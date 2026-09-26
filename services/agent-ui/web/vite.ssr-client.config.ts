@@ -7,6 +7,6 @@ export default defineConfig({
   build: {
     outDir: "dist/client",
     manifest: true,
-    rollupOptions: { input: "src/entry-client.tsx" },
+    rolldownOptions: { input: "src/entry-client.tsx" },
   },
 });

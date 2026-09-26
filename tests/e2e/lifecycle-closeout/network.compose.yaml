@@ -2,7 +2,7 @@ services:
   stage3-model:
     command: ["node", "/lifecycle/network-model.mjs"]
   network-target:
-    image: node:24-bookworm-slim
+    image: node:24.21.0-bookworm-slim
     command: ["node", "/lifecycle/network-target.mjs"]
     volumes:
       - ./tests/e2e/lifecycle-closeout:/lifecycle:ro

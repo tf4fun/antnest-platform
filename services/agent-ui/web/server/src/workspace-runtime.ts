@@ -14,6 +14,9 @@ import {
   type BridgeScope,
 } from "./bridge/registry.ts";
 import { createCommandHandler } from "./http/command-routes.ts";
+import { createControlHandler } from "./http/control-routes.ts";
+import { executeControlCommand } from "./commands/execute.ts";
+import { controlCatalogue } from "./protocol/workspace-commands.ts";
 import { createAgentViewHandler } from "./http/agent-view-routes.ts";
 import { createConfigurationHandler } from "./http/configuration-routes.ts";
 import { createEventHandler } from "./http/event-routes.ts";
@@ -194,6 +197,7 @@ export function createWorkspaceRuntime(input: {
         (item) => item.sessionId === sessionId,
       ),
       configOptions: metadata.configOptions,
+      availableCommands: blocked ? [] : metadata.availableCommands,
       configurationToken:
         !blocked && session.configurationRevision !== null &&
         metadata.configOptions.length > 0
@@ -268,7 +272,7 @@ export function createWorkspaceRuntime(input: {
     for (const permission of owner.permissions) sessionIds.add(permission.sessionId);
     const operations = [...sessionIds].flatMap((sessionId) => owner.operations.snapshot(sessionId, owner.cachedReceipts(sessionId)));
     const active = operations.find((operation) => !["completed", "failed", "cancelled", "uncertain"].includes(operation.phase));
-    let selectedView: unknown = null;
+    let selectedView: ReturnType<typeof makeView> | null = null;
     if (selectedSessionId !== null) {
       const cached = owner.cachedSession(selectedSessionId);
       const cursor = owner.streamJournal(selectedSessionId).snapshot((value) => value).cursor;
@@ -276,9 +280,10 @@ export function createWorkspaceRuntime(input: {
     }
     const permissions = owner.permissions.filter((item) => sessionIds.has(item.sessionId));
     const promptCapabilities = owner.promptCapabilities;
+    const controlCommands = controlCatalogue({ selectedView }, owner.supportsFork);
     return (streamCursor) => ({ agentId: scope.agentId, bridgeEpoch: lease.epoch,
       availability: state.availability === "ready" && active ? "busy" : state.availability,
-      promptCapabilities,
+      promptCapabilities, controlCommands,
       activeSessionId: state.activeSessionId ?? active?.sessionId ?? null,
       selectedSessionId, selectedView, operations,
       permissions, streamCursor });
@@ -466,8 +471,8 @@ export function createWorkspaceRuntime(input: {
       }
     },
   });
-  const configuration = createConfigurationHandler({
-    async apply(scope, sessionId, configId, value, token) {
+  const configurationActions = {
+    async apply(scope: BridgeScope, sessionId: string, configId: string, value: string | boolean, token: string) {
       const lease = await registry.observe(scope);
       try {
         const current = await lease.owner.authorizeSession(sessionId);
@@ -495,7 +500,8 @@ export function createWorkspaceRuntime(input: {
         lease.release();
       }
     },
-  });
+  };
+  const configuration = createConfigurationHandler(configurationActions);
   const sessions = createSessionHandler({
     async list(scope, cursor) {
       const lease = await registry.observe(scope);
@@ -521,9 +527,34 @@ export function createWorkspaceRuntime(input: {
       throw new Error("Controller discovery is not configured");
     }),
   });
+  const controls = createControlHandler({
+    async execute(scope, command) {
+      const lease = await registry.observe(scope);
+      try {
+        return await executeControlCommand(command, {
+          forkSupported: lease.owner.supportsFork,
+          async view(sessionId) {
+            const projection = await prepareAgentView(scope, lease, sessionId);
+            rememberAgentProjection(lease.owner, sessionId, projection);
+            const view = lease.owner.agentJournal(sessionId).snapshot(projection).view;
+            if (!validAgentView(view)) throw new Error("Invalid command observation");
+            return view;
+          },
+          sessions: (cursor) => lease.owner.listSessions(cursor),
+          configure: (sessionId, configId, value, token) => configurationActions.apply(scope, sessionId, configId, value, token),
+          async cancel(sessionId, operationId, runId) {
+            const session = await lease.owner.authorizeExecution(sessionId, { reconcileMissing: false });
+            return session.operations.cancel(sessionId, operationId, runId);
+          },
+          fork: (sessionId) => lease.owner.forkSession(sessionId),
+        });
+      } finally { lease.release(); }
+    },
+  });
   return {
     handle: async (request) =>
       (await bootstrap(request)) ??
+      (await controls(request)) ??
       (await events(request)) ??
       (await permissions(request)) ??
       (await configuration(request)) ??

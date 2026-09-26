@@ -105,7 +105,7 @@ impl rmcp::Service<RoleServer> for FixtureService {
         rmcp::Service::handle_notification(&self.0, notification, context).await
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         ServerHandler::get_info(&self.0)
     }
 
@@ -115,8 +115,8 @@ impl rmcp::Service<RoleServer> for FixtureService {
 }
 
 impl ServerHandler for Fixture {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(self.version.clone())
     }
 

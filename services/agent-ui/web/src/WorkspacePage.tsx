@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import { Composer } from "./components/Composer";
+import { CommandResponse } from "./components/CommandResponse";
 import { Thread } from "./components/Thread";
 import { Sidebar } from "./components/Sidebar";
 import { PermissionRequests } from "./components/PermissionRequests";
@@ -33,6 +34,13 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
     menuOpen,
     setMenuOpen,
     draft,
+    commands,
+    allowControlInput,
+    controlInput,
+    controlEnabled,
+    commanding,
+    commandFeedback,
+    dismissCommandFeedback,
     setDraft,
     attachments,
     sending,
@@ -51,6 +59,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
     activeConversation,
     connected,
     conversationReady,
+    creationUncertain,
     preview,
     promptCapabilities,
     refreshWorkspace,
@@ -91,6 +100,14 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
     window.requestAnimationFrame(() => {
       document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
     });
+  };
+  const startNewConversation = () => {
+    if (menuOpen) pendingMobileFocus.current = 'textarea[aria-label="Message"]';
+    void newConversation();
+    setMenuOpen(false);
+    if (!menuOpen) window.requestAnimationFrame(() =>
+      composerRoot.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')
+        ?.focus({ preventScroll: true }));
   };
   useLayoutEffect(() => {
     const focused = document.activeElement;
@@ -223,9 +240,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
         onClosed={focusAfterDialogClose}
         newConversationDisabled={creating || sending || !connected}
         logoutDisabled={loggingOut}
-        onNewConversation={() => {
-          void newConversation();
-        }}
+        onNewConversation={startNewConversation}
         onLogout={() => {
           void logout();
         }}
@@ -241,7 +256,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
         }}
         onChooseAgent={() => {
           navigate({ agentId: "", sessionId: null });
-          focusAfterMobileNavigation('input[aria-label="Find an agent"]');
+          focusAfterMobileNavigation('input[aria-label="Find a workspace"]');
         }}
       />
       <a className="skip-link" href="#conversation-main">
@@ -290,12 +305,10 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
               <span className="preview-label">Preview</span>
             ) : null}
             <button
-              className="icon-button"
+              className="icon-button topbar-new-conversation"
               type="button"
               disabled={creating || sending || !connected}
-              onClick={() => {
-                void newConversation();
-              }}
+              onClick={startNewConversation}
               title="New conversation"
               aria-label="New conversation"
             >
@@ -304,7 +317,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
           </div>
         </header>
         <section
-          className="thread-region"
+          className={`thread-region${workspace.activeConversationId === null ? " thread-draft" : ""}`}
           onFocusCapture={(event) => {
             composerHadFocus.current =
               composerRoot.current?.contains(event.target) ?? false;
@@ -378,7 +391,15 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
           />
           <Composer
             rootRef={composerRoot}
-            sessionControls={
+            commandScope={JSON.stringify([activeAgent.id, workspace.activeConversationId])}
+            commands={commands ?? (conversationReady ? activeConversation?.availableCommands ?? [] : [])}
+            allowControlInput={allowControlInput}
+            controlInput={controlInput}
+            controlEnabled={controlEnabled}
+            commanding={commanding}
+            feedback={commandFeedback ? <CommandResponse result={commandFeedback} onDismiss={dismissCommandFeedback} /> : undefined}
+            sessionControls={workspace.activeConversationId === null ?
+              <span className="draft-defaults">Agent defaults</span> :
               <SessionSettings
                 options={activeConversation?.configOptions ?? []}
                 disabled={
@@ -388,13 +409,13 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
                   activeAgent.status !== "ready" ||
                   creating ||
                   configuring ||
+                  commanding ||
                   sending
                 }
                 onChange={(id, value) => {
                   void setConfiguration(id, value);
                 }}
-              />
-            }
+              />}
             usage={
               <SessionUsage
                 key={JSON.stringify([activeAgent.id, activeConversation?.id])}
@@ -408,6 +429,8 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
             historyReady={
               conversationReady && (preview || Boolean(activeConversation))
             }
+            draftMode={workspace.activeConversationId === null}
+            sendBlocked={workspace.activeConversationId === null && creationUncertain}
             openingHistory={openingHistory}
             openingFailure={Boolean(openingFailure)}
             agentStatus={activeAgent.status}

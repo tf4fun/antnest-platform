@@ -12,6 +12,11 @@ This integration fixture owns no production service changes. Its contract is:
   the configured immutable image; a second unexecuted Template proves valid
   missing-tag preservation. Runtime image-resolution failures remain part of
   the later lifecycle fault batch.
+- Fresh resource IDs at Gateway/ACP boundaries follow the
+  [platform generation contract](../../../contracts/resource-identifiers.md):
+  Identity, catalog, Agent, lifecycle events, Runtime revisions and Sessions.
+  Catalog retries retain IDs and history/rebuild retain Session references;
+  external model response and Tool-call identifiers remain protocol-owned.
 - Password/directory/SCIM administration, idempotent catalog creation,
   pagination, image rejection, scoped Agent lookup and events remain covered.
 - Create, Disable, Enable, Rebuild and Delete complete through Temporal and

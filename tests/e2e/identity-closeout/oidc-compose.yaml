@@ -1,7 +1,7 @@
 # Test-only IdP and trust anchor. Never included by deployment Compose.
 services:
   oidc-fixture:
-    image: node:24-bookworm-slim
+    image: node:24.21.0-bookworm-slim
     command: ["node", "/fixture/oidc-server.mjs"]
     environment:
       OIDC_TEST_CALLBACK: ${ANTNEST_EDGE_PUBLIC_BASE_URL:?required}/protocol/oidc/callback

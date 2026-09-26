@@ -9,6 +9,7 @@ import {
 } from "../../support/verification/development-runtime.mjs";
 import { inspectPublication, selectPublications } from "./publication.mjs";
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
@@ -152,11 +153,9 @@ async function publications(organization) {
   const end = Date.now() + 120000;
   let roots = [];
   while (Date.now() < end) {
-    const response = await fetch(`${jaeger}/api/traces?${query}`, {
+    const data = await searchJaegerTraces(jaeger, query, {
       signal: AbortSignal.timeout(10000),
     });
-    assert(response.ok, "publication trace search failed");
-    const { data } = await response.json();
     roots = (data ?? []).filter((trace) => {
       const tree = traceTopology(trace);
       const attempt = trace.spans.find(

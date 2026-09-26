@@ -1,4 +1,4 @@
-FROM node:24-alpine AS ui-build
+FROM node:24.21.0-alpine AS ui-build
 
 WORKDIR /app
 COPY services/agent-ui/web/package*.json ./
@@ -8,7 +8,7 @@ COPY services/agent-ui/web/src/ ./src/
 COPY services/agent-ui/web/index.html services/agent-ui/web/tsconfig*.json services/agent-ui/web/vite*.ts ./
 RUN npm run build:bridge && npm prune --omit=dev
 
-FROM node:24-alpine
+FROM node:24.21.0-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production

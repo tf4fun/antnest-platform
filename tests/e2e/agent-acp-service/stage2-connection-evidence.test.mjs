@@ -42,6 +42,14 @@ test("Gateway message links directly to its receiving WebSocket connection", () 
   value.prompt.references[0].spanID = "gateway";
   assert.equal(inspectGatewayConnection(value).trace_id, "socket");
 });
+test("Jaeger HTTP status translation retains the exact connection handshake checks", () => {
+  const value = fixture();
+  for (const span of value.connection.spans)
+    span.tags[1].key = "http.status_code";
+  assert.equal(inspectGatewayConnection(value).trace_id, "socket");
+  value.connection.spans[2].tags[1].value = 503;
+  assert.throws(() => inspectGatewayConnection(value));
+});
 for (const [name, change] of [
   ["wrong connection", (value) => (value.prompt.references[0].spanID = "dial")],
   [

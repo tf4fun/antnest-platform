@@ -157,11 +157,11 @@ type CurrentAccount struct {
 
 type Service struct {
 	repository Repository
-	newID      func() string
+	newID      func(string) string
 	now        func() time.Time
 }
 
-func NewService(repository Repository, newID func() string, now func() time.Time) *Service {
+func NewService(repository Repository, newID func(string) string, now func() time.Time) *Service {
 	if repository == nil || newID == nil || now == nil {
 		panic("directory service requires repository, id generator, and clock")
 	}
@@ -198,10 +198,10 @@ func (s *Service) CreateOrganization(
 	}
 	now := s.now().UTC()
 	organization := domain.Organization{
-		ID: s.newID(), Slug: slug, Name: name, Active: true, CreatedAt: now, UpdatedAt: now,
+		ID: s.newID("org"), Slug: slug, Name: name, Active: true, CreatedAt: now, UpdatedAt: now,
 	}
 	membership := domain.OrganizationMembership{
-		ID: s.newID(), OrganizationID: organization.ID, UserID: principal.UserID,
+		ID: s.newID("membership"), OrganizationID: organization.ID, UserID: principal.UserID,
 		Email: ownerEmail, DisplayName: ownerDisplayName,
 		Role: domain.OrganizationRoleAdmin, Source: domain.SourceLocal, Active: true,
 		CreatedAt: now, UpdatedAt: now,
@@ -244,11 +244,11 @@ func (s *Service) CreateLocalUser(
 
 	now := s.now().UTC()
 	user := domain.User{
-		ID: s.newID(), SystemRole: domain.SystemRoleUser,
+		ID: s.newID("user"), SystemRole: domain.SystemRoleUser,
 		Active: true, CreatedAt: now, UpdatedAt: now,
 	}
 	membership := domain.OrganizationMembership{
-		ID: s.newID(), OrganizationID: input.OrganizationID, UserID: user.ID, Role: input.Role,
+		ID: s.newID("membership"), OrganizationID: input.OrganizationID, UserID: user.ID, Role: input.Role,
 		Email: email, DisplayName: displayName,
 		Source: domain.SourceLocal, Active: true, CreatedAt: now, UpdatedAt: now,
 	}
@@ -291,7 +291,7 @@ func (s *Service) AddOrganizationMembership(
 	}
 	now := s.now().UTC()
 	membership := domain.OrganizationMembership{
-		ID: s.newID(), OrganizationID: input.OrganizationID, UserID: userID,
+		ID: s.newID("membership"), OrganizationID: input.OrganizationID, UserID: userID,
 		Email: email, DisplayName: displayName,
 		Role: input.Role, Source: domain.SourceLocal, Active: true,
 		CreatedAt: now, UpdatedAt: now,

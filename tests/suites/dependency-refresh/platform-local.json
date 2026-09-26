@@ -1,0 +1,12 @@
+[
+  {
+    "name": "deployment-contract",
+    "command": [
+      "sh",
+      "-c",
+      "node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/temporal/*.test.mjs"
+    ],
+    "timeout_ms": 300000,
+    "grace_ms": 30000
+  }
+]

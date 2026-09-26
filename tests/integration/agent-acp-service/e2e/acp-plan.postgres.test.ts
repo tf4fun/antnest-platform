@@ -97,6 +97,13 @@ describe.skipIf(databaseUrl === undefined)(
         await prompt(client, version, sessionId);
         submit(updated);
         await prompt(client, version, sessionId);
+        const planRows = await pool.query<{ id: string }>(
+          "SELECT id FROM session_messages WHERE session_id = $1 AND kind IN ('plan', 'tool_call')",
+          [sessionId],
+        );
+        expect(planRows.rows.length).toBeGreaterThan(0);
+        for (const row of planRows.rows)
+          expect(row.id).toMatch(/^message_[0-9a-f]{32}$/);
         const plans = planUpdates(client.frames);
         expect(plans).toHaveLength(2);
         expect(entries(plans[0]!)).toEqual(first);

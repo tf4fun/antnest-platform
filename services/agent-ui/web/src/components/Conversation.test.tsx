@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Conversation } from "./Conversation";
@@ -6,6 +7,47 @@ import { WorkspaceApiError } from "../lib/workspace-api-client";
 import { projectBridgeConversation, replaceBridgeProcess } from "../lib/bridge-conversation";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+test("running process keeps space between its header and live tool activity", () => {
+  const agent: AgentSummary = { id: "agent", name: "Agent", status: "busy", description: "Test",
+    modelLabel: "Test", managementState: {
+      lifecycle: "created", activation: "enabled", runtime: "available" } };
+  const { container } = render(<>
+    <style>{readFileSync("src/styles.css", "utf8")}</style>
+    <Conversation agent={agent} conversation={{
+      id: "session", agentId: "agent", title: "Conversation", updatedAt: "now",
+      messages: [
+        { id: "turn:prompt", role: "user", content: "Question", processCount: 1,
+          processLoaded: true, turnOutcome: "running" },
+        { id: "turn:process:tool", role: "assistant", content: "", activities: [
+          { id: "tool", tool: "read", label: "Read notes", status: "running", summary: "Running" },
+        ] },
+      ],
+    }} />
+  </>);
+  const process = container.querySelector<HTMLElement>('.turn-process[data-complete="false"]')!;
+  const content = process.querySelector<HTMLElement>(".turn-process-content")!;
+  expect(process.querySelector(".turn-process-trigger")).toBeTruthy();
+  expect(content.querySelector(".tool-running")).toBeTruthy();
+  expect(getComputedStyle(content).marginTop).toBe("12px");
+});
+
+test("a running turn remains expanded even if the Session has no tracked local operation", () => {
+  const agent: AgentSummary = { id: "agent", name: "Agent", status: "ready", description: "Test",
+    modelLabel: "Test", managementState: {
+      lifecycle: "created", activation: "enabled", runtime: "available" } };
+  const { container } = render(<Conversation agent={agent} settled conversation={{
+    id: "session", agentId: "agent", title: "Conversation", updatedAt: "now",
+    messages: [
+      { id: "turn:prompt", role: "user", content: "Question", processCount: 1,
+        processLoaded: true, turnOutcome: "running" },
+      { id: "turn:process:thought", role: "assistant", content: "Working",
+        presentation: "thought" },
+    ],
+  }} />);
+  expect(container.querySelector('.turn-process[data-complete="false"]')).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Hide process" })).toBeTruthy();
+});
 
 test("unknown historical message time is omitted while a known local time remains", () => {
   const conversation: ConversationModel = {

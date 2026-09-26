@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  tag,
   traceTopology,
   assertCaptureDisabled,
 } from "../observability/trace-tree.mjs";
@@ -71,7 +72,6 @@ export function inspectShutdownTrace(trace, expected, secrets) {
   const spans = tree.spans;
   assert.equal(spans.size, trace.spans.length, "duplicate shutdown span");
   const service = (s) => trace.processes[s.processID]?.serviceName;
-  const tag = (s, key) => s.tags?.find((t) => t.key === key)?.value;
   const servers = (name) =>
     trace.spans.filter(
       (s) => service(s) === name && tag(s, "span.kind") === "server",

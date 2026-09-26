@@ -232,8 +232,8 @@ def run(output, old_reference, postgres_reference):
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',required=True)
-    parser.add_argument('--old-image',default='node:24-bookworm-slim')
-    parser.add_argument('--postgres-image',default='postgres:17-bookworm')
+    parser.add_argument('--old-image',default='node:24.21.0-bookworm-slim')
+    parser.add_argument('--postgres-image',default='postgres:17.11-bookworm')
     args=parser.parse_args()
     output=durable_path(args.output)
     if output.exists() or Path(args.output).is_symlink():

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "acp-typecheck",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "typecheck"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "acp-lint",
+    "command": ["npm", "--prefix", "services/agent-acp-service", "run", "lint"],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "acp-test",
+    "command": ["npm", "--prefix", "services/agent-acp-service", "run", "test"],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "acp-test-integration",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "test:integration"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "acp-build",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "build"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  }
+]

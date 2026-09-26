@@ -5,7 +5,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
 
     use rmcp::{
         ClientLifecycleMode, ClientServiceExt,
-        model::{ClientCapabilities, ClientInfo, Implementation, ProtocolVersion},
+        model::{ClientCapabilities, ClientConfig, Implementation, ProtocolVersion},
         transport::StreamableHttpClientTransport,
     };
     use tokio_util::sync::CancellationToken;
@@ -61,7 +61,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         )
         .custom_headers(headers),
     );
-    let client_info = ClientInfo::new(
+    let client_info = ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("antnest-runtime-test", "0.0.0"),
     )
@@ -246,7 +246,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
 
 #[cfg(target_os = "linux")]
 async fn call(
-    client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
+    client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientConfig>,
     name: &str,
     arguments: serde_json::Value,
 ) -> rmcp::model::CallToolResult {

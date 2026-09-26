@@ -5,7 +5,7 @@ import BridgeApp from "./BridgeApp";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 test("Bridge page opens existing Session through HTTP and SSE without a browser ACP socket", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const socket = vi.fn();
   vi.stubGlobal("WebSocket", socket);
   const eventSources: string[] = [];
@@ -64,14 +64,14 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
   expect(socket).not.toHaveBeenCalled();
   expect(requests.some((url) => url.includes("/v1/acp"))).toBe(false);
   expect(eventSources).toEqual([expect.stringContaining("/agents/agent-1/events")]);
-  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Next question" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Message" }), { target: { value: "Next question" } });
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(prompts).toHaveLength(1));
   expect(prompts[0]?.headers.get("X-Antnest-CSRF-Token")).toBe("csrf-test");
   expect((prompts[0]?.body as { prompt: { text: string }[] }).prompt).toEqual([
     { type: "text", text: "Next question" },
   ]);
-  await waitFor(() => expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message" }).value).toBe(""));
+  await waitFor(() => expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe(""));
   expect(screen.getByRole("button", { name: "Stop operation" })).toHaveProperty("disabled", true);
   const completedView = structuredClone(initialView);
   completedView.streamCursor = "cursor-2";

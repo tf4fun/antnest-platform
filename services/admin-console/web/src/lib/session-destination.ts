@@ -1,19 +1,27 @@
 import type { Session } from "./types";
 
 export function agentWorkspacePath(agentID: string): string {
-  return `/workspace/?${new URLSearchParams({ agent: agentID })}`;
+  if (!validWorkspaceID(agentID) || agentID === "assets") throw new Error("Invalid workspace Agent");
+  return `/workspace/${encodeURIComponent(agentID)}/`;
+}
+
+function validWorkspaceID(value: string): boolean {
+  return value.length > 0 && new TextEncoder().encode(value).byteLength <= 200 &&
+    value.trim() === value && value !== "." && value !== ".." && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function workspaceReturnPath(value: string | null): string | undefined {
   if (value === "/workspace/") return value;
-  if (!value?.startsWith("/workspace/?") || value.includes("#")) return undefined;
-  const params = new URLSearchParams(value.slice("/workspace/?".length));
-  for (const [key, id] of params) {
-    if (key !== "agent" && key !== "session") return undefined;
-    if (params.getAll(key).length !== 1 || !id.trim() || id.length > 200 || /[\x00-\x1f\x7f]/.test(id)) return undefined;
-  }
-  if (!params.has("agent")) return undefined;
-  return `/workspace/?${params}`;
+  const match = value?.match(/^\/workspace\/([^/?#\\]+)\/(?:sessions\/([^/?#\\]+))?$/);
+  if (!match) return undefined;
+  try {
+    const agentId = decodeURIComponent(match[1]!);
+    const sessionId = match[2] === undefined ? null : decodeURIComponent(match[2]);
+    if (!validWorkspaceID(agentId) || agentId === "assets" ||
+      (sessionId !== null && !validWorkspaceID(sessionId))) return undefined;
+    const base = agentWorkspacePath(agentId);
+    return sessionId === null ? base : `${base}sessions/${encodeURIComponent(sessionId)}`;
+  } catch { return undefined; }
 }
 
 export function sessionDestination(session: Session, returnTo: string | null): string | undefined {

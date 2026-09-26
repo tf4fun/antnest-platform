@@ -50,7 +50,7 @@ func (service *AgentConfigurationService) SetAgentAuthorization(ctx context.Cont
 		OrganizationID: principal.OrganizationID,
 		Query:          scope, ExpectedRevision: input.ExpectedAuthorizationRevision,
 		OwnerRevocationSequence: principal.LastRevocationSequence, Authorization: authorization,
-		EventID: derivedID("authorization", input.AgentID+":"+strconv.FormatInt(input.ExpectedAuthorizationRevision+1, 10)),
+		EventID: domain.DeriveResourceID("event", "authorization", input.AgentID+":"+strconv.FormatInt(input.ExpectedAuthorizationRevision+1, 10)),
 		TraceID: currentTraceID(ctx), Now: service.clock.Now(),
 	})
 	if err != nil {

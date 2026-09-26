@@ -148,3 +148,58 @@ test("suite entries forward explicit environment overrides", async (t) => {
   });
   assert.equal(result.exit_code, 0);
 });
+
+test("a passing test title is not a business failure report", async (t) => {
+  const output = mkdtempSync(join(tmpdir(), "antnest-suite-passing-title-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  const result = await runSuite({
+    output,
+    manifest: [
+      {
+        name: "test-titles",
+        command: [
+          process.execPath,
+          "-e",
+          'console.log("✔ accepted exits cannot hide ACP access business/topology failed; private diagnostics retained (1ms)")',
+        ],
+      },
+    ],
+  });
+  assert.equal(result.complete, true);
+  assert.equal(result.exit_code, 0);
+});
+
+for (const report of [
+  JSON.stringify({ status: "failed", error: "trace search failed" }, null, 2),
+  "ACP access business/topology failed; private diagnostics retained",
+  "Agent access business/topology failed; diagnostics retained privately",
+]) {
+  test(`accepted exits cannot hide ${report.split("\n")[0]}`, async (t) => {
+    const output = mkdtempSync(
+      join(tmpdir(), "antnest-suite-reported-failure-"),
+    );
+    t.after(() => rmSync(output, { recursive: true, force: true }));
+    const result = await runSuite({
+      output,
+      manifest: [
+        {
+          name: "failed",
+          command: [
+            process.execPath,
+            "-e",
+            `console.error(${JSON.stringify(report)});process.exit(2)`,
+          ],
+          accepted_exits: [0, 2],
+        },
+        {
+          name: "must-not-run",
+          command: [process.execPath, "-e", "process.exit()"],
+        },
+      ],
+    });
+    assert.equal(result.complete, false);
+    assert.equal(result.reason, "business-failure");
+    assert.equal(result.results.length, 1);
+    assert.equal(result.exit_code, 2);
+  });
+}

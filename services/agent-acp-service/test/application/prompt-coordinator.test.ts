@@ -46,13 +46,14 @@ async function setup(initialize = true) {
   };
   const recoveryRequired = vi.fn();
   let nextId = 0;
+  const id = vi.fn<(kind: string) => string>(() => `id-${++nextId}`);
   const coordinator = new PromptCoordinator({
     repository,
     directory: local.directory,
     protection: { hasUnstoppedRuntimeCalls: () => Promise.resolve(false) },
     runTimeoutMs: 600_000,
     recoveryRequired,
-    id: () => `id-${++nextId}`,
+    id,
     now: () => now,
   });
   const input = {
@@ -60,10 +61,15 @@ async function setup(initialize = true) {
     sessionId: session.id,
     prompt: [{ type: "text", text: "hello" }],
   };
-  return { ...local, configuration, repository, recoveryRequired, coordinator, input };
+  return { ...local, configuration, repository, recoveryRequired, coordinator, input, id };
 }
 
 describe("PromptCoordinator", () => {
+  it("assigns separate resource kinds to the Run, request and user message", async () => {
+    const test = await setup();
+    await test.coordinator.accept(test.input);
+    expect(test.id.mock.calls.map(([kind]) => kind)).toEqual(["run", "request", "message"]);
+  });
   it("passes a Bridge intent through authorization into durable Run reservation", async () => {
     const test = await setup();
     const bridgeIntent = { intentId: "intent-1", expectedAppendVersion: 3 };

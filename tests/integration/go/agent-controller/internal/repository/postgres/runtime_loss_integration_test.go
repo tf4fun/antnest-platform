@@ -163,8 +163,9 @@ func TestRuntimeLossReconciliationDoesNotInferDeletionFromUncertainty(t *testing
 func TestRuntimeLossEventFailureRollsBackAgentAndCursor(t *testing.T) {
 	ctx, repository, _ := controllerTestConnection(t)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
+	collision := domain.DeriveResourceID("event", "runtime-observation", "1")
 	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events
-SET event_id='runtime-observation-1' WHERE event_id='event-ready-for-rebuild'`); err != nil {
+SET event_id=$1 WHERE event_id='event-ready-for-rebuild'`, collision); err != nil {
 		t.Fatal(err)
 	}
 	observation := ports.RuntimeObservation{
@@ -183,7 +184,7 @@ SET event_id='runtime-observation-1' WHERE event_id='event-ready-for-rebuild'`);
 		t.Fatalf("failed transaction advanced cursor: %+v error=%v", cursor, err)
 	}
 	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events
-SET event_id='event-ready-for-rebuild' WHERE event_id='runtime-observation-1'`); err != nil {
+SET event_id='event-ready-for-rebuild' WHERE event_id=$1`, collision); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.ApplyRuntimeObservation(ctx, observation); err != nil {

@@ -1,3 +1,4 @@
+import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -248,7 +249,7 @@ test(
       const measureDocument = async (kind) => {
         const start = performance.now();
         const response = await fetch(
-          `${config.gateway}/workspace/?agent=${fixture.agentID}`,
+          `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/`,
           {
             headers: { Cookie: memberClient.cookie },
             signal: AbortSignal.any([
@@ -362,13 +363,13 @@ test(
         page.on("pageerror", (error) => errors.push(error.message));
         page.on("websocket", (socket) => sockets.push(socket.url()));
         await page.goto(
-          `${config.gateway}/workspace/?agent=${fixture.agentID}&session=${selectedSessionId}`,
+          `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(selectedSessionId)}`,
         );
         return page;
       };
       const navigationStart = performance.now();
       const page = await open();
-      const composer = page.getByRole("textbox", {
+      const composer = page.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -580,7 +581,10 @@ test(
       const composerStatus = gatewayPage
         .getByRole("group", { name: "Message composer" })
         .getByRole("status");
-      assert.equal(await composerStatus.innerText(), "Agent is working");
+      assert.equal(
+        await composerStatus.innerText(),
+        "Agent is working. Commands remain available.",
+      );
       let gatewaySseRequests = 0;
       gatewayPage.on("request", (request) => {
         if (new URL(request.url()).pathname.endsWith("/events"))
@@ -670,7 +674,7 @@ test(
         1,
       );
       const secondPage = await open(secondSession);
-      const secondComposer = secondPage.getByRole("textbox", {
+      const secondComposer = secondPage.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -1101,7 +1105,7 @@ test(
         )
       ).body.sessionId;
       const unsupportedPage = await open(unsupportedSessionId);
-      const unsupportedComposer = unsupportedPage.getByRole("textbox", {
+      const unsupportedComposer = unsupportedPage.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -1174,7 +1178,7 @@ test(
       await unsupportedAlert.waitFor({ timeout: 120_000 });
       assert.equal(await unsupportedComposer.isEnabled(), true);
       await unsupportedPage.close();
-      const reopenedComposer = reopened.getByRole("textbox", {
+      const reopenedComposer = reopened.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -1748,7 +1752,7 @@ test(
         await new Promise((resolve) => setTimeout(resolve, 32_000));
         await route.fulfill({ response }).catch(() => {});
       });
-      const timeoutComposer = approvalPage.getByRole("textbox", {
+      const timeoutComposer = approvalPage.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -1860,6 +1864,10 @@ test(
       await mobileAgentPage.keyboard.press("Enter");
       await mobileAgentPage
         .getByRole("dialog", { name: "Workspace navigation" })
+        .locator(".workspace-switcher")
+        .click();
+      await mobileAgentPage
+        .getByRole("dialog", { name: "Workspace navigation" })
         .getByRole("button", { name: /C4 Peer Agent/ })
         .focus();
       await mobileAgentPage.keyboard.press("Enter");
@@ -1878,11 +1886,15 @@ test(
       await mobileAgentPage.keyboard.press("Enter");
       await mobileAgentPage
         .getByRole("dialog", { name: "Workspace navigation" })
-        .getByRole("button", { name: "All agents" })
+        .locator(".workspace-switcher")
+        .click();
+      await mobileAgentPage
+        .getByRole("dialog", { name: "Workspace navigation" })
+        .getByRole("button", { name: "All workspaces" })
         .focus();
       await mobileAgentPage.keyboard.press("Enter");
       const agentSearch = mobileAgentPage.getByRole("searchbox", {
-        name: "Find an agent",
+        name: "Find a workspace",
       });
       await agentSearch.waitFor();
       await until(
@@ -1893,7 +1905,7 @@ test(
       );
       await mobileAgentPage.close();
       const crossAgentPage = await open();
-      const crossAgentComposer = crossAgentPage.getByRole("textbox", {
+      const crossAgentComposer = crossAgentPage.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -1905,20 +1917,21 @@ test(
       await crossAgentComposer.fill("Original Agent private draft");
       await crossAgentPage
         .getByRole("complementary", { name: "Workspace navigation" })
+        .locator(".workspace-switcher")
+        .click();
+      await crossAgentPage
+        .getByRole("complementary", { name: "Workspace navigation" })
         .getByRole("button", { name: /C4 Peer Agent/ })
         .click();
       await until(
-        () =>
-          new URL(crossAgentPage.url()).searchParams.get("agent") ===
-          peerAgentId,
+        () => workspaceLocation(crossAgentPage.url()).agentId === peerAgentId,
         "peer Agent selected",
         abort.signal,
       );
       await crossAgentPage.locator(".conversation-option").first().click();
       await until(
         () =>
-          new URL(crossAgentPage.url()).searchParams.get("session") ===
-          peerSessionId,
+          workspaceLocation(crossAgentPage.url()).sessionId === peerSessionId,
         "peer Agent Session selected",
         abort.signal,
       );
@@ -1932,9 +1945,7 @@ test(
       await crossAgentPage.goBack();
       await crossAgentPage.goBack();
       await until(
-        () =>
-          new URL(crossAgentPage.url()).searchParams.get("session") ===
-          sessionId,
+        () => workspaceLocation(crossAgentPage.url()).sessionId === sessionId,
         "browser history restored original Agent Session",
         abort.signal,
       );
@@ -1949,8 +1960,7 @@ test(
       await crossAgentPage.goForward();
       await until(
         () =>
-          new URL(crossAgentPage.url()).searchParams.get("session") ===
-          peerSessionId,
+          workspaceLocation(crossAgentPage.url()).sessionId === peerSessionId,
         "browser history restored peer Agent Session",
         abort.signal,
       );
@@ -2004,9 +2014,7 @@ test(
       await crossAgentPage.goBack();
       await crossAgentPage.goBack();
       await until(
-        () =>
-          new URL(crossAgentPage.url()).searchParams.get("session") ===
-          sessionId,
+        () => workspaceLocation(crossAgentPage.url()).sessionId === sessionId,
         "original Agent Session restored while peer Run is held",
         abort.signal,
       );
@@ -2035,9 +2043,9 @@ test(
       );
       const logoutPage = await logoutContext.newPage();
       await logoutPage.goto(
-        `${config.gateway}/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
-      const logoutComposer = logoutPage.getByRole("textbox", {
+      const logoutComposer = logoutPage.getByRole("combobox", {
         name: "Message",
         exact: true,
       });
@@ -2090,7 +2098,7 @@ test(
       );
       const peerPage = await peerContext.newPage();
       await peerPage.goto(
-        `${config.gateway}/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
       await peerPage
         .getByText("c4-browser-hold-logout", { exact: true })
@@ -2104,7 +2112,7 @@ test(
         .waitFor({ timeout: 120_000 });
       assert.equal(
         new URL(logoutPage.url()).searchParams.get("return_to"),
-        `/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
       assert.equal(await logoutPage.locator(".message-content").count(), 0);
       assert.equal(
@@ -2235,7 +2243,7 @@ test(
       );
       const expiryPage = await expiryContext.newPage();
       await expiryPage.goto(
-        `${config.gateway}/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
       await expiryPage
         .getByText("c4-browser-hold-logout completed", { exact: true })
@@ -2248,7 +2256,7 @@ test(
         .waitFor({ timeout: 120_000 });
       assert.equal(
         new URL(expiryPage.url()).searchParams.get("return_to"),
-        `/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
       assert.equal(await expiryPage.locator(".message-content").count(), 0);
       await expiryClient.request("/api/session", { status: 401 });
@@ -2265,7 +2273,7 @@ test(
       assert.equal(new URL(approvalPage.url()).pathname, "/");
       assert.equal(
         new URL(approvalPage.url()).searchParams.get("return_to"),
-        `/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
       assert.equal(await approvalPage.locator(".message-content").count(), 0);
       await until(

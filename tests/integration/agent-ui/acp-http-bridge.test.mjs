@@ -26,6 +26,7 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
   const promptMeta = [];
   const cancelMeta = [];
   const configurationMeta = [];
+  const forks = [];
   const agent = acp
     .agent({ name: "agent-ui-http-fixture" })
     .onRequest(acp.methods.agent.initialize, ({ params }) => {
@@ -37,7 +38,10 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       });
       return {
         protocolVersion: acp.PROTOCOL_VERSION,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { fork: {} },
+        },
         _meta: {
           "antnest.dev/bridge": {
             intentReceipt: 1,
@@ -84,6 +88,10 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
           },
         },
       };
+    })
+    .onRequest(acp.methods.agent.session.fork, ({ params }) => {
+      forks.push(params);
+      return { sessionId: "session-fork" };
     })
     .onRequest(acp.methods.agent.session.prompt, ({ params }) => {
       promptMeta.push(params._meta?.["antnest.dev/intent"]);
@@ -272,6 +280,13 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
         { kind: "checkpoint", sequence: 2 },
       ],
     );
+    assert.equal(
+      (await bridge.forkSession("session-1")).sessionId,
+      "session-fork",
+    );
+    assert.deepEqual(forks, [
+      { sessionId: "session-1", cwd: "/workspace", mcpServers: [] },
+    ]);
     await bridge.prompt({
       sessionId: "session-1",
       prompt: [{ type: "text", text: "go" }],

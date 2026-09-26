@@ -141,13 +141,13 @@ function AvailabilityControl({
             aria-checked={enabled}
             title={kind === "provider-connections" && enabled ? "Disable immediately, including active requests" : label}
             disabled={toggleDisabled}
-            className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${enabled ? "bg-primary" : "bg-slate-300"}`}
+            className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${enabled ? "bg-primary" : "bg-slate-300"}`}
             onClick={() =>
               void send({ expected_enabled: enabled, enabled: !enabled })
             }
           >
             <span
-              className={`pointer-events-none block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`}
+              className={`pointer-events-none block h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`}
             />
           </button>
           <Button

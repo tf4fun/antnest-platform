@@ -156,7 +156,7 @@ class ManagedMcpE2E(unittest.TestCase):
         collector = self.name + "-jaeger"
         self.addCleanup(lambda: docker("rm", "-f", "--volumes", collector, check=False))
         docker("run", "-d", "--name", collector, "--network", self.network,
-               "-p", "127.0.0.1::16686", "cr.jaegertracing.io/jaegertracing/jaeger:2.20.0")
+               "-p", "127.0.0.1::16686", "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0")
         inspection = json.loads(docker("inspect", collector))[0]
         address = inspection["NetworkSettings"]["Networks"][self.network]["IPAddress"]
         port = inspection["NetworkSettings"]["Ports"]["16686/tcp"][0]["HostPort"]

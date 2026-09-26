@@ -9,7 +9,7 @@ export function Loading({ label = "Loading" }: { label?: string }) {
       className="flex min-h-56 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
       role="status"
     >
-      <span className="grid h-10 w-10 place-items-center rounded-full border border-border bg-white shadow-sm">
+      <span className="grid h-10 w-10 place-items-center rounded-full border border-border bg-white shadow-xs">
         <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin text-primary" />
       </span>
       {label}
@@ -19,7 +19,7 @@ export function Loading({ label = "Loading" }: { label?: string }) {
 
 export function ErrorNotice({ message, action }: { message: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 shadow-sm sm:flex-row sm:items-center">
+    <div className="flex flex-col gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 shadow-xs sm:flex-row sm:items-center">
       <div aria-atomic="true" className="flex min-w-0 flex-1 items-start gap-2" role="alert">
         <AlertCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{message}</span>
@@ -43,7 +43,7 @@ export function GuidanceNotice({ message, action }: { message: string; action?: 
 
 export function SuccessNotice({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
   return (
-    <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 shadow-sm">
+    <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 shadow-xs">
       <div aria-atomic="true" className="flex min-w-0 flex-1 items-start gap-2" role="status">
         <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">{message}</span>
@@ -51,7 +51,7 @@ export function SuccessNotice({ message, onDismiss }: { message: string; onDismi
       {onDismiss ? (
         <button
           aria-label="Dismiss success message"
-          className="-m-1 grid h-7 w-7 shrink-0 place-items-center rounded text-emerald-800 transition-colors hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700/30"
+          className="-m-1 grid h-7 w-7 shrink-0 place-items-center rounded-sm text-emerald-800 transition-colors hover:bg-emerald-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-700/30"
           title="Dismiss"
           type="button"
           onClick={onDismiss}

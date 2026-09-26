@@ -143,7 +143,7 @@ async function exercise(project, docker, signal) {
     "upstream",
     "--mount",
     `type=bind,source=${fixture},target=/fixture.mjs,readonly`,
-    "node:24-bookworm-slim",
+    "node:24.21.0-bookworm-slim",
     "node",
     "/fixture.mjs",
     "--upstream",

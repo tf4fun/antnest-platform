@@ -1,3 +1,4 @@
+import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -133,9 +134,9 @@ try {
   assert(agent, "Available Agent required");
   report.agent_id = agent.agent_id;
   stage = "automatic_configuration";
-  await page.goto(`${origin}/workspace/?agent=${agent.agent_id}`);
+  await page.goto(`${origin}/workspace/${encodeURIComponent(agent.agent_id)}/`);
   await ready();
-  report.session_id = new URL(page.url()).searchParams.get("session");
+  report.session_id = workspaceLocation(page.url()).sessionId;
   assert(report.session_id, "Automatic Session URL missing");
   assert.equal(
     await page
@@ -159,7 +160,7 @@ try {
     await choose("Thinking", /^Off/);
     const start = frames.length;
     await page
-      .getByRole("textbox", { name: "Message", exact: true })
+      .getByRole("combobox", { name: "Message", exact: true })
       .fill("请用一句简短中文打招呼，不要调用工具。");
     await page
       .getByRole("button", { name: "Send message", exact: true })
@@ -214,10 +215,7 @@ try {
   stage = "replay_and_layout";
   await page.reload();
   await ready();
-  assert.equal(
-    new URL(page.url()).searchParams.get("session"),
-    report.session_id,
-  );
+  assert.equal(workspaceLocation(page.url()).sessionId, report.session_id);
   assert.match(
     await page
       .getByRole("combobox", { name: "Model", exact: true })

@@ -1,3 +1,4 @@
+import { assertResourceId } from "./contracts.mjs";
 import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
@@ -71,6 +72,7 @@ export async function exerciseWorkspace(
   try {
     await client.initialize();
     ({ sessionId } = await client.request("new", setup));
+    assertResourceId("session", sessionId);
     record(traces, client, `${phase}:new`, "request", { sessionId });
     await catalog(client, sessionId);
     client.updates.length = 0;

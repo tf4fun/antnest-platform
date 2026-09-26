@@ -144,9 +144,9 @@ test(
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("websocket", (socket) => sockets.push(socket.url()));
       await page.goto(
-        `${config.gateway}/workspace/?agent=${fixture.agentID}&session=${sessionId}`,
+        `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(sessionId)}`,
       );
-      const composer = page.getByRole("textbox", {
+      const composer = page.getByRole("combobox", {
         name: "Message",
         exact: true,
       });

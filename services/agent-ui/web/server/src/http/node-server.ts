@@ -9,9 +9,9 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BridgeTelemetry } from "../telemetry.ts";
+import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../protocol/workspace-route.ts";
 
 type WorkspaceHandler = { handle(request: Request): Promise<Response | null> };
-type WorkspaceRoute = { agentId: string; sessionId: string | null };
 type DocumentOptions = {
   assetRoot?: string;
   requestDeadlineMs?: number;
@@ -56,6 +56,8 @@ function metricRoute(url: string | undefined): string {
   catch { return "other"; }
   if (path === "/status" || path === "/live" || path === "/workspace/") return path;
   if (path.startsWith("/workspace/assets/")) return "/workspace/assets/*";
+  const route = parseWorkspaceDocumentPath(path);
+  if (route?.agentId) return route.sessionId === null ? "/workspace/:agentId/" : "/workspace/:agentId/sessions/:sessionId";
   if (path.startsWith("/api/app/workspace/v1/")) return "/api/app/workspace/v1/*";
   return "other";
 }
@@ -145,9 +147,14 @@ async function serve(
             duplex: "half",
           }),
     } as RequestInit & { duplex?: "half" });
-    if (new URL(request.url).pathname === "/workspace/" &&
+    if (url.startsWith("/workspace/") &&
       (method === "GET" || method === "HEAD") && options.renderDocument) {
-      await serveDocument(runtime, options.renderDocument, request, outgoing);
+      const route = parseWorkspaceDocumentPath(url);
+      if (!route) {
+        outgoing.writeHead(404, { "cache-control": "private, no-store" }).end();
+        return;
+      }
+      await serveDocument(runtime, options.renderDocument, request, outgoing, route);
       return;
     }
     const eventStream = method === "GET" &&
@@ -270,6 +277,7 @@ async function serveDocument(
   renderDocument: NonNullable<DocumentOptions["renderDocument"]>,
   request: Request,
   output: ServerResponse,
+  route: WorkspaceRoute,
 ): Promise<void> {
   const organizationId = request.headers.get("x-antnest-organization-id");
   const principalId = request.headers.get("x-antnest-principal-id");
@@ -282,11 +290,6 @@ async function serveDocument(
     output.writeHead(401, { "cache-control": "private, no-store" }).end();
     return;
   }
-  const url = new URL(request.url);
-  const route: WorkspaceRoute = {
-    agentId: url.searchParams.get("agent") ?? "",
-    sessionId: url.searchParams.get("session"),
-  };
   let bootstrap: unknown;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 150);

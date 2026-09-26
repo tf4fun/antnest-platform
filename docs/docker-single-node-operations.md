@@ -1,5 +1,12 @@
 # Docker Single-Node Operations
 
+The all-in-one Temporal service advertises `127.0.0.1` for internal membership
+so normal stop/start cannot leave it trying a reallocated Docker interface
+address. Its frontend still binds `0.0.0.0` and clients use `temporal:7233`.
+This assumes all server roles share one container; split-role or multi-node
+deployments require mutually reachable node addresses. See the
+[restart verification](temporal-membership-revalidation-20260926.md).
+
 This runbook covers one development/acceptance deployment on a trusted Docker
 Engine. It is not an Internet-facing production installation: TLS termination,
 production secret delivery, external backup storage and HA are outside this
@@ -102,7 +109,7 @@ Console accepts the image tag and records the resolved immutable image ID.
 Rebuilding the tag does not silently replace existing Agents or Template
 revisions; publish the intended revision and explicitly rebuild the Agent.
 
-The Temporal image `antnest/temporal:local` keeps server 1.31.0 and adds the
+The Temporal image `antnest/temporal:local` uses server 1.32.0 and adds the
 same-version official `tdbg` binary plus a read-only readiness probe. Its health
 check requires frontend initialization and nonempty frontend/history/matching
 gossip rings. A listening 7233 port alone does not establish readiness after

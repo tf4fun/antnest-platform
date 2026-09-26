@@ -6,14 +6,41 @@ execution or exposing internal service credentials to the browser.
 
 ## Status
 
+The [2026-09-26 dependency refresh](../../docs/dependency-refresh-20260926.md)
+upgrades the official ACP SDK to 1.5.0, React to 19.3.0, Vite to 8.3.1,
+Vitest to 5.0.2 and Playwright to 1.63.0. Production uses Node 24.21.0 LTS.
+The user has authorized full regression, including the outstanding control and
+layout browser checks; the new dependency candidate is undergoing those gates.
+
+Human acceptance on 2026-09-26 identified three UX changes. An Agent without a
+selected Session now accepts a local draft and creates a Session on first send;
+the sidebar starts with the current Agent's workspace, followed by its new
+conversation action, search and history, plus a collapsible desktop rail.
+Workspace selection uses a floating picker and also works from the rail;
+running Tool/process content keeps its spacing and
+remains expanded while its Turn is active. The
+[remediation record](docs/human-acceptance-remediation-20260926.md) tracks
+verification and the remaining human review.
+
+The subsequent [control-command preparation](../../docs/stage4-command-preparation-20260926.md)
+adds 11 deterministic Node controls alongside the Session's ACP commands.
+Typing `/` filters the server-advertised catalogue; Enter/Tab complete without
+submission. Help, status and navigation work before the first Session exists;
+controls remain usable during Agent execution. Configuration and Stop reuse
+existing conditional/targeted operations. The latest command result is transient
+feedback outside model history. Backend service/HTTP gates and backend-only
+Docker acceptance pass, including all 11 controls through real Gateway, ACP and
+Runtime services. Browser UI regression is included in the authorized full run.
+
 The [full-stack Bridge refactor](docs/fullstack-bridge-refactor.md) uses one
 TypeScript/Node service for the ACP Bridge, business HTTP/SSE and streaming
 React SSR. The browser holds presentation state and never opens an ACP socket.
 The standard Dockerfile and development command use this same Node path; Edge
 Gateway authenticates HTML and business requests before forwarding them. The
-official ACP SDK is pinned to the tested 1.4.0 HTTP transport.
+official ACP SDK uses its HTTP transport; the previous refactor evidence below
+used 1.4.0 and the dependency refresh validates 1.5.0 separately.
 
-Service tests, HTTP/SSE contracts, Chromium browser/SSR integration and the
+For the earlier refactor candidate, service tests, HTTP/SSE contracts, Chromium browser/SSR integration and the
 isolated Gateway/Identity/Node/ACP/Controller/Runtime Docker regression pass.
 The real stack covers accepted Runs across page close, Bridge and Gateway
 restart, pending permissions, targeted Stop, ambiguous responses, identity
@@ -24,9 +51,14 @@ The plan records the exact evidence and remaining acceptance work: complete
 screen-reader/keyboard review and capacity behavior beyond these fixed loads.
 
 Session-first workspace behind Edge Gateway at `/workspace/`. The entry selects
-an Agent explicitly; Console may deep-link to `/workspace/?agent=<id>`. A Session
-is selected with `&session=<id>`. There is no project hierarchy and ACP always
-uses `/workspace` as cwd. See the [refactor contract](docs/session-workspace-refactor.md).
+an Agent explicitly; Console deep-links to `/workspace/<agentId>/`. A Session
+uses `/workspace/<agentId>/sessions/<sessionId>`. There is no project hierarchy
+and ACP always uses `/workspace` as cwd. See the
+[navigation contract](../../contracts/agent-ui/workspace-navigation.md).
+In navigation, a workspace is the selected Agent's conversation context. Switching
+workspaces selects that Agent's local draft and scoped history, resets the history
+search, and preserves per-Agent drafts through the existing presentation store.
+Selecting the already active workspace leaves the current Session open.
 
 The browser is an in-memory presentation layer. Global discovery/connection
 state and each Session's history, draft and interaction phase are separate.
@@ -38,9 +70,13 @@ through the Node Bridge, which rebuilds its view from ACP.
 
 - page-local navigation, selection, composer, attachment, and disclosure state;
 - end-user presentation of ACP messages, attachments, and tool activity;
+- Session-scoped ACP command discovery, completion and argument hints;
+- workspace control-command discovery and deterministic dispatch through
+  existing ACP lifecycle, observation, configuration and cancellation interfaces;
 - server-advertised provider-grouped model, thinking effort and mode selection;
-  settings appear automatically before the first message without an activation button;
-  configuration responses/notifications remain the only option authority;
+  an uncreated draft uses Agent defaults, and Session settings appear once its
+  authoritative View is available; configuration responses/notifications remain
+  the only option authority;
 - current context usage and cumulative known Session cost from authorized Bridge views;
 - exact Tool approval requests, once/Session decisions, cancellation and reissued
   requests after reconnect; no approval is stored as a user message;

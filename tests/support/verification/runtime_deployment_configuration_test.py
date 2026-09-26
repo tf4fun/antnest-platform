@@ -38,7 +38,7 @@ class RuntimeConfigurationFixture:
             compose=['docker','compose','-p',project,'-f',str(self.compose_file)],
             workspace=dict(container='antnest-runtime-agent_'+'c'*32,path='/workspace',volume='fixture-workspace'),
             expected=dict(containers=4,healthy=3,unaffectedProcesses=3))
-        self.compose = dict(name=project, services={SERVICE:dict(image=self.config['images'][SERVICE]['localTag'], environment=dict(ANTNEST_RUNTIME_CONTROLLER_SCOPE=project), healthcheck=dict(test=['CMD','true'])),'postgres':dict(image='postgres:17-bookworm')})
+        self.compose = dict(name=project, services={SERVICE:dict(image=self.config['images'][SERVICE]['localTag'], environment=dict(ANTNEST_RUNTIME_CONTROLLER_SCOPE=project), healthcheck=dict(test=['CMD','true'])),'postgres':dict(image='postgres:17.11-bookworm')})
         self.compose_file.write_text(json.dumps(self.compose))
         def container(number,name,service,healthy=True):
             return dict(Id=str(number)*64,Name='/'+name,Image=OLD,RestartCount=0,

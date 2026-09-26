@@ -5,7 +5,23 @@ stable ACP v1 and the draft ACP v2 protocol over separate endpoints, owns
 durable conversation and Run execution state, calls the model, and invokes MCP
 Tools. It does not construct Agents or Runtimes.
 
+## Resource identifiers
+
+New Session, Run, message, MCP revision, checkpoint and Tool attempt records
+follow the [platform resource ID contract](../../contracts/resource-identifiers.md).
+Random IDs carry their resource kind; fork/recovery IDs use stable namespaced
+hashes. Forks retain bulk SQL copying and rewrite message payload references to
+the copied IDs. Existing records and externally supplied protocol IDs are opaque
+and unchanged. This does not alter connection IDs or model Tool-call IDs.
+
 ## Status
+
+The 2026-09-26 dependency refresh upgrades ACP SDK to 1.5.0, MCP to 2.1.0
+and the Node OpenTelemetry family to 0.222.0 / 2.11.0. The v2 prompt acceptance
+response now returns the persisted user message ID required by this SDK; the
+same ID is used in the live user-message event. V1 notices remain unadvertised
+and experimental. Upgrade gates and consumer rollout are tracked in the
+[dependency refresh](../../docs/dependency-refresh-20260926.md).
 
 The [execution-boundary refactor](docs/execution-configuration.md) was closed by
 the user's scoped acceptance decision on 2026-09-15.

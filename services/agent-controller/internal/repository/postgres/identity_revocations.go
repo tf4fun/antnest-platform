@@ -149,7 +149,7 @@ aggregate_sequence=aggregate_sequence+1, updated_at=clock_timestamp() WHERE id=$
 		return fmt.Errorf("fence revoked Agent: %w", err)
 	}
 	return repository.insertAgentEvent(ctx, tx, ports.AgentEventRecord{
-		EventID: fmt.Sprintf("identity-revocation-%d-%s", event.Sequence, agent.id),
+		EventID: domain.DeriveResourceID("event", "identity-revocation", fmt.Sprintf("%d\x00%s", event.Sequence, agent.id)),
 		AgentID: agent.id, AggregateSequence: agent.aggregate + 1, SchemaVersion: 1,
 		EventType: ports.EventAgentOwnerRevoked, TraceID: traceID, OccurredAt: event.OccurredAt,
 		Data: map[string]any{"identity_revocation_sequence": event.Sequence, "reason": event.Reason,
@@ -164,6 +164,7 @@ func (repository *Repository) ListPendingOwnerRevocations(ctx context.Context, a
 	rows, err := repository.pool.Query(ctx, `SELECT a.id, a.identity_revocation_sequence, a.aggregate_sequence, r.trace_parent
 FROM agent_controller.agents a JOIN agent_controller.owner_revocations r ON r.sequence=a.identity_revocation_sequence
 WHERE a.identity_revocation_sequence>a.owner_authorization_sequence AND a.lifecycle_state <> 'deleted' AND a.activation_state <> 'disabled'
+AND a.active_operation_request_id=''
 AND NOT EXISTS (SELECT 1 FROM agent_controller.agent_lifecycle_operations o WHERE o.agent_id=a.id
     AND o.kind='disable' AND o.state='failed' AND o.owner_revocation_sequence=a.identity_revocation_sequence
     AND o.updated_at > clock_timestamp() - interval '30 seconds')

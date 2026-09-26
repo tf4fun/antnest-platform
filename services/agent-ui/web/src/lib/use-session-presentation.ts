@@ -24,6 +24,12 @@ export function useSessionPresentation(agentId: string, sessionId: string | null
     restore: (sessionId: string | null, text: string, attachments: Attachment[], error?: string) => dispatch({ type: "restore", key: sessionKey(agentId, sessionId), text, attachments, error }),
     move: (sessionId: string) => dispatch({ type: "move", key, target: sessionKey(agentId, sessionId) }),
     setError: (error?: string) => dispatch({ type: "error", key, error }),
+    setErrorFor: (sessionId: string | null, error?: string) => dispatch({ type: "error", key: sessionKey(agentId, sessionId), error }),
+    clearSubmitted: (sessionId: string | null, text: string, attachments: Attachment[]) => {
+      const target = sessionKey(agentId, sessionId);
+      dispatch({ type: "clearSubmitted", key: target, text,
+        attachmentIds: attachments.map((attachment) => attachment.id) });
+    },
     clear: () => dispatch({ type: "clear" }),
     disconnect: (agentId: string) => dispatch({ type: "disconnected", agentId }),
   };

@@ -6,6 +6,9 @@ generated application models, persistence records, or reusable business code.
 
 ## Active Contracts
 
+[Platform resource identifiers](resource-identifiers.md) defines generation of
+new resource IDs across service owners; consumers retain opaque-ID semantics.
+
 | Contract | Owner | Required reviewers | Consumers | Purpose |
 | --- | --- | --- | --- | --- |
 | [`runtime/contract.json`](runtime/contract.json) | Antnest Runtime | ACP Service, Agent Controller | Runtime Controller, ACP Service, and Antnest Runtime | Runtime status and MCP surface |
@@ -38,6 +41,7 @@ internal producer contract.
 | Contract | Owner | Required reviewers | Consumers | Purpose |
 | --- | --- | --- | --- | --- |
 | [`agent-ui/workspace-api.json`](agent-ui/workspace-api.json), [`wire schema`](agent-ui/workspace-api.schema.json), [`semantics`](agent-ui/workspace-api.md) | Agent UI | Edge Gateway, ACP Service | Gateway and browser | Authenticated HTTP/SSE route and projection boundary |
+| [`agent-ui/workspace-commands.md`](agent-ui/workspace-commands.md) | Agent UI | ACP Service, Edge Gateway | Browser; future Channel Gateway pending | Control-command discovery, semantics and reuse of existing authorized operations |
 | [`agent-acp/workspace-bridge.schema.json`](agent-acp/workspace-bridge.schema.json), [`semantics`](agent-acp/workspace-bridge.md) | Agent ACP Service | Agent UI, Edge Gateway | Node Bridge | Durable prompt receipt, targeted cancel and replay delivery metadata |
 | [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service, Agent UI | Browser and Node Bridge | Active authentication, proxy and SSE admission routes |
 

@@ -36,7 +36,7 @@ func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if result.Principal.UserID != "user-1" || result.AccessToken == "" ||
+	if repository.issued.TokenID != "authtoken-1" || result.Principal.UserID != "user-1" || result.AccessToken == "" ||
 		result.ExpiresAt != fixedNow().Add(12*time.Hour) {
 		t.Fatalf("login result = %#v", result)
 	}
@@ -163,11 +163,11 @@ func activePrincipal() domain.Principal {
 	}
 }
 
-func sequentialIDs() func() string {
+func sequentialIDs() func(kind string) string {
 	next := 0
-	return func() string {
+	return func(kind string) string {
 		next++
-		return fmt.Sprintf("id-%d", next)
+		return fmt.Sprintf("%s-%d", kind, next)
 	}
 }
 

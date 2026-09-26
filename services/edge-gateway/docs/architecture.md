@@ -69,8 +69,12 @@ User, Membership and path Agent IDs, and enforces same-origin and CSRF checks
 before forwarding. Ordinary requests allow the Node response deadline; SSE
 forwards `Last-Event-ID` and flushes immediately, while a bounded lease
 revalidates browser identity and closes only the observer on revocation.
-`/workspace/` document requests require a browser session and preserve a
-validated Agent/Session deep link through login; hashed assets remain public.
+Workspace documents require a browser session and preserve a validated
+`/workspace/{agentId}/` or `/workspace/{agentId}/sessions/{sessionId}` path through
+login; hashed assets remain public. IDs are validated after splitting the escaped
+path, so encoded separators stay inside their ID. Query-bearing and malformed
+return destinations fall back to `/workspace/`, per the
+[document navigation contract](../../../contracts/agent-ui/workspace-navigation.md).
 The Node Bridge remains a separate internal target from the current static UI.
 
 Login and logout call Identity Service directly because the Gateway owns the

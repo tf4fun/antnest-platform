@@ -1,4 +1,4 @@
-FROM rust:1.96-bookworm AS build
+FROM rust:1.98.1-bookworm AS build
 ARG CARGO_BUILD_JOBS=2
 WORKDIR /src
 COPY services/runtime-egress ./services/runtime-egress

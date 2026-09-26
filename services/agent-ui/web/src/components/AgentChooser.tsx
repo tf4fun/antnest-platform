@@ -55,7 +55,7 @@ export function AgentChooser({
             <p className="chooser-kicker">
               {workspace.principal.organizationName}
             </p>
-            <h1 id="agent-directory-heading">Your agents</h1>
+            <h1 id="agent-directory-heading">Your workspaces</h1>
           </div>
           <nav className="chooser-actions" aria-label="Workspace actions">
             <button
@@ -63,8 +63,8 @@ export function AgentChooser({
               type="button"
               onClick={onRefresh}
               disabled={refreshing}
-              title="Refresh agents"
-              aria-label="Refresh agents"
+              title="Refresh workspaces"
+              aria-label="Refresh workspaces"
             >
               <RefreshCw
                 size={17}
@@ -103,8 +103,8 @@ export function AgentChooser({
           <Search size={16} aria-hidden="true" />
           <input
             type="search"
-            aria-label="Find an agent"
-            placeholder="Find an agent"
+            aria-label="Find a workspace"
+            placeholder="Find a workspace"
             aria-describedby={statusId}
             autoComplete="off"
             spellCheck={false}
@@ -131,8 +131,8 @@ export function AgentChooser({
         </div>
         <p className="chooser-count" id={statusId} role="status">
           {filtering
-            ? `${agents.length} of ${workspace.agents.length} agents`
-            : `${agents.length} ${agents.length === 1 ? "agent" : "agents"}`}
+            ? `${agents.length} of ${workspace.agents.length} workspaces`
+            : `${agents.length} ${agents.length === 1 ? "workspace" : "workspaces"}`}
         </p>
         <div className="chooser-list" aria-busy={refreshing}>
           {agents.map((agent) => (
@@ -172,7 +172,7 @@ export function AgentChooser({
         {!agents.length ? (
           <div className="chooser-empty">
             <Bot size={28} aria-hidden="true" />
-            <h2>{filtering ? "No matching agents" : "No Agent available"}</h2>
+            <h2>{filtering ? "No matching workspaces" : "No Agent available"}</h2>
           </div>
         ) : null}
       </section>

@@ -226,20 +226,25 @@ export class PostgresSessionRepository implements SessionRepository {
         `INSERT INTO session_messages(
            id, session_id, run_id, sequence, kind, visible, payload, created_at, context_excluded
          )
-         SELECT $2 || ':message:' || sequence::text,
+         SELECT copied_id,
                 $2, NULL, sequence, kind, visible,
                 CASE WHEN payload ? 'messageId'
                   THEN jsonb_set(
                     payload,
                     '{messageId}',
-                    to_jsonb($2 || ':message:' || sequence::text),
+                    to_jsonb(copied_id),
                     false
                   )
                   ELSE payload
                 END,
                 created_at, context_excluded
-           FROM session_messages
-          WHERE session_id = $1
+           FROM (
+             SELECT *, 'message_' || substr(encode(sha256(
+               convert_to('fork-message', 'UTF8') || decode('00', 'hex') ||
+               convert_to($2 || ':' || sequence::text, 'UTF8')
+             ), 'hex'), 1, 32) AS copied_id
+             FROM session_messages WHERE session_id = $1
+           ) source
           ORDER BY sequence`,
         [input.sourceSessionId, input.sessionId],
       );
@@ -247,7 +252,10 @@ export class PostgresSessionRepository implements SessionRepository {
         `INSERT INTO context_checkpoints(
            id, session_id, through_sequence, summary, token_count, created_at
          )
-         SELECT $2 || ':checkpoint:' || through_sequence::text,
+         SELECT 'checkpoint_' || substr(encode(sha256(
+                  convert_to('fork-checkpoint', 'UTF8') || decode('00', 'hex') ||
+                  convert_to($2 || ':' || through_sequence::text, 'UTF8')
+                ), 'hex'), 1, 32),
                 $2, through_sequence, summary, token_count, created_at
            FROM context_checkpoints
           WHERE session_id = $1`,

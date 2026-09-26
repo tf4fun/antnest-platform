@@ -247,7 +247,7 @@ type Config struct {
 	Repository  Repository
 	Federation  Federation
 	SecretBox   *credentials.SecretBox
-	NewID       func() string
+	NewID       func(string) string
 	NewOpaque   func(string) (string, string, error)
 	Now         func() time.Time
 	SessionTTL  time.Duration
@@ -259,7 +259,7 @@ type Service struct {
 	repository  Repository
 	federation  Federation
 	secretBox   *credentials.SecretBox
-	newID       func() string
+	newID       func(string) string
 	newOpaque   func(string) (string, string, error)
 	now         func() time.Time
 	sessionTTL  time.Duration
@@ -344,7 +344,7 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 	now := s.now().UTC()
 	providerID, createdAt, revision := existing.ID, existing.CreatedAt, existing.Revision+1
 	if providerID == "" {
-		providerID, createdAt, revision = s.newID(), now, 1
+		providerID, createdAt, revision = s.newID("oidcprovider"), now, 1
 	}
 	sealedSecret := existing.ClientSecret
 	if input.ClientSecret != "" {
@@ -449,7 +449,7 @@ func (s *Service) StartLogin(ctx context.Context, input StartLoginInput) (StartL
 	if err != nil {
 		return StartLoginResult{}, fmt.Errorf("generate PKCE verifier: %w", err)
 	}
-	sessionID := s.newID()
+	sessionID := s.newID("oidcsession")
 	sealed, err := sealSessionSecrets(s.secretBox, sessionID, sessionSecrets{Nonce: nonce, PKCEVerifier: verifier})
 	if err != nil {
 		return StartLoginResult{}, err
@@ -481,7 +481,7 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 	if state == "" {
 		return CompleteLoginResult{}, domain.InvalidArgument("OIDC state is required")
 	}
-	claimID := s.newID()
+	claimID := s.newID("oidcclaim")
 	claim, err := s.repository.ClaimSession(ctx, credentials.HashToken(state), claimID, s.now().UTC())
 	if err != nil {
 		return CompleteLoginResult{}, fmt.Errorf("claim OIDC session: %w", err)
@@ -571,7 +571,7 @@ func (s *Service) issueLoginCredential(
 	if err != nil {
 		return CompleteLoginResult{}, s.failSession(ctx, session, claimID, "token", err)
 	}
-	tokenID := s.newID()
+	tokenID := s.newID("authtoken")
 	completed, err := s.repository.CompleteLogin(ctx, CompleteLoginCommand{
 		SessionID: session.ID, ProviderID: session.ProviderID, OrganizationID: session.OrganizationID,
 		ClaimID: claimID, Identity: identity, AccessTokenID: tokenID, AccessTokenHash: tokenHash,
@@ -605,7 +605,7 @@ func (s *Service) reconcileCompletedLogin(
 	tokenID string,
 	now time.Time,
 ) (CompletedLogin, bool) {
-	claim, err := s.repository.ClaimSession(ctx, credentials.HashToken(state), s.newID(), now)
+	claim, err := s.repository.ClaimSession(ctx, credentials.HashToken(state), s.newID("oidcclaim"), now)
 	if err != nil || claim.Disposition != ClaimCompleted || claim.Completed.TokenID != tokenID {
 		return CompletedLogin{}, false
 	}

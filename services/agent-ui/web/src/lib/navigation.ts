@@ -1,25 +1,10 @@
 import type { WorkspaceSnapshot } from "./types";
 import { compactCachedConversation } from "./conversation-history.ts";
+import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../../server/src/protocol/workspace-route.ts";
+export { workspacePath, type WorkspaceRoute } from "../../server/src/protocol/workspace-route.ts";
 
-export type WorkspaceRoute = { agentId: string; sessionId: string | null };
-
-function identifier(query: URLSearchParams, key: string): string {
-  const values = query.getAll(key);
-  const value = values.length === 1 ? values[0] : "";
-  return value.length <= 200 && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value) ? value : "";
-}
-
-export function readWorkspaceRoute(search: string): WorkspaceRoute {
-  const query = new URLSearchParams(search);
-  const agentId = identifier(query, "agent");
-  return { agentId, sessionId: agentId ? identifier(query, "session") || null : null };
-}
-
-export function workspacePath(route: WorkspaceRoute): string {
-  if (!route.agentId) return "/workspace/";
-  const query = new URLSearchParams({ agent: route.agentId });
-  if (route.sessionId) query.set("session", route.sessionId);
-  return `/workspace/?${query}`;
+export function readWorkspaceRoute(path: string): WorkspaceRoute {
+  return parseWorkspaceDocumentPath(path) ?? { agentId: "", sessionId: null };
 }
 
 export function selectWorkspaceRoute(workspace: WorkspaceSnapshot, route: WorkspaceRoute): WorkspaceSnapshot {

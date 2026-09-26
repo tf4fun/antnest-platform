@@ -34,3 +34,15 @@ test("connection disposal retains drafts but clears transient request state", ()
   assert.deepEqual(state[key], { ...emptyPresentation(), text: "Draft" });
   assert.deepEqual(reduceSessionPresentation(state, { type: "clear" }), {});
 });
+
+test("accepted submission clears only the exact draft that was sent", () => {
+  const key = sessionKey("a", "s");
+  let state = reduceSessionPresentation({}, { type: "draft", key, text: "First" });
+  state = reduceSessionPresentation(state, { type: "draft", key, text: "Later edit" });
+  state = reduceSessionPresentation(state, { type: "clearSubmitted", key,
+    text: "First", attachmentIds: [] });
+  assert.equal(state[key].text, "Later edit");
+  state = reduceSessionPresentation(state, { type: "clearSubmitted", key,
+    text: "Later edit", attachmentIds: [] });
+  assert.equal(state[key].text, "");
+});

@@ -1,12 +1,26 @@
-# ACP v1 最新 SDK 反向审计（2026-09-16）
+# ACP v1 SDK 反向审计（2026-09-26 更新）
+
+## SDK 1.5.0 更新状态
+
+2026-09-26 依赖升级已将本服务及机器清单切换到正式 SDK 1.5.0，
+schema 为 268 个定义，SHA-256 为
+`2a920d3c0f76443e07ffa7801443e3cdf008e2a3095e565581a0433fd728ce41`。
+42 个方法及 25/17 稳定性分类均未改变；工具名称 `name` 从实验转为稳定可选字段。
+新增的 `Notice`、`NoticeSeverity`、`NoticeCapabilities` 均为实验能力：当前不宣告、
+不发送 `notice`。`session/fork` 仍为 UNSTABLE。
+
+同包的 v2 接受响应现在要求 `messageId`，本服务返回与用户消息事件一致的持久化 ID。
+升级后本地回归已通过：841 单元、162 协议集成、249 PostgreSQL 和 9/9 SDK 审计。
+最终生产镜像及跨服务回归仍在执行。以下 GAP 章节保留 9 月 16 日原始审计历史；
+本轮结果见[依赖更新与完整回归](../../../docs/dependency-refresh-20260926.md)。
 
 ## 结论与口径
 
-本次按用户最终确认的口径，以 **最新正式 `@agentclientprotocol/sdk@1.4.0`**
+9 月 16 日按用户最终确认的口径，以 **当时最新正式 `@agentclientprotocol/sdk@1.4.0`**
 发布包为准，使用其 `schema/schema.json`、生成的接口定义及 SDK 实现；官网文档不作为
 高于 SDK 的依据。GitHub [SDK v1.4.0](https://github.com/agentclientprotocol/typescript-sdk/releases/tag/v1.4.0)
 与 [npm latest](https://registry.npmjs.org/@agentclientprotocol/sdk/latest) 均已核实。
-项目已经锁定、安装此版本，无需升级依赖。协商的协议版本仍是 `1`。
+当时项目已经锁定、安装此版本。协商的协议版本仍是 `1`。
 
 **最初复现的 3 个失败均已修复，独立 SDK 审计 9/9 通过。**
 修复限定在 ACP 服务；会话元数据一致性覆盖缺口已在后续批次复现并修复，见 COVERAGE-02。

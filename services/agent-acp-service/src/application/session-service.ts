@@ -1,3 +1,4 @@
+import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
 import { requireNoClientMcpServers } from "../domain/mcp.js";
 import {
@@ -11,7 +12,7 @@ import type { SessionRepository } from "../ports/session-repository.js";
 
 export type SessionServiceDependencies = {
   repository: SessionRepository;
-  id: () => string;
+  id: ResourceIdGenerator;
   now: () => Date;
 };
 
@@ -37,12 +38,12 @@ export class SessionService implements Pick<
     input: Parameters<AcpApplicationPort["createSession"]>[0],
   ): Promise<{ sessionId: string }> {
     requireWorkspace(input.cwd, input.additionalDirectories);
-    const sessionId = this.dependencies.id();
+    const sessionId = this.dependencies.id("session");
     await this.dependencies.repository.create({
       sessionId,
       binding: input.binding,
       cwd: "/workspace",
-      mcpRevisionId: this.dependencies.id(),
+      mcpRevisionId: this.dependencies.id("mcprev"),
       mcpSources: requireNoClientMcpServers(input.mcpServers),
     });
     return { sessionId };
@@ -81,11 +82,11 @@ export class SessionService implements Pick<
     if (source.cwd !== input.cwd) {
       throw new DomainError("session_workspace_mismatch", "Session belongs to another workspace");
     }
-    const sessionId = this.dependencies.id();
+    const sessionId = this.dependencies.id("session");
     await this.dependencies.repository.fork({
       sourceSessionId: source.id,
       sessionId,
-      mcpRevisionId: this.dependencies.id(),
+      mcpRevisionId: this.dependencies.id("mcprev"),
       mcpSources: requireNoClientMcpServers(input.mcpServers),
       createdAt: this.dependencies.now(),
     });
@@ -102,7 +103,7 @@ export class SessionService implements Pick<
     }
     await this.dependencies.repository.replaceMcpAndActivate({
       sessionId: session.id,
-      mcpRevisionId: this.dependencies.id(),
+      mcpRevisionId: this.dependencies.id("mcprev"),
       mcpSources: requireNoClientMcpServers(input.mcpServers),
     });
     const afterSequence = input.replayFromStart ? 0 : undefined;

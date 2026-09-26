@@ -8,7 +8,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio_postgres::{NoTls, Row, config::SslMode};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -552,7 +551,7 @@ fn validate_migration_history(applied: &[AppliedMigration]) -> Result<usize, Rep
 }
 
 fn migration_checksum(migration: &Migration) -> String {
-    format!("sha256:{:x}", Sha256::digest(migration.sql.as_bytes()))
+    super::content_digest(migration.sql.as_bytes())
 }
 
 async fn seed_repository(
@@ -1478,6 +1477,26 @@ where
 #[cfg(test)]
 mod migration_tests {
     use super::*;
+
+    #[test]
+    fn applied_migration_checksums_remain_stable_across_sdk_upgrades() {
+        for (version, expected) in [
+            (
+                0,
+                "sha256:334826acb62be26c33ef5a7299bfe8ca7e3e3075354b7790b2b175d5f8722350",
+            ),
+            (
+                1,
+                "sha256:bce4a5acca7b737686b3e8cb2de5b8aaa5685f8cbce5821e87307e20e061f001",
+            ),
+        ] {
+            let migration = MIGRATIONS
+                .iter()
+                .find(|item| item.version == version)
+                .unwrap();
+            assert_eq!(migration_checksum(migration), expected);
+        }
+    }
 
     #[test]
     fn migration_history_must_be_an_exact_catalog_prefix() {

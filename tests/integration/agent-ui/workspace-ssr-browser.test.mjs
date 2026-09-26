@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { createWorkspaceHttpServer } from "../../../services/agent-ui/web/server/dist/http/node-server.js";
 import { loadWorkspaceDocument } from "../../../services/agent-ui/web/server/dist/ssr-assets.js";
+import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
 
 test(
   "production workspace SSR renders before JavaScript and hydrates without crossing identities",
@@ -69,9 +70,12 @@ test(
                     "/api/app/workspace/v1/bootstrap",
                 )
               : null;
-            await page.goto(
-              `http://127.0.0.1:${address.port}/workspace/?agent=agent-1`,
-            );
+            const sessionId = userId === "one" ? null : "saved-session";
+            const path =
+              sessionId === null
+                ? "/workspace/agent-1/"
+                : `/workspace/agent-1/sessions/${sessionId}`;
+            await page.goto(`http://127.0.0.1:${address.port}${path}`);
             if (hydratedBootstrap) await hydratedBootstrap;
             await page.getByText(`Agent ${userId}`).first().waitFor();
             assert.equal(
@@ -82,6 +86,23 @@ test(
             );
             assert.deepEqual(hydrationErrors, []);
             assert.equal(await page.locator("#workspace-bootstrap").count(), 1);
+            assert.deepEqual(
+              JSON.parse(
+                await page.locator("#workspace-bootstrap").textContent(),
+              ).route,
+              { agentId: "agent-1", sessionId },
+            );
+            assert.equal(new URL(page.url()).pathname, path);
+            assert.equal(new URL(page.url()).search, "");
+            await page.reload();
+            await page.getByText(`Agent ${userId}`).first().waitFor();
+            assert.deepEqual(
+              JSON.parse(
+                await page.locator("#workspace-bootstrap").textContent(),
+              ).route,
+              { agentId: "agent-1", sessionId },
+            );
+            assert.deepEqual(hydrationErrors, []);
             if (!javaScriptEnabled) {
               assert.equal(
                 await page.locator("#root[data-ssr]").count(),
@@ -90,7 +111,7 @@ test(
               );
               assert.equal(
                 await page
-                  .locator(".agent-option")
+                  .locator(".workspace-switcher")
                   .filter({ hasText: `Agent ${userId}` })
                   .count(),
                 1,
@@ -105,6 +126,138 @@ test(
       server.closeAllConnections();
       server.close();
       await once(server, "close");
+    }
+  },
+);
+
+test(
+  "hierarchical documents restore selection through reload and Back/Forward without creating a Session",
+  { timeout: 60_000 },
+  async () => {
+    let writes = 0;
+    const runtime = createWorkspaceRuntime({
+      discover: async () => [
+        {
+          agent_id: "agent-1",
+          name: "Navigation Agent",
+          lifecycle_state: "created",
+          activation_state: "enabled",
+          runtime_state: "available",
+        },
+      ],
+      connect: async (_scope, callbacks) => ({
+        async list() {
+          return {
+            sessions: [
+              {
+                sessionId: "saved-session",
+                title: "Saved conversation",
+                cwd: "/workspace",
+              },
+            ],
+          };
+        },
+        async createSession() {
+          writes++;
+          return { sessionId: "unexpected" };
+        },
+        async readAgentExecutionState() {
+          return { availability: "ready", activeSessionId: null };
+        },
+        async load(sessionId) {
+          callbacks.update({
+            sessionId,
+            update: {
+              sessionUpdate: "session_info_update",
+              title: "Saved conversation",
+            },
+          });
+          return { cut: { sealedWatermark: 0, appendVersion: 1 } };
+        },
+        async readExecution(sessionId) {
+          return {
+            sessionId,
+            appendVersion: 1,
+            outputWatermark: 0,
+            activeRunId: null,
+            recentReceipts: [],
+            configurationRevision: null,
+          };
+        },
+        async readIntent() {
+          return { kind: "unknown" };
+        },
+        async prompt() {
+          writes++;
+          return { stopReason: "end_turn" };
+        },
+        async cancel() {},
+        close() {},
+      }),
+    });
+    const server = createWorkspaceHttpServer(
+      runtime,
+      await loadWorkspaceDocument(),
+    );
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let browser;
+    try {
+      browser = await chromium.launch({ headless: true });
+      const address = server.address();
+      assert.ok(address && typeof address !== "string");
+      const context = await browser.newContext({
+        extraHTTPHeaders: {
+          "x-antnest-organization-id": "org",
+          "x-antnest-principal-id": "user",
+          "x-antnest-agent-id": "agent-1",
+          "x-antnest-administrator": "false",
+        },
+      });
+      const page = await context.newPage();
+      page.setDefaultTimeout(10_000);
+      const errors = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      const origin = `http://127.0.0.1:${address.port}`;
+      const draft = "/workspace/agent-1/";
+      const saved = `${draft}sessions/saved-session`;
+      await page.goto(`${origin}/workspace/`);
+      await page.getByRole("link", { name: /Navigation Agent/ }).click();
+      await page.waitForURL(origin + draft);
+      const composer = page.getByRole("combobox", {
+        name: "Message",
+        exact: true,
+      });
+      await composer.fill("Unsent draft");
+      await page
+        .locator(".conversation-option")
+        .filter({ hasText: "Saved conversation" })
+        .click();
+      await page.waitForURL(origin + saved);
+      await page.locator('.conversation-option[aria-current="page"]').waitFor();
+      await page.goBack();
+      await page.waitForURL(origin + draft);
+      assert.equal(await composer.inputValue(), "Unsent draft");
+      await page.goForward();
+      await page.waitForURL(origin + saved);
+      await page.locator('.conversation-option[aria-current="page"]').waitFor();
+      await page.reload();
+      await page.locator('.conversation-option[aria-current="page"]').waitFor();
+      assert.equal(new URL(page.url()).pathname, saved);
+      assert.equal(new URL(page.url()).search, "");
+      assert.deepEqual(
+        JSON.parse(await page.locator("#workspace-bootstrap").textContent())
+          .route,
+        { agentId: "agent-1", sessionId: "saved-session" },
+      );
+      assert.equal(writes, 0);
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser?.close();
+      server.closeAllConnections();
+      server.close();
+      await once(server, "close");
+      await runtime.drain(1_000);
     }
   },
 );
@@ -167,9 +320,7 @@ test(
           if (/hydration|did not match/i.test(message.text()))
             errors.push(message.text());
         });
-        await page.goto(
-          `http://127.0.0.1:${address.port}/workspace/?agent=agent-1`,
-        );
+        await page.goto(`http://127.0.0.1:${address.port}/workspace/agent-1/`);
         await page.getByText("Recovered Agent").first().waitFor();
         assert.equal(bootstraps >= 2, true);
         assert.equal(

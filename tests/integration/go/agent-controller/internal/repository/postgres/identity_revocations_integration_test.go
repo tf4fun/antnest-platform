@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,13 @@ func TestIdentityRevocationPersistsFenceAndDeduplicates(t *testing.T) {
 	var count int
 	if err := repository.pool.QueryRow(ctx, "SELECT count(*) FROM agent_controller.agent_events WHERE event_type = 'agent_owner_revoked'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("events=%d err=%v", count, err)
+	}
+	var eventID string
+	if err := repository.pool.QueryRow(ctx, "SELECT event_id FROM agent_controller.agent_events WHERE event_type = 'agent_owner_revoked'").Scan(&eventID); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^event_[0-9a-f]{32}$`).MatchString(eventID) {
+		t.Fatalf("revocation event ID = %q", eventID)
 	}
 	// Reopening the repository simulates a consumer restart without its in-memory scan cursor.
 	other, err := Open(ctx, os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL"))
@@ -122,7 +130,7 @@ func TestIdentityRevocationCursorAndAgentFenceRollbackTogether(t *testing.T) {
 	repository, base := identityTestRepository(t)
 	ctx := context.Background()
 	// Duplicate the derived event ID to force failure after the scope/fence writes.
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events SET event_id=$1 WHERE event_type='agent_ready'`, "identity-revocation-5-"+base.Agent.AgentID); err != nil {
+	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events SET event_id=$1 WHERE event_type='agent_ready'`, domain.DeriveResourceID("event", "identity-revocation", "5\x00"+base.Agent.AgentID)); err != nil {
 		t.Fatal(err)
 	}
 	event := ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC()}

@@ -154,16 +154,16 @@ test("agent chooser is a standalone directory with search, real navigation links
       .getAttribute("href"),
   ).toBe("/");
   expect(onSelect).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh workspaces" }));
   expect(onRefresh).toHaveBeenCalledOnce();
   expect(onSelect).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByRole("searchbox", { name: "Find an agent" }), {
+  fireEvent.change(screen.getByRole("searchbox", { name: "Find a workspace" }), {
     target: { value: "OFFLINE" },
   });
   expect(screen.queryByRole("link", { name: /ready Agent/ })).toBeNull();
-  expect(screen.getByRole("status").textContent).toBe("1 of 4 agents");
+  expect(screen.getByRole("status").textContent).toBe("1 of 4 workspaces");
   const target = screen.getByRole("link", { name: /offline Agent/ });
-  expect(target.getAttribute("href")).toBe("/workspace/?agent=offline");
+  expect(target.getAttribute("href")).toBe("/workspace/offline/");
   target.addEventListener("click", (event) => event.preventDefault(), {
     once: true,
   });
@@ -177,10 +177,10 @@ test("agent chooser is a standalone directory with search, real navigation links
     target: { value: "absent" },
   });
   expect(
-    screen.getByRole("heading", { name: "No matching agents" }),
+    screen.getByRole("heading", { name: "No matching workspaces" }),
   ).toBeTruthy();
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
-  expect(screen.getByRole("status").textContent).toBe("4 agents");
+  expect(screen.getByRole("status").textContent).toBe("4 workspaces");
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   expect(onLogout).toHaveBeenCalledOnce();
 });
@@ -211,7 +211,7 @@ test("chooser keeps account permissions and in-flight actions honest", () => {
     screen.queryByRole("link", { name: "Open Control Center" }),
   ).toBeNull();
   expect(screen.getByRole("alert").textContent).toBe("Refresh failed");
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh workspaces" }));
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   expect(onRefresh).not.toHaveBeenCalled();
   expect(onLogout).not.toHaveBeenCalled();
@@ -239,11 +239,13 @@ test("sidebar shows ACP status only for the selected Agent", () => {
       onChooseAgent={vi.fn()}
     />,
   );
-  const selected = screen.getByRole("button", { name: /ready Agent/ });
+  fireEvent.click(screen.getByRole("button", { name: "Switch workspace: ready Agent" }));
+  const workspaces = within(screen.getByRole("group", { name: "Workspaces" }));
+  const selected = workspaces.getByRole("button", { name: /ready Agent/ });
   expect(selected.getAttribute("aria-current")).toBe("true");
   expect(within(selected).getByText("Available")).toBeTruthy();
   expect(
-    within(screen.getByRole("button", { name: /offline Agent/ })).getByText(
+    within(workspaces.getByRole("button", { name: /offline Agent/ })).getByText(
       "Disabled",
     ),
   ).toBeTruthy();

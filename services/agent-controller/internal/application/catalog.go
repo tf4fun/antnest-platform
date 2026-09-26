@@ -476,8 +476,7 @@ func requestFingerprint(value any) (string, error) {
 }
 
 func derivedID(prefix string, requestID string) string {
-	digest := sha256.Sum256([]byte(prefix + "\x00" + requestID))
-	return prefix + "_" + hex.EncodeToString(digest[:16])
+	return domain.DeriveResourceID(prefix, prefix, requestID)
 }
 
 func validIdentifier(value string) bool { return identifierPattern.MatchString(value) }

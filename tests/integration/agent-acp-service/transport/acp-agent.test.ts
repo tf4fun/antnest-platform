@@ -63,7 +63,9 @@ describe("ACP v2 agent mapping", () => {
           prompt,
         });
         if (audio) {
-          await expect(result).resolves.toEqual({});
+          await expect(result).resolves.toEqual({
+            messageId: "user-message-1",
+          });
           await idle.promise;
         } else await expect(result).rejects.toMatchObject({ code: -32602 });
       });
@@ -206,7 +208,7 @@ describe("ACP v2 agent mapping", () => {
             sessionId: "session-1",
             prompt: [{ type: "text", text }],
           }),
-        ).resolves.toEqual({});
+        ).resolves.toEqual({ messageId: "user-message-1" });
         await idle[index]!.promise;
       }
     });
@@ -218,7 +220,7 @@ describe("ACP v2 agent mapping", () => {
     ]);
   });
 
-  it("advertises only implemented surfaces and reports prompt completion through updates", async () => {
+  it("returns the accepted user message ID and reports prompt completion through updates", async () => {
     const idle = Promise.withResolvers<void>();
     const order: string[] = [];
     const updates: acp.SessionUpdate[] = [];
@@ -285,8 +287,11 @@ describe("ACP v2 agent mapping", () => {
         prompt: [{ type: "text", text: "hi" }],
       });
       order.push("prompt_response");
-      expect(response).toEqual({});
+      expect(response).toEqual({ messageId: "user-message-1" });
       await idle.promise;
+      expect(
+        updates.find((update) => update.sessionUpdate === "user_message"),
+      ).toMatchObject({ messageId: response.messageId });
     });
 
     expect(order.slice(0, 2)).toEqual([
@@ -811,7 +816,7 @@ describe("ACP v2 agent mapping", () => {
           sessionId: "session-1",
           prompt: supported,
         }),
-      ).resolves.toEqual({});
+      ).resolves.toEqual({ messageId: "user-message-1" });
       await idle.promise;
       await expect(
         context.request(acp.methods.agent.session.prompt, {

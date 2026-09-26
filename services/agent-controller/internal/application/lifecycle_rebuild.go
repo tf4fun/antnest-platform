@@ -70,7 +70,7 @@ func (service *LifecycleService) RebuildAgent(
 		return RebuildAgentResult{}, fmt.Errorf("digest rebuilt Agent spec: %w", err)
 	}
 	now := service.clock.Now()
-	targetSpecID := derivedID("agentspec-rebuild", input.RequestID)
+	targetSpecID := domain.DeriveResourceID("agentspec", "agentspec-rebuild", input.RequestID)
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
 		AgentID: input.AgentID, Kind: domain.OperationRebuild,
@@ -106,7 +106,7 @@ func (service *LifecycleService) RebuildAgent(
 			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-rebuild-requested", input.RequestID),
+			EventID: domain.DeriveResourceID("event", "event-rebuild-requested", input.RequestID),
 			AgentID: input.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
 			SchemaVersion: 1, EventType: ports.EventAgentRebuildRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
@@ -322,13 +322,13 @@ func (service *LifecycleService) publishAgentRebuild(
 	}
 	runtime := *state.Operation.RuntimeResult
 	now := service.clock.Now()
-	accessRevision := derivedID("access-rebuild", state.Operation.RequestID)
+	accessRevision := domain.DeriveResourceID("accessrev", "access-rebuild", state.Operation.RequestID)
 	return service.store.PublishAgentRebuild(ctx, ports.PublishAgentRebuild{
 		RequestID:      state.Operation.RequestID,
 		Fingerprint:    state.Operation.RequestFingerprint,
 		AccessRevision: accessRevision,
 		RebuiltEvent: ports.AgentEventRecord{
-			EventID:           derivedID("event-rebuilt", state.Operation.RequestID),
+			EventID:           domain.DeriveResourceID("event", "event-rebuilt", state.Operation.RequestID),
 			AgentID:           state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentRebuilt,
@@ -476,7 +476,7 @@ func (service *LifecycleService) failAgentRebuild(
 		ExpectedAggregateSequence: state.Agent.AggregateSequence,
 		Stage:                     state.Operation.Phase, Code: code, Detail: detail, Retryable: retryable,
 		FailedEvent: ports.AgentEventRecord{
-			EventID:       derivedID("event-rebuild-failed", state.Operation.RequestID),
+			EventID:       domain.DeriveResourceID("event", "event-rebuild-failed", state.Operation.RequestID),
 			AgentID:       state.Agent.AgentID,
 			SchemaVersion: 1, EventType: ports.EventAgentBuildFailed,
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),

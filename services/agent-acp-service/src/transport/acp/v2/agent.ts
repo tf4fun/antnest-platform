@@ -298,7 +298,7 @@ export function createAcpV2Agent({
             },
           });
         });
-        return {};
+        return { messageId: accepted.userMessageId };
       }),
     )
     .onNotification(acp.methods.agent.session.cancel, ({ params }) =>

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { caseFor } from "./model.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { setTimeout as delay } from "node:timers/promises";
@@ -274,13 +275,11 @@ export async function collectReplayRequestTrace(
   });
   for (let attempt = 0; attempt < 40; attempt++) {
     signal?.throwIfAborted();
-    const response = await fetch(`${base}/api/traces?${query}`, {
+    const data = await searchJaegerTraces(base, query, {
       signal: signal
         ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
         : AbortSignal.timeout(5000),
     });
-    assert(response.ok, "replay trace query failed");
-    const { data } = await response.json();
     assert(
       Array.isArray(data) && data.length <= 1,
       "ambiguous replay request trace",

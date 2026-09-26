@@ -125,12 +125,12 @@ function ModelDetail({ modelID }: { modelID: string }) {
         }} />
       {catalogState.status === "error" ? <ResourceFailureNotice failure={catalogState.failure} message={`Model catalog could not be loaded: ${catalogState.failure.message}`} retryLabel="Retry model catalog" onRetry={() => void loadCatalog()} /> : null}
       <Section title="Model configuration" detail="Provider credentials are write-only and never returned to the browser.">
-        <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
           {facts.map(([label, value]) => <div className="bg-white p-4" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium">{value}</p></div>)}
         </div>
       </Section>
       <Section title="Endpoint">
-        <div className="flex items-center gap-3 rounded-md border border-border bg-white p-4 font-mono text-sm shadow-sm break-all"><Server className="h-4 w-4 shrink-0 text-muted-foreground" />{profile.model.base_url}</div>
+        <div className="flex items-center gap-3 rounded-md border border-border bg-white p-4 font-mono text-sm shadow-xs break-all"><Server className="h-4 w-4 shrink-0 text-muted-foreground" />{profile.model.base_url}</div>
       </Section>
       <Section title="Token rates" detail="USD per 1M tokens. Estimated rates; actual charges may vary.">
         <ModelRates pricing={profile.model.pricing} />

@@ -164,6 +164,12 @@ to these shared artifacts; Runtime contains no legacy compatibility path.
 
 ## Local Validation
 
+The 2026-09-26 dependency baseline uses Rust 1.98.1, rmcp 3.4.1,
+OpenTelemetry 0.33.0 and tracing-opentelemetry 0.34.0. The production image
+supplies Python 3.14.7 and Node 24.21.0 LTS with its bundled npm, including
+for managed stdio MCP programs. Portable checks and the Linux image gates are
+recorded separately in the [dependency refresh record](../../docs/dependency-refresh-20260926.md).
+
 Repository admission from the repository root:
 
 ```bash

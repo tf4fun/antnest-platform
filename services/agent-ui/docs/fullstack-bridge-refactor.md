@@ -115,7 +115,7 @@ ACP SDK 移入 Node，浏览器产物不再包含 ACP transport。以当前精�
 
 ## 5. 身份、访问控制与同源路径
 
-对外保留 `/workspace/`、`?agent=`、`&session=`。新增业务前缀 **`/api/app/workspace/v1/`**；其名称体现工作区能力，不暴露 Bridge 实现细节。
+页面地址按后续[导航契约](../../../contracts/agent-ui/workspace-navigation.md)采用 `/workspace/`、`/workspace/{agentId}/` 和 `/workspace/{agentId}/sessions/{sessionId}`。业务前缀为 **`/api/app/workspace/v1/`**；其名称体现工作区能力，不暴露 Bridge 实现细节。
 
 - Gateway 每次 HTTP 请求验证 Identity 会话，剥离外部伪造的内部身份头，再注入已验证的组织、用户/principal、membership 与必要的请求关联信息。Node 拒绝缺失或非法身份；不采信 URL/body 中的身份字段。
 - `/workspace/assets/*` 等构建资源可匿名缓存；HTML 文档入口认证后转发给 Node，响应 `private, no-store`。未登录按现有登录流程跳转，不输出其他用户 SSR 数据。

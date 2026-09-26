@@ -48,7 +48,7 @@ else
   docker_cmd run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
     --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
     -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
-    node:24-bookworm-slim node /fixture/access-seed.mjs >"$temporary/seed.json"
+    node:24.21.0-bookworm-slim node /fixture/access-seed.mjs >"$temporary/seed.json"
   run_suite access "$root/tests/e2e/identity-closeout/access-client.mjs" "$gateway" "$jaeger" "$temporary/seed.json"
   node "$root/tests/e2e/identity-closeout/expiry-client.mjs" "$gateway" "$jaeger" prepare "$temporary/expiry.json"
   compose stop identity-service >/dev/null

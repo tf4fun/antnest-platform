@@ -33,7 +33,7 @@ func TestUpsertProviderDiscoversBeforePersistingEnabledConfiguration(t *testing.
 	if err != nil {
 		t.Fatalf("upsert provider: %v", err)
 	}
-	if provider.ID != "id-1" || provider.Name != "workforce" || !provider.Enabled {
+	if provider.ID != "oidcprovider-1" || provider.Name != "workforce" || !provider.Enabled {
 		t.Fatalf("provider = %#v", provider)
 	}
 	if provider.Issuer != "https://id.example.com/" {
@@ -272,7 +272,7 @@ func TestStartLoginStoresHashedStateAndSealedPKCESecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start login: %v", err)
 	}
-	if login.AuthorizationURL == "" || login.ExpiresAt != fixedOIDCNow().Add(10*time.Minute) {
+	if repository.session.Session.ID != "oidcsession-1" || login.AuthorizationURL == "" || login.ExpiresAt != fixedOIDCNow().Add(10*time.Minute) {
 		t.Fatalf("login = %#v", login)
 	}
 	if repository.session.StateHash == "" || strings.Contains(repository.session.StateHash, "oidc_state_") {
@@ -334,7 +334,7 @@ func TestCompleteLoginClaimsBeforeExchangeAndPersistsHashedCredential(t *testing
 	if result.Principal.UserID != "user-1" || result.AccessToken == "" {
 		t.Fatalf("result = %#v", result)
 	}
-	if result.TokenID == "" || result.AlreadyCompleted {
+	if result.TokenID != "authtoken-2" || repository.claimID != "oidcclaim-1" || result.AlreadyCompleted {
 		t.Fatalf("initial completion metadata = %#v", result)
 	}
 }
@@ -516,6 +516,7 @@ type oidcRepositoryStub struct {
 	failureContextHasDeadline bool
 	failureContextDeadline    time.Time
 	claimedBeforeExchange     bool
+	claimID                   string
 	claimCalls                int
 	providers                 []Provider
 	listProvidersCalls        int
@@ -578,7 +579,8 @@ func (r *oidcRepositoryStub) CreateSession(_ context.Context, command CreateSess
 	return nil
 }
 
-func (r *oidcRepositoryStub) ClaimSession(_ context.Context, _ string, _ string, _ time.Time) (SessionClaim, error) {
+func (r *oidcRepositoryStub) ClaimSession(_ context.Context, _ string, claimID string, _ time.Time) (SessionClaim, error) {
+	r.claimID = claimID
 	r.claimCalls++
 	r.claimedBeforeExchange = true
 	return r.claim, nil
@@ -646,7 +648,7 @@ func newTestService(t *testing.T, repository *oidcRepositoryStub, federation *fe
 	next := 0
 	service, err := NewService(Config{
 		Repository: repository, Federation: federation, SecretBox: box,
-		NewID:     func() string { next++; return fmt.Sprintf("id-%d", next) },
+		NewID:     func(kind string) string { next++; return fmt.Sprintf("%s-%d", kind, next) },
 		NewOpaque: deterministicOpaque(), Now: fixedOIDCNow,
 		RedirectURI: "https://antnest.example.com/protocol/oidc/callback",
 		SessionTTL:  10 * time.Minute, TokenTTL: 12 * time.Hour,

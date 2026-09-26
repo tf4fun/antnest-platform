@@ -14,6 +14,7 @@ import { collectTrace } from "../managed-mcp/trace.mjs";
 import { identity, gateway, login } from "./identity.mjs";
 import { catalog, editCatalog } from "./catalog.mjs";
 import {
+  assertResourceId,
   assertBuildSnapshot,
   runtimeCommandId,
   assertRuntimeOperation,
@@ -89,6 +90,9 @@ async function journal(kind, requestId, revision) {
         : "provisioned",
   );
   if (revision) assert.equal(current.runtime_revision, revision);
+  assertResourceId("rtv", current.runtime_revision);
+  const events = (await api(`/api/admin/agents/${agentId}/events`)).events;
+  for (const event of events) assertResourceId("event", event.event_id);
   assertRuntimeOperation(result, {
     agentId,
     requestId,
@@ -171,6 +175,7 @@ async function main() {
       },
     });
     agentId = created.body.agent.agent_id;
+    assertResourceId("agent", agentId);
     assert.equal(created.body.agent.owner_user_id, ownerId);
     assert(!Object.hasOwn(created.body.agent, "organization_id"));
     const requestId = created.body.operation.request_id;
@@ -286,6 +291,7 @@ async function main() {
     assert.equal(lifecycle.length, 5);
     assert.equal(new Set(journals.map((item) => item.target_revision)).size, 5);
     const business = {
+      resource_id_contract: "passed",
       status: "business_passed",
       agent_id: agentId,
       deleted: true,

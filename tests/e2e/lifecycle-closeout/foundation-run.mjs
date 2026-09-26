@@ -253,7 +253,7 @@ export async function runFoundation(profile = "foundation") {
             diagnostics[id] = await diagnosticDocker([
               "logs",
               "--tail",
-              "100",
+              "1000",
               id,
             ]);
           } catch {

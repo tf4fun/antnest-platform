@@ -71,7 +71,8 @@ export function Conversation({
           turn={turn}
           number={index + 1}
           agent={agent}
-          completed={settled || index < turns.length - 1}
+          completed={turn.prompt?.turnOutcome !== "running" &&
+            (settled || index < turns.length - 1)}
           atBottom={atBottom}
           canAutoCollapse={canAutoCollapse}
           onProcessToggle={onProcessToggle}

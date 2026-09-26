@@ -92,6 +92,12 @@ separate ownership and failover design is introduced.
 
 ## Development Sequence
 
+The 2026-09-26 baseline uses Rust 1.98.1, OpenTelemetry 0.33.0,
+tracing-opentelemetry 0.34.0, rustls 0.23.45, tokio-postgres 0.7.18 and
+tokio-postgres-rustls 0.14.0. Hash SDK updates must preserve persisted policy
+digests and migration checksums. Local, PostgreSQL and Linux container gates
+are recorded separately in the [dependency refresh record](../../docs/dependency-refresh-20260926.md).
+
 The rewrite follows `doc -> test -> code`:
 
 1. Freeze this service document and the language-neutral contracts.

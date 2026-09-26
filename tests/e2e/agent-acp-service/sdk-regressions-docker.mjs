@@ -202,7 +202,7 @@ try {
     "POSTGRES_PASSWORD=fixture",
     "-e",
     "POSTGRES_DB=acp_audit",
-    "postgres:17-bookworm",
+    "postgres:17.11-bookworm",
   ]);
   await waitFor(async () => {
     try {

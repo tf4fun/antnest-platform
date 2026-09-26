@@ -1,3 +1,4 @@
+import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -230,7 +231,7 @@ async function initialize(page, principal) {
 }
 async function prompt(page, text) {
   const start = frames.length;
-  await page.getByRole("textbox", { name: "Message", exact: true }).fill(text);
+  await page.getByRole("combobox", { name: "Message", exact: true }).fill(text);
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   const result = await until(
     page,
@@ -265,7 +266,7 @@ async function prompt(page, text) {
   await until(
     page,
     () =>
-      page.getByRole("textbox", { name: "Message", exact: true }).isEnabled(),
+      page.getByRole("combobox", { name: "Message", exact: true }).isEnabled(),
     "Composer ready",
   );
   const updates = frames
@@ -305,18 +306,18 @@ try {
   const link = page.getByRole("link", { name: "Open chat", exact: true });
   const href = await link.getAttribute("href");
   assert.equal(
-    new URL(href, origin).searchParams.get("agent"),
+    workspaceLocation(new URL(href, origin)).agentId,
     report.agent_id,
   );
   const popup = page.waitForEvent("popup");
   await link.click();
   const chat = await popup;
   track(chat);
-  await chat.getByRole("textbox", { name: "Message", exact: true }).waitFor();
+  await chat.getByRole("combobox", { name: "Message", exact: true }).waitFor();
   await until(
     chat,
     () =>
-      chat.getByRole("textbox", { name: "Message", exact: true }).isEnabled(),
+      chat.getByRole("combobox", { name: "Message", exact: true }).isEnabled(),
     "Chat ready",
   );
   report.checks.push("console_open_chat_same_agent");
@@ -324,7 +325,7 @@ try {
   const greeting = await prompt(chat, "\u4f60\u597d");
   report.greeting_chunks = greeting.textChunks.length;
   report.checks.push("real_deepseek_greeting");
-  report.session_id = new URL(chat.url()).searchParams.get("session");
+  report.session_id = workspaceLocation(chat.url()).sessionId;
   assert(report.session_id);
   console.log(
     JSON.stringify({
@@ -372,11 +373,11 @@ try {
       event === "framesent" && value.method === "session/prompt",
   ).length;
   await chat.reload();
-  await chat.getByRole("textbox", { name: "Message", exact: true }).waitFor();
+  await chat.getByRole("combobox", { name: "Message", exact: true }).waitFor();
   await until(
     chat,
     () =>
-      chat.getByRole("textbox", { name: "Message", exact: true }).isEnabled(),
+      chat.getByRole("combobox", { name: "Message", exact: true }).isEnabled(),
     "Restored chat ready",
   );
   assert.deepEqual(
@@ -434,9 +435,9 @@ try {
   stage = "agent_chooser";
   await chat.goto(`${origin}/workspace/`);
   await chat
-    .getByRole("searchbox", { name: "Find an agent", exact: true })
+    .getByRole("searchbox", { name: "Find a workspace", exact: true })
     .waitFor();
-  assert.equal(new URL(chat.url()).searchParams.has("agent"), false);
+  assert.equal(new URL(chat.url()).pathname, "/workspace/");
   report.checks.push("workspace_requires_explicit_agent_choice");
   assert.equal(errors.length, 0, "Browser errors detected");
   stage = "chat_trace";

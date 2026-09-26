@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 
 export function assertPromptEvidence(response, events, sessionId) {
-  assert.deepEqual(response, {}, "v2 prompt acknowledgment changed");
+  assertV2PromptAcknowledged(response, events, sessionId);
   assert(
     events.every((e) => e.sessionId === sessionId),
     "foreign Session notification",

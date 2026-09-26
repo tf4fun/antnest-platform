@@ -107,7 +107,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
           <div className="mb-12 lg:hidden">
             <Brand />
           </div>
-          <span className="mb-5 grid h-10 w-10 place-items-center rounded-md border border-border bg-white text-primary shadow-sm">
+          <span className="mb-5 grid h-10 w-10 place-items-center rounded-md border border-border bg-white text-primary shadow-xs">
             <KeyRound className="h-[18px] w-[18px]" aria-hidden="true" />
           </span>
           <h1 className="text-[28px] font-semibold leading-tight">Welcome back</h1>

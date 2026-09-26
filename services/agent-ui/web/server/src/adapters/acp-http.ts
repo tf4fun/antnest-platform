@@ -346,6 +346,12 @@ export class AcpHttpBridge {
     });
   }
 
+  public forkSession(sessionId: string): Promise<acp.ForkSessionResponse> {
+    return this.connection.agent.request(acp.methods.agent.session.fork, {
+      sessionId, cwd: "/workspace", mcpServers: [],
+    });
+  }
+
   public prompt(input: PromptInput): Promise<acp.PromptResponse> {
     return this.connection.agent.request(
       acp.methods.agent.session.prompt,

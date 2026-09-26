@@ -3,6 +3,7 @@ import test from "node:test";
 import { catalog } from "./catalog.mjs";
 
 test("catalog fixture uses current Provider ownership, malformed-image rejection and exact replay/pagination", async () => {
+  const providerId = `provider_${"a".repeat(32)}`;
   const image = `sha256:${"a".repeat(64)}`,
     models = [],
     templates = [],
@@ -21,11 +22,11 @@ test("catalog fixture uses current Provider ownership, malformed-image rejection
           },
         };
       if (path === "/api/admin/provider-connections") {
-        if (!body) return { body: { items: [{ connection_id: "provider" }] } };
+        if (!body) return { body: { items: [{ connection_id: providerId }] } };
         assert.equal(status, 201);
         assert(body.credential.api_key);
         assert.deepEqual(body.models, []);
-        return { body: { connection_id: "provider" } };
+        return { body: { connection_id: providerId } };
       }
       const name = path.includes("model-profiles") ? "models" : "templates";
       const items = name === "models" ? models : templates;
@@ -41,7 +42,7 @@ test("catalog fixture uses current Provider ownership, malformed-image rejection
           return { body: { code: "runtime_image_invalid" } };
         }
         if (name === "models") {
-          assert.equal(body.provider_connection_id, "provider");
+          assert.equal(body.provider_connection_id, providerId);
           assert.equal(body.api_key, undefined);
           assert.equal(body.model.base_url, undefined);
         } else {
@@ -63,7 +64,7 @@ test("catalog fixture uses current Provider ownership, malformed-image rejection
           ...(name === "models"
             ? { model: { ...body.model, base_url: "http://provider-peer/v1" } }
             : {}),
-          [id]: `${name}-${items.length}`,
+          [id]: `${name === "models" ? "model" : "template"}_${items.length.toString(16).padStart(32, "0")}`,
           revision: 1,
           ...(name === "templates"
             ? { runtime: { image_ref: body.runtime?.image_ref ?? image } }
@@ -85,7 +86,7 @@ test("catalog fixture uses current Provider ownership, malformed-image rejection
     },
   };
   const result = await catalog(admin, image, ["private-canary"]);
-  assert.equal(result.model.model_profile_id, "models-0");
+  assert.equal(result.model.model_profile_id, `model_${"0".repeat(32)}`);
   assert.equal(models.length, 2);
   assert.equal(templates.length, 2);
 });

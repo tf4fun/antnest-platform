@@ -80,7 +80,7 @@ func (s *Store) bootstrapOrganization(
 		return domain.Organization{}, false, fmt.Errorf("find bootstrap organization: %w", err)
 	}
 	organization = domain.Organization{
-		ID: s.newID(), Slug: input.OrganizationSlug, Name: input.OrganizationName,
+		ID: s.newID("org"), Slug: input.OrganizationSlug, Name: input.OrganizationName,
 		Active: true, CreatedAt: input.Now, UpdatedAt: input.Now,
 	}
 	if _, err := tx.Exec(ctx, `
@@ -111,7 +111,7 @@ func (s *Store) bootstrapAdministrator(
 		return domain.User{}, domain.OrganizationMembership{}, false, err
 	}
 	user = domain.User{
-		ID: s.newID(), SystemRole: domain.SystemRoleAdmin, Active: true,
+		ID: s.newID("user"), SystemRole: domain.SystemRoleAdmin, Active: true,
 		CreatedAt: input.Now, UpdatedAt: input.Now,
 	}
 	if _, err := tx.Exec(ctx, `
@@ -127,7 +127,7 @@ func (s *Store) bootstrapAdministrator(
 		return domain.User{}, domain.OrganizationMembership{}, false, fmt.Errorf("insert bootstrap credential: %w", err)
 	}
 	membership = domain.OrganizationMembership{
-		ID: s.newID(), OrganizationID: organizationID, UserID: user.ID,
+		ID: s.newID("membership"), OrganizationID: organizationID, UserID: user.ID,
 		Email: input.AdminEmail, DisplayName: input.AdminDisplayName,
 		Role: domain.OrganizationRoleAdmin, Source: domain.SourceLocal, Active: true,
 		CreatedAt: input.Now, UpdatedAt: input.Now,

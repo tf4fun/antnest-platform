@@ -148,10 +148,11 @@ async function scenario(version, item, agent) {
       connectionTraceID: client.traceID,
     });
     outcomes.push({
+      status: "file_case_passed",
       phase,
       file_facts: true,
       replay_and_fork: true,
-      status: item.error ? "failed" : "completed",
+      tool_status: item.error ? "failed" : "completed",
     });
     console.log(JSON.stringify(outcomes.at(-1)));
   } finally {

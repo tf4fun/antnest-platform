@@ -2,20 +2,26 @@ package identityid
 
 import (
 	"crypto/rand"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 )
 
-func New() (string, error) {
-	buffer := make([]byte, 18)
+func New(kind string) (string, error) {
+	switch kind {
+	case "org", "user", "membership", "group", "groupmembership", "oidcprovider",
+		"oidcsession", "oidcclaim", "externalidentity", "authtoken", "scimtoken", "event":
+	default:
+		return "", fmt.Errorf("unknown identity resource kind: %q", kind)
+	}
+	buffer := make([]byte, 16)
 	if _, err := rand.Read(buffer); err != nil {
 		return "", fmt.Errorf("generate identity ID: %w", err)
 	}
-	return "id_" + base64.RawURLEncoding.EncodeToString(buffer), nil
+	return kind + "_" + hex.EncodeToString(buffer), nil
 }
 
-func MustNew() string {
-	value, err := New()
+func MustNew(kind string) string {
+	value, err := New(kind)
 	if err != nil {
 		panic(err)
 	}

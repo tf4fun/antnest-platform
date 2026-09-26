@@ -1,4 +1,4 @@
-FROM golang:1.25-bookworm AS build
+FROM golang:1.27.1-bookworm AS build
 
 WORKDIR /workspace
 COPY services/identity-service/go.mod services/identity-service/go.sum ./services/identity-service/

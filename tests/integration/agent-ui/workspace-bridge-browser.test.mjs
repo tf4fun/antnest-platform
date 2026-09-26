@@ -1,3 +1,4 @@
+import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import assert from "node:assert/strict";
 import { diffAgentViews } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { test } from "node:test";
@@ -201,7 +202,7 @@ test(
         root: fileURLToPath(
           new URL("../../../services/agent-ui/web/", import.meta.url),
         ),
-        server: { host: "127.0.0.1", port: 0 },
+        server: { host: "127.0.0.1", port: 0, strictPort: false },
         plugins: [
           {
             name: "bridge-browser-fixture",
@@ -566,14 +567,16 @@ test(
       ]);
       const chooserPage = await context.newPage();
       await chooserPage.goto(`${origin}/workspace/`);
-      await chooserPage.getByRole("heading", { name: "Your agents" }).waitFor();
+      await chooserPage
+        .getByRole("heading", { name: "Your workspaces" })
+        .waitFor();
       await assertWcagPage(chooserPage);
       await chooserPage
         .getByRole("link", { name: /Agent/u })
         .first()
         .press("Enter");
       await chooserPage.waitForURL(
-        (url) => url.searchParams.get("agent") === "agent-1",
+        (url) => workspaceLocation(url).agentId === "agent-1",
       );
       await chooserPage.close();
       const page = await context.newPage();
@@ -621,7 +624,7 @@ test(
           diagnostics.push(`http ${response.status()}: ${response.url()}`);
       });
       holdSelectedView = true;
-      await page.goto(`${origin}/workspace/?agent=agent-1&session=session-1`);
+      await page.goto(`${origin}/workspace/agent-1/sessions/session-1`);
       await page.locator(".session-opening").waitFor();
       const visualTokens = await page.evaluate(() => {
         const root = getComputedStyle(document.documentElement);
@@ -683,9 +686,7 @@ test(
       await mobilePage.setViewportSize({ width: 390, height: 844 });
       await mobilePage.emulateMedia({ reducedMotion: "reduce" });
       holdSelectedView = true;
-      await mobilePage.goto(
-        `${origin}/workspace/?agent=agent-1&session=session-1`,
-      );
+      await mobilePage.goto(`${origin}/workspace/agent-1/sessions/session-1`);
       await mobilePage.locator(".session-opening").waitFor();
       const mobileOpeningProcess = await mobilePage
         .locator(".session-opening-process")
@@ -738,7 +739,10 @@ test(
         0,
       );
       await assertWcagPage(mobilePage);
-      await mobilePage.getByRole("button", { name: "Retry loading" }).click();
+      const retryOpening = mobilePage.getByRole("button", {
+        name: "Retry loading",
+      });
+      if (await retryOpening.isVisible()) await retryOpening.click();
       await mobilePage.getByText("Saved answer").waitFor();
       const mobileLoadedProcess = await mobilePage
         .locator(".turn-process-trigger")
@@ -756,9 +760,7 @@ test(
       await mobilePage.close();
       const backPage = await context.newPage();
       holdSelectedView = true;
-      await backPage.goto(
-        `${origin}/workspace/?agent=agent-1&session=session-1`,
-      );
+      await backPage.goto(`${origin}/workspace/agent-1/sessions/session-1`);
       await backPage.locator(".session-opening").waitFor();
       holdSelectedView = false;
       for (const held of heldSelectedViews.splice(0))
@@ -776,8 +778,8 @@ test(
       await backPage.getByRole("button", { name: "Back to agent" }).click();
       await backPage.waitForURL(
         (url) =>
-          url.searchParams.get("agent") === "agent-1" &&
-          url.searchParams.get("session") === null,
+          workspaceLocation(url).agentId === "agent-1" &&
+          workspaceLocation(url).sessionId === null,
       );
       await backPage.close();
       assert.equal(
@@ -1096,11 +1098,9 @@ test(
       );
       const secondPage = await context.newPage();
       secondPage.on("websocket", (socket) => sockets.push(socket.url()));
-      await secondPage.goto(
-        `${origin}/workspace/?agent=agent-1&session=session-1`,
-      );
+      await secondPage.goto(`${origin}/workspace/agent-1/sessions/session-1`);
       await secondPage.getByText("Saved answer").waitFor();
-      await page.getByRole("textbox", { name: "Message" }).fill("Continue");
+      await page.getByRole("combobox", { name: "Message" }).fill("Continue");
       interruptFirstPromptStream = true;
       await page.getByRole("button", { name: "Send message" }).click();
       for (
@@ -1143,7 +1143,9 @@ test(
         sockets.filter((url) => url.includes("/v1/acp")),
         [],
       );
-      await page.getByRole("textbox", { name: "Message" }).fill("Keep working");
+      await page
+        .getByRole("combobox", { name: "Message" })
+        .fill("Keep working");
       await page.getByRole("button", { name: "Send message" }).click();
       await page.waitForFunction(
         () =>
@@ -1233,6 +1235,26 @@ test(
       await secondPage
         .getByText("Live second step")
         .waitFor({ state: "attached" });
+      const liveProcess = secondPage
+        .locator('.turn-process[data-complete="false"]')
+        .last();
+      const liveSpacing = await liveProcess.evaluate((process) => {
+        const trigger = process.querySelector(".turn-process-trigger");
+        const content = process.querySelector(".turn-process-content");
+        if (!trigger || !content) return null;
+        return (
+          content.getBoundingClientRect().top -
+          trigger.getBoundingClientRect().bottom
+        );
+      });
+      assert.ok(
+        liveSpacing !== null && liveSpacing >= 11,
+        `running Process header needs visible Tool spacing, got ${liveSpacing}`,
+      );
+      await secondPage.screenshot({
+        path: `${loadingEvidence}process-live-spacing.png`,
+        animations: "disabled",
+      });
       assert.deepEqual(processReads.slice(-2), ["live-page", "live-page-2"]);
       const liveReads = processReads.length;
       liveProcessVersion = 2;
@@ -1255,9 +1277,9 @@ test(
         "Reloaded page must reattach its SSE observer",
       );
       await secondPage
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("combobox", { name: "Message" })
         .fill("Ready again");
-      await secondPage.getByRole("textbox", { name: "Message" }).focus();
+      await secondPage.getByRole("combobox", { name: "Message" }).focus();
       blocked = true;
       publish();
       await secondPage.getByText("Showing saved messages read-only.").waitFor();
@@ -1342,7 +1364,7 @@ test(
         (url) =>
           url.pathname === "/" &&
           url.searchParams.get("return_to") ===
-            "/workspace/?agent=agent-1&session=session-1",
+            "/workspace/agent-1/sessions/session-1",
         { timeout: 15_000 },
       );
       assert.equal(
@@ -1527,7 +1549,7 @@ test(
         root: fileURLToPath(
           new URL("../../../services/agent-ui/web/", import.meta.url),
         ),
-        server: { host: "127.0.0.1", port: 0 },
+        server: { host: "127.0.0.1", port: 0, strictPort: false },
         plugins: [
           {
             name: "bridge-session-switch-fixture",
@@ -1742,10 +1764,42 @@ test(
         { name: "antnest_csrf", value: "session-csrf", url: origin },
       ]);
       const page = await context.newPage();
-      await page.goto(`${origin}/workspace/?agent=agent-1&session=one`);
+      await page.goto(`${origin}/workspace/agent-1/sessions/one`);
       await page.getByText("Answer one").waitFor();
+      const sidebar = page.getByRole("complementary", {
+        name: "Workspace navigation",
+      });
+      const workspaceSwitcher = sidebar.locator(".workspace-switcher");
+      const newConversation = sidebar.getByRole("button", {
+        name: "New conversation",
+      });
+      const contextBounds = await workspaceSwitcher.boundingBox();
+      const actionBounds = await newConversation.boundingBox();
+      assert.ok(
+        contextBounds.y + contextBounds.height <= actionBounds.y,
+        "Workspace context must sit above its conversation actions",
+      );
+      const historyBefore = await sidebar
+        .locator(".conversation-list")
+        .boundingBox();
+      await workspaceSwitcher.click();
+      await sidebar.getByRole("group", { name: "Workspaces" }).waitFor();
+      assert.deepEqual(
+        await sidebar.locator(".conversation-list").boundingBox(),
+        historyBefore,
+        "Opening the workspace picker must not displace conversation history",
+      );
+      await assertWcagPage(page);
+      await page.keyboard.press("Escape");
+      assert.equal(
+        await workspaceSwitcher.evaluate(
+          (element) => document.activeElement === element,
+        ),
+        true,
+      );
+      assert.equal(workspaceLocation(page.url()).sessionId, "one");
       await page
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("combobox", { name: "Message" })
         .fill("Draft for one");
       await page.getByRole("button", { name: "Show process" }).click();
       await page.locator(".tool-activity summary").click();
@@ -1775,11 +1829,11 @@ test(
       );
       assert.equal(await page.getByText("Late tool body").count(), 0);
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "",
       );
       await page
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("combobox", { name: "Message" })
         .fill("Draft for two");
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
@@ -1787,13 +1841,13 @@ test(
         .click();
       await page.getByText("Answer one").waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "Draft for one",
       );
       await page.goBack();
       await page.getByText("Answer two").waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "Draft for two",
       );
       assert.deepEqual(selectedViews, ["one", "two", "one", "two"]);
@@ -1804,21 +1858,34 @@ test(
         1,
         "Only the selected Session keeps an observer",
       );
+      await sidebar
+        .getByRole("searchbox", { name: "Search conversations" })
+        .fill("Conversation two");
+      await page
+        .getByRole("complementary", { name: "Workspace navigation" })
+        .locator(".workspace-switcher")
+        .click();
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
         .getByRole("button", { name: /Peer Agent/u })
         .click();
+      assert.equal(
+        await sidebar
+          .getByRole("searchbox", { name: "Search conversations" })
+          .inputValue(),
+        "",
+      );
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
         .getByRole("button", { name: /Conversation peer/u })
         .click();
       await page.getByText("Answer peer").waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "",
       );
       await page
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("combobox", { name: "Message" })
         .fill("Draft for peer");
       for (
         let attempt = 0;
@@ -1834,7 +1901,11 @@ test(
       assert.equal(peerStreams.size, 1);
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
-        .locator(".agent-option")
+        .locator(".workspace-switcher")
+        .click();
+      await page
+        .getByRole("complementary", { name: "Workspace navigation" })
+        .locator(".workspace-option")
         .first()
         .click();
       await page
@@ -1843,7 +1914,7 @@ test(
         .click();
       await page.getByText("Answer two").waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "Draft for two",
       );
       for (
@@ -1860,6 +1931,10 @@ test(
       assert.equal(streams.size, 1);
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
+        .locator(".workspace-switcher")
+        .click();
+      await page
+        .getByRole("complementary", { name: "Workspace navigation" })
         .getByRole("button", { name: /Peer Agent/u })
         .click();
       await page
@@ -1868,12 +1943,16 @@ test(
         .click();
       await page.getByText("Answer peer").waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "Draft for peer",
       );
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
-        .locator(".agent-option")
+        .locator(".workspace-switcher")
+        .click();
+      await page
+        .getByRole("complementary", { name: "Workspace navigation" })
+        .locator(".workspace-option")
         .first()
         .click();
       await page
@@ -1882,7 +1961,7 @@ test(
         .click();
       await page.getByText("Answer two").waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        await page.getByRole("combobox", { name: "Message" }).inputValue(),
         "Draft for two",
       );
       const png = Buffer.from(
@@ -1929,7 +2008,7 @@ test(
         { name: "note.txt", mimeType: "text/plain", buffer: note },
       ]);
       await page
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("combobox", { name: "Message" })
         .evaluate((editor) => {
           editor.dispatchEvent(
             new KeyboardEvent("keydown", {
@@ -1945,7 +2024,7 @@ test(
         0,
         "IME confirmation must not submit the draft",
       );
-      await page.getByRole("textbox", { name: "Message" }).press("Enter");
+      await page.getByRole("combobox", { name: "Message" }).press("Enter");
       for (
         let attempt = 0;
         attempt < 100 && promptBodies.length === 0;
@@ -1984,9 +2063,9 @@ test(
         buffer: wav,
       });
       await page
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("combobox", { name: "Message" })
         .fill("Unsupported audio check");
-      await page.getByRole("textbox", { name: "Message" }).press("Enter");
+      await page.getByRole("combobox", { name: "Message" }).press("Enter");
       await page
         .getByRole("alert")
         .filter({
@@ -1995,7 +2074,7 @@ test(
         .waitFor();
       assert.equal(promptBodies.length, 2);
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).isEnabled(),
+        await page.getByRole("combobox", { name: "Message" }).isEnabled(),
         true,
       );
       assert.equal(
@@ -2006,7 +2085,7 @@ test(
         "Keyboard submission must return focus after the Run settles",
       );
       await assertWcagPage(page);
-      await page.getByRole("textbox", { name: "Message" }).fill("Try again");
+      await page.getByRole("combobox", { name: "Message" }).fill("Try again");
       assert.equal(
         await page.getByRole("button", { name: "Send message" }).isEnabled(),
         true,
@@ -2019,7 +2098,7 @@ test(
         })
         .waitFor();
       assert.equal(
-        await page.getByRole("textbox", { name: "Message" }).isEnabled(),
+        await page.getByRole("combobox", { name: "Message" }).isEnabled(),
         true,
       );
       assert.equal(
@@ -2029,7 +2108,7 @@ test(
       );
       await page.close();
       const memoryPage = await context.newPage();
-      await memoryPage.goto(`${origin}/workspace/?agent=agent-1&session=two`);
+      await memoryPage.goto(`${origin}/workspace/agent-1/sessions/two`);
       await memoryPage.getByText("Answer two").waitFor();
       const heapSession = await context.newCDPSession(memoryPage);
       const heapBytes = async () => {
@@ -2121,7 +2200,7 @@ test(
         isMobile: true,
       });
       const mobilePage = await mobileContext.newPage();
-      await mobilePage.goto(`${origin}/workspace/?agent=agent-1&session=one`);
+      await mobilePage.goto(`${origin}/workspace/agent-1/sessions/one`);
       await mobilePage.getByText("Answer one").waitFor();
       const navigationButton = mobilePage.getByRole("button", {
         name: "Open navigation",
@@ -2133,6 +2212,23 @@ test(
       });
       await navigationDialog.waitFor();
       await assertWcagPage(mobilePage);
+      await navigationDialog.locator(".workspace-switcher").click();
+      await navigationDialog
+        .getByRole("group", { name: "Workspaces" })
+        .waitFor();
+      await assertWcagPage(mobilePage);
+      await mobilePage.keyboard.press("Escape");
+      assert.equal(
+        await navigationDialog.isVisible(),
+        true,
+        "First Escape dismisses only the workspace picker, keeping mobile navigation open",
+      );
+      assert.equal(
+        await navigationDialog
+          .locator(".workspace-switcher")
+          .getAttribute("aria-expanded"),
+        "false",
+      );
       assert.equal(
         await navigationDialog.evaluate((dialog) =>
           dialog.contains(document.activeElement),
@@ -2196,6 +2292,10 @@ test(
       await mobilePage.keyboard.press("Enter");
       await mobilePage
         .getByRole("dialog", { name: "Workspace navigation" })
+        .locator(".workspace-switcher")
+        .click();
+      await mobilePage
+        .getByRole("dialog", { name: "Workspace navigation" })
         .getByRole("button", { name: /Peer Agent/u })
         .focus();
       await mobilePage.keyboard.press("Enter");
@@ -2213,15 +2313,19 @@ test(
       await mobilePage.keyboard.press("Enter");
       await mobilePage
         .getByRole("dialog", { name: "Workspace navigation" })
-        .getByRole("button", { name: "All agents" })
+        .locator(".workspace-switcher")
+        .click();
+      await mobilePage
+        .getByRole("dialog", { name: "Workspace navigation" })
+        .getByRole("button", { name: "All workspaces" })
         .focus();
       await mobilePage.keyboard.press("Enter");
       await mobilePage
-        .getByRole("searchbox", { name: "Find an agent" })
+        .getByRole("searchbox", { name: "Find a workspace" })
         .waitFor();
       assert.equal(
         await mobilePage
-          .getByRole("searchbox", { name: "Find an agent" })
+          .getByRole("searchbox", { name: "Find a workspace" })
           .evaluate((search) => search === document.activeElement),
         true,
         "Leaving mobile navigation for the Agent directory must focus its search",

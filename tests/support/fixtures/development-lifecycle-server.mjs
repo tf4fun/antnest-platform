@@ -37,18 +37,33 @@ export async function lifecycleServer(options = {}) {
         value = { principal: { organization_id: f.organization } };
       else if (request.url === `/api/admin/agents/${f.retainedId}`)
         value = f.retained;
-      else if (request.url.startsWith("/api/traces?"))
+      else if (
+        request.method === "GET" &&
+        request.url.startsWith("/api/v3/trace-summaries?")
+      ) {
+        const traces = f.searchResponse ? f.searchResponse() : f.publications;
+        f.searchSnapshots = new Map(
+          traces.map((trace) => [trace.traceID, trace]),
+        );
         value = {
-          data: f.searchResponse ? f.searchResponse() : f.publications,
+          summaries: traces.map((trace) => ({ traceId: trace.traceID })),
         };
-      else if (request.url.startsWith("/api/traces/")) {
+      } else if (request.url.startsWith("/api/traces/")) {
         const id = request.url.slice("/api/traces/".length);
+        // A search snapshot is read once; later collector requests can observe
+        // the changed detail response supplied by a recovery test.
+        const searchSnapshot = f.searchSnapshots?.get(id);
+        f.searchSnapshots?.delete(id);
         const trace = [
           ...f.publications,
           ...Object.values(f.lifecycles).map((x) => x.trace),
         ].find((t) => t.traceID === id);
         value = {
-          data: trace ? [f.traceResponse ? f.traceResponse(trace) : trace] : [],
+          data: searchSnapshot
+            ? [searchSnapshot]
+            : trace
+              ? [f.traceResponse ? f.traceResponse(trace) : trace]
+              : [],
         };
       } else if (request.url.startsWith("/api/admin/operations/"))
         value = { state: f.operationState ?? "completed" };

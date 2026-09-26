@@ -291,7 +291,7 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
     assert.ok(workBeforeDocument > 0);
     const response = await new Promise((resolve, reject) => {
       get(
-        `${origin}/workspace/?agent=agent-1&session=session-1`,
+        `${origin}/workspace/agent-1/sessions/session-1`,
         {
           headers: { ...headers, "x-antnest-administrator": "false" },
         },

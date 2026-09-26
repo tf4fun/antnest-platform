@@ -439,7 +439,7 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	if err != nil {
 		return domain.Principal{}, "", err
 	}
-	externalID = a.store.newID()
+	externalID = a.store.newID("externalidentity")
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO external_identities (
 			id, organization_id, provider_id, user_id, membership_id, subject, created_at, updated_at

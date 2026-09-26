@@ -2,8 +2,6 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -197,7 +196,7 @@ WHERE id = $1 AND runtime_revision = $2 AND lifecycle_state = 'created' AND acti
 		changed, err = invalidateRuntimeExecution(
 			ctx, transaction, observation.AgentID, observation.RuntimeRevision,
 			observedExecutionID,
-			"runtime-observation-"+strconv.FormatUint(observation.Sequence, 10),
+			domain.DeriveResourceID("event", "runtime-observation", strconv.FormatUint(observation.Sequence, 10)),
 			invalidation, observation.Sequence,
 		)
 		if err != nil {
@@ -301,10 +300,8 @@ INSERT INTO agent_controller.agent_events (
 }
 
 func runtimeReconciliationEventID(runtime ports.RuntimeEnvironmentSnapshot) string {
-	digest := sha256.Sum256([]byte(
-		runtime.AgentID + "\x00" + runtime.RuntimeRevision + "\x00" + runtime.RuntimeExecutionID,
-	))
-	return "runtime-reconcile-" + hex.EncodeToString(digest[:16])
+	return domain.DeriveResourceID("event", "runtime-reconcile",
+		runtime.AgentID+"\x00"+runtime.RuntimeRevision+"\x00"+runtime.RuntimeExecutionID)
 }
 
 var _ ports.RuntimeObservationStore = (*Repository)(nil)

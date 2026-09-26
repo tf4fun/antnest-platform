@@ -29,15 +29,20 @@ test("routes ordinary members to Agent workspace and rejects arbitrary return pa
 
 test("preserves a selected Agent and Session through login without leaking authority", () => {
   const destination = agentWorkspacePath("agent / 1");
-  assert.equal(destination, "/workspace/?agent=agent+%2F+1");
-  const full = destination + "&session=session%261";
+  assert.equal(destination, "/workspace/agent%20%2F%201/");
+  const full = destination + "sessions/session%261";
+  assert.equal(sessionDestination(session("admin", "member"), destination), destination);
   assert.equal(sessionDestination(session("admin", "member"), full), full);
 });
 
 test("rejects external, ambiguous and non-Workspace login destinations", () => {
   for (const value of ["//evil.example/workspace/", "/workspace/../admin", "/workspace/?agent=a&agent=b", "/workspace/?session=s1",
     "/workspace/?agent=%00", "/workspace/?agent=a&return_to=https://evil.example", "/workspace/?agent=a#credentials",
-    "https://example.com/workspace/", "/workspace/?agent=" + "a".repeat(201)]) {
+    "https://example.com/workspace/", "/workspace/?agent=" + "a".repeat(201),
+    "/workspace/a/sessions/", "/workspace/a/sessions/s/extra", "/workspace/a/?session=s",
+    "/workspace/a/sessions/s#fragment", "/workspace/%2e%2e/", "/workspace/a/sessions/%2E",
+    "/workspace/assets/", "/workspace/%00/", "/workspace/%E0%A4/", "/workspace/%20a/",
+    "/workspace/" + "a".repeat(201) + "/"]) {
     assert.equal(sessionDestination(session("admin", "member"), value), undefined, value);
   }
 });

@@ -194,9 +194,9 @@ describe.skipIf(databaseUrl === undefined)(
             {},
           );
           const response = await active;
-          expect(response.result).toEqual(
-            version === 1 ? { stopReason: "cancelled" } : {},
-          );
+          if (version === 1)
+            expect(response.result).toEqual({ stopReason: "cancelled" });
+          else expect(response.result?.messageId).toMatch(/\S/);
           expect((await pool.query("SELECT state FROM runs")).rows).toEqual([
             { state: "cancelled" },
           ]);

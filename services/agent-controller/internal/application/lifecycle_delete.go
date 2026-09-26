@@ -85,7 +85,7 @@ func (service *LifecycleService) DeleteAgent(
 			ChildRequestID:        operation.ChildRequestID(), CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-delete-requested", input.RequestID),
+			EventID: domain.DeriveResourceID("event", "event-delete-requested", input.RequestID),
 			AgentID: base.Agent.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
 			SchemaVersion: 1, EventType: ports.EventAgentDeleteRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
@@ -210,7 +210,7 @@ func (service *LifecycleService) failAgentDelete(ctx context.Context, state port
 	if err := service.store.QuarantineLifecycleOperation(ctx, ports.QuarantineLifecycleOperation{
 		RequestID: operation.RequestID, Fingerprint: operation.RequestFingerprint,
 		ExpectedPhase: operation.Phase, ErrorCode: code, ErrorDetail: detail,
-		EventID: derivedID("event-lifecycle-quarantined", operation.RequestID), TraceID: currentTraceID(ctx),
+		EventID: domain.DeriveResourceID("event", "event-lifecycle-quarantined", operation.RequestID), TraceID: currentTraceID(ctx),
 	}); err != nil {
 		return state, err
 	}
@@ -338,7 +338,7 @@ func (service *LifecycleService) publishAgentDelete(
 	return service.store.PublishAgentDelete(ctx, ports.PublishAgentDelete{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		DeletedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-deleted", state.Operation.RequestID),
+			EventID: domain.DeriveResourceID("event", "event-deleted", state.Operation.RequestID),
 			AgentID: state.Agent.AgentID, AggregateSequence: state.Agent.AggregateSequence + 1,
 			SchemaVersion: 1, EventType: ports.EventAgentDeleted,
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),

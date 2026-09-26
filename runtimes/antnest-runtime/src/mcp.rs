@@ -1023,8 +1023,8 @@ impl ServerHandler for RuntimeToolServer {
         Self::tool_router().call(call).await
     }
 
-    fn get_info(&self) -> rmcp::model::ServerInfo {
-        rmcp::model::ServerInfo::new(
+    fn get_info(&self) -> rmcp::model::ServerConfig {
+        rmcp::model::ServerConfig::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
@@ -1217,7 +1217,7 @@ impl ServerHandler for ObservedRuntime {
         .await
     }
 
-    fn get_info(&self) -> rmcp::model::ServerInfo {
+    fn get_info(&self) -> rmcp::model::ServerConfig {
         ServerHandler::get_info(&self.0)
     }
 

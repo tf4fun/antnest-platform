@@ -268,7 +268,7 @@ try {
     const answers = page.locator(".message-answer .message-content");
     const previousAnswers = await answers.count();
     await page
-      .getByRole("textbox", { name: "Message", exact: true })
+      .getByRole("combobox", { name: "Message", exact: true })
       .fill("请用一句简短中文打招呼，不要调用工具。");
     await page
       .getByRole("button", { name: "Send message", exact: true })
@@ -369,7 +369,7 @@ try {
       }),
     );
   }
-  await page.goto(`${origin}/workspace/?agent=${agent.agent_id}`);
+  await page.goto(`${origin}/workspace/${encodeURIComponent(agent.agent_id)}/`);
   await ready();
   if (
     await page.getByRole("combobox", { name: "Thinking", exact: true }).count()

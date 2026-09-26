@@ -227,14 +227,11 @@ describe.skipIf(databaseUrl === undefined)(
         const original = await app.connect(2);
         const created = await original.request("session/new", setup);
         const sessionId = String(created.result?.sessionId);
-        expect(
-          (
-            await original.request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text: "hello" }],
-            })
-          ).result,
-        ).toEqual({});
+        const accepted = await original.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: "hello" }],
+        });
+        expect(accepted.result?.messageId).toMatch(/\S/);
         await expect.poll(() => app.model.complete.mock.calls.length).toBe(1);
         await original.close();
 

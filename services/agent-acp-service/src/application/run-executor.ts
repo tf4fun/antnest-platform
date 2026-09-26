@@ -1,3 +1,4 @@
+import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DurableRunEvents, RunEventPersistenceError } from "./durable-run-events.js";
 import { TurnRunner } from "./turn-runner.js";
 import type { ContextBuilder } from "./context-builder.js";
@@ -23,7 +24,7 @@ export type RunExecutorDependencies = {
   events: RunEventRepository;
   ownershipSignal: AbortSignal;
   recoveryRequired: (error: Error) => void;
-  id: () => string;
+  id: ResourceIdGenerator;
   now: () => Date;
 };
 

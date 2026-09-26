@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
@@ -369,7 +370,7 @@ async function exercise(version, kind, template) {
     const result = await pending;
     if (version === 1)
       assert(result.error, "v1 prompt survived killed executor");
-    else assert.deepEqual(result.value, {});
+    else assertV2PromptAcknowledged(result.value, c.updates, sessionId);
   }
   await c.close();
   if (kind === "inflight") {

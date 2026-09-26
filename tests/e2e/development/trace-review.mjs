@@ -3,6 +3,7 @@ import {
   writeDevelopmentJSON,
 } from "../../support/development-configuration.mjs";
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
@@ -29,11 +30,9 @@ const query = new URLSearchParams({
     "antnest.session.id": sessionId,
   }),
 });
-const response = await fetch(new URL(`/api/traces?${query}`, config.jaeger), {
+const data = await searchJaegerTraces(config.jaeger, query, {
   signal: AbortSignal.timeout(10000),
 });
-assert(response.ok);
-const { data } = await response.json();
 assert.equal(data.length, Number(config.expectedTraceCount));
 assert(
   data.every((trace) => /^[a-f0-9]{32}$/u.test(trace.traceID)),

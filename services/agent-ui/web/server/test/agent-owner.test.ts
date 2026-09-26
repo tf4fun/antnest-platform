@@ -86,6 +86,37 @@ function fixture() {
   };
 }
 
+test("command catalogs survive checkpoint replay, live replacement and Session isolation", async () => {
+  const f = fixture();
+  const initial = [{ name: "help", description: "Show help" }];
+  const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async load(sessionId) {
+        await callbacks.update({ sessionId, update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: sessionId === "session-1" ? initial : [],
+        }, _meta: { "antnest.dev/delivery": { kind: "checkpoint", sequence: 0 } } });
+        return { cut: { sealedWatermark: 0, appendVersion: 3 } };
+      },
+    }),
+  });
+  try {
+    await owner.authorizeSession("session-1");
+    await owner.authorizeSession("session-2");
+    assert.deepEqual(owner.viewMetadata("session-1").availableCommands, initial);
+    assert.deepEqual(owner.viewMetadata("session-2").availableCommands, []);
+    const revision = owner.viewRevision("session-1");
+    await f.callback().update({ sessionId: "session-1", update: {
+      sessionUpdate: "available_commands_update", availableCommands: [],
+    } });
+    assert.deepEqual(owner.viewMetadata("session-1").availableCommands, []);
+    assert.ok(owner.viewRevision("session-1") > revision);
+    assert.equal(owner.readTurns("session-1").length, 0);
+    assert.equal(owner.retainedSession("session-1")?.appendVersion, 3);
+  } finally { owner.close(); }
+});
+
 test("owner retires when its ACP transport closes", async () => {
   const f = fixture();
   let finishTransport!: () => void;

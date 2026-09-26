@@ -401,8 +401,11 @@ case Runtime Controller is normally stopped before removal, then restarted to
 require `runtime_missing / platform_reconciliation`. Fault targets must match
 exact inspected container, project scope and Agent identity. Workspace remains.
 
-Current Controller invalidation uses fresh Inspect: its public/private loss
-event has a `runtime-condition-loss-` identity and zero direct journal sequence.
+Current Controller invalidation uses fresh Inspect: its newly generated
+public/private loss event has an `event_<32 lowercase hex>` identity and zero
+direct journal sequence. The stable derivation namespace remains
+`runtime-condition-loss`; event kind and lineage come from the event payload,
+not its ID prefix. See the [resource ID contract](../../../contracts/resource-identifiers.md).
 The live audit retains `runtime_exited`, the cold audit `runtime_missing`.
 Validate producer sequence, route, Agent, Runtime revision, generation and
 physical identity separately; a generic unavailable result cannot substitute.

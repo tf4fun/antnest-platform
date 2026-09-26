@@ -1,0 +1,27 @@
+[
+  {
+    "name": "sdk-timing-diagnostic",
+    "command": ["node", "tests/support/verification/otel-sdk-timing.mjs"],
+    "timeout_ms": 120000
+  },
+  {
+    "name": "format",
+    "command": ["make", "fmt-check"],
+    "timeout_ms": 600000
+  },
+  {
+    "name": "node-lint",
+    "command": ["make", "node-lint"],
+    "timeout_ms": 900000
+  },
+  {
+    "name": "storage-policy",
+    "command": ["make", "test-storage-policy"],
+    "timeout_ms": 180000
+  },
+  {
+    "name": "diff-whitespace",
+    "command": ["git", "diff", "--check"],
+    "timeout_ms": 60000
+  }
+]

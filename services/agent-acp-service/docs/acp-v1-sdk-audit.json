@@ -1,26 +1,27 @@
 {
-  "auditedAt": "2026-09-16",
-  "baselineCommit": "8c639ce",
+  "auditedAt": "2026-09-26",
+  "baselineCommit": "c286fd287462aa00953ec92366d2cff4b0d8ac6d",
   "authority": "latest stable @agentclientprotocol/sdk npm package; user instruction on 2026-09-16",
-  "sdkVersion": "1.4.0",
-  "sdkRelease": "https://github.com/agentclientprotocol/typescript-sdk/releases/tag/v1.4.0",
+  "sdkVersion": "1.5.0",
+  "sdkRelease": "https://github.com/agentclientprotocol/typescript-sdk/releases/tag/v1.5.0",
   "registryMetadata": {
-    "checkedAt": "2026-09-16T14:06:47.065Z",
-    "url": "https://registry.npmjs.org/@agentclientprotocol/sdk/latest",
-    "version": "1.4.0",
-    "gitHead": "e6463f444093ed7c5f1cc937c3f32afb5853e906",
-    "integrity": "sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==",
-    "tarball": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.4.0.tgz"
+    "checkedAt": "2026-09-26T03:35:12.488331+00:00",
+    "url": "https://registry.npmjs.org/@agentclientprotocol/sdk/1.5.0",
+    "version": "1.5.0",
+    "gitHead": "f1ba3a935df42efb4455be9b62c76b06610aaf50",
+    "integrity": "sha512-524jwbB2iYWA+kWWyv9fhKbhU89dH/lu9u5EXwVNmfYzopV8BujCDxByBDZhxRUkB7RWIJzISCnwivdDk+bdVg==",
+    "tarball": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.5.0.tgz"
   },
   "schemaPath": "@agentclientprotocol/sdk/schema/schema.json",
-  "schemaSha256": "7f77702b34e0a0558e77220e9007bf8ee161a976bb8ac5021aba1b7e7b2c5708",
+  "schemaSha256": "2a920d3c0f76443e07ffa7801443e3cdf008e2a3095e565581a0433fd728ce41",
   "methodCount": 42,
   "nonExperimentalMethodCount": 25,
   "notes": [
     "receiver 是 SDK x-side，client 表示由 Agent 调用客户端，不是 Agent 应接收的端点。",
     "JSON Schema 验证形状；描述中的 MUST/时序/上下文语义需要独立断言。",
     "架构排除、明确拒绝和获准延期均不计作已实现。",
-    "实验分类依据 SDK 方法描述或其能力字段的 UNSTABLE 标记，不依据官网文档。"
+    "实验分类依据 SDK 方法描述或其能力字段的 UNSTABLE 标记，不依据官网文档。",
+    "2026-09-26 升级 SDK 1.5.0：v1 42 个方法未增删；tool name 转为稳定可选字段，notice 为新增 UNSTABLE 能力，当前不宣告、不发送。升级后验证结果见依赖更新报告。"
   ],
   "methods": [
     {

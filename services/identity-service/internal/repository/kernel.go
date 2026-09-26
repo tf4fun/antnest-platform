@@ -16,7 +16,7 @@ import (
 
 type Store struct {
 	pool  *databasePool
-	newID func() string
+	newID func(string) string
 	now   func() time.Time
 }
 
@@ -30,7 +30,7 @@ func ParsePoolConfig(databaseURL string) (*pgxpool.Config, error) {
 	return config, nil
 }
 
-func New(pool *pgxpool.Pool, newID func() string, now func() time.Time) (*Store, error) {
+func New(pool *pgxpool.Pool, newID func(string) string, now func() time.Time) (*Store, error) {
 	if pool == nil || newID == nil || now == nil {
 		return nil, fmt.Errorf("identity repository requires pool, ID generator, and clock")
 	}
@@ -91,7 +91,7 @@ func (s *Store) appendEvent(ctx context.Context, tx *databaseTransaction, value 
 			id, organization_id, actor_principal_id, actor_scim_token_id,
 			event_type, subject_type, subject_id, request_id, metadata, created_at
 		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NULLIF($8, ''), $9, $10)`,
-		s.newID(), value.OrganizationID, value.ActorPrincipalID, value.ActorSCIMTokenID,
+		s.newID("event"), value.OrganizationID, value.ActorPrincipalID, value.ActorSCIMTokenID,
 		value.Type, value.SubjectType, value.SubjectID, value.RequestID, metadata, value.CreatedAt,
 	); err != nil {
 		return fmt.Errorf("append identity event: %w", err)

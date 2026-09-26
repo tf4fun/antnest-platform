@@ -163,7 +163,7 @@ export function DashboardPage() {
       <section aria-label="Organization summary" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map(({ label, value, detail, icon: Icon, tone, href }) => (
           <a
-            className="group rounded-md border border-border bg-white p-4 shadow-sm transition-[border-color,box-shadow] hover:border-slate-300 hover:shadow-md"
+            className="group rounded-md border border-border bg-white p-4 shadow-xs transition-[border-color,box-shadow] hover:border-slate-300 hover:shadow-md"
             href={href}
             key={label}
           >
@@ -201,7 +201,7 @@ export function DashboardPage() {
               action={setup.next ? <Button asChild size="sm"><a href={setup.next.href}>{setup.next.action}<ArrowRight className="h-4 w-4" /></a></Button> : null}
             />
           ) : (
-            <div className="overflow-hidden rounded-md border border-border bg-white shadow-sm">
+            <div className="overflow-hidden rounded-md border border-border bg-white shadow-xs">
               <div className="divide-y divide-border">
                 {agents.slice(0, 6).map((agent) => (
                   <a
@@ -232,7 +232,7 @@ export function DashboardPage() {
             ? `Lifecycle distribution within ${agentSnapshot.count} loaded Agents.`
             : "Lifecycle distribution across the organization."}
         >
-          <div className="rounded-md border border-border bg-white p-5 shadow-sm">
+          <div className="rounded-md border border-border bg-white p-5 shadow-xs">
             <div className="flex items-end justify-between gap-4">
               <div>
                 <p className="text-3xl font-semibold leading-none">{agentsAvailable ? agentSnapshot.display : "—"}</p>
@@ -267,7 +267,7 @@ export function DashboardPage() {
       </div>
 
       <Section title="Launch readiness" detail="The shortest supported path from an empty organization to an executable Agent.">
-        <div className="grid overflow-hidden rounded-md border border-border bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-border">
+        <div className="grid overflow-hidden rounded-md border border-border bg-white shadow-xs sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-border">
           {setup.steps.map((step) => <ReadinessItem key={step.key} step={step} />)}
         </div>
       </Section>

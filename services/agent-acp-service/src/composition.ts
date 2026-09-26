@@ -3,7 +3,7 @@ import { PostgresToolPermissions } from "./adapters/postgres/tool-permissions.js
 import { PermissionConnections } from "./application/permission-connections.js";
 import { ToolPermissions } from "./application/tool-permissions.js";
 import { PostgresSessionConfiguration } from "./adapters/postgres/session-configuration.js";
-import { randomUUID } from "node:crypto";
+import { newResourceId } from "./domain/resource-id.js";
 
 import { Pool } from "pg";
 
@@ -237,7 +237,7 @@ export function buildComponents(
       repository: contexts,
       runtimeInformation: information,
       tools,
-      id: randomUUID,
+      id: newResourceId,
       now,
     }),
     providers,
@@ -245,11 +245,11 @@ export function buildComponents(
     events,
     ownershipSignal,
     recoveryRequired,
-    id: randomUUID,
+    id: newResourceId,
     now,
   });
   const supervisor = new RunSupervisor(new InstrumentedRunExecutor(executor, telemetry));
-  const sessionService = new SessionService({ repository: sessions, id: randomUUID, now });
+  const sessionService = new SessionService({ repository: sessions, id: newResourceId, now });
   const application = new InstrumentedAcpApplication(
     new AcpApplication({
       configuration: new SessionConfigurationService({
@@ -266,7 +266,7 @@ export function buildComponents(
         protection: executions,
         runTimeoutMs: config.runTimeoutMs,
         recoveryRequired,
-        id: randomUUID,
+        id: newResourceId,
         now,
       }),
       runs: supervisor,

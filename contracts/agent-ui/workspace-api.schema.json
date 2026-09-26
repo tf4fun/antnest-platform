@@ -255,7 +255,7 @@
               },
               "path": {
                 "type": "string",
-                "pattern": "^/(?:availability|activeSessionId|promptCapabilities|operations|permissions|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
+                "pattern": "^/(?:availability|activeSessionId|promptCapabilities|operations|permissions|controlCommands|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage|availableCommands))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
                 "maxLength": 2048
               },
               "value": {}
@@ -432,6 +432,7 @@
         "agentId": { "$ref": "#/$defs/id" },
         "bridgeEpoch": { "$ref": "#/$defs/id" },
         "availability": { "enum": ["ready", "busy", "offline"] },
+        "controlCommands": { "$ref": "#/$defs/commandCatalogue" },
         "promptCapabilities": {
           "type": "object",
           "properties": {
@@ -595,6 +596,7 @@
             "type": "object"
           }
         },
+        "availableCommands": { "$ref": "#/$defs/commandCatalogue" },
         "configurationToken": {
           "anyOf": [
             {
@@ -915,6 +917,50 @@
       },
       "required": ["generation", "optionId"],
       "additionalProperties": false
+    },
+    "commandCatalogue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "pattern": "^[^\\s/]+$" },
+          "description": { "type": "string" },
+          "input": {
+            "type": "object", "properties": { "hint": { "type": "string" } },
+            "required": ["hint"], "additionalProperties": false
+          }
+        },
+        "required": ["name", "description"], "additionalProperties": false
+      }
+    },
+    "controlCommandRequest": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "sessionId": { "anyOf": [{ "$ref": "#/$defs/controlId" }, { "type": "null" }] },
+        "expectedConfigurationToken": { "$ref": "#/$defs/cursor" },
+        "expectedRunId": { "$ref": "#/$defs/controlId" },
+        "operationId": { "$ref": "#/$defs/controlId" }
+      },
+      "required": ["text", "sessionId"], "additionalProperties": false
+    },
+    "controlId": {
+      "type": "string", "minLength": 1, "maxLength": 200,
+      "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "controlCommandResult": {
+      "type": "object",
+      "properties": {
+        "command": { "enum": ["help", "status", "usage", "new", "sessions", "resume", "fork", "model", "mode", "thinking", "stop"] },
+        "text": { "type": "string", "maxLength": 65536 },
+        "selection": {
+          "type": "object",
+          "properties": { "sessionId": { "anyOf": [{ "$ref": "#/$defs/controlId" }, { "type": "null" }] } },
+          "required": ["sessionId"], "additionalProperties": false
+        },
+        "configurationChanged": { "const": true }
+      },
+      "required": ["command", "text"], "additionalProperties": false
     },
     "configurationRequest": {
       "type": "object",

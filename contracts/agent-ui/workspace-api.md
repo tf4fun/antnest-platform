@@ -30,12 +30,20 @@ messages lacking one.
 
 ## Routes and responses
 
+Workspace control commands use the [control-command contract](workspace-commands.md).
+Agent View's `controlCommands` advertises currently available workspace controls,
+including commands usable without a Session. `POST /agents/A/commands` dispatches
+them without a model Prompt or Run; command feedback is transient. Configuration
+CAS, targeted Stop and exact Session ownership continue through existing operations.
+Native Session `availableCommands` retains its separate ACP meaning.
+
 The machine-readable catalog maps every route to its request/response schema.
 All paths in that catalog are relative to the prefix. Path IDs are opaque and
 must be URL encoded as individual segments; a decoded slash or separator cannot
 escape the selected route. `GET /bootstrap` supplies principal discovery and
-`renderedAt` for SSR/hydration. The Agent → Session URL remains `/workspace/`
-with `agent` and `session` query values; no route mutation occurs during SSR.
+`renderedAt` for SSR/hydration. Document selection follows the
+[workspace navigation contract](workspace-navigation.md): `/workspace/{agentId}/`
+and `/workspace/{agentId}/sessions/{sessionId}`. No route mutation occurs during SSR.
 
 `GET /agents/A/sessions` keeps ACP's cursor semantics. An incomplete page never
 proves that a previously observed Session was deleted. `POST /agents/A/sessions`
@@ -74,6 +82,25 @@ output watermark and history token; submission stays disabled until a
 validated condition arrives. A cursor is bound to its identity, Agent, selected
 Session, fixed history cut and projection version. Old or foreign cursors fail
 or cause an explicit reset; they never revive retired state.
+
+`availableCommands` is the latest Session-scoped ACP command catalog, projected
+as `{name, description, input?: {hint}}` without ACP `_meta`. An empty list clears
+the previous catalog. Both ordinary `available_commands_update` notifications
+and the catalog accompanying a delivery checkpoint update this metadata; the
+checkpoint must still advance/seal delivery normally. Commands do not create
+turns or change the history condition. HTTP Views and SSE deltas carry the same
+catalog, and retained-byte accounting includes only its current replacement.
+Command names are nonempty tokens without whitespace or `/`, and unique within
+the catalog. The browser must not borrow commands from another Session/Agent.
+
+The composer filters the advertised catalog while a leading `/` token is being
+entered. Arrow keys navigate; Enter or Tab completes; Escape dismisses. Selecting
+a candidate edits the draft without sending it, and argument hints remain
+visible. IME confirmation and Shift+Enter retain their normal editing behavior.
+Unrecognized text continues through the normal Prompt path. An unsent new
+conversation has no native Session catalog yet; it still exposes the Agent's
+`controlCommands` for help, status and navigation. Discovering either catalog
+does not create an empty Session.
 
 Protocol-valid history and active output are retained completely. Cumulative
 conversation size is not an admission rule and must not clear history, clip

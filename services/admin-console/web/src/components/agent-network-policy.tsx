@@ -249,7 +249,7 @@ function NetworkPolicyControl({ agent, scope, refreshRevision }: Props) {
             aria-checked={allowed}
             aria-labelledby={`network-label-${agent.agent_id}`}
             disabled={disabled}
-            className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${allowed ? "bg-primary" : "bg-slate-300"}`}
+            className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${allowed ? "bg-primary" : "bg-slate-300"}`}
             onClick={() => {
               if (!disabled && policy)
                 void send({
@@ -260,7 +260,7 @@ function NetworkPolicyControl({ agent, scope, refreshRevision }: Props) {
             }}
           >
             <span
-              className={`pointer-events-none block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${allowed ? "translate-x-5" : "translate-x-0"}`}
+              className={`pointer-events-none block h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${allowed ? "translate-x-5" : "translate-x-0"}`}
             />
           </button>
           <Button

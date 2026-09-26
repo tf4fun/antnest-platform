@@ -2,6 +2,7 @@ import type {
   AgentCapabilities,
   ListSessionsResponse,
   NewSessionResponse,
+  ForkSessionResponse,
   SessionConfigOption,
   SessionNotification,
 } from "@agentclientprotocol/sdk";
@@ -35,9 +36,10 @@ import {
 
 export type AcpBridgePort = {
   closed?: Promise<unknown>;
-  capabilities?: Pick<AgentCapabilities, "promptCapabilities">;
+  capabilities?: Pick<AgentCapabilities, "promptCapabilities" | "sessionCapabilities">;
   list?(cursor?: string): Promise<ListSessionsResponse>;
   createSession?(): Promise<NewSessionResponse>;
+  forkSession?(sessionId: string): Promise<ForkSessionResponse>;
   load(sessionId: string): Promise<{
     cut: { sealedWatermark: number; appendVersion: number };
     response?: { configOptions?: SessionConfigOption[] | null };
@@ -316,6 +318,19 @@ export class AgentBridgeOwner {
     if (acp.createSession === undefined)
       throw new Error("ACP Session create is unavailable");
     return acp.createSession();
+  }
+
+  public get supportsFork(): boolean {
+    const acp = this.connection();
+    return Boolean(acp.capabilities?.sessionCapabilities?.fork && acp.forkSession);
+  }
+
+  public async forkSession(sessionId: string): Promise<ForkSessionResponse> {
+    if (this.accessRevoked) throw new AgentAccessRevokedError();
+    const acp = this.connection();
+    if (!this.supportsFork || !acp.forkSession) throw new BridgeCapabilityError("ACP Session fork is unavailable");
+    await this.authorizeSession(sessionId);
+    return acp.forkSession(sessionId);
   }
 
   public get cachedSessionCount(): number {
@@ -650,11 +665,13 @@ export class AgentBridgeOwner {
     allowStale = false,
   ): {
     configOptions: SessionConfigOption[];
+    availableCommands: CompactTranscript["availableCommands"];
     usage: CompactTranscript["usage"];
     sessionInfo: CompactTranscript["sessionInfo"];
   } {
     const transcript = this.readyTranscript(sessionId, allowStale).view;
-    return { configOptions: transcript.configOptions, usage: transcript.usage,
+    return { configOptions: transcript.configOptions, availableCommands: transcript.availableCommands,
+      usage: transcript.usage,
       sessionInfo: transcript.sessionInfo };
   }
 
@@ -1055,11 +1072,14 @@ export class AgentBridgeOwner {
     if (mark === null) {
       const update = params.update;
       if (update.sessionUpdate !== "config_option_update" &&
+        update.sessionUpdate !== "available_commands_update" &&
         update.sessionUpdate !== "session_info_update") return;
       let changed = false;
       replay.applySideband((view) => {
         if (update.sessionUpdate === "config_option_update")
           { view.applyConfigurationNotification(update.configOptions); changed = true; }
+        else if (update.sessionUpdate === "available_commands_update")
+          changed = view.applyCommandsNotification(update.availableCommands);
         else changed = view.applySessionInfoNotification(update);
       });
       if (changed) this.notifyChanged(params.sessionId);
@@ -1068,8 +1088,16 @@ export class AgentBridgeOwner {
     const before = replay.snapshot();
     try {
       replay.receive(mark, params.update);
+      // ACP carries its current catalog on replay checkpoints as well as sideband
+      // updates. Keep the checkpoint's delivery semantics and project its metadata.
+      let commandsChanged = false;
+      const update = params.update;
+      if (mark.kind === "checkpoint" && update.sessionUpdate === "available_commands_update")
+        replay.applySideband((view) => {
+          commandsChanged = view.applyCommandsNotification(update.availableCommands);
+        });
       const after = replay.snapshot();
-      if (!after.loading && after.watermark > before.watermark)
+      if (!after.loading && (after.watermark > before.watermark || commandsChanged))
         this.notifyChanged(params.sessionId);
     } catch (error) {
       replay.invalidate(error);

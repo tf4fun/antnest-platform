@@ -7,8 +7,9 @@ deactivation and foreign-Agent access use their own normal-request profiles:
 [ACP closeout](../acp-closeout/README.md) and
 [organization/SCIM access](../identity-closeout/README.md).
 
-Both installed SDK versions must preserve completed history, classify known
-interrupted Runs, and retain unresolved Runtime effects honestly. The host must
+Both ACP protocol versions supported by the installed SDK must preserve completed
+history, classify known interrupted Runs, and retain unresolved Runtime effects
+honestly. The host must
 verify the physical marker and live PID before killing an in-flight executor.
 After restart, unknown effects require `runtime_barrier_required` until an
 explicit Rebuild replaces the protected Runtime. Preserve the old unresolved

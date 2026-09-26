@@ -1,12 +1,16 @@
 # ACP Protocol Conformance
 
-> Latest SDK audit and fixes (2026-09-16): the authority is official TypeScript
-> SDK `1.4.0`, including its schema and capability stability annotations.
+> Latest SDK audit (2026-09-26): the authority is official TypeScript SDK `1.5.0`,
+> including its schema and capability stability annotations. Its 42 methods are
+> unchanged; v1 notices remain experimental and unadvertised. V2 prompt acceptance
+> returns the persisted user message ID required by the updated schema.
 > The [42-method audit](acp-v1-sdk-audit.md) reproduced and then fixed refusal
 > context isolation, closed Session output subscriptions, and unknown-effect
 > cancellation responses. The later metadata fix closes observer/recovery consistency (COVERAGE-02).
-> Current evidence: 959 unit/component, 245 PostgreSQL,
-> 9 SDK audit tests and 4 production-image Docker scenarios pass. Conservative
+> Upgrade evidence: 841 unit tests, 162 protocol integration tests, 249 PostgreSQL
+> and 9 SDK audit tests pass. Production-image and cross-service regression is
+> tracked in the [dependency refresh](../../../docs/dependency-refresh-20260926.md).
+> The earlier 4 production-image scenarios used SDK 1.4.0. Conservative
 > unknown-effect facts and Runtime admission protection remain in place.
 > This service evidence does not close the disclosed profile/F07/coverage gaps.
 
@@ -22,7 +26,7 @@
 This document defines ACP tests from the protocol inward. It must not infer
 conformance from the methods that happen to exist in the implementation.
 
-The pinned implementation schema is `@agentclientprotocol/sdk` `1.4.0`:
+The pinned implementation schema is `@agentclientprotocol/sdk` `1.5.0`:
 
 - package root and `schema/schema.json`: ACP v1, including experimental surfaces;
 - `experimental/v2` and `schema/v2/schema.unstable.json`: draft ACP v2.
@@ -431,7 +435,7 @@ do not exclude Provider/mode/editor/NES as one group.
 | V2-MCP-01     | No client MCP capability advertised; nonempty inputs reject across new/resume/fork                                                           | adapter + PostgreSQL MCP input tests                                                                | Service-covered |
 | V2-BATCH-01   | WireStream accepts valid batches and preserves per-entry JSON-RPC responses.                                                                 | mixed request/notification raw-wire test                                                            | Covered         |
 
-The only standardized v2 replay cursor in SDK `1.4.0` is `start`. Other values
+The only standardized v2 replay cursor in SDK `1.5.0` is `start`. Other values
 are extension cursors whose documented safe behavior is preservation or
 rejection. They must not be treated as a missing standardized message cursor.
 

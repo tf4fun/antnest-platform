@@ -6,6 +6,12 @@
   "schema": "workspace-api.schema.json",
   "transport": "same-origin authenticated HTTP; SSE for observation",
   "routes": {
+    "control_command": {
+      "method": "POST",
+      "path": "/agents/{agentId}/commands",
+      "request": "controlCommandRequest",
+      "response": "controlCommandResult"
+    },
     "bootstrap": {
       "method": "GET",
       "path": "/bootstrap",

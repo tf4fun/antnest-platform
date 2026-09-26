@@ -33,7 +33,9 @@ test("ordinary lifecycle CLI preserves five operations, four absences, workspace
   ])
     assert.equal(
       f.requests.filter((r) => r.url === `/api/traces/${trace.traceID}`).length,
-      3,
+      // Search first loads each publication in full, then the stable collector
+      // verifies it with the same three snapshots as lifecycle traces.
+      f.publications.includes(trace) ? 4 : 3,
     );
   assert.equal(
     f.requests.filter((r) => r.url === `/api/admin/agents/${f.retainedId}`)

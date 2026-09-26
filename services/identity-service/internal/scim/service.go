@@ -167,14 +167,14 @@ type GroupPage struct {
 
 type Config struct {
 	Repository Repository
-	NewID      func() string
+	NewID      func(string) string
 	NewOpaque  func(string) (string, string, error)
 	Now        func() time.Time
 }
 
 type Service struct {
 	repository Repository
-	newID      func() string
+	newID      func(string) string
 	newOpaque  func(string) (string, string, error)
 	now        func() time.Time
 }
@@ -213,7 +213,7 @@ func (s *Service) IssueToken(ctx context.Context, input IssueTokenInput) (IssueT
 	}
 	command := IssueTokenCommand{
 		RequestID: input.RequestID, ActorPrincipalID: input.ActorPrincipalID,
-		TokenID: s.newID(), TokenHash: digest, OrganizationID: input.OrganizationID,
+		TokenID: s.newID("scimtoken"), TokenHash: digest, OrganizationID: input.OrganizationID,
 		Name: name, Scopes: scopes, CreatedAt: s.now().UTC(),
 	}
 	token, err := s.repository.IssueToken(ctx, command)
@@ -272,11 +272,11 @@ func (s *Service) CreateUser(ctx context.Context, authorization Authorization, i
 	}
 	now := s.now().UTC()
 	user := domain.User{
-		ID: s.newID(), SystemRole: domain.SystemRoleUser,
+		ID: s.newID("user"), SystemRole: domain.SystemRoleUser,
 		Active: true, CreatedAt: now, UpdatedAt: now,
 	}
 	membership := domain.OrganizationMembership{
-		ID: s.newID(), OrganizationID: authorization.OrganizationID, UserID: user.ID,
+		ID: s.newID("membership"), OrganizationID: authorization.OrganizationID, UserID: user.ID,
 		Email: email, DisplayName: displayName,
 		Role: domain.OrganizationRoleMember, Source: domain.SourceSCIM, Active: input.Active,
 		SCIMExternalID: strings.TrimSpace(input.ExternalID), SCIMUserName: userName,
@@ -365,7 +365,7 @@ func (s *Service) CreateGroup(ctx context.Context, authorization Authorization, 
 	}
 	now := s.now().UTC()
 	group := domain.Group{
-		ID: s.newID(), OrganizationID: authorization.OrganizationID, DisplayName: displayName,
+		ID: s.newID("group"), OrganizationID: authorization.OrganizationID, DisplayName: displayName,
 		Source: domain.SourceSCIM, Active: true, SCIMExternalID: strings.TrimSpace(input.ExternalID),
 		CreatedAt: now, UpdatedAt: now,
 	}

@@ -10,7 +10,7 @@ use rmcp::{
     service::PeerRequestOptions,
 };
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt::Write as _, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
@@ -272,11 +272,11 @@ pub(crate) fn exposed_name(server: &str, tool: &str) -> Result<String, &'static 
     if name.len() <= 64 && !name.contains('.') {
         return Ok(name);
     }
-    let digest = format!("{:x}", Sha256::digest(name.as_bytes()));
+    let digest = Sha256::digest(name.as_bytes());
     let prefix = name.replace('.', "_");
-    Ok(format!(
-        "{}_{:.16}",
-        &prefix[..prefix.len().min(47)],
-        digest
-    ))
+    let mut exposed = format!("{}_", &prefix[..prefix.len().min(47)]);
+    for byte in &digest[..8] {
+        write!(exposed, "{byte:02x}").expect("writing to String is infallible");
+    }
+    Ok(exposed)
 }

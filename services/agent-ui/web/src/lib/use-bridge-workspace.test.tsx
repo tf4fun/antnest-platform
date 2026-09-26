@@ -6,7 +6,7 @@ import { WorkspaceApiError } from "./workspace-api-client";
 afterEach(cleanup);
 
 test("leaving a Session releases completed process from published workspace history", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let changed!: (snapshot: unknown) => void;
   const api = { bootstrap: async () => ({
     principal: { userId: "user-1", organizationId: "org-1", administrator: false },
@@ -42,7 +42,7 @@ test("leaving a Session releases completed process from published workspace hist
 });
 
 test("a missing Session deep link returns to the Agent directory", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=gone");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/gone");
   const bootstrap = async () => ({
     principal: { userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
@@ -59,11 +59,11 @@ test("a missing Session deep link returns to the Agent directory", async () => {
   }));
   await waitFor(() => expect(result.current.workspace?.activeConversationId).toBeNull());
   expect(result.current.workspace?.activeAgentId).toBe("agent-1");
-  expect(window.location.search).toBe("?agent=agent-1");
+  expect(window.location.pathname).toBe("/workspace/agent-1/");
 });
 
 test("Bridge workspace bootstraps through HTTP and observes the selected Agent", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/");
   const bootstrap = vi.fn(async () => ({
     principal: { userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
@@ -84,7 +84,7 @@ test("Bridge workspace bootstraps through HTTP and observes the selected Agent",
 });
 
 test("a disconnected observer keeps saved history but does not advertise stale availability", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let changed!: (snapshot: unknown) => void;
   const conversation = { id: "session-1", agentId: "agent-1", title: "Saved",
     updatedAt: "now", messages: [{ id: "answer", role: "assistant", content: "Saved answer" }] };
@@ -112,7 +112,7 @@ test("a disconnected observer keeps saved history but does not advertise stale a
 });
 
 test("Bridge prompt clears the draft after HTTP admission while operation stays active", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const bootstrap = async () => ({
     principal: { userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
@@ -141,8 +141,124 @@ test("Bridge prompt clears the draft after HTTP admission while operation stays 
   expect(result.current.draft).toBe("");
 });
 
+test("first send creates a Session, waits for its View, and submits once", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/");
+  const createSession = vi.fn(async () => ({ sessionId: "session-new" }));
+  const submitPrompt = vi.fn(async () => ({ operationId: "intent-1", sessionId: "session-new",
+    phase: "dispatching", acceptance: "bridge" }));
+  let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
+  const select = vi.fn(async (sessionId: string | null) => {
+    snapshot = { connection: "ready", view: { agentId: "agent-1", bridgeEpoch: "epoch-1",
+      promptCapabilities: {}, availability: "ready", activeSessionId: null,
+      selectedSessionId: sessionId, selectedView: sessionId ? { historyState: "ready" } : null },
+    operations: [], permissions: [], conversation: sessionId ? {
+      id: sessionId, agentId: "agent-1", title: "New conversation", updatedAt: "now", messages: [],
+    } : undefined };
+    changed(snapshot as never);
+  });
+  let changed!: (snapshot: never) => void;
+  const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+    organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
+    name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
+  sessions: async () => ({ items: [], nextCursor: null }), createSession };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never,
+    makeController: (input) => { changed = input.changed as never; return {
+      get snapshot() { return snapshot; },
+      select, submitPrompt, close: vi.fn(),
+    } as never; },
+  }));
+  await waitFor(() => expect(result.current.activeAgent?.status).toBe("ready"));
+  expect(createSession).not.toHaveBeenCalled();
+  act(() => result.current.setDraft("你好"));
+  await act(async () => { await result.current.submit(); });
+  expect(createSession).toHaveBeenCalledOnce();
+  expect(select).toHaveBeenCalledWith("session-new");
+  expect(submitPrompt).toHaveBeenCalledOnce();
+  expect(result.current.workspace?.activeConversationId).toBe("session-new");
+  expect(result.current.draft).toBe("");
+});
+
+test("first send stays pending until the created Session View becomes ready", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/");
+  let changed!: (snapshot: never) => void;
+  let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
+  const selected = (sessionId: string | null, historyState: "loading" | "ready") => ({
+    connection: "ready", view: { agentId: "agent-1", availability: "ready",
+      activeSessionId: null, selectedSessionId: sessionId,
+      selectedView: sessionId ? { historyState } : null }, operations: [], permissions: [],
+    conversation: sessionId ? { id: sessionId, agentId: "agent-1",
+      title: "New conversation", updatedAt: "now", messages: [] } : undefined,
+  });
+  const submitPrompt = vi.fn(async () => ({ operationId: "intent", sessionId: "created",
+    phase: "dispatching", acceptance: "bridge" }));
+  const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+    organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
+    name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
+  sessions: async () => ({ items: [], nextCursor: null }),
+  createSession: vi.fn(async () => ({ sessionId: "created" })) };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never,
+    makeController: (input) => { changed = input.changed as never; return {
+      get snapshot() { return snapshot; }, close: vi.fn(), submitPrompt,
+      select: async (sessionId: string | null) => {
+        snapshot = selected(sessionId, "loading"); changed(snapshot as never);
+      },
+    } as never; },
+  }));
+  await waitFor(() => expect(result.current.activeAgent?.status).toBe("ready"));
+  act(() => result.current.setDraft("One message"));
+  let pending!: Promise<void>;
+  act(() => { pending = result.current.submit(); });
+  await waitFor(() => expect(result.current.workspace?.activeConversationId).toBe("created"));
+  expect(submitPrompt).not.toHaveBeenCalled();
+  expect(result.current.draft).toBe("One message");
+  await act(async () => { await result.current.submit(); });
+  expect(api.createSession).toHaveBeenCalledOnce();
+  await act(async () => { snapshot = selected("created", "ready"); changed(snapshot as never);
+    await pending; });
+  expect(submitPrompt).toHaveBeenCalledOnce();
+  expect(result.current.draft).toBe("");
+});
+
+test("ambiguous creation retains the draft and requires a directory refresh before retry", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/");
+  const createSession = vi.fn(async () => { throw new WorkspaceApiError(
+    "Workspace request timed out", undefined, "workspace_request_timeout", "retry_read"); });
+  let changed!: (snapshot: never) => void;
+  let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
+  const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+    organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
+    name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
+  sessions: vi.fn(async () => ({ items: [], nextCursor: null })), createSession };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never,
+    makeController: (input) => { changed = input.changed as never; return {
+      get snapshot() { return snapshot; },
+      select: async (sessionId: string | null) => {
+        snapshot = { connection: "ready", view: { agentId: "agent-1",
+          availability: "ready", activeSessionId: null, selectedSessionId: sessionId,
+          selectedView: null }, operations: [], permissions: [] };
+        changed(snapshot as never);
+      }, close: vi.fn(),
+    } as never; },
+  }));
+  await waitFor(() => expect(result.current.activeAgent?.status).toBe("ready"));
+  act(() => result.current.setDraft("Keep this message"));
+  await act(async () => { await result.current.submit(); });
+  expect(result.current.draft).toBe("Keep this message");
+  expect(result.current.creationUncertain).toBe(true);
+  expect(result.current.interactionError).toMatch(/Refresh workspace/i);
+  await act(async () => { await result.current.submit(); });
+  expect(createSession).toHaveBeenCalledOnce();
+  await act(async () => { await result.current.refreshWorkspace(); });
+  expect(api.sessions).toHaveBeenCalledTimes(2);
+  expect(result.current.creationUncertain).toBe(false);
+  expect(result.current.draft).toBe("Keep this message");
+});
+
 test("blocked selected View keeps saved messages read-only and offers retry", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const select = vi.fn(async () => {});
   const api = { bootstrap: async () => ({
     principal: { userId: "user-1", organizationId: "org-1", administrator: false },
@@ -173,7 +289,7 @@ test("blocked selected View keeps saved messages read-only and offers retry", as
 });
 
 test("Bridge Session switching preserves separate unsent drafts", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const api = {
     bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
@@ -199,8 +315,8 @@ test("Bridge Session switching preserves separate unsent drafts", async () => {
   expect(result.current.draft).toBe("Draft two");
 });
 
-test("new Bridge Session remains in the catalog after navigation", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+test("new conversation selects a local Agent draft without creating a Session", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const api = {
     bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
@@ -214,14 +330,16 @@ test("new Bridge Session remains in the catalog after navigation", async () => {
       snapshot: { connection: "ready", view: null, operations: [], permissions: [] } }) as never }));
   await waitFor(() => expect(result.current.workspace?.activeAgentId).toBe("agent-1"));
   await act(async () => { await result.current.newConversation(); });
-  expect(result.current.workspace?.activeConversationId).toBe("session-new");
-  expect(result.current.workspace?.conversations.some((item) => item.id === "session-new"))
-    .toBe(true);
+  expect(result.current.workspace?.activeConversationId).toBeNull();
+  expect(result.current.workspace?.conversations).toHaveLength(0);
+  expect(api.createSession).not.toHaveBeenCalled();
 });
 
 test("late Session creation does not replace a newer explicit selection", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/");
   let finishCreation!: (value: { sessionId: string }) => void;
+  let changed!: (snapshot: never) => void;
+  let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
   const api = {
     bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
@@ -233,20 +351,28 @@ test("late Session creation does not replace a newer explicit selection", async 
     }),
   };
   const { result } = renderHook(() => useBridgeWorkspace({ api: api as never,
-    makeController: () => ({ select: async () => {}, close: vi.fn(),
-      snapshot: { connection: "ready", view: null, operations: [], permissions: [] } }) as never }));
-  await waitFor(() => expect(result.current.workspace?.activeConversationId).toBe("session-1"));
+    makeController: (input) => { changed = input.changed as never; return {
+      select: async (id: string | null) => { snapshot = { connection: "ready", view: {
+        agentId: "agent-1", availability: "ready", activeSessionId: null,
+        selectedSessionId: id, selectedView: id ? { historyState: "ready" } : null },
+      operations: [], permissions: [] }; changed(snapshot as never); }, close: vi.fn(),
+      get snapshot() { return snapshot; }, submitPrompt: vi.fn(),
+    } as never; } }));
+  await waitFor(() => expect(result.current.activeAgent?.status).toBe("ready"));
+  act(() => result.current.setDraft("First message"));
   let pending!: Promise<void>;
-  act(() => { pending = result.current.newConversation(); });
+  act(() => { pending = result.current.submit(); });
   act(() => result.current.selectConversation("session-2"));
   await act(async () => { finishCreation({ sessionId: "session-new" }); await pending; });
   expect(result.current.workspace?.activeConversationId).toBe("session-2");
   expect(result.current.workspace?.conversations.some((item) => item.id === "session-new"))
     .toBe(true);
+  act(() => result.current.selectAgent("agent-1"));
+  expect(result.current.draft).toBe("First message");
 });
 
-test("late hydration bootstrap retains a Session created after SSR", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1");
+test("late hydration bootstrap retains a local Agent draft without creating a Session", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/");
   const bootstrap = { principal: { userId: "user-1", organizationId: "org-1",
     administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
     lifecycle: "created", activation: "enabled", runtime: "available" }],
@@ -261,17 +387,15 @@ test("late hydration bootstrap retains a Session created after SSR", async () =>
     initialBootstrap: bootstrap,
     makeController: () => ({ select: async () => {}, close: vi.fn(),
       snapshot: { connection: "ready", view: null, operations: [], permissions: [] } }) as never }));
+  act(() => result.current.setDraft("SSR draft"));
   await act(async () => { await result.current.newConversation(); });
-  expect(result.current.workspace?.conversations.some((item) => item.id === "session-new"))
-    .toBe(true);
   await act(async () => { finishBootstrap(bootstrap); });
-  expect(result.current.workspace?.activeConversationId).toBe("session-new");
-  expect(result.current.workspace?.conversations.some((item) => item.id === "session-new"))
-    .toBe(true);
+  expect(result.current.workspace?.activeConversationId).toBeNull();
+  expect(result.current.draft).toBe("SSR draft");
 });
 
 test("refreshing into another principal clears private drafts for an overlapping Agent", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let principal = "user-1";
   const select = vi.fn(async () => {});
   const api = {
@@ -302,7 +426,7 @@ test("refreshing into another principal clears private drafts for an overlapping
 });
 
 test("hydration bootstrap replacing the principal drops the SSR identity's draft", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const bootstrapFor = (userId: string) => ({ principal: { userId,
     organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
@@ -324,7 +448,7 @@ test("hydration bootstrap replacing the principal drops the SSR identity's draft
 });
 
 test("removing a Bridge attachment releases its preview URL before page unload", async () => {
-  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview-one");
   const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   try {

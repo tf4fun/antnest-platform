@@ -45,6 +45,16 @@ test("policy trace requires exact successful Egress write under Gateway and Cons
     "200";
   assert.equal(inspectPolicyTrace(rust, item).gateway_ancestry, true);
 });
+test("policy trace validates the status translated by Jaeger's v1 API", () => {
+  const trace = fixture();
+  const status = trace.spans[3].tags.find(
+    (field) => field.key === "http.response.status_code",
+  );
+  status.key = "http.status_code";
+  assert.equal(inspectPolicyTrace(trace, item).gateway_ancestry, true);
+  status.value = 500;
+  assert.throws(() => inspectPolicyTrace(trace, item));
+});
 for (const [label, mutate] of [
   [
     "malformed status",

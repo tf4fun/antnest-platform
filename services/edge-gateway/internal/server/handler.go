@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
 	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
@@ -586,31 +587,41 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 
 func redirectWorkspaceLogin(response http.ResponseWriter, request *http.Request) {
 	returnTo := "/workspace/"
-	if request.URL.Path == "/workspace/" {
-		query, err := url.ParseQuery(request.URL.RawQuery)
-		if err == nil && len(query) <= 2 {
-			agent := query["agent"]
-			session := query["session"]
-			if len(agent) == 1 && validWorkspaceReturnID(agent[0]) &&
-				(len(session) == 0 || len(session) == 1 && validWorkspaceReturnID(session[0])) {
-				valid := true
-				for key := range query {
-					if key != "agent" && key != "session" {
-						valid = false
-					}
-				}
-				if valid {
-					returnTo += "?" + query.Encode()
-				}
-			}
-		}
+	if validWorkspaceReturnPath(request.URL) {
+		returnTo = request.URL.EscapedPath()
 	}
 	response.Header().Set("Cache-Control", "private, no-store")
 	http.Redirect(response, request, "/?return_to="+url.QueryEscape(returnTo), http.StatusSeeOther)
 }
 
+func validWorkspaceReturnPath(destination *url.URL) bool {
+	if destination.RawQuery != "" || destination.ForceQuery || destination.Fragment != "" {
+		return false
+	}
+	path := destination.EscapedPath()
+	if path == "/workspace/" {
+		return true
+	}
+	// Split before decoding so an encoded separator remains inside its ID.
+	parts := strings.Split(path, "/")
+	if len(parts) != 4 && len(parts) != 5 || parts[0] != "" || parts[1] != "workspace" {
+		return false
+	}
+	agent, err := url.PathUnescape(parts[2])
+	if err != nil || !validWorkspaceReturnID(agent) || agent == "assets" {
+		return false
+	}
+	if len(parts) == 4 {
+		return parts[3] == ""
+	}
+	sessionID, err := url.PathUnescape(parts[4])
+	return parts[3] == "sessions" && err == nil && validWorkspaceReturnID(sessionID)
+}
+
 func validWorkspaceReturnID(value string) bool {
-	if value == "" || len(value) > 200 || strings.TrimSpace(value) != value {
+	if value == "" || len(value) > 200 || !utf8.ValidString(value) ||
+		strings.TrimSpace(value) != value || strings.Trim(value, "\ufeff") != value ||
+		value == "." || value == ".." {
 		return false
 	}
 	for _, character := range value {

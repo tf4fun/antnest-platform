@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 
 WORKDIR /workspace/services/agent-acp-service
 
@@ -9,7 +9,7 @@ COPY services/agent-acp-service/tsconfig.json services/agent-acp-service/tsconfi
 COPY services/agent-acp-service/src ./src
 RUN npm run build
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:24.21.0-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app

@@ -60,7 +60,7 @@ func (repository *Repository) applyRuntimeCondition(ctx context.Context, tx *dat
 	}
 	invalidation, executionID, invalidate := currentRuntimeInvalidation(current)
 	if invalidate {
-		eventID := "runtime-condition-loss-" + agent.AgentID + "-" + strconv.FormatInt(agent.AggregateSequence+1, 10)
+		eventID := domain.DeriveResourceID("event", "runtime-condition-loss", agent.AgentID+"\x00"+strconv.FormatInt(agent.AggregateSequence+1, 10))
 		changed, err := invalidateRuntimeExecution(ctx, tx, agent.AgentID, agent.RuntimeRevision, executionID, eventID, invalidation, 0)
 		if err != nil {
 			return 0, err
@@ -91,7 +91,7 @@ WHERE id=$1`, agent.AgentID, state, current.Reason, current.DiagnosticSummary, c
 	}
 	if changed {
 		err := repository.insertAgentEvent(ctx, tx, ports.AgentEventRecord{
-			EventID: "runtime-condition-" + agent.AgentID + "-" + strconv.FormatInt(sequence, 10), AgentID: agent.AgentID,
+			EventID: domain.DeriveResourceID("event", "runtime-condition", agent.AgentID+"\x00"+strconv.FormatInt(sequence, 10)), AgentID: agent.AgentID,
 			AggregateSequence: sequence, SchemaVersion: 1, EventType: ports.EventAgentRuntimeConditionChanged,
 			TraceID: traceID, OccurredAt: current.ObservedAt,
 			Data: map[string]any{"runtime_revision": current.RuntimeRevision, "runtime_state": state, "reason": current.Reason},

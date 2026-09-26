@@ -101,7 +101,7 @@ describe("Agent lifecycle command boundaries", () => {
     const { fetch } = mockWorkflow("disable", async () => Response.json(operation("disable")));
     render(<AgentsPage agentID="agent-1" />);
     const link = await screen.findByRole("link", { name: "Open chat" });
-    expect(link.getAttribute("href")).toBe("/workspace/?agent=agent-1");
+    expect(link.getAttribute("href")).toBe("/workspace/agent-1/");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
     expect(postCalls(fetch)).toHaveLength(0);

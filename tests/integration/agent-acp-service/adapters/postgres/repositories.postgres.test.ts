@@ -422,6 +422,11 @@ describe.skipIf(databaseUrl === undefined)(
           { kind: "environment_change", visible: false, sequence: "1" },
           { kind: "user_message", visible: true, sequence: "2" },
         ]);
+        const fact = await pool.query<{ id: string }>(
+          "SELECT id FROM session_messages WHERE run_id = $1 AND kind = 'environment_change'",
+          [runId],
+        );
+        expect(fact.rows[0]?.id).toMatch(/^message_[0-9a-f]{32}$/);
         await expect(sessions.get(sessionId)).resolves.toMatchObject({
           title: "hello",
           lastExecutionRevision: "execution-2",
@@ -490,6 +495,14 @@ describe.skipIf(databaseUrl === undefined)(
         finishedAt: new Date("2026-08-30T00:20:03Z"),
       });
 
+      await contexts.saveCheckpoint({
+        id: randomUUID(),
+        sessionId: sourceSessionId,
+        throughSequence: 1,
+        summary: "remember this",
+        tokenCount: 3,
+        createdAt: new Date("2026-08-30T00:20:04Z"),
+      });
       const forkSessionId = randomUUID();
       const forkMcpRevisionId = randomUUID();
       await sessions.fork({
@@ -523,6 +536,38 @@ describe.skipIf(databaseUrl === undefined)(
         [forkSessionId],
       );
       expect(copiedRunReferences.rowCount).toBe(0);
+      const copied = await pool.query<{
+        id: string;
+        sequence: string;
+        payload: { messageId: string };
+      }>(
+        "SELECT id, sequence, payload FROM session_messages WHERE session_id = $1 ORDER BY sequence",
+        [forkSessionId],
+      );
+      for (const row of copied.rows) {
+        const suffix = createHash("sha256")
+          .update(`fork-message\0${forkSessionId}:${row.sequence}`)
+          .digest("hex")
+          .slice(0, 32);
+        expect(row.id).toBe(`message_${suffix}`);
+        expect(row.payload.messageId).toBe(row.id);
+      }
+      const checkpoint = (
+        await pool.query<{ id: string }>(
+          "SELECT id FROM context_checkpoints WHERE session_id = $1",
+          [forkSessionId],
+        )
+      ).rows[0];
+      expect(checkpoint?.id).toBe(
+        `checkpoint_${createHash("sha256")
+          .update(`fork-checkpoint\0${forkSessionId}:1`)
+          .digest("hex")
+          .slice(0, 32)}`,
+      );
+      expect((await contexts.load(forkSessionId)).checkpoint).toMatchObject({
+        summary: "remember this",
+        throughSequence: 1,
+      });
     });
 
     it("persists replay events, context checkpoints, Tool attempts, and terminal Run facts", async () => {
@@ -630,6 +675,29 @@ describe.skipIf(databaseUrl === undefined)(
         toolEffectState: "unknown",
         unknownEffectSource: "unclassified",
       });
+      const attempts = await pool.query<{ id: string }>(
+        "SELECT id FROM tool_attempts WHERE run_id = $1",
+        [runId],
+      );
+      expect(attempts.rows).toHaveLength(2);
+      for (const row of attempts.rows)
+        expect(row.id).toMatch(/^toolattempt_[0-9a-f]{32}$/);
+      const recoveryRows = await pool.query<{ id: string }>(
+        "SELECT id FROM session_messages WHERE run_id = $1 AND kind = 'tool_call' AND payload ->> 'status' = 'failed' ORDER BY sequence",
+        [runId],
+      );
+      expect(recoveryRows.rows).toHaveLength(2);
+      for (const row of recoveryRows.rows)
+        expect(row.id).toMatch(/^message_[0-9a-f]{32}$/);
+      await events.interruptToolAttempts(
+        runId,
+        new Date("2026-08-30T01:00:04Z"),
+      );
+      const recoveryAgain = await pool.query<{ id: string }>(
+        "SELECT id FROM session_messages WHERE run_id = $1 AND kind = 'tool_call' AND payload ->> 'status' = 'failed' ORDER BY sequence",
+        [runId],
+      );
+      expect(recoveryAgain.rows).toEqual(recoveryRows.rows);
       const replayed = (await sessions.replay(sessionId)).filter(
         (event) => event.kind === "tool_call" && event.toolCallId === "call-2",
       );

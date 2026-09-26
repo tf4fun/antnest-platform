@@ -12,6 +12,12 @@ import {
 const session = "session-1";
 const phase = "phase-1";
 const frame = (update) => ({ sessionId: session, update });
+const accepted = { messageId: "input-1" };
+const user = frame({
+  sessionUpdate: "user_message",
+  messageId: accepted.messageId,
+  content: [{ type: "text", text: phase }],
+});
 const running = frame({ sessionUpdate: "state_update", state: "running" });
 const idle = frame({
   sessionUpdate: "state_update",
@@ -80,11 +86,11 @@ test("version selection and initialization keep the two official contracts disti
   });
 });
 for (const version of [1, 2]) {
-  const result = version === 1 ? { stopReason: "end_turn" } : {};
+  const result = version === 1 ? { stopReason: "end_turn" } : accepted;
   const updates =
     version === 1
       ? [tool, answer(version)]
-      : [running, tool, answer(version), idle];
+      : [user, running, tool, answer(version), idle];
   test(`v${version}: only actual Tool/answer/completion can finish a prompt`, () => {
     assertPromptComplete(version, result, updates, phase, session);
     for (const invalid of [
@@ -107,7 +113,7 @@ for (const version of [1, 2]) {
   });
   test(`v${version}: replay preserves ordered Tool terminal records and answers`, () => {
     const replayed = [
-      ...(version === 1 ? [input()] : []),
+      ...(version === 1 ? [input()] : [user]),
       tool,
       answer(version),
       ...(version === 2 ? [idle] : []),
@@ -151,7 +157,9 @@ test("v2 acknowledgment, failed idle, duplicate idle and reversed states are not
       frame({ ...idle.update, stopReason: "_failed" }),
     ],
   ])
-    assert.throws(() => assertPromptComplete(2, {}, invalid, phase, session));
+    assert.throws(() =>
+      assertPromptComplete(2, accepted, [user, ...invalid], phase, session),
+    );
   assert.throws(() =>
     assertPromptComplete(1, {}, [tool, answer(1)], phase, session),
   );
@@ -168,6 +176,28 @@ test("v2 acknowledgment, failed idle, duplicate idle and reversed states are not
         session,
       ),
     );
+});
+test("v2 acceptance identifies the initiating user message", () => {
+  const updates = [user, running, tool, answer(2), idle];
+  assertPromptComplete(2, accepted, updates, phase, session);
+  for (const response of [
+    {},
+    { messageId: "" },
+    { messageId: "answer-1" },
+    { messageId: "foreign" },
+  ])
+    assert.throws(() =>
+      assertPromptComplete(2, response, updates, phase, session),
+    );
+  assert.throws(() =>
+    assertPromptComplete(
+      2,
+      accepted,
+      updates.filter((item) => item !== user),
+      phase,
+      session,
+    ),
+  );
 });
 test("v1 load adds each sent input once before its live Tool/answer sequence", () => {
   const secondTool = frame({ ...tool.update, toolCallId: "tool-2" });

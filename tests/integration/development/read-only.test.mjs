@@ -40,13 +40,23 @@ async function fixture(t, profile) {
     let body = "";
     for await (const chunk of request) body += chunk;
     f.requests.push({ method: request.method, url: request.url, body });
-    const value = request.url.startsWith("/api/traces?")
-      ? { data: f.traces }
-      : request.url === "/api/session/login"
-        ? { ok: true }
-        : request.url.startsWith("/api/admin/agents/")
-          ? f.agent
-          : f.state;
+    const value =
+      request.method === "GET" &&
+      request.url.startsWith("/api/v3/trace-summaries?")
+        ? {
+            summaries: f.traces.map((trace) => ({ traceId: trace.traceID })),
+          }
+        : request.url.startsWith("/api/traces/")
+          ? {
+              data: f.traces.filter(
+                (trace) => request.url === `/api/traces/${trace.traceID}`,
+              ),
+            }
+          : request.url === "/api/session/login"
+            ? { ok: true }
+            : request.url.startsWith("/api/admin/agents/")
+              ? f.agent
+              : f.state;
     response.writeHead(f.status, { "content-type": "application/json" });
     response.end(JSON.stringify(value));
   });
@@ -154,11 +164,18 @@ test("trace-review retains raw bytes, strict failure and exact query scope", asy
   assert(
     reports.every((r) => r.session_id === sessionId && r.runtime_calls === 1),
   );
-  const query = new URL(f.requests[0].url, f.config.jaeger).searchParams;
-  assert.equal(query.get("service"), "agent-acp-service");
-  assert.equal(query.get("limit"), "20");
-  assert.equal(query.get("lookback"), "1h");
-  assert.deepEqual(JSON.parse(query.get("tags")), {
+  const search = new URL(f.requests[0].url, f.config.jaeger);
+  assert.equal(search.pathname, "/api/v3/trace-summaries");
+  assert.equal(f.requests[0].method, "GET");
+  const query = search.searchParams;
+  assert.equal(query.get("query.serviceName"), "agent-acp-service");
+  assert.equal(query.get("query.searchDepth"), "20");
+  assert.equal(
+    Date.parse(query.get("query.startTimeMax")) -
+      Date.parse(query.get("query.startTimeMin")),
+    3600000,
+  );
+  assert.deepEqual(JSON.parse(query.get("query.attributes")), {
     "rpc.method": "session/prompt",
     "antnest.session.id": sessionId,
   });
@@ -208,7 +225,9 @@ test("rejection-trace preserves expected rejection report and query", async (t) 
   assert.equal(report.model_requests, 0);
   assert.equal(report.scope, "expected rejection; not a successful-chat trace");
   assert.equal(
-    new URL(f.requests[0].url, f.config.jaeger).searchParams.get("limit"),
+    new URL(f.requests[0].url, f.config.jaeger).searchParams.get(
+      "query.searchDepth",
+    ),
     "10",
   );
 });

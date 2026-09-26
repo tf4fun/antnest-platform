@@ -61,6 +61,7 @@ export type Message = {
 };
 
 export type Conversation = {
+  availableCommands?: import("../../server/src/protocol/available-commands.ts").WorkspaceCommand[];
   plan?: PlanEntry[];
   historyState?: "loading" | "failed" | "blocked";
   usage?: SessionUsage;

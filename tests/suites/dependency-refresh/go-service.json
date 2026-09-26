@@ -1,0 +1,52 @@
+[
+  {
+    "name": "go-race",
+    "command": [
+      "node",
+      "tests/integration/go/run.mjs",
+      {
+        "input": "service"
+      },
+      "--profile",
+      "all",
+      "--output",
+      {
+        "input": "output",
+        "relative": "go"
+      },
+      "--",
+      "-race",
+      "-timeout=10m"
+    ],
+    "timeout_ms": 1200000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "go-build",
+    "command": [
+      "sh",
+      "-c",
+      "go build \"./services/$1/...\"",
+      "sh",
+      {
+        "input": "service"
+      }
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "go-lint",
+    "command": [
+      "sh",
+      "-c",
+      "cd \"services/$1\" && golangci-lint run ./...",
+      "sh",
+      {
+        "input": "service"
+      }
+    ],
+    "timeout_ms": 900000,
+    "grace_ms": 30000
+  }
+]

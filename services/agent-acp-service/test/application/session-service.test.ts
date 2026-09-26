@@ -12,6 +12,27 @@ const binding: ConnectionBinding = {
 };
 
 describe("SessionService", () => {
+  it("requests Session and MCP revision kinds for create, fork and resume", async () => {
+    const repository = createRepository();
+    const kinds: string[] = [];
+    const id = (kind: string) => {
+      kinds.push(kind);
+      return `${kind}_${kinds.length.toString(16).padStart(32, "0")}`;
+    };
+    const service = new SessionService({
+      repository: repository.port,
+      id,
+      now: () => new Date("2026-09-26T00:00:00Z"),
+    });
+    const input = { binding, cwd: "/workspace", additionalDirectories: [], mcpServers: [] };
+    const created = await service.createSession(input);
+    const forked = await service.forkSession({ ...input, sessionId: "session-1" });
+    await service.resumeSession({ ...input, sessionId: "session-1", replayFromStart: false });
+    expect(created.sessionId).toMatch(/^session_[0-9a-f]{32}$/);
+    expect(forked.sessionId).toMatch(/^session_[0-9a-f]{32}$/);
+    expect(kinds).toEqual(["session", "mcprev", "session", "mcprev", "mcprev"]);
+  });
+
   it("creates one durable Session with an empty client MCP revision", async () => {
     const repository = createRepository();
     const service = createService(repository.port);

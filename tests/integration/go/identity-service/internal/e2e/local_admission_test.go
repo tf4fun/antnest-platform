@@ -100,7 +100,7 @@ type localAdmissionFixture struct {
 	pool  *pgxpool.Pool
 	store *repository.Store
 	user  directory.CreateLocalUserResult
-	newID func() string
+	newID func(kind string) string
 	admin repository.BootstrapResult
 	clock func() time.Time
 }
@@ -112,7 +112,7 @@ func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() tim
 		t.Fatal(err)
 	}
 	var sequence atomic.Uint64
-	newID := func() string { return fmt.Sprintf("admission-%d", sequence.Add(1)) }
+	newID := func(kind string) string { return fmt.Sprintf("admission-%d", sequence.Add(1)) }
 	store, err := repository.New(pool, newID, clock)
 	if err != nil {
 		t.Fatal(err)

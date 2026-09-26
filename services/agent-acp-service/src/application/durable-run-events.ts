@@ -1,3 +1,4 @@
+import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { createHash } from "node:crypto";
 
 import type { ContentBlock, ModelToolDefinition, ToolEffectState } from "../domain/types.js";
@@ -14,7 +15,7 @@ const MAX_RESULT_SUMMARY_CHARACTERS = 4_096;
 export type DurableRunEventsDependencies = {
   repository: RunEventRepository;
   publish: SessionEventPublisher["publish"];
-  id: () => string;
+  id: ResourceIdGenerator;
   now: () => Date;
   contextSize: number;
   runtimeWorkspace?: string;
@@ -68,7 +69,7 @@ export class DurableRunEvents implements RunEventPort {
   ): Promise<void> {
     const event = await this.persist("Tool progress", () =>
       this.dependencies.repository.appendToolProgress({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         toolCallId,
         content,
@@ -86,7 +87,7 @@ export class DurableRunEvents implements RunEventPort {
   ): Promise<void> {
     const event = await this.persist("tool start", () =>
       this.dependencies.repository.startToolAttempt({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         toolCallId,
         tool,
@@ -102,7 +103,7 @@ export class DurableRunEvents implements RunEventPort {
   public async toolRejected(runId: string, call: ModelToolCall, message: string): Promise<void> {
     const event = await this.persist("Tool rejection", () =>
       this.dependencies.repository.appendRejectedToolCall({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         call,
         message,
@@ -122,7 +123,7 @@ export class DurableRunEvents implements RunEventPort {
   ): Promise<void> {
     const event = await this.persist("Tool finish", () =>
       this.dependencies.repository.finishToolAttempt({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         toolCallId,
         status,
@@ -144,7 +145,7 @@ export class DurableRunEvents implements RunEventPort {
   ): Promise<void> {
     const event = await this.persist("agent message", () =>
       this.dependencies.repository.appendAgentMessage({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         content,
         ...(toolCalls === undefined ? {} : { toolCalls }),
@@ -164,7 +165,7 @@ export class DurableRunEvents implements RunEventPort {
   ): Promise<void> {
     const event = await this.persist("agent thought", () =>
       this.dependencies.repository.appendAgentThought({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         content,
         ...(responseId === undefined ? {} : { responseId }),
@@ -177,7 +178,7 @@ export class DurableRunEvents implements RunEventPort {
   public async usage(runId: string, usage: ModelUsage): Promise<void> {
     const event = await this.persist("usage", () =>
       this.dependencies.repository.appendUsage({
-        id: this.dependencies.id(),
+        id: this.dependencies.id("message"),
         runId,
         usage,
         contextSize: this.dependencies.contextSize,

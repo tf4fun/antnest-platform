@@ -11,7 +11,7 @@ import { mergeIDRefs } from "../../lib/accessibility";
 import { cn } from "../../lib/utils";
 
 const control =
-  "w-full rounded-md border border-border bg-white px-3 text-sm text-foreground shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60";
+  "w-full rounded-md border border-border bg-white px-3 text-sm text-foreground shadow-xs outline-hidden transition-[border-color,box-shadow] placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => <input ref={ref} className={cn(control, "h-10", className)} {...props} />,

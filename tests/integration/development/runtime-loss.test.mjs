@@ -114,7 +114,7 @@ test("runtime loss preserves normal stop, source generation, five absences and p
   );
   const paths = f.requests.map((r) => r.url);
   assert(
-    paths.findIndex((p) => p.startsWith("/api/traces?")) >
+    paths.findIndex((p) => p.startsWith("/api/v3/trace-summaries?")) >
       paths.indexOf(`/api/admin/agents/${f.temporaryId}/delete`),
   );
 });
@@ -287,7 +287,7 @@ for (const [name, mutate, error] of [
   [
     "duplicate publication",
     (f) => (f.publications[1] = f.publications[0]),
-    /distinct publication/,
+    /duplicate Jaeger trace summary/,
   ],
   [
     "publication collides with lifecycle",

@@ -271,7 +271,9 @@ fn forwarding_and_policy_decisions_are_unchanged_and_create_no_spans() {
         let packet: Vec<_> =
             "4500002800004000400600006460000a5db8d8229c4001bb00000029000000005002000000000000"
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
                 .collect();
         for policy in [PolicySpec::allow_all(), PolicySpec::deny_all()] {

@@ -95,7 +95,7 @@ function events() {
   return [
     {
       agent_id: "a",
-      event_id: "runtime-condition-loss-a-3",
+      event_id: "event_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       event_type: "agent_runtime_missing",
       global_sequence: 3,
       data: {
@@ -137,6 +137,8 @@ test("loss evidence requires absent executable binding and exact prior lineage/a
     [...events(), ...events()],
     [{ ...events()[0], agent_id: "other" }],
     [{ ...events()[0], operation_request_id: "old-create" }],
+    [{ ...events()[0], event_id: "runtime-condition-loss-a-3" }],
+    [{ ...events()[0], event_id: "event_incomplete" }],
     [
       {
         ...events()[0],

@@ -38,6 +38,39 @@ function fixture() {
     ],
   };
 }
+test("Jaeger legacy HTTP status translation preserves ownership checks and raw evidence", () => {
+  const trace = fixture();
+  const status = trace.spans[1].tags.find(
+    (field) => field.key === "http.response.status_code",
+  );
+  status.key = "http.status_code";
+  const before = JSON.stringify(trace);
+  assert.equal(owningServer(trace, expected).database.length, 1);
+  assert.equal(JSON.stringify(trace), before);
+  status.value = 503;
+  assert.throws(() => owningServer(trace, expected));
+});
+test("conflicting HTTP status aliases cannot hide a failed response", () => {
+  const trace = fixture();
+  trace.spans[1].tags.push({ key: "http.status_code", value: 503 });
+  assert.throws(
+    () => owningServer(trace, expected),
+    /conflicting HTTP status/u,
+  );
+});
+test("equal HTTP status aliases and absent attributes retain their meaning", () => {
+  const span = {
+    tags: fields({
+      "http.status_code": 200,
+      "http.response.status_code": 200,
+    }),
+  };
+  assert.equal(tag(span, "http.response.status_code"), 200);
+  assert.equal(tag(span, "http.status_code"), 200);
+  assert.equal(tag(span, "http.route"), undefined);
+  assert.equal(tag(undefined, "http.response.status_code"), undefined);
+  assert.equal(tag({ tags: [] }, "http.response.status_code"), undefined);
+});
 test("Provider read evidence uses SERVER identity and DB ownership, not SQL/table semantics or counts", () => {
   const trace = fixture();
   const first = owningServer(trace, expected);

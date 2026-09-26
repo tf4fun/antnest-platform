@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import {
   assertPromptComplete,
   assertStillRunning,
@@ -23,7 +24,7 @@ export function assertHeldCompletion({
     assert.equal(resolved, false);
     return false;
   }
-  assert.deepEqual(response, {});
+  assertV2PromptAcknowledged(response, updates, sessionId);
   if (
     updates.some(
       (u) =>

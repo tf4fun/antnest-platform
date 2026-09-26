@@ -12,12 +12,7 @@ import {
 } from "./verification/environment.mjs";
 
 function businessFailure(log) {
-  if (
-    log.includes(
-      "Foundation business/topology failed; diagnostics retained privately",
-    )
-  )
-    return true;
+  if (/^[A-Za-z][A-Za-z -]* business\/topology failed;/m.test(log)) return true;
   for (const match of log.matchAll(/(?:^|\n)\{/g)) {
     const start = match.index + (match[0].startsWith("\n") ? 1 : 0);
     let depth = 0,
@@ -34,7 +29,7 @@ function businessFailure(log) {
       else if (char === "}" && --depth === 0) {
         try {
           const report = JSON.parse(log.slice(start, index + 1));
-          if (report.status === "failed" && report.error_type) return true;
+          if (report.status === "failed") return true;
         } catch {
           /* Ordinary command output is not necessarily JSON. */
         }

@@ -50,6 +50,23 @@ test("metadata and normal output publish directly applicable deltas without ACP 
     assert.equal(state.view?.selectedView?.title, "Renamed");
     assert.equal(reads, baseline, "Local projection changes do not requery ACP");
     assert.equal(loads, 1);
+    const beforeCommands = reads;
+    await callbacks.update({ sessionId: "session", update: {
+      sessionUpdate: "available_commands_update",
+      availableCommands: [{ name: "help", description: "Help", _meta: { private: "omit" } }],
+    } });
+    const commands = await next();
+    assert.equal(commands.raw.type, "delta");
+    assert.deepEqual(state.view?.selectedView?.availableCommands,
+      [{ name: "help", description: "Help" }]);
+    assert.ok(!commands.text.includes("private"));
+    assert.equal(reads, beforeCommands);
+    await callbacks.update({ sessionId: "session", update: {
+      sessionUpdate: "available_commands_update", availableCommands: [],
+    } });
+    await next();
+    assert.deepEqual(state.view?.selectedView?.availableCommands, []);
+    assert.equal(reads, beforeCommands);
     const previous = state.view!.streamCursor;
     await callbacks.update({ sessionId: "session", update: { sessionUpdate: "session_info_update", title: "Renamed" } });
     await new Promise((resolve) => setImmediate(resolve));

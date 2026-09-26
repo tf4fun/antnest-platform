@@ -37,7 +37,8 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	identity := &offboardingIdentity{principal: ports.IdentityPrincipal{UserID: base.Agent.OwnerUserID, OrganizationID: base.Agent.OrganizationID, MembershipID: "membership", Active: false, LastRevocationSequence: 5},
 		event: ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC(), TraceParent: "00-11111111111111111111111111111111-2222222222222222-01"}}
 	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repository)))
-	worker, err := application.NewIdentityRevocationWorker(identity, repository, lifecycle, time.Second, logger)
+	scheduler := &countedOffboardingScheduler{service: lifecycle}
+	worker, err := application.NewIdentityRevocationWorker(identity, repository, scheduler, time.Second, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +66,7 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 			t.Fatal(err)
 		}
 	}
+	require.Len(t, scheduler.requests, 1, "an active Disable must not start another Temporal admission")
 	latest, err := loadAgentRecord(ctx, repository.pool, base.Agent.AgentID)
 	if err != nil || latest.ActiveOperationRequestID != operation.RequestID {
 		t.Fatal("duplicate receipt replaced operation")
@@ -92,6 +94,7 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	if err := worker.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
+	require.Len(t, scheduler.requests, 1, "a completed Disable must not be scheduled again")
 	afterRestore, err := loadAgentRecord(ctx, repository.pool, base.Agent.AgentID)
 	if err != nil || (afterRestore.LifecycleState != domain.AgentCreated || afterRestore.ActivationState != domain.ActivationDisabled || afterRestore.RuntimeState != domain.RuntimeAbsent) {
 		t.Fatal("Identity restore auto-enabled Agent")
@@ -130,6 +133,16 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	if !found {
 		t.Fatal("missing causal consumer trace")
 	}
+}
+
+type countedOffboardingScheduler struct {
+	service  *application.LifecycleService
+	requests []application.DisableAgentInput
+}
+
+func (scheduler *countedOffboardingScheduler) DisableAgent(ctx context.Context, input application.DisableAgentInput) (application.DisableAgentResult, error) {
+	scheduler.requests = append(scheduler.requests, input)
+	return scheduler.service.DisableAgent(ctx, input)
 }
 
 func assertOffboardingEventStream(t *testing.T, repo *Repository, agent ports.AgentRecord) {

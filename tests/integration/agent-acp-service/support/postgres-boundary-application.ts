@@ -3,7 +3,8 @@ import { PostgresToolPermissions } from "../../../../services/agent-acp-service/
 import { ToolPermissions } from "../../../../services/agent-acp-service/src/application/tool-permissions.js";
 import { PermissionConnections } from "../../../../services/agent-acp-service/src/application/permission-connections.js";
 import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { newResourceId } from "../../../../services/agent-acp-service/src/domain/resource-id.js";
 
 import type { Pool } from "pg";
 import { vi } from "vitest";
@@ -160,7 +161,7 @@ export async function startBoundaryApplication(
         runtimeInformation: { read: () => Promise.resolve(information) },
         tools,
         repository: new PostgresContextRepository(kernel),
-        id: randomUUID,
+        id: newResourceId,
         now: () => new Date(),
       }),
       providers,
@@ -168,7 +169,7 @@ export async function startBoundaryApplication(
       events,
       ownershipSignal: new AbortController().signal,
       recoveryRequired,
-      id: randomUUID,
+      id: newResourceId,
       now: () => new Date(),
     }),
   );
@@ -176,7 +177,7 @@ export async function startBoundaryApplication(
     configuration: new SessionConfigurationService({
       sessions: new SessionService({
         repository: sessions,
-        id: randomUUID,
+        id: newResourceId,
         now: () => new Date(),
       }),
       repository: new PostgresSessionConfiguration(kernel),
@@ -186,7 +187,7 @@ export async function startBoundaryApplication(
     access,
     sessions: new SessionService({
       repository: sessions,
-      id: randomUUID,
+      id: newResourceId,
       now: () => new Date(),
     }),
     prompts: new PromptCoordinator({
@@ -195,7 +196,7 @@ export async function startBoundaryApplication(
       protection: executions,
       runTimeoutMs: options.runTimeoutMs ?? 60_000,
       recoveryRequired,
-      id: randomUUID,
+      id: newResourceId,
       now: () => new Date(),
     }),
     runs: supervisor,

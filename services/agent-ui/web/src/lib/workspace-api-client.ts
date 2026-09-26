@@ -1,4 +1,5 @@
 import type { ContentBlock } from "@agentclientprotocol/sdk";
+import { controlResultSchema, type ControlRequest, type ControlResult } from "../../server/src/protocol/workspace-commands.ts";
 
 const base = "/api/app/workspace/v1";
 const ordinaryTimeoutMs = 30_000;
@@ -111,6 +112,14 @@ export class BridgeHttpClient {
 
   createSession(agentId: string, signal?: AbortSignal): Promise<unknown> {
     return this.request(`${agentPath(agentId)}/sessions`, { method: "POST", body: {}, signal });
+  }
+
+  async control(agentId: string, input: ControlRequest, signal?: AbortSignal): Promise<ControlResult> {
+    const raw = await this.request(`${agentPath(agentId)}/commands`, { method: "POST", body: input, signal });
+    const result = controlResultSchema.safeParse(raw);
+    if (!result.success) throw new WorkspaceApiError("Command result could not be verified. Refresh before retrying.",
+      503, "invalid_command_result", "refresh");
+    return result.data;
   }
 
   prompt(agentId: string, sessionId: string, admission: PromptAdmission, signal?: AbortSignal): Promise<PromptAccepted> {

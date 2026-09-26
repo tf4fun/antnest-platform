@@ -52,6 +52,28 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     expect(client.frames.at(-1)).toEqual(response);
     expect(app.finish).toHaveBeenCalledOnce();
     expect(await transcript(pool, sessionId)).toHaveLength(6);
+    expect(sessionId).toMatch(/^session_[0-9a-f]{32}$/);
+    const run = (
+      await pool.query<{ id: string; request_id: string }>(
+        "SELECT id, request_id FROM runs WHERE session_id = $1",
+        [sessionId],
+      )
+    ).rows[0];
+    expect(run?.id).toMatch(/^run_[0-9a-f]{32}$/);
+    expect(run?.request_id).toMatch(/^request_[0-9a-f]{32}$/);
+    const revision = (
+      await pool.query<{ id: string }>(
+        "SELECT id FROM client_mcp_revisions WHERE session_id = $1",
+        [sessionId],
+      )
+    ).rows[0];
+    expect(revision?.id).toMatch(/^mcprev_[0-9a-f]{32}$/);
+    const messages = await pool.query<{ id: string }>(
+      "SELECT id FROM session_messages WHERE session_id = $1",
+      [sessionId],
+    );
+    for (const row of messages.rows)
+      expect(row.id).toMatch(/^message_[0-9a-f]{32}$/);
 
     const offset = client.frames.length;
     const loaded = await client.request("session/load", {

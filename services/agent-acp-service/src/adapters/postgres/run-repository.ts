@@ -1,3 +1,4 @@
+import { deriveResourceId } from "../../domain/resource-id.js";
 import type { PoolClient } from "pg";
 import { sessionConfigurationSchema } from "../../domain/session-configuration.js";
 import { bridgeIntentDigest } from "../../domain/bridge-intent.js";
@@ -328,7 +329,7 @@ async function insertEnvironmentFact(
      SELECT $1, session_id, id, $2, 'environment_change', false, $3::jsonb, $4
        FROM runs WHERE id = $5`,
     [
-      `${input.runId}:environment-change`,
+      deriveResourceId("message", "environment-change", input.runId),
       sequence,
       JSON.stringify(fact),
       input.acceptedAt,

@@ -1,5 +1,12 @@
 # Edge Gateway
 
+## Dependency baseline (2026-09-26)
+
+Go 1.27.1 and OpenTelemetry 1.46.0 are the current baseline, with refreshed
+stable transitive dependencies. Local race, contract, build, and lint gates
+precede the isolated authentication and workspace HTTP/SSE platform regression.
+See the [dependency refresh record](../../docs/dependency-refresh-20260926.md).
+
 Edge Gateway is Antnest Platform's sole external application entry. It turns
 an Identity Service access credential into one trusted internal principal and
 routes the request without owning the requested business operation.

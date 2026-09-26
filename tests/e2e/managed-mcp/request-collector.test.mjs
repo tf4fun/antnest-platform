@@ -9,7 +9,7 @@ const expected = {
   connectionTraceID: "connection",
 };
 const found = {
-  traceID: "request",
+  traceID: "a".repeat(32),
   processes: {
     acp: { serviceName: "agent-acp-service" },
     gateway: { serviceName: "edge-gateway" },
@@ -59,7 +59,9 @@ for (const phase of ["query", "trace"])
     t.mock.method(globalThis, "fetch", async (_url, options) => {
       count++;
       if (phase === "trace" && count === 1)
-        return Response.json({ data: [found] });
+        return Response.json({
+          summaries: [{ traceId: found.traceID }],
+        });
       return new Promise((resolve, reject) => {
         options.signal.addEventListener(
           "abort",

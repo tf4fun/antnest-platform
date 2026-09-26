@@ -289,7 +289,7 @@ function ConnectionDetails({ view, endpoints, copied, error, onCopy }: {
 	return (
 		<section className="grid gap-3 border-y border-border bg-muted/20 px-1 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)] sm:items-center sm:gap-6">
 			<div className="flex items-start gap-3">
-				<span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md bg-white text-primary shadow-sm ring-1 ring-border">
+				<span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md bg-white text-primary shadow-xs ring-1 ring-border">
 					<Link2 className="h-4 w-4" aria-hidden="true" />
 				</span>
 				<div>
@@ -311,7 +311,7 @@ function ConnectionDetails({ view, endpoints, copied, error, onCopy }: {
 
 function EndpointValue({ value, copied, onCopy }: { value: string; copied: boolean; onCopy: () => void }) {
 	return (
-		<div className="flex min-w-0 items-center rounded-md border border-border bg-white pl-3 shadow-sm">
+		<div className="flex min-w-0 items-center rounded-md border border-border bg-white pl-3 shadow-xs">
 			<code className="min-w-0 flex-1 break-all py-2 text-xs">{value}</code>
 			<Button
 				aria-label={copied ? "Address copied" : "Copy address"}

@@ -1,5 +1,6 @@
 // Browser-safe workspace DTO validation and patching. No Node or ACP runtime imports.
 import { z } from "zod";
+import { availableCommandsSchema } from "./available-commands.ts";
 
 const id = z.string().min(1).max(200);
 const revision = z.number().int().nonnegative().safe();
@@ -43,6 +44,7 @@ const session = z.strictObject({ agentId: id, sessionId: id, title: z.string().m
   historyState: z.enum(["cold", "loading", "ready", "reconciling", "blocked"]),
   turns: z.array(turn).max(21), olderTurnsCursor: cursor.nullable(), operations: z.array(operation),
   permissions: z.array(permission), configOptions: z.array(z.record(z.string(), z.unknown())).optional(),
+  availableCommands: availableCommandsSchema.optional(),
   configurationToken: cursor.nullable().optional(), usage: z.record(z.string(), z.unknown()).nullable().optional(),
 }).refine((value) => value.historyState !== "blocked" ||
   (value.historyToken === null && value.olderTurnsCursor === null && (value.configurationToken ?? null) === null))
@@ -50,6 +52,7 @@ const session = z.strictObject({ agentId: id, sessionId: id, title: z.string().m
     value.operations.every((item) => item.sessionId === value.sessionId) &&
     value.permissions.every((item) => item.sessionId === value.sessionId));
 const agent = z.strictObject({ agentId: id, bridgeEpoch: id, availability: z.enum(["ready", "busy", "offline"]),
+  controlCommands: availableCommandsSchema.optional(),
   promptCapabilities: z.strictObject({ image: z.boolean().optional(), audio: z.boolean().optional(), embeddedContext: z.boolean().optional() }),
   activeSessionId: id.nullable(), selectedSessionId: id.nullable(), selectedView: session.nullable(),
   operations: z.array(operation), permissions: z.array(permission), streamCursor: cursor,
@@ -61,9 +64,9 @@ export type AgentView = z.infer<typeof agent>;
 export type Patch = { op: "add" | "replace"; path: string; value: unknown } | { op: "remove"; path: string };
 export type DeltaBody = { type: "delta"; sessionId: string | null; incarnation: string | null;
   fromSessionViewRevision: number | null; sessionViewRevision: number | null; patch: Patch[] };
-const agentFields = new Set(["availability", "activeSessionId", "promptCapabilities", "operations", "permissions"]);
+const agentFields = new Set(["availability", "activeSessionId", "promptCapabilities", "operations", "permissions", "controlCommands"]);
 const sessionFields = new Set(["title", "updatedAt", "viewRevision", "appendVersion", "outputWatermark", "historyToken",
-  "historyState", "turns", "olderTurnsCursor", "operations", "permissions", "configOptions", "configurationToken", "usage"]);
+  "historyState", "turns", "olderTurnsCursor", "operations", "permissions", "configOptions", "configurationToken", "usage", "availableCommands"]);
 const forbidden = new Set(["__proto__", "constructor", "prototype"]);
 
 export function validAgentView(value: unknown): value is AgentView {

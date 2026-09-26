@@ -1,7 +1,22 @@
 import assert from "node:assert/strict";
 
-export const tag = (span, key) =>
-  span?.tags?.find((field) => field.key === key)?.value;
+export function tag(span, key) {
+  const value = span?.tags?.find((field) => field.key === key)?.value;
+  if (key !== "http.response.status_code" && key !== "http.status_code")
+    return value;
+  // Jaeger's v1 query translator can expose the current OTLP status under
+  // the legacy key. Read either representation without changing raw evidence.
+  const alias = span?.tags?.find(
+    (field) =>
+      field.key ===
+      (key === "http.response.status_code"
+        ? "http.status_code"
+        : "http.response.status_code"),
+  )?.value;
+  if (value !== undefined && alias !== undefined)
+    assert.equal(value, alias, "conflicting HTTP status attributes");
+  return value ?? alias;
+}
 
 export function traceTree(trace) {
   const tree = traceTopology(trace);

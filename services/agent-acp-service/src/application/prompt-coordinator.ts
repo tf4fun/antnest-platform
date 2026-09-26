@@ -1,3 +1,4 @@
+import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
 import { normalizePromptResources } from "../domain/embedded-resource.js";
 import { bridgeIntentDigest } from "../domain/bridge-intent.js";
@@ -24,7 +25,7 @@ export type PromptCoordinatorDependencies = {
   protection: RuntimeProtectionRepository;
   runTimeoutMs: number;
   recoveryRequired: (error: Error) => void;
-  id: () => string;
+  id: ResourceIdGenerator;
   now: () => Date;
 };
 
@@ -116,9 +117,9 @@ export class PromptCoordinator {
       );
     }
     throwIfCancelled(signal);
-    const runId = this.dependencies.id();
-    const requestId = this.dependencies.id();
-    const userMessageId = this.dependencies.id();
+    const runId = this.dependencies.id("run");
+    const requestId = this.dependencies.id("request");
+    const userMessageId = this.dependencies.id("message");
     const now = this.dependencies.now();
     const intent = await this.persist(() =>
       this.dependencies.repository.createRunIntent({

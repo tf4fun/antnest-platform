@@ -11,7 +11,6 @@ use std::{
 use axum::{
     body::{Body, Bytes},
     http::{HeaderMap, HeaderValue, StatusCode},
-    response::IntoResponse as _,
 };
 use http_body::{Frame, SizeHint};
 use http_body_util::BodyExt as _;

@@ -1,3 +1,4 @@
+import { assertResourceId } from "./contracts.mjs";
 import assert from "node:assert/strict";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
@@ -28,6 +29,9 @@ export async function identity(admin, secrets) {
   const principal = (
     await login(admin, "stage3-admin@example.com", "stage3-admin-password")
   ).body.principal;
+  assertResourceId("user", principal.user_id);
+  assertResourceId("org", principal.organization_id);
+  assertResourceId("membership", principal.membership_id);
   secrets.push(
     ...admin.cookies.values(),
     "stage3-admin-password",
@@ -101,6 +105,8 @@ export async function identity(admin, secrets) {
     password: ownerCredentials.password,
     role: "member",
   });
+  assertResourceId("user", created.user.id);
+  assertResourceId("membership", created.membership.id);
   assertSecretFree(JSON.stringify(created), secrets);
   for (const active of [false, true]) {
     const member = await api(
@@ -132,6 +138,7 @@ export async function identity(admin, secrets) {
     name: "Stage 3 directory",
     scopes: ["scim:read", "scim:write"],
   });
+  assertResourceId("scimtoken", issued.body.token.id);
   assertNoStore(issued.headers);
   assert.match(issued.body.credential, /^ant_scim_/);
   secrets.push(issued.body.credential);

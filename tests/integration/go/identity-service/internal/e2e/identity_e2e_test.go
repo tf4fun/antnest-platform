@@ -17,9 +17,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +29,7 @@ import (
 	"soft/antnest-platform/services/identity-service/internal/credentials"
 	"soft/antnest-platform/services/identity-service/internal/directory"
 	"soft/antnest-platform/services/identity-service/internal/domain"
+	"soft/antnest-platform/services/identity-service/internal/identityid"
 	"soft/antnest-platform/services/identity-service/internal/localauth"
 	"soft/antnest-platform/services/identity-service/internal/oidcclient"
 	"soft/antnest-platform/services/identity-service/internal/oidcflow"
@@ -51,8 +52,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	var sequence atomic.Uint64
-	newID := func() string { return fmt.Sprintf("e2e-%d", sequence.Add(1)) }
+	newID := identityid.MustNew
 	store, err := repository.New(pool, newID, time.Now)
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +153,12 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		t.Fatalf("load SCIM user: %v", err)
 	}
 
+	var scimGroup map[string]any
+	scimRequest(t, identity.Client(), http.MethodPost, identity.URL+"/scim/v2/Groups", issued.Credential, map[string]any{
+		"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
+		"displayName": "Engineering", "members": []map[string]string{{"value": membershipID}},
+	}, http.StatusCreated, &scimGroup)
+
 	postJSON(t, identity.Client(), identity.URL+rpc.ContractRoutes["upsert_oidc_provider"], map[string]any{
 		"request_id": "provider-1", "actor_principal_id": bootstrap.User.ID,
 		"organization_id": bootstrap.Organization.ID, "name": "workforce",
@@ -174,6 +180,28 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	getJSON(t, idp.Client(), started.AuthorizationURL, &replay)
 	if replay.AccessToken != "" || replay.TokenID != completed.TokenID || !replay.AlreadyCompleted || idp.ExchangeCount() != 1 {
 		t.Fatalf("OIDC callback was not idempotent: first=%#v replay=%#v exchanges=%d", completed, replay, idp.ExchangeCount())
+	}
+	for table, kind := range map[string]string{
+		"organizations": "org", "users": "user", "organization_memberships": "membership",
+		"groups": "group", "group_memberships": "groupmembership", "oidc_providers": "oidcprovider",
+		"oidc_auth_sessions": "oidcsession", "external_identities": "externalidentity",
+		"api_tokens": "authtoken", "scim_tokens": "scimtoken", "identity_events": "event",
+	} {
+		var total, valid int
+		query := "SELECT count(*), count(*) FILTER (WHERE id ~ $1) FROM " + pgx.Identifier{table}.Sanitize()
+		if err := pool.QueryRow(t.Context(), query, "^"+kind+"_[0-9a-f]{32}$").Scan(&total, &valid); err != nil {
+			t.Fatal(err)
+		}
+		if total == 0 || total != valid {
+			t.Errorf("%s resource IDs: %d/%d valid", table, valid, total)
+		}
+	}
+	var claimID string
+	if err := pool.QueryRow(t.Context(), "SELECT claim_id FROM oidc_auth_sessions WHERE status = 'completed'").Scan(&claimID); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^oidcclaim_[0-9a-f]{32}$`).MatchString(claimID) {
+		t.Fatalf("claim ID = %q", claimID)
 	}
 	t.Run("SCIM revocation delivery", func(t *testing.T) {
 		assertSCIMRevocationDelivery(t, identity, issued.Credential, createdUser)

@@ -6,10 +6,13 @@ than around one shared application package.
 
 The [current implementation and acceptance index](docs/current-status.md)
 distinguishes the latest service boundaries, recorded verification and remaining
-scope. Updated 2026-09-23; historical stage reports retain their original scope.
+scope. Updated 2026-09-26; historical stage reports retain their original scope.
+The [dependency refresh and regression](docs/dependency-refresh-20260926.md)
+records the verified pre-Stage-4 candidate. Development uses Node 24.21.0 LTS
+(`.nvmrc`), Go 1.27.1 (`go.work`) and Rust 1.98.1 (`rust-toolchain.toml`).
 The [Stage 3 current-service closeout](docs/stage-3-current-services-closeout.md)
-records the reviewed clock-warning exception and keeps deferred browser checks
-explicit. Planned new services belong to Stage 4.
+records the reviewed clock-warning exception and manual acceptance limits.
+Planned new services belong to Stage 4.
 
 [Test ownership and commands](tests/README.md) define the repository test layout:
 unit tests stay within their service, integration tests live in
@@ -28,7 +31,7 @@ verification tools in `tests/support/`.
 | Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Identity and owner-offboarding profile accepted |
 | Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
 | Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
-| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, attachments, and model settings | Implemented; targeted real-browser checks passed; full strict profile remains open |
+| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, attachments, and model settings | HTTP/SSE Bridge implemented; automated regression passed; human review pending |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 
 The repository layout and ownership rules are defined in

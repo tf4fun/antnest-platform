@@ -149,7 +149,7 @@ export async function volumeTool(
     `type=volume,source=${volume},target=/data${readOnly ? ",readonly" : ""}`,
     "--mount",
     `type=bind,source=${directory},target=/backup`,
-    "node:24-bookworm-slim",
+    "node:24.21.0-bookworm-slim",
     ...args,
   ]);
 }

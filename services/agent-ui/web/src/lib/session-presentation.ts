@@ -8,6 +8,7 @@ export type PresentationAction =
   | { type: "attachments"; key: string; attachments: Attachment[] }
   | { type: "phase"; key: string; phase: InteractionPhase }
   | { type: "restore"; key: string; text: string; attachments: Attachment[]; error?: string }
+  | { type: "clearSubmitted"; key: string; text: string; attachmentIds: string[] }
   | { type: "move"; key: string; target: string }
   | { type: "error"; key: string; error?: string }
   | { type: "disconnected"; agentId: string }
@@ -31,6 +32,11 @@ export function reduceSessionPresentation(state: SessionPresentations, action: P
       return next;
     }
     case "draft": return { ...state, [action.key]: { ...current, text: action.text } };
+    case "clearSubmitted":
+      if (current.text !== action.text || current.attachments.length !== action.attachmentIds.length ||
+        current.attachments.some((attachment, index) => attachment.id !== action.attachmentIds[index]))
+        return state;
+      return { ...state, [action.key]: { ...current, text: "", attachments: [] } };
     case "attachments": return { ...state, [action.key]: { ...current, attachments: action.attachments } };
     case "phase": return { ...state, [action.key]: { ...current, phase: action.phase } };
     case "error": return { ...state, [action.key]: { ...current, error: action.error } };

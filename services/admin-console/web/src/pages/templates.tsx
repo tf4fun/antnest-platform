@@ -573,12 +573,12 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         onBusyChange={setAvailabilityBusy} onReload={readCurrent} /> : null}
       {modelFailure ? <ResourceFailureNotice failure={modelFailure} message={`Model choices could not be loaded: ${modelFailure.message}`} retryLabel="Retry model choices" onRetry={retryModels} /> : null}
       <Section title="Configuration">
-        <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
           {facts.map(([label, value]) => <div className="bg-white p-4" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium">{value}</p></div>)}
         </div>
       </Section>
       <Section title="System prompt">
-        <pre className="whitespace-pre-wrap rounded-md border border-border bg-white p-4 font-sans text-sm leading-6 shadow-sm">{template.system_prompt || "No system prompt."}</pre>
+        <pre className="whitespace-pre-wrap rounded-md border border-border bg-white p-4 font-sans text-sm leading-6 shadow-xs">{template.system_prompt || "No system prompt."}</pre>
       </Section>
       <Section title="Backup Providers">
         <ol className="grid gap-2 text-sm">{(template.fallback_model_profile_ids ?? []).map((id, index) => <li key={id} className="flex gap-3"><span className="text-muted-foreground">{index + 1}</span><a className="break-all text-primary hover:underline" href={`#models/${encodeURIComponent(id)}`}>{models.find(model => model.model_profile_id === id)?.display_name ?? id}</a></li>)}</ol>

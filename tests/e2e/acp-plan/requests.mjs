@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
@@ -206,13 +207,12 @@ export async function collectPlanRequestTrace(
   });
   for (let attempt = 0; attempt < 40; attempt++) {
     signal?.throwIfAborted();
-    const response = await fetch(`${base}/api/traces?${query}`, {
+    const data = await searchJaegerTraces(base, query, {
       signal: signal
         ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
         : AbortSignal.timeout(5000),
     });
-    assert(response.ok, "request trace query failed");
-    const id = selectRequestTrace((await response.json()).data, expected);
+    const id = selectRequestTrace(data, expected);
     if (id)
       return collectTrace(
         base,

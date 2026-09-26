@@ -11,6 +11,17 @@ const require = createRequire(
 );
 const { parse } = require("yaml");
 const root = new URL("../../../../", import.meta.url);
+test("single-node Temporal keeps membership stable when Docker reallocates interface addresses", async () => {
+  const { services } = parse(
+    await readFile(new URL("compose.yaml", root), "utf8"),
+  );
+  const { environment } = services.temporal;
+  // All four server roles share this container. Remote SDK clients still use
+  // the frontend's wildcard listener, never the internal membership address.
+  assert.equal(environment.TEMPORAL_BROADCAST_ADDRESS, "127.0.0.1");
+  assert.equal(environment.BIND_ON_IP, "0.0.0.0");
+  assert.equal(environment.SERVICES, undefined);
+});
 test("Temporal readiness gates Controller even after namespace initialization has exited", async () => {
   const { services } = parse(
     await readFile(new URL("compose.yaml", root), "utf8"),
@@ -46,8 +57,8 @@ test("Temporal probe runs inside the pinned derived image without publishing HTT
     new URL(temporal.build.dockerfile, root),
     "utf8",
   );
-  assert.match(dockerfile, /FROM temporalio\/admin-tools:1\.31\.0 AS tools/);
-  assert.match(dockerfile, /FROM temporalio\/server:1\.31\.0/);
+  assert.match(dockerfile, /FROM temporalio\/admin-tools:1\.32\.0 AS tools/);
+  assert.match(dockerfile, /FROM temporalio\/server:1\.32\.0/);
   for (const target of ["docker-build", "docker-build-stage3"]) {
     const make = await readFile(new URL("Makefile", root), "utf8");
     const recipe = make.split(`${target}:`)[1].split("\n\n")[0];

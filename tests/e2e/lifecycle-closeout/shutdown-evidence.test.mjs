@@ -141,6 +141,21 @@ function traceFixture() {
     ],
   };
 }
+test("shutdown trace reads translated HTTP statuses and still rejects failed dependencies", () => {
+  const trace = traceFixture();
+  for (const span of trace.spans)
+    for (const field of span.tags)
+      if (field.key === "http.response.status_code")
+        field.key = "http.status_code";
+  assert.equal(
+    inspectShutdownTrace(trace, expected, ["secret"]).gateway_ancestry,
+    true,
+  );
+  trace.spans
+    .at(-1)
+    .tags.find((field) => field.key === "http.status_code").value = 503;
+  assert.throws(() => inspectShutdownTrace(trace, expected, ["secret"]));
+});
 test("shutdown trace requires completed servers on the actual Gateway watch path", () => {
   assert.equal(
     inspectShutdownTrace(traceFixture(), expected, ["secret"]).gateway_ancestry,

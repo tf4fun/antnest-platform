@@ -51,6 +51,16 @@ test("HTTP evidence proves actual CLIENT -> SERVER parentage, not service co-occ
     { from: "edge-gateway", to: "admin-console", calls: 1 },
   ]);
 });
+test("HTTP evidence reads Jaeger's translated status without accepting failed responses", () => {
+  const trace = fixture();
+  for (const span of trace.spans)
+    span.tags.find((field) => field.key === "http.response.status_code").key =
+      "http.status_code";
+  assert.equal(inspectHTTPTrace(trace, config).spans, 3);
+  trace.spans[0].tags.find((field) => field.key === "http.status_code").value =
+    503;
+  assert.throws(() => inspectHTTPTrace(trace, config));
+});
 
 test("HTTP evidence rejects trace-level Jaeger warnings", () => {
   const trace = fixture();

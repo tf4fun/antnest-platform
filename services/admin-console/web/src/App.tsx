@@ -359,7 +359,7 @@ export default function App() {
         <div className="border-t border-border p-3">
           <div aria-live="polite" className="rounded-md bg-muted/70 p-3">
             <div className="flex items-start gap-3">
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[#1d1d1b] text-[#dbff54] shadow-sm">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[#1d1d1b] text-[#dbff54] shadow-xs">
                 <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 flex-1">
@@ -434,7 +434,7 @@ export default function App() {
         id="console-content-shell"
         inert={compactNavigation && menuOpen}
       >
-        <header className="sticky top-0 z-20 flex h-[68px] items-center border-b border-border bg-[#fbfbfa]/95 px-4 backdrop-blur sm:px-6 lg:px-8">
+        <header className="sticky top-0 z-20 flex h-[68px] items-center border-b border-border bg-[#fbfbfa]/95 px-4 backdrop-blur-sm sm:px-6 lg:px-8">
           <Button
             aria-controls="primary-navigation"
             aria-expanded={menuOpen}
@@ -475,7 +475,7 @@ export default function App() {
         </header>
         <main
           aria-label={`${pageLabel} page`}
-          className="mx-auto w-full max-w-[1500px] px-4 py-6 outline-none sm:px-6 lg:px-8 lg:py-8"
+          className="mx-auto w-full max-w-[1500px] px-4 py-6 outline-hidden sm:px-6 lg:px-8 lg:py-8"
           ref={mainContentRef}
           tabIndex={-1}
         >

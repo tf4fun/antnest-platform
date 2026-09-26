@@ -24,6 +24,7 @@ import {
 } from "./foundation-trace.mjs";
 import { physicalIdentity } from "./network-support.mjs";
 import { openShutdownWatchSet } from "./shutdown-streams.mjs";
+import { collectSingleNodeMembership } from "./temporal-membership.mjs";
 
 async function inventory(config, docker) {
   const ids = lines(
@@ -154,6 +155,7 @@ export async function runShutdown({
     remember(acp, "session/new", sessionId);
     await assertIdle();
     const before = await inventory(config, docker);
+    const initialMembership = await collectSingleNodeMembership(docker, before);
     eventWatch.assertOpen();
     stateWatch.assertOpen();
     assert.equal(acp.closeCode, undefined, "ACP closed before maintenance");
@@ -215,7 +217,8 @@ export async function runShutdown({
       signal,
     );
     // Start existing containers only: no one-shot migration jobs or replacements.
-    for (const services of [["postgres"], ["temporal"], applicationServices])
+    for (const services of [["postgres"], ["temporal"], applicationServices]) {
+      console.error(`Lifecycle restart: ${services.join(", ")}`);
       await docker(
         config.compose([
           "start",
@@ -226,10 +229,12 @@ export async function runShutdown({
         ]),
         true,
       );
-    const restarted = assertRestarted(
-      config.project,
-      before,
-      await inventory(config, docker),
+    }
+    const restartedRows = await inventory(config, docker);
+    const restarted = assertRestarted(config.project, before, restartedRows);
+    const restartedMembership = await collectSingleNodeMembership(
+      docker,
+      restartedRows,
     );
     const current = await ready(agentID);
     assert.equal(
@@ -325,6 +330,10 @@ export async function runShutdown({
       profile: "shutdown",
       stopped,
       restarted,
+      temporal_membership: {
+        initial: initialMembership,
+        restarted: restartedMembership,
+      },
       stop_window: stopWindow,
       watches_closed_by_server: 2,
       acp_close_code: acp.closeCode,

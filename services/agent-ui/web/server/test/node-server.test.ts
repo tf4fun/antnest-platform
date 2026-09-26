@@ -49,14 +49,46 @@ test("Node Bridge records bounded HTTP routes and final response statuses", asyn
     const base = `http://127.0.0.1:${address.port}`;
     await fetch(`${base}/status`);
     await fetch(`${base}/api/app/workspace/v1/agents/private-agent/view`);
+    await fetch(`${base}/workspace/private-agent/`);
+    await fetch(`${base}/workspace/private-agent/sessions/private-session`);
     assert.deepEqual(observed, [
       { method: "GET", route: "/status", status: 200 },
       { method: "GET", route: "/api/app/workspace/v1/*", status: 200 },
+      { method: "GET", route: "/workspace/:agentId/", status: 200 },
+      { method: "GET", route: "/workspace/:agentId/sessions/:sessionId", status: 200 },
     ]);
   } finally {
     server.closeAllConnections();
     server.close();
     await once(server, "close");
+  }
+});
+
+test("document paths reject unknown shapes and retain escaped identifiers for GET and HEAD", async () => {
+  let renders = 0;
+  const server = createWorkspaceHttpServer({ async handle() { return Response.json({ agents: [] }); } }, {
+    async renderDocument(output, input) { renders++; output.end(JSON.stringify(input.route)); },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const headers = { "x-antnest-organization-id": "org", "x-antnest-principal-id": "user", "x-antnest-administrator": "false" };
+    for (const path of ["/workspace/agent/sessions/", "/workspace/agent/sessions/s/extra", "/workspace/?agent=agent", "/workspace/agent/?return_to=//other", "/workspace/%00/", "/workspace/assets/"]) {
+      assert.equal((await fetch(origin + path, { headers })).status, 404, path);
+    }
+    assert.equal(renders, 0);
+    const path = "/workspace/agent%2Fone/sessions/session%20%26one";
+    const document = await fetch(origin + path, { headers });
+    assert.deepEqual(await document.json(), { agentId: "agent/one", sessionId: "session &one" });
+    const head = await fetch(origin + path, { headers, method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), "");
+    assert.equal(renders, 1);
+  } finally {
+    server.closeAllConnections(); server.close(); await once(server, "close");
   }
 });
 
@@ -77,7 +109,7 @@ test("workspace document requires trusted identity and isolates bootstrap by req
   try {
     const address = server.address();
     assert.ok(address && typeof address !== "string");
-    const base = `http://127.0.0.1:${address.port}/workspace/?agent=agent-1`;
+    const base = `http://127.0.0.1:${address.port}/workspace/agent-1/sessions/session-1`;
     assert.equal((await fetch(base)).status, 401);
     for (const userId of ["user-one", "user-two"]) {
       const response = await fetch(base, { headers: {
@@ -92,6 +124,7 @@ test("workspace document requires trusted identity and isolates bootstrap by req
       assert.match(html, new RegExp(`Agent ${userId}`));
       assert.doesNotMatch(html, new RegExp(`Agent user-${userId === "user-one" ? "two" : "one"}`));
       assert.equal(JSON.parse(html).route.agentId, "agent-1");
+      assert.equal(JSON.parse(html).route.sessionId, "session-1");
     }
   } finally {
     server.closeAllConnections();

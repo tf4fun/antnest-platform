@@ -51,7 +51,7 @@ func (service *LifecycleService) QuarantineLifecycle(ctx context.Context, failur
 	return service.store.QuarantineLifecycleOperation(ctx, ports.QuarantineLifecycleOperation{
 		RequestID: failure.RequestID, Fingerprint: operation.RequestFingerprint,
 		ExpectedPhase: failure.Phase, ErrorCode: "lifecycle_invariant_failed", ErrorDetail: failure.Detail,
-		EventID: derivedID("event-lifecycle-quarantined", failure.RequestID), TraceID: currentTraceID(ctx),
+		EventID: domain.DeriveResourceID("event", "event-lifecycle-quarantined", failure.RequestID), TraceID: currentTraceID(ctx),
 	})
 }
 

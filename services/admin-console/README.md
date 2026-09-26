@@ -18,6 +18,14 @@ second source of truth.
 
 ## Status
 
+The [2026-09-26 dependency refresh](../../docs/dependency-refresh-20260926.md)
+updates React to 19.3.0, Vite to 8.3.1 and Tailwind to 4.3.3 using its dedicated
+Vite plugin and CSS theme tokens. Base styles stay in the base cascade layer;
+shadow, radius, blur and outline utility names are migrated to preserve the
+existing presentation and keyboard focus behavior. Obsolete PostCSS and
+autoprefixer configuration is removed. Local and browser upgrade gates are
+tracked separately from the earlier acceptance history below.
+
 The execution-boundary B4 batch adds direct ACP audit reads, an independent
 Execution history page and a separate Controller synchronization read. See
 [Execution audit](docs/execution-audit.md). Original input, execution snapshots,

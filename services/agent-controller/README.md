@@ -1,5 +1,13 @@
 # Agent Controller
 
+## Dependency baseline (2026-09-26)
+
+Go 1.27.1, Temporal SDK 1.49.0 / API 1.63.6, pgx 5.11.0, and
+OpenTelemetry 1.46.0 / log 0.22.0 are the current baseline. The service-local
+race, contract, build, and lint gates precede database and Temporal workflow
+regression on the refreshed platform images. See the
+[dependency refresh record](../../docs/dependency-refresh-20260926.md).
+
 Runtime-managed stdio MCP configuration is documented in
 [Managed MCP](docs/managed-mcp.md), including immutable revision ownership,
 create/rebuild/enable forwarding, privacy, and verification boundaries.
@@ -7,6 +15,16 @@ create/rebuild/enable forwarding, privacy, and verification boundaries.
 Agent Controller is the Agent aggregate and lifecycle authority for Antnest
 Platform. It turns an immutable Agent specification into one published
 executable Agent by coordinating Runtime Controller and Runtime Egress.
+
+## Resource identifiers
+
+The [platform resource ID contract](../../contracts/resource-identifiers.md)
+separates resource kind from retry purpose. Create and Rebuild both generate
+`agentspec_` IDs; execution revisions use `execution_`, and all lifecycle,
+Runtime observation and owner-revocation events use `event_`. Stable namespaces
+retain retry deduplication, and Agent ID derivation is byte-for-byte unchanged.
+Existing records, client request keys, content digests and Runtime incarnation
+tokens are unchanged. Identity and ACP own their respective resource generators.
 
 ## Status
 

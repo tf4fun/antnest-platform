@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import {
   assertCaptureDisabled,
   tag,
@@ -155,11 +156,9 @@ export async function collectChatTraces({ jaeger, sessionId, secrets }) {
       "antnest.session.id": sessionId,
     }),
   });
-  const response = await fetch(`${jaeger}/api/traces?${query}`, {
+  const data = await searchJaegerTraces(jaeger, query, {
     signal: AbortSignal.timeout(10000),
   });
-  assert(response.ok, "Jaeger query failed");
-  const { data } = await response.json();
   assert.equal(data?.length, 3, "expected greeting and two Tool prompts");
   const reports = data.map((trace) =>
     inspectChatTrace(trace, { sessionId, secrets }),

@@ -481,8 +481,8 @@ func newCrashFixture(t *testing.T, ctx context.Context) crashJob {
 		image = "antnest/antnest-runtime:local"
 	}
 	dockerCommand(t, ctx, "image", "inspect", image)
-	dockerCommand(t, ctx, "image", "inspect", "postgres:17-bookworm")
-	dockerCommand(t, ctx, "image", "inspect", "node:24-bookworm-slim")
+	dockerCommand(t, ctx, "image", "inspect", "postgres:17.11-bookworm")
+	dockerCommand(t, ctx, "image", "inspect", "node:24.21.0-bookworm-slim")
 	t.Cleanup(func() {
 		// Independent command budgets let cleanup attempt every owned resource.
 		cleanupCommand := func(args ...string) (string, bool) {
@@ -523,7 +523,7 @@ func newCrashFixture(t *testing.T, ctx context.Context) crashJob {
 	// A local UDP sink keeps the real Runtime network transport alive. This fixture
 	// does not exercise packet policy or replace the separate egress acceptance.
 	dockerCommand(t, ctx, "run", "-d", "--pull=never", "--name", scope+"-peer", "--label", crashLabel+"="+scope,
-		"--network", scope, "node:24-bookworm-slim", "node", "-e",
+		"--network", scope, "node:24.21.0-bookworm-slim", "node", "-e",
 		`require("node:dgram").createSocket("udp4").bind(8092, "0.0.0.0", () => console.log("ready"))`)
 	for dockerCommand(t, ctx, "logs", scope+"-peer") != "ready" {
 		select {
@@ -535,7 +535,7 @@ func newCrashFixture(t *testing.T, ctx context.Context) crashJob {
 	peerIP := dockerCommand(t, ctx, "inspect", scope+"-peer", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
 
 	password := hex.EncodeToString(nonce[:]) + "fixture"
-	dockerCommand(t, ctx, "run", "-d", "--pull=never", "--name", scope+"-postgres", "--label", crashLabel+"="+scope, "-p", "127.0.0.1::5432", "-e", "POSTGRES_PASSWORD="+password, "-e", "POSTGRES_DB=crash_fixture", "postgres:17-bookworm")
+	dockerCommand(t, ctx, "run", "-d", "--pull=never", "--name", scope+"-postgres", "--label", crashLabel+"="+scope, "-p", "127.0.0.1::5432", "-e", "POSTGRES_PASSWORD="+password, "-e", "POSTGRES_DB=crash_fixture", "postgres:17.11-bookworm")
 	port := dockerCommand(t, ctx, "port", scope+"-postgres", "5432/tcp")
 	job.Database = "postgres://postgres:" + password + "@" + port + "/crash_fixture?sslmode=disable"
 	var db *sql.DB

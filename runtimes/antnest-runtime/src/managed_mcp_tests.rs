@@ -42,6 +42,11 @@ fn managed_tool_names_are_stable_distinct_and_model_compatible() {
     let long = "a".repeat(128);
     let name = exposed_name("docs", &long).unwrap();
     assert!(name.len() <= 64);
+    // Persisted tool names must stay byte-for-byte stable across hash SDK upgrades.
+    assert_eq!(
+        name,
+        "mcp__docs__aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_7c13f0dccd7d06a0"
+    );
     assert_eq!(name, exposed_name("docs", &long).unwrap());
     assert_ne!(
         name,
@@ -53,6 +58,10 @@ fn managed_tool_names_are_stable_distinct_and_model_compatible() {
         exposed_name("docs", "a_b").unwrap()
     );
     assert!(!exposed_name("docs", "a.b").unwrap().contains('.'));
+    assert_eq!(
+        exposed_name("docs", "a.b").unwrap(),
+        "mcp__docs__a_b_b0addbda3eec8b12"
+    );
 }
 
 #[test]

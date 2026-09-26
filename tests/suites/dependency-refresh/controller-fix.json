@@ -1,0 +1,41 @@
+[
+  {
+    "name": "suite-failure-contracts",
+    "command": [
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "tests/support/run-suite.test.mjs",
+      "tests/support/run-command.test.mjs",
+      "tests/support/suite-manifest.test.mjs"
+    ],
+    "timeout_ms": 180000
+  },
+  {
+    "name": "controller-lint",
+    "command": ["golangci-lint", "run", "./..."],
+    "cwd": "services/agent-controller",
+    "timeout_ms": 900000
+  },
+  {
+    "name": "controller-build",
+    "command": ["go", "build", "./services/agent-controller/..."],
+    "timeout_ms": 600000
+  },
+  {
+    "name": "build-controller-fix",
+    "command": [
+      "docker",
+      "build",
+      "--pull",
+      "--progress=plain",
+      "-f",
+      "services/agent-controller/Dockerfile",
+      "-t",
+      "antnest/agent-controller:dependency-refresh-20260926-offboarding",
+      "."
+    ],
+    "timeout_ms": 1200000,
+    "grace_ms": 120000
+  }
+]

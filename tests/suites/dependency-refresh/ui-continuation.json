@@ -1,0 +1,56 @@
+[
+  {
+    "name": "ui-components",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "run",
+      "test:components"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "ui-build",
+    "command": ["npm", "--prefix", "services/agent-ui/web", "run", "build"],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "ui-test-bridge-integration",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "run",
+      "test:bridge:integration"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "ui-test-bridge-memory",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "run",
+      "test:bridge:memory"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "ui-test-bridge-runtime-memory",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "run",
+      "test:bridge:runtime-memory"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  }
+]

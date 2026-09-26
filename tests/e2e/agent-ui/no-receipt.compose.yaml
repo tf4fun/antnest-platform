@@ -1,7 +1,7 @@
 services:
   acp-gate:
     profiles: [ui-no-receipt]
-    image: node:24-bookworm-slim
+    image: node:24.21.0-bookworm-slim
     command: ["node", "/tests/e2e/agent-ui/acp-gate.mjs"]
     volumes:
       - ./tests:/tests:ro

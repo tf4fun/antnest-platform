@@ -1,3 +1,4 @@
+import { deriveResourceId } from "../../domain/resource-id.js";
 import type { PoolClient } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import { projectUsage } from "../../domain/usage.js";
@@ -36,7 +37,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
         await appendLocked(
           client,
           { ...locked, nextSequence: locked.nextSequence + index },
-          `${input.id}:${index}`,
+          deriveResourceId("message", "plan", `${input.id}:${index}`),
           event.kind,
           event,
           input.createdAt,
@@ -144,7 +145,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
            state, tool_effect_state, started_at, created_at, updated_at
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'in_progress', 'none', $8, $8, $8)`,
         [
-          input.id,
+          deriveResourceId("toolattempt", "tool-start", input.id),
           input.runId,
           input.toolCallId,
           input.tool.source,
@@ -259,7 +260,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
         await appendLocked(
           client,
           { ...locked, nextSequence: locked.nextSequence + interrupted },
-          `${attempt.id}:interrupted`,
+          deriveResourceId("message", "tool-interrupted", attempt.id),
           "tool_call",
           {
             kind: "tool_call",
@@ -464,7 +465,7 @@ async function appendUnstartedToolResults(
     await appendLocked(
       client,
       { ...locked, nextSequence: locked.nextSequence + sequenceOffset + appended },
-      `${row.id}:not-executed:${appended}`,
+      deriveResourceId("message", "tool-not-executed", JSON.stringify([row.id, call.id])),
       "tool_call",
       {
         kind: "tool_call",

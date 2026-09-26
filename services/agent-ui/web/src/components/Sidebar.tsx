@@ -1,9 +1,7 @@
 import {
-  Bot,
-  Check,
-  ChevronLeft,
   MessageSquareText,
   PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   ChevronDown,
@@ -13,9 +11,8 @@ import { useState } from "react";
 import type { AgentSummary, Conversation, Principal } from "../lib/types";
 import { conversationsForAgent, relativeTime } from "../lib/presentation";
 import { Brand } from "./Brand";
-import { AgentPresence } from "./AgentPresence";
-import { AgentManagementStatus } from "./AgentManagementStatus";
-import { NavigationPanel } from "./NavigationPanel";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { NavigationPanel, useMobileNavigation } from "./NavigationPanel";
 import { AccountFooter } from "./AccountFooter";
 
 type Props = {
@@ -45,14 +42,106 @@ type Props = {
 };
 
 export function Sidebar(props: Props) {
-  const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+  const mobile = useMobileNavigation();
+  const compact = collapsed && !mobile;
   const activeAgent =
     props.agents.find(({ id }) => id === props.activeAgentId) ??
     props.agents[0];
+  const switcher = (
+    <WorkspaceSwitcher
+      key={`${activeAgent?.id}:${compact}:${props.open}`}
+      agents={props.agents}
+      activeAgent={activeAgent}
+      compact={compact}
+      disabled={props.agentSwitchDisabled}
+      onSelect={props.onSelectAgent}
+      onBrowse={props.onChooseAgent}
+    />
+  );
+
+  return (
+    <NavigationPanel
+      open={props.open}
+      onClose={props.onClose}
+      onClosed={props.onClosed}
+      collapsed={compact}
+    >
+      {compact ? (
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="Expand sidebar"
+          title="Expand sidebar"
+          onClick={() => setCollapsed(false)}
+        >
+          <PanelLeftOpen size={18} aria-hidden="true" />
+        </button>
+      ) : (
+        <div className="sidebar-title-row">
+          <Brand subtitle={switcher} />
+          <button
+            className="icon-button sidebar-collapse"
+            type="button"
+            onClick={() => setCollapsed(true)}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <PanelLeftClose size={17} aria-hidden="true" />
+          </button>
+          <button
+            className="icon-button sidebar-close"
+            type="button"
+            onClick={props.onClose}
+            title="Close navigation"
+            aria-label="Close navigation"
+          >
+            <PanelLeftClose size={17} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+      {compact ? switcher : null}
+      {compact ? (
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="New conversation"
+          title="New conversation"
+          disabled={props.newConversationDisabled}
+          onClick={props.onNewConversation}
+        >
+          <Plus size={18} aria-hidden="true" />
+        </button>
+      ) : null}
+      <ConversationNavigation
+        key={activeAgent?.id}
+        {...props}
+        agent={activeAgent}
+        compact={compact}
+      />
+      {!compact ? (
+        <>
+          <div className="sidebar-spacer" />
+          <AccountFooter
+            principal={props.principal}
+            onLogout={props.onLogout}
+            logoutDisabled={props.logoutDisabled}
+          />
+        </>
+      ) : null}
+    </NavigationPanel>
+  );
+}
+
+function ConversationNavigation({
+  agent,
+  compact,
+  ...props
+}: Props & { agent: AgentSummary | undefined; compact: boolean }) {
+  const [query, setQuery] = useState("");
+  if (compact) return null;
   const conversations = (
-    activeAgent
-      ? conversationsForAgent(props.conversations, activeAgent.id)
-      : []
+    agent ? conversationsForAgent(props.conversations, agent.id) : []
   ).filter((session) =>
     session.title
       .toLocaleLowerCase()
@@ -60,165 +149,101 @@ export function Sidebar(props: Props) {
   );
 
   return (
-    <NavigationPanel open={props.open} onClose={props.onClose} onClosed={props.onClosed}>
-      <div className="sidebar-brand-row">
-        <Brand />
-        <button
-          className="icon-button sidebar-close"
-          type="button"
-          onClick={props.onClose}
-          title="Close navigation"
-          aria-label="Close navigation"
-        >
-          <PanelLeftClose size={17} aria-hidden="true" />
-        </button>
+    <section
+      className="sidebar-section conversation-section"
+      aria-label={`Conversations in ${agent?.name ?? "workspace"}`}
+    >
+      <button
+        className="sidebar-new-conversation"
+        type="button"
+        disabled={props.newConversationDisabled}
+        onClick={props.onNewConversation}
+      >
+        <Plus size={17} aria-hidden="true" />
+        New conversation
+      </button>
+      <label className="search-field session-search">
+        <Search size={14} aria-hidden="true" />
+        <input
+          type="search"
+          placeholder="Search conversations"
+          aria-label="Search conversations"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      <div className="section-heading">
+        <span className="section-label">Conversations</span>
       </div>
-
-      <section className="sidebar-section agent-section">
-        <button
-          className="back-to-agents"
-          type="button"
-          onClick={props.onChooseAgent}
-        >
-          <ChevronLeft size={14} aria-hidden="true" />
-          All agents
-        </button>
-        <div className="agent-list">
-          {props.agents.map((agent) => (
+      <div className="conversation-list">
+        {conversations.length ? (
+          conversations.map((conversation) => (
             <button
-              className={`agent-option ${agent.id === props.activeAgentId ? "active" : ""}`}
-              key={agent.id}
+              className={`conversation-option ${conversation.id === props.activeConversationId ? "active" : ""}`}
+              key={conversation.id}
               type="button"
               aria-current={
-                agent.id === props.activeAgentId ? "true" : undefined
+                conversation.id === props.activeConversationId
+                  ? "page"
+                  : undefined
               }
-              disabled={
-                props.agentSwitchDisabled && agent.id !== props.activeAgentId
-              }
-              onClick={() => props.onSelectAgent(agent.id)}
+              onClick={() => props.onSelectConversation(conversation.id)}
             >
-              <span className="agent-option-icon">
-                <Bot size={15} aria-hidden="true" />
+              <MessageSquareText size={14} aria-hidden="true" />
+              <span>
+                <strong>{conversation.title}</strong>
+                <small>
+                  <time
+                    dateTime={conversation.updatedAt}
+                    title={new Date(conversation.updatedAt).toLocaleString()}
+                  >
+                    {relativeTime(conversation.updatedAt)}
+                  </time>
+                </small>
               </span>
-              <span className="agent-option-copy">
-                <strong>{agent.name}</strong>
-                {agent.id === props.activeAgentId ? (
-                  <AgentPresence status={agent.status} />
-                ) : (
-                  <AgentManagementStatus state={agent.managementState} />
-                )}
-              </span>
-              {agent.id === props.activeAgentId ? (
-                <Check size={14} aria-hidden="true" />
-              ) : null}
             </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="sidebar-section conversation-section">
-        <div className="section-heading">
-          <span className="section-label">Conversations</span>
-          <button
-            className="icon-button"
-            type="button"
-            disabled={props.newConversationDisabled}
-            onClick={props.onNewConversation}
-            title="New conversation"
-            aria-label="New conversation"
-          >
-            <Plus size={16} aria-hidden="true" />
-          </button>
-        </div>
-        <label className="search-field session-search">
-          <Search size={14} aria-hidden="true" />
-          <input
-            type="search"
-            placeholder="Search conversations"
-            aria-label="Search conversations"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-        <div className="conversation-list">
-          {conversations.length ? (
-            conversations.map((conversation) => (
-              <button
-                className={`conversation-option ${conversation.id === props.activeConversationId ? "active" : ""}`}
-                key={conversation.id}
-                type="button"
-                aria-current={
-                  conversation.id === props.activeConversationId
-                    ? "page"
-                    : undefined
-                }
-                onClick={() => props.onSelectConversation(conversation.id)}
-              >
-                <MessageSquareText size={14} aria-hidden="true" />
-                <span>
-                  <strong>{conversation.title}</strong>
-                  <small>
-                    <time
-                      dateTime={conversation.updatedAt}
-                      title={new Date(conversation.updatedAt).toLocaleString()}
-                    >
-                      {relativeTime(conversation.updatedAt)}
-                    </time>
-                  </small>
-                </span>
-              </button>
-            ))
-          ) : (
-            <p className="sidebar-empty">
-              {query
-                ? "No matching loaded conversations"
-                : props.catalog.loading
-                  ? "Loading conversations"
-                  : props.catalog.error
-                    ? "Conversations unavailable"
-                    : "No conversations yet"}
-            </p>
-          )}
-        </div>
-        {props.catalog.error ? (
-          <p className="catalog-error" role="alert">
-            {props.catalog.error}
+          ))
+        ) : (
+          <p className="sidebar-empty">
+            {query
+              ? "No matching loaded conversations"
+              : props.catalog.loading
+                ? "Loading conversations"
+                : props.catalog.error
+                  ? "Conversations unavailable"
+                  : "No conversations yet"}
           </p>
-        ) : null}
-        {props.catalog.hasMore ||
-        props.catalog.loading ||
-        props.catalog.error ? (
-          <button
-            className="catalog-more"
-            type="button"
-            disabled={props.catalogDisabled || props.catalog.loading}
-            onClick={props.catalog.loadMore}
-            aria-label={
-              props.catalog.error
-                ? "Retry conversations"
-                : "Load more conversations"
-            }
-          >
-            {props.catalog.error ? (
-              <RefreshCw size={14} aria-hidden="true" />
-            ) : (
-              <ChevronDown size={14} aria-hidden="true" />
-            )}
-            {props.catalog.loading
-              ? "Loading conversations"
-              : props.catalog.error
-                ? "Retry"
-                : "Load more"}
-          </button>
-        ) : null}
-      </section>
-
-      <div className="sidebar-spacer" />
-      <AccountFooter
-        principal={props.principal}
-        onLogout={props.onLogout}
-        logoutDisabled={props.logoutDisabled}
-      />
-    </NavigationPanel>
+        )}
+      </div>
+      {props.catalog.error ? (
+        <p className="catalog-error" role="alert">
+          {props.catalog.error}
+        </p>
+      ) : null}
+      {props.catalog.hasMore || props.catalog.loading || props.catalog.error ? (
+        <button
+          className="catalog-more"
+          type="button"
+          disabled={props.catalogDisabled || props.catalog.loading}
+          onClick={props.catalog.loadMore}
+          aria-label={
+            props.catalog.error
+              ? "Retry conversations"
+              : "Load more conversations"
+          }
+        >
+          {props.catalog.error ? (
+            <RefreshCw size={14} aria-hidden="true" />
+          ) : (
+            <ChevronDown size={14} aria-hidden="true" />
+          )}
+          {props.catalog.loading
+            ? "Loading conversations"
+            : props.catalog.error
+              ? "Retry"
+              : "Load more"}
+        </button>
+      ) : null}
+    </section>
   );
 }

@@ -12,7 +12,7 @@ import (
 func TestListPrincipalRevocationsValidatesBounds(t *testing.T) {
 	for _, input := range []RevocationQuery{{AfterSequence: -1, Limit: 1}, {Limit: 0}, {Limit: 501}} {
 		repository := &revocationRepositoryStub{}
-		service := NewService(repository, func() string { return "id" }, time.Now)
+		service := NewService(repository, func(kind string) string { return "id" }, time.Now)
 		if _, err := service.ListPrincipalRevocations(t.Context(), input); !errors.Is(err, domain.ErrInvalidArgument) {
 			t.Fatalf("query %#v: %v", input, err)
 		}
@@ -26,7 +26,7 @@ func TestListPrincipalRevocationsPreservesPageAndError(t *testing.T) {
 	repository := &revocationRepositoryStub{page: domain.PrincipalRevocationPage{
 		Events: []domain.PrincipalRevocation{{Sequence: 7, UserID: "owner"}}, NextSequence: 7,
 	}}
-	service := NewService(repository, func() string { return "id" }, time.Now)
+	service := NewService(repository, func(kind string) string { return "id" }, time.Now)
 	query := RevocationQuery{AfterSequence: 3, Limit: 1}
 	page, err := service.ListPrincipalRevocations(t.Context(), query)
 	if err != nil || page.NextSequence != 7 || len(page.Events) != 1 || repository.query != query {
@@ -61,7 +61,7 @@ func (*directoryRepositoryStub) ResolveOwnerAuthorization(_ context.Context, use
 }
 
 func TestOwnerAuthorizationRejectsMissingIdentity(t *testing.T) {
-	service := NewService(&directoryRepositoryStub{}, func() string { return "id" }, time.Now)
+	service := NewService(&directoryRepositoryStub{}, func(kind string) string { return "id" }, time.Now)
 	for _, pair := range [][2]string{{"", "org"}, {"user", ""}} {
 		if _, err := service.ResolveOwnerAuthorization(t.Context(), pair[0], pair[1]); !errors.Is(err, domain.ErrInvalidArgument) {
 			t.Fatalf("missing identity error=%v", err)

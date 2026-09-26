@@ -1,0 +1,56 @@
+[
+  {
+    "name": "console-typecheck",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/admin-console/web",
+      "run",
+      "typecheck"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "console-test",
+    "command": ["npm", "--prefix", "services/admin-console/web", "run", "test"],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "console-build",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/admin-console/web",
+      "run",
+      "build"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "console-test-browser-catalog",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/admin-console/web",
+      "run",
+      "test:browser:catalog"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  },
+  {
+    "name": "console-test-browser-audit",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/admin-console/web",
+      "run",
+      "test:browser:audit"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  }
+]

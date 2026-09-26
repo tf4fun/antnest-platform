@@ -40,7 +40,7 @@ trap 'exit 143' TERM
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
   --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
-  node:24-bookworm-slim node /fixture/access-seed.mjs > "$directory/seed.json"
+  node:24.21.0-bookworm-slim node /fixture/access-seed.mjs > "$directory/seed.json"
 docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_development" --network-alias agent-access-model \
   -v "$root/tests/e2e/identity-closeout:/app/identity-closeout:ro" \

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import {
   evidenceDirectory,
   evidenceFilePath,
@@ -153,20 +154,15 @@ export async function collectDeniedMessage(base, expected, secrets) {
     tags: JSON.stringify({ "rpc.method": expected.method }),
   });
   for (let attempt = 0; attempt < 40; attempt++) {
-    let response, body;
+    let data;
     try {
-      response = await fetch(`${base}/api/traces?${query}`, {
+      data = await searchJaegerTraces(base, query, {
         signal: AbortSignal.timeout(5000),
       });
-      body = await response.json();
     } catch {
       throw new Error("Gateway denial trace query failed");
     }
-    assert(
-      response.ok && !body.errors?.length,
-      "Gateway denial trace query failed",
-    );
-    const id = selectDeniedMessage(body.data, expected);
+    const id = selectDeniedMessage(data, expected);
     if (id) {
       evidenceFilePath(directory, `${id}.json`);
       return collectTrace(base, id, (trace) => {

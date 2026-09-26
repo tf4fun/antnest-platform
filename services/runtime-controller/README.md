@@ -2,6 +2,14 @@
 
 > Status: Docker implementation complete; Kubernetes remains a later adapter.
 
+## Dependency baseline (2026-09-26)
+
+Go 1.27.1, pgx 5.11.0, and OpenTelemetry 1.46.0 / log 0.22.0 are
+the current dependency baseline. Local admission includes the complete Go
+overlay profile with the race detector, build, and lint. Database and installed
+image contracts run in the isolated platform regression batch; see the
+[dependency refresh record](../../docs/dependency-refresh-20260926.md).
+
 Runtime Controller owns the platform lifecycle of one logical Runtime
 Environment per Agent. Agent Controller issues explicit Initialize, Update,
 Disable, Enable, and Delete commands. Runtime Controller realizes those

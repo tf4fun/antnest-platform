@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS web-build
+FROM node:24.21.0-bookworm-slim AS web-build
 
 WORKDIR /web
 COPY services/admin-console/web/package.json services/admin-console/web/package-lock.json ./
@@ -6,7 +6,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
 COPY services/admin-console/web ./
 RUN npm run build
 
-FROM golang:1.25-bookworm AS go-build
+FROM golang:1.27.1-bookworm AS go-build
 
 WORKDIR /src
 COPY services/admin-console/go.mod services/admin-console/go.sum ./

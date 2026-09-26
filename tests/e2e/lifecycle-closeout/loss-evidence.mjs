@@ -60,7 +60,7 @@ export function assertLoss(initial, agent, events, recorded) {
     initial.agent.runtime.runtime_revision,
   );
   assert.equal(recorded.data.observation_sequence, 0);
-  assert.match(recorded.event_id, /^runtime-condition-loss-/);
+  assert.match(recorded.event_id, /^event_[a-f0-9]{32}$/);
   return recorded;
 }
 

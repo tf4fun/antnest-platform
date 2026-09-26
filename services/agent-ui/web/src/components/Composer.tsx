@@ -20,15 +20,26 @@ import {
 } from "react";
 import type { AgentStatus, Attachment } from "../lib/types";
 import { canSubmit } from "../lib/presentation";
+import { CommandMenu } from "./CommandMenu";
+import type { WorkspaceCommand } from "../../server/src/protocol/available-commands.ts";
 
 type Props = {
   rootRef?: Ref<HTMLDivElement>;
+  commands?: readonly WorkspaceCommand[];
+  commandScope?: string;
+  allowControlInput?: boolean;
+  controlInput?: boolean;
+  controlEnabled?: boolean;
+  commanding?: boolean;
+  feedback?: ReactNode;
   sessionControls?: ReactNode;
   usage?: ReactNode;
   fileAccept: string;
   configuring: boolean;
   preparing?: boolean;
   historyReady: boolean;
+  draftMode?: boolean;
+  sendBlocked?: boolean;
   openingHistory?: boolean;
   openingFailure?: boolean;
   value: string;
@@ -60,6 +71,10 @@ function statusCopy(
 
 export function Composer(props: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [editorFocused, setEditorFocused] = useState(false);
+  const [dismissedCommandKey, setDismissedCommandKey] = useState<string | null>(null);
+  const [activeCommand, setActiveCommand] = useState({ key: "", index: 0 });
+  const commandMenuId = useId();
   const hintId = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -78,12 +93,38 @@ export function Composer(props: Props) {
   }, [props.value, expanded]);
   const disabled =
     !props.connected ||
-    !props.historyReady ||
+    !(props.historyReady || props.draftMode) ||
     props.agentStatus !== "ready" ||
     props.sending ||
     props.configuring ||
     props.preparing;
-  const hint = props.openingFailure
+  const editorDisabled = props.allowControlInput
+    ? !props.connected || props.configuring || Boolean(props.preparing)
+    : props.draftMode
+    ? props.sending || props.configuring || Boolean(props.preparing)
+    : disabled;
+  const commands = props.commands ?? [];
+  const commandKey = JSON.stringify([props.commandScope, props.value,
+    commands.map(({ name }) => name)]);
+  const commandMenuOpen = editorFocused && !editorDisabled &&
+    props.value.startsWith("/") && !/\s/u.test(props.value) &&
+    dismissedCommandKey !== commandKey;
+  const commandMatches = commandMenuOpen
+    ? commands.filter(({ name }) => name.toLowerCase().includes(props.value.slice(1).toLowerCase()))
+    : [];
+  const activeCommandIndex = activeCommand.key === commandKey
+    ? Math.min(activeCommand.index, Math.max(0, commandMatches.length - 1)) : 0;
+  const selectCommand = (command: WorkspaceCommand) => {
+    const value = `/${command.name}${command.input ? " " : ""}`;
+    setDismissedCommandKey(JSON.stringify([props.commandScope, value, commands.map(({ name }) => name)]));
+    props.onChange(value);
+    textarea.current?.focus({ preventScroll: true });
+  };
+  const hint = props.allowControlInput && props.attachments.length && props.controlInput
+    ? "Remove attachments before running a command"
+    : props.allowControlInput && props.sending
+    ? "Agent is working. Commands remain available."
+    : props.openingFailure
     ? "Conversation history unavailable"
     : props.openingHistory
       ? "Opening conversation history"
@@ -91,19 +132,19 @@ export function Composer(props: Props) {
         ? "Preparing conversation"
         : props.configuring
           ? "Updating session settings"
-          : !props.historyReady && props.connected && !props.sending
+          : !props.historyReady && !props.draftMode && props.connected && !props.sending
             ? "Conversation not yet synchronized"
             : statusCopy(props.agentStatus, props.connected, props.sending);
-  const submitEnabled =
+  const submitEnabled = props.controlInput ? Boolean(props.controlEnabled) :
     canSubmit({
       text: props.value,
       attachments: props.attachments,
       agentStatus: props.agentStatus,
-      connected: props.connected && props.historyReady,
+      connected: props.connected && (props.historyReady || Boolean(props.draftMode)),
       configuring: props.configuring || Boolean(props.preparing),
-    }) && !props.sending;
+    }) && !props.sending && !props.sendBlocked && !props.commanding;
   useLayoutEffect(() => {
-    if (!disabled) {
+    if (!editorDisabled) {
       if (restoreEditorFocus.current && document.activeElement === document.body)
         textarea.current?.focus({ preventScroll: true });
       restoreEditorFocus.current = false;
@@ -121,7 +162,7 @@ export function Composer(props: Props) {
       document.removeEventListener("focusin", abandon);
       document.removeEventListener("pointerdown", abandon);
     };
-  }, [disabled]);
+  }, [editorDisabled]);
   useLayoutEffect(() => {
     const pending = pendingRemovalFocus.current;
     if (!pending || props.attachments.some((attachment) => attachment.id === pending.id))
@@ -130,17 +171,27 @@ export function Composer(props: Props) {
     if (document.activeElement !== document.body) return;
     const next = props.attachments[Math.min(pending.index, props.attachments.length - 1)];
     if (next) removeButtons.current.get(next.id)?.focus({ preventScroll: true });
-    else if (!disabled) textarea.current?.focus({ preventScroll: true });
+    else if (!editorDisabled) textarea.current?.focus({ preventScroll: true });
     else expandButton.current?.focus({ preventScroll: true });
-  }, [props.attachments, disabled]);
+  }, [props.attachments, editorDisabled]);
 
   return (
     <div className="composer-region" ref={props.rootRef}>
+      {props.feedback}
       <div
         className={`composer ${expanded ? "composer-expanded" : ""} ${submitEnabled ? "composer-ready" : ""}`}
         role="group"
         aria-label="Message composer"
       >
+        {commandMenuOpen ? <CommandMenu
+          id={commandMenuId}
+          commands={commandMatches}
+          activeIndex={activeCommandIndex}
+          emptyMessage={props.draftMode ? "Commands become available after your first message."
+            : commands.length ? "No matching commands" : "No commands available in this conversation"}
+          onActive={(index) => setActiveCommand({ key: commandKey, index })}
+          onSelect={selectCommand}
+        /> : null}
         {props.attachments.length ? (
           <div className="composer-attachments">
             {props.attachments.map((attachment, index) => {
@@ -184,13 +235,47 @@ export function Composer(props: Props) {
         ) : null}
         <textarea
           ref={textarea}
+          role="combobox"
           aria-label="Message"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={commandMenuOpen}
+          aria-controls={commandMenuOpen ? commandMenuId : undefined}
+          aria-activedescendant={commandMenuOpen && commandMatches.length
+            ? `${commandMenuId}-${activeCommandIndex}` : undefined}
           aria-describedby={hint ? hintId : undefined}
-          disabled={disabled}
-          onChange={(event) => props.onChange(event.target.value)}
+          disabled={editorDisabled}
+          onFocus={() => setEditorFocused(true)}
+          onBlur={() => setEditorFocused(false)}
+          onChange={(event) => {
+            setDismissedCommandKey(null);
+            props.onChange(event.target.value);
+          }}
           onKeyDown={(event) => {
             // Some IMEs report the confirmation key after compositionend with code 229.
             if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            if (commandMenuOpen) {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setDismissedCommandKey(commandKey);
+                return;
+              }
+              if (commandMatches.length && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  const direction = event.key === "ArrowDown" ? 1 : -1;
+                  setActiveCommand({ key: commandKey,
+                    index: (activeCommandIndex + direction + commandMatches.length) % commandMatches.length });
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  selectCommand(commandMatches[activeCommandIndex]!);
+                  return;
+                }
+              }
+            }
             if (event.key === "Escape" && expanded) {
               event.preventDefault();
               setExpanded(false);
@@ -207,7 +292,7 @@ export function Composer(props: Props) {
               }
             }
           }}
-          placeholder="Message your agent"
+          placeholder={commands.length ? "Message your agent, or type / for commands" : "Message your agent"}
           rows={1}
           value={props.value}
         />
@@ -266,7 +351,17 @@ export function Composer(props: Props) {
                 <Maximize2 size={16} aria-hidden="true" />
               )}
             </button>
-            {props.sending || props.cancellable ? (
+            {props.preparing ? (
+              <button type="button" className="send-button" disabled
+                title="Preparing conversation" aria-label="Preparing conversation">
+                <LoaderCircle className="spin" size={17} aria-hidden="true" />
+              </button>
+            ) : props.controlInput ? (
+              <button type="button" className="send-button" disabled={!submitEnabled}
+                onClick={props.onSubmit} title="Run command" aria-label="Run command">
+                {props.commanding ? <LoaderCircle className="spin" size={17} aria-hidden="true" /> : <ArrowUp size={17} aria-hidden="true" />}
+              </button>
+            ) : props.sending || props.cancellable ? (
               <button
                 type="button"
                 className="send-button stop-button"

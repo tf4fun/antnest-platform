@@ -3,10 +3,12 @@ import test from "node:test";
 import { readWorkspaceRoute, workspacePath, selectWorkspaceRoute } from "./navigation.ts";
 import { workspaceFromBootstrap } from "./bootstrap.ts";
 
-test("routes encode Agent and Session identifiers, not a project or cwd", () => {
-  assert.equal(workspacePath({ agentId: "a/1", sessionId: "s &1" }), "/workspace/?agent=a%2F1&session=s+%261");
-  assert.deepEqual(readWorkspaceRoute("?agent=a%2F1&session=s+%261"), { agentId: "a/1", sessionId: "s &1" });
-  assert.deepEqual(readWorkspaceRoute("?session=s1&cwd=/tmp"), { agentId: "", sessionId: null });
+test("routes express workspace and Session hierarchy with independently encoded identifiers", () => {
+  assert.equal(workspacePath({ agentId: "a/1", sessionId: "s &1" }), "/workspace/a%2F1/sessions/s%20%261");
+  assert.deepEqual(readWorkspaceRoute("/workspace/a%2F1/sessions/s%20%261"), { agentId: "a/1", sessionId: "s &1" });
+  assert.equal(workspacePath({ agentId: "a1", sessionId: null }), "/workspace/a1/");
+  assert.deepEqual(readWorkspaceRoute("/workspace/a1/"), { agentId: "a1", sessionId: null });
+  assert.deepEqual(readWorkspaceRoute("/workspace/"), { agentId: "", sessionId: null });
   assert.equal(workspacePath({ agentId: "", sessionId: "s1" }), "/workspace/");
 });
 
@@ -38,8 +40,12 @@ test("selecting another Session releases completed process from the workspace ca
     ["turn:prompt", "turn:answer"]);
 });
 
-test("ambiguous and malformed identifiers cannot choose an Agent", () => {
-  for (const query of ["?agent=a1&agent=a2", "?agent=%00", `?agent=${"a".repeat(201)}`]) {
-    assert.equal(readWorkspaceRoute(query).agentId, "");
+test("malformed routes, queries, assets and dot segments cannot choose an Agent", () => {
+  for (const path of ["/workspace/?agent=a1", "/workspace/a1/?session=s1", "/workspace/a1/sessions/",
+    "/workspace/a1/sessions/s1/extra", "/workspace/%00/", "/workspace/%E0%A4/", "/workspace/../",
+    "/workspace/%2e%2e/", "/workspace/a1/sessions/%2E", "/workspace/assets/", "/workspace/assets/app.js",
+    "/workspace/a1/#fragment", "/workspace/%20a1/", `/${"/workspace/a1/"}`,
+    `/workspace/${"a".repeat(201)}/`]) {
+    assert.equal(readWorkspaceRoute(path).agentId, "", path);
   }
 });

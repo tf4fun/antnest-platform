@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"testing"
 	"time"
 
@@ -34,6 +35,9 @@ func TestRuntimeLossAuditSurvivesRealEventListAndWatch(t *testing.T) {
 		t.Fatalf("real event list=%+v error=%v", page, err)
 	}
 	loss := page.Events[3]
+	if !regexp.MustCompile(`^event_[0-9a-f]{32}$`).MatchString(loss.EventID) {
+		t.Fatalf("runtime event ID = %q", loss.EventID)
+	}
 	if loss.EventType != "agent_runtime_missing" || loss.Data["reason"] != "runtime_missing" ||
 		loss.Data["runtime_revision"] != base.Agent.RuntimeRevision || loss.Data["observation_sequence"] != float64(7) ||
 		loss.OperationRequestID != "" || loss.GlobalSequence != page.NextSequence {

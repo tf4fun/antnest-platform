@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertHeldCompletion } from "./completion.mjs";
 test("v2 may observe a committed terminal fact while execution still owns its slot", () => {
-  const running = {
+  const response = { messageId: "user-1" },
+    user = {
+      sessionId: "s",
+      update: {
+        sessionUpdate: "user_message",
+        messageId: "user-1",
+        content: [{ type: "text", text: "v2-finish-fault" }],
+      },
+    },
+    running = {
       sessionId: "s",
       update: { sessionUpdate: "state_update", state: "running" },
     },
@@ -33,8 +42,8 @@ test("v2 may observe a committed terminal fact while execution still owns its sl
   assert.equal(
     assertHeldCompletion({
       version: 2,
-      response: {},
-      updates: [running],
+      response,
+      updates: [user, running],
       phase: "v2-finish-fault",
       sessionId: "s",
       availability: "busy",
@@ -44,8 +53,8 @@ test("v2 may observe a committed terminal fact while execution still owns its sl
   assert.equal(
     assertHeldCompletion({
       version: 2,
-      response: {},
-      updates: [running, tool, answer, idle],
+      response,
+      updates: [user, running, tool, answer, idle],
       phase: "v2-finish-fault",
       sessionId: "s",
       availability: "busy",
@@ -55,8 +64,8 @@ test("v2 may observe a committed terminal fact while execution still owns its sl
   assert.throws(() =>
     assertHeldCompletion({
       version: 2,
-      response: {},
-      updates: [running, idle],
+      response,
+      updates: [user, running, idle],
       phase: "v2-finish-fault",
       sessionId: "s",
       availability: "busy",
@@ -65,8 +74,8 @@ test("v2 may observe a committed terminal fact while execution still owns its sl
   assert.throws(() =>
     assertHeldCompletion({
       version: 2,
-      response: {},
-      updates: [running, tool, answer, idle],
+      response,
+      updates: [user, running, tool, answer, idle],
       phase: "v2-finish-fault",
       sessionId: "s",
       availability: "ready",
@@ -82,4 +91,32 @@ test("v2 may observe a committed terminal fact while execution still owns its sl
       availability: "busy",
     }),
   );
+});
+
+test("held v2 admission cannot acknowledge another message while execution stays busy", () => {
+  const updates = [
+    {
+      sessionId: "s",
+      update: {
+        sessionUpdate: "user_message",
+        messageId: "input",
+        content: [{ type: "text", text: "held" }],
+      },
+    },
+    {
+      sessionId: "s",
+      update: { sessionUpdate: "state_update", state: "running" },
+    },
+  ];
+  for (const response of [{}, { messageId: "" }, { messageId: "other" }])
+    assert.throws(() =>
+      assertHeldCompletion({
+        version: 2,
+        response,
+        updates,
+        phase: "held",
+        sessionId: "s",
+        availability: "busy",
+      }),
+    );
 });

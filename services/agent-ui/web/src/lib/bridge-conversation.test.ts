@@ -3,6 +3,20 @@ import test from "node:test";
 import { projectBridgeConversation, replaceBridgeProcess, replaceBridgeTurnContent } from "./bridge-conversation.ts";
 import { initialBridgeContent } from "./bridge-content.ts";
 
+test("Session projection carries only the selected catalog and rejects malformed commands", () => {
+  const view = { sessionId: "session", bridgeEpoch: "epoch", historyState: "ready",
+    turns: [], olderTurnsCursor: null, availableCommands: [
+      { name: "help", description: "Help" },
+      { name: "plan", description: "Plan", input: { hint: "task" } },
+    ] };
+  const read = (raw: unknown) => projectBridgeConversation(raw, "agent", "session", "now");
+  assert.deepEqual(read(view).conversation.availableCommands, view.availableCommands);
+  assert.deepEqual(read({ ...view, availableCommands: [] }).conversation.availableCommands, []);
+  for (const availableCommands of ["help", [{ name: "/help", description: "Help" }],
+    [{ name: "help now", description: "Help" }], [view.availableCommands[0], view.availableCommands[0]]])
+    assert.throws(() => read({ ...view, availableCommands }));
+});
+
 test("Session projection uses ACP metadata instead of deriving title or local time", () => {
   const view = {
     sessionId: "session-1", bridgeEpoch: "epoch-1", historyState: "ready",

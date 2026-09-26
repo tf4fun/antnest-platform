@@ -554,7 +554,7 @@ func (a *SCIMAdapter) replaceSCIMGroupMemberships(
 				id, organization_id, group_id, organization_membership_id,
 				source, active, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, 'scim', TRUE, $5, $5)`,
-			a.store.newID(), group.OrganizationID, group.ID, memberID, group.UpdatedAt,
+			a.store.newID("groupmembership"), group.OrganizationID, group.ID, memberID, group.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("insert SCIM group membership: %w", err)
 		}

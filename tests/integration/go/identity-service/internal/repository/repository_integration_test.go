@@ -82,7 +82,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 
 	var sequence atomic.Uint64
 	now := time.Date(2026, 8, 31, 5, 0, 0, 0, time.UTC)
-	store, err := New(pool, func() string { return fmt.Sprintf("id-%d", sequence.Add(1)) }, func() time.Time { return now })
+	store, err := New(pool, func(kind string) string { return fmt.Sprintf("id-%d", sequence.Add(1)) }, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if err != nil || repeated.User.ID != bootstrap.User.ID {
 		t.Fatalf("repeat bootstrap = %#v, %v", repeated, err)
 	}
-	directoryService := directory.NewService(store.Directory(), func() string {
+	directoryService := directory.NewService(store.Directory(), func(kind string) string {
 		return fmt.Sprintf("id-%d", sequence.Add(1))
 	}, func() time.Time { return now })
 	for _, change := range []struct {
@@ -281,7 +281,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		t.Fatalf("repeat organization membership = %#v, %v", repeatedMembership, err)
 	}
 
-	authService, err := localauth.NewService(store.LocalAuth(), func() string {
+	authService, err := localauth.NewService(store.LocalAuth(), func(kind string) string {
 		return fmt.Sprintf("id-%d", sequence.Add(1))
 	}, func() time.Time { return now }, 12*time.Hour)
 	if err != nil {
@@ -418,7 +418,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 
 	scimService, err := scim.NewService(scim.Config{
 		Repository: store.SCIM(),
-		NewID:      func() string { return fmt.Sprintf("id-%d", sequence.Add(1)) },
+		NewID:      func(kind string) string { return fmt.Sprintf("id-%d", sequence.Add(1)) },
 		NewOpaque:  credentials.NewOpaqueToken, Now: func() time.Time { return now },
 	})
 	if err != nil {

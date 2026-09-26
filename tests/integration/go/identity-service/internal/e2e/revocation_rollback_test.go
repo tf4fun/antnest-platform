@@ -81,7 +81,7 @@ func seedRevocationGroup(t *testing.T, f localAdmissionFixture, membershipID str
 	now := time.Now().UTC()
 	_, err := f.store.SCIM().CreateGroup(t.Context(), scim.CreateGroupCommand{
 		OrganizationID: f.admin.Organization.ID,
-		Group: domain.Group{ID: f.newID(), OrganizationID: f.admin.Organization.ID,
+		Group: domain.Group{ID: f.newID("group"), OrganizationID: f.admin.Organization.ID,
 			DisplayName: "SCIM group", Source: domain.SourceSCIM, Active: true,
 			SCIMExternalID: "revocation-group", CreatedAt: now, UpdatedAt: now},
 		MemberIDs: []string{membershipID},

@@ -1,4 +1,5 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import { availableCommandsSchema } from "../../server/src/protocol/available-commands.ts";
 import { initialBridgeContent, type BridgeContentState } from "./bridge-content.ts";
 import { contentView } from "./content-view.ts";
 import { parseBridgeProcessItem, type BridgeProcessItem } from "./bridge-process.ts";
@@ -102,6 +103,7 @@ export function projectBridgeConversation(
       messages,
       ...(blocked ? { historyState: "blocked" as const } : {}),
       configOptions: configOptions(raw.configOptions ?? []),
+      availableCommands: blocked ? [] : availableCommandsSchema.parse(raw.availableCommands ?? []),
       ...(raw.usage === undefined || raw.usage === null ? {} : { usage: usage(raw.usage) }),
     },
     turns,

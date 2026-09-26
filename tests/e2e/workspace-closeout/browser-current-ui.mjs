@@ -70,7 +70,7 @@ export async function runMigratedBrowser({
         );
     });
     const input = () =>
-      page.getByRole("textbox", { name: "Message", exact: true });
+      page.getByRole("combobox", { name: "Message", exact: true });
     const enabled = () =>
       until(() => input().isEnabled(), "browser composer ready", signal);
     const reply = (text) =>
@@ -120,7 +120,7 @@ export async function runMigratedBrowser({
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.waitForURL("**/workspace/**");
     await page
-      .getByRole("searchbox", { name: "Find an agent" })
+      .getByRole("searchbox", { name: "Find a workspace" })
       .fill("Browser Agent");
     await page
       .locator(".chooser-agent")

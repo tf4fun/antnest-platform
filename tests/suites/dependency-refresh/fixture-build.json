@@ -1,0 +1,21 @@
+[
+  {
+    "name": "build-runtime-fixture-stage",
+    "command": [
+      "docker",
+      "build",
+      "--progress=plain",
+      "--target",
+      "build",
+      "-f",
+      "runtimes/antnest-runtime/Dockerfile",
+      "-t",
+      {
+        "input": "runtime_build_image"
+      },
+      "."
+    ],
+    "timeout_ms": 1800000,
+    "grace_ms": 180000
+  }
+]

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertResourceId,
   modelEdit,
   templateInput,
   assertBuildSnapshot,
@@ -147,5 +148,35 @@ test("Runtime completion must match the deterministic lifecycle command and gene
     assert.throws(() =>
       assertRuntimeOperation({ ...operation, [key]: "wrong" }, expected),
     );
+  }
+});
+
+test("new resource IDs preserve kind and use exactly 32 lowercase hex digits", () => {
+  for (const kind of [
+    "agent",
+    "session",
+    "run",
+    "message",
+    "org",
+    "user",
+    "membership",
+    "provider",
+    "model",
+    "template",
+    "event",
+    "scimtoken",
+    "rtv",
+  ]) {
+    assertResourceId(kind, `${kind}_${"a0".repeat(16)}`);
+    for (const invalid of [
+      "",
+      "b68d13dc-4561-4a45-af5b-10cff87dffd5",
+      `${kind}_${"A".repeat(32)}`,
+      `${kind}_${"a".repeat(31)}`,
+      `${kind}_${"a".repeat(33)}`,
+      `other_${"a".repeat(32)}`,
+    ]) {
+      assert.throws(() => assertResourceId(kind, invalid));
+    }
   }
 });

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,7 +35,7 @@ func TestBridgeWorkspaceDocumentForwardsVerifiedIdentityAndKeepsAssetPublic(t *t
 			}
 			response.WriteHeader(http.StatusOK)
 		}), time.Now(), Config{})
-	document := httptest.NewRequest(http.MethodGet, "/workspace/?agent=agent-1", nil)
+	document := httptest.NewRequest(http.MethodGet, "/workspace/agent-1/", nil)
 	addSessionCookies(document, "token-1", "csrf-1")
 	document.Header.Set(HeaderPrincipalID, "forged-user")
 	document.Header.Set("Authorization", "Bearer forged")
@@ -45,8 +46,8 @@ func TestBridgeWorkspaceDocumentForwardsVerifiedIdentityAndKeepsAssetPublic(t *t
 		t.Fatalf("document status=%d requests=%d", response.Code, len(seen))
 	}
 	upstream := seen[0]
-	if upstream.URL.Host != "agent-ui.internal" || upstream.URL.Path != "/workspace/" ||
-		upstream.URL.RawQuery != "agent=agent-1" || upstream.Header.Get(HeaderPrincipalID) != "user-admin" ||
+	if upstream.URL.Host != "agent-ui.internal" || upstream.URL.Path != "/workspace/agent-1/" ||
+		upstream.URL.RawQuery != "" || upstream.Header.Get(HeaderPrincipalID) != "user-admin" ||
 		upstream.Header.Get(HeaderOrganizationID) != "org-1" || upstream.Header.Get(HeaderAdministrator) != "false" ||
 		upstream.Header.Get("Cookie") != "" || upstream.Header.Get("Authorization") != "" {
 		t.Fatalf("document upstream URL=%s headers=%v", upstream.URL, upstream.Header)
@@ -287,11 +288,11 @@ func TestWorkspaceDocumentRequiresSessionAndPreservesSafeDeepLink(t *testing.T) 
 			response.WriteHeader(http.StatusOK)
 		}), time.Now(), Config{},
 	)
-	path := "/workspace/?agent=agent-1&session=session-2"
+	path := "/workspace/agent-1/sessions/session-2"
 	visitor := httptest.NewRecorder()
 	handler.ServeHTTP(visitor, httptest.NewRequest(http.MethodGet, path, nil))
 	if visitor.Code != http.StatusSeeOther ||
-		visitor.Header().Get("Location") != "/?return_to=%2Fworkspace%2F%3Fagent%3Dagent-1%26session%3Dsession-2" ||
+		visitor.Header().Get("Location") != "/?return_to="+url.QueryEscape(path) ||
 		len(forwarded) != 0 {
 		t.Fatalf("visitor status=%d location=%q forwarded=%v", visitor.Code, visitor.Header().Get("Location"), forwarded)
 	}
@@ -300,7 +301,7 @@ func TestWorkspaceDocumentRequiresSessionAndPreservesSafeDeepLink(t *testing.T) 
 	member := httptest.NewRecorder()
 	handler.ServeHTTP(member, request)
 	if member.Code != http.StatusOK || member.Header().Get("Cache-Control") != "private, no-store" ||
-		len(forwarded) != 1 || forwarded[0] != "/workspace/|" {
+		len(forwarded) != 1 || forwarded[0] != path+"|" {
 		t.Fatalf("member status=%d cache=%q forwarded=%v", member.Code, member.Header().Get("Cache-Control"), forwarded)
 	}
 	asset := httptest.NewRecorder()
@@ -310,14 +311,47 @@ func TestWorkspaceDocumentRequiresSessionAndPreservesSafeDeepLink(t *testing.T) 
 	}
 	unsafe := httptest.NewRecorder()
 	handler.ServeHTTP(unsafe, httptest.NewRequest(http.MethodGet,
-		"/workspace/?agent=agent-1&return_to=https://evil.example", nil))
+		"/workspace/agent-1/?return_to=https://evil.example", nil))
 	if unsafe.Header().Get("Location") != "/?return_to=%2Fworkspace%2F" {
 		t.Fatalf("unsafe redirect=%q", unsafe.Header().Get("Location"))
 	}
 	control := httptest.NewRecorder()
 	handler.ServeHTTP(control, httptest.NewRequest(http.MethodGet,
-		"/workspace/?agent=agent-1%01", nil))
+		"/workspace/agent-1%01/", nil))
 	if control.Header().Get("Location") != "/?return_to=%2Fworkspace%2F" {
 		t.Fatalf("control character redirect=%q", control.Header().Get("Location"))
+	}
+}
+
+func TestWorkspaceDocumentPreservesEscapedPathThroughLoginAndProxy(t *testing.T) {
+	path := "/workspace/agent%2Fone/sessions/session%20%26one"
+	var forwarded string
+	handler := newTestHandlerWithConfig(t,
+		&identityServiceStub{resolvePrincipal: ordinaryPrincipal()},
+		http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			forwarded = request.URL.EscapedPath()
+			response.WriteHeader(http.StatusOK)
+		}), time.Now(), Config{})
+	visitor := httptest.NewRecorder()
+	handler.ServeHTTP(visitor, httptest.NewRequest(http.MethodGet, path, nil))
+	if visitor.Code != http.StatusSeeOther || visitor.Header().Get("Location") != "/?return_to="+url.QueryEscape(path) {
+		t.Fatalf("visitor status=%d location=%q", visitor.Code, visitor.Header().Get("Location"))
+	}
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	addSessionCookies(request, "token-1", "csrf-1")
+	member := httptest.NewRecorder()
+	handler.ServeHTTP(member, request)
+	if member.Code != http.StatusOK || forwarded != path {
+		t.Fatalf("member status=%d forwarded=%q", member.Code, forwarded)
+	}
+}
+
+func TestWorkspaceLoginRejectsMalformedDocumentDestinations(t *testing.T) {
+	for _, path := range []string{"/workspace/?agent=a", "/workspace/a/sessions/", "/workspace/a/sessions/s/extra", "/workspace/%20a/", "/workspace/%E0%A4/", "/workspace/a/?session=s", "/workspace/" + strings.Repeat("a", 201) + "/"} {
+		response := httptest.NewRecorder()
+		redirectWorkspaceLogin(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Header().Get("Location") != "/?return_to=%2Fworkspace%2F" {
+			t.Fatalf("path=%q location=%q", path, response.Header().Get("Location"))
+		}
 	}
 }

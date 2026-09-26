@@ -82,6 +82,11 @@ health startup uses the remaining 15-minute profile budget, not that short probe
 limit; an explicit wrapper-only `--lifecycle` flag selects the wait. Neither mode
 can bypass an expired deadline. Cleanup has its own bounded allowance.
 
+Current scenario reports use `status: file_case_passed` for successful
+verification and a separate `tool_status` for the expected Tool outcome. An
+intentional failed edit must not look like a failed acceptance command to the
+suite runner. The final business and strict Trace outcomes remain separate.
+
 ## Historical Evidence — 2026-09-09
 
 Sixteen scenarios passed across v1/v2, with 32 validated model requests,

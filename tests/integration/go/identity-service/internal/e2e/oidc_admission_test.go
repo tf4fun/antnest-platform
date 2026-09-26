@@ -178,7 +178,7 @@ func newOIDCAdmissionFixture(t *testing.T, databaseURL string) *oidcAdmissionFix
 func (f *oidcAdmissionFixture) start(t *testing.T) oidcflow.CompleteLoginInput {
 	t.Helper()
 	started, err := f.flow.StartLogin(t.Context(), oidcflow.StartLoginInput{
-		RequestID: f.newID(), OrganizationSlug: "admission", ProviderName: "workforce",
+		RequestID: f.newID("request"), OrganizationSlug: "admission", ProviderName: "workforce",
 	})
 	if err != nil {
 		t.Fatal(err)

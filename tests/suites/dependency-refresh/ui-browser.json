@@ -1,0 +1,14 @@
+[
+  {
+    "name": "ui-browser",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "run",
+      "test:browser"
+    ],
+    "timeout_ms": 600000,
+    "grace_ms": 30000
+  }
+]

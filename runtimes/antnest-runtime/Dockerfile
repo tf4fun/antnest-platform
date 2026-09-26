@@ -1,6 +1,6 @@
 # Build from the repository root:
 #   docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
-FROM rust:1.96-bookworm AS build
+FROM rust:1.98.1-bookworm AS build
 ARG CARGO_BUILD_JOBS=2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libnftables-dev pkg-config \
@@ -23,10 +23,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cargo build --locked --release \
     && cp target/release/antnest-runtime /tmp/antnest-runtime
 
-FROM python:3.12-slim-bookworm
+FROM node:24.21.0-bookworm-slim AS node
+
+FROM python:3.14.7-slim-bookworm
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git iproute2 libnftables1 nodejs npm \
+    && apt-get install -y --no-install-recommends ca-certificates curl git iproute2 libnftables1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 RUN useradd --uid 1000 --home-dir /workspace --no-create-home agent \
 	&& mkdir -p /workspace /skills \
 	&& chown 1000:1000 /workspace \

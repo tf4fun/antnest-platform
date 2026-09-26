@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import { tag } from "./trace-tree.mjs";
 
 const value = (fields, key) =>
   fields?.find((field) => field.key === key)?.value;
-const tag = (span, key) => value(span.tags, key);
 
 function graph(trace) {
   assert(

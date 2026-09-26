@@ -2,7 +2,7 @@ name: antnest-platform
 
 services:
   postgres:
-    image: postgres:17-bookworm
+    image: postgres:17.11-bookworm
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: antnest_test_admin
@@ -40,7 +40,7 @@ services:
 
   temporal-databases:
     profiles: [stage2, stage3]
-    image: postgres:17-bookworm
+    image: postgres:17.11-bookworm
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,7 +56,7 @@ services:
 
   temporal-schema:
     profiles: [stage2, stage3]
-    image: temporalio/admin-tools:1.31.0
+    image: temporalio/admin-tools:1.32.0
     depends_on:
       temporal-databases:
         condition: service_completed_successfully
@@ -85,6 +85,9 @@ services:
       POSTGRES_PWD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
       POSTGRES_SEEDS: postgres
       BIND_ON_IP: 0.0.0.0
+      # All Temporal server roles share this container; keep gossip independent
+      # of Docker interface IP reallocation during a normal stop/start.
+      TEMPORAL_BROADCAST_ADDRESS: 127.0.0.1
       NUM_HISTORY_SHARDS: 4
       DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/docker.yaml
     volumes:
@@ -103,7 +106,7 @@ services:
 
   temporal-namespace:
     profiles: [stage2, stage3]
-    image: temporalio/admin-tools:1.31.0
+    image: temporalio/admin-tools:1.32.0
     depends_on:
       temporal:
         condition: service_healthy
@@ -253,7 +256,7 @@ services:
 
   stage2-model:
     profiles: [stage2-e2e]
-    image: node:24-bookworm-slim
+    image: node:24.21.0-bookworm-slim
     command: ["node", "/fixtures/stage2-model-server.mjs"]
     environment:
       ANTNEST_STAGE2_MODEL_PORT: "8080"
@@ -277,7 +280,7 @@ services:
 
   stage3-model:
     profiles: [stage3-e2e]
-    image: node:24-bookworm-slim
+    image: node:24.21.0-bookworm-slim
     command: ["node", "/fixtures/stage2-model-server.mjs"]
     environment:
       ANTNEST_STAGE2_MODEL_PORT: "8080"
@@ -503,7 +506,7 @@ services:
 
   jaeger:
     profiles: [observability]
-    image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.21.0
     ports:
       - 127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:-16686}:16686
     networks:

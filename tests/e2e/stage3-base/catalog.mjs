@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { modelEdit, modelParameters, templateInput } from "./contracts.mjs";
+import {
+  assertResourceId,
+  modelEdit,
+  modelParameters,
+  templateInput,
+} from "./contracts.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 
 export async function catalog(admin, image, secrets) {
@@ -118,6 +123,11 @@ export async function catalog(admin, image, secrets) {
       new Set(expected),
     );
   }
+  assertResourceId("provider", provider.connection_id);
+  for (const item of [model, secondary])
+    assertResourceId("model", item.model_profile_id);
+  for (const item of [template, otherTemplate])
+    assertResourceId("template", item.template_id);
   return { provider, model, template };
 }
 export async function editCatalog(admin, original, secrets) {

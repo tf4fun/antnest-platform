@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 
 export function parseVersion(value = "1") {
   assert(["1", "2"].includes(value), "managed MCP version must be 1 or 2");
@@ -63,7 +64,7 @@ export function assertPromptComplete(
     assert.equal(response.stopReason, "end_turn");
     assert.equal(states.length, 0);
   } else {
-    assert.deepEqual(response, {}, "v2 acknowledgment changed");
+    assertV2PromptAcknowledged(response, updates, sessionId);
     assert.deepEqual(
       states.map(({ update }) => update.state),
       ["running", "idle"],

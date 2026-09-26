@@ -33,6 +33,9 @@ func TestCreateAgentAcceptsDurableIntentWithoutCallingRuntimeDependencies(t *tes
 	if err != nil {
 		t.Fatalf("accept Agent create: %v", err)
 	}
+	assertResourceID(t, "agent", result.Agent.AgentID)
+	assertResourceID(t, "agentspec", store.initial.Spec.ID)
+	assertResourceID(t, "event", store.initial.RequestedEvent.EventID)
 	if len(dependencies.calls) != 0 {
 		t.Fatalf("request path called lifecycle dependencies: %v", dependencies.calls)
 	}

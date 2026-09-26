@@ -1,33 +1,78 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: hsl(var(--foreground));
-  background: hsl(var(--background));
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  --background: 60 11% 96%;
-  --foreground: 60 4% 11%;
-  --border: 60 8% 86%;
-  --primary: 60 4% 12%;
-  --primary-foreground: 60 10% 98%;
-  --muted: 60 10% 93%;
-  --muted-foreground: 60 3% 43%;
-  --signal: 75 100% 66%;
-  --signal-strong: 73 100% 30%;
-  --destructive: 0 67% 47%;
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-destructive: hsl(var(--destructive));
 }
 
-* { border-color: hsl(var(--border)); }
-html { min-width: 320px; background: hsl(var(--background)); }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: hsl(var(--background)); }
-button, input, select, textarea { font: inherit; }
-button { letter-spacing: 0; }
-::selection { background: hsl(var(--signal)); color: hsl(var(--foreground)); }
-
 @layer base {
-  a { color: inherit; text-decoration: none; }
-  :focus-visible { outline: none; }
+  :root {
+    font-family:
+      "DM Sans",
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    color: hsl(var(--foreground));
+    background: hsl(var(--background));
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    --background: 60 11% 96%;
+    --foreground: 60 4% 11%;
+    --border: 60 8% 86%;
+    --primary: 60 4% 12%;
+    --primary-foreground: 60 10% 98%;
+    --muted: 60 10% 93%;
+    --muted-foreground: 60 3% 43%;
+    --signal: 75 100% 66%;
+    --signal-strong: 73 100% 30%;
+    --destructive: 0 67% 47%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+  html {
+    min-width: 320px;
+    background: hsl(var(--background));
+  }
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background: hsl(var(--background));
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+  button {
+    letter-spacing: 0;
+  }
+  ::selection {
+    background: hsl(var(--signal));
+    color: hsl(var(--foreground));
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  :focus-visible {
+    outline: none;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
 }

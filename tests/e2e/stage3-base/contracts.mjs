@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
+// This assertion applies to fresh resources in a disposable deployment only.
+// Product consumers continue to treat already-issued IDs as opaque strings.
+export function assertResourceId(kind, value) {
+  assert.match(
+    value,
+    new RegExp(`^${kind}_[0-9a-f]{32}$`),
+    `${kind} resource ID format`,
+  );
+}
+
 export function assertWorkspaceProjection(bootstrap, state, agentId) {
   const agent = bootstrap.agents.find((item) => item.agent_id === agentId);
   assert(agent, "Agent missing from management discovery");

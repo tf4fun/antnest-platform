@@ -79,3 +79,18 @@ test("catalog releases completed process when a Session is left", () => {
   assert.deepEqual(catalog.conversations[0]?.messages.map((item) => item.id),
     ["turn:prompt", "turn:answer"]);
 });
+
+test("catalog refreshes its first page after a completed initial scan", async () => {
+  let items: { sessionId: string; title: string; updatedAt: string; activeOperationId: null }[] = [];
+  const cursors: (string | undefined)[] = [];
+  const catalog = new BridgeSessionCatalog("agent-1", { sessions: async (_id, cursor) => {
+    cursors.push(cursor);
+    return { items, nextCursor: null };
+  } });
+  await catalog.loadPage();
+  items = [{ sessionId: "new", title: "New", updatedAt: "2026-09-26T00:00:00Z",
+    activeOperationId: null }];
+  await catalog.refreshFirstPage();
+  assert.deepEqual(cursors, [undefined, undefined]);
+  assert.equal(catalog.conversations[0]?.id, "new");
+});

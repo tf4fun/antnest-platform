@@ -123,10 +123,43 @@ test(
     const requestPrincipal = new AsyncLocalStorage();
     const mediumClients = new Map();
     const mediumWatermarks = new Map();
+    const mediumHistory = new Map();
+    const publishMedium = async (principalId, text) => {
+      const sequence = (mediumWatermarks.get(principalId) ?? 9) + 1;
+      const params = {
+        sessionId: "session-medium",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: `live-${sequence}`,
+          content: { type: "text", text },
+        },
+        _meta: {
+          "antnest.dev/delivery": {
+            kind: "part",
+            sequence,
+            partIndex: 0,
+            partCount: 1,
+            runId: "run-medium",
+            messageId: `live-event-${sequence}`,
+          },
+        },
+      };
+      const history = mediumHistory.get(principalId) ?? [];
+      history.push(params);
+      mediumHistory.set(principalId, history);
+      // The execution endpoint may be observed before SSE delivery. Every
+      // advertised event must already be available to a concurrent replay.
+      mediumWatermarks.set(principalId, sequence);
+      await mediumClients
+        .get(principalId)
+        .notify(acp.methods.client.session.update, params);
+      return sequence;
+    };
     let mediumLive = false;
     const capacityMemoryBytes = [];
     let longNotifications = 0;
     const longFailures = [];
+    const commandMutations = { prompts: 0, sessions: 0 };
     const agent = acp
       .agent({ name: "bridge-container-fixture" })
       .onRequest(acp.methods.agent.initialize, ({ params }) => {
@@ -152,6 +185,7 @@ test(
         };
       })
       .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
+        let mediumCut = 9;
         assert(
           [
             "session-1",
@@ -216,6 +250,8 @@ test(
           const principalId = requestPrincipal.getStore();
           assert.equal(typeof principalId, "string");
           mediumClients.set(principalId, client);
+          const liveHistory = [...(mediumHistory.get(principalId) ?? [])];
+          mediumCut = mediumWatermarks.get(principalId) ?? 9;
           for (let index = 0; index < 8; index++)
             await client.notify(acp.methods.client.session.update, {
               sessionId: params.sessionId,
@@ -245,6 +281,11 @@ test(
               "antnest.dev/delivery": { kind: "checkpoint", sequence: 9 },
             },
           });
+          for (const notification of liveHistory)
+            await client.notify(
+              acp.methods.client.session.update,
+              notification,
+            );
         }
         return {
           _meta: {
@@ -253,7 +294,7 @@ test(
                 params.sessionId === "session-long"
                   ? 21
                   : params.sessionId === "session-medium"
-                    ? 9
+                    ? mediumCut
                     : params.sessionId === "session-memory"
                       ? memoryWatermark
                       : session1Watermark,
@@ -263,7 +304,7 @@ test(
         };
       })
       .onRequest(acp.methods.agent.session.list, ({ params }) => {
-        assert.equal(params.cursor, "old-page");
+        assert.ok(params.cursor === undefined || params.cursor === "old-page");
         return {
           sessions: [
             { sessionId: "session-1", cwd: "/workspace", title: "First" },
@@ -272,9 +313,14 @@ test(
         };
       })
       .onRequest(acp.methods.agent.session.new, ({ params }) => {
+        commandMutations.sessions++;
         assert.equal(params.cwd, "/workspace");
         assert.deepEqual(params.mcpServers, []);
         return { sessionId: "session-2" };
+      })
+      .onRequest(acp.methods.agent.session.prompt, () => {
+        commandMutations.prompts++;
+        throw new Error("Controls must never dispatch a model prompt");
       });
     const acpHandler = createNodeHttpHandler(new AcpServer({ agent }));
     const fixture = createServer((request, response) => {
@@ -434,7 +480,7 @@ test(
         coldAttempts++;
         let response;
         try {
-          response = await fetch(`${base}/workspace/?agent=agent-1`, {
+          response = await fetch(`${base}/workspace/agent-1/`, {
             headers: {
               "x-antnest-organization-id": "org-1",
               "x-antnest-principal-id": "user-1",
@@ -560,11 +606,8 @@ test(
         ),
         "Controller discovery must continue the authenticated Bridge HTTP trace",
       );
-      assert.equal(
-        (await fetch(`${base}/workspace/?agent=agent-1`)).status,
-        401,
-      );
-      const documentResponse = await fetch(`${base}/workspace/?agent=agent-1`, {
+      assert.equal((await fetch(`${base}/workspace/agent-1/`)).status, 401);
+      const documentResponse = await fetch(`${base}/workspace/agent-1/`, {
         headers: {
           "x-antnest-organization-id": "org-1",
           "x-antnest-principal-id": "user-1",
@@ -613,6 +656,54 @@ test(
       assert.equal(view.selectedView?.appendVersion, 1);
       assert.equal(view.selectedView?.title, "Fixture session title");
       assert.equal(view.selectedView?.updatedAt, "2026-09-24T00:00:00Z");
+      const commandHeaders = {
+        "x-antnest-organization-id": "org-1",
+        "x-antnest-principal-id": "user-1",
+        "x-antnest-agent-id": "agent-1",
+        "content-type": "application/json",
+      };
+      const control = async (text, sessionId = null, status = 200) => {
+        const response = await fetch(
+          `${base}/api/app/workspace/v1/agents/agent-1/commands`,
+          {
+            method: "POST",
+            headers: commandHeaders,
+            body: JSON.stringify({ text, sessionId }),
+            signal: AbortSignal.any([
+              AbortSignal.timeout(10_000),
+              interrupted.signal,
+            ]),
+          },
+        );
+        const result = await response.json();
+        assert.equal(response.status, status, JSON.stringify(result));
+        return result;
+      };
+      assert.match((await control("/help")).text, /\/sessions/);
+      assert.match(
+        (await control("/status", "session-1")).text,
+        /Fixture session title/,
+      );
+      assert.match((await control("/usage", "session-1")).text, /Not reported/);
+      assert.match(
+        (await control("/sessions old-page")).text,
+        /\/sessions next-page/,
+      );
+      assert.deepEqual((await control("/resume session-1")).selection, {
+        sessionId: "session-1",
+      });
+      assert.deepEqual((await control("/new", "session-1")).selection, {
+        sessionId: null,
+      });
+      assert.equal(
+        (await control("/fork", "session-1", 422)).code,
+        "command_unavailable",
+      );
+      assert.equal(
+        (await control("/model", "session-1", 422)).code,
+        "command_unavailable",
+      );
+      assert.deepEqual(commandMutations, { prompts: 0, sessions: 0 });
       const oversizedPrompt = {
         intentId: "intent-cap",
         expectedAppendVersion: 1,
@@ -1309,28 +1400,10 @@ test(
       for (let round = 0; round < 4; round++) {
         for (let index = 0; index < activeOwners.length; index++) {
           const principalId = activeOwners[index];
-          const sequence = (mediumWatermarks.get(principalId) ?? 9) + 1;
-          mediumWatermarks.set(principalId, sequence);
-          await mediumClients
-            .get(principalId)
-            .notify(acp.methods.client.session.update, {
-              sessionId: "session-medium",
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                messageId: `live-${sequence}`,
-                content: { type: "text", text: "a".repeat(8 * 1024) },
-              },
-              _meta: {
-                "antnest.dev/delivery": {
-                  kind: "part",
-                  sequence,
-                  partIndex: 0,
-                  partCount: 1,
-                  runId: "run-medium",
-                  messageId: `live-event-${sequence}`,
-                },
-              },
-            });
+          const sequence = await publishMedium(
+            principalId,
+            "a".repeat(8 * 1024),
+          );
           const liveResponse = await fetch(
             `${base}/api/app/workspace/v1/agents/agent-1/view?sessionId=session-medium`,
             {
@@ -1382,28 +1455,7 @@ test(
       );
       const continuedMemoryBytes = [await memoryBytes()];
       for (let index = 0; index < 24; index++) {
-        const sequence = (mediumWatermarks.get(liveOwner) ?? 9) + 1;
-        mediumWatermarks.set(liveOwner, sequence);
-        await mediumClients
-          .get(liveOwner)
-          .notify(acp.methods.client.session.update, {
-            sessionId: "session-medium",
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              messageId: `live-${sequence}`,
-              content: { type: "text", text: "b".repeat(8 * 1024) },
-            },
-            _meta: {
-              "antnest.dev/delivery": {
-                kind: "part",
-                sequence,
-                partIndex: 0,
-                partCount: 1,
-                runId: "run-medium",
-                messageId: `live-event-${sequence}`,
-              },
-            },
-          });
+        await publishMedium(liveOwner, "b".repeat(8 * 1024));
       }
       const continuedResponse = await fetch(
         `${base}/api/app/workspace/v1/agents/agent-1/view?sessionId=session-medium`,
@@ -1453,28 +1505,10 @@ test(
         `Active-output memory samples: ${JSON.stringify(mediumMemoryBytes)}`,
       );
       const oversizedBeforeBytes = await memoryBytes();
-      const oversizedSequence = (mediumWatermarks.get(liveOwner) ?? 0) + 1;
-      mediumWatermarks.set(liveOwner, oversizedSequence);
-      await mediumClients
-        .get(liveOwner)
-        .notify(acp.methods.client.session.update, {
-          sessionId: "session-medium",
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            messageId: `live-${oversizedSequence}`,
-            content: { type: "text", text: "c".repeat(17 * 1024 * 1024) },
-          },
-          _meta: {
-            "antnest.dev/delivery": {
-              kind: "part",
-              sequence: oversizedSequence,
-              partIndex: 0,
-              partCount: 1,
-              runId: "run-medium",
-              messageId: `live-event-${oversizedSequence}`,
-            },
-          },
-        });
+      const oversizedSequence = await publishMedium(
+        liveOwner,
+        "c".repeat(17 * 1024 * 1024),
+      );
       let oversizedView;
       const oversizedReadyDeadline = performance.now() + 30_000;
       while (performance.now() < oversizedReadyDeadline) {
@@ -1653,6 +1687,7 @@ test(
       const created = await createResponse.json();
       assert.equal(createResponse.status, 201, JSON.stringify(created));
       assert.deepEqual(created, { sessionId: "session-2" });
+      assert.deepEqual(commandMutations, { prompts: 0, sessions: 1 });
       assert.ok(seen.some(({ path }) => path === "/v1/acp"));
       assert.ok(
         seen.some(

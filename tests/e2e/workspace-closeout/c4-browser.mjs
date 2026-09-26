@@ -1,3 +1,4 @@
+import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import assert from "node:assert/strict";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { member, until } from "./c4-setup.mjs";
@@ -66,9 +67,9 @@ export async function runBrowser(
     return page;
   };
   let page = track(await context.newPage());
-  const url = `${config.gateway}/workspace/?agent=${fixture.agentID}`;
+  const url = `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/`;
   const input = (target = page) =>
-    target.getByRole("textbox", { name: "Message", exact: true });
+    target.getByRole("combobox", { name: "Message", exact: true });
   const enabled = (target = page) =>
     until(() => input(target).isEnabled(), "composer ready", signal);
   const newConversation = async (target) => {
@@ -119,11 +120,11 @@ export async function runBrowser(
       await enabled(target);
     }
     await until(
-      () => new URL(target.url()).searchParams.get("session"),
+      () => workspaceLocation(target.url()).sessionId,
       "session URL",
       signal,
     );
-    report.sessions[phase] = new URL(target.url()).searchParams.get("session");
+    report.sessions[phase] = workspaceLocation(target.url()).sessionId;
   }
   async function held(phase, target = page) {
     await prompt(phase, undefined, target);
@@ -171,17 +172,76 @@ export async function runBrowser(
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.waitForURL("**/workspace/**");
     await page
-      .getByRole("searchbox", { name: "Find an agent" })
+      .getByRole("searchbox", { name: "Find a workspace" })
       .fill("C4 Browser Agent");
     await page
       .locator(".chooser-agent")
       .filter({ hasText: "C4 Browser Agent" })
       .click();
-    await newConversation(page);
+    await enabled(page);
+    assert.equal(
+      workspaceLocation(page.url()).sessionId,
+      null,
+      "opening an Agent must remain a local draft",
+    );
+    const workspaceSwitcher = page.getByRole("button", {
+      name: "Switch workspace: C4 Browser Agent",
+    });
+    const conversations = page.getByRole("region", {
+      name: "Conversations in C4 Browser Agent",
+    });
+    const contextBounds = await workspaceSwitcher.boundingBox();
+    const actionBounds = await conversations
+      .getByRole("button", { name: "New conversation" })
+      .boundingBox();
+    assert.ok(
+      contextBounds.y + contextBounds.height <= actionBounds.y,
+      "Workspace selection scopes the conversation actions below it",
+    );
+    await workspaceSwitcher.click();
+    await page.getByRole("group", { name: "Workspaces" }).waitFor();
+    await page.screenshot({
+      path: `${output}/desktop-workspace-switcher.png`,
+      fullPage: true,
+    });
+    await page.keyboard.press("Escape");
+    assert.equal(
+      await workspaceSwitcher.getAttribute("aria-expanded"),
+      "false",
+    );
+    await check("workspace context above conversation navigation");
+    const draftLayout = await page
+      .locator(".thread-draft")
+      .evaluate((region) => {
+        const heading = region.querySelector(".empty-thread");
+        const composer = region.querySelector(".composer");
+        if (!heading || !composer) return null;
+        const outer = region.getBoundingClientRect();
+        const first = heading.getBoundingClientRect();
+        const last = composer.getBoundingClientRect();
+        return {
+          offset: Math.abs(
+            (first.top + last.bottom) / 2 - (outer.top + outer.bottom) / 2,
+          ),
+          allowance: outer.height * 0.12,
+        };
+      });
+    assert(
+      draftLayout && draftLayout.offset <= draftLayout.allowance,
+      `new conversation greeting and composer should be centered: ${JSON.stringify(draftLayout)}`,
+    );
+    await page.screenshot({
+      path: `${output}/desktop-new-conversation.png`,
+      fullPage: true,
+    });
     assert(
       (await page.locator("body").innerText()).includes("C4 Browser Agent"),
     );
     await prompt("c4-browser-write", "Workspace note saved.");
+    assert(
+      workspaceLocation(page.url()).sessionId,
+      "first send must create and select a Session",
+    );
     await page
       .getByRole("button", { name: "Show process", exact: true })
       .first()
@@ -198,7 +258,7 @@ export async function runBrowser(
     const observer = track(await context.newPage());
     await observer.goto(firstURL);
     await enabled(observer);
-    const firstSession = new URL(firstURL).searchParams.get("session");
+    const firstSession = workspaceLocation(firstURL).sessionId;
     const previousMetadata = await sessionInfo(firstSession);
     assert(previousMetadata, "observer must receive current Session metadata");
     await prompt("c4-browser-read", "Workspace note: alpha-beta.");
@@ -325,9 +385,13 @@ export async function runBrowser(
     const other = track(await context.newPage());
     await openAgentPage(other);
     await newConversation(other);
+    await input(other).fill("Waiting in a separate draft");
     await held("c4-browser-hold-cancel");
     await until(
-      async () => !(await input(other).isEnabled()),
+      async () =>
+        !(await other
+          .getByRole("button", { name: "Send message" })
+          .isEnabled()),
       "cross-session busy",
       signal,
     );
@@ -342,15 +406,20 @@ export async function runBrowser(
       "model canceled",
       signal,
     );
-    await enabled(other);
+    await until(
+      async () =>
+        other.getByRole("button", { name: "Send message" }).isEnabled(),
+      "cross-session send available",
+      signal,
+    );
     await prompt(
       "c4-browser-after-cancel",
       "c4-browser-after-cancel completed",
       other,
     );
     assert.notEqual(
-      new URL(other.url()).searchParams.get("session"),
-      new URL(firstURL).searchParams.get("session"),
+      workspaceLocation(other.url()).sessionId,
+      workspaceLocation(firstURL).sessionId,
     );
     await other.close();
     await enabled();
@@ -401,6 +470,14 @@ export async function runBrowser(
     await check("close_reopen_history_without_resubmission");
 
     const before = await state();
+    const beforeRebuildRequests = (await model()).requests.length;
+    const rebuildDraft = "Draft retained while the Agent rebuilds";
+    await input().fill(rebuildDraft);
+    const sendDuringRebuild = page.getByRole("button", {
+      name: "Send message",
+      exact: true,
+    });
+    assert(await sendDuringRebuild.isEnabled());
     const rebuilt = await fixture.json(
       `/api/admin/agents/${fixture.agentID}/rebuild`,
       {
@@ -412,10 +489,16 @@ export async function runBrowser(
       },
     );
     await until(
-      async () => !(await input().isEnabled()),
-      "open page observes rebuild",
+      () => sendDuringRebuild.isDisabled(),
+      "open page blocks ordinary prompts during rebuild",
       signal,
     );
+    assert(
+      await input().isEnabled(),
+      "rebuild removed the control-command input",
+    );
+    await input().press("Enter");
+    assert.equal(await input().inputValue(), rebuildDraft);
     await page.screenshot({
       path: `${output}/desktop-rebuild.png`,
       fullPage: true,
@@ -430,6 +513,11 @@ export async function runBrowser(
       signal,
     );
     await enabled();
+    assert.equal(
+      (await model()).requests.length,
+      beforeRebuildRequests,
+      "blocked rebuild draft invoked the model",
+    );
     await prompt(
       "c4-browser-after-rebuild",
       "c4-browser-after-rebuild: retained note alpha-beta verified.",

@@ -21,7 +21,7 @@ func TestIssueTokenRequiresOrganizationAdministrationAndStoresHashOnly(t *testin
 	if err != nil {
 		t.Fatalf("issue SCIM token: %v", err)
 	}
-	if result.Credential == "" || repository.issued.TokenHash != credentials.HashToken(result.Credential) ||
+	if repository.issued.TokenID != "scimtoken-1" || result.Credential == "" || repository.issued.TokenHash != credentials.HashToken(result.Credential) ||
 		repository.issued.TokenHash == result.Credential {
 		t.Fatalf("issued token = %#v credential=%q", repository.issued, result.Credential)
 	}
@@ -101,7 +101,7 @@ func TestCreateUserBuildsOrganizationScopedSCIMMembership(t *testing.T) {
 		result.Membership.SCIMExternalID != "workday-42" || result.Membership.ID == result.User.ID {
 		t.Fatalf("SCIM user = %#v", result)
 	}
-	if repository.createdUser.ActorTokenID != "scim-token-1" {
+	if result.User.ID != "user-1" || result.Membership.ID != "membership-2" || repository.createdUser.ActorTokenID != "scim-token-1" {
 		t.Fatalf("SCIM actor token was dropped: %#v", repository.createdUser)
 	}
 }
@@ -291,7 +291,7 @@ func newSCIMTestService(t *testing.T, repository *scimRepositoryStub) *Service {
 	next := 0
 	service, err := NewService(Config{
 		Repository: repository,
-		NewID:      func() string { next++; return fmt.Sprintf("id-%d", next) },
+		NewID:      func(kind string) string { next++; return fmt.Sprintf("%s-%d", kind, next) },
 		NewOpaque: func(prefix string) (string, string, error) {
 			raw := prefix + "secret"
 			return raw, credentials.HashToken(raw), nil

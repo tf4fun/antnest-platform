@@ -5,7 +5,22 @@ organizations, directory membership, local login, OIDC federation, SCIM 2.0,
 and opaque access credentials. It does not own Agents, Channels, Runtimes, or
 model credentials.
 
+## Resource identifiers
+
+New owned records use `<kind>_<32 lowercase hex digits>` from the
+[platform resource ID contract](../../contracts/resource-identifiers.md).
+Bootstrap, local login, directory administration, OIDC and SCIM request the
+specific resource kind from the same secure generator. Existing IDs remain
+opaque and unchanged, including SCIM resource references. Token record IDs are
+separate from bearer credential bytes; token hashing and OIDC secrets are unchanged.
+
 ## Status
+
+The [2026-09-26 dependency refresh](../../docs/dependency-refresh-20260926.md)
+targets Go 1.27.1, go-oidc 3.21.0, pgx 5.11.0, OpenTelemetry 1.46.0/0.22.0,
+otelhttp 0.71.0, x/crypto 0.57.0 and x/oauth2 0.37.0. Authentication,
+directory and revocation behavior continue through the service's race/contract
+gates and the final isolated PostgreSQL/Docker acceptance batch.
 
 The identity model and the documented OIDC/SCIM profile are independently
 deployable. A narrow `resolve_principal` RPC lets Agent Controller validate an

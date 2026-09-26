@@ -43,6 +43,14 @@ export class BridgeSessionCatalog {
     return this.pending;
   }
 
+  async refreshFirstPage(): Promise<{ hasMore: boolean }> {
+    await this.pending?.catch(() => {});
+    this.cursor = undefined;
+    this.complete = false;
+    this.cursors.clear();
+    return this.loadPage();
+  }
+
   private async fetchPage(): Promise<{ hasMore: boolean }> {
     const raw = await this.api.sessions(this.agentId, this.cursor);
     if (!isRecord(raw) || !Array.isArray(raw.items) || !nullableCursor(raw.nextCursor))

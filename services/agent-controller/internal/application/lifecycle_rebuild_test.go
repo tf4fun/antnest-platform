@@ -46,6 +46,10 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		t.Fatalf("rebuild Agent: %v", err)
 	}
 
+	assertResourceID(t, "agentspec", store.begin.TargetSpec.ID)
+	assertResourceID(t, "event", store.begin.RequestedEvent.EventID)
+	assertResourceID(t, "event", store.published.RebuiltEvent.EventID)
+	assertResourceID(t, "accessrev", store.published.AccessRevision)
 	wantCalls := []string{
 		"egress.get", "egress.attachment.closed", "runtime.update", "egress.attachment.open",
 	}

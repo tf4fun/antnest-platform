@@ -1,11 +1,70 @@
 # Current Implementation And Acceptance
 
+The pre-Stage-4 dependency refresh and full current-service automated regression
+are complete on 2026-09-26. The [delivery and verification record](dependency-refresh-20260926.md)
+records fresh service/unit/contract/component, database, image and 32 Docker
+entry-point results, including the current command/layout browser checks.
+Required business, applicable topology and privacy gates pass; original strict
+Trace exits remain nonzero under the reviewed clock/SDK-timing boundary and
+explicit negative/fault scopes. Human visual, real screen-reader and non-local
+acceptance remain separate. The 24 retained containers, 290 volumes and 25
+networks are unchanged; candidate images are built, the human environment has
+not been redeployed. Earlier dated results
+below retain their original versions and scope.
+
 The 2026-09-26 [Stage 3 final acceptance](stage3-final-acceptance-20260926.md)
 records the current single-node service candidate passing business and
 applicable topology gates with the reviewed clock-warning exception. The
 original strict Trace exits remain nonzero. The earlier
 [pre-acceptance checkpoint](stage3-final-preacceptance-20260925.md) is retained
 as history.
+
+Human experience acceptance has started. The
+[2026-09-26 Agent UI remediation record](../services/agent-ui/docs/human-acceptance-remediation-20260926.md)
+tracks the implemented first-send Session flow, sidebar navigation and running
+Tool/process spacing. Service tests, browser integration and the isolated C4
+business checks passed. C4 strict Trace still exits nonzero only for the
+previously reviewed clock-skew warnings; renewed human review remains.
+The follow-up workspace navigation layout is now deployed for visual review:
+the Antnest title is retained, with the current Agent name as its clickable
+workspace subtitle; New conversation, search and scoped history follow below.
+The renewed C4 regression now covers this follow-up layout, including workspace
+context above conversation navigation and desktop/mobile behavior.
+Workspace document selection now uses
+`/workspace/{agentId}/sessions/{sessionId}` and `/workspace/{agentId}/` for a draft,
+with matching Console links and Gateway login returns. Focused route checks and
+the deployed browser preview and renewed C4 regression pass; human visual
+approval remains pending. See the [navigation contract](../contracts/agent-ui/workspace-navigation.md).
+
+The [resource ID unification](resource-identifiers-20260926.md) is implemented
+and deployed: newly generated platform resources use
+`<kind>_<32 lowercase hex digits>`, including `agent_` and `session_` in workspace
+paths. Existing identities remain unchanged. ACP, Identity and Controller local
+gates and disposable Docker business/topology checks pass; strict Trace retains
+only the reviewed cross-process clock warnings and its original nonzero exit.
+The focused browser first-send/reload check passes with a new `session_` ID.
+The subsequent UI regression also passes; human style review remains pending.
+
+The [Stage 4 command preparation](stage4-command-preparation-20260926.md)
+extends the existing Agent UI service with 11 Node control commands and a shared
+cross-channel semantic contract. Its Agent-level control catalogue is separate
+from native Session ACP commands. Help/status/navigation work before Session
+creation; busy controls preserve configuration CAS and targeted cancellation.
+242 service tests, 16 official SDK/HTTP/SSE integration tests, the production
+container regression and backend-only real-stack Docker acceptance pass. The
+real stack covers all 11 commands, concurrent configuration CAS, targeted Stop,
+fork, authorization and no model calls for controls; temporary resources are
+cleaned. The refreshed candidate also passes real-stack browser command input,
+two-page SSE/control synchronization, Session navigation and reload restoration
+without extra model requests. Human visual approval remains separate. Channel
+Gateway and the other Stage 4 services remain
+unstarted; this is not a completed cross-channel workflow or final acceptance.
+`session/fork` is an explicitly negotiated **UNSTABLE** SDK capability, not a
+stable ACP v1 requirement. The 2026-09-26 recheck found SDK 1.5.0 (released
+2026-09-21) while the earlier tests used pinned 1.4.0. The 1.5.0 service upgrade,
+v1 schema audit, v2 acceptance-response consumer contracts and final Docker
+regression all pass within the stated acceptance boundaries. Fork remains
+unstable in the 1.5.0 schema.
 
 Agent UI implementation checkpoint (2026-09-24): it runs as one Node full-stack development
 service: Gateway-authenticated HTML, business HTTP/SSE, a server-owned ACP
@@ -408,11 +467,11 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   restarts still use the committed-response profile. No new production fix or
   deployment is required by these passing reconstruction scenarios.
 
-- F07 remains deferred under the recorded rmcp 3.4.0 recheck: standard URL
-  input was rejected without a legacy `elicitationId`. That result is dated
-  evidence, not a claim about today's upstream release. Runtime, ACP, UI and
-  deployment work stays deferred while upstream support is absent. Per the
-  current priority decision, no new F07 recheck or implementation is scheduled.
+- F07 remains deferred. The 2026-09-26 dependency refresh upgraded Runtime to
+  rmcp 3.4.1 and its existing SDK boundary regression again reproduced rejection
+  of standard URL input without a legacy `elicitationId`. The 3.4.0 independent
+  probe remains dated reproduction evidence. Runtime interaction, ACP, UI and
+  deployment work for F07 stays deferred; no partial implementation was added.
 - [OBS-ACP-CLOCK](controller-acp-execution-boundary-plan.md#obs-acp-clock) is an
   accepted maintenance deferral for inspected, recorded timing warnings. Strict
   results remain unchanged. The later [Stage 3 decision](stage-3-current-services-closeout.md)

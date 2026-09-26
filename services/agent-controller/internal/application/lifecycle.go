@@ -222,7 +222,7 @@ func (service *LifecycleService) CreateAgent(
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-create-requested", input.RequestID), AgentID: agentID,
+			EventID: domain.DeriveResourceID("event", "event-create-requested", input.RequestID), AgentID: agentID,
 			AggregateSequence: 1, SchemaVersion: 1, EventType: ports.EventAgentCreateRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
@@ -447,7 +447,7 @@ func (service *LifecycleService) publishAgentCreate(
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		NetworkAttachment: attachment,
 		CreatedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-created", state.Operation.RequestID), AgentID: state.Agent.AgentID,
+			EventID: domain.DeriveResourceID("event", "event-created", state.Operation.RequestID), AgentID: state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1, SchemaVersion: 1,
 			EventType: ports.EventAgentCreated, OperationRequestID: state.Operation.RequestID,
 			TraceID: currentTraceID(ctx),
@@ -557,7 +557,7 @@ func (service *LifecycleService) failCreate(
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		Stage: state.Operation.Phase, Code: code, Detail: detail, Retryable: retryable,
 		FailedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-build-failed", state.Operation.RequestID), AgentID: state.Agent.AgentID,
+			EventID: domain.DeriveResourceID("event", "event-build-failed", state.Operation.RequestID), AgentID: state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1, SchemaVersion: 1,
 			EventType: ports.EventAgentBuildFailed, OperationRequestID: state.Operation.RequestID,
 			TraceID:    currentTraceID(ctx),

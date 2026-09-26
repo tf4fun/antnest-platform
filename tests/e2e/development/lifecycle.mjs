@@ -9,6 +9,7 @@ import {
 } from "../../support/verification/development-runtime.mjs";
 import { inspectPublication, selectPublications } from "./publication.mjs";
 import assert from "node:assert/strict";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
@@ -137,11 +138,9 @@ async function publications(organization) {
     limit: "100",
     tags: JSON.stringify({ "antnest.organization.id": organization }),
   });
-  const response = await fetch(`${jaeger}/api/traces?${query}`, {
+  const data = await searchJaegerTraces(jaeger, query, {
     signal: AbortSignal.timeout(10000),
   });
-  assert(response.ok, "publication trace search failed");
-  const { data } = await response.json();
   assert(data?.length, "publication traces absent");
   for (const found of selectPublications(data)) {
     traceIDs.add(found.traceID);

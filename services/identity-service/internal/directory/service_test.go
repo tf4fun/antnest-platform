@@ -26,7 +26,7 @@ func TestCreateOrganizationRequiresSystemAdministrator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create organization: %v", err)
 	}
-	if organization.ID != "id-1" || organization.Slug != "engineering" || organization.Name != "Engineering Team" {
+	if organization.ID != "org-1" || organization.Slug != "engineering" || organization.Name != "Engineering Team" {
 		t.Fatalf("organization = %#v", organization)
 	}
 	if repository.createdOrganization.RequestID != "request-organization" {
@@ -77,7 +77,7 @@ func TestCreateLocalUserNormalizesAndHashesPassword(t *testing.T) {
 	if repository.created.RequestID != "request-user" {
 		t.Fatalf("local-user command = %#v", repository.created)
 	}
-	if result.User.ID == result.Membership.ID {
+	if result.User.ID != "user-1" || result.Membership.ID != "membership-2" {
 		t.Fatal("user and organization membership reused identity")
 	}
 }
@@ -401,11 +401,11 @@ func (r *directoryRepositoryStub) SetUserActive(_ context.Context, command SetUs
 	return nil
 }
 
-func sequentialIDs() func() string {
+func sequentialIDs() func(kind string) string {
 	next := 0
-	return func() string {
+	return func(kind string) string {
 		next++
-		return fmt.Sprintf("id-%d", next)
+		return fmt.Sprintf("%s-%d", kind, next)
 	}
 }
 

@@ -111,12 +111,12 @@ func TestPrincipalRevocationsSCIMTransitions(t *testing.T) {
 func newRevocationSCIMUser(t *testing.T, f localAdmissionFixture) scim.UserResource {
 	t.Helper()
 	now := time.Now().UTC()
-	userID := f.newID()
+	userID := f.newID("user")
 	resource, err := f.store.SCIM().CreateUser(t.Context(), scim.CreateUserCommand{
 		OrganizationID: f.admin.Organization.ID,
 		User:           domain.User{ID: userID, SystemRole: domain.SystemRoleUser, Active: true, CreatedAt: now, UpdatedAt: now},
 		Membership: domain.OrganizationMembership{
-			ID: f.newID(), UserID: userID, OrganizationID: f.admin.Organization.ID, Email: "scim@example.com",
+			ID: f.newID("membership"), UserID: userID, OrganizationID: f.admin.Organization.ID, Email: "scim@example.com",
 			DisplayName: "SCIM member", Role: domain.OrganizationRoleMember, Source: domain.SourceSCIM,
 			Active: true, SCIMExternalID: "external-member", SCIMUserName: "scim-member", CreatedAt: now, UpdatedAt: now,
 		},

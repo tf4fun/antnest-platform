@@ -7,6 +7,7 @@ import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { tag } from "../observability/trace-tree.mjs";
 import { assertNetworkRun } from "./network-current.mjs";
 import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
 import {
@@ -388,7 +389,6 @@ export function inspectPolicyTrace(
   secrets = ["stage3-model-secret", "lifecycle-owner-password"],
 ) {
   assert(!trace.spans.some(hasError), "unexpected policy error span");
-  const tag = (s, key) => s.tags?.find((t) => t.key === key)?.value;
   const spans = trace?.spans?.filter(
     (s) =>
       trace.processes[s.processID]?.serviceName === "antnest-runtime-egress" &&

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -524,6 +525,16 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		events[2].EventType != ports.EventAgentRuntimeConditionChanged || events[3].EventType != ports.EventAgentReady ||
 		float64(events[3].AggregateSequence) != queried["aggregate_sequence"] {
 		t.Fatalf("creation/readiness journal differs from projection: %+v error=%v", events, err)
+	}
+	for _, event := range events {
+		if !regexp.MustCompile(`^event_[0-9a-f]{32}$`).MatchString(event.EventID) {
+			t.Errorf("event ID = %q", event.EventID)
+		}
+	}
+	for kind, value := range map[string]string{"agent": agentID, "provider": provider["connection_id"].(string), "model": modelID, "template": templateID} {
+		if !regexp.MustCompile("^" + kind + "_[0-9a-f]{32}$").MatchString(value) {
+			t.Errorf("%s ID = %q", kind, value)
+		}
 	}
 	listed := serveJSON(
 		t, handler, http.MethodGet,

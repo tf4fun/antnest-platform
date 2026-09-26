@@ -281,13 +281,13 @@ function AgentInventory() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div
             aria-label="Agent inventory view"
-            className="inline-flex w-fit rounded-md border border-border bg-white p-1 shadow-sm"
+            className="inline-flex w-fit rounded-md border border-border bg-white p-1 shadow-xs"
             role="tablist"
           >
             {(["current", "deleted"] as const).map((item) => (
               <button
                 aria-selected={view === item}
-                className={`flex h-8 items-center gap-2 rounded px-3 text-xs font-medium transition-colors ${
+                className={`flex h-8 items-center gap-2 rounded-sm px-3 text-xs font-medium transition-colors ${
                   view === item
                     ? "bg-[#1d1d1b] text-white"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1020,7 +1020,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
         />
       ) : null}
       {actions.retained ? (
-        <div className="flex items-start gap-3 rounded-md border border-border bg-white p-4 shadow-sm">
+        <div className="flex items-start gap-3 rounded-md border border-border bg-white p-4 shadow-xs">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
             <Archive className="h-4 w-4" aria-hidden="true" />
           </span>
@@ -1032,7 +1032,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
           </div>
         </div>
       ) : null}
-      <div className="flex flex-col gap-4 rounded-md border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 rounded-md border border-border bg-white p-4 shadow-xs sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-md bg-muted text-muted-foreground">
             <Bot className="h-[18px] w-[18px]" aria-hidden="true" />
@@ -1056,7 +1056,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
         title="Build configuration"
       >
         {configuration && agent.configuration ? (
-          <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
             <Fact
               label="Template"
               value={
@@ -1109,7 +1109,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       </Section>
       {agent.configuration ? <Section title="Deployed MCP servers"><ManagedMCPSummary servers={agent.configuration.runtime.mcp_servers} /></Section> : null}
       <AgentNetworkPolicy agent={agent} scope={networkScope} refreshRevision={networkRefreshRevision} />
-      <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
         <Fact
           label="Owner"
           value={owner ? (
@@ -1160,13 +1160,13 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
               />
             ) : null}
             {operationLoadingRequestID && !visibleOperation ? (
-              <div className="flex items-center gap-3 rounded-md border border-border bg-white p-4 text-sm shadow-sm">
+              <div className="flex items-center gap-3 rounded-md border border-border bg-white p-4 text-sm shadow-xs">
                 <LoaderCircle className="h-4 w-4 animate-spin text-muted-foreground" />
                 Loading operation progress
               </div>
             ) : null}
             {visibleOperation ? (
-              <div className="flex flex-col gap-3 rounded-md border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center">
+              <div className="flex flex-col gap-3 rounded-md border border-border bg-white p-4 shadow-xs sm:flex-row sm:items-center">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted text-slate-600">
                   {visibleOperation.state === "running" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CircleDot className="h-4 w-4" />}
                 </span>
@@ -1214,7 +1214,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
             />
           )
         ) : (
-          <div className="divide-y divide-border overflow-hidden rounded-md border border-border bg-white shadow-sm">
+          <div className="divide-y divide-border overflow-hidden rounded-md border border-border bg-white shadow-xs">
             {[...events].reverse().map((event) => (
               <div
                 className="grid gap-2 px-4 py-3.5 sm:grid-cols-[auto_minmax(180px,1fr)_auto] sm:items-center"

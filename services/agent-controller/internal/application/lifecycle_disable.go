@@ -91,7 +91,7 @@ func (service *LifecycleService) DisableAgent(
 			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-disable-requested", input.RequestID),
+			EventID: domain.DeriveResourceID("event", "event-disable-requested", input.RequestID),
 			AgentID: input.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
 			SchemaVersion: 1, EventType: ports.EventAgentDisableRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
@@ -231,7 +231,7 @@ func (service *LifecycleService) publishAgentDisable(
 	return service.store.PublishAgentDisable(ctx, ports.PublishAgentDisable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		DisabledEvent: ports.AgentEventRecord{
-			EventID:           derivedID("event-disabled", state.Operation.RequestID),
+			EventID:           domain.DeriveResourceID("event", "event-disabled", state.Operation.RequestID),
 			AgentID:           state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentDisabled,
@@ -286,7 +286,7 @@ func (service *LifecycleService) failAgentDisable(
 		PreserveExecutable: preserveExecutable, SourceRuntimeInspection: inspection,
 		RuntimeAbsenceProof: absenceProof,
 		FailedEvent: ports.AgentEventRecord{
-			EventID:       derivedID("event-disable-failed", state.Operation.RequestID),
+			EventID:       domain.DeriveResourceID("event", "event-disable-failed", state.Operation.RequestID),
 			AgentID:       state.Agent.AgentID,
 			SchemaVersion: 1, EventType: ports.EventAgentDisableFailed,
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),

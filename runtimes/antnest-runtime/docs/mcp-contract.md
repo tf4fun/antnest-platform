@@ -2,7 +2,7 @@
 
 ## Protocol
 
-Runtime implements MCP `2026-07-28` with the official Rust `rmcp` `3.2.0` SDK and its
+Runtime implements MCP `2026-07-28` with the official Rust `rmcp` `3.4.1` SDK and its
 Streamable HTTP server transport.
 
 - MCP endpoint: `POST /mcp`.

@@ -1,0 +1,274 @@
+[
+  {
+    "name": "file-observations",
+    "command": ["make", "e2e-file-observations"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "structured-plan",
+    "command": ["make", "e2e-structured-plan"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "tool-permissions",
+    "command": ["make", "e2e-tool-permissions"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "slash-commands",
+    "command": ["make", "e2e-slash-commands"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "multimodal",
+    "command": ["make", "e2e-multimodal"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "session-cost",
+    "command": ["make", "e2e-session-cost"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle",
+    "command": ["make", "e2e-lifecycle"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle-network",
+    "command": ["make", "e2e-lifecycle-network"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle-shutdown",
+    "command": ["make", "e2e-lifecycle-shutdown"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle-health",
+    "command": ["make", "e2e-lifecycle-health"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle-restore",
+    "command": ["make", "e2e-lifecycle-restore"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle-loss",
+    "command": ["make", "e2e-lifecycle-loss"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "lifecycle-interrupted",
+    "command": ["make", "e2e-lifecycle-interrupted"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "workspace",
+    "command": ["make", "e2e-workspace"],
+    "accepted_exits": [0, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "workspace-browser",
+    "command": ["make", "e2e-workspace-browser"],
+    "accepted_exits": [0, 1, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "c4-browser",
+    "command": ["node", "tests/e2e/workspace-closeout/c4-run.mjs"],
+    "accepted_exits": [0, 1, 2],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  }
+]

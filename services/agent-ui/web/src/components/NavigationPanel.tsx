@@ -7,19 +7,22 @@ function subscribe(onChange: () => void) {
   return () => media?.removeEventListener("change", onChange);
 }
 const isMobile = () => window.matchMedia?.(query).matches ?? false;
+export const useMobileNavigation = () => useSyncExternalStore(subscribe, isMobile, () => false);
 
 export function NavigationPanel({
   open,
   onClose,
   onClosed,
+  collapsed = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   onClosed?: () => void;
+  collapsed?: boolean;
   children: ReactNode;
 }) {
-  const mobile = useSyncExternalStore(subscribe, isMobile, () => false);
+  const mobile = useMobileNavigation();
   const dialog = useRef<HTMLDialogElement>(null);
   const closed = useRef(onClosed);
   closed.current = onClosed;
@@ -35,7 +38,7 @@ export function NavigationPanel({
 
   if (!mobile)
     return (
-      <aside className="sidebar" aria-label="Workspace navigation">
+      <aside className="sidebar" aria-label="Workspace navigation" data-collapsed={collapsed}>
         {children}
       </aside>
     );

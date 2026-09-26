@@ -43,11 +43,11 @@ func TestSCIMDiscoveryAndUserProtocolShape(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &resource); err != nil {
 		t.Fatal(err)
 	}
-	if resource["id"] != "id-2" || resource["userName"] != "alice.employee" {
+	if resource["id"] != "membership-2" || resource["userName"] != "alice.employee" {
 		t.Fatalf("resource = %#v", resource)
 	}
 	meta, _ := resource["meta"].(map[string]any)
-	if meta["location"] != "https://identity.example.com/scim/v2/Users/id-2" {
+	if meta["location"] != "https://identity.example.com/scim/v2/Users/membership-2" {
 		t.Fatalf("meta = %#v", meta)
 	}
 }

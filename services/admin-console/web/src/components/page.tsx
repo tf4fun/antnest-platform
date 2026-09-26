@@ -96,7 +96,7 @@ export function ResourceFailureNotice({
 
 export function DataTable({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("overflow-x-auto rounded-md border border-border bg-white shadow-sm", className)}>
+    <div className={cn("overflow-x-auto rounded-md border border-border bg-white shadow-xs", className)}>
       {children}
     </div>
   );
@@ -126,7 +126,7 @@ export function MobileResourceItem({
   className?: string;
 }) {
   return (
-    <li className={cn("min-w-0 rounded-md border border-border bg-white p-4 shadow-sm", className)}>
+    <li className={cn("min-w-0 rounded-md border border-border bg-white p-4 shadow-xs", className)}>
       {children}
     </li>
   );

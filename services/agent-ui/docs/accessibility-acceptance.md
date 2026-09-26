@@ -6,7 +6,8 @@
 
 | 流程 | 操作 | 必须观察到的结果 |
 | --- | --- | --- |
-| Agent 目录 | 刷新 `/workspace/`，从页面顶部依次按 Tab；用读屏器标题/链接导航并按 Enter 选择 Agent | 读出“Your agents”、搜索框、Agent 名称与可用状态；焦点顺序和视觉顺序一致，选择后进入该 Agent，不跳到另一身份或 Session |
+| Agent 目录 | 刷新 `/workspace/`，从页面顶部依次按 Tab；用读屏器标题/链接导航并按 Enter 选择 Agent | 读出“Your workspaces”、搜索框、Agent 名称与可用状态；焦点顺序和视觉顺序一致，选择后进入该 Agent，不跳到另一身份或 Session |
+| 工作环境导航 | 检查侧栏顶部的 Workspace 入口；打开浮层、按 Tab / Shift+Tab、再按 Escape；移动端再按一次 Escape | 工作环境在 New conversation、搜索与历史上方；浮层不挤动历史；当前环境已标明；首次 Escape 回到环境入口且抽屉仍打开，第二次关闭抽屉并回到导航按钮 |
 | Session 与草稿 | 在两个 Session 间切换，输入未发送草稿，再跨 Agent 往返；用浏览器 Back/Forward | 读出当前 Agent/Session；各草稿只回到原作用域；切换后焦点处于可操作区域，返回不会提交 Prompt |
 | 发送与执行 | 在“Message”输入测试文本，按 Enter；执行中离开页面再返回 | “Message composer”的状态简短提示运行中；“Conversation messages”可主动阅读输出；返回后能读到同一 Run 的权威状态与结果，未重复提交 |
 | 断线与受限历史 | 断开观察流，再恢复；切换到受限历史和只读回放失败状态 | 状态播报“不可用”而非沿用“可发送”；发送/批准禁用；受限告警简短播报，长预览只在“Recent output preview”主动聚焦时阅读；恢复后焦点不会被无关控件抢走 |

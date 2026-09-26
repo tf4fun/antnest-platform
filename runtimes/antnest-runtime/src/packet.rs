@@ -293,11 +293,11 @@ fn internet_checksum(bytes: &[u8]) -> u16 {
 }
 
 fn checksum_add(mut sum: u32, bytes: &[u8]) -> u32 {
-    let mut chunks = bytes.chunks_exact(2);
-    for chunk in &mut chunks {
-        sum += u32::from(u16::from_be_bytes([chunk[0], chunk[1]]));
+    let (chunks, remainder) = bytes.as_chunks::<2>();
+    for chunk in chunks {
+        sum += u32::from(u16::from_be_bytes(*chunk));
     }
-    if let Some(value) = chunks.remainder().first() {
+    if let Some(value) = remainder.first() {
         sum += u32::from(*value) << 8;
     }
     sum
@@ -576,7 +576,9 @@ mod tests {
         }
         value
             .as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let text = std::str::from_utf8(pair).map_err(|_| "hex must be ASCII")?;
                 u8::from_str_radix(text, 16).map_err(|_| "hex byte is invalid")

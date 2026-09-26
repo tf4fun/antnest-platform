@@ -92,7 +92,7 @@ func (service *LifecycleService) EnableAgent(
 			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-enable-requested", input.RequestID),
+			EventID: domain.DeriveResourceID("event", "event-enable-requested", input.RequestID),
 			AgentID: input.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
 			SchemaVersion: 1, EventType: ports.EventAgentEnableRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
@@ -279,7 +279,7 @@ func (service *LifecycleService) publishAgentEnable(
 	return service.store.PublishAgentEnable(ctx, ports.PublishAgentEnable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		EnabledEvent: ports.AgentEventRecord{
-			EventID:           derivedID("event-enabled", state.Operation.RequestID),
+			EventID:           domain.DeriveResourceID("event", "event-enabled", state.Operation.RequestID),
 			AgentID:           state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentEnabled,
@@ -356,7 +356,7 @@ func (service *LifecycleService) failAgentEnable(
 		Stage: state.Operation.Phase, Code: code, Detail: detail,
 		SourceRuntimeInspection: inspection,
 		FailedEvent: ports.AgentEventRecord{
-			EventID:           derivedID("event-enable-failed", state.Operation.RequestID),
+			EventID:           domain.DeriveResourceID("event", "event-enable-failed", state.Operation.RequestID),
 			AgentID:           state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentEnableFailed,

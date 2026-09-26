@@ -2,13 +2,13 @@
 
 ## Status And Decision
 
-F07 remains deferred after the latest-SDK recheck on 2026-09-17; the original
+F07 remains deferred after the production SDK upgrade check on 2026-09-26; the original
 decision was made on 2026-09-09. The maintainer requires an official SDK
 implementation: check the latest release first, and wait for upstream support
 if it remains incomplete. Do not vendor, fork or patch the SDK, write a custom
 protocol adapter, or present partial form support as completed elicitation.
 
-Production Runtime remains locked to official `rmcp 3.2.0`. Its normal tools,
+Production Runtime now uses official `rmcp 3.4.1`. Its normal tools,
 progress and managed stdio process lifecycle remain available. F07 adds no
 session, durable table, background waiter or deployment dependency while
 deferred. ACP and Agent UI elicitation work and its deployment acceptance are
@@ -78,6 +78,17 @@ of a missing standard capability and is not used to justify the deferral.
    compatibility tests alone are not end-to-end evidence.
 
 ## Final Local Checks
+
+### Production Dependency Refresh, 2026-09-26
+
+The [official 3.4.1 release](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.4.1)
+is the production dependency baseline. The existing SDK boundary tests passed
+in the 104-test Runtime suite: standard URL input still fails without the legacy
+`elicitationId`, while form and legacy-ID URL input round-trip. F07 therefore
+remains deferred. This is a compatibility check, not interaction acceptance.
+Evidence is in the [dependency refresh record](../../../docs/dependency-refresh-20260926.md).
+The independently pinned 3.4.0 probe and its dated evidence below are retained
+as the earlier upstream reproduction, not the active production dependency.
 
 ### Latest SDK Recheck, 2026-09-17
 

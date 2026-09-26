@@ -56,6 +56,12 @@ It schedules ordinary Disable operations with a durable revocation
 cause and deterministic request IDs; the shared Temporal orchestration facade executes them.
 Running/unknown operations retain their original request IDs. A terminal failed
 attempt leaves the fence intact and may be retried with a new operation.
+The candidate query excludes Agents with an active lifecycle operation. A
+poll during an admitted Disable therefore cannot derive another request from
+its newer aggregate sequence and start a redundant Temporal workflow. Other
+busy lifecycle operations remain responsible for their own completion; the
+durable fence becomes eligible after they release ownership. Admission still
+checks for races after the query.
 Terminal failed offboarding attempts have a 30-second cooldown in the local
 candidate query, preventing a failing dependency from generating a tight loop
 of operations/events. Busy or unavailable candidates do not starve later pages.

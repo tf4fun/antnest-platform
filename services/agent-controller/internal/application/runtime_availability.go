@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx context.Cont
 	}
 	now := time.Now().UTC()
 	execution := ports.ExecutionRecord{
-		ID:      derivedID("execution-observed", pending.Operation.RequestID),
+		ID:      domain.DeriveResourceID("execution", "execution-observed", pending.Operation.RequestID),
 		AgentID: pending.Agent.AgentID, Revision: pending.NextExecutionRevision,
 		AgentSpecRevisionID: pending.Spec.ID, RuntimeRevision: inspection.RuntimeRevision,
 		RuntimeExecutionID: inspection.RuntimeExecutionID, RuntimeMCPEndpoint: inspection.MCPEndpoint,
@@ -75,7 +76,7 @@ func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx context.Cont
 		ExpectedAggregateSequence: pending.Agent.AggregateSequence,
 		OperationRequestID:        pending.Operation.RequestID, Execution: execution,
 		ReadyEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-ready", pending.Operation.RequestID), AgentID: pending.Agent.AgentID,
+			EventID: domain.DeriveResourceID("event", "event-ready", pending.Operation.RequestID), AgentID: pending.Agent.AgentID,
 			AggregateSequence: pending.Agent.AggregateSequence + 1, SchemaVersion: 1,
 			EventType: ports.EventAgentReady, OperationRequestID: pending.Operation.RequestID,
 			TraceID: currentTraceID(ctx), OccurredAt: now,

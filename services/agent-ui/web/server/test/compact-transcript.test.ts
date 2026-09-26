@@ -14,6 +14,31 @@ function batch(
   return { sequence, runId, messageId, updates };
 }
 
+test("available commands replace Session metadata without retaining wire history", () => {
+  const transcript = new CompactTranscript();
+  const emptyBytes = transcript.estimatedRetainedBytes;
+  const commands = [{ name: "help", description: "Show help", _meta: { private: "omit" },
+    input: { hint: "topic", _meta: { private: "omit" } } }];
+  transcript.apply(batch(1, null, "catalog", {
+    sessionUpdate: "available_commands_update", availableCommands: commands,
+  }));
+  assert.deepEqual(transcript.availableCommands,
+    [{ name: "help", description: "Show help", input: { hint: "topic" } }]);
+  assert.equal(transcript.turnCount, 0);
+  assert.equal(transcript.conversationRevision, 0);
+  const retained = transcript.estimatedRetainedBytes;
+  assert.ok(retained > emptyBytes);
+  for (let i = 0; i < 20; i++)
+    assert.equal(transcript.applyCommandsNotification(commands), false);
+  assert.equal(transcript.estimatedRetainedBytes, retained);
+  const snapshot = transcript.availableCommands;
+  snapshot[0]!.name = "changed";
+  assert.equal(transcript.availableCommands[0]!.name, "help");
+  assert.equal(transcript.applyCommandsNotification([]), true);
+  assert.deepEqual(transcript.availableCommands, []);
+  assert.equal(transcript.estimatedRetainedBytes, emptyBytes);
+});
+
 test("tool patches replace current fields, retain omitted fields and clear empty collections", () => {
   const transcript = new CompactTranscript();
   transcript.apply(batch(1, "run", "start", {

@@ -1,3 +1,4 @@
+import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
 import { withPlanTool } from "../domain/plan.js";
 import type {
@@ -21,7 +22,7 @@ export type ContextBuilderDependencies = {
   repository: ContextRepository;
   runtimeInformation: RuntimeInformationPort;
   tools: Pick<ToolCatalogPort, "list">;
-  id: () => string;
+  id: ResourceIdGenerator;
   now: () => Date;
 };
 
@@ -97,7 +98,7 @@ export class ContextBuilder {
       }
       await withWorkerOwnership(ownershipSignal, () =>
         this.dependencies.repository.saveCheckpoint({
-          id: this.dependencies.id(),
+          id: this.dependencies.id("checkpoint"),
           sessionId,
           throughSequence,
           summary,

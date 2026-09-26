@@ -1,0 +1,97 @@
+[
+  {
+    "name": "runtime-pid1-mcp",
+    "command": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests/e2e/antnest-runtime",
+      "-p",
+      "e2e_managed_mcp.py"
+    ],
+    "env": {
+      "ANTNEST_RUNTIME_TEST_IMAGE": {
+        "input": "runtime_test_image"
+      },
+      "ANTNEST_RUNTIME_BUILD_IMAGE": {
+        "input": "runtime_build_image"
+      }
+    },
+    "check_resources": true,
+    "pin_images": true,
+    "timeout_ms": 900000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "gateway-signals",
+    "command": ["node", "tests/e2e/edge-gateway/shutdown-docker.mjs"],
+    "env": {
+      "ANTNEST_GATEWAY_TEST_IMAGE": {
+        "input": "build_edge_gateway_image"
+      }
+    },
+    "check_resources": true,
+    "pin_images": true,
+    "timeout_ms": 300000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "console-signals",
+    "command": ["node", "tests/e2e/admin-console/shutdown-docker.mjs"],
+    "check_resources": true,
+    "pin_images": true,
+    "timeout_ms": 300000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "ui-container-soak",
+    "command": [
+      "node",
+      "--test",
+      "tests/e2e/agent-ui/bridge-container.test.mjs"
+    ],
+    "env": {
+      "ANTNEST_UI_DOCKER_SOAK": "1"
+    },
+    "check_resources": true,
+    "pin_images": true,
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "ui-controls-browser",
+    "command": [
+      "node",
+      "--test",
+      "tests/e2e/agent-ui/workspace-controls.test.mjs"
+    ],
+    "env": {
+      "ANTNEST_UI_CONTROL_BROWSER": "1",
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "check_resources": true,
+    "pin_images": true,
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "ui-history",
+    "command": [
+      "node",
+      "--test",
+      "tests/e2e/agent-ui/fullstack-history.test.mjs"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "check_resources": true,
+    "pin_images": true,
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  }
+]

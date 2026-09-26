@@ -1,4 +1,5 @@
 import type {
+  AvailableCommand,
   ContentBlock,
   SessionConfigOption,
   SessionConfigSelectGroup,
@@ -8,6 +9,7 @@ import type {
   UsageUpdate,
 } from "@agentclientprotocol/sdk";
 import type { DeliveredBatch } from "./delivery.ts";
+import { projectAvailableCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 
 export type ProcessItem = {
   id: string;
@@ -66,6 +68,7 @@ export class CompactTranscript {
   private readonly order: string[] = [];
   private readonly records = new Map<string, StoredTurn>();
   private currentConfigOptions: SessionConfigOption[] = [];
+  private currentCommands: WorkspaceCommand[] = [];
   private configUpdated = false;
   private configSequence = 0;
   private currentUsage: SessionUsage | null = null;
@@ -102,6 +105,17 @@ export class CompactTranscript {
 
   public get configOptions(): SessionConfigOption[] {
     return structuredClone(this.currentConfigOptions);
+  }
+
+  public get availableCommands(): WorkspaceCommand[] {
+    return structuredClone(this.currentCommands);
+  }
+
+  public applyCommandsNotification(commands: readonly AvailableCommand[]): boolean {
+    const projected = projectAvailableCommands(commands);
+    if (JSON.stringify(projected) === JSON.stringify(this.currentCommands)) return false;
+    this.currentCommands = projected;
+    return true;
   }
 
   public get configurationSequence(): number {
@@ -152,7 +166,8 @@ export class CompactTranscript {
   public get estimatedRetainedBytes(): number {
     return (
       this.usedBytes +
-      metadataBytes(this.currentConfigOptions, this.currentUsage, this.currentSessionInfo)
+      metadataBytes(this.currentConfigOptions, this.currentUsage, this.currentSessionInfo,
+        this.currentCommands)
     );
   }
 
@@ -273,6 +288,10 @@ export class CompactTranscript {
     update: SessionUpdate,
   ): void {
     switch (update.sessionUpdate) {
+      case "available_commands_update": {
+        this.applyCommandsNotification(update.availableCommands);
+        return;
+      }
       case "usage_update": {
         this.currentUsage = projectUsage(this.currentUsage, update);
         return;
@@ -487,11 +506,13 @@ function metadataBytes(
   options: SessionConfigOption[],
   usage: SessionUsage | null,
   info: SessionInfo,
+  commands: WorkspaceCommand[],
 ): number {
   return (
     Buffer.byteLength(JSON.stringify(options)) +
     Buffer.byteLength(JSON.stringify(usage)) +
-    Buffer.byteLength(JSON.stringify(info))
+    Buffer.byteLength(JSON.stringify(info)) +
+    Buffer.byteLength(JSON.stringify(commands))
   );
 }
 

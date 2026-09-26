@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Write as _,
     net::Ipv4Addr,
     sync::Arc,
     time::{Duration, SystemTime},
@@ -564,9 +565,18 @@ fn builtin_revisions() -> HashMap<(PolicyId, u64), PolicyRevision> {
     .collect()
 }
 
+fn content_digest(bytes: &[u8]) -> String {
+    let mut digest = String::with_capacity(71);
+    digest.push_str("sha256:");
+    for byte in Sha256::digest(bytes) {
+        write!(digest, "{byte:02x}").expect("writing to String is infallible");
+    }
+    digest
+}
+
 pub fn policy_revision(policy_id: PolicyId, revision: u64, spec: PolicySpec) -> PolicyRevision {
     let canonical = serde_json::to_vec(&spec).expect("PolicySpec serialization");
-    let digest = format!("sha256:{:x}", Sha256::digest(canonical));
+    let digest = content_digest(&canonical);
     PolicyRevision {
         policy_id,
         revision,
@@ -583,3 +593,29 @@ fn retry_version_matches(current: u64, expected: u64) -> bool {
 }
 
 pub type SharedRepository<R> = Arc<R>;
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    #[test]
+    fn published_policy_digests_remain_stable_across_sdk_upgrades() {
+        for (policy, spec, expected) in [
+            (
+                BUILTIN_ALLOW_ALL,
+                PolicySpec::allow_all(),
+                "sha256:5171cd901b624f9a6dcf7a750e0030741cb9476dcc4a9b74405dcd2ef0065ea8",
+            ),
+            (
+                BUILTIN_DENY_ALL,
+                PolicySpec::deny_all(),
+                "sha256:d9a620482e1aff562a27f3d76c9a40b3c9223e9f1a2bf184e068f627e98a7755",
+            ),
+        ] {
+            assert_eq!(
+                policy_revision(PolicyId::parse(policy).unwrap(), BUILTIN_REVISION, spec).digest,
+                expected
+            );
+        }
+    }
+}

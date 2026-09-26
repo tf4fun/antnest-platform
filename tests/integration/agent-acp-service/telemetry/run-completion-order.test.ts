@@ -92,7 +92,8 @@ it.each(["v1", "v2"] as const)(
       expect(test.events).toHaveLength(0);
       expect(idleReceived).toBe(false);
 
-      if (version === "v2") await expect(response).resolves.toEqual({});
+      if (version === "v2")
+        await expect(response).resolves.toEqual({ messageId: "user-1" });
       else expect(replied).toBe(false);
 
       test.allowMessage.resolve();
@@ -121,7 +122,7 @@ it.each(["v1", "v2"] as const)(
       });
       await cancellation;
       await expect(response).resolves.toEqual(
-        version === "v1" ? { stopReason: "end_turn" } : {},
+        version === "v1" ? { stopReason: "end_turn" } : { messageId: "user-1" },
       );
       if (version === "v2") await idle.promise;
       expect(test.supervisor.occupancy(test.identity).busy).toBe(false);

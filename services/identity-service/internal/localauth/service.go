@@ -60,7 +60,7 @@ const (
 
 type Service struct {
 	repository Repository
-	newID      func() string
+	newID      func(string) string
 	now        func() time.Time
 	tokenTTL   time.Duration
 	dummyHash  string
@@ -68,7 +68,7 @@ type Service struct {
 
 func NewService(
 	repository Repository,
-	newID func() string,
+	newID func(string) string,
 	now func() time.Time,
 	tokenTTL time.Duration,
 ) (*Service, error) {
@@ -116,7 +116,7 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	now := s.now().UTC()
 	expiresAt := now.Add(s.tokenTTL)
 	token, err := s.repository.IssueToken(ctx, IssueTokenCommand{
-		TokenID: s.newID(), TokenHash: tokenHash, Principal: credential.Principal,
+		TokenID: s.newID("authtoken"), TokenHash: tokenHash, Principal: credential.Principal,
 		ExpectedPasswordHash: credential.PasswordHash,
 		RequestID:            input.RequestID, IssuedAt: now, ExpiresAt: expiresAt,
 	})

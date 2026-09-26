@@ -55,7 +55,7 @@ describe.skipIf(databaseUrl === undefined)(
       await pool.end();
     });
 
-    async function waitDone() {
+    async function waitDone(timeout?: number) {
       await expect
         .poll(
           async () =>
@@ -64,6 +64,7 @@ describe.skipIf(databaseUrl === undefined)(
                 "SELECT count(*)::int AS n FROM runs WHERE state = 'running'",
               )
             ).rows[0]?.n,
+          timeout === undefined ? undefined : { timeout },
         )
         .toBe(0);
     }
@@ -373,7 +374,9 @@ describe.skipIf(databaseUrl === undefined)(
         prompt: [{ type: "text", text: "read" }],
       });
       const frame = await pending(client);
-      await waitDone();
+      // The 1 s Run deadline must elapse before cancellation and durable
+      // settlement can finish; Vitest's 1 s default poll budget races that work.
+      await waitDone(5000);
       client.respond(frame.id!, { outcome: { outcome: "cancelled" } });
       expect(app.tools.call).not.toHaveBeenCalled();
       expect(
