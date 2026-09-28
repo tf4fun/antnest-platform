@@ -8,4 +8,5 @@ use (
 	./services/edge-gateway
 	./services/identity-service
 	./services/runtime-controller
+	./services/skill-registry
 )

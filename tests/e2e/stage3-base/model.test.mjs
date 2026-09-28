@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decide, modelServer } from "./model-server.mjs";
+import { decide, modelServer, registryDenialCommand } from "./model-server.mjs";
 
 const payload = (phase, results = []) => ({
   model: "stage3-model",
@@ -37,6 +37,16 @@ test("base fixture requires real Bash results and preserves the API model identi
     () => decide(payload("after-rebuild", [tool])),
     /persist|effect/,
   );
+});
+test("Registry network probe requires service-name and exact IPv4 denial", () => {
+  const command = registryDenialCommand("172.28.0.9");
+  assert.match(command, /skill-registry:8080\/status/);
+  assert.match(command, /--resolve skill-registry:8080:172\.28\.0\.9/);
+  assert.match(command, /ip -4 route get 172\.28\.0\.9 uid 1000/);
+  assert.match(command, /dev antnest0/);
+  assert.match(command, /registry-dns-blocked/);
+  assert.match(command, /registry-ip-blocked/);
+  assert.throws(() => registryDenialCommand("not-an-ip"));
 });
 test("HTTP model component enforces credential rotation, trace identity and no duplicate effects", async () => {
   const server = modelServer().listen(0, "127.0.0.1");

@@ -6,7 +6,17 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["image_ref", "network", "resources"],
+  "dependentRequired": {
+    "organization_id": ["system_skills", "prepared_skill_set", "prepared_reference_id"],
+    "system_skills": ["organization_id", "prepared_skill_set", "prepared_reference_id"],
+    "prepared_skill_set": ["organization_id", "system_skills", "prepared_reference_id"],
+    "prepared_reference_id": ["organization_id", "system_skills", "prepared_skill_set"]
+  },
   "properties": {
+    "organization_id": {"type": "string", "pattern": "^org_[0-9a-f]{32}$"},
+    "system_skills": {"type": "array", "maxItems": 32, "items": {"$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/frozen_skill"}},
+    "prepared_skill_set": {"$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepared_skill_set"},
+    "prepared_reference_id": {"type": "string", "pattern": "^psr_[0-9a-f]{32}$"},
     "mcp_servers": {
       "$ref": "../../../contracts/runtime/runtime-spec.schema.json#/properties/mcp_servers"
     },

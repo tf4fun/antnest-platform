@@ -1,5 +1,18 @@
 # Admin Console Contracts
 
+Revision 46 adds fixed `{skill_id, version}` references to Template creation
+and revision. Console forwards them without resolving or silently upgrading
+versions; Controller freezes the package metadata and collection digest.
+Current and historical Template reads preserve that frozen identity. Applying
+a new revision to an existing Agent still requires an explicit rebuild.
+
+Revision 45 adds administrator-only Skill inventory, initial/revision ZIP
+publication, version listing and fixed-version download. Console derives
+organization/actor and publication identity from its trusted principal and
+command key; Registry is the package/version authority. The audit allowlist no longer
+returns the legacy `skillInstructions` body. See the
+[Skills module contract](../../services/admin-console/docs/skills.md).
+
 Revision 44 adds explicit Provider, Model and current Template availability PUTs.
 Both boolean flags are required; identity and command IDs remain server-derived.
 One Controller command returns a historical receipt. The browser refreshes the
@@ -218,3 +231,12 @@ store current parameters; Agent detail presents build-time model parameters from
 its own snapshot, including rates and input capabilities. Model links open current
 settings, while Template revision links remain historical. Changing a command's
 payload replaces its pending retry intent rather than retaining older keys.
+
+Revision 47 adds a scoped read of Agent Skill preparation before an Agent row
+exists. The BFF takes organization identity only from the verified principal,
+rejects browser query parameters, and projects bounded state and progress.
+The browser can query the same intent by its original `Idempotency-Key`; the
+BFF derives the lifecycle request ID using the trusted organization scope.
+It never exposes the frozen target specification or RC reference. A transient
+read failure does not create another lifecycle command; retrying the command
+uses its original body and idempotency key.

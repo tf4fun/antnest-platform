@@ -35,7 +35,7 @@ func TestNeverReadyRuntimeCanRebuildDisableEnableAndDelete(t *testing.T) {
 			identity := &offboardingIdentity{principal: ports.IdentityPrincipal{
 				UserID: base.Agent.OwnerUserID, OrganizationID: base.Agent.OrganizationID, MembershipID: "membership", Active: true,
 			}}
-			service := application.NewLifecycleService(repo, repo, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repo)))
+			service := newIntegratedLifecycleService(repo, repo, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repo)))
 			input := application.RebuildAgentInput{RequestID: "rebuild-before-ready", AgentID: base.Agent.AgentID,
 				TemplateID: seed.Revision.Snapshot().TemplateID, TemplateRevision: seed.Revision.Revision()}
 			if _, err := service.RebuildAgent(ctx, input); err != nil {
@@ -78,7 +78,7 @@ func TestNeverReadyRuntimeCanRebuildDisableEnableAndDelete(t *testing.T) {
 			}
 			// The complete deletion workflow must not need a successful MCP execution either.
 			deleteDeps := &deleteRetryDependencies{offboardingDependencies: &deps.offboardingDependencies, calls: make(map[string]int)}
-			deleteService := application.NewLifecycleService(repo, repo, deleteDeps, deleteDeps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repo)))
+			deleteService := newIntegratedLifecycleService(repo, repo, deleteDeps, deleteDeps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repo)))
 			deletion, err := deleteService.DeleteAgent(ctx, application.DeleteAgentInput{RequestID: "delete-before-ready", AgentID: agent.AgentID})
 			if err != nil || deletion.Operation.State != domain.OperationRunning {
 				t.Fatalf("delete pending Agent=%+v error=%v", deletion, err)

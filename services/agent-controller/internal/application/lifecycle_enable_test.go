@@ -309,6 +309,7 @@ func enableLifecycleBase(t *testing.T) ports.AgentEnableBase {
 	return ports.AgentEnableBase{
 		Agent: agent, Spec: disabled.ConfiguredSpec,
 		LastSuccessfulExecution: disabled.SourceExecution,
+		NextSpecRevision:        disabled.ConfiguredSpec.Revision + 1,
 		NextExecutionRevision:   disabled.SourceExecution.Revision + 1,
 	}
 }
@@ -449,6 +450,7 @@ type enableLifecycleStoreStub struct {
 	state     ports.AgentEnableState
 	replayed  bool
 	published ports.PublishAgentEnable
+	begin     ports.BeginAgentEnable
 	failed    ports.FailAgentEnable
 }
 
@@ -467,6 +469,7 @@ func (store *enableLifecycleStoreStub) ReplayAgentEnable(
 func (store *enableLifecycleStoreStub) BeginAgentEnable(
 	_ context.Context, input ports.BeginAgentEnable,
 ) (ports.AgentEnableState, bool, error) {
+	store.begin = input
 	if store.replayed {
 		return store.state, true, nil
 	}
@@ -475,10 +478,14 @@ func (store *enableLifecycleStoreStub) BeginAgentEnable(
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	operation := input.Operation
+	target := store.base.Spec
+	if input.TargetSpec != nil {
+		target = *input.TargetSpec
+	}
 	store.state = ports.AgentEnableState{
-		Agent: agent, Spec: store.base.Spec,
+		Agent: agent, Spec: target, SourceSpec: store.base.Spec,
 		LastSuccessfulExecution: store.base.LastSuccessfulExecution,
-		Operation:               operation,
+		Operation:               operation, LegacyMigration: input.LegacyMigration,
 	}
 	store.replayed = true
 	return store.state, false, nil

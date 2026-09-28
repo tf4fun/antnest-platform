@@ -6,10 +6,12 @@ import { durablePath, evidenceFilePath } from "../../support/storage.mjs";
 import { lines } from "./docker.mjs";
 import {
   databases,
+  stage4Databases,
   encryptionKeys,
   restorableVolume,
   assertRestored,
   assertRecoveryManifest,
+  requiredSkillVolumeNames,
 } from "./restore-evidence.mjs";
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -39,14 +41,93 @@ export async function postgresContainer(config, docker) {
   return value;
 }
 
-async function fingerprints(docker, pg) {
+export async function skillVolumeInventory(docker, pg) {
+  // Keep both the set's latest materialization and retained references: a
+  // rematerialized set can still have an older volume held by an operation.
+  const query = `SELECT COALESCE(json_agg(row_to_json(inventory) ORDER BY source, volume_name), '[]'::json)
+FROM (
+  SELECT 'current' AS source, set_id, volume_name, manifest_digest
+    FROM runtime_controller.skill_current_references
+  UNION ALL
+  SELECT 'lifecycle' AS source, set_id, volume_name, manifest_digest
+    FROM runtime_controller.skill_lifecycle_references
+  UNION ALL
+  SELECT 'set' AS source, set_id, volume_name, manifest_digest
+    FROM runtime_controller.skill_sets WHERE volume_name <> ''
+) AS inventory`;
+  const output = await docker([
+    "exec",
+    pg,
+    "psql",
+    "-XAt",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-U",
+    "antnest_test_admin",
+    "-d",
+    "antnest_runtime_controller",
+    "-c",
+    query,
+  ]);
+  return requiredSkillVolumeNames(JSON.parse(output));
+}
+
+export async function stage4RecoveryPlan(
+  config,
+  docker,
+  workspaceVolumes,
+  legacyVolume,
+) {
+  assert(Array.isArray(workspaceVolumes), "missing workspace inventory");
+  assert(
+    typeof legacyVolume === "string" && legacyVolume.length > 0,
+    "missing legacy Skill volume",
+  );
+  const backupVolume = config.env?.ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME;
+  assert(
+    typeof backupVolume === "string" && backupVolume.length > 0,
+    "missing legacy backup volume",
+  );
+  const pg = await postgresContainer(config, docker);
+  const skillVolumes = await skillVolumeInventory(docker, pg.Id);
+  const volumes = [
+    ...workspaceVolumes,
+    legacyVolume,
+    backupVolume,
+    ...skillVolumes,
+  ];
+  assert(
+    volumes.every((name) => typeof name === "string" && name.length > 0),
+    "invalid recovery volume",
+  );
+  assert.equal(
+    new Set(volumes).size,
+    volumes.length,
+    "recovery volume inventories overlap",
+  );
+  return { databases: stage4Databases, volumes };
+}
+
+export function databaseInitializers(databaseNames) {
+  assert.deepEqual(
+    databaseNames,
+    databaseNames.includes("antnest_skill_registry")
+      ? stage4Databases
+      : databases,
+  );
+  return databaseNames.includes("antnest_skill_registry")
+    ? ["temporal-databases", "skill-registry-database-init"]
+    : ["temporal-databases"];
+}
+
+async function fingerprints(docker, pg, databaseNames = databases) {
   await docker([
     "cp",
     "tests/e2e/lifecycle-closeout/restore-fingerprint.sql",
     `${pg}:/tmp/restore-fingerprint.sql`,
   ]);
   const values = {};
-  for (const database of databases) {
+  for (const database of databaseNames) {
     const output = await docker([
       "exec",
       pg,
@@ -70,7 +151,12 @@ async function fingerprints(docker, pg) {
   return values;
 }
 
-async function verifyPermissionSensitivity(docker, pg, expected) {
+async function verifyPermissionSensitivity(
+  docker,
+  pg,
+  expected,
+  databaseNames = databases,
+) {
   const database = "antnest_egress";
   for (const mutation of [
     "GRANT SELECT ON runtime_egress.agent_networks TO PUBLIC",
@@ -103,7 +189,7 @@ async function verifyPermissionSensitivity(docker, pg, expected) {
     );
   }
   assert.deepEqual(
-    await fingerprints(docker, pg),
+    await fingerprints(docker, pg, databaseNames),
     expected,
     "permission sensitivity probe escaped its rollback",
   );
@@ -137,29 +223,38 @@ export async function volumeTool(
   readOnly = false,
 ) {
   directory = durablePath(directory);
-  return docker([
-    "run",
-    "--rm",
-    "--label",
-    `com.docker.compose.project=${config.project}`,
-    "--network",
-    "none",
-    "--read-only",
-    "--mount",
-    `type=volume,source=${volume},target=/data${readOnly ? ",readonly" : ""}`,
-    "--mount",
-    `type=bind,source=${directory},target=/backup`,
-    "node:24.21.0-bookworm-slim",
-    ...args,
-  ]);
+  return docker(
+    [
+      "run",
+      "--rm",
+      "--label",
+      `com.docker.compose.project=${config.project}`,
+      "--network",
+      "none",
+      "--read-only",
+      "--mount",
+      `type=volume,source=${volume},target=/data${readOnly ? ",readonly" : ""}`,
+      "--mount",
+      `type=bind,source=${directory},target=/backup`,
+      "node:24.21.0-bookworm-slim",
+      ...args,
+    ],
+    true,
+  );
 }
 
-export async function backupStorage(config, docker, directory, volumeNames) {
+export async function backupStorage(
+  config,
+  docker,
+  directory,
+  volumeNames,
+  databaseNames = databases,
+) {
   directory = durablePath(directory);
   for (const name of [
     "keys.json",
     "manifest.json",
-    ...databases.map((db) => db + ".dump"),
+    ...databaseNames.map((db) => db + ".dump"),
     ...volumeNames.map((_, index) => `volume-${index}.tar`),
   ])
     evidenceFilePath(directory, name);
@@ -176,10 +271,10 @@ export async function backupStorage(config, docker, directory, volumeNames) {
     postgresID: pg.Id,
     postgresImage: pg.Image,
     volumes: [],
-    fingerprints: await fingerprints(docker, pg.Id),
+    fingerprints: await fingerprints(docker, pg.Id, databaseNames),
     files: {},
   };
-  for (const database of databases) {
+  for (const database of databaseNames) {
     const file = `${database}.dump`;
     await pgTool(docker, pg.Id, [
       "pg_dump",
@@ -264,6 +359,7 @@ export async function restoreStorage(config, docker, directory, expected) {
     await readFile(evidenceFilePath(directory, "manifest.json"), "utf8"),
   );
   assertRecoveryManifest(metadata, expected);
+  const databaseNames = expected.databases ?? databases;
   await verifyArtifacts(directory, metadata.files);
   const keys = encryptionKeys(
     JSON.parse(await readFile(join(directory, "keys.json"), "utf8")),
@@ -313,14 +409,15 @@ export async function restoreStorage(config, docker, directory, expected) {
     ]),
     true,
   );
-  await docker(
-    config.compose(["run", "--rm", "--no-deps", "temporal-databases"]),
-    true,
-  );
+  for (const initializer of databaseInitializers(databaseNames))
+    await docker(
+      config.compose(["run", "--rm", "--no-deps", initializer]),
+      true,
+    );
   const after = await postgresContainer(config, docker);
   assert.notEqual(after.Id, before.Id);
   assert.equal(after.Image, metadata.postgresImage);
-  for (const database of databases) {
+  for (const database of databaseNames) {
     const tables = await docker([
       "exec",
       after.Id,
@@ -345,11 +442,11 @@ export async function restoreStorage(config, docker, directory, expected) {
       `/tmp/${file}`,
     ]);
   }
-  const restored = await fingerprints(docker, after.Id);
+  const restored = await fingerprints(docker, after.Id, databaseNames);
   assertRestored(metadata.fingerprints, restored, before.Id, after.Id);
-  await verifyPermissionSensitivity(docker, after.Id, restored);
+  await verifyPermissionSensitivity(docker, after.Id, restored, databaseNames);
   return {
-    database_count: databases.length,
+    database_count: databaseNames.length,
     persistent_volumes: metadata.volumes.length,
     database_fingerprints: restored,
     encryption_keys: Object.keys(keys).length,

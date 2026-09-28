@@ -30,9 +30,11 @@ import { captureResource, type ResourceState } from "../lib/resource-state";
 import { runtimeImageLabel } from "../lib/runtime-image";
 import { RuntimeImageChoice } from "../components/runtime-image-choice";
 import { ManagedMCPDetails, ManagedMCPEditor } from "../components/managed-mcp";
+import { TemplateSkills } from "../components/template-skills";
 import { managedMCPInput } from "../lib/managed-mcp";
 import { templateCreationGate } from "../lib/setup";
 import type { AgentTemplate, ModelProfile, TemplateDefaults } from "../lib/types";
+import type { SkillReference } from "../lib/skills";
 
 export function TemplatesPage({ templateID, revisionID }: { templateID?: string; revisionID?: string }) {
   return templateID ? <TemplateDetail key={JSON.stringify([templateID, revisionID])} templateID={templateID} revisionID={revisionID} /> : <TemplateList />;
@@ -59,6 +61,7 @@ function TemplateList() {
   const [formError, setFormError] = useState("");
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [selectedSkills, setSelectedSkills] = useState<SkillReference[]>([]);
   const [successMessage, setSuccessMessage] = useState("");
   const [query, setQuery] = useState("");
   const loadTemplates = useCallback(async () => {
@@ -125,12 +128,14 @@ function TemplateList() {
         ),
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), 32),
+        skill_refs: selectedSkills,
         runtime: customImage || servers.length ? {
           ...(customImage ? { image_ref: imageRef } : {}),
           ...(servers.length ? { mcp_servers: servers } : {}),
         } : undefined,
       });
       form.reset();
+      setSelectedSkills([]);
       setOpen(false);
       setSuccessMessage(`${name} created.`);
       await loadTemplates();
@@ -184,7 +189,7 @@ function TemplateList() {
           <Button
             disabled={!creationGate.allowed}
             title={creationGate.message}
-            onClick={() => { setFormError(""); setSuccessMessage(""); setOpen(true); }}
+            onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedSkills([]); setOpen(true); }}
           >
             <Plus className="h-4 w-4" />
             Create template
@@ -208,7 +213,7 @@ function TemplateList() {
           title="No templates"
           detail={creationGate.message ?? "Create a template to define a model and runtime."}
           action={creationGate.allowed
-            ? <Button size="sm" onClick={() => { setFormError(""); setSuccessMessage(""); setOpen(true); }}><Plus className="h-4 w-4" />Create template</Button>
+            ? <Button size="sm" onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedSkills([]); setOpen(true); }}><Plus className="h-4 w-4" />Create template</Button>
             : creationGate.href
             ? <Button asChild size="sm" variant="secondary"><a href={creationGate.href}>{creationGate.action}</a></Button>
             : null}
@@ -344,6 +349,7 @@ function TemplateList() {
             </Select>
           </Field>
           <FallbackModels primaryID={primaryID} models={models} disabled={pending} />
+          <TemplateSkills value={selectedSkills} onChange={setSelectedSkills} disabled={pending} />
           <ListPagination
             failure={modelFailure}
             hasMore={modelsHaveMore}
@@ -416,6 +422,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
   const [formError, setFormError] = useState("");
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [selectedSkills, setSelectedSkills] = useState<SkillReference[]>([]);
   const [successMessage, setSuccessMessage] = useState("");
 
   const load = useCallback(async () => {
@@ -508,6 +515,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         model_profile_id: modelID,
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), template.max_model_requests),
+        skill_refs: selectedSkills,
         runtime: {
           image_ref: imageRef,
           resources: template.runtime.resources,
@@ -549,6 +557,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     ) : referencedModelState.status === "loading" ? "Loading current model" : "Current model unavailable"],
     [historical ? "Viewed revision" : "Current revision", String(template.revision)],
     ["Maximum requests", String(template.max_model_requests)],
+    ["Preset Skills", String(template.skill_refs.length)],
     ["Runtime memory", bytes(template.runtime.resources.memory_bytes)],
     ["PID limit", template.runtime.resources.pids_limit.toLocaleString()],
     ["Template updated", dateTime(template.updated_at)],
@@ -564,7 +573,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           : "The current immutable Agent configuration head used for new builds and explicit rebuilds."}
         actions={historical
           ? <><Badge value="historical" /><Button asChild variant="secondary"><a href={`#templates/${templateID}`}>View current revision</a></Button></>
-          : <><Badge value={template.enabled ? "enabled" : "disabled"} /><Button disabled={availabilityBusy || pending || Boolean(publishedReadFailure)} onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedModelID(undefined); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
+          : <><Badge value={template.enabled ? "enabled" : "disabled"} /><Button disabled={availabilityBusy || pending || Boolean(publishedReadFailure)} onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedModelID(undefined); setSelectedSkills(template.skill_refs.map(({ skill_id, version }) => ({ skill_id, version }))); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
       />
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
       {referencedModelState.status === "error" ? <ResourceFailureNotice failure={referencedModelState.failure} message={`Current model could not be loaded: ${referencedModelState.failure.message}`} retryLabel="Retry current model" onRetry={() => void loadReferencedModel(template.model_profile_id)} /> : null}
@@ -584,6 +593,10 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         <ol className="grid gap-2 text-sm">{(template.fallback_model_profile_ids ?? []).map((id, index) => <li key={id} className="flex gap-3"><span className="text-muted-foreground">{index + 1}</span><a className="break-all text-primary hover:underline" href={`#models/${encodeURIComponent(id)}`}>{models.find(model => model.model_profile_id === id)?.display_name ?? id}</a></li>)}</ol>
         {!template.fallback_model_profile_ids?.length ? <p className="text-sm text-muted-foreground">None</p> : null}
       </Section>
+      <Section title="Preset Skills">
+        {template.skill_refs.length ? <ul className="grid gap-2">{template.skill_refs.map((skill) => <li key={skill.skill_id} className="rounded-md border border-border bg-white p-3 text-sm shadow-xs"><span className="font-medium">{skill.name} · v{skill.version}</span><p className="mt-1 text-muted-foreground">{skill.description}</p></li>)}</ul> : <p className="text-sm text-muted-foreground">No preset Skills.</p>}
+        {template.skill_set_digest ? <p className="mt-2 break-all font-mono text-xs text-muted-foreground">Set digest: {template.skill_set_digest}</p> : null}
+      </Section>
       <Section title="Runtime image">
         <p className="break-all text-sm font-medium">{runtimeImageLabel(template.runtime.image_ref, template.runtime.image_source)}</p>
       </Section>
@@ -599,6 +612,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
             </Select>
           </Field>
           <FallbackModels primaryID={modelID} models={choices} initial={template.fallback_model_profile_ids} disabled={pending} />
+          <TemplateSkills value={selectedSkills} frozen={template.skill_refs} onChange={setSelectedSkills} disabled={pending} />
           <ListPagination
             failure={modelFailure}
             hasMore={modelsHaveMore}

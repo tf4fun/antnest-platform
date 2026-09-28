@@ -39,7 +39,7 @@ func (s *Service) updateRuntime(
 		if retained {
 			operation.Inspection = nil
 		}
-		return s.finishFromEffect(ctx, operation, outcome, !retained)
+		return s.finishFromEffect(ctx, operation, outcome, !retained, retained)
 	}
 	return s.createRuntime(ctx, operation, physical, true)
 }
@@ -71,5 +71,5 @@ func (s *Service) unresolvedUpdate(
 ) (deployment.Operation, error) {
 	return s.finishFromEffect(ctx, operation, deployment.EffectOutcome{
 		State: deployment.EffectUnknown, Code: code,
-	}, true)
+	}, true, false)
 }

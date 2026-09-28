@@ -58,6 +58,7 @@ test-go:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs agent-controller
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs admin-console
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs edge-gateway
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/skill-registry/...
 
 .PHONY: test-go-unit
 test-go-unit:
@@ -66,6 +67,7 @@ test-go-unit:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/admin-console/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/edge-gateway/...
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/skill-registry/...
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
@@ -131,6 +133,14 @@ e2e-lifecycle-health:
 .PHONY: e2e-lifecycle-restore
 e2e-lifecycle-restore:
 	node tests/e2e/lifecycle-closeout/run.mjs restore
+
+.PHONY: e2e-stage4-skill-storage-restore
+e2e-stage4-skill-storage-restore:
+	node tests/e2e/lifecycle-closeout/restore-stage4-storage-docker.mjs
+
+.PHONY: e2e-stage4-skill-restore
+e2e-stage4-skill-restore:
+	node tests/e2e/lifecycle-closeout/run.mjs skill-restore
 
 .PHONY: test-workspace-fixtures e2e-workspace
 test-workspace-fixtures:
@@ -264,12 +274,93 @@ e2e-stage2: docker-build
 e2e-stage3: docker-build-stage3
 	sh tests/e2e/e2e-stage3a.sh
 
-.PHONY: test-stage3-base-fixtures e2e-stage3-local
+.PHONY: test-stage3-base-fixtures e2e-stage3-local e2e-stage3-skill-delivery
 test-stage3-base-fixtures:
 	node --test --test-concurrency=1 tests/e2e/stage3-base/*.test.mjs
 
 e2e-stage3-local:
 	sh tests/e2e/e2e-stage3a.sh
+
+e2e-stage3-skill-delivery:
+	ANTNEST_E2E_SKILL_DELIVERY=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-ready-loss
+e2e-stage4-skill-ready-loss:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_READY_LOSS=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: integration-stage4-skill-prepare integration-stage4-skill-slow-prepare integration-stage4-skill-restart-prepare
+integration-stage4-skill-prepare:
+	bash tests/integration/skill-registry/run-registry-rc-prepare.sh
+
+integration-stage4-skill-slow-prepare:
+	ANTNEST_TEST_SLOW_SKILL_PREPARATION=true bash tests/integration/skill-registry/run-registry-rc-prepare.sh
+
+integration-stage4-skill-restart-prepare:
+	ANTNEST_TEST_SLOW_SKILL_PREPARATION=true ANTNEST_TEST_RESTART_SKILL_PREPARATION=true bash tests/integration/skill-registry/run-registry-rc-prepare.sh
+
+.PHONY: e2e-stage4-skill-ready-drift
+e2e-stage4-skill-ready-drift:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_READY_DRIFT=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-target-drift
+e2e-stage4-skill-target-drift:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_TARGET_DRIFT=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-registry-outage
+e2e-stage4-skill-registry-outage:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_REGISTRY_OUTAGE=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-offline-reuse
+e2e-stage4-skill-offline-reuse:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_OFFLINE_REUSE=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-mount-race
+e2e-stage4-skill-mount-race:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_MOUNT_RACE=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-initialize-race
+e2e-stage4-skill-initialize-race:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_INITIALIZE_RACE=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-mount-response-loss
+e2e-stage4-skill-mount-response-loss:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_MOUNT_RACE=true ANTNEST_E2E_SKILL_MOUNT_RESPONSE_LOSS=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-start-response-loss
+e2e-stage4-skill-start-response-loss:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_START_RESPONSE_LOSS=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-fenced-invalidation
+e2e-stage4-skill-fenced-invalidation:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_FENCED_INVALIDATION=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-restart-rebuild
+e2e-stage4-skill-restart-rebuild:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_RESTART_REBUILD=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-legacy-inventory
+e2e-stage4-skill-legacy-inventory:
+	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_LEGACY_INVENTORY=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-stage4-skill-legacy-choice
+e2e-stage4-skill-legacy-choice:
+	node tests/e2e/skill-registry/legacy-choice-docker.mjs
+
+.PHONY: e2e-stage4-skill-legacy-migration
+e2e-stage4-skill-legacy-migration:
+	ANTNEST_E2E_LEGACY_MIGRATION=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
+
+.PHONY: e2e-stage4-skill-post-migration-restart
+e2e-stage4-skill-post-migration-restart:
+	ANTNEST_E2E_LEGACY_MIGRATION=true ANTNEST_E2E_POST_MIGRATION_RESTART=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
+
+.PHONY: e2e-stage4-skill-legacy-recovery-trace
+e2e-stage4-skill-legacy-recovery-trace:
+	ANTNEST_E2E_LEGACY_MIGRATION=true ANTNEST_E2E_RECOVERY_NORMAL=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
+
+.PHONY: e2e-stage4-skill-source-recovery
+e2e-stage4-skill-source-recovery:
+	ANTNEST_E2E_LEGACY_MIGRATION=true ANTNEST_E2E_RECOVERY_NORMAL=true ANTNEST_E2E_SOURCE_RECOVERY=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
 
 .PHONY: e2e-identity-access e2e-identity-core
 e2e-identity-core:
@@ -338,6 +429,8 @@ test-integration-node:
 	$(MAKE) test-agent-acp-audit
 	npm --prefix services/admin-console/web run test:browser:catalog
 	npm --prefix services/admin-console/web run test:browser:audit
+	npm --prefix services/admin-console/web run test:browser:skills
+	npm --prefix services/admin-console/web run test:browser:template-skills
 	npm --prefix services/agent-ui/web run test:browser
 
 .PHONY: test-agent-acp-audit

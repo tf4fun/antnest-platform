@@ -38,6 +38,21 @@ function setup(repository = new MemoryConfigurationRepository()) {
 }
 
 describe("execution directory", () => {
+  it("rejects nonempty legacy Skill bodies without changing the published configuration", async () => {
+    const { directory, repository, onApplied } = setup();
+    const current = executionConfiguration();
+    await directory.apply(current);
+    const candidate = structuredClone(current);
+    candidate.revision++;
+    candidate.agents[0]!.skill_instructions = [
+      { skill_key: "example", version: "1", instructions: "hidden body" },
+    ];
+    await expect(directory.apply(candidate)).rejects.toThrow();
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(directory.inspect(executionIdentity()).configuration.revision).toBe(current.revision);
+  });
+
   it("checks lifecycle closure against the live applied revision rather than a user's access", async () => {
     const { directory } = setup();
     const configuration = executionConfiguration();

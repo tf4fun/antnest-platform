@@ -7,6 +7,7 @@ import (
 	"github.com/opencontainers/go-digest"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 func (s *Service) prepareBuildImage(ctx context.Context, operation *deployment.Operation, configuration deployment.Configuration) error {
@@ -35,5 +36,14 @@ func deploymentForOperation(configuration deployment.Configuration, operation de
 	}
 	physical.ImageReference = operation.ImageReference
 	physical.ImageRef = operation.ImageID
+	if physical.PreparedSkills != nil && operation.PreparedSetID > 0 {
+		physical.PreparedMaterialization = &skillset.PreparedMaterialization{
+			SetID: operation.PreparedSetID,
+			Key: skillset.SetKey{Scope: physical.PreparedSkills.Scope, OrganizationID: physical.PreparedSkills.OrganizationID,
+				AgentID: operation.AgentID, SkillSetDigest: physical.PreparedSkills.SkillSetDigest,
+				LayoutVersion: physical.PreparedSkills.LayoutVersion, Materialization: operation.PreparedMaterialization},
+			VolumeName: operation.PreparedVolumeName, ManifestDigest: operation.PreparedManifestDigest,
+		}
+	}
 	return physical, nil
 }

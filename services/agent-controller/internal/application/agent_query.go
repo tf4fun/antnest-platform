@@ -134,6 +134,8 @@ func (service *AgentQueryService) agentProjection(
 		ModelProfileName:       configuration.ModelProfileName, Model: snapshot.Model,
 		MaxModelRequests:     snapshot.MaxModelRequests,
 		ContextPolicyVersion: snapshot.ContextPolicyVersion, Runtime: snapshot.Runtime,
+		SystemSkills:   snapshot.SystemSkills,
+		SkillSetDigest: snapshot.SkillSetDigest,
 	}
 	return view, nil
 }

@@ -23,6 +23,9 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
+	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
@@ -57,15 +60,38 @@ type Service interface {
 }
 
 type Handler struct {
-	service        Service
-	hub            *observation.Hub
-	heartbeat      time.Duration
-	requestTimeout time.Duration
-	mux            *http.ServeMux
+	service             Service
+	skillPreparation    SkillPreparationService
+	activeSkillVerifier ActiveSkillSetVerifier
+	legacyInventory     LegacyInventoryService
+	legacyBackup        LegacyBackupService
+	hub                 *observation.Hub
+	heartbeat           time.Duration
+	requestTimeout      time.Duration
+	mux                 *http.ServeMux
+}
+
+type SkillPreparationService interface {
+	Prepare(context.Context, string, string, skillset.PrepareRequest) (skillset.PreparationReceipt, error)
+	Get(context.Context, string, string, string) (skillset.PreparationReceipt, error)
+	Release(context.Context, string, string, string, string) error
+}
+
+type LegacyInventoryService interface {
+	Inventory(context.Context) (platformdocker.LegacySystemSkillsInventory, error)
+}
+
+func (h *Handler) SetLegacyInventory(service LegacyInventoryService) {
+	h.legacyInventory = service
+}
+
+func (h *Handler) SetLegacyBackup(service LegacyBackupService) {
+	h.legacyBackup = service
 }
 
 func NewHandler(
 	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration,
+	skillPreparations ...SkillPreparationService,
 ) (*Handler, error) {
 	if service == nil || hub == nil {
 		return nil, fmt.Errorf("service and observation hub are required")
@@ -79,6 +105,12 @@ func NewHandler(
 	handler := &Handler{
 		service: service, hub: hub, heartbeat: heartbeat, requestTimeout: requestTimeout,
 	}
+	if len(skillPreparations) > 1 {
+		return nil, fmt.Errorf("only one Skill preparation service is supported")
+	}
+	if len(skillPreparations) == 1 {
+		handler.skillPreparation = skillPreparations[0]
+	}
 	mux := http.NewServeMux()
 	registerRPC := func(pattern string, endpoint http.HandlerFunc) {
 		mux.Handle(pattern, telemetry.RPCHandler(pattern, endpoint))
@@ -86,7 +118,14 @@ func NewHandler(
 	mux.HandleFunc("GET /status", handler.status)
 	registerRPC("GET /internal/runtime-images/resolve", handler.resolveImage)
 	registerRPC("GET /internal/runtimes", handler.listRuntimes)
+	registerRPC("GET /internal/legacy-system-skills/inventory", handler.legacySystemSkillsInventory)
+	registerRPC("POST /internal/legacy-system-skills/backups", handler.createLegacySystemSkillsBackup)
+	registerRPC("GET /internal/legacy-system-skills/backups/{backup_ref}", handler.getLegacySystemSkillsBackup)
 	registerRPC("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/prepare", handler.prepareSkillSet)
+	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/verify-active", handler.verifyActiveSkillSet)
+	registerRPC("GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}", handler.getSkillPreparation)
+	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release", handler.releaseSkillPreparation)
 	registerRPC("POST /internal/runtimes/{agent_id}/initialize", handler.initializeRuntime)
 	registerRPC("POST /internal/runtimes/{agent_id}/update", handler.updateRuntime)
 	registerRPC("POST /internal/runtimes/{agent_id}/disable", handler.disableRuntime)
@@ -97,11 +136,17 @@ func NewHandler(
 	mux.HandleFunc("GET /internal/runtime-observations/watch", handler.watchObservations)
 	for _, pattern := range []string{
 		"/internal/runtime-images/resolve",
+		"/internal/legacy-system-skills/inventory",
+		"/internal/legacy-system-skills/backups",
+		"/internal/legacy-system-skills/backups/{backup_ref}",
 		"/status", "/internal/runtimes", "/internal/runtimes/{agent_id}",
 		"/internal/runtimes/{agent_id}/initialize", "/internal/runtimes/{agent_id}/update",
 		"/internal/runtimes/{agent_id}/disable", "/internal/runtimes/{agent_id}/enable",
 		"/internal/runtimes/{agent_id}/delete", "/internal/runtime-operations/{request_id}",
 		"/internal/runtime-observations", "/internal/runtime-observations/watch",
+		"/internal/runtimes/{agent_id}/skill-sets/prepare",
+		"/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}",
+		"/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release",
 	} {
 		mux.HandleFunc(pattern, handler.methodNotAllowed)
 	}
@@ -732,6 +777,18 @@ func classifyError(err error) errorDescriptor {
 	case errors.Is(err, control.ErrRevisionConflict):
 		result.status = http.StatusConflict
 		result.response = errorResponse{Code: "runtime_revision_conflict", Message: "Runtime revision is stale", Retryable: false}
+	case errors.Is(err, control.ErrPreparedSkillSetInvalidated):
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "prepared_skill_set_invalidated", Message: "prepared Skill set is unavailable or invalidated", Retryable: false}
+	case errors.Is(err, control.ErrSkillPreflightUnavailable):
+		result.status = http.StatusServiceUnavailable
+		result.response = errorResponse{Code: "skill_preflight_unavailable", Message: "prepared Skill volume inspection is unavailable", Retryable: true}
+	case errors.Is(err, repositoryport.ErrSkillCleanupInProgress):
+		result.status = http.StatusServiceUnavailable
+		result.response = errorResponse{Code: "skill_cleanup_in_progress", Message: "Skill set cleanup is in progress", Retryable: true}
+	case errors.Is(err, repositoryport.ErrSkillPreparationClosed):
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "skill_preparation_closed", Message: "Agent Skill preparation is closed", Retryable: false}
 	case errors.Is(err, control.ErrDrift):
 		result.status = http.StatusConflict
 		result.response = errorResponse{Code: "runtime_drift", Message: "Runtime platform state differs from the controller record", Retryable: false}

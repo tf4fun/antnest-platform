@@ -7,7 +7,19 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/repository"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
+
+func TestObservedRepositoryForwardsPreparedSkillReferenceResolution(t *testing.T) {
+	wrapped, err := NewRepository(&fakeRepository{}, NewHub(), &Health{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := wrapped.ResolvePreparedSkillSet(context.Background(), skillset.PreparedReference{ReferenceID: "psr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+	if err != nil || prepared.SetID != 7 {
+		t.Fatalf("prepared reference was not forwarded: %+v %v", prepared, err)
+	}
+}
 
 func TestLocalReadinessDoesNotDependOnPlatformWatchHealth(t *testing.T) {
 	health := &Health{}
@@ -95,6 +107,10 @@ func (*fakeRepository) BeginTransition(_ context.Context, operation deployment.O
 }
 func (*fakeRepository) GenerationClaim(context.Context, deployment.Key) (repository.GenerationClaim, error) {
 	return repository.GenerationClaim{}, nil
+}
+func (*fakeRepository) MaxClaimedGeneration(context.Context, string) (uint64, error) { return 0, nil }
+func (*fakeRepository) ResolvePreparedSkillSet(context.Context, skillset.PreparedReference) (skillset.PreparedMaterialization, error) {
+	return skillset.PreparedMaterialization{SetID: 7, VolumeName: "prepared-test-volume"}, nil
 }
 func (*fakeRepository) CompleteOperation(
 	context.Context, deployment.Operation, *deployment.Observation,

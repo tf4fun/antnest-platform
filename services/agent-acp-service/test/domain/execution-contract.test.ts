@@ -28,6 +28,15 @@ describe("shared execution snapshot contract", () => {
     expect(parseExecutionConfiguration(fixture)).toEqual(fixture);
   });
 
+  it("requires the retired Skill body channel to be empty in both validators", () => {
+    const fixture = executionConfiguration();
+    fixture.agents[0]!.skill_instructions = [
+      { skill_key: "example", version: "1", instructions: "hidden body" },
+    ];
+    expect(validator(fixture)).toBe(false);
+    expect(() => parseExecutionConfiguration(fixture)).toThrow();
+  });
+
   it("preserves opaque identifiers across the wire, stored projection and model selection", () => {
     const fixture = executionConfiguration();
     fixture.organization_id = "organization+division@example.org";

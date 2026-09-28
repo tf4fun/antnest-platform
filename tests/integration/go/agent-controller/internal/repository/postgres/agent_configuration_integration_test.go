@@ -160,7 +160,7 @@ func TestAgentConfigurationRejectsOldProofBeforeRevocationConsumption(t *testing
 	stale := agentAuthorizationCommand(disabled)
 	identity := &offboardingIdentity{principal: ports.IdentityPrincipal{UserID: disabled.OwnerUserID,
 		OrganizationID: disabled.OrganizationID, MembershipID: "member", Active: true, LastRevocationSequence: 5}}
-	lifecycle := application.NewLifecycleService(repository, repository, nil, nil, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	lifecycle := newIntegratedLifecycleService(repository, repository, nil, nil, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	_, err := lifecycle.EnableAgent(t.Context(), application.EnableAgentInput{RequestID: "enable-new-proof", AgentID: disabled.AgentID})
 	require.NoError(t, err)
 	current, err := repository.GetAgent(t.Context(), disabled.AgentID)

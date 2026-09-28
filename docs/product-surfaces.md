@@ -2,7 +2,7 @@
 
 > Status: current product ownership; acceptance recorded per batch, not a full current-HEAD pass
 >
-> Updated: 2026-09-16
+> Updated: 2026-09-27
 
 This document separates four situations that otherwise look identical in the
 browser: a feature intentionally moved to another application, a feature whose
@@ -18,8 +18,14 @@ Current delivery and recorded evidence are indexed in [current status](current-s
 The [Docker single-node closeout](docker-single-node-closeout.md) retains the
 2026-09-11 baseline and five explicitly deferred browser checks; later workspace,
 model-selection, fallback and discovery checks have their own scope.
-Skill Registry and Channel Gateway remain unstarted. Scheduled-Agent usage has
-a planned Scheduler owner, but no implementation or navigation in this stage.
+The [Stage 4 plan](stage-4-services.md) records Skill Registry, Channel Manager
+and Task Scheduler. Skill Registry now has a
+[minimal technical design](skill-registry-minimal-design.md) and an implemented
+[Registry service batch](../services/skill-registry/README.md). The
+[Admin Console Skills module](../services/admin-console/docs/skills.md) now covers
+publication, inventory, fixed-version Template selection and Agent preparation
+progress. The Template-to-Runtime workflow has Docker integration evidence. Channel Manager and
+Task Scheduler are not implemented.
 Cross-service audit-service ownership remains undecided; the required Jaeger
 verification report does not introduce an audit service.
 
@@ -63,19 +69,49 @@ The old connection-settings page is removed rather than migrated. Browser
 clients use same-origin Edge Gateway routes and must not configure internal
 service base URLs or paste API tokens.
 
-### B. Owner service pending
+### B. Stage 4 owner surfaces
 
-These are valid Admin Console areas, but their owner service is not yet ready.
-They remain out of navigation until the service contract and BFF integration
-exist.
+These surfaces have separate delivery status. Registry inventory and publication
+are in Console navigation; Template forms and Agent lifecycle dialogs consume
+the Controller and Runtime preparation workflow.
 
 | Surface | Owning service | Current state | Console action after delivery |
 | --- | --- | --- | --- |
-| Channels and Agent bindings | Channel Gateway | service pending | add Channel management pages backed only by Channel Gateway RPC |
-| System Skills, versions, review, and distribution | Skill Registry | service pending | add Skill governance pages backed only by Skill Registry RPC |
+| Channels and Agent bindings | Channel Manager (`channel-manager`) | Stage 4 planned; service pending | add Channel management pages backed only by Channel Manager RPC |
+| Hosted Skills and immutable versions | Skill Registry (`skill-registry`) | Console BFF and Skills page implemented; scoped Registry＋Console Docker E2E and desktop/mobile browser checks pass | Template selection and Agent rebuild remain Controller operations |
 
-Neither page may read another service's tables or temporarily store its domain
-records in the Console.
+Neither surface may read another service's tables or temporarily store its domain
+records in the Console. Task scheduling belongs to Task Scheduler; its UI entry
+and interaction design remain pending as described below.
+
+The [minimal Skill Registry design](skill-registry-minimal-design.md) distinguishes
+published packages, Agent-selected versions, Runtime-applied artifacts and Run
+usage. Pages present these outcomes separately. Agent selection
+and explicit application use Agent Controller operations; a Registry download
+is not evidence that an Agent has installed or used the Skill.
+The implemented delivery includes upload/version lists, explicit Template version
+selection, and configured system Skills. Preparation progress/retry is separate
+from lifecycle change and Runtime readiness; rebuilding Agents keep their
+current execution available until preparation has succeeded. This preflight
+behavior is implemented and covered by the Registry-outage Docker gate. Cross-catalog search,
+imports and review workflows are outside this first delivery. Runtime presets
+are read-only; Console does not add an in-place editor for installed packages.
+
+The separate [learning proposal](skill-learning-design.md) requires an Agent UI
+native "Save as Skill" action selecting authorized messages/Run evidence. ACP
+records the authenticated user action; model text cannot invoke it or manufacture
+user intent. A second step presents candidate diffs and evidence limitations
+for confirmation of exact content before application. Waiting candidates show
+specific foreground/background-task/content-conflict blockers with retry,
+cancel and user-directed remediation. The first delivery shows task identity and
+accessible source Tool records, and directs the user to request termination in a
+normal foreground Run through existing tools; it adds no kill API or stop button.
+Waiting maintenance releases its execution slot so that Run can proceed, then
+rechecks task/descendant exit and candidate content. A long-running dev server
+must not leave an unexplained spinner or be killed automatically. Background reflection only proposes
+changes in its first delivery. This interface is pending and is not a Registry
+personal-to-system publishing workflow; that path initially requires manual
+export and administrator upload.
 
 ### C. Delivered Console Workflows
 
@@ -411,12 +447,14 @@ failure semantics are explicit.
 
 #### Scheduled Tasks
 
-No page or API is added yet. A separate Scheduler is now the planned initiator
-of scheduled Agent usage. It will own schedules and trigger records, while
-Agent Controller retains configuration/lifecycle and ACP Service retains admission/execution.
+No page or API is added yet. Stage 4 includes Task Scheduler (`task-scheduler`)
+as the planned initiator of scheduled Agent usage. It will own schedules and
+trigger records, while Agent Controller retains configuration/lifecycle and
+ACP Service retains admission/execution.
 Execution identity, Session reuse, overlap, and missed-fire policy remain future
-design decisions. See the planning-only boundary in
-[single-node closeout](docker-single-node-closeout.md#6-scheduler-planning-only).
+design decisions. The [Stage 4 plan](stage-4-services.md) records current scope;
+the [single-node closeout](docker-single-node-closeout.md#6-scheduler-planning-only)
+retains the earlier Stage 3 exclusion.
 
 #### Cross-service Audit And Events
 
@@ -608,5 +646,7 @@ currently decided Console scope. Reusable evidence remains 77 unit tests and
 116 component tests, owner/BFF HTTP and contract tests, and the isolated Stage 3
 Docker E2E described above; format, lint, and type checks passed. Browser
 acceptance complements these tests rather than replacing them.
-Channel and Skill pages wait for their owner services; Scheduler is planning-only
-and cross-service Audit remains undecided. None is in the current closeout scope.
+Channel pages wait for their owner service; the Stage 4 Skill management page is
+newer than this Stage 3 acceptance baseline and has separate scoped Docker evidence. Task Scheduler is planned
+for Stage 4 and cross-service Audit remains undecided. None is in the Stage 3
+closeout scope.

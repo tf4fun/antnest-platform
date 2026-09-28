@@ -8,19 +8,23 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
 	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 var (
-	ErrInvalidRequest          = errors.New("invalid request")
-	ErrRequestConflict         = repositoryport.ErrIdempotencyConflict
-	ErrOperationFinalized      = repositoryport.ErrOperationFinalized
-	ErrMutationLockLost        = repositoryport.ErrLockLost
-	ErrAgentMutationInProgress = repositoryport.ErrConcurrentMutation
-	ErrLifecycleConflict       = repositoryport.ErrTransitionConflict
-	ErrRevisionConflict        = repositoryport.ErrRevisionConflict
-	ErrDrift                   = repositoryport.ErrInvariantConflict
-	ErrNotFound                = repositoryport.ErrNotFound
+	ErrInvalidRequest              = errors.New("invalid request")
+	ErrRequestConflict             = repositoryport.ErrIdempotencyConflict
+	ErrOperationFinalized          = repositoryport.ErrOperationFinalized
+	ErrMutationLockLost            = repositoryport.ErrLockLost
+	ErrAgentMutationInProgress     = repositoryport.ErrConcurrentMutation
+	ErrLifecycleConflict           = repositoryport.ErrTransitionConflict
+	ErrRevisionConflict            = repositoryport.ErrRevisionConflict
+	ErrDrift                       = repositoryport.ErrInvariantConflict
+	ErrNotFound                    = repositoryport.ErrNotFound
+	ErrPreparedSkillSetInvalidated = repositoryport.ErrPreparedSkillSetInvalidated
+	ErrSkillPreflightUnavailable   = errors.New("prepared Skill volume preflight is unavailable")
 )
 
 const operationFinalizeBudget = 5 * time.Second
@@ -43,14 +47,26 @@ type RuntimeVerifier interface {
 	Verify(context.Context, deployment.Inspection) (deployment.Inspection, error)
 }
 
+type SkillVolumeInspector interface {
+	InspectPreparedVolume(context.Context, skillset.PreparedMaterialization) error
+}
+
 type Service struct {
-	repository      repositoryport.Store
-	locker          repositoryport.MutationLocker
-	observations    ObservationReadiness
-	platform        platform.Lifecycle
-	verifier        RuntimeVerifier
-	now             func() time.Time
-	mutationTimeout time.Duration
+	repository           repositoryport.Store
+	locker               repositoryport.MutationLocker
+	observations         ObservationReadiness
+	platform             platform.Lifecycle
+	verifier             RuntimeVerifier
+	now                  func() time.Time
+	mutationTimeout      time.Duration
+	skillScope           string
+	skillInspector       SkillVolumeInspector
+	activeReferenceStore repositoryport.PreparedSkillReferenceStore
+	activeMountVerifier  ActiveSkillMountVerifier
+}
+
+func (s *Service) SetSkillVolumeInspector(inspector SkillVolumeInspector) {
+	s.skillInspector = inspector
 }
 
 type Readiness struct {
@@ -71,6 +87,7 @@ func NewService(
 	verifier RuntimeVerifier,
 	now func() time.Time,
 	mutationTimeout time.Duration,
+	skillScope ...string,
 ) (*Service, error) {
 	if repository == nil || locker == nil || observations == nil || platform == nil || verifier == nil || now == nil {
 		return nil, fmt.Errorf("repository, mutation locker, observation health, platform, Runtime verifier, and clock are required")
@@ -78,10 +95,17 @@ func NewService(
 	if mutationTimeout <= 0 {
 		return nil, fmt.Errorf("positive mutation timeout is required")
 	}
-	return &Service{
+	if len(skillScope) > 1 {
+		return nil, fmt.Errorf("one Controller scope is allowed")
+	}
+	service := &Service{
 		repository: repository, locker: locker, observations: observations,
 		platform: platform, verifier: verifier, now: now, mutationTimeout: mutationTimeout,
-	}, nil
+	}
+	if len(skillScope) == 1 {
+		service.skillScope = skillScope[0]
+	}
+	return service, nil
 }
 
 func (s *Service) Ready(ctx context.Context) error {
@@ -181,6 +205,12 @@ type lifecycleRequest struct {
 }
 
 func (s *Service) lifecycle(ctx context.Context, input lifecycleRequest) (deployment.Operation, error) {
+	if input.Configuration != nil && input.Configuration.PreparedSkillSet != nil {
+		if s.skillScope == "" {
+			return deployment.Operation{}, fmt.Errorf("%w: Controller scope is required for prepared Skills", ErrInvalidRequest)
+		}
+		input.Configuration.SkillScope = s.skillScope
+	}
 	requestDigest, err := validateLifecycleRequest(input)
 	if err != nil {
 		return deployment.Operation{}, err
@@ -291,6 +321,13 @@ func (s *Service) prepareOperation(
 	generation := source.Generation
 	if input.Kind == deployment.OperationInitializeRuntime || input.Kind == deployment.OperationUpdateRuntime ||
 		input.Kind == deployment.OperationEnableRuntime {
+		claimed, err := s.repository.MaxClaimedGeneration(ctx, input.AgentID)
+		if err != nil {
+			return deployment.Operation{}, false, err
+		}
+		if claimed > generation {
+			generation = claimed
+		}
 		generation++
 		if err := (deployment.Key{AgentID: input.AgentID, Generation: generation}).Validate(); err != nil {
 			return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
@@ -311,6 +348,30 @@ func (s *Service) prepareOperation(
 	if input.Configuration != nil {
 		if err := s.prepareBuildImage(ctx, &candidate, *input.Configuration); err != nil {
 			return deployment.Operation{}, false, err
+		}
+		if input.Configuration.PreparedSkillSet != nil {
+			physical, err := input.Configuration.Resolve(input.AgentID, generation)
+			if err != nil {
+				return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+			}
+			candidate.PreparedReference = physical.PreparedSkills
+			store, ok := s.repository.(repositoryport.PreparedSkillReferenceStore)
+			if !ok {
+				return deployment.Operation{}, false, ErrPreparedSkillSetInvalidated
+			}
+			prepared, err := store.ResolvePreparedSkillSet(ctx, *candidate.PreparedReference)
+			if err != nil {
+				return deployment.Operation{}, false, err
+			}
+			if s.skillInspector == nil {
+				return deployment.Operation{}, false, ErrSkillPreflightUnavailable
+			}
+			if err := s.skillInspector.InspectPreparedVolume(ctx, prepared); err != nil {
+				if errors.Is(err, platformdocker.ErrSkillVolumeMissing) || errors.Is(err, platformdocker.ErrConflict) {
+					return deployment.Operation{}, false, ErrPreparedSkillSetInvalidated
+				}
+				return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrSkillPreflightUnavailable, err)
+			}
 		}
 	}
 	operation, replay, beginErr := s.repository.BeginTransition(ctx, candidate)
@@ -335,14 +396,14 @@ func (s *Service) executeOperation(
 	switch operation.Kind {
 	case deployment.OperationInitializeRuntime:
 		if outcome := s.platform.EnsureStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
-			return s.finishFromEffect(ctx, operation, outcome, false)
+			return s.finishFromEffect(ctx, operation, outcome, false, false)
 		}
 		return s.createRuntime(ctx, operation, physical, false)
 	case deployment.OperationUpdateRuntime:
 		return s.updateRuntime(ctx, operation, physical)
 	case deployment.OperationDisableRuntime:
 		if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
-			return s.finishFromEffect(ctx, operation, outcome, false)
+			return s.finishFromEffect(ctx, operation, outcome, false, false)
 		}
 		return s.finishWithoutCompute(ctx, operation)
 	case deployment.OperationEnableRuntime:
@@ -351,12 +412,12 @@ func (s *Service) executeOperation(
 		destructive := false
 		if operation.SourceState == deployment.LifecycleProvisioned || operation.SourceState == deployment.LifecycleFailed {
 			if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
-				return s.finishFromEffect(ctx, operation, outcome, false)
+				return s.finishFromEffect(ctx, operation, outcome, false, false)
 			}
 			destructive = true
 		}
 		if outcome := s.platform.DeleteStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
-			return s.finishFromEffect(ctx, operation, outcome, destructive)
+			return s.finishFromEffect(ctx, operation, outcome, destructive, false)
 		}
 		return s.finishWithoutCompute(ctx, operation)
 	default:
@@ -380,7 +441,7 @@ func (s *Service) createRuntime(
 ) (deployment.Operation, error) {
 	outcome := s.platform.Create(ctx, physical, operation.SpecDigest)
 	if outcome.State != deployment.EffectCompleted {
-		return s.finishFromEffect(ctx, operation, outcome, destructive)
+		return s.finishFromEffect(ctx, operation, outcome, destructive, false)
 	}
 	environment := operationEnvironment(operation, deployment.LifecycleProvisioned, s.now().UTC())
 	operation.State = deployment.OperationCompleted
@@ -416,7 +477,7 @@ func (s *Service) finishFromEffect(
 	ctx context.Context,
 	operation deployment.Operation,
 	outcome deployment.EffectOutcome,
-	destructive bool,
+	destructive, priorUnknownResolved bool,
 ) (deployment.Operation, error) {
 	if err := outcome.Validate(); err != nil {
 		return deployment.Operation{}, fmt.Errorf("platform returned invalid outcome: %w", err)
@@ -424,7 +485,10 @@ func (s *Service) finishFromEffect(
 	operation.ErrorCode = outcome.Code
 	operation.ErrorDetail = sanitizedDetail(outcome)
 	operation.UpdatedAt = s.now().UTC()
-	if destructive || outcome.State == deployment.EffectUnknown {
+	// A later not_started response only describes this attempt. It cannot
+	// erase an earlier accepted attempt unless the source was positively
+	// re-proven and no destructive step began.
+	if destructive || outcome.State == deployment.EffectUnknown || operation.State == deployment.OperationUnknown && !priorUnknownResolved {
 		operation.State = deployment.OperationUnknown
 		operation.Effect = deployment.EffectUnknown
 		environment := operationEnvironment(operation, deployment.LifecycleUnknown, operation.UpdatedAt)

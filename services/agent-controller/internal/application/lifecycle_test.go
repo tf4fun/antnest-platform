@@ -67,7 +67,7 @@ func TestCreateAgentMaterializesSpecAndCompletesWithoutRuntimeReadiness(t *testi
 			Health: "unknown",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store,
 		dependencies,
@@ -109,8 +109,8 @@ func TestCreateAgentMaterializesSpecAndCompletesWithoutRuntimeReadiness(t *testi
 	if err != nil {
 		t.Fatalf("marshal Agent spec: %v", err)
 	}
-	if strings.Contains(string(specPayload), "skill") {
-		t.Fatalf("Stage 2 Agent spec must have no Skill surface: %s", specPayload)
+	if strings.Contains(string(specPayload), "system_skills") || store.initial.Spec.Snapshot.SkillSetDigest == "" {
+		t.Fatalf("empty Skill collection must have an identity without package references: %s", specPayload)
 	}
 	if dependencies.runtimeConfiguration.Network.TunnelIPv4 != "100.64.0.2" ||
 		dependencies.runtimeConfiguration.ImageRef != template.Snapshot().Runtime.ImageRef {
@@ -133,7 +133,7 @@ func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
 	completed := completedCreateState(t, template, model)
 	store := &lifecycleStoreStub{beginState: completed, replayed: true}
 	dependencies := &lifecycleDependenciesStub{}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store,
 		dependencies,
@@ -192,10 +192,17 @@ func TestCreateAgentRunningRetryKeepsPersistedAuthorizationDecision(t *testing.T
 		},
 	}
 	identities := &identityDirectoryStub{err: errors.New("identity unavailable")}
-	service := NewLifecycleService(
+	prepared := &skillIntentStub{intent: ports.SkillPreparationIntent{
+		RequestID: input.RequestID, RequestFingerprint: fingerprint, Kind: domain.OperationCreate,
+		AgentID: running.Agent.AgentID, OrganizationID: input.OrganizationID,
+		TargetSpec: running.Spec.Snapshot, TargetSpecDigest: running.Spec.CanonicalDigest,
+		State: "ready", PreparedReferenceID: "psr_11111111111111111111111111111111",
+	}}
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model}, store,
 		dependencies, dependencies, fixedClock{now: time.Unix(20, 0).UTC()},
 		WithIdentityDirectory(identities),
+		WithSkillPreparation(prepared, &skillPreparationClientStub{state: "ready"}),
 	)
 
 	result, err := executeCreateForTest(service, context.Background(), input)
@@ -220,7 +227,7 @@ func TestCreateAgentReplaysConcurrentIntentAfterIdentityFailure(t *testing.T) {
 		beginState: completedCreateState(t, template, model), replayOnCall: 2,
 	}
 	identities := &identityDirectoryStub{err: errors.New("identity unavailable")}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model}, store,
 		&lifecycleDependenciesStub{}, &lifecycleDependenciesStub{},
 		fixedClock{now: time.Unix(20, 0).UTC()}, WithIdentityDirectory(identities),
@@ -274,7 +281,7 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 		State: ports.NetworkStateQuarantined, NetworkResourceVersion: 2,
 		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 1,
 	}}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(30, 0).UTC()},
 		WithIdentityDirectory(activeIdentityDirectory()),
@@ -334,7 +341,7 @@ func TestCreateAgentRequiresActiveOrganizationOwnerBeforePersistingIntent(t *tes
 	identities := &identityDirectoryStub{principal: ports.IdentityPrincipal{
 		UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1", Active: false,
 	}}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(40, 0).UTC()},
 		WithIdentityDirectory(identities),
@@ -355,7 +362,7 @@ func TestCreateAgentFailsAsDependencyUnavailableWithoutIdentityDirectory(t *test
 
 	store := &lifecycleStoreStub{}
 	dependencies := &lifecycleDependenciesStub{}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(41, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -872,7 +879,7 @@ func newLifecycleTestService(
 	t *testing.T, store ports.LifecycleStore, dependencies lifecycleDependencies,
 ) *LifecycleService {
 	t.Helper()
-	return NewLifecycleService(
+	return newTestLifecycleService(
 		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(50, 0).UTC()},
 		WithIdentityDirectory(activeIdentityDirectory()),

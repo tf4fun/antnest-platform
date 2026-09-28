@@ -2,6 +2,114 @@
 set -eu
 
 keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
+case "${ANTNEST_E2E_SKILL_DELIVERY:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_DELIVERY must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_READY_LOSS must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_READY_DRIFT must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_TARGET_DRIFT must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_REGISTRY_OUTAGE must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_OFFLINE_REUSE must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_MOUNT_RACE must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_INITIALIZE_RACE must be true or false' >&2; exit 1 ;;
+esac
+if [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" != true ]; then
+  echo 'Initial Skill mount race requires Skill delivery acceptance' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] && { [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; }; then
+  echo 'Initial Skill mount race requires its own disposable fault profile' >&2
+  exit 1
+fi
+case "${ANTNEST_E2E_SKILL_MOUNT_RESPONSE_LOSS:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_MOUNT_RESPONSE_LOSS must be true or false' >&2; exit 1 ;;
+esac
+if [ "${ANTNEST_E2E_SKILL_MOUNT_RESPONSE_LOSS:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" != true ]; then
+  echo 'Skill mount response loss requires the isolated Skill mount race profile' >&2
+  exit 1
+fi
+case "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_START_RESPONSE_LOSS must be true or false' >&2; exit 1 ;;
+esac
+if [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" != true ]; then
+  echo 'Skill start response loss requires Skill delivery acceptance' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ] && { [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; }; then
+  echo 'Skill start response loss requires its own disposable fault profile' >&2
+  exit 1
+fi
+case "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_FENCED_INVALIDATION must be true or false' >&2; exit 1 ;;
+esac
+case "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_SKILL_RESTART_REBUILD must be true or false' >&2; exit 1 ;;
+esac
+if [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" != true ]; then
+  echo 'Skill Rebuild restart requires Skill delivery acceptance' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; then
+  echo 'Skill Rebuild restart and fenced invalidation require separate disposable profiles' >&2
+  exit 1
+fi
+case "${ANTNEST_E2E_LEGACY_INVENTORY:-false}" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_LEGACY_INVENTORY must be true or false' >&2; exit 1 ;;
+esac
+if [ "${ANTNEST_E2E_LEGACY_INVENTORY:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" != true ]; then
+  echo 'Legacy Skill inventory requires Skill delivery acceptance' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ]; then
+  echo 'Ready Skill volume fault profiles are mutually exclusive' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] && { [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; }; then
+  echo 'Target Skill drift requires its own disposable fault profile' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" = true ] && { [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; }; then
+  echo 'Registry outage requires its own disposable fault profile' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" = true ] && { [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; }; then
+  echo 'Offline Skill reuse requires its own disposable fault profile' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] && { [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; }; then
+  echo 'Docker Skill mount race requires its own disposable fault profile' >&2
+  exit 1
+fi
+if { [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_TARGET_DRIFT:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ]; } && [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" != true ]; then
+  echo 'Ready Skill volume fault requires Skill delivery acceptance' >&2
+  exit 1
+fi
 case "$keep_stack" in
   false) ;;
   true)
@@ -44,6 +152,7 @@ export ANTNEST_EDGE_PUBLIC_BASE_URL="http://127.0.0.1:${ANTNEST_EDGE_HOST_PORT}"
 export ANTNEST_RUNTIME_CONTROLLER_SCOPE="$COMPOSE_PROJECT_NAME"
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${COMPOSE_PROJECT_NAME}-system-skills"
+export ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME="${COMPOSE_PROJECT_NAME}-legacy-skill-backups"
 export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="10.243.${network_octet}.0/24"
 export ANTNEST_EGRESS_IPV4="10.243.${network_octet}.3"
 export ANTNEST_JAEGER_RUNTIME_IPV4="10.243.${network_octet}.4"
@@ -287,6 +396,13 @@ if [ -z "$tool_profile" ] && [ "$keep_stack" = false ] && [ "$identity_access" =
   export ANTNEST_BASE_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
+if [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" = true ] && [ "$base_profile" != true ]; then
+  echo 'Skill delivery acceptance requires the Stage 3 base profile' >&2
+  exit 1
+fi
+if [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ]; then
+  export ANTNEST_E2E_CONTROLLER_RUNTIME_URL=http://stage3-rc-proxy:8080
+fi
 if [ -n "$tool_profile" ]; then
   export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
   docker() { node "$repository_root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
@@ -317,6 +433,14 @@ compose() {
     return
   fi
   if [ "$base_profile" = true ]; then
+    if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then
+      if [ "$1" = up ]; then
+        docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f tests/e2e/stage3-base/compose.yaml -f tests/e2e/stage3-base/compose-skill-mount-race.yaml --profile stage3 --profile observability "$@"
+      else
+        docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f tests/e2e/stage3-base/compose.yaml -f tests/e2e/stage3-base/compose-skill-mount-race.yaml --profile stage3 --profile observability "$@"
+      fi
+      return
+    fi
     if [ "$1" = up ]; then
       docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f tests/e2e/stage3-base/compose.yaml --profile stage3 --profile observability "$@"
     else
@@ -430,9 +554,20 @@ cleanup() {
   fi
   if [ "$status" -ne 0 ]; then
     compose ps >&2 || true
+    fault_service=
+    if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then fault_service=skill-docker-proxy; fi
     compose logs --no-color --tail=200 edge-gateway admin-console agent-ui agent-acp-service \
       identity-service agent-controller runtime-controller runtime-egress stage3-model jaeger \
+      $fault_service \
       > "$temporary_root/failure-logs.txt" 2>/dev/null || true
+    if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then
+      fault_evidence="$repository_root/artifacts/verification/stage3-base/$COMPOSE_PROJECT_NAME"
+      (umask 077; mkdir -p "$fault_evidence"; cp "$temporary_root/failure-logs.txt" "$fault_evidence/failure-logs.txt") || true
+      runtime_id=$(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter 'label=com.docker.compose.service=runtime-controller')
+      if [ -n "$runtime_id" ]; then
+        (umask 077; docker inspect --format '{{json .State.Health}}' "$runtime_id" > "$fault_evidence/runtime-health.json") || true
+      fi
+    fi
     node tests/e2e/identity-closeout/check-oidc-logs.mjs --summary "$temporary_root/failure-logs.txt" >&2 || true
     printf 'Raw service and runtime logs omitted: they may contain credentials.\n' >&2
   fi

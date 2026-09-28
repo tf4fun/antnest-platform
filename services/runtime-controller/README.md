@@ -1,6 +1,118 @@
 # Runtime Controller
 
-> Status: Docker implementation complete; Kubernetes remains a later adapter.
+> Status: existing Runtime lifecycle Docker adapter complete; Kubernetes remains a later adapter.
+
+Stage 4 B3 system-Skill delivery has passed its local and applicable Docker
+gates. A replayed `ready` preparation
+fully reads the owned volume's manifest and file contents before returning a
+consumable reference. Missing or modified content fails closed. A missing
+volume is requeued under a new materialization when no current Runtime or
+in-flight lifecycle operation references that set. An active source Runtime
+may keep using a different set while an unmounted Rebuild target is prepared
+again; its current set remains protected. Confirmed content drift in a
+disabled Agent, or in an unmounted target set while a different source Runtime
+remains active, enters durable cleanup;
+the worker removes the invalid volume and requeues the same frozen set with a
+new materialization. Current active sets and in-flight operations remain
+fail-closed.
+Lifecycle mutation uses a separate, bounded volume ownership preflight
+and a post-create manifest gate. The
+[preparation/lifecycle contract](../../contracts/skill-registry/runtime-delivery-api.md),
+independent frozen-set digest validation, Docker archive transport and observed
+mount fields are present. PostgreSQL now durably admits preparation intents,
+merges identical collection work, retains operation-owned reference identities
+and saves per-package checkpoints. The preparation HTTP routes and a worker are
+wired into the service. The worker downloads exact Registry versions, writes
+real files to an owned per-Agent volume, reads them back, resumes verified
+checkpoints, and writes a collection manifest before marking the set ready.
+On graceful shutdown, RC waits for the preparation worker to settle an
+interrupted round and release its lease before exiting. The isolated
+`make integration-stage4-skill-restart-prepare` gate restarts RC after the
+first persisted checkpoint; preparation resumes against the same database,
+completes all five delayed packages, and does not download the first one again.
+The development Compose service gives this shutdown sequence a 30-second
+stop window, covering the bounded HTTP and worker waits before Docker forces
+termination.
+The final readback scans the whole volume root, verifies file content and
+rejects extra entries.
+Missing volumes are requeued under a new physical materialization identity.
+The Docker adapter verifies the actual mounted volume after container creation
+and before startup, including an auto-created empty replacement volume race.
+If Docker starts the Runtime but loses its Start response, RC re-inspects the
+running candidate and repeats the Skill mount/manifest gate before accepting
+completion. A changed mount remains `unknown`; a verified running mount may be
+adopted. Unit tests cover both outcomes, and a disposable full-stack Docker
+profile confirms legitimate adoption and a subsequent Skill-reading ACP Run.
+Lifecycle admission resolves an exact active `ready` reference and inspects
+the owned physical volume before the transition, repeats the database check
+in the transition transaction, and records a
+lifecycle reference with the chosen physical volume. Runtime creation and
+recovery consume that recorded volume. Completing an operation atomically
+transfers its reference to the current Agent set, keeps it through Disable,
+replaces it on successful Update, and releases it on Delete or settled failure;
+unknown operations retain their recovery reference. A cleanup worker normally
+claims only sets with no preparation, lifecycle, or current Agent reference.
+Confirmed drifted sets may retain preparation/current references while their
+Agent is disabled and no lifecycle operation is active. An active Agent may
+also clean an unmounted target set that has no current or lifecycle reference.
+After removing the owned invalid volume, the worker requeues the same frozen
+set. Delete
+closes new preparation admission and cancels in-flight work in its lifecycle
+transaction. The core Registry→Template→Controller→RC→Runtime/ACP Docker
+workflow has passed. Controlled legacy shared-volume migration and exact-source
+recovery pass isolated Docker gates; independent protected off-host export
+acceptance is outside the current clean-development-deployment scope, which
+has no legacy business data. The Skill Registry first-release business scope
+has passed its local and Docker gates.
+The read-only legacy shared-volume inventory endpoint scans the mounted volume
+twice without following symlinks, hashes every regular file and reports all
+Docker consumers, including stopped and foreign containers. The separate
+`POST /internal/legacy-system-skills/backups` copies an explicitly observed
+inventory to a restricted persistent volume, reads its archive and manifest
+back, and returns an idempotent receipt. This same-host copy still needs a
+verified protected export before Controller may finish any Agent migration;
+`GET /internal/legacy-system-skills/backups/{backup_ref}` revalidates the
+stored archive and manifest without reading Docker or the live shared volume.
+None of these endpoints lifts the existing gate.
+The separate `legacy-backup-export` maintenance binary copies an RC backup
+directory into an operator-mounted private destination, verifies source and
+destination archives, and reports `copy_verified`. It does not certify that the
+destination is off-host; the migration gate still requires independent protected
+export verification.
+The `legacy-backup-attest` maintenance binary is intended to run on an
+independent verifier, with its own private Ed25519 key and read-only access to
+the protected export. It reads the full archive again and emits the signed
+[`v1 attestation`](../../contracts/skill-registry/legacy-export-attestation.md).
+
+Do not mount that key in the RC service. The same-host Docker test validates
+the command and signature mechanics only. Controller consumes a valid signed
+attestation in the explicit migration operation; the gate opens only after a
+verified target mount and atomic publication. Independent off-host evidence
+remains to be exercised.
+
+The private `POST /internal/runtimes/{agent_id}/skill-sets/verify-active`
+endpoint rechecks a still-held prepared reference against the current
+Environment revision, running container deployment identity, read-only Skill
+mount and manifest. It returns a point-in-time receipt for Controller's
+implemented migration publish gate. See the
+[verification contract](../../contracts/skill-registry/active-skill-set-verification.md).
+An isolated root integration test publishes a fixed Registry version over HTTP,
+asks RC to prepare and Initialize it over HTTP, and verifies the owned Docker
+volume's labels, manifest, exact `SKILL.md`, idempotent receipt, actual candidate
+container mount and write denial. The candidate is a test image, so Controller
+Template selection and Antnest Runtime/ACP execution remain separate gates.
+With `ANTNEST_TEST_REAL_RUNTIME_IMAGE=antnest/antnest-runtime:local`, the same
+isolated test invokes the real Runtime executor against that prepared volume:
+`info` discovers only the system Skill summary, `read` retrieves the full file,
+and `write` to the system root is rejected. This does not run Runtime's networked
+MCP server or an ACP Run.
+
+The B3 artifact path now independently validates Registry ZIPs against the
+shared package-rule cases and frozen metadata, streams normalized real files
+into a read-only tar layout, and downloads only scoped exact versions through a
+non-redirecting authenticated client. A root-owned Docker E2E exercises package
+and collection-manifest write/readback on a never-started `NetworkMode=none`
+preparation container.
 
 ## Dependency baseline (2026-09-26)
 

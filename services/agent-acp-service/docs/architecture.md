@@ -9,6 +9,10 @@
 > Strict clock-warning failures and later workspace/model evidence remain separately
 > recorded in [current status](../../../docs/current-status.md).
 
+The Stage 4 Skill delivery boundary permanently rejects nonempty legacy
+`skill_instructions` in execution publications and persisted Run snapshots.
+Runtime remains the source for Skill summaries and on-demand content.
+
 ## Mission
 
 Turn one authenticated ACP connection into durable Session work while keeping

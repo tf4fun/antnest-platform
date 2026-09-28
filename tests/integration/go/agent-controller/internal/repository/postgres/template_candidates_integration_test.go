@@ -17,6 +17,7 @@ func TestTemplateCandidatesPreserveOrderAndProtectAllReferences(t *testing.T) {
 	snapshot := template.Revision.Snapshot()
 	template.OrganizationID, snapshot.OrganizationID = "org", "org"
 	snapshot.FallbackModelProfileIDs = []string{third.ModelProfileID, second.ModelProfileID}
+	snapshot.SkillSetDigest, _ = domain.SkillSetDigest(snapshot.OrganizationID, snapshot.SkillRefs)
 	var err error
 	template.Revision, err = domain.NewTemplateRevision(domain.TemplateRevisionInput(snapshot))
 	require.NoError(t, err)
@@ -60,6 +61,7 @@ func TestTemplateCandidatesRejectForeignMissingAndRepeatedConnection(t *testing.
 			snapshot := template.Revision.Snapshot()
 			template.OrganizationID, snapshot.OrganizationID = "org", "org"
 			snapshot.FallbackModelProfileIDs = []string{fallback}
+			snapshot.SkillSetDigest, _ = domain.SkillSetDigest(snapshot.OrganizationID, snapshot.SkillRefs)
 			var err error
 			template.Revision, err = domain.NewTemplateRevision(domain.TemplateRevisionInput(snapshot))
 			require.NoError(t, err)

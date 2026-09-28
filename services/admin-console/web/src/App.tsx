@@ -12,6 +12,7 @@ import {
   MessageSquareText,
   RefreshCw,
   ShieldCheck,
+  ScrollText,
   Waypoints,
   Users,
   X,
@@ -40,6 +41,7 @@ import { LoginPage } from "./pages/login";
 import { ModelsPage } from "./pages/models";
 import { ProvisioningPage } from "./pages/provisioning";
 import { TemplatesPage } from "./pages/templates";
+import { SkillsPage } from "./pages/skills";
 import { ExecutionAuditsPage } from "./pages/execution-audits";
 
 type NavigationItem = { page: Page; label: string; icon: LucideIcon };
@@ -59,6 +61,7 @@ const navigation: NavigationGroup[] = [
     items: [
       { page: "models", label: "Model providers", icon: BrainCircuit },
       { page: "templates", label: "Agent templates", icon: Boxes },
+      { page: "skills", label: "Skills", icon: ScrollText },
     ],
   },
   {
@@ -76,6 +79,7 @@ const pageLabels: Record<Page, string> = {
   provisioning: "Provisioning",
   models: "Model providers",
   templates: "Agent templates",
+  skills: "Skills",
   agents: "Agents",
   audits: "Execution history",
 };
@@ -328,7 +332,7 @@ export default function App() {
   const role = session.principal.system_role === "admin" ? "System administrator" : "Organization administrator";
   const account = accountPresentation(accountState);
   const pageLabel = route.resourceID
-    ? route.page === "agents" ? "Agent detail" : route.page === "models" ? "Model detail" : route.page === "audits" ? "Execution detail" : "Template detail"
+    ? route.page === "agents" ? "Agent detail" : route.page === "models" ? "Model detail" : route.page === "audits" ? "Execution detail" : route.page === "skills" ? "Skill detail" : "Template detail"
     : pageLabels[route.page];
 
   return (
@@ -493,6 +497,7 @@ export default function App() {
           ) : null}
           {route.page === "models" ? <ModelsPage modelID={route.resourceID} /> : null}
           {route.page === "templates" ? <TemplatesPage templateID={route.resourceID} revisionID={route.revisionID} /> : null}
+          {route.page === "skills" ? <SkillsPage skillID={route.resourceID} /> : null}
           {route.page === "agents" ? <AgentsPage agentID={route.resourceID} networkScope={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
           {route.page === "audits" ? <ExecutionAuditsPage runID={route.resourceID} agentID={route.agentID} /> : null}
         </main>

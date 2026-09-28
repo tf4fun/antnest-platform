@@ -6,7 +6,7 @@ import type { ContextRepository, ContextSource } from "../../src/ports/context-r
 import type { RunExecutionSnapshot } from "../../src/domain/types.js";
 
 describe("ContextBuilder", () => {
-  it("builds system, Skill, environment, and conversation context in order", async () => {
+  it("builds system, environment, and conversation context in order", async () => {
     const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
     const repository: ContextRepository = {
       load: vi.fn((): Promise<ContextSource> =>
@@ -42,8 +42,30 @@ describe("ContextBuilder", () => {
     ]);
     const systemText = messages[0]?.content[0];
     expect(systemText?.type).toBe("text");
-    expect(systemText?.type === "text" ? systemText.text : "").toContain("skill instructions");
+    expect(systemText?.type === "text" ? systemText.text : "").toBe("system");
     expect(saveCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persisted Run snapshot with legacy Skill bodies before Runtime access", async () => {
+    const runtime = emptyRuntimePreparation();
+    const read = vi.spyOn(runtime.runtimeInformation, "read");
+    const builder = new ContextBuilder({
+      ...runtime,
+      repository: {
+        load: vi.fn(() => Promise.resolve({ checkpoint: null, messages: [] })),
+        saveCheckpoint: vi.fn(),
+      },
+      id: () => "checkpoint-legacy",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const legacy = snapshot();
+    legacy.executionSpec.skillInstructions = [
+      { skillKey: "example", version: "1", instructions: "hidden body" },
+    ];
+    await expect(builder.build("session-1", legacy, new AbortController().signal)).rejects.toThrow(
+      "Legacy Skill instructions are unsupported",
+    );
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("checkpoints old history while preserving the newest user request", async () => {
@@ -259,9 +281,7 @@ function snapshot(): RunExecutionSnapshot {
     executionSpec: {
       systemPrompt: "system",
       contextPolicyVersion: "context-v1",
-      skillInstructions: [
-        { skillKey: "example", version: "1", instructions: "skill instructions" },
-      ],
+      skillInstructions: [],
       model: {
         baseUrl: "https://api.example.test/v1",
         model: "example-model",

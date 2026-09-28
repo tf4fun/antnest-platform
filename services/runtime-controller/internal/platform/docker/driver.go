@@ -11,6 +11,7 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
@@ -34,6 +35,11 @@ type Config struct {
 	ManagementNetwork  string
 	SystemSkillsVolume string
 	RuntimeOTEL        map[string]string
+	SkillMountGate     SkillMountGate
+}
+
+type SkillMountGate interface {
+	VerifyRuntimeMount(context.Context, skillset.SetKey, string, string) error
 }
 
 type Engine interface {
@@ -71,6 +77,15 @@ type Container struct {
 	Health       string
 	RestartCount uint64
 	Labels       map[string]string
+	Mounts       []ObservedMount
+}
+
+type ObservedMount struct {
+	Type        string
+	Name        string
+	Destination string
+	ReadWrite   bool
+	NoCopy      bool
 }
 
 type Volume struct {
@@ -81,6 +96,7 @@ type Volume struct {
 type Mount struct {
 	Source   string
 	ReadOnly bool
+	NoCopy   bool
 }
 
 type Healthcheck struct {
@@ -106,6 +122,7 @@ type ContainerSpec struct {
 	ReadOnlyRootFS bool
 	Tmpfs          map[string]string
 	Networks       []string
+	NetworkMode    string
 	PidsLimit      int64
 	MemoryBytes    int64
 	RestartPolicy  string
@@ -153,17 +170,20 @@ func (d *Driver) DeploymentDigest(value deployment.Deployment) (string, error) {
 	if err := value.ValidateFor(key); err != nil {
 		return "", err
 	}
-	spec, err := d.containerSpec(value, "")
+	logical := value
+	logical.PreparedMaterialization = nil
+	spec, err := d.containerSpec(logical, "")
 	if err != nil {
 		return "", err
 	}
 	delete(spec.Labels, labelSpecDigest)
 	return deployment.DigestValue(struct {
-		Revision uint32                 `json:"revision"`
-		Platform string                 `json:"platform"`
-		Name     string                 `json:"name"`
-		Request  createContainerRequest `json:"request"`
-	}{Revision: 1, Platform: "docker", Name: spec.Name, Request: dockerCreateRequest(spec)})
+		Revision       uint32                      `json:"revision"`
+		Platform       string                      `json:"platform"`
+		Name           string                      `json:"name"`
+		Request        createContainerRequest      `json:"request"`
+		PreparedSkills *skillset.PreparedReference `json:"prepared_skills,omitempty"`
+	}{Revision: 1, Platform: "docker", Name: spec.Name, Request: dockerCreateRequest(spec), PreparedSkills: value.PreparedSkills})
 }
 
 func (d *Driver) Create(
@@ -173,11 +193,21 @@ func (d *Driver) Create(
 	if err := value.ValidateFor(key); err != nil {
 		return failed(deployment.EffectNotStarted, "invalid_request", err)
 	}
+	if (value.PreparedSkills == nil) != (value.PreparedMaterialization == nil) || value.PreparedSkills != nil && d.config.SkillMountGate == nil {
+		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("prepared Skill materialization and mount gate are required"))
+	}
+	if value.PreparedSkills != nil {
+		logical, physical := value.PreparedSkills, value.PreparedMaterialization
+		if logical.Scope != physical.Key.Scope || logical.OrganizationID != physical.Key.OrganizationID || logical.AgentID != physical.Key.AgentID ||
+			logical.SkillSetDigest != physical.Key.SkillSetDigest || logical.LayoutVersion != physical.Key.LayoutVersion {
+			return failed(deployment.EffectNotStarted, "invalid_request", errors.New("prepared Skill logical and physical identities differ"))
+		}
+	}
 	computed, err := d.DeploymentDigest(value)
 	if err != nil || computed != digest {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("deployment digest mismatch"))
 	}
-	if err := d.requireCreateStorage(ctx, key.AgentID); err != nil {
+	if err := d.requireCreateStorage(ctx, key.AgentID, value.PreparedMaterialization); err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -194,7 +224,7 @@ func (d *Driver) Create(
 		return dockerFailure("platform_unavailable", err, false)
 	}
 	if err == nil {
-		return d.convergeContainer(ctx, existing, key, digest)
+		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization)
 	}
 
 	spec, err := d.containerSpec(value, digest)
@@ -205,24 +235,50 @@ func (d *Driver) Create(
 	if err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil {
-			return d.convergeContainer(ctx, existing, key, digest)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization)
 		}
 		return dockerFailure(
 			"platform_unavailable", errors.Join(err, inspectErr), errors.Is(err, ErrConflict),
 		)
 	}
+	if prepared := value.PreparedMaterialization; prepared != nil {
+		if err := d.config.SkillMountGate.VerifyRuntimeMount(ctx, prepared.Key, containerID, prepared.ManifestDigest); err != nil {
+			return failed(deployment.EffectUnknown, "skill_mount_verification_failed",
+				errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
+		}
+	}
 	if err := d.engine.StartContainer(ctx, containerID); err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil && d.matches(existing, key, digest) && existing.Running {
-			return completed()
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization)
 		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
 	}
 	return completed()
 }
 
+// A failed mount gate leaves an operation unknown, but a candidate created by
+// this call can be removed before it starts. Never remove a changed or running
+// container, and never infer permission to delete its mounted volume here.
+func (d *Driver) removeRejectedSkillCandidate(containerID string, key deployment.Key, digest string) error {
+	cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	candidate, err := d.engine.InspectContainer(cleanup, containerID)
+	if err != nil {
+		return fmt.Errorf("inspect rejected Runtime candidate: %w", err)
+	}
+	if candidate.ID != containerID || candidate.Name != containerName(key.AgentID) ||
+		!d.matches(candidate, key, digest) || candidate.Status != "created" || candidate.Running {
+		return errors.New("rejected Runtime candidate changed before cleanup")
+	}
+	if err := d.engine.RemoveContainer(cleanup, containerID); err != nil {
+		return fmt.Errorf("remove rejected Runtime candidate: %w", err)
+	}
+	return nil
+}
+
 func (d *Driver) convergeContainer(
-	ctx context.Context, existing Container, key deployment.Key, digest string,
+	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization,
 ) deployment.EffectOutcome {
 	if !d.matches(existing, key, digest) {
 		return failed(
@@ -230,6 +286,11 @@ func (d *Driver) convergeContainer(
 			"runtime_drift",
 			errors.New("managed Runtime has another immutable identity"),
 		)
+	}
+	if prepared != nil {
+		if err := d.config.SkillMountGate.VerifyRuntimeMount(ctx, prepared.Key, existing.ID, prepared.ManifestDigest); err != nil {
+			return failed(deployment.EffectUnknown, "skill_mount_verification_failed", err)
+		}
 	}
 	if existing.Running {
 		return completed()
@@ -462,9 +523,23 @@ func (d *Driver) requireWorkspace(ctx context.Context, agentID string) error {
 	return nil
 }
 
-func (d *Driver) requireCreateStorage(ctx context.Context, agentID string) error {
+func (d *Driver) requireCreateStorage(ctx context.Context, agentID string, prepared *skillset.PreparedMaterialization) error {
 	if err := d.requireWorkspace(ctx, agentID); err != nil {
 		return err
+	}
+	if prepared != nil {
+		name, err := prepared.Key.VolumeName()
+		if err != nil || name != prepared.VolumeName || prepared.Key.Scope != d.config.ControllerScope || prepared.Key.AgentID != agentID {
+			return deployment.ErrIdentityConflict
+		}
+		volume, err := d.engine.InspectVolume(ctx, name)
+		if err != nil {
+			return fmt.Errorf("prepared system Skills volume: %w", err)
+		}
+		if !matchLabels(volume.Labels, skillVolumeLabels(prepared.Key)) {
+			return deployment.ErrIdentityConflict
+		}
+		return nil
 	}
 	if _, err := d.engine.InspectVolume(ctx, d.config.SystemSkillsVolume); err != nil {
 		return fmt.Errorf("system Skills volume: %w", err)
@@ -486,6 +561,15 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		environment["ANTNEST_RUNTIME_IMAGE_ID"] = value.ImageRef
 	}
 	port := strconv.FormatUint(uint64(value.RuntimeSpec.Listen.Port), 10)
+	skillsVolume := d.config.SystemSkillsVolume
+	skillsNoCopy := false
+	if value.PreparedSkills != nil {
+		skillsVolume = "antnest-prepared-skill-set"
+		skillsNoCopy = true
+		if value.PreparedMaterialization != nil {
+			skillsVolume = value.PreparedMaterialization.VolumeName
+		}
+	}
 	return ContainerSpec{
 		Name: containerName(value.RuntimeSpec.AgentID), Image: value.ImageRef, User: "0:0",
 		Environment: environment,
@@ -500,7 +584,7 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 				Source: workspaceVolume(value.RuntimeSpec.AgentID),
 			},
 			value.RuntimeSpec.Filesystem.SystemSkills: {
-				Source: d.config.SystemSkillsVolume, ReadOnly: true,
+				Source: skillsVolume, ReadOnly: true, NoCopy: skillsNoCopy,
 			},
 		},
 		Capabilities: []string{

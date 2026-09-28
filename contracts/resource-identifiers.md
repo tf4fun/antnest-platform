@@ -17,6 +17,7 @@ access, ownership, ordering or time from them.
 | Agent ACP Service | `session`, `run`, `message`, `mcprev`, `checkpoint`, `toolattempt`; internally generated Run correlation `request` |
 | Identity Service | `org`, `user`, `membership`, `group`, `groupmembership`, `oidcprovider`, `oidcsession`, `oidcclaim`, `externalidentity`, `authtoken`, `scimtoken`, `event` |
 | Runtime Controller | `rtv` (existing immutable Runtime revision format) |
+| Skill Registry (Stage 4 B0) | `skill` (new immutable Skill identity; service implementation in B1) |
 
 Random IDs use cryptographically secure randomness. Retry-derived IDs retain
 their owning operation's stable namespace and key; type spelling is separate

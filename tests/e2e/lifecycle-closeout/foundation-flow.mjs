@@ -180,6 +180,9 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     );
     const result = {
       ...expectation,
+      ...(config.skillRestore && ["create", "enable", "rebuild"].includes(kind)
+        ? { skillPreparation: true }
+        : {}),
       kind,
       agentID: id,
       requestID: op.request_id,
@@ -218,8 +221,25 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     const container = physical.containers[0];
     assert.equal(container.State.Health.Status, "healthy");
     assert.equal(container.Image, config.image);
-    assert.deepEqual(physical.volumes, [`antnest-workspace-${agentID}`]);
-    return { agent, container, volume: physical.volumes[0] };
+    const workspaceVolume = `antnest-workspace-${agentID}`;
+    assert(physical.volumes.includes(workspaceVolume));
+    const skillVolumes = physical.volumes.filter(
+      (name) => name !== workspaceVolume,
+    );
+    assert.equal(skillVolumes.length, config.skillRestore ? 1 : 0);
+    if (config.skillRestore) {
+      const mount = container.Mounts.find(
+        (item) => item.Destination === "/skills",
+      );
+      assert.equal(mount?.Name, skillVolumes[0]);
+      assert.equal(mount.RW, false);
+    }
+    return {
+      agent,
+      container,
+      volume: workspaceVolume,
+      skillVolume: skillVolumes[0],
+    };
   }
   async function physicalIdentity(agentID) {
     const state = await resources(agentID);
@@ -237,6 +257,8 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       json,
       principal,
       agentBody,
+      templateBody,
+      admin: client,
       command,
       resources,
       ready,

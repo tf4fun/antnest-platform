@@ -53,25 +53,28 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const root = fileURLToPath(new URL("../../", import.meta.url));
-  const services = [
+  const overlayServices = [
     "runtime-controller",
     "identity-service",
     "agent-controller",
     "admin-console",
     "edge-gateway",
   ];
+  const services = [...overlayServices, "skill-registry"];
   const output = resolve(root, "artifacts/verification/go-lint");
-  const result = await withGoTestSources({ root, services, output }, () =>
-    runCommand({
-      command: [
-        "golangci-lint",
-        "run",
-        ...services.map((service) => `./services/${service}/...`),
-      ],
-      cwd: root,
-      output,
-      name: `go-lint-${Date.now()}-${process.pid}`,
-    }),
+  const result = await withGoTestSources(
+    { root, services: overlayServices, output },
+    () =>
+      runCommand({
+        command: [
+          "golangci-lint",
+          "run",
+          ...services.map((service) => `./services/${service}/...`),
+        ],
+        cwd: root,
+        output,
+        name: `go-lint-${Date.now()}-${process.pid}`,
+      }),
   );
   console.log(JSON.stringify(result));
   process.exitCode = result.exit_code;

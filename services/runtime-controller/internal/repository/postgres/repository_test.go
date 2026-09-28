@@ -60,6 +60,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 		uint64(3), string(deployment.OperationCompleted), string(deployment.EffectCompleted),
 		encoded, "", "", now, now,
 		"antnest/runtime:latest", integrationSpecDigest,
+		sql.NullInt64{}, "", int64(0), "", "",
 	}}
 
 	operation, err := scanOperation(row)

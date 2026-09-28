@@ -14,6 +14,8 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 type machineContract struct {
@@ -70,6 +72,34 @@ type controlSchema struct {
 	} `json:"$defs"`
 }
 
+func TestPreparedSkillSetInvalidationIsNonRetryableConflict(t *testing.T) {
+	descriptor := classifyError(repositoryport.ErrPreparedSkillSetInvalidated)
+	if descriptor.status != http.StatusConflict || descriptor.response.Code != "prepared_skill_set_invalidated" || descriptor.response.Retryable {
+		t.Fatalf("invalidated Skill reference response: %+v", descriptor)
+	}
+}
+
+func TestSkillVolumePreflightOutageIsRetryableBeforeAdmission(t *testing.T) {
+	descriptor := classifyError(control.ErrSkillPreflightUnavailable)
+	if descriptor.status != http.StatusServiceUnavailable || descriptor.response.Code != "skill_preflight_unavailable" || !descriptor.response.Retryable {
+		t.Fatalf("Skill preflight outage response: %+v", descriptor)
+	}
+}
+
+func TestSkillCleanupAdmissionRetriesAfterCollection(t *testing.T) {
+	descriptor := classifyError(repositoryport.ErrSkillCleanupInProgress)
+	if descriptor.status != http.StatusServiceUnavailable || descriptor.response.Code != "skill_cleanup_in_progress" || !descriptor.response.Retryable {
+		t.Fatalf("cleanup admission response: %+v", descriptor)
+	}
+}
+
+func TestDeletedAgentRejectsSkillPreparation(t *testing.T) {
+	descriptor := classifyError(repositoryport.ErrSkillPreparationClosed)
+	if descriptor.status != http.StatusConflict || descriptor.response.Code != "skill_preparation_closed" || descriptor.response.Retryable {
+		t.Fatalf("closed Agent preparation response: %+v", descriptor)
+	}
+}
+
 func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	root := serviceRoot(t)
 	var contract machineContract
@@ -78,18 +108,25 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
 
 	expectedRoutes := map[string][]string{
-		"GET /internal/runtime-images/resolve":          {"200"},
-		"GET /status":                                   {"200", "503"},
-		"GET /internal/runtimes":                        {"200"},
-		"GET /internal/runtimes/{agent_id}":             {"200"},
-		"POST /internal/runtimes/{agent_id}/initialize": {"200", "202"},
-		"POST /internal/runtimes/{agent_id}/update":     {"200", "202"},
-		"POST /internal/runtimes/{agent_id}/disable":    {"200", "202"},
-		"POST /internal/runtimes/{agent_id}/enable":     {"200", "202"},
-		"POST /internal/runtimes/{agent_id}/delete":     {"200", "202"},
-		"GET /internal/runtime-operations/{request_id}": {"200"},
-		"GET /internal/runtime-observations":            {"200"},
-		"GET /internal/runtime-observations/watch":      {"200"},
+		"GET /internal/runtime-images/resolve":                                            {"200"},
+		"GET /status":                                                                     {"200", "503"},
+		"GET /internal/runtimes":                                                          {"200"},
+		"GET /internal/legacy-system-skills/inventory":                                    {"200"},
+		"POST /internal/legacy-system-skills/backups":                                     {"201"},
+		"GET /internal/legacy-system-skills/backups/{backup_ref}":                         {"200"},
+		"GET /internal/runtimes/{agent_id}":                                               {"200"},
+		"POST /internal/runtimes/{agent_id}/skill-sets/prepare":                           {"202"},
+		"POST /internal/runtimes/{agent_id}/skill-sets/verify-active":                     {"200"},
+		"GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}":          {"200"},
+		"POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release": {"204"},
+		"POST /internal/runtimes/{agent_id}/initialize":                                   {"200", "202"},
+		"POST /internal/runtimes/{agent_id}/update":                                       {"200", "202"},
+		"POST /internal/runtimes/{agent_id}/disable":                                      {"200", "202"},
+		"POST /internal/runtimes/{agent_id}/enable":                                       {"200", "202"},
+		"POST /internal/runtimes/{agent_id}/delete":                                       {"200", "202"},
+		"GET /internal/runtime-operations/{request_id}":                                   {"200"},
+		"GET /internal/runtime-observations":                                              {"200"},
+		"GET /internal/runtime-observations/watch":                                        {"200"},
 	}
 	if len(contract.Routes) != len(expectedRoutes) {
 		t.Fatalf("contract routes=%d want=%d", len(contract.Routes), len(expectedRoutes))
@@ -115,10 +152,12 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 		}
 		for _, status := range statuses {
 			response, ok := route.Responses[status]
-			if !ok || response.ContentType == "" || response.Body == "" {
+			if !ok || status != "204" && (response.ContentType == "" || response.Body == "") {
 				t.Fatalf("route %s has incomplete %s response: %+v", key, status, response)
 			}
-			assertKnownSchemaReference(t, schema, response.Body)
+			if status != "204" {
+				assertKnownSchemaReference(t, schema, response.Body)
+			}
 			if response.ContentType == "text/event-stream" {
 				if response.SSE == nil || response.SSE.EventName == "" || response.SSE.ID == "" ||
 					response.SSE.Data == "" || response.SSE.ResumeWith == "" || response.SSE.Delivery == "" ||
@@ -133,9 +172,11 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 			if !slices.Contains(route.RequiredHeaders, "Idempotency-Key") {
 				t.Fatalf("mutation route %s omits Idempotency-Key", key)
 			}
-			for _, code := range []string{"agent_mutation_in_progress", "mutation_lock_lost"} {
-				if !slices.Contains(route.Errors, code) {
-					t.Fatalf("mutation route %s omits coordination error %s", key, code)
+			if !strings.Contains(route.Path, "/skill-sets/") && route.Path != "/internal/legacy-system-skills/backups" {
+				for _, code := range []string{"agent_mutation_in_progress", "mutation_lock_lost"} {
+					if !slices.Contains(route.Errors, code) {
+						t.Fatalf("mutation route %s omits coordination error %s", key, code)
+					}
 				}
 			}
 		}
@@ -167,7 +208,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	}
 	for _, code := range []string{
 		"runtime_drift", "storage_in_use", "storage_not_found",
-		"storage_ownership_conflict", "platform_unavailable",
+		"storage_ownership_conflict", "platform_unavailable", "skill_mount_verification_failed",
 	} {
 		definition, ok := contract.OperationErrorCodes[code]
 		if !ok || len(definition.OperationStates) == 0 || len(definition.Effects) == 0 ||
@@ -221,6 +262,11 @@ func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 		Health:         deployment.HealthHealthy, RestartCount: 0, ObservedAt: now,
 	}
 	assertRequiredFields(t, schema, "initialize_request", initializeRequest{Configuration: configurationDTO{}})
+	assertRequiredFields(t, schema, "skill_prepare_request", skillset.PrepareRequest{OrganizationID: "org_00000000000000000000000000000000", OwnerOperationID: "build-1", LayoutVersion: 1, SkillSetDigest: "sha256:" + strings.Repeat("a", 64), SystemSkills: []skillset.FrozenSkill{}})
+	assertRequiredFields(t, schema, "skill_prepare_receipt", skillset.PreparationReceipt{RequestID: "prepare-1", AgentID: "agent-1", OrganizationID: "org_00000000000000000000000000000000", OwnerOperationID: "build-1", State: skillset.PreparationQueued})
+	assertRequiredFields(t, schema, "skill_release_request", skillReleaseRequest{OrganizationID: "org_00000000000000000000000000000000", OwnerOperationID: "build-1"})
+	assertRequiredFields(t, schema, "active_skill_verification_request", control.ActiveSkillSetVerificationRequest{OrganizationID: "org_00000000000000000000000000000000", ExpectedRuntimeRevision: testRuntimeRevision, PreparedReferenceID: "psr_" + strings.Repeat("a", 32), PreparedSkillSet: skillset.PreparedSet{SkillSetDigest: "sha256:" + strings.Repeat("a", 64), LayoutVersion: 1}, SystemSkills: []skillset.FrozenSkill{}})
+	assertRequiredFields(t, schema, "active_skill_verification_receipt", control.ActiveSkillSetVerificationReceipt{AgentID: "agent-1", RuntimeRevision: testRuntimeRevision, SkillSetDigest: "sha256:" + strings.Repeat("a", 64), LayoutVersion: 1, ManifestDigest: "sha256:" + strings.Repeat("b", 64), VerifiedAt: now})
 	assertRequiredFields(t, schema, "image_resolution", imageResolutionResponse{
 		Reference: "antnest/runtime:local", ImageRef: "sha256:" + strings.Repeat("a", 64),
 	})

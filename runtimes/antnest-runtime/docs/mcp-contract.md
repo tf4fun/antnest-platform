@@ -19,6 +19,33 @@ Streamable HTTP server transport.
 Antnest tests the SDK-facing tool list and calls. It does not copy the complete
 MCP specification into a local schema.
 
+### Planned Skill Maintenance Boundary (L0, Not Implemented)
+
+The [learning design](../../../docs/skill-learning-design.md) proposes a separate
+`POST /internal/skill-maintenance/{action}` control endpoint, not a Tool or an
+additional built-in. It must not appear in `tools/list`, the information Resource,
+or model definitions. Ordinary `tools/call` must reject reserved maintenance
+names even if a caller guesses them; managed tools cannot claim these names.
+
+The endpoint requires an ACP-signed request bound to the Agent, current execution,
+maintenance job/generation, action, request and content/parameter digest. RC
+bootstraps at most two verification keys (current/next); the request selects a
+`kid`. Missing verification configuration keeps maintenance closed, and unknown
+kids or invalid signatures are rejected without blocking ordinary MCP calls.
+The complete trusted set enters the deployment digest and is frozen in each
+accepted RC operation; recovery cannot substitute newly configured keys.
+RuntimeSpec is immutable, so trusted-set changes require explicit rebuild.
+Preloaded next-key signing can switch after deployment checks; removing an old
+trusted key cannot happen through an ACP-only change. Compromise requires the
+design's isolation/rebuild procedure, including stopping affected Runtimes when
+maintenance cannot be isolated. `X-Antnest-Expected-Execution-ID` remains only a consistency
+identity and cannot authorize this path. ACP's internal-origin check is a second
+layer. All file operations still use the Execution Actor and UID/GID 1000 executor.
+
+These are pending L0/L1/L1R/L3 requirements, not current routes, auth capabilities
+or changes to ordinary MCP's existing trusted-network policy. `tools/list`
+remains the sole authority for model-callable tools.
+
 ## Status
 
 `GET /status` returns HTTP 200 and this exact shape after bootstrap:

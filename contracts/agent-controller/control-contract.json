@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 30,
+  "revision": 35,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -226,13 +226,63 @@
         "response": "control-api.schema.json#/$defs/operation"
       }
     },
+    "legacy_system_skill_migration": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/agents/{agent_id}/legacy-system-skills-migration",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/legacy_skill_migration_review"
+      },
+      "record_choice": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/legacy-system-skills-migration/choices",
+        "headers": ["Idempotency-Key"],
+        "request": "control-api.schema.json#/$defs/legacy_skill_choice_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/legacy_skill_choice"
+      },
+      "start_operation": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/legacy-system-skills-migration/operations",
+        "headers": ["Idempotency-Key"],
+        "request": "control-api.schema.json#/$defs/legacy_skill_migration_operation_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/operation"
+      },
+      "recover_proof_loss": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/legacy-system-skills-migration/proof-loss-recovery",
+        "headers": ["Idempotency-Key"],
+        "request": "control-api.schema.json#/$defs/legacy_proof_loss_recovery_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/legacy_proof_loss_recovery_receipt"
+      },
+      "recover_source": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/legacy-system-skills-migration/source-recovery",
+        "headers": ["Idempotency-Key"],
+        "request": "control-api.schema.json#/$defs/legacy_source_recovery_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/legacy_source_recovery_receipt"
+      }
+    },
     "operations": {
       "get": {
         "method": "GET",
         "path": "/internal/agent-operations/{request_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.schema.json#/$defs/operation_or_recovery"
+      }
+    },
+    "skill_preparations": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/agent-skill-preparations/{request_id}",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent_skill_preparation_status"
       }
     },
     "events": {
@@ -348,6 +398,11 @@
       "execution_configuration_capacity_exceeded": 409,
       "agent_not_found": 404,
       "agent_not_ready": 409,
+      "legacy_system_skills_migration_required": 409,
+      "legacy_migration_recovery_required": 409,
+      "legacy_inventory_changed": 409,
+      "legacy_backup_mismatch": 409,
+      "legacy_attestation_invalid": 409,
       "lifecycle_conflict": 409,
       "operation_not_found": 404,
       "dependency_unavailable": 503,
@@ -372,6 +427,11 @@
       "execution_configuration_capacity_exceeded": false,
       "agent_not_found": false,
       "agent_not_ready": true,
+      "legacy_system_skills_migration_required": false,
+      "legacy_migration_recovery_required": false,
+      "legacy_inventory_changed": false,
+      "legacy_backup_mismatch": false,
+      "legacy_attestation_invalid": false,
       "lifecycle_conflict": false,
       "operation_not_found": false,
       "dependency_unavailable": true,

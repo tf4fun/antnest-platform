@@ -67,6 +67,40 @@ fn discovery_only_requires_complete_frontmatter_not_the_skill_body() {
     );
 }
 
+#[test]
+fn registry_package_rules_are_readable_by_runtime() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/integration/skill-registry/package-rules-v1.json"
+    ))
+    .unwrap();
+    assert_eq!(cases["package_rules_version"], 1);
+    let entries = cases["cases"].as_array().unwrap();
+    assert!(!entries.is_empty());
+    for entry in entries {
+        let id = entry["id"].as_str().unwrap();
+        let result = parse_skill_manifest(entry["manifest"].as_str().unwrap());
+        if entry["runtime_result"].is_null() {
+            assert!(
+                result.is_err(),
+                "{id}: Runtime unexpectedly accepted the sample"
+            );
+        } else {
+            let expected = entry["runtime_result"].as_array().unwrap();
+            assert_eq!(expected.len(), 2, "{id}");
+            let (name, description) = result.expect(id);
+            assert_eq!(name, expected[0].as_str().unwrap(), "{id}");
+            assert_eq!(description, expected[1].as_str().unwrap(), "{id}");
+        }
+        if entry["accept"] == true {
+            assert_eq!(
+                entry["runtime_result"][0].as_str().unwrap(),
+                entry["name"].as_str().unwrap(),
+                "Registry accepted {id} with a different Runtime identity"
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod filesystem {
     use std::fs;

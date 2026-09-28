@@ -46,6 +46,11 @@ traffic. All inter-service access remains through the documented contracts.
 
 - Keep `read`, `write`, `edit`, and `bash` as the built-in tools. Runtime
   information uses the standard MCP Resource `antnest://runtime/info`.
+- Planned L0 boundary, not implemented: the [Skill learning design](skill-learning-design.md)
+  adds a separate authenticated Runtime maintenance endpoint. Candidate/check/
+  commit operations never become MCP tools or enter `tools/list`; the four
+  model built-ins remain unchanged. Runtime must reject reserved maintenance
+  names on ordinary `tools/call`, independently of ACP's source checks.
 - The existing Runtime `/mcp` endpoint is the single platform Tool entry point.
   `tools/list` aggregates built-in tools and configured stdio MCP tools. There
   are no per-child HTTP endpoints or child addresses for Agent ACP Service to
@@ -106,10 +111,23 @@ Keep the child's tool description and parameter schema rather than replacing
 them with a generic "call MCP" tool. Tool definitions are callable model inputs,
 not just descriptive text appended to a system prompt.
 
-`tools/list` is the authority for these definitions. The information Resource
+`tools/list` is the authority for these model-callable definitions. The information Resource
 does not maintain a duplicate tool catalog or return child connection addresses.
 The official SDK owns framing, request IDs, response correlation and cancellation
 on the stdio connection; Runtime does not write an ad-hoc JSON protocol to stdin.
+
+The planned learning control path is outside this model-tool catalog and is not
+a child MCP address or an ACP filter over hidden Tool definitions. ACP issues
+bound maintenance requests only from internal maintenance jobs; Runtime checks
+their credentials and execution identity before using the same UID 1000 executor
+and Execution Actor. An execution ID alone is not authentication. The planned
+bootstrap contains a bounded current/next public-key set; requests select `kid`.
+RC freezes that set in each accepted operation and includes it in deployment
+identity, so recovery does not read a newly rotated configuration. Changing a
+Runtime's trusted set requires explicit rebuild; stopping ACP signing alone
+does not revoke a compromised key. L0 defines the contract; Runtime L1, RC
+bootstrap L1R and ACP L3 are separate pending batches.
+Existing acceptance below does not cover this new endpoint.
 
 ## Delivery Batches
 

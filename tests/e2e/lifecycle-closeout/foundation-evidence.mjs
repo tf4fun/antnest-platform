@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { identityEvidenceExitCode } from "../identity-closeout/trace.mjs";
+import { clockWarningsOnly } from "../stage3-base/trace.mjs";
 
 export function assertCompletedExecution(run, agent) {
   assert.equal(run.agent_id, agent.agent_id);
@@ -50,4 +51,12 @@ export function foundationTraceExitCode(evidence) {
   return evidence.some((e) => e.topology === "failed")
     ? 1
     : identityEvidenceExitCode(evidence);
+}
+
+export function acceptedClockOnlyRestore(evidence) {
+  return (
+    evidence.length > 0 &&
+    evidence.every((item) => item.topology === "passed") &&
+    clockWarningsOnly(evidence)
+  );
 }

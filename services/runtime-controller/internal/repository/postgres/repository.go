@@ -134,6 +134,20 @@ func (r *Repository) BeginTransition(
 	if transition == "" {
 		return deployment.Operation{}, false, repository.ErrTransitionConflict
 	}
+	if candidate.PreparedReference != nil {
+		if !candidate.CreatesCompute() || candidate.PreparedReference.AgentID != candidate.AgentID {
+			return deployment.Operation{}, false, repository.ErrPreparedSkillSetInvalidated
+		}
+		prepared, err := resolvePreparedSkillSet(ctx, tx, *candidate.PreparedReference, true)
+		if err != nil {
+			return deployment.Operation{}, false, err
+		}
+		candidate.PreparedSetID = prepared.SetID
+		candidate.PreparedVolumeName = prepared.VolumeName
+		candidate.PreparedMaterialization = prepared.Key.Materialization
+		candidate.PreparedManifestDigest = prepared.ManifestDigest
+		candidate.PreparedReferenceID = candidate.PreparedReference.ReferenceID
+	}
 	candidate.Attempt = 1
 	if _, err := tx.ExecContext(ctx, insertOperationSQL, operationArguments(candidate)...); err != nil {
 		if strings.Contains(err.Error(), "operations_agent_nonterminal_unique") {
@@ -141,8 +155,22 @@ func (r *Repository) BeginTransition(
 		}
 		return deployment.Operation{}, false, fmt.Errorf("insert Runtime operation: %w", err)
 	}
+	if candidate.PreparedSetID > 0 {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO runtime_controller.skill_lifecycle_references
+  (operation_request_id,set_id,materialization,volume_name,manifest_digest)
+VALUES ($1,$2,$3,$4,$5)`, candidate.RequestID, candidate.PreparedSetID, candidate.PreparedMaterialization,
+			candidate.PreparedVolumeName, candidate.PreparedManifestDigest); err != nil {
+			return deployment.Operation{}, false, fmt.Errorf("retain Skill lifecycle reference: %w", err)
+		}
+	}
 	if err := writeTransitionEnvironment(ctx, tx, candidate, transition, current.LifecycleState); err != nil {
 		return deployment.Operation{}, false, err
+	}
+	if candidate.Kind == deployment.OperationDeleteRuntime {
+		if err := closeAgentSkillPreparations(ctx, tx, candidate.AgentID); err != nil {
+			return deployment.Operation{}, false, err
+		}
 	}
 	if candidate.CreatesCompute() {
 		if err := claimGeneration(ctx, tx, candidate); err != nil {
@@ -153,6 +181,21 @@ func (r *Repository) BeginTransition(
 		return deployment.Operation{}, false, fmt.Errorf("commit Runtime transition: %w", err)
 	}
 	return candidate, false, nil
+}
+
+func closeAgentSkillPreparations(ctx context.Context, tx *sql.Tx, agentID string) error {
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_controller.skill_preparations p SET released=TRUE,updated_at=NOW()
+FROM runtime_controller.skill_sets s WHERE p.set_id=s.set_id AND s.agent_id=$1 AND NOT p.released`, agentID); err != nil {
+		return fmt.Errorf("release deleted Agent Skill preparations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_controller.skill_sets SET state='invalidated',lease_owner='',lease_until=NULL,
+  retry_after=NULL,error_code='agent_deleted',updated_at=NOW()
+WHERE agent_id=$1 AND state IN ('queued','preparing','retry_wait','paused','rejected')`, agentID); err != nil {
+		return fmt.Errorf("cancel deleted Agent Skill preparation work: %w", err)
+	}
+	return nil
 }
 
 func matchOperationSource(operation deployment.Operation, current deployment.Environment) error {
@@ -250,6 +293,14 @@ func (r *Repository) GenerationClaim(
 	))
 }
 
+func (r *Repository) MaxClaimedGeneration(ctx context.Context, agentID string) (uint64, error) {
+	var generation uint64
+	if err := r.database.QueryRowContext(ctx, `SELECT COALESCE(MAX(generation),0) FROM runtime_controller.generation_claims WHERE agent_id=$1`, agentID).Scan(&generation); err != nil {
+		return 0, fmt.Errorf("read maximum Runtime generation claim: %w", err)
+	}
+	return generation, nil
+}
+
 func scanGenerationClaim(row scanner) (repository.GenerationClaim, error) {
 	var claim repository.GenerationClaim
 	if err := row.Scan(&claim.RuntimeRevision, &claim.SpecDigest); err != nil {
@@ -303,6 +354,9 @@ func (r *Repository) CompleteOperation(
 	if err := completeEnvironment(ctx, tx, operation); err != nil {
 		return nil, err
 	}
+	if err := settleSkillLifecycleReferences(ctx, tx, stored, operation.State, operation.UpdatedAt); err != nil {
+		return nil, err
+	}
 	storedObservation, err := r.storeObservation(ctx, tx, observation)
 	if err != nil {
 		return nil, err
@@ -311,6 +365,40 @@ func (r *Repository) CompleteOperation(
 		return nil, fmt.Errorf("commit Runtime operation completion: %w", err)
 	}
 	return storedObservation, nil
+}
+
+func settleSkillLifecycleReferences(ctx context.Context, tx *sql.Tx, stored deployment.Operation, state deployment.OperationState, updatedAt time.Time) error {
+	if state == deployment.OperationUnknown {
+		return nil // The accepted operation may still need its exact prepared volume on replay.
+	}
+	if state == deployment.OperationCompleted {
+		switch stored.Kind {
+		case deployment.OperationInitializeRuntime, deployment.OperationUpdateRuntime, deployment.OperationEnableRuntime:
+			if stored.PreparedSetID > 0 {
+				if _, err := tx.ExecContext(ctx, `
+INSERT INTO runtime_controller.skill_current_references
+  (agent_id,set_id,materialization,volume_name,manifest_digest,updated_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+ON CONFLICT (agent_id) DO UPDATE SET
+  set_id=EXCLUDED.set_id,materialization=EXCLUDED.materialization,
+  volume_name=EXCLUDED.volume_name,manifest_digest=EXCLUDED.manifest_digest,
+  updated_at=EXCLUDED.updated_at`, stored.AgentID, stored.PreparedSetID, stored.PreparedMaterialization,
+					stored.PreparedVolumeName, stored.PreparedManifestDigest, updatedAt); err != nil {
+					return fmt.Errorf("transfer current Skill reference: %w", err)
+				}
+			} else if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_controller.skill_current_references WHERE agent_id=$1`, stored.AgentID); err != nil {
+				return fmt.Errorf("clear legacy Runtime Skill reference: %w", err)
+			}
+		case deployment.OperationDeleteRuntime:
+			if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_controller.skill_current_references WHERE agent_id=$1`, stored.AgentID); err != nil {
+				return fmt.Errorf("release deleted Runtime Skill reference: %w", err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_controller.skill_lifecycle_references WHERE operation_request_id=$1`, stored.RequestID); err != nil {
+		return fmt.Errorf("release settled Skill operation reference: %w", err)
+	}
+	return nil
 }
 
 func encodeEnvironment(environment *deployment.Environment) (any, error) {
@@ -565,6 +653,7 @@ type scanner interface {
 func scanOperation(row scanner) (deployment.Operation, error) {
 	var operation deployment.Operation
 	var inspection []byte
+	var preparedSetID sql.NullInt64
 	err := row.Scan(
 		&operation.RequestID, &operation.RequestDigest, &operation.Kind, &operation.AgentID,
 		&operation.RuntimeRevision, &operation.ExpectedRevision,
@@ -573,6 +662,8 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		&operation.Attempt, &operation.State, &operation.Effect, &inspection,
 		&operation.ErrorCode, &operation.ErrorDetail, &operation.CreatedAt, &operation.UpdatedAt,
 		&operation.ImageReference, &operation.ImageID,
+		&preparedSetID, &operation.PreparedVolumeName, &operation.PreparedMaterialization,
+		&operation.PreparedManifestDigest, &operation.PreparedReferenceID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -588,6 +679,7 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		environment := snapshot.domain()
 		operation.Inspection = &environment
 	}
+	operation.PreparedSetID = preparedSetID.Int64
 	return operation, nil
 }
 
@@ -635,7 +727,16 @@ func operationArguments(operation deployment.Operation) []any {
 		operation.Attempt, operation.State, operation.Effect,
 		operation.ErrorCode, operation.ErrorDetail, operation.CreatedAt, operation.UpdatedAt,
 		operation.ImageReference, operation.ImageID,
+		nullablePreparedSetID(operation.PreparedSetID), operation.PreparedVolumeName,
+		operation.PreparedMaterialization, operation.PreparedManifestDigest, operation.PreparedReferenceID,
 	}
+}
+
+func nullablePreparedSetID(value int64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
 }
 
 const insertOperationSQL = `
@@ -643,8 +744,9 @@ INSERT INTO runtime_controller.operations (
     request_id, request_digest, kind, agent_id, runtime_revision, expected_revision,
     source_state, source_revision, source_generation, source_spec_digest,
     target_generation, target_spec_digest, attempt, state, effect,
-    error_code, error_detail, created_at, updated_at, image_reference, image_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`
+    error_code, error_detail, created_at, updated_at, image_reference, image_id,
+    skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`
 
 const claimOperationAttemptSQL = `
 UPDATE runtime_controller.operations
@@ -661,7 +763,8 @@ WHERE request_id = $7 AND attempt = $8 AND state IN ('running', 'unknown')`
 const operationColumns = `request_id, request_digest, kind, agent_id, runtime_revision,
 expected_revision, source_state, source_revision, source_generation, source_spec_digest,
 target_generation, target_spec_digest, attempt, state, effect, inspection,
-error_code, error_detail, created_at, updated_at, image_reference, image_id`
+error_code, error_detail, created_at, updated_at, image_reference, image_id,
+skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id`
 
 const selectOperationSQL = `SELECT ` + operationColumns + `
 FROM runtime_controller.operations WHERE request_id = $1`

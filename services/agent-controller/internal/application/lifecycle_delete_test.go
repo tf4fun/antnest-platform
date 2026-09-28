@@ -18,7 +18,7 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(700, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -67,7 +67,7 @@ func TestDeleteNetworkReleaseTreatsQuarantineAsLostResponseReplay(t *testing.T) 
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.attachment.State = ports.NetworkStateQuarantined
 	dependencies.attachment.AttachmentState = ports.NetworkAttachmentClosed
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(705, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -104,7 +104,7 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 	dependencies.inspectionErr = missingRuntime
 	dependencies.fenceErr = missingNetwork
 	dependencies.releaseErr = missingNetwork
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(710, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -145,7 +145,7 @@ func TestDeleteAgentRejectsForeignRuntimeWhenProjectionHasNoRevision(t *testing.
 		AgentID: "another-agent", RuntimeRevision: "rtv_deleted_elsewhere",
 		LifecycleState: "deleted", Health: "absent",
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(715, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -171,7 +171,7 @@ func TestDeleteAgentWaitsForActiveRun(t *testing.T) {
 	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDeleteDependencies(base.Agent)
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(720, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -195,7 +195,7 @@ func TestDeleteAgentExpiredDeadlineDoesNotQueryACPOrMutateRuntime(t *testing.T) 
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
 	now := time.Unix(900, 0).UTC()
-	service := NewLifecycleServiceWithDrainTimeout(
+	service := newTestLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: now}, time.Minute,
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -232,7 +232,7 @@ func TestDeleteAgentKeepsUnknownRuntimeEffectNonterminal(t *testing.T) {
 	dependencies.runtime = ports.RuntimeOperation{
 		State: "unknown", Effect: "unknown", RuntimeRevision: base.Agent.RuntimeRevision,
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(730, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -272,7 +272,7 @@ func TestDeleteAgentCompletedRetryDoesNotRepeatEffects(t *testing.T) {
 	}
 	store := &deleteLifecycleStoreStub{state: state, replayed: true}
 	dependencies := newDeleteDependencies(base.Agent)
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(740, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),

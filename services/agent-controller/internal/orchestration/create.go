@@ -3,6 +3,7 @@ package orchestration
 
 import (
 	"errors"
+	"reflect"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -26,7 +27,7 @@ func CreateAgentWorkflow(ctx workflow.Context, command application.CreateAgentIn
 	return runWorkflow[application.CreateAgentInput, application.CreateAgentResult](ctx, command, command.RequestID, AdmitActivity, createPhases, func(phase domain.OperationPhase) string { return string(phase) })
 }
 
-func runWorkflow[I comparable, R any](ctx workflow.Context, command I, requestID string, admit string, phases []domain.OperationPhase, activityName func(domain.OperationPhase) string) error {
+func runWorkflow[I any, R any](ctx workflow.Context, command I, requestID string, admit string, phases []domain.OperationPhase, activityName func(domain.OperationPhase) string) error {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 15 * time.Minute,
 		HeartbeatTimeout:    30 * time.Second,
@@ -45,7 +46,7 @@ func runWorkflow[I comparable, R any](ctx workflow.Context, command I, requestID
 			return admission, admissionErr
 		}, workflow.UpdateHandlerOptions{
 			Validator: func(input I) error {
-				if input != command {
+				if !reflect.DeepEqual(input, command) {
 					return temporal.NewNonRetryableApplicationError("request identity conflict", "request_conflict", nil)
 				}
 				return nil

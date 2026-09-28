@@ -35,6 +35,7 @@ services:
         agent-acp-database,
         identity-database,
         agent-controller-database,
+        skill-registry-database,
         temporal-database,
       ]
 
@@ -179,6 +180,10 @@ services:
       ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${ANTNEST_RUNTIME_CONTROLLER_SCOPE:-antnest-platform}
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
+      ANTNEST_RUNTIME_LEGACY_BACKUP_ROOT: /legacy-skill-backups
+      ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
@@ -195,6 +200,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runtime-system-skills:/system-skills-volume:ro
+      - runtime-legacy-backups:/legacy-skill-backups
     ports:
       - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-58080}:8080
     healthcheck:
@@ -211,7 +217,7 @@ services:
         development,
         observability,
       ]
-    stop_grace_period: 10s
+    stop_grace_period: 30s
 
   agent-acp-service:
     profiles: [stage2, stage3]
@@ -363,6 +369,7 @@ services:
       ANTNEST_TEMPORAL_ADDRESS: temporal:7233
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@postgres:5432/antnest_agent_controller
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS: ${ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS:-}
       ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
       ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT:-5m}
@@ -376,6 +383,8 @@ services:
       ANTNEST_RUNTIME_EGRESS_URL: http://${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081
       ANTNEST_RUNTIME_CONTROLLER_URL: http://runtime-controller:8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
+      ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
@@ -396,6 +405,45 @@ services:
     networks: [agent-controller-database, control, development, observability]
     stop_grace_period: 20s
 
+  skill-registry-database-init:
+    profiles: [stage3]
+    image: postgres:17.11-bookworm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: antnest_test_admin
+      PGPASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}
+      ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD: ${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:-antnest-skill-registry-dev}
+    entrypoint: [sh, /scripts/init-database.sh]
+    volumes:
+      - ./scripts/skill-registry/init-database.sh:/scripts/init-database.sh:ro
+    networks: [skill-registry-database]
+
+  skill-registry:
+    profiles: [stage3]
+    image: antnest/skill-registry:local
+    build:
+      context: .
+      dockerfile: services/skill-registry/Dockerfile
+    depends_on:
+      skill-registry-database-init:
+        condition: service_completed_successfully
+    environment:
+      ANTNEST_SKILL_REGISTRY_LISTEN: :8080
+      ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://antnest_skill_registry:${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:-antnest-skill-registry-dev}@postgres:5432/antnest_skill_registry
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
+    healthcheck:
+      test: [CMD, /usr/local/bin/skill-registry, --healthcheck]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    networks: [skill-registry-database, development]
+    stop_grace_period: 15s
+
   admin-console:
     profiles: [stage3]
     image: antnest/admin-console:local
@@ -407,11 +455,15 @@ services:
         condition: service_healthy
       agent-controller:
         condition: service_healthy
+      skill-registry:
+        condition: service_healthy
     environment:
       ANTNEST_ADMIN_CONSOLE_LISTEN: :8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
       ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       ANTNEST_AGENT_ACP_SERVICE_URL: ${ANTNEST_AGENT_ACP_SERVICE_URL:-http://agent-acp-service:8080}
+      ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: ${ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:-}
       ANTNEST_ADMIN_DEPENDENCY_TIMEOUT: ${ANTNEST_ADMIN_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_ADMIN_SHUTDOWN_TIMEOUT: ${ANTNEST_ADMIN_SHUTDOWN_TIMEOUT:-15s}
@@ -536,6 +588,8 @@ networks:
   agent-acp-database: {}
   identity-database: {}
   agent-controller-database: {}
+  skill-registry-database:
+    internal: true
   temporal-database:
     internal: true
 
@@ -543,3 +597,5 @@ volumes:
   postgres-data:
   runtime-system-skills:
     name: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
+  runtime-legacy-backups:
+    name: ${ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME:-antnest-legacy-skill-backups}

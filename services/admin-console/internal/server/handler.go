@@ -45,6 +45,10 @@ type Backend interface {
 	Do(context.Context, upstream.Target, string, string, string, []byte) (*http.Response, error)
 }
 
+type RegistryBackend interface {
+	Do(context.Context, string, string, string, string, []byte) (*http.Response, error)
+}
+
 type Config struct {
 	DefaultRuntimeImageRef string
 	RequestTimeout         time.Duration
@@ -52,6 +56,7 @@ type Config struct {
 
 type Dependencies struct {
 	Backend       Backend
+	Registry      RegistryBackend
 	Assets        fs.FS
 	Logger        *slog.Logger
 	StreamContext context.Context
@@ -60,6 +65,8 @@ type Dependencies struct {
 type handler struct {
 	modelLister            providerdiscovery.Lister
 	backend                Backend
+	registry               RegistryBackend
+	skillUploads           chan struct{}
 	assets                 fs.FS
 	fileServer             http.Handler
 	logger                 *slog.Logger
@@ -85,7 +92,9 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	h := &handler{
 		modelLister: providerdiscovery.New(config.RequestTimeout, nil),
 		backend:     dependencies.Backend, assets: dependencies.Assets,
-		fileServer: http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,
+		registry:     dependencies.Registry,
+		skillUploads: make(chan struct{}, 2),
+		fileServer:   http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,
 		defaultRuntimeImageRef: strings.TrimSpace(config.DefaultRuntimeImageRef),
 		requestTimeout:         config.RequestTimeout,
 		streamContext:          dependencies.StreamContext,
@@ -123,12 +132,15 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/model-profiles/{model_profile_id}", h.withPrincipal(h.getModelProfile))
 	h.mux.HandleFunc("POST /api/admin/model-profiles/{model_profile_id}/revisions", h.withPrincipal(h.reviseModelProfile))
 	h.mux.HandleFunc("GET /api/admin/templates", h.withPrincipal(h.listTemplates))
+	h.registerSkillRoutes()
 	h.mux.HandleFunc("POST /api/admin/templates", h.withPrincipal(h.createTemplate))
 	h.mux.HandleFunc("GET /api/admin/templates/{template_id}", h.withPrincipal(h.getTemplate))
 	h.mux.HandleFunc("GET /api/admin/templates/{template_id}/revisions/{revision}", h.withPrincipal(h.getTemplateRevision))
 	h.mux.HandleFunc("POST /api/admin/templates/{template_id}/revisions", h.withPrincipal(h.reviseTemplate))
 	h.mux.HandleFunc("GET /api/admin/agents", h.withPrincipal(h.listAgents))
 	h.mux.HandleFunc("POST /api/admin/agents", h.withPrincipal(h.createAgent))
+	h.mux.HandleFunc("GET /api/admin/agent-skill-preparations/by-idempotency-key", h.withPrincipal(h.getAgentSkillPreparationByKey))
+	h.mux.HandleFunc("GET /api/admin/agent-skill-preparations/{request_id}", h.withPrincipal(h.getAgentSkillPreparation))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}", h.withPrincipal(h.getAgent))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/network-policy", h.withPrincipal(h.getNetworkPolicy))
 	h.mux.HandleFunc("PUT /api/admin/agents/{agent_id}/network-policy", h.withPrincipal(h.setNetworkPolicy))
@@ -564,12 +576,32 @@ func (h *handler) listTemplates(response http.ResponseWriter, request *http.Requ
 }
 
 type createTemplateInput struct {
-	FallbackModelProfileIDs []string     `json:"fallback_model_profile_ids,omitempty"`
-	Name                    string       `json:"name"`
-	ModelProfileID          string       `json:"model_profile_id"`
-	SystemPrompt            string       `json:"system_prompt"`
-	MaxModelRequests        int          `json:"max_model_requests,omitempty"`
-	Runtime                 runtimeInput `json:"runtime,omitempty"`
+	FallbackModelProfileIDs []string                 `json:"fallback_model_profile_ids,omitempty"`
+	Name                    string                   `json:"name"`
+	ModelProfileID          string                   `json:"model_profile_id"`
+	SystemPrompt            string                   `json:"system_prompt"`
+	MaxModelRequests        int                      `json:"max_model_requests,omitempty"`
+	Runtime                 runtimeInput             `json:"runtime,omitempty"`
+	SkillRefs               []templateSkillReference `json:"skill_refs,omitempty"`
+}
+
+type templateSkillReference struct {
+	SkillID string `json:"skill_id"`
+	Version int64  `json:"version"`
+}
+
+func validTemplateSkillReferences(refs []templateSkillReference) bool {
+	if len(refs) > 32 {
+		return false
+	}
+	seen := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		if !skillIDPattern.MatchString(ref.SkillID) || ref.Version < 1 || seen[ref.SkillID] {
+			return false
+		}
+		seen[ref.SkillID] = true
+	}
+	return true
 }
 
 type runtimeInput struct {
@@ -591,6 +623,10 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	}
 	if !required(input.Name, input.ModelProfileID) {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is empty")
+		return
+	}
+	if !validTemplateSkillReferences(input.SkillRefs) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Template Skill references are invalid")
 		return
 	}
 	if input.MaxModelRequests == 0 {
@@ -615,6 +651,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		"model_profile_id":           input.ModelProfileID,
 		"system_prompt":              input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
+		"skill_refs": append([]templateSkillReference{}, input.SkillRefs...),
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/agent-templates", "", payload, projectTemplate)
@@ -636,12 +673,13 @@ func (h *handler) getTemplateRevision(
 }
 
 type reviseTemplateInput struct {
-	FallbackModelProfileIDs []string     `json:"fallback_model_profile_ids,omitempty"`
-	Name                    string       `json:"name"`
-	ModelProfileID          string       `json:"model_profile_id"`
-	SystemPrompt            string       `json:"system_prompt"`
-	MaxModelRequests        int          `json:"max_model_requests"`
-	Runtime                 runtimeInput `json:"runtime"`
+	FallbackModelProfileIDs []string                 `json:"fallback_model_profile_ids,omitempty"`
+	Name                    string                   `json:"name"`
+	ModelProfileID          string                   `json:"model_profile_id"`
+	SystemPrompt            string                   `json:"system_prompt"`
+	MaxModelRequests        int                      `json:"max_model_requests"`
+	Runtime                 runtimeInput             `json:"runtime"`
+	SkillRefs               []templateSkillReference `json:"skill_refs,omitempty"`
 }
 
 func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -651,6 +689,10 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	}
 	if !required(input.Name, input.ModelProfileID) || input.MaxModelRequests < 1 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is invalid")
+		return
+	}
+	if !validTemplateSkillReferences(input.SkillRefs) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Template Skill references are invalid")
 		return
 	}
 	if input.Runtime.ImageRef == "" {
@@ -671,6 +713,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 		"fallback_model_profile_ids": append([]string{}, input.FallbackModelProfileIDs...),
 		"system_prompt":              input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
+		"skill_refs": append([]templateSkillReference{}, input.SkillRefs...),
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/agent-templates/"+url.PathEscape(request.PathValue("template_id"))+"/revisions",
@@ -759,6 +802,30 @@ func (h *handler) getOperation(response http.ResponseWriter, request *http.Reque
 	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
 		"/internal/agent-operations/"+url.PathEscape(request.PathValue("request_id")),
 		url.Values{"organization_id": []string{actor.OrganizationID}}.Encode(), nil, projectOperation)
+}
+
+func (h *handler) getAgentSkillPreparation(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	if _, ok := parseListQuery(response, request); !ok {
+		return
+	}
+	h.forwardAgentSkillPreparation(response, request, actor, request.PathValue("request_id"))
+}
+
+func (h *handler) getAgentSkillPreparationByKey(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	if _, ok := parseListQuery(response, request); !ok {
+		return
+	}
+	requestID, ok := lifecycleRequestID(response, request, actor.OrganizationID)
+	if !ok {
+		return
+	}
+	h.forwardAgentSkillPreparation(response, request, actor, requestID)
+}
+
+func (h *handler) forwardAgentSkillPreparation(response http.ResponseWriter, request *http.Request, actor principal.Principal, requestID string) {
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/agent-skill-preparations/"+url.PathEscape(requestID),
+		url.Values{"organization_id": []string{actor.OrganizationID}}.Encode(), nil, projectAgentSkillPreparation)
 }
 
 func (h *handler) listAgentEvents(response http.ResponseWriter, request *http.Request, actor principal.Principal) {

@@ -2,6 +2,8 @@
 services:
   agent-controller:
     image: ${ANTNEST_E2E_CONTROLLER_IMAGE:-antnest/agent-controller:local}
+    environment:
+      ANTNEST_RUNTIME_CONTROLLER_URL: ${ANTNEST_E2E_CONTROLLER_RUNTIME_URL:-http://runtime-controller:8080}
   runtime-controller:
     image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
   temporal:

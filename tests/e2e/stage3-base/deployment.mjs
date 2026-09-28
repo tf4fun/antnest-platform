@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-export function inspectDeployment(rows, project) {
+export function inspectDeployment(rows, project, mountRace = false) {
   const required = [
     "postgres",
     "jaeger",
@@ -14,6 +14,8 @@ export function inspectDeployment(rows, project) {
     "admin-console",
     "agent-ui",
     "runtime-egress",
+    "skill-registry",
+    ...(mountRace ? ["skill-docker-proxy"] : []),
   ];
   const names = rows.map(
     (row) => row.Config.Labels["com.docker.compose.service"],
@@ -46,6 +48,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
       inspectDeployment(
         JSON.parse(await readFile(process.argv[2], "utf8")),
         process.argv[3],
+        process.env.ANTNEST_E2E_SKILL_MOUNT_RACE === "true" ||
+          process.env.ANTNEST_E2E_SKILL_INITIALIZE_RACE === "true" ||
+          process.env.ANTNEST_E2E_SKILL_START_RESPONSE_LOSS === "true",
       ),
     ),
   );

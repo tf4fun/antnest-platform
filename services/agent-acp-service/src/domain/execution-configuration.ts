@@ -95,13 +95,15 @@ export const agentConfigurationSchema = z.strictObject({
   execution_revision: identifier.nullable(),
   system_prompt: z.string(),
   context_policy_version: z.literal("context-v1"),
-  skill_instructions: z.array(
-    z.strictObject({
-      skill_key: identifier,
-      version: identifier,
-      instructions: z.string(),
-    }),
-  ),
+  skill_instructions: z
+    .array(
+      z.strictObject({
+        skill_key: identifier,
+        version: identifier,
+        instructions: z.string(),
+      }),
+    )
+    .max(0),
   max_model_requests: revision,
   runtime: z
     .strictObject({

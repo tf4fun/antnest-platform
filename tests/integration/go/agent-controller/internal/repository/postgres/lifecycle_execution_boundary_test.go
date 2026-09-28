@@ -22,7 +22,7 @@ func TestLifecycleDoesNotReadOrWriteRunAdmissions(t *testing.T) {
 				deps := &lifecycleBoundaryDependencies{runtimeRebuildDependencies: newRuntimeRebuildDependencies(base.Agent)}
 				peer := &lifecycleACPStub{outcome: outcome}
 				publisher := application.NewExecutionPublisher(repository, mutationCredentialOpener{}, peer)
-				service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(publisher))
+				service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(publisher))
 				requestID := "no-run-table"
 				switch kind {
 				case domain.OperationRebuild:
@@ -51,7 +51,7 @@ func TestLifecycleRuntimeResultCannotAdvanceDetachedOperation(t *testing.T) {
 			repository := providerTestRepository(t)
 			base, seed := seedAvailableAgentForRebuild(t, t.Context(), repository)
 			deps := &lifecycleBoundaryDependencies{runtimeRebuildDependencies: newRuntimeRebuildDependencies(base.Agent)}
-			service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+			service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 			command := application.LifecycleCommand{Kind: kind, RequestID: "detached-runtime-result", AgentID: base.Agent.AgentID, TemplateID: seed.Revision.Snapshot().TemplateID, TemplateRevision: seed.Revision.Revision()}
 			_, err := service.AdmitLifecycle(t.Context(), command)
 			require.NoError(t, err)

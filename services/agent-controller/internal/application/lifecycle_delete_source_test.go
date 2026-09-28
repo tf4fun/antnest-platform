@@ -19,7 +19,7 @@ func TestDeleteFreezesFailedRuntimeBeforeEffectsAndSurvivesWorkerRestart(t *test
 	dependencies.inspection = ports.RuntimeInspection{AgentID: base.Agent.AgentID,
 		RuntimeRevision: "rtv_failed_owned", LifecycleState: "failed", Health: "unhealthy"}
 	clock := fixedClock{now: time.Unix(716, 0).UTC()}
-	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock,
+	service := newTestLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock,
 		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 	ctx := context.Background()
@@ -44,7 +44,7 @@ func TestDeleteFreezesFailedRuntimeBeforeEffectsAndSurvivesWorkerRestart(t *test
 	}
 	dependencies.inspection.RuntimeRevision = "rtv_replacement_must_not_be_adopted"
 	dependencies.calls = nil
-	restarted := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock,
+	restarted := newTestLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock,
 		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 	if _, err := restarted.stepAgentDelete(ctx, store.state); err != nil {
@@ -64,7 +64,7 @@ func TestDeleteWaitsForUnresolvedRuntimeOwnership(t *testing.T) {
 			store := &deleteLifecycleStoreStub{base: base}
 			dependencies := newDeleteDependencies(base.Agent)
 			dependencies.inspection = ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: "rtv_unresolved", LifecycleState: lifecycle, Health: "unknown"}
-			service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(717, 0).UTC()},
+			service := newTestLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(717, 0).UTC()},
 				WithLifecycleExecution(testExecutionForStore(store)),
 			)
 			_, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{RequestID: "request-delete-unresolved", AgentID: base.Agent.AgentID})

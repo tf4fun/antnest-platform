@@ -61,6 +61,19 @@ func (service *Service) RebuildAgent(ctx context.Context, input application.Rebu
 	result, err := service.startLifecycle(ctx, application.LifecycleCommand{Kind: domain.OperationRebuild, RequestID: input.RequestID, OrganizationID: input.OrganizationID, ActorPrincipalID: input.ActorPrincipalID, AgentID: input.AgentID, TemplateID: input.TemplateID, TemplateRevision: input.TemplateRevision})
 	return application.RebuildAgentResult(result), err
 }
+
+func (service *Service) MigrateLegacySkills(ctx context.Context, input application.LegacySkillMigrationOperationInput) (application.RebuildAgentResult, error) {
+	kind, err := service.MigrationOperationKind(ctx, input.RequestID, input.AgentID)
+	if err != nil {
+		return application.RebuildAgentResult{}, err
+	}
+	result, err := service.startLifecycle(ctx, application.LifecycleCommand{Kind: kind,
+		RequestID: input.RequestID, OrganizationID: input.OrganizationID, ActorPrincipalID: input.ActorPrincipalID,
+		AgentID: input.AgentID, LegacyMigration: &application.LegacyMigrationCommand{
+			ChoiceSequence: input.ChoiceSequence, Attestation: input.Attestation,
+		}})
+	return application.RebuildAgentResult(result), err
+}
 func (service *Service) DisableAgent(ctx context.Context, input application.DisableAgentInput) (application.DisableAgentResult, error) {
 	result, err := service.startLifecycle(ctx, application.LifecycleCommand{Kind: domain.OperationDisable, RequestID: input.RequestID, OrganizationID: input.OrganizationID, ActorPrincipalID: input.ActorPrincipalID, AgentID: input.AgentID, OwnerRevocationSequence: input.OwnerRevocationSequence})
 	return application.DisableAgentResult(result), err
@@ -75,5 +88,9 @@ func (service *Service) DeleteAgent(ctx context.Context, input application.Delet
 }
 
 func (service *Service) startLifecycle(ctx context.Context, command application.LifecycleCommand) (application.LifecycleResult, error) {
-	return startWorkflow(ctx, service.client, "agent-"+string(command.Kind)+"/"+command.RequestID, LifecycleWorkflow, command, service.ReplayLifecycle)
+	prefix := "agent-" + string(command.Kind)
+	if command.LegacyMigration != nil {
+		prefix = "agent-legacy-skill-migration"
+	}
+	return startWorkflow(ctx, service.client, prefix+"/"+command.RequestID, LifecycleWorkflow, command, service.ReplayLifecycle)
 }

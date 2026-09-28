@@ -8,6 +8,25 @@ import {
 import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
 
 describe("execution configuration", () => {
+  it("rejects the retired skill instruction body channel", () => {
+    const fixture = executionConfiguration();
+    const agent = fixture.agents[0];
+    if (agent === undefined) throw new Error("fixture requires an Agent");
+    expect(() =>
+      parseExecutionConfiguration({
+        ...fixture,
+        agents: [
+          {
+            ...agent,
+            skill_instructions: [
+              { skill_key: "example", version: "1", instructions: "hidden body" },
+            ],
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it("accepts an empty organization without confusing it with an incomplete snapshot", () => {
     const empty = {
       organization_id: "organization-1",

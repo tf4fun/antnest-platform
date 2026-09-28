@@ -1,0 +1,28 @@
+{
+  "package_rules_version": 1,
+  "cases": [
+    {"id":"plain-name","manifest":"---\nname: code-review\ndescription: Helpful review\n---\n", "accept":true, "name":"code-review", "runtime_result":["code-review","Helpful review"]},
+    {"id":"quoted-radix-name","manifest":"---\nname: \"0x-1\"\ndescription: Helpful review\n---\n", "accept":true, "name":"0x-1", "runtime_result":["0x-1","Helpful review"]},
+    {"id":"quoted-octal-name","manifest":"---\nname: \"0o-7\"\ndescription: Helpful review\n---\n", "accept":true, "name":"0o-7", "runtime_result":["0o-7","Helpful review"]},
+    {"id":"quoted-date-name","manifest":"---\nname: \"2024-01-01\"\ndescription: Helpful review\n---\n", "accept":true, "name":"2024-01-01", "runtime_result":["2024-01-01","Helpful review"]},
+    {"id":"plain-radix-negative","manifest":"---\nname: 0x-1\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-radix-positive","manifest":"---\nname: code-review\ndescription: 0x+1f\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-octal-negative","manifest":"---\nname: 0o-7\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-double-plus","manifest":"---\nname: code-review\ndescription: ++42\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-plus-minus","manifest":"---\nname: code-review\ndescription: +-42\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-binary","manifest":"---\nname: code-review\ndescription: 0b101\n---\n", "accept":false, "runtime_result":["code-review","0b101"]},
+    {"id":"plain-timestamp","manifest":"---\nname: code-review\ndescription: 2024-01-01\n---\n", "accept":false, "runtime_result":["code-review","2024-01-01"]},
+    {"id":"plain-upper-bool","manifest":"---\nname: code-review\ndescription: TRUE\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-upper-null","manifest":"---\nname: code-review\ndescription: NULL\n---\n", "accept":false, "runtime_result":["code-review","NULL"]},
+    {"id":"plain-infinity","manifest":"---\nname: code-review\ndescription: .Inf\n---\n", "accept":false, "runtime_result":null},
+    {"id":"plain-nan-word","manifest":"---\nname: code-review\ndescription: nan\n---\n", "accept":true, "name":"code-review", "runtime_result":["code-review","nan"]},
+    {"id":"inline-merge","manifest":"---\n<<: {name: code-review}\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":null},
+    {"id":"quoted-merge","manifest":"---\n\"<<\": {name: code-review}\nname: code-review\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":["code-review","Helpful review"]},
+    {"id":"duplicate-name","manifest":"---\nname: code-review\nname: second\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":null},
+    {"id":"explicit-tag","manifest":"---\nname: !!str code-review\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":["code-review","Helpful review"]},
+    {"id":"bom","manifest":"\ufeff---\nname: code-review\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":null},
+    {"id":"bad-first-delimiter","manifest":"--- \nname: code-review\ndescription: Helpful review\n---\n", "accept":false, "runtime_result":null},
+    {"id":"bad-last-delimiter","manifest":"---\nname: code-review\ndescription: Helpful review\n--- \n", "accept":false, "runtime_result":null},
+    {"id":"crlf","manifest":"---\r\nname: code-review\r\ndescription: Helpful review\r\n---\r\n", "accept":true, "name":"code-review", "runtime_result":["code-review","Helpful review"]}
+  ]
+}

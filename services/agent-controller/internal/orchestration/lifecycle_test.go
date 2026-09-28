@@ -21,14 +21,17 @@ func TestLifecycleWorkflows(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			for _, fail := range []bool{false, true} {
 				t.Run(fmt.Sprintf("fail_%t", fail), func(t *testing.T) {
-					checkLifecycleWorkflow(t, kind, fail)
+					checkLifecycleWorkflow(t, kind, fail, false)
 				})
 			}
 		})
 	}
+	t.Run("legacy_enable_equivalent_command", func(t *testing.T) {
+		checkLifecycleWorkflow(t, domain.OperationEnable, false, true)
+	})
 }
 
-func checkLifecycleWorkflow(t *testing.T, kind domain.OperationKind, fail bool) {
+func checkLifecycleWorkflow(t *testing.T, kind domain.OperationKind, fail, legacy bool) {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
@@ -37,6 +40,10 @@ func checkLifecycleWorkflow(t *testing.T, kind domain.OperationKind, fail bool) 
 		t.Fatal(err)
 	}
 	input := application.LifecycleCommand{Kind: kind, RequestID: "request-1", AgentID: "agent-1", OrganizationID: "org-1", ActorPrincipalID: "actor-1"}
+	if legacy {
+		input.LegacyMigration = &application.LegacyMigrationCommand{ChoiceSequence: 1,
+			Attestation: application.LegacyExportAttestation{Version: 1, KeyID: "test-key"}}
+	}
 	var order []string
 	env.RegisterActivityWithOptions(func(context.Context, application.LifecycleCommand) (application.LifecycleResult, error) {
 		order = append(order, "admit")
@@ -58,6 +65,11 @@ func checkLifecycleWorkflow(t *testing.T, kind domain.OperationKind, fail bool) 
 	}
 	admitted := false
 	env.RegisterDelayedCallback(func() {
+		update := input
+		if legacy {
+			copy := *input.LegacyMigration
+			update.LegacyMigration = &copy
+		}
 		env.UpdateWorkflow(admissionUpdate, "admission-test", &testsuite.TestUpdateCallback{
 			OnReject: func(err error) { t.Errorf("admission rejected: %v", err) },
 			OnAccept: func() {},
@@ -70,7 +82,7 @@ func checkLifecycleWorkflow(t *testing.T, kind domain.OperationKind, fail bool) 
 					t.Errorf("admission waited for resource work: %v", order)
 				}
 			},
-		}, input)
+		}, update)
 	}, 0)
 	env.SetTestTimeout(5 * time.Second)
 	env.ExecuteWorkflow(LifecycleWorkflow, input)
@@ -93,7 +105,8 @@ func checkLifecycleWorkflow(t *testing.T, kind domain.OperationKind, fail bool) 
 }
 
 func TestLifecycleAdmissionErrorsDoNotRetry(t *testing.T) {
-	for _, input := range []error{application.ErrAgentNotReady, application.ErrLifecycleConflict} {
+	for _, input := range []error{application.ErrAgentNotReady, application.ErrLifecycleConflict, application.ErrLegacyMigrationRecoveryRequired,
+		application.ErrLegacyAttestationInvalid, application.ErrLegacyInventoryChanged, application.ErrLegacyBackupMismatch} {
 		var failure *temporal.ApplicationError
 		if !errors.As(activityError(input), &failure) || !failure.NonRetryable() {
 			t.Fatalf("retryable business rejection: %v", input)

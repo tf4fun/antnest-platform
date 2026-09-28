@@ -2,6 +2,7 @@ import { csrfFromCookie } from "./forms";
 import type { AvailabilityChange, AvailabilityReceipt, CatalogKind, ExecutionSynchronization } from "./catalog-availability";
 import { decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
 import { invalidatesBrowserSession } from "./session-errors";
+import type { SkillPage, SkillReference, SkillVersion, SkillVersionPage } from "./skills";
 import { auditQuery, type AuditFilters, type AuditPage, type ExecutionAuditSummary, type ExecutionAuditDetail, type ExecutionAuditEvent, type ExecutionAuditPermission } from "./execution-audit";
 import {
   agentPagePath,
@@ -11,6 +12,7 @@ import {
 } from "./pagination";
 import type {
   Agent,
+  AgentSkillPreparation,
   AgentEventList,
   AgentList,
   AgentTemplate,
@@ -67,7 +69,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body !== undefined) {
+  if (init.body !== undefined && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
@@ -147,6 +149,51 @@ async function idempotentRequest<T>(scope: string, path: string, input: unknown,
   }
 }
 
+export type CreateAgentInput = { owner_user_id: string; name: string; template_id: string; template_revision: number };
+
+function pendingLifecycleKey(scope: string, input: unknown): string | null {
+  return sessionStorage.getItem(intentStorageKey(`${commandPrincipal}:${scope}`, input));
+}
+
+async function skillUpload(skillID: string | undefined, file: File, expectedVersion?: number): Promise<SkillVersion> {
+  if (file.size === 0 || file.size > 8 * 1024 * 1024) throw new Error("Choose a ZIP file of at most 8 MiB.");
+  const bytes = await file.arrayBuffer();
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (value) => value.toString(16).padStart(2, "0")).join("");
+  const scope = `${commandPrincipal}:skill:${skillID ?? "new"}:${expectedVersion ?? 0}`;
+  const storageKey = `antnest:skill:${scope}:${digest}`;
+  let key = sessionStorage.getItem(storageKey);
+  if (!key) { key = crypto.randomUUID(); sessionStorage.setItem(storageKey, key); }
+  const form = new FormData();
+  form.append("artifact", file);
+  if (skillID) form.append("expected_version", String(expectedVersion));
+  const path = skillID ? `/api/admin/skills/${encodeURIComponent(skillID)}/versions` : "/api/admin/skills";
+  const session = browserSession;
+  try {
+    const result = await request<SkillVersion>(path, { method: "POST", headers: { "Idempotency-Key": key }, body: form });
+    if (session === browserSession && sessionStorage.getItem(storageKey) === key) sessionStorage.removeItem(storageKey);
+    return result;
+  } catch (cause) {
+    if (cause instanceof APIError && cause.status >= 400 && cause.status < 500 && ![408, 429].includes(cause.status)) {
+      if (session === browserSession && sessionStorage.getItem(storageKey) === key) sessionStorage.removeItem(storageKey);
+    }
+    throw cause;
+  }
+}
+
+async function skillArtifact(skillID: string, version: number): Promise<Blob> {
+  const path = `/api/admin/skills/${encodeURIComponent(skillID)}/versions/${version}/artifact`;
+  const session = browserSession;
+  const response = await fetch(path, { credentials: "same-origin", headers: { Accept: "application/zip" } });
+  if (!response.ok) {
+    let failure: RemoteErrorBody = {};
+    try { failure = await response.json() as RemoteErrorBody; } catch { /* bounded BFF failure fallback */ }
+    const code = typeof failure.code === "string" ? failure.code : "request_failed";
+    notifySessionFailure(session, path, response.status, code);
+    throw new APIError(response.status, code, typeof failure.message === "string" ? failure.message : "Download failed.", failure);
+  }
+  return response.blob();
+}
+
 function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
   return request<T>(path, {
     method: "POST",
@@ -156,6 +203,11 @@ function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
 }
 
 export const api = {
+  skills: (afterID?: string) => request<SkillPage>(`/api/admin/skills${afterID ? `?after_id=${encodeURIComponent(afterID)}` : ""}`),
+  skillVersions: (skillID: string, afterVersion?: number) => request<SkillVersionPage>(`/api/admin/skills/${encodeURIComponent(skillID)}/versions${afterVersion ? `?after_version=${afterVersion}` : ""}`),
+  publishSkill: (file: File) => skillUpload(undefined, file),
+  publishSkillVersion: (skillID: string, expectedVersion: number, file: File) => skillUpload(skillID, file, expectedVersion),
+  skillArtifact,
   setCatalogAvailability: (kind: CatalogKind, id: string, input: AvailabilityChange) =>
     idempotentRequest<AvailabilityReceipt>(`availability:${kind}:${id}`, `/api/admin/${kind}/${encodeURIComponent(id)}/availability`, input, "PUT"),
   executionSynchronization: (signal?: AbortSignal) =>
@@ -291,6 +343,7 @@ export const api = {
     model_profile_id: string;
     system_prompt: string;
     max_model_requests: number;
+    skill_refs?: SkillReference[];
     runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServer[] };
   }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
@@ -299,6 +352,7 @@ export const api = {
     model_profile_id: string;
     system_prompt: string;
     max_model_requests: number;
+    skill_refs?: SkillReference[];
     runtime: {
       image_ref: string;
       resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
@@ -311,12 +365,11 @@ export const api = {
   ),
   agents: (options: AgentPageOptions = {}) => request<AgentList>(agentPagePath(options)),
   agent: (agentID: string) => request<Agent>(`/api/admin/agents/${encodeURIComponent(agentID)}`),
-  createAgent: (input: {
-    owner_user_id: string;
-    name: string;
-    template_id: string;
-    template_revision: number;
-  }) => idempotentRequest<CreateAgentResult>("create-agent", "/api/admin/agents", input),
+  createAgent: (input: CreateAgentInput) => idempotentRequest<CreateAgentResult>("create-agent", "/api/admin/agents", input),
+  agentSkillPreparationForCreate: (input: CreateAgentInput) => {
+    const key = pendingLifecycleKey("create-agent", input);
+    return key ? request<AgentSkillPreparation>("/api/admin/agent-skill-preparations/by-idempotency-key", { headers: { "Idempotency-Key": key } }) : Promise.resolve(undefined);
+  },
   lifecycle: (
     agentID: string,
     action: "rebuild" | "disable" | "enable" | "delete",
@@ -328,6 +381,15 @@ export const api = {
       `/api/admin/agents/${encodeURIComponent(agentID)}/${action}`,
       input,
     ),
+  agentSkillPreparationForLifecycle: (
+    agentID: string,
+    action: "rebuild" | "enable",
+    input: Record<string, unknown>,
+    afterOperation = "",
+  ) => {
+    const key = pendingLifecycleKey(`${action}:${agentID}:after:${afterOperation}`, input);
+    return key ? request<AgentSkillPreparation>("/api/admin/agent-skill-preparations/by-idempotency-key", { headers: { "Idempotency-Key": key } }) : Promise.resolve(undefined);
+  },
   operation: (requestID: string) =>
     request<LifecycleOperation>(`/api/admin/operations/${encodeURIComponent(requestID)}`),
   events: (agentID: string, afterSequence = 0) =>

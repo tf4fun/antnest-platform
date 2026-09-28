@@ -62,7 +62,7 @@ import {
   agentEventRecoveryDecision,
 } from "../lib/agent-detail-resources";
 import { agentConfigurationLinks, agentConfigurationSummary } from "../lib/agent-configuration";
-import { api, errorMessage } from "../lib/api";
+import { api, errorMessage, type CreateAgentInput } from "../lib/api";
 import { useTemplateOptions } from "../lib/catalog-options";
 import { dateTime } from "../lib/format";
 import { modelInputLabel } from "../lib/model-catalog";
@@ -72,12 +72,36 @@ import { agentCreationGate } from "../lib/setup";
 import type {
   Agent,
   AgentEvent,
+  AgentSkillPreparation,
   DirectoryMember,
   LifecycleOperation,
 } from "../lib/types";
 
 export function AgentsPage({ agentID, networkScope }: { agentID?: string; networkScope?: string }) {
   return agentID ? <AgentDetail agentID={agentID} networkScope={networkScope} key={JSON.stringify([agentID, networkScope])} /> : <AgentInventory />;
+}
+
+type PendingSkillLifecycle = {
+  action: "rebuild" | "enable";
+  input: Record<string, unknown>;
+  afterOperation: string;
+  status: AgentSkillPreparation;
+};
+
+function SkillPreparationPanel({ status, rebuild, failure }: { status: AgentSkillPreparation; rebuild: boolean; failure?: string }) {
+  const progress = status.progress;
+  return <div className="rounded-lg border border-border bg-muted/35 px-4 py-3" role="status">
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm font-medium">Preparing template Skills</span>
+      <span className="text-xs text-muted-foreground">{status.state.replaceAll("_", " ")}</span>
+    </div>
+    <p className="mt-2 text-sm text-muted-foreground">{progress.verified_packages} of {progress.total_packages} Skills verified</p>
+    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border" aria-hidden="true">
+      <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${progress.total_bytes > 0 ? Math.min(100, Math.round(100 * progress.verified_bytes / progress.total_bytes)) : 0}%` }} />
+    </div>
+    <p className="mt-2 text-xs text-muted-foreground">{rebuild ? "The existing Agent remains available while Skills are prepared." : "The Agent remains disabled until preparation finishes."}</p>
+    {failure ? <p className="mt-2 text-xs text-muted-foreground">Progress is temporarily unavailable. {failure}</p> : null}
+  </div>;
 }
 
 function AgentInventory() {
@@ -98,6 +122,8 @@ function AgentInventory() {
   const [inventoryFailure, setInventoryFailure] = useState<ResourceFailure>();
   const [directoryFailure, setDirectoryFailure] = useState<ResourceFailure>();
   const [formError, setFormError] = useState("");
+  const [skillPreparation, setSkillPreparation] = useState<{ input: CreateAgentInput; status: AgentSkillPreparation }>();
+  const [skillProgressError, setSkillProgressError] = useState("");
   const [deletedFailure, setDeletedFailure] = useState<ResourceFailure>();
   const [deletedLoading, setDeletedLoading] = useState(false);
   const [nextCursors, setNextCursors] = useState<Record<AgentFleetView, string | undefined>>({
@@ -187,29 +213,44 @@ function AgentInventory() {
     }
   }
 
+  useEffect(() => {
+    if (!open || !skillPreparation || ["released", "rejected", "abandoned"].includes(skillPreparation.status.state)) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void api.agentSkillPreparationForCreate(skillPreparation.input).then((status) => {
+        if (active && status) { setSkillPreparation({ input: skillPreparation.input, status }); setSkillProgressError(""); }
+      }).catch((cause) => { if (active) setSkillProgressError(errorMessage(cause)); });
+    }, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [open, skillPreparation?.input, skillPreparation?.status.state]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const selected = templates.find(
-      (template) => template.template_id === data.get("template_id"),
-    );
-    if (!selected) {
+    const selected = templates.find((template) => template.template_id === data.get("template_id"));
+    if (!skillPreparation && !selected) {
       setFormError("Select an available template.");
       return;
     }
+    const input: CreateAgentInput = skillPreparation?.input ?? {
+      owner_user_id: String(data.get("owner_user_id") ?? ""),
+      name: String(data.get("name") ?? "").trim(),
+      template_id: selected!.template_id,
+      template_revision: selected!.revision,
+    };
     setPending(true);
     setFormError("");
     try {
-      const result = await api.createAgent({
-        owner_user_id: String(data.get("owner_user_id") ?? ""),
-        name: String(data.get("name") ?? "").trim(),
-        template_id: selected.template_id,
-        template_revision: selected.revision,
-      });
+      const result = await api.createAgent(input);
+      setSkillPreparation(undefined);
       setOpen(false);
       window.location.hash = `agents/${result.agent.agent_id}`;
     } catch (cause) {
       setFormError(errorMessage(cause));
+      try {
+        const status = await api.agentSkillPreparationForCreate(input);
+        if (status) { setSkillPreparation({ input, status }); setFormError(""); setSkillProgressError(""); }
+      } catch { /* Keep the original command error when progress is unavailable. */ }
     } finally {
       setPending(false);
     }
@@ -431,11 +472,26 @@ function AgentInventory() {
       >
         <form className="grid gap-5" onSubmit={submit}>
           {formError ? <ErrorNotice message={formError} /> : null}
+          {skillPreparation ? (
+            <div className="rounded-lg border border-border bg-muted/35 px-4 py-3" role="status">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">Preparing template Skills</span>
+                <span className="text-xs text-muted-foreground">{skillPreparation.status.state.replaceAll("_", " ")}</span>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {skillPreparation.status.progress.verified_packages} of {skillPreparation.status.progress.total_packages} Skills verified
+              </p>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border" aria-hidden="true">
+                <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${skillPreparation.status.progress.total_bytes > 0 ? Math.min(100, Math.round(100 * skillPreparation.status.progress.verified_bytes / skillPreparation.status.progress.total_bytes)) : 0}%` }} />
+              </div>
+              {skillProgressError ? <p className="mt-2 text-xs text-muted-foreground">Progress is temporarily unavailable. {skillProgressError}</p> : null}
+            </div>
+          ) : null}
           <Field label="Name">
-            <Input name="name" placeholder="Operations assistant" required />
+            <Input name="name" placeholder="Operations assistant" required disabled={!!skillPreparation} />
           </Field>
           <Field label="Owner">
-            <Select name="owner_user_id" defaultValue="" required>
+            <Select name="owner_user_id" defaultValue="" required disabled={!!skillPreparation}>
               <option value="" disabled>
                 Select a directory member
               </option>
@@ -447,7 +503,7 @@ function AgentInventory() {
             </Select>
           </Field>
           <Field label="Template">
-            <Select name="template_id" defaultValue="" required>
+            <Select name="template_id" defaultValue="" required disabled={!!skillPreparation}>
               <option value="" disabled>
                 Select a template
               </option>
@@ -478,7 +534,7 @@ function AgentInventory() {
               {pending ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : null}
-              Create Agent
+              {skillPreparation ? "Retry creation" : "Create Agent"}
             </Button>
           </div>
         </form>
@@ -536,8 +592,24 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
   const [pending, setPending] = useState("");
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const [rebuildError, setRebuildError] = useState("");
+  const [skillLifecycle, setSkillLifecycle] = useState<PendingSkillLifecycle>();
+  const [skillLifecycleReadError, setSkillLifecycleReadError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+
+  useEffect(() => {
+    if (!skillLifecycle || ["released", "rejected", "abandoned"].includes(skillLifecycle.status.state)) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void api.agentSkillPreparationForLifecycle(agentID, skillLifecycle.action, skillLifecycle.input, skillLifecycle.afterOperation).then((status) => {
+        if (!active || !status) return;
+        if (status.agent_id !== agentID || status.kind !== skillLifecycle.action) throw new Error("Skill preparation does not belong to this Agent.");
+        setSkillLifecycle({ ...skillLifecycle, status });
+        setSkillLifecycleReadError("");
+      }).catch((cause) => { if (active) setSkillLifecycleReadError(errorMessage(cause)); });
+    }, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [agentID, skillLifecycle?.action, skillLifecycle?.input, skillLifecycle?.afterOperation, skillLifecycle?.status.state]);
 
   const loadOperation = useCallback(async (requestID: string) => {
     if (terminalOperationRequestID.current === requestID) return;
@@ -826,6 +898,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
   async function changeLifecycle(
     action: "disable" | "enable" | "delete" | "rebuild",
     input: Record<string, unknown> = {},
+    retryIntent?: PendingSkillLifecycle,
   ) {
     const permitted = { rebuild: actions.canRebuild, disable: actions.canDisable, enable: actions.canEnable, delete: actions.canDelete };
     if (pending || !permitted[action]) return;
@@ -834,13 +907,26 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     setDeleteError("");
     setRebuildError("");
     setAcknowledgement("");
+    const afterOperation = retryIntent?.afterOperation ?? (visibleOperation?.state !== "running" ? visibleOperation?.request_id ?? "" : "");
+    const commandInput = retryIntent?.input ?? input;
     try {
       // An observed terminal operation ends the previous intent, including a lost HTTP response.
-      const afterOperation = visibleOperation?.state !== "running" ? visibleOperation?.request_id : undefined;
-      acceptOperation(await api.lifecycle(agentID, action, input, afterOperation));
+      acceptOperation(await api.lifecycle(agentID, action, commandInput, afterOperation));
+      setSkillLifecycle(undefined);
     } catch (cause) {
       const reportFailure = action === "delete" ? setDeleteError : action === "rebuild" ? setRebuildError : setError;
       reportFailure(errorMessage(cause));
+      if (action === "rebuild" || action === "enable") {
+        try {
+          const status = await api.agentSkillPreparationForLifecycle(agentID, action, commandInput, afterOperation);
+          if (status) {
+            if (status.agent_id !== agentID || status.kind !== action) throw new Error("Skill preparation does not belong to this Agent.");
+            setSkillLifecycle({ action, input: commandInput, afterOperation, status });
+            setSkillLifecycleReadError("");
+            reportFailure("");
+          }
+        } catch { /* Keep the original command error if progress cannot be read. */ }
+      }
       setPending("");
       return;
     }
@@ -858,6 +944,10 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
 
   async function rebuild(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (skillLifecycle?.action === "rebuild") {
+      await changeLifecycle("rebuild", skillLifecycle.input, skillLifecycle);
+      return;
+    }
     const data = new FormData(event.currentTarget);
     const template = (templates ?? []).find(
       (item) => item.template_id === data.get("template_id"),
@@ -978,9 +1068,9 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
                 </Button>
               ) : null}
               {actions.canEnable ? (
-                <Button onClick={() => void changeLifecycle("enable")}>
+                <Button onClick={() => void (skillLifecycle?.action === "enable" ? changeLifecycle("enable", skillLifecycle.input, skillLifecycle) : changeLifecycle("enable"))}>
                   <Play className="h-4 w-4" />
-                  Enable
+                  {skillLifecycle?.action === "enable" ? "Retry enable" : "Enable"}
                 </Button>
               ) : null}
               {actions.canDisable ? (
@@ -1009,6 +1099,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       />
       {acknowledgement ? <SuccessNotice message={acknowledgement} onDismiss={() => setAcknowledgement("")} /> : null}
       {error ? <ErrorNotice message={error} /> : null}
+      {skillLifecycle?.action === "enable" ? <SkillPreparationPanel status={skillLifecycle.status} rebuild={false} failure={skillLifecycleReadError} /> : null}
       {stateFailure ? <ResourceFailureNotice failure={stateFailure} pending={agentStateRetryPending} retryLabel="Retry Agent state" onRetry={() => void retryAgentState()} /> : null}
       {templateOptionFailure ? <ResourceFailureNotice failure={templateOptionFailure} message={`Rebuild options could not be loaded: ${templateOptionFailure.message}`} retryLabel="Retry template choices" onRetry={retryTemplates} /> : null}
       {directoryFailure ? <ResourceFailureNotice failure={directoryFailure} retryLabel="Retry owner profile" onRetry={() => {
@@ -1250,8 +1341,9 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       >
         <form className="grid gap-4" onSubmit={rebuild}>
           {rebuildError ? <ErrorNotice message={rebuildError} /> : null}
+          {skillLifecycle?.action === "rebuild" ? <SkillPreparationPanel status={skillLifecycle.status} rebuild failure={skillLifecycleReadError} /> : null}
           <Field label="Template">
-            <Select name="template_id" defaultValue="" required>
+            <Select name="template_id" defaultValue="" required disabled={skillLifecycle?.action === "rebuild"}>
               <option value="" disabled>
                 Select a template revision
               </option>
@@ -1284,7 +1376,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              Rebuild
+              {skillLifecycle?.action === "rebuild" ? "Retry rebuild" : "Rebuild"}
             </Button>
           </div>
         </form>

@@ -63,6 +63,13 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("create upstream client: %w", err)
 	}
+	var registryClient server.RegistryBackend
+	if cfg.SkillRegistryURL != "" {
+		registryClient, err = upstream.NewRegistryClient(cfg.SkillRegistryURL, cfg.SkillRegistryToken, httpClient)
+		if err != nil {
+			return fmt.Errorf("create Skill Registry client: %w", err)
+		}
+	}
 	assets, err := web.Dist()
 	if err != nil {
 		return fmt.Errorf("load embedded application: %w", err)
@@ -72,7 +79,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	handler, err := server.NewHandler(server.Config{
 		DefaultRuntimeImageRef: cfg.DefaultRuntimeImageRef,
 		RequestTimeout:         cfg.DependencyTimeout,
-	}, server.Dependencies{Backend: backend, Assets: assets, Logger: logger, StreamContext: streamContext})
+	}, server.Dependencies{Backend: backend, Registry: registryClient, Assets: assets, Logger: logger, StreamContext: streamContext})
 	if err != nil {
 		return fmt.Errorf("compose Admin Console: %w", err)
 	}

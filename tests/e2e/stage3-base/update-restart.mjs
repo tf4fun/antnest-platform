@@ -74,6 +74,67 @@ export function inspectUpdateRestart(trace, tree, expected) {
       old.startTime + old.duration,
   );
   assert(old.startTime + old.duration <= completed.startTime);
+  if (expected.updateRestart.fencedBeforeForward) {
+    const child = runtimeCommandId(expected.requestId, "runtime_update");
+    const interruptedClients = trace.spans.filter(
+      (span) =>
+        tree.chain(span).includes(interrupted) &&
+        span.operationName === "HTTP POST runtime-controller" &&
+        tag(span, "antnest.operation.request_id") === child,
+    );
+    const completedClients = trace.spans.filter(
+      (span) =>
+        tree.chain(span).includes(completed) &&
+        span.operationName === "HTTP POST runtime-controller" &&
+        tag(span, "antnest.operation.request_id") === child,
+    );
+    assert.equal(
+      interruptedClients.length,
+      1,
+      "interrupted Update RPC is missing",
+    );
+    assert.equal(completedClients.length, 1, "resumed Update RPC is missing");
+    const [canceled] = interruptedClients;
+    const [delivered] = completedClients;
+    assert(hasError(canceled));
+    assert.equal(tag(canceled, "antnest.outcome"), "canceled");
+    assert.equal(tag(canceled, "error.type"), "canceled");
+    assert(
+      !trace.spans.some(
+        (span) =>
+          tree.parent(span) === canceled &&
+          tree.service(span) === "runtime-controller",
+      ),
+      "fenced request reached RC before restart",
+    );
+    assert(!hasError(delivered));
+    const servers = trace.spans.filter(
+      (span) =>
+        tree.parent(span) === delivered &&
+        tree.service(span) === "runtime-controller" &&
+        tag(span, "http.route") === "/internal/runtimes/{agent_id}/update",
+    );
+    const server = one(servers, "resumed Runtime Update server");
+    assertRPCParent(tree, server, "agent-controller");
+    assert.equal(tag(server, "http.response.status_code"), 200);
+    assert(!hasError(server));
+    return {
+      workflows,
+      old,
+      resumed,
+      interrupted,
+      completed,
+      errors: new Set([interrupted, canceled]),
+      runID,
+      phase: "runtime_update",
+      oldPhases: [
+        "admit_lifecycle",
+        "drain",
+        "network_fence",
+        "runtime_update",
+      ],
+    };
+  }
   const records = expected.updateRestart.records;
   assert.equal(records.length, 2);
   assert.equal(records[0].delivery, "caller_disconnected");

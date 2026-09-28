@@ -9,11 +9,100 @@ import {
   assertRestored,
   assertRecoveryManifest,
   databases,
+  stage4Databases,
+  stage4WriterServices,
+  requiredSkillVolumeNames,
   keyDigests,
   assertInjectedKeys,
   assertRestoreRun,
   assertReplayAudits,
 } from "./restore-evidence.mjs";
+
+test("Stage 4 recovery includes Registry storage and its writer", () => {
+  assert.deepEqual(stage4Databases, [...databases, "antnest_skill_registry"]);
+  assert.deepEqual(stage4WriterServices, [...writerServices, "skill-registry"]);
+  const stoppedWriters = [
+    ...stopped(),
+    {
+      Id: "skill-registry",
+      Config: {
+        Labels: {
+          "com.docker.compose.project": project,
+          "com.docker.compose.service": "skill-registry",
+        },
+      },
+      State: { Running: false, OOMKilled: false, ExitCode: 0, Error: "" },
+    },
+  ];
+  assertQuiesced(stoppedWriters, project, stage4WriterServices);
+  assert.throws(() => assertQuiesced(stopped(), project, stage4WriterServices));
+});
+
+test("Stage 4 Skill volume inventory includes retained, in-flight and candidate materializations", () => {
+  const rows = [
+    {
+      source: "current",
+      volume_name: "skill-current",
+      set_id: 1,
+      manifest_digest: "sha256:" + "a".repeat(64),
+    },
+    {
+      source: "lifecycle",
+      volume_name: "skill-old",
+      set_id: 1,
+      manifest_digest: "sha256:" + "b".repeat(64),
+    },
+    {
+      source: "set",
+      volume_name: "skill-current",
+      set_id: 1,
+      manifest_digest: "sha256:" + "a".repeat(64),
+    },
+    {
+      source: "set",
+      volume_name: "skill-candidate",
+      set_id: 2,
+      manifest_digest: "",
+    },
+  ];
+  assert.deepEqual(requiredSkillVolumeNames(rows), [
+    "skill-candidate",
+    "skill-current",
+    "skill-old",
+  ]);
+  assert.throws(
+    () => requiredSkillVolumeNames([{ ...rows[0], volume_name: "" }]),
+    /missing volume/,
+  );
+  assert.throws(
+    () => requiredSkillVolumeNames([{ ...rows[0], source: "unknown" }]),
+    /unknown source/,
+  );
+  assert.throws(
+    () =>
+      requiredSkillVolumeNames([
+        rows[0],
+        { ...rows[0], manifest_digest: "sha256:" + "c".repeat(64) },
+      ]),
+    /conflicting/,
+  );
+});
+
+test("Stage 4 recovery manifest requires its eighth database and every dynamic Skill volume", () => {
+  const manifest = completeManifest();
+  manifest.fingerprints.antnest_skill_registry = "a".repeat(64);
+  manifest.files["antnest_skill_registry.dump"] = "a".repeat(64);
+  manifest.volumes.push({ name: "agent-skill-set", file: "volume-2.tar" });
+  manifest.files["volume-2.tar"] = "a".repeat(64);
+  const expected = {
+    postgres: "postgres-fixture",
+    databases: stage4Databases,
+    volumes: ["workspace", "skills", "agent-skill-set"],
+  };
+  assertRecoveryManifest(manifest, expected);
+  delete manifest.files["antnest_skill_registry.dump"];
+  assert.throws(() => assertRecoveryManifest(manifest, expected));
+});
 
 test("offline recovery includes both Temporal databases and its stopped writer", () => {
   assert.deepEqual(databases, [

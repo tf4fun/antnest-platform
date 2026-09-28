@@ -75,6 +75,9 @@ func (repository *Repository) BeginAgentEnable(
 			return ports.AgentEnableState{}, false, ports.ErrRequestConflict
 		}
 		state, loadErr := loadAgentEnableState(ctx, transaction, existing)
+		if loadErr == nil && !sameLegacyMigrationBinding(state.LegacyMigration, input.LegacyMigration) {
+			return ports.AgentEnableState{}, false, ports.ErrRequestConflict
+		}
 		return state, true, loadErr
 	case !errors.Is(err, ports.ErrNotFound):
 		return ports.AgentEnableState{}, false, err
@@ -93,6 +96,9 @@ func (repository *Repository) BeginAgentEnable(
 	if !matchesEnableSource(agent, input) {
 		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
 	}
+	if err := checkLegacyLifecycleAdmission(ctx, transaction, agent, input.LegacyMigration, input.Now); err != nil {
+		return ports.AgentEnableState{}, false, err
+	}
 	if input.OwnerAuthorizationSequence < agent.OwnerAuthorizationSequence {
 		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
 	}
@@ -106,10 +112,46 @@ func (repository *Repository) BeginAgentEnable(
 	if !validEnableBegin(input, base) {
 		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
 	}
-	if err := requireEnabledModel(ctx, transaction, agent.OrganizationID, base.Spec.Snapshot.ModelProfileID); err != nil {
+	target := base.Spec
+	if input.LegacyMigration != nil {
+		if input.TargetSpec == nil {
+			return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
+		}
+		target = *input.TargetSpec
+		choice, err := loadLatestLegacySkillChoice(ctx, transaction, agent.AgentID)
+		if err != nil {
+			return ports.AgentEnableState{}, false, err
+		}
+		if choice == nil {
+			return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
+		}
+		if err := checkLegacyTargetAgainstChoice(agent.OrganizationID, base.Spec.Snapshot, target.Snapshot, *choice); err != nil {
+			return ports.AgentEnableState{}, false, err
+		}
+		intent, err := loadSkillPreparationIntent(ctx, transaction, input.Operation.RequestID)
+		if err != nil {
+			return ports.AgentEnableState{}, false, err
+		}
+		if intent.State != "ready" || intent.Kind != domain.OperationEnable || intent.RequestFingerprint != input.Operation.RequestFingerprint ||
+			intent.AgentID != agent.AgentID || intent.OrganizationID != agent.OrganizationID ||
+			intent.TargetSpecDigest != target.CanonicalDigest || intent.TargetSpec.SkillSetDigest != target.Snapshot.SkillSetDigest ||
+			intent.PreparedReferenceID == "" {
+			return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
+		}
+		if err := requireEnabledTemplateSpec(ctx, transaction, agent.OrganizationID, target.Snapshot); err != nil {
+			return ports.AgentEnableState{}, false, err
+		}
+		if err := insertAgentSpec(ctx, transaction, target); err != nil {
+			return ports.AgentEnableState{}, false, err
+		}
+	}
+	if err := requireEnabledModel(ctx, transaction, agent.OrganizationID, target.Snapshot.ModelProfileID); err != nil {
 		return ports.AgentEnableState{}, false, err
 	}
 	if err := insertLifecycleOperation(ctx, transaction, input.Operation); err != nil {
+		return ports.AgentEnableState{}, false, err
+	}
+	if err := insertLegacyMigrationBinding(ctx, transaction, input.Operation.RequestID, input.AgentID, input.LegacyMigration, input.Now); err != nil {
 		return ports.AgentEnableState{}, false, err
 	}
 	result, err := transaction.Exec(ctx, `
@@ -141,9 +183,9 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'created' AND
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	agent.UpdatedAt = input.Now
 	state := ports.AgentEnableState{
-		Agent: agent, Spec: base.Spec,
+		Agent: agent, Spec: target, SourceSpec: base.Spec,
 		LastSuccessfulExecution: base.LastSuccessfulExecution,
-		Operation:               input.Operation,
+		Operation:               input.Operation, LegacyMigration: input.LegacyMigration,
 	}
 	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
 		return ports.AgentEnableState{}, false, err
@@ -239,8 +281,18 @@ func (repository *Repository) PublishAgentEnable(
 	) {
 		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
+	resolveMigration, err := checkLegacyPublishTarget(ctx, transaction, state.Agent, state.SourceSpec, state.Spec,
+		operation, state.LegacyMigration, input.LegacyVerification, domain.OperationEnable, input.Fingerprint, input.Now)
+	if err != nil {
+		return ports.AgentEnableState{}, err
+	}
 	if err := publishRuntimeTarget(ctx, transaction, operation, input.EnabledEvent, input.Now); err != nil {
 		return ports.AgentEnableState{}, err
+	}
+	if resolveMigration {
+		if err := resolveLegacyMigration(ctx, transaction, operation.AgentID, input.RequestID, input.Now); err != nil {
+			return ports.AgentEnableState{}, err
+		}
 	}
 	if err := repository.insertAgentEvent(ctx, transaction, input.EnabledEvent); err != nil {
 		return ports.AgentEnableState{}, err
@@ -382,13 +434,13 @@ func loadAgentEnableBase(
 	if err != nil {
 		return ports.AgentEnableBase{}, err
 	}
-	_, nextExecution, err := loadNextLifecycleRevisions(ctx, queryer, agent.AgentID)
+	nextSpec, nextExecution, err := loadNextLifecycleRevisions(ctx, queryer, agent.AgentID)
 	if err != nil {
 		return ports.AgentEnableBase{}, err
 	}
 	return ports.AgentEnableBase{
 		Agent: agent, Spec: spec, LastSuccessfulExecution: execution,
-		NextExecutionRevision: nextExecution,
+		NextSpecRevision: nextSpec, NextExecutionRevision: nextExecution,
 	}, nil
 }
 
@@ -399,7 +451,11 @@ func loadAgentEnableState(
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	spec, err := loadAgentSpec(ctx, queryer, operation.SourceSpecRevisionID)
+	spec, err := loadAgentSpec(ctx, queryer, operation.TargetSpecRevisionID)
+	if err != nil {
+		return ports.AgentEnableState{}, err
+	}
+	source, err := loadAgentSpec(ctx, queryer, operation.SourceSpecRevisionID)
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
@@ -407,8 +463,13 @@ func loadAgentEnableState(
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
+	binding, err := loadLegacyMigrationBinding(ctx, queryer, operation.RequestID)
+	if err != nil {
+		return ports.AgentEnableState{}, err
+	}
 	return ports.AgentEnableState{
-		Agent: agent, Spec: spec, LastSuccessfulExecution: execution, Operation: operation,
+		Agent: agent, Spec: spec, SourceSpec: source, LastSuccessfulExecution: execution, Operation: operation,
+		LegacyMigration: binding,
 	}, nil
 }
 
@@ -434,13 +495,21 @@ func validEnableBegin(input ports.BeginAgentEnable, base ports.AgentEnableBase) 
 		input.Operation.SourceSpecRevisionID == input.ExpectedSpecRevisionID &&
 		input.Operation.SourceExecutionRevisionID == input.ExpectedExecutionRevisionID &&
 		input.Operation.SourceRuntimeRevision == input.ExpectedRuntimeRevision &&
-		input.Operation.TargetSpecRevisionID == input.ExpectedSpecRevisionID &&
+		validEnableTarget(input, base) &&
 		validEnableEvent(
 			input.RequestedEvent, input.Operation, ports.EventAgentEnableRequested,
 			base.Agent.AggregateSequence+1,
 		) &&
 		base.Spec.AgentID == input.AgentID &&
 		(base.LastSuccessfulExecution.ID == "" || base.LastSuccessfulExecution.AgentID == input.AgentID)
+}
+
+func validEnableTarget(input ports.BeginAgentEnable, base ports.AgentEnableBase) bool {
+	if input.LegacyMigration == nil {
+		return input.TargetSpec == nil && input.Operation.TargetSpecRevisionID == input.ExpectedSpecRevisionID
+	}
+	return input.TargetSpec != nil && input.TargetSpec.ID != "" && input.TargetSpec.ID == input.Operation.TargetSpecRevisionID &&
+		input.TargetSpec.AgentID == input.AgentID && input.TargetSpec.Revision == base.NextSpecRevision
 }
 
 func validEnableEvent(

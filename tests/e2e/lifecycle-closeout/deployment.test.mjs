@@ -11,6 +11,7 @@ const applicationServices = [
   "admin-console",
   "agent-ui",
   "edge-gateway",
+  "skill-registry",
 ];
 const bindings = {
   postgres: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "45001" }] },
@@ -56,8 +57,8 @@ function fixture() {
 test("deployment inspection proves current images, health and exact loopback bindings", () => {
   const { config, images, rows } = fixture();
   assert.deepEqual(assertDeployment(config, rows, images), {
-    services: 11,
-    applicationImages: 8,
+    services: 12,
+    applicationImages: 9,
     publishedPorts: 4,
   });
 });

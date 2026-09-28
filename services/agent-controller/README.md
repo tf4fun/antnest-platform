@@ -1,5 +1,42 @@
 # Agent Controller
 
+Stage 4 Skill delivery: the Template catalog freezes exact Registry versions,
+and the Runtime Controller client now supports durable Skill preparation,
+status reads, release, and prepared collection identity in lifecycle
+configuration. A separate PostgreSQL preparation intent freezes the target
+and source revisions without changing Agent admission. Create, rebuild, and
+enable now wait for a ready RC collection before entering their lifecycle;
+the Runtime request carries the persistent reference and terminal operations
+release it. Deterministically rejected preparations are abandoned so a new
+operation can proceed. Pre-admission invalidation starts a new durable attempt;
+a fenced rebuild with an unaccepted RC Update restores its source before ending
+the operation. The upgrade marks pre-existing Agents as requiring legacy Skill
+review and blocks their Enable/rebuild before network or Drain. Controller can
+now read RC's complete legacy-volume inventory and verified local backup receipt
+before appending a per-Agent empty or fixed-Template migration choice. Recording
+the choice keeps the gate closed. An explicit migration operation now verifies
+the signed protected-export evidence, installs the selected collection and
+resolves the marker only after checking the target Runtime mount; enabled and
+disabled paths pass isolated Docker checks. Independent off-host export
+acceptance is outside the current clean-development-deployment scope; there is
+no legacy business data to migrate.
+The optional post-migration restart gate also recreates Controller and RC,
+then confirms the resolved marker, read-only mount and another Skill-reading
+ACP Run survive those service restarts.
+The separate legacy source-recovery route now admits an exact RC source and
+advances a durable PostgreSQL journal through ACP drain, Egress fence, RC
+Disable and atomic disabled publication. Its application, workflow, route and
+PostgreSQL component tests pass. Disposable Docker verifies active-Run drain,
+wrong and missing RC sources, exact-source recovery, retained volumes,
+Controller restart replay, uncertain and rejected RC Disable, Egress drift
+with re-closure, source Trace topology, and fresh-proof controlled Enable.
+An isolated RC→Controller Docker check covers matching, missing and mismatched
+backup receipts, exact choice replay and the still-closed Enable gate.
+The organization-scoped `GET /internal/agent-skill-preparations/{request_id}`
+projects preparation progress before the Agent row exists. It combines the
+durable intent with RC's live receipt, omits the frozen spec and prepared
+reference, and reports RC read failures as retryable dependency errors.
+
 ## Dependency baseline (2026-09-26)
 
 Go 1.27.1, Temporal SDK 1.49.0 / API 1.63.6, pgx 5.11.0, and
@@ -75,10 +112,27 @@ and operational acceptance remains tracked in the
 
 - Agent identity, organization, owner user, desired state, and current status;
 - [Provider connections and model management](docs/provider-management.md), with independent encrypted credential versions;
-- mutable Template heads and immutable Template revisions referencing stable model identities;
+- mutable Template heads and immutable Template revisions referencing stable model identities and fixed Registry Skill versions;
 - immutable Agent configuration and execution revisions;
 - the current opaque Runtime binding returned by Runtime Controller;
+- durable Skill preparation intent and its organization-scoped progress view;
 - durable lifecycle operations for create, rebuild, disable, enable, and delete;
+- an internal proof-loss recovery journal that reserves a quarantined legacy
+  Agent against the exact failed migration target, records an exact completed
+  RC Disable receipt, and atomically publishes a disabled Agent while retaining
+  the pending migration gate; the application stages verify RC and Egress,
+  then reuse the recorded RC child request through a registered Temporal
+  workflow and an organization-scoped internal operator API; the disposable
+  proof-revocation recovery and fresh-proof Enable path passes. Definitive
+  rejection persists a manual-intervention receipt. Docker checks cover a
+  same-revision process restart and, after a missing-container rejection,
+  continued rejection when an out-of-band RC Update creates a live replacement
+  at a different revision. A missing target is rejected for manual
+  recovery. A competing recovery returns `lifecycle_conflict` while exact
+  replay retains the first operation. A revoked verifier key must be removed
+  from startup configuration before Controller restart. The normal recovery
+  Docker path passes full Jaeger topology, while the
+  SIGKILL recovery path retains raw abnormal-exit Trace diagnostics;
 - current execution configuration publication and Agent-level lifecycle settlement;
 - Agent default authorization and the organization model catalog (Session selection belongs to ACP);
 - Agent ownership/access bindings and revisions published to ACP;
@@ -97,8 +151,23 @@ state.
 - Tunnel allocation, Egress policy, packet flow, or conntrack;
 - Runtime MCP execution;
 - Identity Service users or organization records;
-- Skill packages. Stage 2 emits an empty `skill_instructions` list until Skill
-  Registry integration is implemented.
+- Skill package bytes. The current projection emits `skill_instructions: []`.
+  The [Stage 4 design](../../docs/skill-registry-minimal-design.md) permanently
+  retires this full-text channel: Registry integration adds frozen references,
+  not instructions in the execution snapshot. Schema enforcement and ACP
+  rejection/removal are implemented in B0/B5; Console audit-body removal is
+  complete.
+
+Template create/revise can now resolve exact `skill_id` and `version` pairs in
+Registry and freeze their metadata beside the model configuration. Historical
+revisions and command replays read the stored metadata without selecting a new
+version. The current AgentSpec domain copies those fixed records, but lifecycle
+admission waits for Runtime Controller's independent prepared set. This prevents a successful
+Agent creation that silently lacks its configured Skills. The preparation-intent
+store supports durable replay, ready receipts, release, and source checks for
+rebuild and enable. Lifecycle admission retries preparation while queued and
+only changes the Agent after RC returns ready. Empty-set Agents retain
+their existing lifecycle behavior. See the [Stage 4 plan](../../docs/skill-registry-minimal-design.md).
 
 ## Internal Interfaces
 
@@ -184,3 +253,13 @@ Docker and Jaeger acceptance commands are documented in
 - [Stage 2 Agent and ACP design](../../docs/stage-2-agent-and-acp.md)
 
 All lifecycle commands, including Identity-triggered disable, use [Temporal workflows](docs/lifecycle-workflows.md). PostgreSQL stores business state and audit history, not retry queues or worker leases.
+
+Legacy protected-export verifier keys are configured with
+`ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS`, a JSON object containing
+`current` and optional `next` Ed25519 public keys as specified by the
+[attestation contract](../../contracts/skill-registry/legacy-export-attestation.md).
+The default empty value keeps migration unavailable. Startup compares each
+configured key with durable `legacy_export_verifier_keys` history, permanently
+revokes removed IDs and refuses ID or key-byte reuse. All Controller instances
+must deploy the same rotation before an export proof is consumed; the explicit
+migration operation is still pending.

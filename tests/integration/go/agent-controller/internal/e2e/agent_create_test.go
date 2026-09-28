@@ -232,6 +232,33 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			return
 		}
 		path := strings.TrimPrefix(request.URL.Path, "/internal/runtimes/")
+		if request.Method == http.MethodPost && strings.Contains(path, "/skill-sets/preparations/") && strings.HasSuffix(path, "/release") {
+			if request.Header.Get("Idempotency-Key") == "" {
+				t.Fatal("Skill preparation release omitted idempotency key")
+			}
+			response.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if request.Method == http.MethodPost && strings.HasSuffix(path, "/skill-sets/prepare") {
+			agentID := strings.TrimSuffix(path, "/skill-sets/prepare")
+			var preparation ports.SkillPreparationRequest
+			if err := json.NewDecoder(request.Body).Decode(&preparation); err != nil {
+				t.Fatal(err)
+			}
+			if agentID == "" || request.Header.Get("Idempotency-Key") == "" || preparation.SystemSkills == nil {
+				t.Fatalf("invalid Skill preparation request: agent=%q request=%q body=%+v", agentID, request.Header.Get("Idempotency-Key"), preparation)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(response).Encode(ports.SkillPreparationReceipt{
+				RequestID: request.Header.Get("Idempotency-Key"), AgentID: agentID,
+				OrganizationID: preparation.OrganizationID, OwnerOperationID: preparation.OwnerOperationID,
+				State: "ready", PreparedSkillSet: &ports.PreparedSkillSet{
+					SkillSetDigest: preparation.SkillSetDigest, LayoutVersion: preparation.LayoutVersion,
+				}, PreparedReferenceID: "psr_11111111111111111111111111111111",
+			})
+			return
+		}
 		if request.Method == http.MethodGet && path != "" && !strings.Contains(path, "/") {
 			runtimeMu.Lock()
 			inspection := map[string]any{
@@ -414,6 +441,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	execution, snapshot := executionPublicationPeer(t, repository, secretBox)
 	lifecycle := application.NewLifecycleService(
 		repository, repository, egress, runtime, clock,
+		application.WithSkillPreparation(repository, runtime),
 		application.WithIdentityDirectory(e2eIdentityDirectory{}),
 		application.WithLifecycleExecution(execution),
 	)
@@ -432,6 +460,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	handler = telemetry.HTTPHandler(handler, logger)
 	restartedLifecycle := application.NewLifecycleService(
 		repository, repository, egress, runtime, clock,
+		application.WithSkillPreparation(repository, runtime),
 		application.WithLifecycleExecution(execution),
 	)
 
@@ -498,7 +527,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	acceptedOperation := acceptedCreate["operation"].(map[string]any)
 	if acceptedAgent["lifecycle_state"] != "not_created" ||
 		acceptedOperation["state"] != "running" || acceptedOperation["phase"] != "network_ensure" ||
-		egressCalls.Load() != 0 || runtimeCalls.Load() != 0 {
+		egressCalls.Load() != 0 || runtimeCalls.Load() != 1 {
 		t.Fatalf("accepted create crossed asynchronous boundary: response=%+v egress=%d runtime=%d",
 			acceptedCreate, egressCalls.Load(), runtimeCalls.Load())
 	}
@@ -592,7 +621,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		rebuildBody, http.StatusAccepted,
 	)
 	if acceptedRebuild["state"] != "running" || acceptedRebuild["phase"] != "drain" ||
-		egressCalls.Load() != beforeRebuildEgress || runtimeCalls.Load() != beforeRebuildRuntime {
+		egressCalls.Load() != beforeRebuildEgress || runtimeCalls.Load() != beforeRebuildRuntime+1 {
 		t.Fatalf("accepted rebuild crossed asynchronous boundary: %+v", acceptedRebuild)
 	}
 	recoverOperation("agent-e2e-rebuild")
@@ -671,7 +700,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		enableBody, http.StatusAccepted,
 	)
 	if acceptedEnable["state"] != "running" || acceptedEnable["phase"] != "network_ensure" ||
-		egressCalls.Load() != beforeEnableEgress || runtimeCalls.Load() != beforeEnableRuntime {
+		egressCalls.Load() != beforeEnableEgress || runtimeCalls.Load() != beforeEnableRuntime+1 {
 		t.Fatalf("accepted enable crossed asynchronous boundary: %+v", acceptedEnable)
 	}
 	recoverOperation("agent-e2e-enable")

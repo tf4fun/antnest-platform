@@ -6,13 +6,26 @@ than around one shared application package.
 
 The [current implementation and acceptance index](docs/current-status.md)
 distinguishes the latest service boundaries, recorded verification and remaining
-scope. Updated 2026-09-26; historical stage reports retain their original scope.
+scope. Updated 2026-09-29; historical stage reports retain their original scope.
 The [dependency refresh and regression](docs/dependency-refresh-20260926.md)
 records the verified pre-Stage-4 candidate. Development uses Node 24.21.0 LTS
 (`.nvmrc`), Go 1.27.1 (`go.work`) and Rust 1.98.1 (`rust-toolchain.toml`).
 The [Stage 3 current-service closeout](docs/stage-3-current-services-closeout.md)
 records the reviewed clock-warning exception and manual acceptance limits.
-Planned new services belong to Stage 4.
+The [Stage 4 service plan](docs/stage-4-services.md) records three new services:
+`skill-registry` for Skill hosting, `channel-manager` for external-channel
+interaction, and `task-scheduler` for scheduled tasks. Skill Registry and its
+Controller, Runtime Controller, ACP and Console consumers are implemented;
+service, component, browser and disposable Docker business/restore gates pass.
+The [minimal Skill Registry design](docs/skill-registry-minimal-design.md)
+limits its first delivery to hosting, pinned Template references, and read-only
+Runtime delivery on Agent creation/rebuild.
+Its review revision requires resumable preparation before lifecycle changes and
+verified per-Agent set reuse. The separate [Skill learning draft](docs/skill-learning-design.md)
+uses candidates, evidence and user confirmation before idle-time activation;
+that learning proposal remains pending. Skill Registry is accepted for the
+current clean development deployment, which has no old business data to migrate.
+Legacy migration and off-host legacy export are outside this release's scope.
 
 [Test ownership and commands](tests/README.md) define the repository test layout:
 unit tests stay within their service, integration tests live in
@@ -32,6 +45,9 @@ verification tools in `tests/support/`.
 | Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
 | Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
 | Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, attachments, and model settings | HTTP/SSE Bridge implemented; automated regression passed; human review pending |
+| Skill Registry (`skill-registry`) | Hosts reusable Skill packages, versions and distribution metadata | Hosting, frozen Template references and read-only Runtime delivery implemented; clean-deployment business/restore gates pass |
+| Channel Manager (`channel-manager`) | Owns external-channel connections, Agent/conversation bindings and message delivery | Stage 4 planned; not implemented |
+| Task Scheduler (`task-scheduler`) | Owns task schedules and trigger records for Agent usage | Stage 4 planned; not implemented |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 
 The repository layout and ownership rules are defined in
@@ -81,8 +97,10 @@ Agent management and server-side ACP/Runtime usage have Gateway-rooted evidence
 in the [verification report](docs/docker-single-node-verification-report.md).
 Admin Console recovery and live Jaeger navigation are included; this is not a
 claim of universal ACP conformance or completed Agent Web UI acceptance.
-Skill Registry and Channel Gateway are not started. Scheduler and Kubernetes
-remain planning-only; horizontal scaling and HA are deferred.
+Skill Registry has current Stage 4 business and restore acceptance. Channel
+Manager and Task Scheduler remain planned; their implementation has not started.
+Kubernetes, horizontal scaling and HA
+remain outside this three-service plan.
 
 Runtime-owned stdio MCP and per-Run context construction are described in
 [`docs/runtime-context-and-managed-mcp.md`](docs/runtime-context-and-managed-mcp.md).

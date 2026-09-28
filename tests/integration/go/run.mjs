@@ -27,6 +27,7 @@ assert(
     "identity-service",
     "admin-console",
     "edge-gateway",
+    "skill-registry",
   ].includes(service),
   "unknown Go integration service",
 );

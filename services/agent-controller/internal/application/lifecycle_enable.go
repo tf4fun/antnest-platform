@@ -60,7 +60,23 @@ func (service *LifecycleService) EnableAgent(
 	if err != nil {
 		return EnableAgentResult{}, err
 	}
+	if err := service.requireLegacySkillMigrationResolved(ctx, input.AgentID); err != nil {
+		return EnableAgentResult{}, err
+	}
 	now := service.clock.Now()
+	_, err = service.prepareAgentSkills(ctx, ports.SkillPreparationIntent{
+		RequestID: input.RequestID, RequestFingerprint: fingerprint, Kind: domain.OperationEnable,
+		AgentID: input.AgentID, OrganizationID: base.Agent.OrganizationID,
+		TargetSpec: base.Spec.Snapshot, TargetSpecDigest: base.Spec.CanonicalDigest,
+		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
+		ExpectedSpecRevisionID:      base.Spec.ID,
+		ExpectedExecutionRevisionID: base.LastSuccessfulExecution.ID,
+		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
+		CreatedAt:                   now, UpdatedAt: now,
+	})
+	if err != nil {
+		return EnableAgentResult{}, err
+	}
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
 		AgentID: input.AgentID, Kind: domain.OperationEnable,
@@ -177,14 +193,18 @@ func (service *LifecycleService) enableRuntime(
 		return ports.AgentEnableState{}, fmt.Errorf("enable operation has no network attachment")
 	}
 	runtimeInput := state.Spec.Snapshot.Runtime
+	configuration := ports.RuntimeConfiguration{
+		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
+		Resources:  runtimeInput.Resources,
+		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
+	}
+	if err := service.attachPreparedSkills(ctx, state.Operation.RequestID, state.Agent.AgentID, state.Agent.OrganizationID, state.Spec.Snapshot, &configuration); err != nil {
+		return state, err
+	}
 	result, err := service.runtime.EnableRuntime(
 		ctx, state.Operation.ChildRequestID, state.Agent.AgentID,
 		state.Operation.SourceRuntimeRevision,
-		ports.RuntimeConfiguration{
-			ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
-			Resources:  runtimeInput.Resources,
-			MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
-		},
+		configuration,
 	)
 	if err != nil {
 		return service.handleEnableDependencyFailure(ctx, state, "runtime-controller", err)
@@ -228,6 +248,12 @@ func (service *LifecycleService) restoreEnableNetwork(
 ) (ports.AgentEnableState, error) {
 	if state.Operation.NetworkAttachment == nil || state.Operation.RuntimeResult == nil {
 		return ports.AgentEnableState{}, fmt.Errorf("enable operation is missing a durable dependency result")
+	}
+	if state.LegacyMigration != nil {
+		if _, err := service.verifyLegacySkillMount(ctx, state.Agent, state.Operation, state.Spec.Snapshot,
+			state.Operation.RuntimeResult.RuntimeRevision, "verify-active-skills-enable-closed"); err != nil {
+			return state, err
+		}
 	}
 	attachment, err := service.egress.SetAgentNetworkAttachment(
 		ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
@@ -275,8 +301,17 @@ func (service *LifecycleService) publishAgentEnable(
 		return ports.AgentEnableState{}, fmt.Errorf("enable operation has no proven Runtime result")
 	}
 	runtime := *state.Operation.RuntimeResult
+	var legacyVerification *ports.LegacySkillPublishVerification
+	if state.LegacyMigration != nil {
+		verified, err := service.verifyLegacySkillMount(ctx, state.Agent, state.Operation, state.Spec.Snapshot,
+			runtime.RuntimeRevision, "verify-active-skills-enable-publish")
+		if err != nil {
+			return ports.AgentEnableState{}, err
+		}
+		legacyVerification = &verified
+	}
 	now := service.clock.Now()
-	return service.store.PublishAgentEnable(ctx, ports.PublishAgentEnable{
+	published, err := service.store.PublishAgentEnable(ctx, ports.PublishAgentEnable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		EnabledEvent: ports.AgentEventRecord{
 			EventID:           domain.DeriveResourceID("event", "event-enabled", state.Operation.RequestID),
@@ -290,8 +325,22 @@ func (service *LifecycleService) publishAgentEnable(
 			},
 			OccurredAt: now,
 		},
-		Now: now,
+		Now: now, LegacyVerification: legacyVerification,
 	})
+	if errors.Is(err, ports.ErrLegacyMigrationProofLost) && state.LegacyMigration != nil {
+		if settleErr := service.settleLegacyMigrationProofLoss(ctx, state.Operation); settleErr != nil {
+			return state, settleErr
+		}
+		settled, found, replayErr := service.store.ReplayAgentEnable(ctx, state.Operation.RequestID, state.Operation.RequestFingerprint)
+		if replayErr != nil {
+			return state, fmt.Errorf("replay settled legacy migration Enable: %w", replayErr)
+		}
+		if !found {
+			return state, fmt.Errorf("replay settled legacy migration Enable: %w", ports.ErrNotFound)
+		}
+		return settled, nil
+	}
+	return published, err
 }
 
 func (service *LifecycleService) handleEnableDependencyFailure(

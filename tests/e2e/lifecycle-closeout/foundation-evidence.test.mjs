@@ -4,6 +4,7 @@ import {
   assertCompletedExecution,
   collectLifecycleEvidence,
   foundationTraceExitCode,
+  acceptedClockOnlyRestore,
 } from "./foundation-evidence.mjs";
 
 const agent = { agent_id: "agent", executable_execution_revision: "rebuilt" };
@@ -14,6 +15,33 @@ const run = () => ({
   executor_state: "quiescent",
   tool_effect_state: "settled",
   execution_snapshot: { executionRevision: "rebuilt" },
+});
+
+test("Stage 4 restore accepts only clock warnings after every topology passes", () => {
+  const warning =
+    "clock skew adjustment disabled; not applying calculated delta of 500µs";
+  const evidence = [
+    {
+      topology: "passed",
+      strict_trace: "failed",
+      warning_count: 1,
+      warnings: [warning],
+      platform_probe_errors: 0,
+    },
+  ];
+  assert.equal(acceptedClockOnlyRestore(evidence), true);
+  assert.equal(
+    acceptedClockOnlyRestore([{ ...evidence[0], topology: "failed" }]),
+    false,
+  );
+  assert.equal(
+    acceptedClockOnlyRestore([{ ...evidence[0], warnings: ["tool failed"] }]),
+    false,
+  );
+  assert.equal(
+    acceptedClockOnlyRestore([{ ...evidence[0], platform_probe_errors: 1 }]),
+    false,
+  );
 });
 test("public Run audit binds the completed execution to the actual Agent revision", () => {
   assertCompletedExecution(run(), agent);

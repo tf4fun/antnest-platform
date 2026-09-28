@@ -26,6 +26,9 @@ func TestLoadUsesThinDockerAdapterDefaults(t *testing.T) {
 	if config.SystemSkillsVolume != "antnest-system-skills" {
 		t.Fatalf("unexpected system Skills volume: %s", config.SystemSkillsVolume)
 	}
+	if config.LegacyBackupRoot != "/legacy-skill-backups" {
+		t.Fatalf("unexpected legacy backup root: %s", config.LegacyBackupRoot)
+	}
 	if config.ControllerScope != "antnest-runtime-management" {
 		t.Fatalf("controller scope did not default to the management network: %s", config.ControllerScope)
 	}
@@ -43,6 +46,26 @@ func TestLoadAllowsAnExplicitControllerScope(t *testing.T) {
 	}
 	if config.ControllerScope != "deployment-a" {
 		t.Fatalf("controller scope = %q", config.ControllerScope)
+	}
+}
+
+func TestLoadSkillPreparationRequiresRegistryPair(t *testing.T) {
+	base := map[string]string{"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime", "ANTNEST_RUNTIME_MANAGEMENT_NETWORK": "antnest-runtime-management"}
+	for _, key := range []string{"ANTNEST_SKILL_REGISTRY_URL", "ANTNEST_SKILL_REGISTRY_API_TOKEN"} {
+		values := map[string]string{}
+		for k, v := range base {
+			values[k] = v
+		}
+		values[key] = "configured"
+		if _, err := Load(func(name string) string { return values[name] }); err == nil {
+			t.Fatalf("accepted partial Skill Registry configuration: %s", key)
+		}
+	}
+	base["ANTNEST_SKILL_REGISTRY_URL"] = "http://skill-registry:8080"
+	base["ANTNEST_SKILL_REGISTRY_API_TOKEN"] = "test-token"
+	configuration, err := Load(func(name string) string { return base[name] })
+	if err != nil || configuration.SkillRegistryURL != "http://skill-registry:8080" || configuration.SkillRegistryToken != "test-token" {
+		t.Fatalf("Skill Registry configuration: %+v %v", configuration, err)
 	}
 }
 

@@ -17,15 +17,8 @@ type auditExecutionSpec struct {
 	SystemPrompt         *string                    `json:"systemPrompt,omitempty"`
 	ContextPolicyVersion string                     `json:"contextPolicyVersion,omitempty"`
 	MaxModelRequests     *int64                     `json:"maxModelRequests,omitempty"`
-	SkillInstructions    *[]auditSkillInstruction   `json:"skillInstructions,omitempty"`
 	Model                *auditModelSpec            `json:"model,omitempty"`
 	Configuration        *auditSessionConfiguration `json:"configuration,omitempty"`
-}
-
-type auditSkillInstruction struct {
-	SkillKey     string `json:"skillKey"`
-	Version      string `json:"version"`
-	Instructions string `json:"instructions"`
 }
 
 type auditModelSpec struct {

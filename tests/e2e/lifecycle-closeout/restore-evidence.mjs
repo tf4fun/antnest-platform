@@ -11,6 +11,7 @@ export const databases = [
   "antnest_temporal",
   "antnest_temporal_visibility",
 ];
+export const stage4Databases = [...databases, "antnest_skill_registry"];
 export const keyNames = [
   "ANTNEST_IDENTITY_ENCRYPTION_KEY",
   "ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY",
@@ -27,6 +28,48 @@ export const writerServices = [
   "identity-service",
   "temporal",
 ];
+export const stage4WriterServices = [...writerServices, "skill-registry"];
+
+export function requiredSkillVolumeNames(rows) {
+  assert(Array.isArray(rows), "missing Skill volume inventory");
+  const volumes = new Map();
+  for (const row of rows) {
+    assert(
+      ["current", "lifecycle", "set"].includes(row.source),
+      "unknown source in Skill volume inventory",
+    );
+    if (row.source === "set" && !row.volume_name) continue;
+    assert(
+      typeof row.volume_name === "string" && row.volume_name.length > 0,
+      "missing volume for retained Skill reference",
+    );
+    assert(
+      Number.isSafeInteger(row.set_id) && row.set_id > 0,
+      "invalid Skill set identity",
+    );
+    if (row.source !== "set")
+      assert.match(row.manifest_digest, /^sha256:[a-f0-9]{64}$/);
+    const previous = volumes.get(row.volume_name);
+    if (previous) {
+      assert.equal(
+        previous.set_id,
+        row.set_id,
+        "conflicting Skill volume ownership",
+      );
+      if (previous.manifest_digest && row.manifest_digest)
+        assert.equal(
+          previous.manifest_digest,
+          row.manifest_digest,
+          "conflicting Skill volume manifest",
+        );
+    }
+    volumes.set(row.volume_name, {
+      set_id: row.set_id,
+      manifest_digest: row.manifest_digest || previous?.manifest_digest || "",
+    });
+  }
+  return [...volumes.keys()].sort();
+}
 
 export function assertRestoreRun(runs, agent, sessionId) {
   assert.equal(runs.length, 1, "restore prompt must create exactly one Run");
@@ -102,6 +145,7 @@ export function assertInjectedKeys(containers, expected) {
 }
 
 export function assertRecoveryManifest(metadata, expected) {
+  const databaseNames = expected.databases ?? databases;
   assert.equal(metadata.postgres.name, expected.postgres);
   assert.deepEqual(
     metadata.volumes.map(({ name, file }) => ({ name, file })),
@@ -113,11 +157,11 @@ export function assertRecoveryManifest(metadata, expected) {
   );
   assert.deepEqual(
     Object.keys(metadata.fingerprints).sort(),
-    [...databases].sort(),
+    [...databaseNames].sort(),
     "database fingerprint inventory incomplete",
   );
   const files = [
-    ...databases.map((name) => `${name}.dump`),
+    ...databaseNames.map((name) => `${name}.dump`),
     ...expected.volumes.map((_, index) => `volume-${index}.tar`),
     "keys.json",
   ];
@@ -151,10 +195,14 @@ export function restorableVolume(volume, project, expectedName) {
   return { name: volume.Name, labels };
 }
 
-export function assertQuiesced(containers, project) {
+export function assertQuiesced(
+  containers,
+  project,
+  expectedWriters = writerServices,
+) {
   assert.deepEqual(
     containers.map((c) => c.Config.Labels["com.docker.compose.service"]).sort(),
-    [...writerServices].sort(),
+    [...expectedWriters].sort(),
     "writer inventory incomplete or duplicated",
   );
   for (const container of containers) {

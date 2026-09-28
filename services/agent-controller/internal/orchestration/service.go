@@ -21,16 +21,59 @@ import (
 
 type Service struct {
 	*application.LifecycleService
-	client client.Client
+	recovery       *application.LegacyProofLossRecoveryService
+	sourceRecovery *application.LegacySourceRecoveryService
+	client         client.Client
 }
 
-func NewService(lifecycle *application.LifecycleService, temporalClient client.Client) *Service {
-	return &Service{LifecycleService: lifecycle, client: temporalClient}
+func NewServiceWithSourceRecovery(lifecycle *application.LifecycleService, temporalClient client.Client,
+	source *application.LegacySourceRecoveryService, recoveries ...*application.LegacyProofLossRecoveryService) *Service {
+	service := NewService(lifecycle, temporalClient, recoveries...)
+	service.sourceRecovery = source
+	return service
+}
+
+func (service *Service) RecoverLegacySource(ctx context.Context, command application.LegacySourceRecoveryInput) (ports.LegacySourceRecoveryRecord, error) {
+	if service.sourceRecovery == nil {
+		return ports.LegacySourceRecoveryRecord{}, application.ErrDependencyUnavailable
+	}
+	return startWorkflow(ctx, service.client, "agent-legacy-source-recovery/"+command.RequestID,
+		LegacySourceRecoveryWorkflow, command, service.sourceRecovery.Replay)
+}
+
+func (service *Service) GetLegacySourceRecovery(ctx context.Context, organizationID, requestID string) (ports.LegacySourceRecoveryRecord, error) {
+	if service.sourceRecovery == nil {
+		return ports.LegacySourceRecoveryRecord{}, application.ErrDependencyUnavailable
+	}
+	return service.sourceRecovery.Get(ctx, organizationID, requestID)
+}
+
+func NewService(lifecycle *application.LifecycleService, temporalClient client.Client, recoveries ...*application.LegacyProofLossRecoveryService) *Service {
+	service := &Service{LifecycleService: lifecycle, client: temporalClient}
+	if len(recoveries) > 0 {
+		service.recovery = recoveries[0]
+	}
+	return service
 }
 
 func (service *Service) CreateAgent(ctx context.Context, command application.CreateAgentInput) (application.CreateAgentResult, error) {
 	command.Name = strings.TrimSpace(command.Name)
 	return startWorkflow(ctx, service.client, "agent-create/"+command.RequestID, CreateAgentWorkflow, command, service.ReplayCreateAgent)
+}
+
+func (service *Service) RecoverLegacyProofLoss(ctx context.Context, command application.LegacyProofLossRecoveryInput) (ports.LegacyProofLossRecoveryRecord, error) {
+	if service.recovery == nil {
+		return ports.LegacyProofLossRecoveryRecord{}, application.ErrDependencyUnavailable
+	}
+	return startWorkflow(ctx, service.client, "agent-legacy-proof-loss-recovery/"+command.RequestID,
+		LegacyProofLossRecoveryWorkflow, command, service.recovery.Replay)
+}
+
+func (service *Service) GetLegacyProofLossRecovery(ctx context.Context, organizationID, requestID string) (ports.LegacyProofLossRecoveryRecord, error) {
+	if service.recovery == nil {
+		return ports.LegacyProofLossRecoveryRecord{}, application.ErrDependencyUnavailable
+	}
+	return service.recovery.Get(ctx, organizationID, requestID)
 }
 
 func startWorkflow[I any, R any](ctx context.Context, temporalClient client.Client, workflowID string, workflow interface{}, command I, replay func(context.Context, I) (R, bool, error)) (R, error) {
@@ -92,6 +135,15 @@ var admissionErrors = []struct {
 	{"request_conflict", ports.ErrRequestConflict},
 	{"lifecycle_conflict", application.ErrLifecycleConflict},
 	{"agent_not_ready", application.ErrAgentNotReady},
+	{"legacy_system_skills_migration_required", application.ErrLegacySystemSkillsMigrationRequired},
+	{"legacy_migration_recovery_required", application.ErrLegacyMigrationRecoveryRequired},
+	{"legacy_proof_loss_recovery_not_applicable", application.ErrLegacyProofLossRecoveryNotApplicable},
+	{"legacy_source_recovery_not_applicable", application.ErrLegacySourceRecoveryNotApplicable},
+	{"legacy_source_manual_recovery_required", application.ErrLegacySourceManualRecoveryRequired},
+	{"legacy_migration_manual_recovery_required", application.ErrLegacyMigrationManualRecoveryRequired},
+	{"legacy_attestation_invalid", application.ErrLegacyAttestationInvalid},
+	{"legacy_inventory_changed", application.ErrLegacyInventoryChanged},
+	{"legacy_backup_mismatch", application.ErrLegacyBackupMismatch},
 }
 
 func activityError(err error) error {

@@ -1,13 +1,38 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
 export const phases = [
   "v1-baseline",
   "v2-baseline",
   "http-baseline",
+  ...(process.env.ANTNEST_E2E_SKILL_REGISTRY_OUTAGE === "true"
+    ? ["registry-outage"]
+    : []),
+  ...(process.env.ANTNEST_E2E_SKILL_OFFLINE_REUSE === "true"
+    ? ["offline-reuse"]
+    : []),
   "after-rebuild",
 ];
+const skillMode = process.env.ANTNEST_E2E_SKILL_DELIVERY === "true";
+const skillBody = (version) =>
+  `---\nname: code-review\ndescription: Review code\n---\nStage 4 immutable preset version ${version}.\n`;
+export function registryDenialCommand(ip) {
+  assert.equal(isIP(ip), 4, "Registry network probe needs its actual IPv4");
+  const name = "http://skill-registry:8080/status";
+  const curl =
+    "curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 -o /dev/null";
+  return [
+    "curl --version >/dev/null || exit 43",
+    `route=$(ip -4 route get ${ip} uid 1000) || exit 46`,
+    'case " $route " in *" dev antnest0 "*) ;; *) exit 47 ;; esac',
+    `if ${curl} ${name} >/dev/null 2>&1; then exit 44; fi`,
+    "printf 'registry-dns-blocked\\n'",
+    `if ${curl} --resolve skill-registry:8080:${ip} ${name} >/dev/null 2>&1; then exit 45; fi`,
+    "printf 'registry-ip-blocked\\n'",
+  ].join("; ");
+}
 export function decide(payload) {
   const last = payload.messages.findLastIndex((m) => m.role === "user");
   const phase = payload.messages[last]?.content;
@@ -28,12 +53,33 @@ export function decide(payload) {
     assert.equal(result.effect_state, "settled");
     assert.equal(result.stderr, "");
     assert.equal(result.truncated, false);
+    const skillRead =
+      skillMode &&
+      [
+        "v1-baseline",
+        "registry-outage",
+        "offline-reuse",
+        "after-rebuild",
+      ].includes(phase);
+    const expected =
+      phases.slice(0, phases.indexOf(phase) + 1).join("\n") +
+      "\n" +
+      (skillRead ? skillBody(phase === "after-rebuild" ? 2 : 1) : "") +
+      (skillMode && phase === "v1-baseline"
+        ? "registry-dns-blocked\nregistry-ip-blocked\n"
+        : "");
     assert.equal(
       result.stdout,
-      phases.slice(0, phases.indexOf(phase) + 1).join("\n") + "\n",
-      "persisted effects missing or duplicated",
+      expected,
+      "persisted effects or preset Skill mismatch",
     );
-    return { phase, text: `${phase} verified` };
+    return {
+      phase,
+      text: `${phase} verified`,
+      ...(skillMode && phase === "v1-baseline"
+        ? { registryNetworkDenied: true }
+        : {}),
+    };
   }
   assert(
     payload.tools.some((t) => t.function.name === "bash"),
@@ -44,7 +90,7 @@ export function decide(payload) {
     call: {
       name: "bash",
       arguments: {
-        command: `printf '%s\\n' '${phase}' >> /workspace/stage3-effects.log; cat /workspace/stage3-effects.log`,
+        command: `printf '%s\\n' '${phase}' >> /workspace/stage3-effects.log; cat /workspace/stage3-effects.log${skillMode && ["v1-baseline", "registry-outage", "offline-reuse", "after-rebuild"].includes(phase) ? "; cat /skills/code-review/SKILL.md" : ""}${skillMode && phase === "v1-baseline" ? "; " + registryDenialCommand(process.env.ANTNEST_E2E_REGISTRY_IP) : ""}`,
         working_dir: { root: "workspace", path: "." },
         timeout_ms: 10000,
       },
@@ -96,6 +142,9 @@ export function modelServer() {
         stage,
         trace_id: request.headers.traceparent.split("-")[1],
         model_span_id: request.headers.traceparent.split("-")[2],
+        ...(result.registryNetworkDenied
+          ? { registry_network_denied: true }
+          : {}),
       });
       reply(200, {
         choices: [

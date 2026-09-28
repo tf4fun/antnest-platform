@@ -1,0 +1,22 @@
+{
+  "layout_version": 1,
+  "cases": [
+    {
+      "organization_id": "org_00000000000000000000000000000000",
+      "skills": [
+        {
+          "skill_id": "skill_11111111111111111111111111111111",
+          "version": 1,
+          "name": "code-review",
+          "description": "Review code",
+          "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "artifact_size": 100,
+          "unpacked_size": 200,
+          "package_rules_version": 1
+        }
+      ],
+      "skill_set_digest": "sha256:50510ca3e153ba6eca18b35fbf11669bcc3ebe5ec373217a9089a84ac3f1cfc1"
+    }
+  ]
+}

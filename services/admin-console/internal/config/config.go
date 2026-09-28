@@ -12,6 +12,8 @@ type Config struct {
 	IdentityURL            string
 	AgentControllerURL     string
 	AgentACPURL            string
+	SkillRegistryURL       string
+	SkillRegistryToken     string
 	DefaultRuntimeImageRef string
 	DependencyTimeout      time.Duration
 	ShutdownTimeout        time.Duration
@@ -34,6 +36,8 @@ func Load(lookup func(string) string) (Config, error) {
 		IdentityURL:            strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		AgentControllerURL:     strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
 		AgentACPURL:            strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_SERVICE_URL")),
+		SkillRegistryURL:       strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
+		SkillRegistryToken:     lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN"),
 		DefaultRuntimeImageRef: strings.TrimSpace(lookup("ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF")),
 		DependencyTimeout:      dependencyTimeout,
 		ShutdownTimeout:        shutdownTimeout,
@@ -46,6 +50,16 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if err := serviceURL("ANTNEST_AGENT_ACP_SERVICE_URL", config.AgentACPURL); err != nil {
 		return Config{}, err
+	}
+	if config.SkillRegistryURL != "" {
+		if err := serviceURL("ANTNEST_SKILL_REGISTRY_URL", config.SkillRegistryURL); err != nil {
+			return Config{}, err
+		}
+		if len(config.SkillRegistryToken) < 32 || strings.TrimSpace(config.SkillRegistryToken) != config.SkillRegistryToken {
+			return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN must be at least 32 non-whitespace bytes")
+		}
+	} else if config.SkillRegistryToken != "" {
+		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_URL is required when Registry token is configured")
 	}
 	return config, nil
 }

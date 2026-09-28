@@ -41,6 +41,12 @@ test("provisioning is a first-class organization route", () => {
   assert.deepEqual(parseConsoleRoute("#provisioning"), { page: "provisioning" });
 });
 
+test("Skills inventory and detail remain distinct routes", () => {
+  assert.deepEqual(parseConsoleRoute("#skills"), { page: "skills" });
+  assert.deepEqual(parseConsoleRoute("#skills/skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), { page: "skills", resourceID: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+  assert.deepEqual(parseConsoleRoute("#skills/one/versions/2"), { page: "overview" });
+});
+
 test("execution audit routes preserve opaque identities and retained-Agent filters", () => {
   assert.deepEqual(parseConsoleRoute("#audits"), { page: "audits" });
   assert.deepEqual(parseConsoleRoute("#audits?agent_id=Agent%2Fone%20%232"), { page: "audits", agentID: "Agent/one #2" });

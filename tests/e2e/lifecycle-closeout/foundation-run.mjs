@@ -13,7 +13,10 @@ import {
 } from "./foundation-setup.mjs";
 import { applicationServices, assertDeployment } from "./deployment.mjs";
 import { runFoundationFlow } from "./foundation-flow.mjs";
-import { foundationTraceExitCode } from "./foundation-evidence.mjs";
+import {
+  acceptedClockOnlyRestore,
+  foundationTraceExitCode,
+} from "./foundation-evidence.mjs";
 
 export async function runFoundation(profile = "foundation") {
   assert(
@@ -23,6 +26,7 @@ export async function runFoundation(profile = "foundation") {
       "shutdown",
       "health",
       "restore",
+      "skill-restore",
       "loss",
       "interrupted",
       "crash",
@@ -56,6 +60,7 @@ export async function runFoundation(profile = "foundation") {
       [
         "network",
         "restore",
+        "skill-restore",
         "loss",
         "interrupted",
         "crash",
@@ -71,12 +76,16 @@ export async function runFoundation(profile = "foundation") {
             ? "tests/e2e/workspace-closeout/compose.yaml"
             : profile === "workspace-browser"
               ? "tests/e2e/workspace-closeout/browser.compose.yaml"
-              : `tests/e2e/lifecycle-closeout/${profile === "interrupted" ? "update-receipt" : profile}.compose.yaml`,
+              : `tests/e2e/lifecycle-closeout/${profile === "skill-restore" ? "restore" : profile === "interrupted" ? "update-receipt" : profile}.compose.yaml`,
           ...args,
         ]);
     }
-    if (profile === "restore")
+    if (["restore", "skill-restore"].includes(profile))
       (await import("./restore-flow.mjs")).configureRestore(config);
+    if (profile === "skill-restore") {
+      config.skillRestore = true;
+      config.env.ANTNEST_E2E_SKILL_RESTORE = "true";
+    }
     config.evidence = `artifacts/verification/lifecycle-${profile}/${config.project}`;
     evidenceDirectory(config.evidence);
     await mkdir(`${config.evidence}/traces`, { recursive: true, mode: 0o700 });
@@ -198,7 +207,7 @@ export async function runFoundation(profile = "foundation") {
             ? (await import("./shutdown.mjs")).runShutdown
             : profile === "health"
               ? (await import("./health-flow.mjs")).runHealth
-              : profile === "restore"
+              : profile === "restore" || profile === "skill-restore"
                 ? (await import("./restore-flow.mjs")).runRestore
                 : profile === "loss"
                   ? (await import("./loss-flow.mjs")).runLoss
@@ -229,6 +238,7 @@ export async function runFoundation(profile = "foundation") {
         "shutdown",
         "health",
         "restore",
+        "skill-restore",
         "loss",
         "interrupted",
         "crash",
@@ -287,12 +297,18 @@ export async function runFoundation(profile = "foundation") {
   }
   abort.signal.throwIfAborted();
   assert(result);
-  const code = foundationTraceExitCode([
+  const traceEvidence = [
     ...result.traces,
     ...(result.active_run_rebuild?.run_traces ?? result.request_traces ?? []),
     ...(result.policy_traces ?? []),
     ...(result.watch_traces ?? []),
-  ]);
+  ];
+  const strictCode = foundationTraceExitCode(traceEvidence);
+  const clockAccepted =
+    ["restore", "skill-restore"].includes(profile) &&
+    strictCode === 2 &&
+    acceptedClockOnlyRestore(traceEvidence);
+  const code = clockAccepted ? 0 : strictCode;
   console.log(
     JSON.stringify({
       status:
@@ -304,7 +320,11 @@ export async function runFoundation(profile = "foundation") {
       ...result,
       deployment,
       cleanup: "verified",
-      strict_exit: code,
+      strict_exit: strictCode,
+      accepted_exit: code,
+      ...(clockAccepted
+        ? { strict_trace: "failed", clock_warnings_accepted: true }
+        : {}),
     }),
   );
   process.exitCode = code;

@@ -98,4 +98,15 @@ func installCreationPredecessor(t *testing.T, ctx context.Context, database *sql
 			t.Fatal(err)
 		}
 	}
+	// Current Repository writes the later Skill columns. Those additive
+	// migrations are independent of the readiness vocabulary changed by v6;
+	// install them while deliberately leaving v6 unapplied for this upgrade test.
+	for _, migration := range schemaMigrations[6:] {
+		if _, err := database.ExecContext(ctx, migration.sql); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, `INSERT INTO runtime_controller.schema_migrations(version, name, checksum) VALUES ($1,$2,$3)`, migration.version, migration.name, migration.checksum); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

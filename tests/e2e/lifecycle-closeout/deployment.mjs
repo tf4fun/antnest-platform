@@ -10,6 +10,7 @@ export const applicationServices = [
   "admin-console",
   "agent-ui",
   "edge-gateway",
+  "skill-registry",
 ];
 
 export function assertDeployment(config, rows, images) {

@@ -21,7 +21,7 @@ func TestDisableAgentFencesRuntimeAndPublishesDisabledProjection(t *testing.T) {
 		RuntimeRevision: "rtv_33333333333333333333333333333333",
 		LifecycleState:  "disabled", Health: "absent",
 	})
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(200, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -63,7 +63,7 @@ func TestDisableAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 	base := disableLifecycleBase(t)
 	store := &disableLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDisableDependencies(base, ports.RuntimeOperation{})
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(210, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -103,7 +103,7 @@ func TestDisableAgentExpiredDeadlineDoesNotQueryACPOrMutateRuntime(t *testing.T)
 	}
 	store := &disableLifecycleStoreStub{base: base, state: state, replayed: true}
 	dependencies := newDisableDependencies(base, ports.RuntimeOperation{})
-	service := NewLifecycleServiceWithDrainTimeout(
+	service := newTestLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: now}, time.Minute,
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -126,7 +126,7 @@ func TestDisableAgentKnownRuntimeFailureRestoresPolicyAndExecutable(t *testing.T
 	dependencies := newDisableDependencies(base, ports.RuntimeOperation{
 		State: "failed", Effect: "not_started", ErrorCode: "platform_unavailable",
 	})
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(220, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -164,7 +164,7 @@ func TestDisableAgentDoesNotRestoreUnverifiedRuntime(t *testing.T) {
 		State: "failed", Effect: "not_started", ErrorCode: "platform_unavailable",
 	})
 	dependencies.inspection.RuntimeExecutionID = "different-execution"
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(225, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -202,7 +202,7 @@ func TestDisableAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 	dependencies := newDisableDependencies(base, ports.RuntimeOperation{})
 	dependencies.runtimeErr = missing
 	dependencies.inspectionErr = missing
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(227, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -239,7 +239,7 @@ func TestDisableAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 		LifecycleState: "deleted", Health: "absent",
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(228, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -275,7 +275,7 @@ func TestDisableAgentAmbiguousRuntimeRemainsRunningAndFenced(t *testing.T) {
 		State: "unknown", Effect: "unknown",
 		RuntimeRevision: "rtv_33333333333333333333333333333333",
 	})
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(230, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),

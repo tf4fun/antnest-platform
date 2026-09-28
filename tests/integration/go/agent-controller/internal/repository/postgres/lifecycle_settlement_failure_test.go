@@ -21,7 +21,7 @@ func TestLifecycleSettlementBoundarySurvivesWorkerRestartAndPlatformRejection(t 
 				deps.rejectDisable = true
 				deps.runtime = ports.RuntimeOperation{State: "failed", Effect: "not_started", ErrorCode: "image_not_found"}
 				deps.inspection = &ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID, MCPEndpoint: base.SourceExecution.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy"}
-				service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+				service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 				requestID := "settlement-restart"
 				if kind == domain.OperationRebuild {
 					_, err := service.RebuildAgent(t.Context(), application.RebuildAgentInput{RequestID: requestID, AgentID: base.Agent.AgentID, TemplateID: seed.Revision.Snapshot().TemplateID, TemplateRevision: seed.Revision.Revision()})
@@ -34,7 +34,7 @@ func TestLifecycleSettlementBoundarySurvivesWorkerRestartAndPlatformRejection(t 
 				require.NoError(t, err)
 				_, err = repository.ConfirmLifecycleDrain(t.Context(), ports.ConfirmLifecycleDrain{RequestID: requestID, Fingerprint: operation.RequestFingerprint, Kind: kind, Outcome: outcome, Now: offboardingClock{}.Now()})
 				require.NoError(t, err)
-				restarted := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+				restarted := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 				finishOffboardingOperation(t, repository, restarted, requestID, domain.OperationFailed)
 				stored, err := repository.GetLifecycleOperation(t.Context(), requestID)
 				require.NoError(t, err)

@@ -40,6 +40,12 @@ export class ContextBuilder {
     snapshot: RunExecutionSnapshot,
     ownershipSignal: AbortSignal,
   ): Promise<PreparedRunContext> {
+    if (snapshot.executionSpec.skillInstructions.length !== 0) {
+      throw new DomainError(
+        "invalid_execution_configuration",
+        "Legacy Skill instructions are unsupported",
+      );
+    }
     const information = await this.dependencies.runtimeInformation.read(snapshot, ownershipSignal);
     const tools =
       snapshot.executionSpec.configuration?.authorization.mode === "chat"
@@ -125,14 +131,7 @@ export class ContextBuilder {
 }
 
 function systemMessage(snapshot: RunExecutionSnapshot): ModelMessage {
-  const skills = snapshot.executionSpec.skillInstructions
-    .map((skill) => `## Skill ${skill.skillKey}@${skill.version}\n${skill.instructions}`)
-    .join("\n\n");
-  const text =
-    skills.length === 0
-      ? snapshot.executionSpec.systemPrompt
-      : `${snapshot.executionSpec.systemPrompt}\n\n# Available skill instructions\n${skills}`;
-  return { role: "system", content: [{ type: "text", text }] };
+  return { role: "system", content: [{ type: "text", text: snapshot.executionSpec.systemPrompt }] };
 }
 
 function checkpointMessage(checkpoint: ContextCheckpoint | null): ModelMessage | null {

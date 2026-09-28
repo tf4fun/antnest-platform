@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -15,6 +16,10 @@ type Config struct {
 	ControllerScope       string
 	ManagementNetwork     string
 	SystemSkillsVolume    string
+	LegacyBackupRoot      string
+	SkillRegistryURL      string
+	SkillRegistryToken    string
+	SkillPreparerImage    string
 	RuntimeStatusTimeout  time.Duration
 	MutationTimeout       time.Duration
 	RPCRequestTimeout     time.Duration
@@ -65,6 +70,10 @@ func Load(lookup func(string) string) (Config, error) {
 			strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
 		),
 		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
+		LegacyBackupRoot:      valueOr(lookup, "ANTNEST_RUNTIME_LEGACY_BACKUP_ROOT", "/legacy-skill-backups"),
+		SkillRegistryURL:      strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
+		SkillRegistryToken:    strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN")),
+		SkillPreparerImage:    valueOr(lookup, "ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE", "antnest/runtime-controller:local"),
 		RuntimeStatusTimeout:  statusTimeout,
 		MutationTimeout:       mutationTimeout,
 		RPCRequestTimeout:     rpcTimeout,
@@ -87,6 +96,12 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if config.ControllerScope == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_SCOPE is required")
+	}
+	if !filepath.IsAbs(config.LegacyBackupRoot) || filepath.Clean(config.LegacyBackupRoot) != config.LegacyBackupRoot {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_LEGACY_BACKUP_ROOT must be a clean absolute path")
+	}
+	if (config.SkillRegistryURL == "") != (config.SkillRegistryToken == "") {
+		return Config{}, fmt.Errorf("skill Registry URL and API token must be configured together")
 	}
 	dockerHost := valueOr(lookup, "ANTNEST_DOCKER_HOST", "unix:///var/run/docker.sock")
 	parsedHost, err := url.Parse(dockerHost)

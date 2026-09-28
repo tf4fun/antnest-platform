@@ -14,6 +14,10 @@ type ProviderAccess struct {
 
 type CatalogOption func(*CatalogService)
 
+func WithSkillVersionResolver(resolver ports.SkillVersionResolver) CatalogOption {
+	return func(service *CatalogService) { service.skillResolver = resolver }
+}
+
 func WithProviderCredentialReader(reader ports.ProviderAccessReader, opener ports.CredentialOpener) CatalogOption {
 	return func(service *CatalogService) { service.accessReader, service.opener = reader, opener }
 }

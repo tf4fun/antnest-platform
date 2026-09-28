@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/skill-registry/registry-api.schema.json",
+  "title": "Skill Registry internal API v1 JSON payloads",
+  "$defs": {
+    "organization_id": {"type": "string", "pattern": "^org_[0-9a-f]{32}$"},
+    "user_id": {"type": "string", "pattern": "^user_[0-9a-f]{32}$"},
+    "skill_id": {"type": "string", "pattern": "^skill_[0-9a-f]{32}$"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[!-~]+$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "create_metadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "organization_id", "actor_id"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "organization_id": {"$ref": "#/$defs/organization_id"},
+        "actor_id": {"$ref": "#/$defs/user_id"}
+      }
+    },
+    "append_metadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "organization_id", "actor_id", "expected_version"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "organization_id": {"$ref": "#/$defs/organization_id"},
+        "actor_id": {"$ref": "#/$defs/user_id"},
+        "expected_version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "version": {
+      "type": "object", "additionalProperties": false,
+      "required": ["skill_id", "version", "name", "description", "artifact_digest", "content_digest", "artifact_size", "unpacked_size", "package_rules_version"],
+      "properties": {
+        "skill_id": {"$ref": "#/$defs/skill_id"},
+        "version": {"type": "integer", "minimum": 1},
+        "name": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 512},
+        "artifact_digest": {"$ref": "#/$defs/digest"},
+        "content_digest": {"$ref": "#/$defs/digest"},
+        "artifact_size": {"type": "integer", "minimum": 1, "maximum": 8388608},
+        "unpacked_size": {"type": "integer", "minimum": 1, "maximum": 33554432},
+        "package_rules_version": {"const": 1}
+      }
+    },
+    "skill": {
+      "type": "object", "additionalProperties": false,
+      "required": ["skill_id", "name", "current_version", "description", "artifact_digest", "content_digest", "artifact_size", "unpacked_size", "package_rules_version"],
+      "properties": {
+        "skill_id": {"$ref": "#/$defs/skill_id"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+        "current_version": {"type": "integer", "minimum": 1},
+        "description": {"type": "string", "minLength": 1, "maxLength": 512},
+        "artifact_digest": {"$ref": "#/$defs/digest"},
+        "content_digest": {"$ref": "#/$defs/digest"},
+        "artifact_size": {"type": "integer", "minimum": 1, "maximum": 8388608},
+        "unpacked_size": {"type": "integer", "minimum": 1, "maximum": 33554432},
+        "package_rules_version": {"const": 1}
+      }
+    },
+    "reference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["skill_id", "version"],
+      "properties": {
+        "skill_id": {"$ref": "#/$defs/skill_id"},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "resolve_request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["organization_id", "refs"],
+      "properties": {
+        "organization_id": {"$ref": "#/$defs/organization_id"},
+        "refs": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/reference"}}
+      }
+    },
+    "resolve_response": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items"],
+      "properties": {"items": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/version"}}}
+    },
+    "skill_page": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "next_after_id"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/skill"}},
+        "next_after_id": {"type": "string"}
+      }
+    },
+    "version_page": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "next_after_version"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/version"}},
+        "next_after_version": {"type": "integer", "minimum": 0}
+      }
+    },
+    "error": {
+      "type": "object", "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object", "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {"enum": ["invalid_request", "invalid_package", "unauthorized", "not_found", "name_conflict", "request_conflict", "revision_conflict", "limit_exceeded", "busy", "temporarily_unavailable"]},
+            "message": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

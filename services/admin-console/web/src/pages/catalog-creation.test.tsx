@@ -158,6 +158,35 @@ it("submits an ordered backup from another Provider with a new template", async 
   );
 });
 
+it("creates a Template with a selected fixed Skill version", async () => {
+  const skillID = "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const published = { skill_id: skillID, name: "review", description: "Review", artifact_digest: `sha256:${"a".repeat(64)}`, content_digest: `sha256:${"b".repeat(64)}`, artifact_size: 100, unpacked_size: 200, package_rules_version: 1 };
+  let written: Record<string, unknown> | undefined;
+  vi.stubGlobal("fetch", vi.fn(async (input: string, init: RequestInit) => {
+    const path = new URL(input, "http://localhost").pathname;
+    if (path === "/api/admin/templates" && init.method === "POST") {
+      written = JSON.parse(String(init.body));
+      return Response.json({ ...template, skill_refs: [{ ...published, version: 2 }] }, { status: 201 });
+    }
+    if (path === "/api/admin/templates") return Response.json({ items: [], next_after_id: null });
+    if (path === "/api/admin/model-profiles") return Response.json({ items: [model], next_after_id: null });
+    if (path === "/api/admin/template-defaults") return Response.json({ runtime_image_ref: "runtime:latest" });
+    if (path === "/api/admin/skills") return Response.json({ items: [{ ...published, current_version: 2 }], next_after_id: null });
+    if (path === `/api/admin/skills/${skillID}/versions`) return Response.json({ items: [{ ...published, version: 2 }, { ...published, version: 1 }], next_after_version: null });
+    throw new Error(`Unexpected request: ${path}`);
+  }));
+  render(<TemplatesPage />);
+  await waitFor(() => expect((screen.getAllByRole("button", { name: "Create template" })[0] as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getAllByRole("button", { name: "Create template" })[0]!);
+  fillForm("template");
+  const dialog = within(await screen.findByRole("dialog"));
+  fireEvent.change(await dialog.findByLabelText("Add Skill"), { target: { value: skillID } });
+  fireEvent.change(await dialog.findByLabelText("Skill version"), { target: { value: "1" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Add fixed version" }));
+  fireEvent.click(dialog.getByRole("button", { name: "Create template" }));
+  await waitFor(() => expect(written?.skill_refs).toEqual([{ skill_id: skillID, version: 1 }]));
+});
+
 async function fillForm(name: string) {
   if (name === "model") {
     fireEvent.change(screen.getByLabelText("API key"), {

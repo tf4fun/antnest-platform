@@ -206,6 +206,12 @@ func (catalogOnlyLifecycle) GetLifecycleOperation(
 	return application.OperationView{}, application.ErrDependencyUnavailable
 }
 
+func (catalogOnlyLifecycle) GetSkillPreparationStatus(
+	context.Context, string, string,
+) (application.SkillPreparationStatus, error) {
+	return application.SkillPreparationStatus{}, application.ErrDependencyUnavailable
+}
+
 func (catalogOnlyLifecycle) CreateAgent(
 	context.Context, application.CreateAgentInput,
 ) (application.CreateAgentResult, error) {
@@ -214,6 +220,12 @@ func (catalogOnlyLifecycle) CreateAgent(
 
 func (catalogOnlyLifecycle) RebuildAgent(
 	context.Context, application.RebuildAgentInput,
+) (application.RebuildAgentResult, error) {
+	return application.RebuildAgentResult{}, application.ErrDependencyUnavailable
+}
+
+func (catalogOnlyLifecycle) MigrateLegacySkills(
+	context.Context, application.LegacySkillMigrationOperationInput,
 ) (application.RebuildAgentResult, error) {
 	return application.RebuildAgentResult{}, application.ErrDependencyUnavailable
 }

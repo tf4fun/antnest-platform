@@ -16,7 +16,7 @@ func TestDeleteWorkflowFailureAndExplicitRetry(t *testing.T) {
 		runtime: ports.RuntimeOperation{RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.Agent.RuntimeExecutionID,
 			MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy"},
 	}, reject: true, calls: make(map[string]int)}
-	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	ctx := context.Background()
 	input := application.DeleteAgentInput{RequestID: "delete-rejected", AgentID: base.Agent.AgentID}
 	if _, err := service.DeleteAgent(ctx, input); err != nil {

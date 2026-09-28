@@ -9,10 +9,12 @@ import (
 	"math"
 	"net/netip"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/distribution/reference"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 var (
@@ -40,22 +42,32 @@ func (k Key) Validate() error {
 }
 
 type Deployment struct {
-	ImageReference string         `json:"image_reference,omitempty"`
-	ImageRef       string         `json:"image_ref"`
-	RuntimeSpec    RuntimeSpec    `json:"runtime_spec"`
-	Resources      ResourceLimits `json:"resources"`
+	ImageReference          string                            `json:"image_reference,omitempty"`
+	ImageRef                string                            `json:"image_ref"`
+	RuntimeSpec             RuntimeSpec                       `json:"runtime_spec"`
+	Resources               ResourceLimits                    `json:"resources"`
+	PreparedSkills          *skillset.PreparedReference       `json:"prepared_skills,omitempty"`
+	PreparedMaterialization *skillset.PreparedMaterialization `json:"-"`
 }
 
 // Configuration is the caller-owned policy input. Deployment identity and
 // Runtime image invariants are injected by Runtime Controller.
 type Configuration struct {
-	MCPServers []MCPServer    `json:"mcp_servers,omitempty"`
-	ImageRef   string         `json:"image_ref"`
-	Network    NetworkSpec    `json:"network"`
-	Resources  ResourceLimits `json:"resources"`
+	MCPServers          []MCPServer            `json:"mcp_servers,omitempty"`
+	ImageRef            string                 `json:"image_ref"`
+	Network             NetworkSpec            `json:"network"`
+	Resources           ResourceLimits         `json:"resources"`
+	OrganizationID      string                 `json:"organization_id,omitempty"`
+	SystemSkills        []skillset.FrozenSkill `json:"system_skills,omitempty"`
+	PreparedSkillSet    *skillset.PreparedSet  `json:"prepared_skill_set,omitempty"`
+	PreparedReferenceID string                 `json:"prepared_reference_id,omitempty"`
+	SkillScope          string                 `json:"-"`
 }
 
 func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, error) {
+	if err := c.validatePreparedSkills(); err != nil {
+		return Deployment{}, err
+	}
 	value := Deployment{
 		ImageRef: c.ImageRef,
 		RuntimeSpec: RuntimeSpec{
@@ -67,10 +79,32 @@ func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, e
 		},
 		Resources: c.Resources,
 	}
+	if c.PreparedSkillSet != nil {
+		value.PreparedSkills = &skillset.PreparedReference{Scope: c.SkillScope, OrganizationID: c.OrganizationID, AgentID: agentID,
+			SkillSetDigest: c.PreparedSkillSet.SkillSetDigest, LayoutVersion: c.PreparedSkillSet.LayoutVersion,
+			ReferenceID: c.PreparedReferenceID, SystemSkills: slices.Clone(c.SystemSkills)}
+	}
 	if err := value.ValidateFor(Key{AgentID: agentID, Generation: generation}); err != nil {
 		return Deployment{}, err
 	}
 	return value, nil
+}
+
+func (c Configuration) validatePreparedSkills() error {
+	if c.OrganizationID == "" && c.SystemSkills == nil && c.PreparedSkillSet == nil && c.PreparedReferenceID == "" {
+		return nil
+	}
+	if c.OrganizationID == "" || c.SystemSkills == nil || c.PreparedSkillSet == nil || len(c.PreparedReferenceID) != 36 || !strings.HasPrefix(c.PreparedReferenceID, "psr_") {
+		return invalid("complete prepared Skill set identity is required")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(c.PreparedReferenceID, "psr_")); err != nil {
+		return invalid("prepared_reference_id is invalid")
+	}
+	digest, err := skillset.Digest(c.OrganizationID, c.PreparedSkillSet.LayoutVersion, c.SystemSkills)
+	if err != nil || digest != c.PreparedSkillSet.SkillSetDigest {
+		return invalid("prepared Skill set differs from frozen metadata")
+	}
+	return nil
 }
 
 func (c Configuration) Validate() error {
@@ -487,15 +521,21 @@ type Operation struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 
-	Attempt          uint64
-	ExpectedRevision RuntimeRevision
-	SourceState      LifecycleState
-	SourceRevision   RuntimeRevision
-	SourceGeneration uint64
-	SourceSpecDigest string
-	Generation       uint64
-	SpecDigest       string
-	Transition       LifecycleState
+	Attempt                 uint64
+	ExpectedRevision        RuntimeRevision
+	SourceState             LifecycleState
+	SourceRevision          RuntimeRevision
+	SourceGeneration        uint64
+	SourceSpecDigest        string
+	Generation              uint64
+	SpecDigest              string
+	Transition              LifecycleState
+	PreparedReference       *skillset.PreparedReference
+	PreparedSetID           int64
+	PreparedVolumeName      string
+	PreparedMaterialization int64
+	PreparedManifestDigest  string
+	PreparedReferenceID     string
 }
 
 func (o Operation) RuntimeKey() Key {

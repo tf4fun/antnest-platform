@@ -15,7 +15,7 @@ func TestDeleteDefinitiveFailureIsRetainedWithoutReleasingResources(t *testing.T
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.runtime = ports.RuntimeOperation{State: "failed", Effect: "not_started", ErrorCode: "docker_denied", ErrorDetail: "Docker rejected deletion"}
-	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(730, 0).UTC()},
+	service := newTestLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(730, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 	input := DeleteAgentInput{RequestID: "delete-definitive-failure", AgentID: base.Agent.AgentID}
@@ -39,7 +39,7 @@ func TestDeleteDrainDeadlineEndsAttemptButKeepsDeletionIntent(t *testing.T) {
 	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDeleteDependencies(base.Agent)
-	service := NewLifecycleServiceWithDrainTimeout(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(900, 0).UTC()}, time.Minute,
+	service := newTestLifecycleServiceWithDrainTimeout(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(900, 0).UTC()}, time.Minute,
 		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 	input := DeleteAgentInput{RequestID: "delete-drain-timeout", AgentID: base.Agent.AgentID}
@@ -58,7 +58,7 @@ func TestDeleteRetryResolvesFreshRuntimeWithoutRevivingAgent(t *testing.T) {
 	base.Agent.DesiredState = domain.DesiredDeleted
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
-	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(950, 0).UTC()},
+	service := newTestLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(950, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 	result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{RequestID: "delete-explicit-retry", AgentID: base.Agent.AgentID})

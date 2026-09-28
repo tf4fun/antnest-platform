@@ -16,6 +16,15 @@ Admin Console is the administrator React application and thin BFF for Antnest
 Platform. It presents Identity and Agent lifecycle facts without becoming a
 second source of truth.
 
+The Stage 4 [Skills module](docs/skills.md) lists and publishes immutable
+organization Skill versions through the private Registry. Template selection
+pins exact versions in Controller. The Agent creation dialog now reads scoped
+Skill preparation progress through the BFF and preserves its original command
+key for explicit retry. Rebuild and Enable now use the same progress read and
+freeze the original command tuple before lifecycle admission. Runtime
+installation belongs to RC; full-chain
+acceptance remains separate.
+
 ## Status
 
 The [2026-09-26 dependency refresh](../../docs/dependency-refresh-20260926.md)

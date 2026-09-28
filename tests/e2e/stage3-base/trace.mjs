@@ -14,6 +14,42 @@ import { runtimeCommandId } from "./contracts.mjs";
 import { inspectWorkflowRestart } from "./workflow-restart.mjs";
 import { inspectUpdateRestart } from "./update-restart.mjs";
 
+export function clockWarningsOnly(traces) {
+  return traces.every(
+    (result) =>
+      result.strict_trace === "passed" ||
+      (result.strict_trace === "failed" &&
+        result.warning_count > 0 &&
+        result.warnings?.length > 0 &&
+        result.warnings.every((warning) =>
+          /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/.test(
+            warning,
+          ),
+        ) &&
+        (result.platform_probe_errors ?? 0) === 0 &&
+        (result.restart_error_spans ?? 0) === 0),
+  );
+}
+
+export function reviewedFencedRestartOnly(traces) {
+  const restarted = traces.filter(
+    (result) => result.fenced_restart_cancellation === true,
+  );
+  if (restarted.length !== 1) return false;
+  const [result] = restarted;
+  return (
+    result.kind === "rebuild" &&
+    result.restart_error_spans === 2 &&
+    result.platform_probe_errors === 0 &&
+    (result.warnings ?? []).every((warning) =>
+      /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/.test(
+        warning,
+      ),
+    ) &&
+    clockWarningsOnly(traces.filter((item) => item !== result))
+  );
+}
+
 export function inspectLifecycle(trace, expected, secrets = []) {
   const { kind, requestId, agentId } = expected;
   const settlementOutcome = expected.settlementOutcome ?? "settled";
@@ -42,8 +78,105 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       ? inspectWorkflowRestart(trace, tree, expected)
       : undefined;
   const errors = trace.spans.filter(hasError);
+  const skillRetries = new Set();
+  const expectedTransportFaults = new Set();
+  if (expected.startResponseLoss) {
+    assert.equal(kind, "rebuild");
+    const faults = errors.filter(
+      (span) =>
+        tree.service(span) === "runtime-controller" &&
+        span.operationName === "HTTP POST docker" &&
+        tag(span, "http.request.method") === "POST" &&
+        tag(span, "antnest.error.code") === "transport_failed" &&
+        tag(span, "antnest.error.stage") === "http_send",
+    );
+    assert.equal(
+      faults.length,
+      1,
+      "expected exactly one lost Docker Start response",
+    );
+    const [fault] = faults;
+    const platform = tree.parent(fault);
+    assert.equal(platform?.operationName, "runtime.platform.create");
+    assert.equal(tag(platform, "antnest.outcome"), "completed");
+    assert.equal(
+      tree.parent(platform)?.operationName,
+      "runtime.lifecycle.update_runtime",
+    );
+    const siblings = trace.spans.filter(
+      (span) =>
+        tree.parent(span) === platform &&
+        tree.service(span) === "runtime-controller" &&
+        tag(span, "peer.service") === "docker",
+    );
+    assert(
+      siblings.some(
+        (span) =>
+          !hasError(span) &&
+          tag(span, "http.request.method") === "POST" &&
+          tag(span, "http.response.status_code") === 201 &&
+          span.startTime + span.duration <= fault.startTime,
+      ),
+      "lost Start response had no successful candidate creation",
+    );
+    assert(
+      siblings.some(
+        (span) =>
+          !hasError(span) &&
+          tag(span, "http.request.method") === "GET" &&
+          tag(span, "http.response.status_code") === 200 &&
+          span.startTime >= fault.startTime + fault.duration,
+      ),
+      "lost Start response was not followed by Docker reconciliation",
+    );
+    expectedTransportFaults.add(fault);
+  }
+  if (expected.skillPreparation) {
+    assert(["create", "enable", "rebuild"].includes(kind));
+    const activityName = kind === "create" ? "admit_agent" : "admit_lifecycle";
+    for (const span of errors.filter(
+      (item) => item.operationName === `RunActivity:${activityName}`,
+    )) {
+      if (
+        !/^dependency unavailable: Skill preparation (?:queued|preparing|retry_wait|cleanup_pending)$/.test(
+          tag(span, "otel.status_description") ?? "",
+        )
+      )
+        continue;
+      assert.equal(tree.service(span), "agent-controller");
+      assert.equal(tag(span, "span.kind"), "server");
+      assert.equal(
+        tag(span, "temporalWorkflowID"),
+        `agent-${kind}/${requestId}`,
+      );
+      const parent = tree.parent(span);
+      assert(
+        tree
+          .chain(span)
+          .some((ancestor) =>
+            ancestor.operationName.startsWith("RunWorkflow:"),
+          ),
+        "Skill retry has no owning Workflow",
+      );
+      assert(
+        trace.spans.some(
+          (candidate) =>
+            candidate.operationName === span.operationName &&
+            !hasError(candidate) &&
+            tree.parent(candidate) === parent &&
+            candidate.startTime >= span.startTime + span.duration,
+        ),
+        "Skill preparation queue was not followed by successful admission",
+      );
+      skillRetries.add(span);
+    }
+  }
   for (const error of errors)
-    if (!restart?.errors.has(error))
+    if (
+      !restart?.errors.has(error) &&
+      !skillRetries.has(error) &&
+      !expectedTransportFaults.has(error)
+    )
       assertDockerProbe(trace, tree, error, expected);
   const absence = trace.spans.filter(
     (s) =>
@@ -53,6 +186,39 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       tag(s, "http.response.status_code") === 404,
   );
   for (const probe of absence) assertDockerProbe(trace, tree, probe, expected);
+  if (expected.readyVolumeLoss) {
+    assert.equal(kind, "enable");
+    assert(
+      absence.some(
+        (probe) =>
+          tree.parent(probe)?.operationName ===
+          "HTTP POST /internal/runtimes/{agent_id}/skill-sets/prepare",
+      ),
+      "Enable did not observe a missing ready Skill resource",
+    );
+    assert(
+      skillRetries.size > 0,
+      "missing ready Skill volume did not queue a preparation retry",
+    );
+  }
+  if (expected.readyVolumeDrift) {
+    assert.equal(kind, "enable");
+    assert(
+      skillRetries.size > 0,
+      "drifted ready Skill volume did not queue a preparation retry",
+    );
+  }
+  if (expected.registryOutage) {
+    assert.equal(kind, "rebuild");
+    assert(
+      [...skillRetries].some(
+        (span) =>
+          tag(span, "otel.status_description") ===
+          "dependency unavailable: Skill preparation retry_wait",
+      ),
+      "Registry outage did not produce a durable preparation retry",
+    );
+  }
   if (expected.missingSourceGeneration !== undefined) {
     assert.equal(kind, "rebuild");
     assert.equal(
@@ -191,6 +357,7 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       .filter(
         (s) =>
           s.operationName === `RunActivity:${name}` &&
+          !skillRetries.has(s) &&
           workflows.some((workflow) => tree.chain(s).includes(workflow)),
       )
       .sort((a, b) => a.startTime - b.startTime);
@@ -457,10 +624,23 @@ export function inspectLifecycle(trace, expected, secrets = []) {
     activities,
     settlement,
     ...timing,
-    platform_probe_errors: errors.length - (restart?.errors.size ?? 0),
+    platform_probe_errors:
+      errors.length -
+      (restart?.errors.size ?? 0) -
+      skillRetries.size -
+      expectedTransportFaults.size,
+    ...(expected.startResponseLoss
+      ? { expected_transport_faults: expectedTransportFaults.size }
+      : {}),
+    ...(expected.skillPreparation
+      ? { skill_preparation_retries: skillRetries.size }
+      : {}),
     ...(restart
       ? {
           restart_error_spans: restart.errors.size,
+          ...(expected.updateRestart?.fencedBeforeForward
+            ? { fenced_restart_cancellation: true }
+            : {}),
           workflow_spans: workflows.map((s) => ({
             span_id: s.spanID,
             end_reason: tag(s, "antnest.temporal.workflow.span_end"),
@@ -468,7 +648,10 @@ export function inspectLifecycle(trace, expected, secrets = []) {
         }
       : {}),
     platform_absence_probes: absence.length,
-    strict_trace: errors.length ? "failed" : timing.strict_trace,
+    strict_trace:
+      errors.length > skillRetries.size + expectedTransportFaults.size
+        ? "failed"
+        : timing.strict_trace,
     timing: {
       [expected.offboarding
         ? "schedule_start_minus_identity_us"
@@ -508,6 +691,24 @@ export function assertDockerProbe(trace, tree, error, expected) {
   }
   const platform = tree.parent(error);
   assert.equal(tree.service(platform), "runtime-controller");
+  if (
+    expected.skillPreparation &&
+    platform.operationName ===
+      "HTTP POST /internal/runtimes/{agent_id}/skill-sets/prepare"
+  ) {
+    const admission =
+      expected.kind === "create"
+        ? "RunActivity:admit_agent"
+        : "RunActivity:admit_lifecycle";
+    assert.equal(tag(platform, "antnest.outcome"), "completed");
+    assert.equal(tag(platform, "http.status_code"), 202);
+    assert(
+      tree
+        .chain(error)
+        .some((ancestor) => ancestor.operationName === admission),
+    );
+    return;
+  }
   assert.equal(tag(platform, "antnest.agent.id"), expected.agentId);
   assert.equal(tag(platform, "antnest.outcome"), "completed");
   assert.equal(tag(platform, "antnest.platform"), "docker");
@@ -596,6 +797,26 @@ export function assertDockerProbe(trace, tree, error, expected) {
       tag(s, "http.response.status_code") === 201,
   );
   assert(allocated, "absence probe has no successful allocation");
+  if (!storage && expected.startResponseLoss && expected.kind === "rebuild") {
+    const lostStart = trace.spans.find(
+      (span) =>
+        tree.parent(span) === platform &&
+        span.startTime >= allocated.startTime + allocated.duration &&
+        span.operationName === "HTTP POST docker" &&
+        tag(span, "antnest.error.code") === "transport_failed",
+    );
+    assert(
+      lostStart &&
+        following.some(
+          (span) =>
+            span.startTime >= lostStart.startTime + lostStart.duration &&
+            tag(span, "http.request.method") === "GET" &&
+            tag(span, "http.response.status_code") === 200,
+        ),
+      "lost Docker Start response has no successful reconciliation",
+    );
+    return;
+  }
   assert(
     following.some(
       (s) =>

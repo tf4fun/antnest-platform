@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,11 +34,12 @@ const (
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 
 type CatalogService struct {
-	store        ports.CatalogStore
-	sealer       ports.CredentialSealer
-	clock        ports.Clock
-	opener       ports.CredentialOpener
-	accessReader ports.ProviderAccessReader
+	store         ports.CatalogStore
+	sealer        ports.CredentialSealer
+	clock         ports.Clock
+	opener        ports.CredentialOpener
+	accessReader  ports.ProviderAccessReader
+	skillResolver ports.SkillVersionResolver
 }
 
 func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock, options ...CatalogOption) *CatalogService {
@@ -180,6 +182,7 @@ type CreateTemplateInput struct {
 	MaxModelRequests        int
 	ContextPolicyVersion    string
 	Runtime                 domain.RuntimeSpecInput
+	SkillRefs               []domain.SkillReference
 }
 
 type TemplateView struct {
@@ -194,6 +197,8 @@ type TemplateView struct {
 	MaxModelRequests        int
 	ContextPolicyVersion    string
 	Runtime                 domain.RuntimeSpecInput
+	SkillRefs               []domain.FrozenSkill
+	SkillSetDigest          string
 	Enabled                 bool
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
@@ -226,13 +231,17 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if modelRevision.OrganizationID() != input.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
 	}
+	skills, err := service.resolveTemplateSkills(ctx, input.OrganizationID, input.SkillRefs)
+	if err != nil {
+		return TemplateView{}, err
+	}
 	templateID := derivedID("template", input.RequestID)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: templateID, OrganizationID: input.OrganizationID, Revision: 1,
 		ModelProfileID:          input.ModelProfileID,
 		FallbackModelProfileIDs: input.FallbackModelProfileIDs,
 		SystemPrompt:            input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
-		Runtime: input.Runtime, ContextPolicyVersion: input.ContextPolicyVersion,
+		Runtime: input.Runtime, ContextPolicyVersion: input.ContextPolicyVersion, SkillRefs: skills,
 	})
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
@@ -261,6 +270,7 @@ type ReviseTemplateInput struct {
 	MaxModelRequests        int
 	ContextPolicyVersion    string
 	Runtime                 domain.RuntimeSpecInput
+	SkillRefs               []domain.SkillReference
 }
 
 func (service *CatalogService) ReviseTemplate(
@@ -298,12 +308,16 @@ func (service *CatalogService) ReviseTemplate(
 	if modelRevision.OrganizationID() != current.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
 	}
+	skills, err := service.resolveTemplateSkills(ctx, current.OrganizationID, input.SkillRefs)
+	if err != nil {
+		return TemplateView{}, err
+	}
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID,
 		Revision: current.Revision.Revision() + 1, ModelProfileID: input.ModelProfileID,
 		FallbackModelProfileIDs: input.FallbackModelProfileIDs,
 		SystemPrompt:            input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
-		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: input.Runtime,
+		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: input.Runtime, SkillRefs: skills,
 	})
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
@@ -453,6 +467,53 @@ func validateTemplateInput(input CreateTemplateInput) error {
 	return nil
 }
 
+func (service *CatalogService) resolveTemplateSkills(ctx context.Context, organizationID string, refs []domain.SkillReference) ([]domain.FrozenSkill, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if len(refs) > 32 {
+		return nil, fmt.Errorf("%w: too many Skill references", ErrInvalidInput)
+	}
+	seen := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		if !domain.ValidSkillReference(ref) || seen[ref.SkillID] {
+			return nil, fmt.Errorf("%w: duplicate or invalid Skill reference", ErrInvalidInput)
+		}
+		seen[ref.SkillID] = true
+	}
+	if service.skillResolver == nil {
+		return nil, fmt.Errorf("%w: Skill Registry is not configured", ErrDependencyUnavailable)
+	}
+	items, err := service.skillResolver.Resolve(ctx, organizationID, refs)
+	if err != nil {
+		if errors.Is(err, ports.ErrSkillNotFound) {
+			return nil, fmt.Errorf("%w: Skill version", ErrInvalidReference)
+		}
+		return nil, fmt.Errorf("%w: resolve Skill versions: %v", ErrDependencyUnavailable, err)
+	}
+	if len(items) != len(refs) {
+		return nil, fmt.Errorf("%w: incomplete Skill resolution", ErrInvalidReference)
+	}
+	versions := make(map[string]int64, len(refs))
+	for _, ref := range refs {
+		versions[ref.SkillID] = ref.Version
+	}
+	for _, item := range items {
+		if versions[item.SkillID] != item.Version || item.Version == 0 {
+			return nil, fmt.Errorf("%w: mismatched Skill resolution", ErrInvalidReference)
+		}
+		delete(versions, item.SkillID)
+	}
+	if len(versions) != 0 {
+		return nil, fmt.Errorf("%w: incomplete Skill resolution", ErrInvalidReference)
+	}
+	if err := domain.ValidateFrozenSkills(items); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidReference, err)
+	}
+	slices.SortFunc(items, func(a, b domain.FrozenSkill) int { return strings.Compare(a.SkillID, b.SkillID) })
+	return items, nil
+}
+
 func validateListCatalogInput(input ListCatalogInput) (ListCatalogInput, error) {
 	if !validIdentifier(input.OrganizationID) || (input.AfterID != "" && !validIdentifier(input.AfterID)) {
 		return ListCatalogInput{}, fmt.Errorf("%w: Catalog list identity", ErrInvalidInput)
@@ -509,6 +570,8 @@ func templateView(record ports.TemplateRecord) TemplateView {
 		MaxModelRequests:        snapshot.MaxModelRequests,
 		ContextPolicyVersion:    record.Revision.ContextPolicyVersion(),
 		Runtime:                 snapshot.Runtime,
+		SkillRefs:               snapshot.SkillRefs,
+		SkillSetDigest:          snapshot.SkillSetDigest,
 		Enabled:                 record.Enabled,
 		CreatedAt:               record.CreatedAt,
 		UpdatedAt:               record.UpdatedAt,

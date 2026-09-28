@@ -1,8 +1,13 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 44,
+  "version": 47,
   "base_path": "/api/admin",
   "routes": {
+    "list_skills": {"method": "GET", "path": "/skills", "query": {"optional": ["after_id", "limit"], "cursor_response": "next_after_id"}},
+    "publish_skill": {"method": "POST", "path": "/skills", "content_type": "multipart/form-data", "parts": ["artifact"], "requires": ["Idempotency-Key"]},
+    "list_skill_versions": {"method": "GET", "path": "/skills/{skill_id}/versions", "query": {"optional": ["after_version", "limit"], "cursor_response": "next_after_version"}},
+    "publish_skill_version": {"method": "POST", "path": "/skills/{skill_id}/versions", "content_type": "multipart/form-data", "parts": ["artifact", "expected_version"], "requires": ["Idempotency-Key"]},
+    "download_skill_version": {"method": "GET", "path": "/skills/{skill_id}/versions/{version}/artifact", "content_type": "application/zip"},
     "set_provider_availability": {
       "method": "PUT",
       "path": "/provider-connections/{connection_id}/availability"
@@ -164,6 +169,22 @@
       "method": "POST",
       "path": "/agents"
     },
+    "get_agent_skill_preparation": {
+      "method": "GET",
+      "path": "/agent-skill-preparations/{request_id}",
+      "query": "reject_all",
+      "scope": "trusted_organization",
+      "projection": "bounded_progress_without_target_spec_or_prepared_reference",
+      "cache_control": "no-store"
+    },
+    "get_agent_skill_preparation_by_key": {
+      "method": "GET",
+      "path": "/agent-skill-preparations/by-idempotency-key",
+      "headers": {"required": ["Idempotency-Key"]},
+      "query": "reject_all",
+      "request_identity": "derive_lifecycle_request_id_from_trusted_organization_and_original_key",
+      "cache_control": "no-store"
+    },
     "get_agent": {
       "method": "GET",
       "path": "/agents/{agent_id}"
@@ -266,6 +287,7 @@
       "agent_templates",
       "agents",
       "agent_network_policy",
+      "agent_skill_preparation",
       "operations",
       "events"
     ],
@@ -273,6 +295,13 @@
       "list_execution_audits",
       "get_execution_audit",
       "list_execution_events"
+    ],
+    "skill_registry": [
+      "list_skills",
+      "publish_skill",
+      "list_skill_versions",
+      "publish_skill_version",
+      "download_skill_version"
     ]
   },
   "response_policy": {
@@ -369,6 +398,14 @@
       "environment_values": "administrator_detail_only_visually_masked_not_encrypted",
       "cache_control": "no-store",
       "browser_value_persistence": "forbidden",
+      "apply": "explicit_agent_rebuild"
+    },
+    "template_skills": {
+      "configuration_owner": "agent_controller_immutable_template_revision",
+      "write": "skill_refs_array_of_skill_id_and_positive_fixed_version_create_and_revise",
+      "clear": "explicit_empty_array_in_new_revision",
+      "read": "frozen_skill_metadata_and_skill_set_digest_from_controller",
+      "inventory": "frozen_skill_identity_without_artifact_bytes",
       "apply": "explicit_agent_rebuild"
     },
     "catalog_creation": {

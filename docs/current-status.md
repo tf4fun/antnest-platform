@@ -1,5 +1,93 @@
 # Current Implementation And Acceptance
 
+Skill Registry's first release is accepted for the current clean development
+deployment. There is no legacy business data to migrate. Old shared-volume
+migration, protected off-host legacy export and exceptional legacy-source
+restoration are outside this release's scope. Their existing code and tests are
+historical work, not pending delivery gates. The
+[acceptance audit](skill-registry-acceptance-audit-20260928.md) records the evidence
+and limits; the [minimal design](skill-registry-minimal-design.md) defines the
+implemented hosting, frozen Template references and read-only Runtime delivery.
+
+The [Stage 4 plan](stage-4-services.md) contains exactly three services:
+`skill-registry`, `channel-manager` and `task-scheduler`. Only Skill Registry is
+implemented. Channel Manager and Task Scheduler retain their planned ownership;
+they have no implementation or detailed shared contracts. The independent
+[Skill learning design](skill-learning-design.md) also remains a proposal.
+
+The Registry-owned [API/schema](../contracts/skill-registry/registry-api.md)
+and [service](../services/skill-registry/README.md) validate and store immutable
+organization-scoped package versions. Unit, contract and isolated PostgreSQL
+checks cover fixed bytes/digests, publication replay, concurrent revision CAS,
+organization isolation and package limits. The shared `package-rules-v1.json`
+cases run through Registry/RC Go validators and the actual Runtime Rust parser,
+including parser-specific scalar types and forbidden merge keys. The old
+`skill_instructions` field is permanently empty; ACP rejects nonempty input and
+no longer appends Skill bodies to system prompts. Console's audit projection
+also omits that body field.
+
+Controller freezes exact Skill versions in Template revisions and AgentSpec.
+It persists a preparation intent before create, rebuild or enable, and enters
+the lifecycle only after RC returns a ready collection. RC owns downloads,
+complete readback, resumable package checkpoints, per-Agent collection volumes,
+reference transfer, mount validation and cleanup. Preparation retries retain
+the source Agent's execution availability. Fenced rejection restores its network
+and ACP admission; tests cover publication, restart, volume races and uncertain
+Docker effects without silently mounting an empty replacement.
+
+The [Admin Console Skills module](../services/admin-console/docs/skills.md)
+provides upload/version lists, explicit Template selection, and creation,
+rebuild and enable preparation progress with same-request retry. Its local
+unit/component, user-approved desktop/mobile browser, authenticated login and
+isolated Docker BFF checks pass. Stub-backed BFF checks are distinguished from
+the separate real Controller/RC/ACP business gate.
+
+The current evidence includes:
+
+- `make e2e-stage3-skill-delivery`: rebuilt Registry, Controller, RC and Console
+  images passed the disposable 12-service deployment on 2026-09-28. Publication
+  of v1, frozen Template creation, Agent creation, real ACP Skill-reading Runs,
+  publication of v2, explicit rebuild, Disable/Enable and Delete all passed.
+  Workspace history is preserved and new publication does not change a running
+  Agent. Runtime service-name and actual private-IPv4 access to Registry is denied;
+  the tested Registry network has IPv6 disabled.
+- `make integration-stage4-skill-prepare`: HTTP/PG/Docker preparation and
+  Initialize consume the exact manifest and actual read-only mount. Real Runtime
+  discovery and on-demand reads pass. Root and UID 1000 cannot write, delete,
+  rename, chmod, create links inside the mount or write through a workspace link.
+  The 2026-09-29 repeat explicitly enabled `ANTNEST_TEST_REAL_RUNTIME_IMAGE` and
+  passed real executor discovery/read plus `write`/`edit` rejection. Its unique
+  private log preserves those results even if a later optional profile replaces
+  the shared JSON summary.
+- `make integration-stage4-skill-slow-prepare` and
+  `make integration-stage4-skill-restart-prepare`: five delayed packages finish
+  in 126.654 and 143.292 seconds, beyond the 120-second mutation budget. A
+  graceful RC restart preserves the first package checkpoint and avoids its
+  redownload. Preparation has its own budget and shutdown settles its worker.
+- RC PostgreSQL tests age a retained reference beyond the five-minute Drain
+  window and consume it after reopening the repository. Docker gates separately
+  cover fenced invalidation, Controller/RC restart, Initialize/Rebuild mount
+  races, lost Docker responses, disabled-volume loss, unmounted target drift,
+  Registry outage and offline same-set reuse. The reference test uses aged
+  database state; it does not claim a five-minute wall-clock Drain run.
+- `make e2e-stage4-skill-restore`: on 2026-09-28, eight databases and six persistent
+  volumes were restored for two real Agents. Four ACP Runs, retained history,
+  independent Skill volumes and Registry-offline Enable passed. Removing one
+  disabled Agent's Skill volume while Registry remained offline blocked its
+  Enable, while the unaffected peer still completed a Skill-reading Run.
+- Service/unit/contract/component checks and the latest formatting, Go lint,
+  Node lint/type checks and test-storage policy checks pass. Test sources stay
+  in their service or root `tests/integration`/`tests/e2e`; durable private
+  evidence stays in ignored `artifacts/verification`.
+
+Business and applicable Trace topology gates pass. Original strict Trace
+results retain the already reviewed clock warnings; no global clock/NTP project
+is part of this delivery. Complete Prepare readback, startup mount/manifest
+checks, read-only Runtime access and recovery validation cover the normal Skill
+lifecycle. Continuous scanning for privileged host-side changes to an already
+mounted volume is outside the agreed scope. These limits do not block the
+current first release.
+
 The pre-Stage-4 dependency refresh and full current-service automated regression
 are complete on 2026-09-26. The [delivery and verification record](dependency-refresh-20260926.md)
 records fresh service/unit/contract/component, database, image and 32 Docker
@@ -57,8 +145,8 @@ fork, authorization and no model calls for controls; temporary resources are
 cleaned. The refreshed candidate also passes real-stack browser command input,
 two-page SSE/control synchronization, Session navigation and reload restoration
 without extra model requests. Human visual approval remains separate. Channel
-Gateway and the other Stage 4 services remain
-unstarted; this is not a completed cross-channel workflow or final acceptance.
+Manager and the other Stage 4 services have no implementation yet; this is not a
+completed cross-channel workflow or final acceptance.
 `session/fork` is an explicitly negotiated **UNSTABLE** SDK capability, not a
 stable ACP v1 requirement. The 2026-09-26 recheck found SDK 1.5.0 (released
 2026-09-21) while the earlier tests used pinned 1.4.0. The 1.5.0 service upgrade,
@@ -488,9 +576,12 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   batch evidence. The later development synchronization deployed the verified
   ACP/UI candidates and added scoped real-provider regression; it is not a new
   full-platform acceptance run.
-- Skill Registry and Channel Gateway are not started. They and the planned
-  Scheduler belong to Stage 4. Kubernetes remains planning-only; horizontal
-  scaling and high availability are outside Stage 3.
+- Skill Registry's current hosting, frozen Template references and read-only
+  Runtime delivery pass the [first-release acceptance audit](skill-registry-acceptance-audit-20260928.md).
+  Legacy migration/export is outside the clean-development scope. Channel Manager,
+  Task Scheduler and the independent Skill learning proposal remain future work;
+  their design or implementation requires a separately scoped batch. Kubernetes,
+  horizontal scaling and high availability remain outside the Stage 4 plan.
 - The declared ACP profile does not imply universal conformance or client MCP
   injection support. [Protocol conformance](../services/agent-acp-service/docs/protocol-conformance.md)
   remains authoritative for individual capabilities and exclusions.

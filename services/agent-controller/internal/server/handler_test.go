@@ -195,6 +195,38 @@ func TestCatalogHandlerListsCurrentTemplatesWithNullableCursor(t *testing.T) {
 	}
 }
 
+func TestCatalogHandlerAcceptsSkillReferenceAndReturnsFrozenMetadata(t *testing.T) {
+	t.Parallel()
+	view := sampleTemplateView()
+	view.SkillRefs = []domain.FrozenSkill{{SkillID: "skill_11111111111111111111111111111111", Version: 2,
+		Name: "code-review", Description: "Review code", ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
+		ContentDigest: "sha256:" + strings.Repeat("b", 64), ArtifactSize: 100, UnpackedSize: 200,
+		PackageRulesVersion: 1}}
+	service := &catalogServiceStub{templateView: view}
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody := `{"request_id":"request-1","organization_id":"org-1","template_key":"personal","name":"Personal","model_profile_id":"model-1","system_prompt":"","max_model_requests":8,"context_policy_version":"context-v1","runtime":{"image_ref":"antnest/runtime:latest","resources":{"memory_bytes":536870912,"pids_limit":256,"tmpfs_bytes":67108864}},"skill_refs":[{"skill_id":"skill_11111111111111111111111111111111","version":2}]}`
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/internal/agent-templates", strings.NewReader(requestBody)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if len(service.createTemplateInput.SkillRefs) != 1 || service.createTemplateInput.SkillRefs[0].Version != 2 {
+		t.Fatalf("request refs = %+v", service.createTemplateInput.SkillRefs)
+	}
+	var body struct {
+		SkillRefs []domain.FrozenSkill `json:"skill_refs"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.SkillRefs) != 1 || body.SkillRefs[0].ArtifactDigest != view.SkillRefs[0].ArtifactDigest {
+		t.Fatalf("response refs = %+v", body.SkillRefs)
+	}
+}
+
 func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 	t.Parallel()
 
@@ -212,6 +244,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 		{name: "concurrent", err: ports.ErrConcurrentChange, status: http.StatusConflict, code: "lifecycle_conflict"},
 		{name: "Agent missing", err: application.ErrAgentNotFound, status: http.StatusNotFound, code: "agent_not_found"},
 		{name: "Agent not ready", err: application.ErrAgentNotReady, status: http.StatusConflict, code: "agent_not_ready"},
+		{name: "legacy Skills migration", err: application.ErrLegacySystemSkillsMigrationRequired, status: http.StatusConflict, code: "legacy_system_skills_migration_required"},
 		{name: "Agent busy", err: application.ErrLifecycleConflict, status: http.StatusConflict, code: "lifecycle_conflict"},
 		{name: "internal", err: errors.New("database detail"), status: http.StatusInternalServerError, code: "internal_error"},
 	}
@@ -660,13 +693,14 @@ func TestObserveLifecycleResultMarksTerminalBusinessFailure(t *testing.T) {
 }
 
 type catalogServiceStub struct {
-	createModelInput application.CreateModelProfileInput
-	createModelCalls int
-	modelView        application.ModelProfileView
-	templateView     application.TemplateView
-	getModelErr      error
-	templatePage     application.TemplatePage
-	listInput        application.ListCatalogInput
+	createModelInput    application.CreateModelProfileInput
+	createTemplateInput application.CreateTemplateInput
+	createModelCalls    int
+	modelView           application.ModelProfileView
+	templateView        application.TemplateView
+	getModelErr         error
+	templatePage        application.TemplatePage
+	listInput           application.ListCatalogInput
 
 	templateRevisionOrganizationID string
 	templateRevisionTemplateID     string
@@ -674,20 +708,59 @@ type catalogServiceStub struct {
 }
 
 type lifecycleServiceStub struct {
-	input              application.CreateAgentInput
-	result             application.CreateAgentResult
-	rebuildInput       application.RebuildAgentInput
-	rebuildResult      application.RebuildAgentResult
-	disableInput       application.DisableAgentInput
-	disableResult      application.DisableAgentResult
-	enableInput        application.EnableAgentInput
-	enableResult       application.EnableAgentResult
-	deleteInput        application.DeleteAgentInput
-	deleteResult       application.DeleteAgentResult
-	operation          application.OperationView
-	operationRequestID string
-	err                error
-	createHadDeadline  bool
+	input                application.CreateAgentInput
+	result               application.CreateAgentResult
+	rebuildInput         application.RebuildAgentInput
+	legacyMigrationInput application.LegacySkillMigrationOperationInput
+	rebuildResult        application.RebuildAgentResult
+	disableInput         application.DisableAgentInput
+	disableResult        application.DisableAgentResult
+	enableInput          application.EnableAgentInput
+	enableResult         application.EnableAgentResult
+	deleteInput          application.DeleteAgentInput
+	deleteResult         application.DeleteAgentResult
+	operation            application.OperationView
+	operationRequestID   string
+	skillStatus          application.SkillPreparationStatus
+	skillStatusOrg       string
+	skillStatusRequest   string
+	err                  error
+	createHadDeadline    bool
+}
+
+func (service *lifecycleServiceStub) GetSkillPreparationStatus(_ context.Context, organizationID, requestID string) (application.SkillPreparationStatus, error) {
+	service.skillStatusOrg, service.skillStatusRequest = organizationID, requestID
+	return service.skillStatus, service.err
+}
+
+func TestSkillPreparationReadIsScopedAndProjectsProgress(t *testing.T) {
+	service := &lifecycleServiceStub{skillStatus: application.SkillPreparationStatus{
+		RequestID: "request-1", AgentID: "agent-1", Kind: domain.OperationCreate, State: "retry_wait",
+		Progress:  ports.SkillPreparationProgress{VerifiedPackages: 1, TotalPackages: 2, VerifiedBytes: 100, TotalBytes: 300},
+		UpdatedAt: time.Unix(100, 0).UTC(),
+	}}
+	handler, err := NewHandler(&catalogServiceStub{}, service, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agent-skill-preparations/request-1?organization_id=org-1", nil))
+	if response.Code != http.StatusOK || service.skillStatusOrg != "org-1" || service.skillStatusRequest != "request-1" {
+		t.Fatalf("status=%d body=%s org=%q request=%q", response.Code, response.Body.String(), service.skillStatusOrg, service.skillStatusRequest)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["state"] != "retry_wait" || body["progress"].(map[string]any)["verified_bytes"] != float64(100) {
+		t.Fatalf("progress lost: %v", body)
+	}
+	service.err = ports.ErrNotFound
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agent-skill-preparations/request-1?organization_id=org-2", nil))
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "org-1") {
+		t.Fatalf("cross-organization read: %d %s", response.Code, response.Body.String())
+	}
 }
 
 func (service *lifecycleServiceStub) CreateAgent(
@@ -709,6 +782,11 @@ func (service *lifecycleServiceStub) RebuildAgent(
 	_ context.Context, input application.RebuildAgentInput,
 ) (application.RebuildAgentResult, error) {
 	service.rebuildInput = input
+	return service.rebuildResult, service.err
+}
+
+func (service *lifecycleServiceStub) MigrateLegacySkills(_ context.Context, input application.LegacySkillMigrationOperationInput) (application.RebuildAgentResult, error) {
+	service.legacyMigrationInput = input
 	return service.rebuildResult, service.err
 }
 
@@ -760,8 +838,12 @@ func (service *catalogServiceStub) ListModelProfiles(
 }
 
 func (service *catalogServiceStub) CreateTemplate(
-	context.Context, application.CreateTemplateInput,
+	_ context.Context, input application.CreateTemplateInput,
 ) (application.TemplateView, error) {
+	service.createTemplateInput = input
+	if service.templateView.TemplateID != "" {
+		return service.templateView, nil
+	}
 	return sampleTemplateView(), nil
 }
 

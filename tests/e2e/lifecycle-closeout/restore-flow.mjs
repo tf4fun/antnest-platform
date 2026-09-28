@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdtemp, chmod, rm } from "node:fs/promises";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ import { lines } from "./docker.mjs";
 import {
   keyNames,
   databases,
+  stage4WriterServices,
   assertRestoreRun,
   assertReplayAudits,
   writerServices,
@@ -29,7 +31,16 @@ import {
   backupStorage,
   restoreStorage,
   volumeTool,
+  stage4RecoveryPlan,
 } from "./restore-storage.mjs";
+import {
+  assertFrozenSkill,
+  publishSkill,
+} from "../skill-registry/stage3-fixture.mjs";
+import {
+  createLegacyExportFixture,
+  assertRestoredLegacyExport,
+} from "./legacy-export-restore.mjs";
 
 export function configureRestore(config) {
   for (const key of keyNames)
@@ -101,7 +112,10 @@ async function restoreScenario(
     docker,
     signal,
     json,
+    api,
+    admin,
     agentBody,
+    templateBody,
     command,
     resources,
     ready,
@@ -138,8 +152,61 @@ async function restoreScenario(
     return state.requests;
   };
   const expectedKeys = keyDigests(config.env);
+  let frozenSkill;
+  if (config.skillRestore) {
+    frozenSkill = await publishSkill(admin, 1);
+    const revision = (
+      await api(`/api/admin/templates/${agentBody.template_id}/revisions`, {
+        body: {
+          ...templateBody,
+          skill_refs: [
+            { skill_id: frozenSkill.skill_id, version: frozenSkill.version },
+          ],
+        },
+        status: 201,
+      })
+    ).body;
+    assertFrozenSkill(revision, frozenSkill);
+    agentBody = { ...agentBody, template_revision: revision.revision };
+  }
   const created = await command("create", undefined, agentBody);
   const initial = await ready(created.agentID);
+  let peerCreated, peerInitial;
+  if (config.skillRestore) {
+    assert(initial.skillVolume);
+    assert.match(
+      await docker([
+        "exec",
+        "--user",
+        "1000:1000",
+        initial.container.Id,
+        "cat",
+        "/skills/code-review/SKILL.md",
+      ]),
+      /Stage 4 immutable preset version 1\./,
+    );
+    peerCreated = await command("create", undefined, {
+      ...agentBody,
+      name: "Second restored Skill Agent",
+    });
+    peerInitial = await ready(peerCreated.agentID);
+    assert(
+      peerInitial.skillVolume &&
+        peerInitial.skillVolume !== initial.skillVolume,
+    );
+    assert.notEqual(peerInitial.volume, initial.volume);
+    assert.match(
+      await docker([
+        "exec",
+        "--user",
+        "1000:1000",
+        peerInitial.container.Id,
+        "cat",
+        "/skills/code-review/SKILL.md",
+      ]),
+      /Stage 4 immutable preset version 1\./,
+    );
+  }
   const first = await loginOwner(config);
   traceSecrets.push(
     "lifecycle-owner-password",
@@ -147,8 +214,10 @@ async function restoreScenario(
     ...keyNames.map((k) => config.env[k]),
   );
   const auditPath = `/api/admin/execution-audits?agent_id=${created.agentID}`;
-  const completedRun = async (sessionId, agent) => {
-    const page = await json(`${auditPath}&session_id=${sessionId}`);
+  const completedRun = async (sessionId, agent, agentID = created.agentID) => {
+    const page = await json(
+      `/api/admin/execution-audits?agent_id=${agentID}&session_id=${sessionId}`,
+    );
     assert.equal(page.next_cursor, null);
     assert.equal(page.items.length, 1);
     return assertRestoreRun(
@@ -217,13 +286,34 @@ async function restoreScenario(
     "mkdir -p /data/restore-fixture; printf '%s\\n' '# System recovery skill' > /data/restore-fixture/SKILL.md; chmod 644 /data/restore-fixture/SKILL.md",
   ]);
   await command("disable", created.agentID, {});
+  if (peerCreated) await command("disable", peerCreated.agentID, {});
+  const legacyExport = config.skillRestore
+    ? await createLegacyExportFixture(config, docker, directory, skills)
+    : undefined;
   const offline = await json(`/api/admin/agents/${created.agentID}`);
+  const peerOffline = peerCreated
+    ? await json(`/api/admin/agents/${peerCreated.agentID}`)
+    : undefined;
   assert.equal(offline.lifecycle_state, "created");
   assert.equal(offline.activation_state, "disabled");
-  assert.deepEqual(await resources(created.agentID), {
-    containers: [],
-    volumes: [initial.volume],
-  });
+  const offlineResources = await resources(created.agentID);
+  assert.deepEqual(offlineResources.containers, []);
+  assert.deepEqual(
+    offlineResources.volumes.sort(),
+    [
+      initial.volume,
+      ...(config.skillRestore ? [initial.skillVolume] : []),
+    ].sort(),
+  );
+  if (peerCreated) {
+    const peerResources = await resources(peerCreated.agentID);
+    assert.deepEqual(peerResources.containers, []);
+    assert.deepEqual(
+      peerResources.volumes.sort(),
+      [peerInitial.volume, peerInitial.skillVolume].sort(),
+    );
+    assert.equal(peerOffline.activation_state, "disabled");
+  }
   const models = await json("/api/admin/model-profiles");
   const templates = await json("/api/admin/templates");
   const policy = await json(
@@ -234,29 +324,50 @@ async function restoreScenario(
   const eventPath = `/api/admin/agents/${created.agentID}/events?limit=100`;
   const beforeEvents = await json(eventPath);
   assert(beforeEvents.events.length < 100);
+  const recoveryWriters = config.skillRestore
+    ? stage4WriterServices
+    : writerServices;
   console.error(
-    "Restore: stopping every writer, exporting seven databases and two persistent volumes",
+    "Restore: stopping every writer and exporting the complete recovery set",
   );
   await docker(
     config.compose([
       "stop",
       "-t",
       "25",
-      ...writerServices.filter((s) => s !== "temporal"),
+      ...recoveryWriters.filter((s) => s !== "temporal"),
     ]),
     true,
   );
   await docker(config.compose(["stop", "-t", "25", "temporal"]), true);
   const ids = lines(
-    await docker(config.compose(["ps", "-aq", ...writerServices])),
+    await docker(config.compose(["ps", "-aq", ...recoveryWriters])),
   );
-  assertQuiesced(JSON.parse(await docker(["inspect", ...ids])), config.project);
+  assertQuiesced(
+    JSON.parse(await docker(["inspect", ...ids])),
+    config.project,
+    recoveryWriters,
+  );
   await docker(config.compose(["stop", "-t", "20", "stage3-model"]), true);
-  const backup = await backupStorage(config, docker, directory, [
-    initial.volume,
-    skills,
-  ]);
-  assert.equal(Object.keys(backup.files).length, databases.length + 3);
+  const plan = config.skillRestore
+    ? await stage4RecoveryPlan(
+        config,
+        docker,
+        [initial.volume, peerInitial.volume],
+        skills,
+      )
+    : { databases, volumes: [initial.volume, skills] };
+  const backup = await backupStorage(
+    config,
+    docker,
+    directory,
+    plan.volumes,
+    plan.databases,
+  );
+  assert.equal(
+    Object.keys(backup.files).length,
+    plan.databases.length + plan.volumes.length + 1,
+  );
   // Recovery must reload the saved keys rather than reuse the in-memory values.
   for (const key of keyNames) delete config.env[key];
   console.error(
@@ -264,8 +375,18 @@ async function restoreScenario(
   );
   const storage = await restoreStorage(config, docker, directory, {
     postgres: backup.postgres.name,
-    volumes: [initial.volume, skills],
+    ...plan,
   });
+  if (config.skillRestore)
+    assert.deepEqual(
+      await stage4RecoveryPlan(
+        config,
+        docker,
+        [initial.volume, peerInitial.volume],
+        skills,
+      ),
+      plan,
+    );
   await docker(
     config.compose([
       "up",
@@ -277,6 +398,11 @@ async function restoreScenario(
     ]),
     true,
   );
+  if (config.skillRestore)
+    await docker(config.compose(["stop", "-t", "20", "skill-registry"]), true);
+  const restoredLegacyExport = legacyExport
+    ? await assertRestoredLegacyExport(config, docker, directory, legacyExport)
+    : undefined;
 
   console.error(
     "Restore: checking authentication, saved policy/configuration, history and new Tool execution",
@@ -307,6 +433,11 @@ async function restoreScenario(
   assert.equal(restored.lifecycle_state, "created");
   assert.equal(restored.activation_state, "disabled");
   assert.deepEqual(restored.configuration, offline.configuration);
+  if (peerCreated) {
+    const peerRestored = await json(`/api/admin/agents/${peerCreated.agentID}`);
+    assert.equal(peerRestored.activation_state, "disabled");
+    assert.deepEqual(peerRestored.configuration, peerOffline.configuration);
+  }
   assert.deepEqual(await json("/api/admin/model-profiles"), models);
   assert.deepEqual(await json("/api/admin/templates"), templates);
   const restoredPolicy = await json(
@@ -327,6 +458,44 @@ async function restoreScenario(
   await command("enable", created.agentID, {});
   const enabled = await ready(created.agentID);
   assert.notEqual(enabled.container.Id, initial.container.Id);
+  let peerEnabled;
+  if (config.skillRestore) {
+    assert.equal(
+      enabled.skillVolume,
+      initial.skillVolume,
+      "offline Enable replaced the retained Skill collection",
+    );
+    assert.match(
+      await docker([
+        "exec",
+        "--user",
+        "1000:1000",
+        enabled.container.Id,
+        "cat",
+        "/skills/code-review/SKILL.md",
+      ]),
+      /Stage 4 immutable preset version 1\./,
+    );
+    await command("enable", peerCreated.agentID, {});
+    peerEnabled = await ready(peerCreated.agentID);
+    assert.equal(
+      peerEnabled.skillVolume,
+      peerInitial.skillVolume,
+      "second Agent lost its retained Skill collection",
+    );
+    assert.notEqual(peerEnabled.skillVolume, enabled.skillVolume);
+    assert.match(
+      await docker([
+        "exec",
+        "--user",
+        "1000:1000",
+        peerEnabled.container.Id,
+        "cat",
+        "/skills/code-review/SKILL.md",
+      ]),
+      /Stage 4 immutable preset version 1\./,
+    );
+  }
   assert.deepEqual(await modelState(), []);
   client = connectOwner(
     config.gateway,
@@ -378,6 +547,147 @@ async function restoreScenario(
       ["c5-after-restore", "reply"],
     ],
   );
+  if (peerCreated) {
+    client.close();
+    client = connectOwner(
+      config.gateway,
+      peerCreated.agentID,
+      second.owner.cookie,
+      signal,
+    );
+    setClient(client);
+    await client.initialize();
+    const peerSessionID = (
+      await client.request("new", { cwd: "/workspace", mcpServers: [] })
+    ).sessionId;
+    remember(client, "session/new", { sessionId: peerSessionID });
+    await prompt(client, peerSessionID, "c5-after-restore-peer");
+    const peerRun = await completedRun(
+      peerSessionID,
+      peerEnabled.agent,
+      peerCreated.agentID,
+    );
+    assert.notEqual(peerRun.run_id, afterRun.run_id);
+    remember(client, "session/prompt", {
+      sessionId: peerSessionID,
+      kind: "ordinary",
+      phase: "c5-after-restore-peer",
+      toolName: "read",
+      runId: peerRun.run_id,
+    });
+    assert.deepEqual(
+      (await modelState()).map(({ phase, stage }) => [phase, stage]),
+      [
+        ["c5-after-restore", "tool"],
+        ["c5-after-restore", "reply"],
+        ["c5-after-restore-peer", "tool"],
+        ["c5-after-restore-peer", "reply"],
+      ],
+    );
+
+    await command("disable", peerCreated.agentID, {});
+    assert.deepEqual(
+      (await resources(peerCreated.agentID)).volumes.sort(),
+      [peerInitial.volume, peerInitial.skillVolume].sort(),
+    );
+    await docker(["volume", "rm", peerInitial.skillVolume]);
+    const missingVolume = () =>
+      docker([
+        "volume",
+        "ls",
+        "-q",
+        "--filter",
+        `name=${peerInitial.skillVolume}`,
+      ]);
+    assert(!lines(await missingVolume()).includes(peerInitial.skillVolume));
+    const enableKey = randomUUID();
+    let blockedEnable;
+    try {
+      blockedEnable = await fetch(
+        `${config.gateway}/api/admin/agents/${peerCreated.agentID}/enable`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(5000),
+          headers: {
+            "content-type": "application/json",
+            Cookie: admin.cookie,
+            Origin: config.gateway,
+            "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
+            "Idempotency-Key": enableKey,
+          },
+          body: "{}",
+        },
+      );
+    } catch (error) {
+      assert.equal(
+        error.name,
+        "TimeoutError",
+        "missing-volume Enable failed unexpectedly",
+      );
+    }
+    if (blockedEnable) {
+      assert.equal(blockedEnable.status, 503);
+      assert.equal((await blockedEnable.json()).retryable, true);
+    }
+    let preparation;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      preparation = (
+        await admin.request(
+          "/api/admin/agent-skill-preparations/by-idempotency-key",
+          {
+            headers: { "Idempotency-Key": enableKey },
+          },
+        )
+      ).body;
+      if (preparation.state === "retry_wait") break;
+      assert(
+        ["queued", "preparing"].includes(preparation.state),
+        `unexpected missing-volume preparation state: ${preparation.state}`,
+      );
+      await delay(500);
+    }
+    assert.equal(preparation.state, "retry_wait");
+    assert.equal(preparation.agent_id, peerCreated.agentID);
+    assert.equal(preparation.kind, "enable");
+    assert.equal(preparation.error_code, "skill_preparation_unavailable");
+    assert.equal(
+      (await json(`/api/admin/agents/${peerCreated.agentID}`)).activation_state,
+      "disabled",
+    );
+    const blockedResources = await resources(peerCreated.agentID);
+    assert.deepEqual(blockedResources.containers, []);
+    assert.deepEqual(blockedResources.volumes, [peerInitial.volume]);
+    assert(
+      !lines(await missingVolume()).includes(peerInitial.skillVolume),
+      "Docker silently recreated the missing Skill volume",
+    );
+
+    client.close();
+    client = connectOwner(
+      config.gateway,
+      created.agentID,
+      second.owner.cookie,
+      signal,
+    );
+    setClient(client);
+    await client.initialize();
+    const unaffectedSessionID = (
+      await client.request("new", { cwd: "/workspace", mcpServers: [] })
+    ).sessionId;
+    remember(client, "session/new", { sessionId: unaffectedSessionID });
+    await prompt(client, unaffectedSessionID, "c5-after-peer-volume-loss");
+    const unaffectedRun = await completedRun(
+      unaffectedSessionID,
+      enabled.agent,
+    );
+    remember(client, "session/prompt", {
+      sessionId: unaffectedSessionID,
+      kind: "ordinary",
+      phase: "c5-after-peer-volume-loss",
+      toolName: "read",
+      runId: unaffectedRun.run_id,
+    });
+  }
   client.close();
   assert.equal(
     await docker([
@@ -393,10 +703,38 @@ async function restoreScenario(
   );
   const calls = [...beforeModel, ...(await modelState())];
   await command("delete", created.agentID, {});
-  assert.deepEqual(await resources(created.agentID), {
-    containers: [],
-    volumes: [],
-  });
+  if (peerCreated)
+    await command(
+      "delete",
+      peerCreated.agentID,
+      {},
+      { networkAlreadyClosed: true },
+    );
+  let cleared = false;
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const remaining = await resources(created.agentID);
+    if (remaining.containers.length === 0 && remaining.volumes.length === 0) {
+      cleared = true;
+      break;
+    }
+    await delay(100);
+  }
+  assert(cleared, "Delete did not close retained Skill and workspace volumes");
+  if (peerCreated) {
+    let peerCleared = false;
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const remaining = await resources(peerCreated.agentID);
+      if (remaining.containers.length === 0 && remaining.volumes.length === 0) {
+        peerCleared = true;
+        break;
+      }
+      await delay(100);
+    }
+    assert(
+      peerCleared,
+      "second Agent retained Skill or workspace volumes after Delete",
+    );
+  }
   await flushTraceProducers(config, docker);
   const requestTraces = await collectLifecycleEvidence(
     requests,
@@ -433,9 +771,9 @@ async function restoreScenario(
     signal,
   );
   return {
-    profile: "offline-restore",
+    profile: config.skillRestore ? "offline-skill-restore" : "offline-restore",
     request_traces: requestTraces,
-    completed_runs: 2,
+    completed_runs: peerCreated ? 4 : 2,
     model_requests: calls.length,
     event_history_preserved: true,
     execution_audits_preserved: true,
@@ -444,8 +782,19 @@ async function restoreScenario(
     ...storage,
     history_events: beforeHistory.length,
     history_replay_model_calls: 0,
-    restored_tool_calls: 1,
+    restored_tool_calls: peerCreated ? 3 : 1,
     original_acp_ciphertext_read: true,
+    ...(config.skillRestore
+      ? {
+          restored_preset_skill: frozenSkill.skill_id,
+          registry_offline_enable: true,
+          restored_agents: 2,
+          independent_skill_volumes: true,
+          offline_missing_skill_volume_blocked: true,
+          unaffected_peer_run: true,
+          restored_legacy_export: restoredLegacyExport,
+        }
+      : {}),
     file_metadata_preserved: true,
     agent_id: created.agentID,
   };

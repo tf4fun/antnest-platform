@@ -252,7 +252,7 @@ func loadTemplateRecord(
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
        r.revision, r.model_profile_id, r.system_prompt,
-       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids
+       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids, r.skill_refs
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
   ON r.template_id = t.id
@@ -266,11 +266,12 @@ func scanTemplateRecord(scanner catalogRowScanner) (ports.TemplateRecord, error)
 	var record ports.TemplateRecord
 	var snapshot domain.TemplateRevisionSnapshot
 	var runtimePayload []byte
+	var skillPayload []byte
 	if err := scanner.Scan(
 		&record.TemplateID, &record.OrganizationID, &record.TemplateKey, &record.Name,
 		&record.Enabled, &record.CreatedAt, &record.UpdatedAt,
 		&snapshot.Revision, &snapshot.ModelProfileID, &snapshot.SystemPrompt,
-		&snapshot.MaxModelRequests, &snapshot.ContextPolicyVersion, &runtimePayload, &snapshot.FallbackModelProfileIDs,
+		&snapshot.MaxModelRequests, &snapshot.ContextPolicyVersion, &runtimePayload, &snapshot.FallbackModelProfileIDs, &skillPayload,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ports.TemplateRecord{}, ports.ErrNotFound
@@ -279,6 +280,9 @@ func scanTemplateRecord(scanner catalogRowScanner) (ports.TemplateRecord, error)
 	}
 	if err := json.Unmarshal(runtimePayload, &snapshot.Runtime); err != nil {
 		return ports.TemplateRecord{}, fmt.Errorf("decode Template Runtime input: %w", err)
+	}
+	if err := json.Unmarshal(skillPayload, &snapshot.SkillRefs); err != nil {
+		return ports.TemplateRecord{}, fmt.Errorf("decode Template Skill refs: %w", err)
 	}
 	snapshot.TemplateID = record.TemplateID
 	snapshot.OrganizationID = record.OrganizationID
@@ -298,14 +302,18 @@ func insertTemplateRevision(
 	if err != nil {
 		return fmt.Errorf("encode Template Runtime input: %w", err)
 	}
+	skillPayload, err := json.Marshal(append([]domain.FrozenSkill{}, snapshot.SkillRefs...))
+	if err != nil {
+		return fmt.Errorf("encode Template Skill refs: %w", err)
+	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_template_revisions (
     template_id, organization_id, revision, model_profile_id,
-    system_prompt, max_model_requests, context_policy_version, runtime_input, created_at, fallback_model_profile_ids
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    system_prompt, max_model_requests, context_policy_version, runtime_input, created_at, fallback_model_profile_ids, skill_refs
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		record.TemplateID, record.OrganizationID, snapshot.Revision,
 		snapshot.ModelProfileID, snapshot.SystemPrompt, snapshot.MaxModelRequests,
-		snapshot.ContextPolicyVersion, runtimePayload, record.UpdatedAt, append([]string{}, snapshot.FallbackModelProfileIDs...),
+		snapshot.ContextPolicyVersion, runtimePayload, record.UpdatedAt, append([]string{}, snapshot.FallbackModelProfileIDs...), skillPayload,
 	); err != nil {
 		return fmt.Errorf("insert Template revision: %w", err)
 	}

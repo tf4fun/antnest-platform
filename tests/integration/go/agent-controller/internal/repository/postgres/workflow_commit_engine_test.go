@@ -29,7 +29,7 @@ func TestTemporalResumesAfterBusinessCommitBeforeActivityAcknowledgement(t *test
 		network: *closedNetworkAttachment(base.Agent.AgentID),
 		runtime: ports.RuntimeOperation{RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "provisioned", Health: "healthy"},
 	}, calls: make(map[string]int)}
-	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	c, closeClient, err := orchestration.Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))

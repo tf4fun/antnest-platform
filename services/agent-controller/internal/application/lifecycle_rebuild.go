@@ -17,6 +17,7 @@ type RebuildAgentInput struct {
 	AgentID          string
 	TemplateID       string
 	TemplateRevision int64
+	migration        *LegacySkillMigrationOperationInput
 }
 
 type RebuildAgentResult struct {
@@ -25,6 +26,12 @@ type RebuildAgentResult struct {
 }
 
 func (service *LifecycleService) RebuildAgent(
+	ctx context.Context, input RebuildAgentInput,
+) (RebuildAgentResult, error) {
+	return service.rebuildAgent(ctx, input)
+}
+
+func (service *LifecycleService) rebuildAgent(
 	ctx context.Context, input RebuildAgentInput,
 ) (RebuildAgentResult, error) {
 	if err := validateRebuildAgentInput(input); err != nil {
@@ -57,19 +64,68 @@ func (service *LifecycleService) RebuildAgent(
 	}
 	source, err := resolveRebuildSource(base)
 	if err != nil {
+		if input.migration != nil && errors.Is(err, ErrAgentNotReady) {
+			return RebuildAgentResult{}, fmt.Errorf("%w: %v", ErrLegacyMigrationRecoveryRequired, err)
+		}
 		return RebuildAgentResult{}, err
 	}
-	template, _, targetSpec, err := service.resolveAgentSpecRevision(
-		ctx, base.Agent.OrganizationID, input.TemplateID, input.TemplateRevision,
-	)
+	var migrationChoice *ports.LegacySkillChoice
+	if input.migration == nil {
+		if err := service.requireLegacySkillMigrationResolved(ctx, input.AgentID); err != nil {
+			return RebuildAgentResult{}, err
+		}
+	} else {
+		choice, err := service.preflightLegacyMigration(ctx, base.Agent.OrganizationID, input.AgentID, input.migration)
+		if err != nil {
+			return RebuildAgentResult{}, err
+		}
+		migrationChoice = &choice
+	}
+	var targetSnapshot domain.AgentSpecSnapshot
+	var digest string
+	intent, existingIntent, err := service.existingSkillPreparation(ctx, input.RequestID, fingerprint, domain.OperationRebuild, input.AgentID, base.Agent.OrganizationID)
 	if err != nil {
 		return RebuildAgentResult{}, err
 	}
-	digest, err := targetSpec.Digest()
-	if err != nil {
-		return RebuildAgentResult{}, fmt.Errorf("digest rebuilt Agent spec: %w", err)
+	if existingIntent {
+		targetSnapshot, digest = intent.TargetSpec, intent.TargetSpecDigest
+	} else {
+		if migrationChoice != nil && migrationChoice.Kind == "empty" {
+			targetSnapshot, digest, err = emptyLegacyMigrationTarget(base.Agent.OrganizationID, source.Spec.Snapshot)
+		} else {
+			templateID, templateRevision := input.TemplateID, input.TemplateRevision
+			if migrationChoice != nil {
+				templateID, templateRevision = migrationChoice.TemplateID, migrationChoice.TemplateRevision
+			}
+			var targetSpec domain.AgentSpec
+			_, _, targetSpec, err = service.resolveAgentSpecRevision(ctx, base.Agent.OrganizationID, templateID, templateRevision)
+			if err == nil {
+				targetSnapshot = targetSpec.Snapshot()
+				digest, err = targetSpec.Digest()
+			}
+		}
+		if err != nil {
+			return RebuildAgentResult{}, fmt.Errorf("resolve rebuilt Agent spec: %w", err)
+		}
+	}
+	if migrationChoice != nil {
+		if err := validateLegacyMigrationTarget(base.Agent.OrganizationID, source.Spec.Snapshot, targetSnapshot, *migrationChoice); err != nil {
+			return RebuildAgentResult{}, err
+		}
 	}
 	now := service.clock.Now()
+	prepared, err := service.prepareAgentSkills(ctx, ports.SkillPreparationIntent{
+		RequestID: input.RequestID, RequestFingerprint: fingerprint, Kind: domain.OperationRebuild,
+		AgentID: input.AgentID, OrganizationID: base.Agent.OrganizationID,
+		TargetSpec: targetSnapshot, TargetSpecDigest: digest,
+		ExpectedAggregateSequence: base.Agent.AggregateSequence,
+		ExpectedSpecRevisionID:    source.Spec.ID, ExpectedExecutionRevisionID: source.Execution.ID,
+		ExpectedRuntimeRevision: base.Agent.RuntimeRevision, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return RebuildAgentResult{}, err
+	}
+	targetSnapshot, digest = prepared.TargetSpec, prepared.TargetSpecDigest
 	targetSpecID := domain.DeriveResourceID("agentspec", "agentspec-rebuild", input.RequestID)
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -91,7 +147,7 @@ func (service *LifecycleService) RebuildAgent(
 		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
 		TargetSpec: ports.AgentSpecRecord{
 			ID: targetSpecID, AgentID: input.AgentID, Revision: base.NextSpecRevision,
-			Snapshot: targetSpec.Snapshot(), CanonicalDigest: digest, CreatedAt: now,
+			Snapshot: targetSnapshot, CanonicalDigest: digest, CreatedAt: now,
 		},
 		Operation: ports.LifecycleOperationRecord{
 			DrainDeadlineAt: service.drainDeadline(now),
@@ -115,12 +171,19 @@ func (service *LifecycleService) RebuildAgent(
 				"source_agent_spec_revision_id": source.Spec.ID,
 				"source_runtime_revision":       base.Agent.RuntimeRevision,
 				"target_agent_spec_revision_id": targetSpecID,
-				"template_id":                   template.Snapshot().TemplateID,
-				"template_revision":             template.Revision(),
+				"template_id":                   targetSnapshot.TemplateID,
+				"template_revision":             targetSnapshot.TemplateRevision,
 			},
 			OccurredAt: now,
 		},
 		Now: now,
+	}
+	if migrationChoice != nil {
+		binding, err := legacyMigrationBinding(*migrationChoice, input.migration.Attestation)
+		if err != nil {
+			return RebuildAgentResult{}, err
+		}
+		begin.LegacyMigration = &binding
 	}
 	state, _, err = service.store.BeginAgentRebuild(ctx, begin)
 	if err != nil {
@@ -227,6 +290,9 @@ func (service *LifecycleService) updateRebuildRuntime(
 		Resources:  runtimeInput.Resources,
 		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
 	}
+	if err := service.attachPreparedSkills(ctx, state.Operation.RequestID, state.Agent.AgentID, state.Agent.OrganizationID, state.TargetSpec.Snapshot, &configuration); err != nil {
+		return state, err
+	}
 	result, err := service.runtime.UpdateRuntime(
 		ctx, state.Operation.ChildRequestID, state.Agent.AgentID,
 		state.Operation.SourceRuntimeRevision, configuration,
@@ -321,9 +387,17 @@ func (service *LifecycleService) publishAgentRebuild(
 		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no Runtime result")
 	}
 	runtime := *state.Operation.RuntimeResult
+	var legacyVerification *ports.LegacySkillPublishVerification
+	if state.LegacyMigration != nil {
+		verification, err := service.verifyLegacyMigrationMount(ctx, state, runtime.RuntimeRevision)
+		if err != nil {
+			return ports.AgentRebuildState{}, err
+		}
+		legacyVerification = &verification
+	}
 	now := service.clock.Now()
 	accessRevision := domain.DeriveResourceID("accessrev", "access-rebuild", state.Operation.RequestID)
-	return service.store.PublishAgentRebuild(ctx, ports.PublishAgentRebuild{
+	published, err := service.store.PublishAgentRebuild(ctx, ports.PublishAgentRebuild{
 		RequestID:      state.Operation.RequestID,
 		Fingerprint:    state.Operation.RequestFingerprint,
 		AccessRevision: accessRevision,
@@ -339,8 +413,61 @@ func (service *LifecycleService) publishAgentRebuild(
 			},
 			OccurredAt: now,
 		},
-		Now: now,
+		Now:                now,
+		LegacyVerification: legacyVerification,
 	})
+	if errors.Is(err, ports.ErrLegacyMigrationProofLost) && state.LegacyMigration != nil {
+		if settleErr := service.settleLegacyMigrationProofLoss(ctx, state.Operation); settleErr != nil {
+			return state, settleErr
+		}
+		settled, found, replayErr := service.store.ReplayAgentRebuild(ctx, state.Operation.RequestID, state.Operation.RequestFingerprint)
+		if replayErr != nil {
+			return state, fmt.Errorf("replay settled legacy migration rebuild: %w", replayErr)
+		}
+		if !found {
+			return state, fmt.Errorf("replay settled legacy migration rebuild: %w", ports.ErrNotFound)
+		}
+		return settled, nil
+	}
+	return published, err
+}
+
+func (service *LifecycleService) verifyLegacyMigrationMount(ctx context.Context, state ports.AgentRebuildState, runtimeRevision string) (ports.LegacySkillPublishVerification, error) {
+	return service.verifyLegacySkillMount(ctx, state.Agent, state.Operation, state.TargetSpec.Snapshot,
+		runtimeRevision, "verify-active-skills")
+}
+
+func (service *LifecycleService) verifyLegacySkillMount(ctx context.Context, agent ports.AgentRecord,
+	operation ports.LifecycleOperationRecord, snapshot domain.AgentSpecSnapshot, runtimeRevision, requestNamespace string) (ports.LegacySkillPublishVerification, error) {
+	if service.activeSkillVerifier == nil || service.skillIntents == nil {
+		return ports.LegacySkillPublishVerification{}, fmt.Errorf("%w: legacy migration mount verifier unavailable", ErrDependencyUnavailable)
+	}
+	intent, err := service.skillIntents.GetSkillPreparationIntent(ctx, operation.RequestID)
+	if err != nil {
+		return ports.LegacySkillPublishVerification{}, fmt.Errorf("%w: load legacy migration preparation: %v", ErrDependencyUnavailable, err)
+	}
+	if intent.State != "ready" || intent.PreparedReferenceID == "" || intent.RequestFingerprint != operation.RequestFingerprint ||
+		intent.AgentID != agent.AgentID || intent.OrganizationID != agent.OrganizationID ||
+		intent.TargetSpec.SkillSetDigest != snapshot.SkillSetDigest {
+		return ports.LegacySkillPublishVerification{}, fmt.Errorf("%w: legacy migration preparation is not ready for target", ErrDependencyUnavailable)
+	}
+	request := ports.ActiveSkillSetVerificationRequest{
+		OrganizationID: agent.OrganizationID, ExpectedRuntimeRevision: runtimeRevision,
+		PreparedReferenceID: intent.PreparedReferenceID,
+		PreparedSkillSet:    ports.PreparedSkillSet{SkillSetDigest: snapshot.SkillSetDigest, LayoutVersion: domain.SkillLayoutVersion},
+		SystemSkills:        append([]domain.FrozenSkill{}, snapshot.SystemSkills...),
+	}
+	receipt, err := service.activeSkillVerifier.VerifyActiveSkillSet(ctx,
+		domain.DeriveResourceID("request", requestNamespace, operation.RequestID), agent.AgentID, request)
+	if err != nil {
+		return ports.LegacySkillPublishVerification{}, fmt.Errorf("%w: verify legacy migration Runtime mount: %v", ErrDependencyUnavailable, err)
+	}
+	if receipt.AgentID != agent.AgentID || receipt.RuntimeRevision != runtimeRevision ||
+		receipt.SkillSetDigest != request.PreparedSkillSet.SkillSetDigest || receipt.LayoutVersion != domain.SkillLayoutVersion ||
+		receipt.VerifiedAt.IsZero() || len(receipt.ManifestDigest) != len("sha256:")+64 || !strings.HasPrefix(receipt.ManifestDigest, "sha256:") {
+		return ports.LegacySkillPublishVerification{}, fmt.Errorf("%w: legacy migration Runtime mount receipt mismatch", ErrDependencyUnavailable)
+	}
+	return ports.LegacySkillPublishVerification{PreparedReferenceID: intent.PreparedReferenceID, Receipt: receipt}, nil
 }
 
 func (service *LifecycleService) handleRebuildDependencyFailure(
@@ -492,6 +619,15 @@ func (service *LifecycleService) failAgentRebuild(
 }
 
 func validateRebuildAgentInput(input RebuildAgentInput) error {
+	if input.migration != nil {
+		if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
+			!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) ||
+			input.TemplateID != "" || input.TemplateRevision != 0 ||
+			input.migration.ChoiceSequence < 1 || input.migration.Attestation.Version != 1 {
+			return fmt.Errorf("%w: legacy Skill migration input", ErrInvalidInput)
+		}
+		return nil
+	}
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
 		!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) ||
 		!validIdentifier(input.TemplateID) || input.TemplateRevision < 1 {
@@ -514,6 +650,15 @@ func resolveRebuildSource(base ports.AgentLifecycleBase) (ports.AgentRuntimeSour
 }
 
 func rebuildAgentFingerprint(input RebuildAgentInput) (string, error) {
+	if input.migration != nil {
+		return requestFingerprint(struct {
+			Kind                                                 string
+			RequestID, OrganizationID, ActorPrincipalID, AgentID string
+			ChoiceSequence                                       int64
+			Attestation                                          LegacyExportAttestation
+		}{"legacy-skill-migration-v1", input.RequestID, input.OrganizationID, input.ActorPrincipalID,
+			input.AgentID, input.migration.ChoiceSequence, input.migration.Attestation})
+	}
 	return requestFingerprint(struct {
 		RequestID        string
 		OrganizationID   string

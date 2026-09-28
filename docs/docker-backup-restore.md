@@ -127,9 +127,11 @@ synthetic credentials, never `.secret`. It must:
 - Preserve public Agent events and the original completed Run. History replay
   must not create or change an execution audit. The new Run must use the restored
   Agent's newly admitted execution revision.
-- Keep isolated in-memory Jaeger available across storage replacement, collect
-  both pre/post-restore lifecycle and SDK request traces, and retain strict
-  warnings/errors as failures. Jaeger is diagnostic, outside the recovery set.
+- Keep isolated in-memory Jaeger available across storage replacement and
+  collect both pre/post-restore lifecycle and SDK request traces. Trace topology
+  or platform errors fail acceptance. Preserve `strict_trace: failed` for the
+  reviewed clock-only warnings but allow that narrow timing exception. Jaeger
+  is diagnostic, outside the recovery set.
 - Delete only its own labelled resources and temporary backup files on success,
   failure or interruption. Conflicting ownership labels block deletion even in
   finally cleanup. Preserve retained human-acceptance stacks.
@@ -141,3 +143,167 @@ make e2e-lifecycle-restore
 Current migration results belong in [Restore revalidation](lifecycle-restore-revalidation.md);
 [C5-02](docker-single-node-closeout.md) retains historical evidence. Do not commit
 dumps, secret bundles or step-by-step execution logs.
+
+## Stage 4 Skill Registry Addendum
+
+Current development acceptance covers freshly created Registry packages and
+per-Agent Skill volumes. There is no legacy business data to migrate. The
+legacy export commands retained below document existing historical tooling;
+they are not a deployment prerequisite or an outstanding acceptance gate.
+
+The procedure and seven-database acceptance above describe the previously deployed
+services. Registry service code and development Compose provisioning now exist.
+Recovery tooling now defines an eight-database manifest and derives physical
+Skill volume names from RC current/lifecycle references and set
+materializations, while preserving the seven-database Stage 3 profile. The
+isolated `make e2e-stage4-skill-storage-restore` fixture has deleted and
+restored all eight databases plus two workspace volumes, the nonempty legacy
+shared volume, the RC private legacy-backup volume and three per-Agent Skill
+volumes (ready, empty and candidate).
+This is storage recovery evidence using synthetic Skill records. The real-Agent
+follow-up `make e2e-stage4-skill-restore` publishes a fixed Skill, restores the
+Registry database and two real Agents' independent retained Skill and workspace
+volumes with the other seven databases and legacy/private-backup volumes, then
+enables both Agents while Registry is stopped. Each Agent completes a new ACP
+Run that reads its pinned Skill through Runtime; Delete closes both Agents'
+retained volumes. The same run disables one restored Agent, removes its retained
+Skill volume while Registry remains offline, and confirms Enable stays in
+`retry_wait` without creating a Runtime or an empty replacement volume; the
+other Agent still completes a new Tool-backed ACP Run. Business and Trace
+topology pass; strict Trace still records only the previously reviewed clock
+warnings. The same real-Agent restore scenario now creates a verified RC backup
+of the nonempty legacy shared volume and exports it to a private test directory.
+After storage replacement it rereads the restored RC receipt, exports again
+from the restored private backup volume and compares archive, manifest and
+receipt files byte for byte. This same-host fixture does not establish an
+off-host protected export. The bounded proof-loss and exact-source recovery
+paths pass separate disposable Docker checks; missing or changed RC sources
+still require operator restoration when those historical paths are used.
+Independent off-host legacy export is outside the current scope. The
+[Skill Registry design](skill-registry-minimal-design.md) defines B0/B3/I1 recovery
+requirements; this addendum does not claim complete business recovery.
+
+The new recovery set must additionally include:
+
+- the Registry database, including immutable package bytes and publication
+  receipts, exported within the same quiesced maintenance window;
+- RC preparation checkpoints, logical set identities, physical materializations
+  and retained references as part of its database backup;
+- every per-Agent system-Skill volume referenced by a running/disabled Agent or
+  an unfinished lifecycle operation, including empty-set manifests, numeric
+  ownership, modes, labels and full content checksums;
+- candidate volumes if preparation is to resume from its saved progress. Any
+  deliberately omitted candidate must be listed, and restored progress must be
+  invalidated before preparation resumes;
+- for a historical deployment with legacy assets only, the shared system-Skill volume and an inventory of its Agent/container
+  references until explicit migration has finished. Empty historical
+  `skill_refs` do not prove that this volume is empty.
+- for that same historical case, the RC-owned `runtime-legacy-backups` volume while any legacy choice or
+  migration still references its archive receipt. Export its archive and
+  manifest to protected storage and verify both hashes; the same-host copy
+  alone is not an off-host recovery set.
+
+For one legacy backup, mount a pre-created private export directory from
+operator-managed storage, then run the RC image's isolated maintenance command
+with the `backup_ref`, volume name and manifest digest returned by RC:
+
+```sh
+docker run --rm --network none --read-only \
+  --mount "type=volume,source=${ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME},target=/backup,readonly" \
+  --mount "type=bind,source=${PROTECTED_EXPORT_DIR},target=/export" \
+  --entrypoint /usr/local/bin/legacy-backup-export antnest/runtime-controller:local \
+  --source=/backup --destination=/export \
+  --backup-ref="${BACKUP_REF}" --volume-name="${LEGACY_SKILL_VOLUME}" \
+  --manifest-digest="${MANIFEST_DIGEST}"
+```
+
+`PROTECTED_EXPORT_DIR` must already exist as a 0700 directory on storage whose
+failure domain and access policy the operator has verified independently. The
+command requires locking, rename and directory sync support, writes 0700/0600
+content, and reads back the full archive. `copy_verified` proves only that this
+destination copy matches RC's backup; it does not certify an off-host location
+or clear any Agent migration gate. Keep the RC and exported copies until all
+legacy choices and restore obligations are resolved.
+
+On an independent verifier outside the RC host/failure domain, mount the
+protected export read-only and a dedicated 0600 Ed25519 PKCS8 private key
+read-only, then run the maintenance verifier. The key must never be mounted in
+the RC service or copied into the backup set. Supply the RC receipt's manifest
+digest and the operator-owned external storage reference:
+
+```sh
+docker run --rm --network none --read-only \
+  --mount "type=bind,source=${PROTECTED_EXPORT_DIR},target=/export,readonly" \
+  --mount "type=bind,source=${VERIFIER_KEY_FILE},target=/run/verifier-key.pem,readonly" \
+  --entrypoint /usr/local/bin/legacy-backup-attest antnest/runtime-controller:local \
+  --destination=/export --backup-ref="${BACKUP_REF}" \
+  --volume-name="${LEGACY_SKILL_VOLUME}" --manifest-digest="${MANIFEST_DIGEST}" \
+  --storage-ref="${STORAGE_REF}" --verifier-id="${VERIFIER_ID}" \
+  --key-id="${VERIFIER_KEY_ID}" --key-file=/run/verifier-key.pem
+```
+
+The output follows the [signed attestation contract](../contracts/skill-registry/legacy-export-attestation.md).
+Keep it with the migration evidence. A storage URI and a successful local test
+do not prove that storage is off-host; the operator must establish that
+separately. Controller consumes the attestation in its explicit migration
+operation, then releases the legacy gate only with a verified target Runtime
+mount at atomic publication; an actual off-host operator run remains pending.
+Controller's current/next public-key configuration and revocation history are
+implemented.
+Retain the Controller database's `legacy_export_verifier_keys` history in every
+backup and restore. It records permanent revocations and prevents a restored
+deployment from silently trusting a reused key ID.
+
+Retained ready volumes are backed up so a disabled Agent can be enabled while
+Registry is offline. The restore tooling derives the required volume manifest
+from ownership and retained references; the storage fixture covers multiple
+Agents, multiple retained sets, an empty set and a nonempty legacy shared
+volume. The real-Agent scenario verifies independent personal workspaces and
+offline reuse of two retained sets.
+
+Quiescence must stop Registry uploads and all RC preparation/retry/cleanup
+workers, in addition to the writers listed above. On restore, validate actual
+volume existence, ownership, complete file hashes, permissions and set manifests
+before honoring any persisted `ready` record. A database marker or matching
+volume name alone is insufficient evidence.
+Before starting each restored/recreated container, B3 must also check its actual
+Skill mount, RC volume labels and stored set manifest. Docker can recreate a
+missing named volume during container creation; a pre-create check cannot prove
+the mounted volume is the restored one. Replayed/adopted targets use the same gate.
+Do not start a mismatched target or delete a foreign volume based only on its name
+or missing labels; uncertain effects follow the existing recovery contract.
+
+If a ready record has no intact volume and no live compute references it,
+invalidate that materialization and prepare an exact replacement from the backup
+or pinned Registry version under a new private materialization identity. If
+Registry is unavailable too, retain a pending/unavailable state; never mount an
+empty set or silently choose the latest version. If restoration or a lifecycle
+check finds a mismatched active mount or set manifest, keep admission closed
+and recover through Controller; never write to a live read-only volume. The
+first release does not continuously hash Skill files in an already running
+Runtime to detect privileged host-side edits.
+
+The historical migration procedure, excluded from current development, is:
+before switching legacy Agents, inventory and back up the shared contents, then
+record each Agent's explicit target: imported fixed versions in a new Template
+revision, or a reviewed empty set. Invalid old files require an explicit operator
+decision; they are not silently discarded. Unresolved Agents are blocked from
+the new Enable/rebuild path with `legacy_system_skills_migration_required`.
+Delete the shared volume only after all references have left and the migration
+and preservation records have been verified. Controlled migration has passed
+isolated Docker acceptance. Its independent protected off-host export was not
+accepted and is no longer a current delivery requirement.
+
+## Skill Learning Key Recovery Addendum (Planned)
+
+The separate [learning design](skill-learning-design.md) requires L1R/L3/LI1 to
+cover bootstrap key recovery. RC backups must retain the complete public-key set
+frozen with each accepted operation and its deployment identity. ACP signing
+keys stay in its protected secret backup, outside RuntimeSpec, logs and Git.
+Restore must reconcile these records with current revocation/incident records
+before opening maintenance. New global RC key configuration cannot rewrite an
+unfinished operation's snapshot; a compromised key in an old backup cannot be
+made trusted again by replay. Keep affected execution isolated, settle old
+effects through the lifecycle recovery process, and explicitly rebuild with a
+safe key set. These are future requirements, not existing key-rotation or backup
+acceptance evidence.

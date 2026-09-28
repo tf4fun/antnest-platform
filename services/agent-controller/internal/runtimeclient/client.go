@@ -362,9 +362,13 @@ func oneOf(value string, allowed ...string) bool {
 }
 
 type runtimeConfigurationDTO struct {
-	ImageRef   string             `json:"image_ref"`
-	MCPServers []domain.MCPServer `json:"mcp_servers,omitempty"`
-	Network    struct {
+	ImageRef            string                  `json:"image_ref"`
+	MCPServers          []domain.MCPServer      `json:"mcp_servers,omitempty"`
+	OrganizationID      string                  `json:"organization_id,omitempty"`
+	SystemSkills        *[]domain.FrozenSkill   `json:"system_skills,omitempty"`
+	PreparedSkillSet    *ports.PreparedSkillSet `json:"prepared_skill_set,omitempty"`
+	PreparedReferenceID string                  `json:"prepared_reference_id,omitempty"`
+	Network             struct {
 		PacketContractRevision uint32 `json:"packet_contract_revision"`
 		EgressEndpoint         struct {
 			IPv4 string `json:"ipv4"`
@@ -384,6 +388,14 @@ func runtimeConfigurationPayload(configuration ports.RuntimeConfiguration) runti
 	var payload runtimeConfigurationDTO
 	payload.ImageRef = configuration.ImageRef
 	payload.MCPServers = domain.CloneMCPServers(configuration.MCPServers)
+	payload.OrganizationID = configuration.OrganizationID
+	if configuration.SystemSkills != nil {
+		skills := make([]domain.FrozenSkill, len(configuration.SystemSkills))
+		copy(skills, configuration.SystemSkills)
+		payload.SystemSkills = &skills
+	}
+	payload.PreparedSkillSet = configuration.PreparedSkillSet
+	payload.PreparedReferenceID = configuration.PreparedReferenceID
 	payload.Network.PacketContractRevision = configuration.Network.PacketContractRevision
 	payload.Network.EgressEndpoint.IPv4 = configuration.Network.EgressIPv4
 	payload.Network.EgressEndpoint.Port = configuration.Network.EgressPort

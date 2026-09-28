@@ -10,8 +10,145 @@ import {
   restoreStorage,
   backupStorage,
   volumeTool,
+  skillVolumeInventory,
+  stage4RecoveryPlan,
+  databaseInitializers,
 } from "./restore-storage.mjs";
-import { databases, keyNames } from "./restore-evidence.mjs";
+import { databases, stage4Databases, keyNames } from "./restore-evidence.mjs";
+
+test("Stage 4 recovery plan combines workspaces, legacy contents, private backups and DB-derived Skill volumes", async () => {
+  const config = {
+    project: "antnest-fixture",
+    env: { ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME: "legacy-backups" },
+    compose: (args) => ["compose", ...args],
+  };
+  const docker = async (args) => {
+    if (args[0] === "compose") return "pg";
+    if (args[0] === "inspect")
+      return JSON.stringify([
+        {
+          Id: "pg",
+          Config: { Labels: { "com.docker.compose.project": config.project } },
+          State: { Health: { Status: "healthy" } },
+        },
+      ]);
+    assert.equal(args[0], "exec");
+    return JSON.stringify([
+      {
+        source: "current",
+        set_id: 1,
+        volume_name: "skill-owned",
+        manifest_digest: "sha256:" + "a".repeat(64),
+      },
+    ]);
+  };
+  assert.deepEqual(
+    await stage4RecoveryPlan(
+      config,
+      docker,
+      ["workspace-a", "workspace-b"],
+      "legacy-skills",
+    ),
+    {
+      databases: stage4Databases,
+      volumes: [
+        "workspace-a",
+        "workspace-b",
+        "legacy-skills",
+        "legacy-backups",
+        "skill-owned",
+      ],
+    },
+  );
+  await assert.rejects(
+    stage4RecoveryPlan(config, docker, ["workspace-a"], "workspace-a"),
+    /overlap/,
+  );
+  await assert.rejects(
+    stage4RecoveryPlan(
+      { ...config, env: {} },
+      docker,
+      ["workspace-a"],
+      "legacy-skills",
+    ),
+    /missing legacy backup volume/,
+  );
+});
+
+test("Stage 4 destination creates Registry database before restoring its dump", () => {
+  assert.deepEqual(databaseInitializers(databases), ["temporal-databases"]);
+  assert.deepEqual(databaseInitializers(stage4Databases), [
+    "temporal-databases",
+    "skill-registry-database-init",
+  ]);
+});
+
+test("volume archive operations use the bounded lifecycle deadline", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "antnest-volume-deadline-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const calls = [];
+  await volumeTool(
+    { project: "antnest-fixture" },
+    async (...args) => {
+      calls.push(args);
+      return "";
+    },
+    "owned-volume",
+    directory,
+    ["tar", "--help"],
+    true,
+  );
+  assert.equal(calls[0][1], true);
+});
+
+test("Skill recovery inventory reads current, lifecycle and candidate physical volumes from RC", async () => {
+  const rows = [
+    {
+      source: "current",
+      set_id: 1,
+      volume_name: "skill-current",
+      manifest_digest: "sha256:" + "a".repeat(64),
+    },
+    {
+      source: "lifecycle",
+      set_id: 1,
+      volume_name: "skill-old",
+      manifest_digest: "sha256:" + "b".repeat(64),
+    },
+    {
+      source: "set",
+      set_id: 2,
+      volume_name: "skill-candidate",
+      manifest_digest: "",
+    },
+  ];
+  const docker = async (args) => {
+    assert.deepEqual(args.slice(0, 8), [
+      "exec",
+      "pg",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "antnest_test_admin",
+    ]);
+    assert.equal(args[9], "antnest_runtime_controller");
+    const query = args.at(-1);
+    for (const table of [
+      "skill_sets",
+      "skill_current_references",
+      "skill_lifecycle_references",
+    ])
+      assert(query.includes(`runtime_controller.${table}`));
+    return JSON.stringify(rows);
+  };
+  assert.deepEqual(await skillVolumeInventory(docker, "pg"), [
+    "skill-candidate",
+    "skill-current",
+    "skill-old",
+  ]);
+});
 
 test("restore scenario rejects cached TMPDIR before creating its recovery directory", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "antnest-restore-temp-policy-"));

@@ -332,6 +332,7 @@ func seedExecutionAgentInOrganization(t *testing.T, repository *Repository, base
 	template.RequestID, template.TemplateID, template.OrganizationID = "template-request-"+organization, "template-"+organization, organization
 	templateInput := domain.TemplateRevisionInput(template.Revision.Snapshot())
 	templateInput.TemplateID, templateInput.OrganizationID = template.TemplateID, organization
+	templateInput.SkillSetDigest = "" // Recompute the collection identity for the new organization.
 	template.Revision, err = domain.NewTemplateRevision(templateInput)
 	require.NoError(t, err)
 	_, err = repository.PutTemplate(ctx, template)

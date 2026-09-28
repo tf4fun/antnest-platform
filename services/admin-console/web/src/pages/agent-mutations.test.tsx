@@ -97,6 +97,32 @@ function postCalls(fetch: ReturnType<typeof vi.fn>) {
 }
 
 describe("Agent lifecycle command boundaries", () => {
+  it.each(["rebuild", "enable"] as const)("shows %s Skill preparation before lifecycle admission and retries the frozen command", async (action) => {
+    let commands = 0;
+    const { fetch } = mockWorkflow(action, async () => {
+      commands++;
+      return commands === 1
+        ? Response.json({ code: "dependency_unavailable", message: "Preparing Skills", retryable: true }, { status: 503 })
+        : Response.json(operation(action, "running"), { status: 202 });
+    });
+    const previous = fetch.getMockImplementation()!;
+    fetch.mockImplementation(async (input, init) => {
+      if (new URL(input, "http://localhost").pathname === "/api/admin/agent-skill-preparations/by-idempotency-key") {
+        expect(new Headers(init.headers).get("Idempotency-Key")).toBe(new Headers(postCalls(fetch)[0]![1].headers).get("Idempotency-Key"));
+        return Response.json({ request_id: "request-1", agent_id: "agent-1", kind: action, state: "retry_wait", progress: { verified_packages: 1, verified_bytes: 128, total_packages: 2, total_bytes: 256 }, updated_at: timestamp });
+      }
+      return previous(input, init);
+    });
+    render(<AgentsPage agentID="agent-1" />);
+    await start(action);
+    await screen.findByText(/1 of 2 Skills verified/);
+    if (action === "rebuild") expect(screen.getByText(/existing Agent remains available/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: action === "rebuild" ? "Retry rebuild" : "Retry enable" }));
+    await waitFor(() => expect(postCalls(fetch)).toHaveLength(2));
+    expect(postCalls(fetch)[1]![1].body).toBe(postCalls(fetch)[0]![1].body);
+    expect(new Headers(postCalls(fetch)[1]![1].headers).get("Idempotency-Key")).toBe(new Headers(postCalls(fetch)[0]![1].headers).get("Idempotency-Key"));
+  });
+
   it("opens the independent Agent workspace without issuing a lifecycle command", async () => {
     const { fetch } = mockWorkflow("disable", async () => Response.json(operation("disable")));
     render(<AgentsPage agentID="agent-1" />);
@@ -487,6 +513,43 @@ describe("Agent lifecycle command boundaries", () => {
 });
 
 describe("Agent creation admission", () => {
+  it("shows Skill preparation progress and retries the original creation intent", async () => {
+    const sent: Array<{ body: string; key: string | null }> = [];
+    let progressReads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init: RequestInit) => {
+      const url = new URL(input, "http://localhost");
+      if (init.method === "POST" && url.pathname === "/api/admin/agents") {
+        sent.push({ body: String(init.body), key: new Headers(init.headers).get("Idempotency-Key") });
+        if (sent.length === 1) return Response.json({ code: "dependency_unavailable", message: "Preparing Skills", retryable: true }, { status: 503 });
+        return Response.json({ agent, operation: { ...operation("rebuild"), kind: "create" } }, { status: 202 });
+      }
+      if (url.pathname === "/api/admin/agent-skill-preparations/by-idempotency-key") {
+        expect(new Headers(init.headers).get("Idempotency-Key")).toBe(sent[0]?.key);
+        progressReads++;
+        return Response.json({ request_id: "request-1", agent_id: "agent-1", kind: "create", state: "preparing", progress: { verified_packages: 1, verified_bytes: 120, total_packages: 2, total_bytes: 240 }, updated_at: timestamp });
+      }
+      switch (url.pathname) {
+        case "/api/admin/agents": return Response.json({ items: [] });
+        case "/api/admin/templates": return Response.json({ items: [template] });
+        case "/api/admin/directory": return Response.json({ users: [member], groups: [] });
+        default: throw new Error(`Unexpected request: ${init.method} ${url.pathname}`);
+      }
+    }));
+    render(<AgentsPage />);
+    await waitFor(() => expect((screen.getAllByRole("button", { name: "Create Agent" })[0] as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Agent" })[0]!);
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Name"), { target: { value: "Support Agent" } });
+    fireEvent.change(dialog.getByLabelText("Owner"), { target: { value: member.user.id } });
+    fireEvent.change(dialog.getByLabelText("Template"), { target: { value: template.template_id } });
+    fireEvent.click(dialog.getByRole("button", { name: "Create Agent" }));
+    await dialog.findByText(/1 of 2 Skills verified/);
+    expect(progressReads).toBeGreaterThan(0);
+    fireEvent.click(dialog.getByRole("button", { name: "Retry creation" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]).toEqual(sent[0]);
+  });
+
   it.each(["lost response", "503"])("retains one creation intent after %s and navigates only after acknowledgement", async (failure) => {
     const command = deferred<Response>();
     const state = {

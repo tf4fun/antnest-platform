@@ -1,17 +1,23 @@
 package rpc
 
 import (
+	"slices"
 	"time"
 
 	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 type configurationDTO struct {
-	MCPServers []deployment.MCPServer `json:"mcp_servers,omitempty"`
-	ImageRef   string                 `json:"image_ref"`
-	Network    networkDTO             `json:"network"`
-	Resources  resourceLimitsDTO      `json:"resources"`
+	MCPServers          []deployment.MCPServer `json:"mcp_servers,omitempty"`
+	ImageRef            string                 `json:"image_ref"`
+	Network             networkDTO             `json:"network"`
+	Resources           resourceLimitsDTO      `json:"resources"`
+	OrganizationID      string                 `json:"organization_id,omitempty"`
+	SystemSkills        []skillset.FrozenSkill `json:"system_skills,omitempty"`
+	PreparedSkillSet    *skillset.PreparedSet  `json:"prepared_skill_set,omitempty"`
+	PreparedReferenceID string                 `json:"prepared_reference_id,omitempty"`
 }
 
 type networkDTO struct {
@@ -50,6 +56,8 @@ func (d configurationDTO) domain() deployment.Configuration {
 			PidsLimit:   d.Resources.PidsLimit,
 			TmpfsBytes:  d.Resources.TmpfsBytes,
 		},
+		OrganizationID: d.OrganizationID, SystemSkills: slices.Clone(d.SystemSkills),
+		PreparedSkillSet: d.PreparedSkillSet, PreparedReferenceID: d.PreparedReferenceID,
 	}
 }
 

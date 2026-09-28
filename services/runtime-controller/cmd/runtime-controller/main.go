@@ -22,6 +22,7 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
 	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
 	platformmonitor "soft/antnest-platform/services/runtime-controller/internal/platform/monitor"
+	"soft/antnest-platform/services/runtime-controller/internal/registryclient"
 	postgresrepository "soft/antnest-platform/services/runtime-controller/internal/repository/postgres"
 	"soft/antnest-platform/services/runtime-controller/internal/rpc"
 	"soft/antnest-platform/services/runtime-controller/internal/runtimeclient"
@@ -114,14 +115,48 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("platform", "docker_client_initialization_failed", err)
 	}
+	skillVolumes, err := platformdocker.NewSkillVolumeWriter(dockerClient, configuration.SkillPreparerImage)
+	if err != nil {
+		return classified("skill_preparation", "skill_volume_writer_initialization_failed", err)
+	}
 	driver, err := platformdocker.NewDriver(dockerClient, platformdocker.Config{
 		ControllerScope:    configuration.ControllerScope,
 		ManagementNetwork:  configuration.ManagementNetwork,
 		SystemSkillsVolume: configuration.SystemSkillsVolume,
 		RuntimeOTEL:        configuration.RuntimeOTEL,
+		SkillMountGate:     skillVolumes,
 	})
 	if err != nil {
 		return classified("platform", "docker_driver_initialization_failed", err)
+	}
+	var skillService *control.SkillPreparationService
+	var skillWorker *control.SkillPreparationWorker
+	if configuration.SkillRegistryURL != "" {
+		skillService, err = control.NewSkillPreparationService(baseRepository, configuration.ControllerScope)
+		if err != nil {
+			return classified("skill_preparation", "skill_service_initialization_failed", err)
+		}
+		skillService.SetReadyVerifier(baseRepository, skillVolumes)
+		registry, registryErr := registryclient.New(configuration.SkillRegistryURL, configuration.SkillRegistryToken, 30*time.Second, nil)
+		if registryErr != nil {
+			return classified("skill_preparation", "skill_registry_client_initialization_failed", registryErr)
+		}
+		workerID, identityErr := newNotificationProbePayload()
+		if identityErr != nil {
+			return classified("skill_preparation", "skill_worker_identity_failed", identityErr)
+		}
+		skillWorker, err = control.NewSkillPreparationWorker(baseRepository, registry, skillVolumes, configuration.ControllerScope, workerID)
+		if err != nil {
+			return classified("skill_preparation", "skill_worker_initialization_failed", err)
+		}
+	}
+	cleanupID, err := newNotificationProbePayload()
+	if err != nil {
+		return classified("skill_cleanup", "skill_cleanup_identity_failed", err)
+	}
+	skillCleanup, err := control.NewSkillCleanupWorker(baseRepository, skillVolumes, configuration.ControllerScope, cleanupID)
+	if err != nil {
+		return classified("skill_cleanup", "skill_cleanup_initialization_failed", err)
 	}
 	observedPlatform, err := telemetry.ObservePlatform(driver, slog.Default(), configuration.Platform)
 	if err != nil {
@@ -134,10 +169,13 @@ func run(ctx context.Context) (resultErr error) {
 	service, err := control.NewService(
 		repository, baseRepository, observationHealth, observedPlatform, verifier, time.Now,
 		configuration.MutationTimeout,
+		configuration.ControllerScope,
 	)
 	if err != nil {
 		return classified("control", "control_service_initialization_failed", err)
 	}
+	service.SetSkillVolumeInspector(skillVolumes)
+	service.SetActiveSkillSetVerifier(repository, skillVolumes)
 	monitor, err := platformmonitor.New(
 		observedPlatform, service, observationHealth, slog.Default(), time.Second,
 		configuration.ReconciliationTimeout,
@@ -219,12 +257,38 @@ func run(ctx context.Context) (resultErr error) {
 	case <-ctx.Done():
 		return nil
 	}
+	var skillHandler []rpc.SkillPreparationService
+	if skillService != nil {
+		skillHandler = append(skillHandler, skillService)
+	}
 	handler, err := rpc.NewHandler(
-		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout,
+		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout, skillHandler...,
 	)
 	if err != nil {
 		return classified("rpc", "rpc_handler_initialization_failed", err)
 	}
+	handler.SetActiveSkillVerifier(service)
+	legacyInventory, err := platformdocker.NewLegacyInventoryReader(
+		dockerClient, "/system-skills-volume", configuration.SystemSkillsVolume, configuration.ControllerScope,
+	)
+	if err != nil {
+		return classified("legacy_inventory", "legacy_inventory_initialization_failed", err)
+	}
+	handler.SetLegacyInventory(legacyInventory)
+	backupRootInfo, err := os.Lstat(configuration.LegacyBackupRoot)
+	if err != nil || !backupRootInfo.IsDir() {
+		return classified("legacy_backup", "legacy_backup_storage_unavailable", fmt.Errorf("legacy backup mount is absent or invalid: %v", err))
+	}
+	if err := os.Chmod(configuration.LegacyBackupRoot, 0700); err != nil {
+		return classified("legacy_backup", "legacy_backup_storage_unavailable", err)
+	}
+	legacyBackup, err := platformdocker.NewLegacyBackupWriter(
+		dockerClient, "/system-skills-volume", configuration.LegacyBackupRoot, configuration.SystemSkillsVolume, configuration.ControllerScope,
+	)
+	if err != nil {
+		return classified("legacy_backup", "legacy_backup_initialization_failed", err)
+	}
+	handler.SetLegacyBackup(legacyBackup)
 	serverContext, cancelServer := context.WithCancelCause(context.WithoutCancel(ctx))
 	defer cancelServer(rpc.ErrServerShutdown)
 	server := &http.Server{
@@ -235,6 +299,17 @@ func run(ctx context.Context) (resultErr error) {
 	if err := service.Ready(ctx); err != nil {
 		return classified("readiness", "startup_readiness_failed", err)
 	}
+	workerContext, stopWorkers := context.WithCancel(ctx)
+	defer stopWorkers()
+	var skillWorkerDone chan struct{}
+	if skillWorker != nil {
+		skillWorkerDone = make(chan struct{})
+		go func() {
+			defer close(skillWorkerDone)
+			runSkillPreparationWorker(workerContext, skillWorker)
+		}()
+	}
+	go runSkillCleanupWorker(workerContext, skillCleanup)
 	go func() { componentErrors <- classified("rpc", "http_server_failed", serveHTTP(server)) }()
 	slog.Info("Runtime Controller started",
 		"listen_address", configuration.ListenAddress,
@@ -245,10 +320,49 @@ func run(ctx context.Context) (resultErr error) {
 	case <-ctx.Done():
 	case runErr = <-componentErrors:
 	}
+	stopWorkers()
 	cancelServer(rpc.ErrServerShutdown)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return errors.Join(runErr, classified("rpc", "http_shutdown_failed", server.Shutdown(shutdownCtx)))
+	shutdownErr := classified("rpc", "http_shutdown_failed", server.Shutdown(shutdownCtx))
+	if skillWorkerDone != nil {
+		select {
+		case <-skillWorkerDone:
+		case <-time.After(12 * time.Second):
+			return errors.Join(runErr, shutdownErr, classified("skill_preparation", "skill_worker_shutdown_timeout", context.DeadlineExceeded))
+		}
+	}
+	return errors.Join(runErr, shutdownErr)
+}
+
+func runSkillPreparationWorker(ctx context.Context, worker *control.SkillPreparationWorker) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := worker.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("Skill preparation round failed", "component", "skill_preparation", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func runSkillCleanupWorker(ctx context.Context, worker *control.SkillCleanupWorker) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := worker.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("Skill cleanup round failed", "component", "skill_cleanup", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type telemetryLifecycle interface {

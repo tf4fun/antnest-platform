@@ -8,7 +8,7 @@ import {
 } from "./contracts.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 
-export async function catalog(admin, image, secrets) {
+export async function catalog(admin, image, secrets, skill) {
   const api = async (path, body, status = 200, headers = {}) =>
     (await admin.request(path, { body, status, headers })).body;
   const replay = async (path, body, id) => {
@@ -71,6 +71,9 @@ export async function catalog(admin, image, secrets) {
     "/api/admin/templates",
     {
       ...templateInput(model, "Stage 3 Template"),
+      ...(skill
+        ? { skill_refs: [{ skill_id: skill.skill_id, version: skill.version }] }
+        : {}),
     },
     "template_id",
   );
@@ -130,7 +133,7 @@ export async function catalog(admin, image, secrets) {
     assertResourceId("template", item.template_id);
   return { provider, model, template };
 }
-export async function editCatalog(admin, original, secrets) {
+export async function editCatalog(admin, original, secrets, skill) {
   const api = async (path, body, status = 200) =>
     (await admin.request(path, { body, status })).body;
   const { provider, model, template } = original;
@@ -166,6 +169,9 @@ export async function editCatalog(admin, original, secrets) {
       system_prompt: "Use the requested tool with revised configuration.",
       max_model_requests: 12,
       runtime: { image_ref: template.runtime.image_ref },
+      ...(skill
+        ? { skill_refs: [{ skill_id: skill.skill_id, version: skill.version }] }
+        : {}),
     },
     201,
   );

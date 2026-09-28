@@ -10,6 +10,7 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
 	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 func TestRuntimeLifecycleCommandsHidePhysicalResourceSteps(t *testing.T) {
@@ -95,6 +96,23 @@ func TestLifecycleRejectsStaleRevisionBeforePlatformMutation(t *testing.T) {
 	}
 	if platform.mutationCalls() != 0 {
 		t.Fatalf("stale update reached platform: %d calls", platform.mutationCalls())
+	}
+}
+
+func TestUpdateSkipsGenerationClaimRetainedByEarlierFailedOperation(t *testing.T) {
+	repository := newLifecycleRepository()
+	revision := deployment.RevisionFor("original", lifecycleDigest)
+	repository.environments["agent-1"] = deployment.Environment{
+		AgentID: "agent-1", RuntimeRevision: revision, LifecycleState: deployment.LifecycleProvisioned,
+		Health: deployment.HealthHealthy, Generation: 1, SpecDigest: lifecycleDigest, ObservedAt: lifecycleNow,
+	}
+	repository.claims[deployment.Key{AgentID: "agent-1", Generation: 2}] = repositoryport.GenerationClaim{
+		RuntimeRevision: deployment.RevisionFor("failed-update", lifecycleDigest), SpecDigest: lifecycleDigest,
+	}
+	service := newLifecycleService(t, repository, newLifecyclePlatform())
+	operation, err := service.UpdateRuntime(context.Background(), "retry-update", "agent-1", revision, lifecycleConfiguration())
+	if err != nil || operation.Generation != 3 {
+		t.Fatalf("reused claimed generation: %+v %v", operation, err)
 	}
 }
 
@@ -427,11 +445,20 @@ func lifecycleConfiguration() deployment.Configuration {
 }
 
 type lifecycleRepository struct {
-	mu           sync.Mutex
-	operations   map[string]deployment.Operation
-	environments map[string]deployment.Environment
-	claims       map[deployment.Key]repositoryport.GenerationClaim
-	observations []deployment.Observation
+	mu                sync.Mutex
+	operations        map[string]deployment.Operation
+	environments      map[string]deployment.Environment
+	claims            map[deployment.Key]repositoryport.GenerationClaim
+	observations      []deployment.Observation
+	prepared          *skillset.PreparedMaterialization
+	preparedReference *skillset.PreparedReference
+}
+
+func (r *lifecycleRepository) ResolvePreparedSkillSet(_ context.Context, reference skillset.PreparedReference) (skillset.PreparedMaterialization, error) {
+	if r.prepared == nil {
+		return skillset.PreparedMaterialization{}, repositoryport.ErrPreparedSkillSetInvalidated
+	}
+	return *r.prepared, nil
 }
 
 func newLifecycleRepository() *lifecycleRepository {
@@ -475,6 +502,17 @@ func (r *lifecycleRepository) BeginTransition(
 		}
 	}
 	transition := candidate.Transition
+	if candidate.PreparedReference != nil {
+		r.preparedReference = candidate.PreparedReference
+		if r.prepared == nil {
+			return deployment.Operation{}, false, repositoryport.ErrPreparedSkillSetInvalidated
+		}
+		candidate.PreparedSetID = r.prepared.SetID
+		candidate.PreparedVolumeName = r.prepared.VolumeName
+		candidate.PreparedMaterialization = r.prepared.Key.Materialization
+		candidate.PreparedManifestDigest = r.prepared.ManifestDigest
+		candidate.PreparedReferenceID = candidate.PreparedReference.ReferenceID
+	}
 	r.operations[candidate.RequestID] = candidate
 	r.environments[candidate.AgentID] = deployment.Environment{
 		AgentID: candidate.AgentID, RuntimeRevision: candidate.RuntimeRevision,
@@ -577,6 +615,18 @@ func (r *lifecycleRepository) GenerationClaim(
 		return repositoryport.GenerationClaim{}, ErrNotFound
 	}
 	return value, nil
+}
+
+func (r *lifecycleRepository) MaxClaimedGeneration(_ context.Context, agentID string) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var maximum uint64
+	for key := range r.claims {
+		if key.AgentID == agentID && key.Generation > maximum {
+			maximum = key.Generation
+		}
+	}
+	return maximum, nil
 }
 
 func (r *lifecycleRepository) AppendObservation(

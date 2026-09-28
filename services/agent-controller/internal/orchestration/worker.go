@@ -39,13 +39,26 @@ func Open(ctx context.Context, address string, logger *slog.Logger) (client.Clie
 	}, nil
 }
 
-func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration) worker.Worker {
+func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration, recoveries ...*application.LegacyProofLossRecoveryService) worker.Worker {
+	return newWorker(temporalClient, service, stopTimeout, nil, recoveries...)
+}
+
+func NewWorkerWithSourceRecovery(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration,
+	source *application.LegacySourceRecoveryService, recoveries ...*application.LegacyProofLossRecoveryService) worker.Worker {
+	return newWorker(temporalClient, service, stopTimeout, source, recoveries...)
+}
+
+func newWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration,
+	source *application.LegacySourceRecoveryService, recoveries ...*application.LegacyProofLossRecoveryService) worker.Worker {
 	w := worker.New(temporalClient, TaskQueue, worker.Options{
 		WorkerStopTimeout:                      stopTimeout,
 		MaxConcurrentActivityExecutionSize:     4,
 		MaxConcurrentWorkflowTaskExecutionSize: 4,
 	})
-	Register(w, service)
+	Register(w, service, recoveries...)
+	if source != nil {
+		registerLegacySourceRecovery(w, source)
+	}
 	return w
 }
 
@@ -54,8 +67,11 @@ type Registry interface {
 	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
 }
 
-func Register(registry Registry, service *application.LifecycleService) {
+func Register(registry Registry, service *application.LifecycleService, recoveries ...*application.LegacyProofLossRecoveryService) {
 	registerLifecycle(registry, service)
+	if len(recoveries) > 0 && recoveries[0] != nil {
+		registerLegacyProofLossRecovery(registry, recoveries[0])
+	}
 	registry.RegisterWorkflow(CreateAgentWorkflow)
 	registry.RegisterActivityWithOptions(func(ctx context.Context, input application.CreateAgentInput) (application.CreateAgentResult, error) {
 		ctx, stop := activityLifetime(ctx)

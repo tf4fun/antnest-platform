@@ -119,8 +119,12 @@ deployment uses locally installed images; registry pull policy is not added by
 this change. No image database or cross-service persistence is introduced.
 
 Templates do not contain users, active Runtime endpoints, Egress policy, or
-Skill package bytes. Stage 2 has no Skill Registry dependency, so every derived
-Agent configuration has an empty Skill set.
+Skill package bytes. The Stage 4 catalog accepts exact Skill versions and stores
+Registry-resolved immutable metadata in each Template revision. AgentSpec copies
+those records alongside the model configuration. For nonempty sets, lifecycle
+admission waits for Runtime Controller preparation before creation, Drain, or
+network Ensure, and supplies the prepared reference to the Runtime operation.
+Invalidated-set recovery and cross-service acceptance remain pending.
 
 Updating a Template creates a revision. It does not silently mutate existing
 Agents. Applying that revision to an Agent is an explicit rebuild operation.
@@ -211,7 +215,12 @@ metadata here records build lineage only; ACP selects current synchronized Model
 parameters by logical identity. Provider credentials are not build inputs.
 Managed MCP arguments and environment are not copied into the ACP Agent
 configuration payload or operational events.
-`skill_instructions` is always empty in Stage 2.
+The current projection always emits `skill_instructions: []`. The
+[Skill Registry design](../../../docs/skill-registry-minimal-design.md) keeps it
+permanently empty and deprecates the full-text channel. B0 will constrain the
+wire schema and B5 will reject nonempty input and remove ACP prompt expansion;
+Console B4 will also remove its audit projection of `skillInstructions` bodies.
+Those changes remain pending. Registry integration must not populate this field.
 
 ### ExecutionRevision
 
@@ -573,7 +582,27 @@ Required metrics are low-cardinality:
 ## Extension Rules
 
 - Skill Registry integration adds immutable Skill references to Template and
-  AgentSpec revisions; it never lets Agent Controller read Skill storage.
+  AgentSpec revisions; it never lets Agent Controller read Skill storage or
+  populate `skill_instructions`. Runtime discovery and on-demand reads are the
+  only planned body-delivery path.
+- The Skill-set preparation phase precedes Initialize and, for rebuild,
+  precedes both Drain and Egress Fence. Rebuild preflight retains the source
+  execution publication and admission, then checks source revisions before
+  entering the lifecycle workflow. Enable validates its retained set before
+  NetworkEnsure. A durable operation-owned reference, without TTL, protects the
+  target until settlement and overlaps RC's lifecycle reference. External drift
+  rejected after Fence must restore the intact, still-authorized source network
+  and admission before completing that attempt as failed; never wait fenced
+  for another download. RC owns preparation and references. The Controller
+  stores the intent before lifecycle admission and exposes its scoped progress
+  through `GET /internal/agent-skill-preparations/{request_id}`. The endpoint
+  reads RC's live receipt while preparing or ready and returns a dependency
+  error if that read fails. Full ACP/Console integration and legacy-asset
+  migration remain separate acceptance work.
+- The separate [learning proposal](../../../docs/skill-learning-design.md)
+  assigns Agent learning scope, authorization and budget configuration to a
+  mandatory Controller batch. ACP owns candidates, confirmation and execution;
+  learning is not a Registry prerequisite.
 - A Kubernetes adapter changes Runtime Controller only.
 - A KMS adapter replaces local encrypted credential storage behind the
   credential port without changing Run contracts.

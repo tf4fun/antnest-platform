@@ -12,7 +12,7 @@ import (
 
 func TestWorkflowInvariantFailureIsAtomicAndDoesNotOverwriteAnotherPhase(t *testing.T) {
 	repository, base := identityTestRepository(t)
-	service := application.NewLifecycleService(repository, repository, &offboardingDependencies{}, &offboardingDependencies{}, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	service := newIntegratedLifecycleService(repository, repository, &offboardingDependencies{}, &offboardingDependencies{}, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	accepted, err := service.DisableAgent(context.Background(), application.DisableAgentInput{RequestID: "invariant-disable", AgentID: base.Agent.AgentID})
 	if err != nil {
 		t.Fatal(err)

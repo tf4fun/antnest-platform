@@ -62,7 +62,7 @@ func TestRebuildLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing
 		network: validLifecycleNetwork(),
 		runtime: ports.RuntimeOperation{State: "running"},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),
@@ -193,7 +193,7 @@ func TestDeleteLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing.
 	store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.runtime = ports.RuntimeOperation{State: "running"}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(700, 0).UTC()},
 		WithLifecycleExecution(testExecutionForStore(store)),

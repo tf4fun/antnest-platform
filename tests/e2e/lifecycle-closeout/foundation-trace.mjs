@@ -44,6 +44,7 @@ export async function collectFoundationLifecycle(
           updateRestart: operation.updateRestart,
           settlementOutcome: operation.settlementOutcome,
           networkAlreadyClosed: operation.networkAlreadyClosed,
+          skillPreparation: operation.skillPreparation,
           missingSourceGeneration: operation.missingSourceGeneration,
         },
         secrets,

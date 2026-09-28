@@ -550,6 +550,7 @@ type fakeEngine struct {
 	removeCalls              int
 	removeVolumeCalls        int
 	createErr                error
+	startErr                 error
 	createMaterializes       bool
 	createVolumeErr          error
 	createVolumeMaterializes bool
@@ -656,12 +657,12 @@ func (e *fakeEngine) CreateContainer(_ context.Context, spec ContainerSpec) (str
 	e.createCalls++
 	e.created = spec
 	if e.createMaterializes {
-		e.container = &Container{ID: "created", Name: spec.Name, Labels: spec.Labels}
+		e.container = &Container{ID: "created", Name: spec.Name, Status: "created", Labels: spec.Labels}
 	}
 	if e.createErr != nil {
 		return "", e.createErr
 	}
-	e.container = &Container{ID: "created", Name: spec.Name, Labels: spec.Labels}
+	e.container = &Container{ID: "created", Name: spec.Name, Status: "created", Labels: spec.Labels}
 	return "created", nil
 }
 
@@ -672,7 +673,7 @@ func (e *fakeEngine) StartContainer(context.Context, string) error {
 		e.container.Status = "running"
 		e.container.Health = "starting"
 	}
-	return nil
+	return e.startErr
 }
 
 func (e *fakeEngine) StopContainer(context.Context, string) error {

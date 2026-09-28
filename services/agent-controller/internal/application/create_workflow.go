@@ -47,6 +47,11 @@ func (service *LifecycleService) AdvanceAgentCreate(ctx context.Context, input C
 	}
 	if state.Operation.State != domain.OperationRunning || current > expected {
 		// A retry after the phase transaction committed must not repeat its side effects.
+		if state.Operation.State == domain.OperationCompleted || state.Operation.State == domain.OperationFailed {
+			if err := service.releasePreparedSkills(ctx, input.RequestID, fingerprint); err != nil {
+				return OperationView{}, err
+			}
+		}
 		return lifecycleOperationView(state.Operation), nil
 	}
 	next, err := service.stepAgentCreate(ctx, state)
@@ -55,6 +60,11 @@ func (service *LifecycleService) AdvanceAgentCreate(ctx context.Context, input C
 	}
 	if next.Operation.State == domain.OperationRunning && next.Operation.Phase == phase {
 		return OperationView{}, fmt.Errorf("%w: Runtime effect is still pending", ErrDependencyUnavailable)
+	}
+	if next.Operation.State == domain.OperationCompleted || next.Operation.State == domain.OperationFailed {
+		if err := service.releasePreparedSkills(ctx, input.RequestID, fingerprint); err != nil {
+			return OperationView{}, err
+		}
 	}
 	return lifecycleOperationView(next.Operation), nil
 }

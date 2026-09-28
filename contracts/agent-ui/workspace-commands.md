@@ -3,8 +3,10 @@
 Status: backend acceptance passed; browser preview awaits human style review
 and frontend regression. Owner: Agent UI. Reviewed boundaries: ACP
 remains the Session/Run authority; Edge Gateway retains authentication, CSRF and
-trusted identity injection. Future Channel Gateway is a pending consumer of
-these semantics, not an implemented integration.
+trusted identity injection. Future Channel Manager is a pending consumer of
+these semantics, not an implemented integration. Its scope is recorded in the
+[Stage 4 service plan](../../docs/stage-4-services.md); a channel-facing contract
+remains to be designed.
 
 ## Discovery and execution
 
@@ -84,6 +86,6 @@ no durable creation idempotency promise.
    evidence for busy status/stop, configuration CAS, scope denial and no model
    calls for controls. A preview is not final acceptance.
 
-Channel bindings, external delivery deduplication, skill registry, Scheduler,
+Channel bindings, external delivery deduplication, Skill Registry, Task Scheduler,
 `/queue` and `/steer` remain pending separate deliveries. No new service is
 created by this preparation batch.

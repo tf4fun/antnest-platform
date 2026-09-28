@@ -49,7 +49,7 @@ func TestRuntimeLossRebuildRechecksHistoricalSourceUnderRowLock(t *testing.T) {
 				}
 			}}
 			deps := newRuntimeRebuildDependencies(base.Agent)
-			service := application.NewLifecycleService(repository, store, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+			service := newIntegratedLifecycleService(repository, store, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 			_, err := service.RebuildAgent(ctx, application.RebuildAgentInput{
 				RequestID: "stale-recovery", AgentID: base.Agent.AgentID,
 				TemplateID: seed.Revision.Snapshot().TemplateID, TemplateRevision: seed.Revision.Revision(),

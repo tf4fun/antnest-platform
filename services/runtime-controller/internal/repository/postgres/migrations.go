@@ -162,6 +162,100 @@ ALTER TABLE runtime_controller.operations
     );
 `
 
+const skillPreparationSQL = `
+CREATE TABLE runtime_controller.skill_sets (
+    set_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    controller_scope TEXT NOT NULL,
+    organization_id TEXT NOT NULL CHECK (organization_id ~ '^org_[0-9a-f]{32}$'),
+    agent_id TEXT NOT NULL,
+    skill_set_digest TEXT NOT NULL CHECK (skill_set_digest ~ '^sha256:[0-9a-f]{64}$'),
+    layout_version INTEGER NOT NULL CHECK (layout_version = 1),
+    frozen_skills JSONB NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'preparing', 'retry_wait', 'paused', 'ready', 'rejected', 'invalidated', 'cleanup_pending')),
+    verified_packages INTEGER NOT NULL DEFAULT 0 CHECK (verified_packages >= 0),
+    verified_bytes BIGINT NOT NULL DEFAULT 0 CHECK (verified_bytes >= 0),
+    total_packages INTEGER NOT NULL CHECK (total_packages BETWEEN 0 AND 32),
+    total_bytes BIGINT NOT NULL CHECK (total_bytes BETWEEN 0 AND 134217728),
+    materialization BIGINT NOT NULL DEFAULT 0 CHECK (materialization >= 0),
+    volume_name TEXT NOT NULL DEFAULT '',
+    manifest_digest TEXT NOT NULL DEFAULT '',
+    lease_owner TEXT NOT NULL DEFAULT '',
+    lease_until TIMESTAMPTZ,
+    retry_after TIMESTAMPTZ,
+    error_code TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (controller_scope, organization_id, agent_id, skill_set_digest, layout_version)
+);
+
+CREATE INDEX skill_sets_work_idx ON runtime_controller.skill_sets (state, retry_after, lease_until);
+
+CREATE TABLE runtime_controller.skill_preparations (
+    request_id TEXT PRIMARY KEY,
+    request_digest TEXT NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    set_id BIGINT NOT NULL REFERENCES runtime_controller.skill_sets(set_id),
+    owner_operation_id TEXT NOT NULL,
+    reference_id TEXT NOT NULL UNIQUE CHECK (reference_id ~ '^psr_[0-9a-f]{32}$'),
+    released BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX skill_preparations_set_active_idx
+    ON runtime_controller.skill_preparations (set_id) WHERE NOT released;
+`
+
+const skillPackageCheckpointSQL = `
+CREATE TABLE runtime_controller.skill_package_checkpoints (
+    set_id BIGINT NOT NULL REFERENCES runtime_controller.skill_sets(set_id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL CHECK (skill_id ~ '^skill_[0-9a-f]{32}$'),
+    version BIGINT NOT NULL CHECK (version > 0),
+    content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
+    verified_bytes BIGINT NOT NULL CHECK (verified_bytes BETWEEN 1 AND 33554432),
+    files JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (set_id, skill_id)
+);
+`
+
+const skillLifecycleReferenceSQL = `
+ALTER TABLE runtime_controller.operations
+    ADD COLUMN skill_set_id BIGINT REFERENCES runtime_controller.skill_sets(set_id),
+    ADD COLUMN skill_volume_name TEXT NOT NULL DEFAULT '',
+    ADD COLUMN skill_materialization BIGINT NOT NULL DEFAULT 0 CHECK (skill_materialization >= 0),
+    ADD COLUMN skill_manifest_digest TEXT NOT NULL DEFAULT '',
+    ADD COLUMN skill_reference_id TEXT NOT NULL DEFAULT '',
+    ADD CONSTRAINT operations_prepared_skill_identity_check CHECK (
+        (skill_set_id IS NULL AND skill_volume_name = '' AND skill_materialization = 0
+            AND skill_manifest_digest = '' AND skill_reference_id = '') OR
+        (skill_set_id IS NOT NULL AND skill_volume_name <> '' AND skill_materialization > 0
+            AND skill_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+            AND skill_reference_id ~ '^psr_[0-9a-f]{32}$')
+    );
+
+CREATE TABLE runtime_controller.skill_lifecycle_references (
+    operation_request_id TEXT PRIMARY KEY REFERENCES runtime_controller.operations(request_id),
+    set_id BIGINT NOT NULL REFERENCES runtime_controller.skill_sets(set_id),
+    materialization BIGINT NOT NULL CHECK (materialization > 0),
+    volume_name TEXT NOT NULL,
+    manifest_digest TEXT NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX skill_lifecycle_references_set_idx ON runtime_controller.skill_lifecycle_references(set_id);
+`
+
+const skillCurrentReferenceSQL = `
+CREATE TABLE runtime_controller.skill_current_references (
+    agent_id TEXT PRIMARY KEY REFERENCES runtime_controller.runtime_environments(agent_id),
+    set_id BIGINT NOT NULL REFERENCES runtime_controller.skill_sets(set_id),
+    materialization BIGINT NOT NULL CHECK (materialization > 0),
+    volume_name TEXT NOT NULL,
+    manifest_digest TEXT NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX skill_current_references_set_idx ON runtime_controller.skill_current_references(set_id);
+`
+
 type migration struct {
 	version  int64
 	name     string
@@ -199,6 +293,26 @@ var schemaMigrations = []migration{
 		version: 6, name: "separate_creation_from_readiness",
 		checksum: "d432fef4aa3753f72222633ed18696730fb6c000db230f278ec0c554cd4553c9",
 		sql:      provisionedEnvironmentSQL,
+	},
+	{
+		version: 7, name: "add_system_skill_preparation_intents",
+		checksum: "499110396464ebf43c6e300e48efe978fec2b4049663ac0a9ca31a8988863de3",
+		sql:      skillPreparationSQL,
+	},
+	{
+		version: 8, name: "add_system_skill_package_checkpoints",
+		checksum: "378835f603c6beacb4b23a7cb280fccb215293dc3b101fd44bfc666435b06f40",
+		sql:      skillPackageCheckpointSQL,
+	},
+	{
+		version: 9, name: "retain_system_skill_lifecycle_references",
+		checksum: "3c0fb637be68d1a4e5b0fb5841b82be2551ef19862f0fbca509439e31d48e2f1",
+		sql:      skillLifecycleReferenceSQL,
+	},
+	{
+		version: 10, name: "retain_current_system_skill_reference",
+		checksum: "fafdadcdcd99dbc39aa0e30ec806ed966b65598e8ea6c8658a6feb9a8013a5a2",
+		sql:      skillCurrentReferenceSQL,
 	},
 }
 

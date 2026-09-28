@@ -36,7 +36,7 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	deps.network.AttachmentState = ports.NetworkAttachmentOpen
 	identity := &offboardingIdentity{principal: ports.IdentityPrincipal{UserID: base.Agent.OwnerUserID, OrganizationID: base.Agent.OrganizationID, MembershipID: "membership", Active: false, LastRevocationSequence: 5},
 		event: ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC(), TraceParent: "00-11111111111111111111111111111111-2222222222222222-01"}}
-	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	lifecycle := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	scheduler := &countedOffboardingScheduler{service: lifecycle}
 	worker, err := application.NewIdentityRevocationWorker(identity, repository, scheduler, time.Second, logger)
 	if err != nil {
@@ -250,7 +250,7 @@ func TestIdentityOffboardingRetriesFailedDisableWithoutRestoringAccess(t *testin
 		runtime: ports.RuntimeOperation{RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.Agent.RuntimeExecutionID,
 			MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy"}}
 	identity := &offboardingIdentity{event: ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC()}}
-	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	lifecycle := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	worker, err := application.NewIdentityRevocationWorker(identity, repository, lifecycle, time.Second, logger)
 	if err != nil {
 		t.Fatal(err)

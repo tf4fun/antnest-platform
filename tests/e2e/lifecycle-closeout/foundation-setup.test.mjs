@@ -88,6 +88,7 @@ test("foundation deployment rejects a missing Temporal service or published Temp
     "admin-console",
     "agent-ui",
     "runtime-egress",
+    "skill-registry",
     "stage3-model",
   ].map((name) => ({
     Config: {
@@ -108,7 +109,7 @@ test("foundation deployment rejects a missing Temporal service or published Temp
         : {},
     },
   }));
-  assert.equal(inspectFoundationDeployment(rows, config).services, 12);
+  assert.equal(inspectFoundationDeployment(rows, config).services, 13);
   assert.throws(() =>
     inspectFoundationDeployment(
       rows.filter(

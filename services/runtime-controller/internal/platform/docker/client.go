@@ -35,7 +35,7 @@ func NewUnixClient(socketPath string) (*Client, error) {
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", socketPath)
 		},
 		DisableCompression:    true,
-		ResponseHeaderTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	return NewHTTPClient(&http.Client{Transport: transport, Timeout: 30 * time.Second}, "http://docker")
 }
@@ -68,7 +68,22 @@ func (c *Client) InspectContainer(ctx context.Context, identifier string) (Conta
 		Status: response.State.Status, ExitCode: response.State.ExitCode,
 		OOMKilled: response.State.OOMKilled, Error: response.State.Error,
 		RestartCount: response.RestartCount, Labels: response.Config.Labels,
+		Mounts: observedMounts(response.Mounts, response.HostConfig.Mounts),
 	}, nil
+}
+
+func observedMounts(actual []dockerObservedMount, requested []dockerMount) []ObservedMount {
+	result := make([]ObservedMount, 0, len(actual))
+	for _, mount := range actual {
+		observed := ObservedMount{Type: mount.Type, Name: mount.Name, Destination: mount.Destination, ReadWrite: mount.RW}
+		for _, wanted := range requested {
+			if wanted.Target == mount.Destination && wanted.Source == mount.Name && wanted.VolumeOptions != nil {
+				observed.NoCopy = wanted.VolumeOptions.NoCopy
+			}
+		}
+		result = append(result, observed)
+	}
+	return result
 }
 
 func (c *Client) ListManagedContainers(ctx context.Context) ([]Container, error) {
@@ -84,6 +99,35 @@ func (c *Client) ListManagedContainers(ctx context.Context) ([]Container, error)
 		}
 		if inspectErr != nil {
 			return nil, inspectErr
+		}
+		result = append(result, container)
+	}
+	return result, nil
+}
+
+// ListAllContainers is used only by the legacy shared-volume inventory. A
+// managed-label filter would silently omit foreign Docker volume consumers.
+func (c *Client) ListAllContainers(ctx context.Context) ([]Container, error) {
+	var summaries []struct {
+		ID string `json:"Id"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/containers/json?all=1", nil, &summaries); err != nil {
+		return nil, err
+	}
+	if len(summaries) > 10_000 {
+		return nil, fmt.Errorf("legacy inventory container limit exceeded")
+	}
+	result := make([]Container, 0, len(summaries))
+	for _, summary := range summaries {
+		if strings.TrimSpace(summary.ID) == "" {
+			return nil, fmt.Errorf("docker container summary is missing an ID")
+		}
+		container, err := c.InspectContainer(ctx, summary.ID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrLegacyInventoryChanged
+		}
+		if err != nil {
+			return nil, err
 		}
 		result = append(result, container)
 	}
@@ -241,9 +285,13 @@ func dockerCreateRequest(spec ContainerSpec) createContainerRequest {
 	sort.Strings(environment)
 	mounts := make([]dockerMount, 0, len(spec.Mounts))
 	for target, mount := range spec.Mounts {
-		mounts = append(mounts, dockerMount{
+		item := dockerMount{
 			Type: "volume", Source: mount.Source, Target: target, ReadOnly: mount.ReadOnly,
-		})
+		}
+		if mount.NoCopy {
+			item.VolumeOptions = &dockerVolumeOptions{NoCopy: true}
+		}
+		mounts = append(mounts, item)
 	}
 	sort.Slice(mounts, func(left, right int) bool { return mounts[left].Target < mounts[right].Target })
 	return createContainerRequest{
@@ -256,7 +304,8 @@ func dockerCreateRequest(spec ContainerSpec) createContainerRequest {
 		NetworkingConfig: dockerNetworkingConfig{EndpointsConfig: dockerEndpoints(spec.Networks)},
 		HostConfig: dockerHostConfig{
 			ReadonlyRootfs: spec.ReadOnlyRootFS, Mounts: mounts,
-			CapDrop: []string{"ALL"}, CapAdd: spec.Capabilities, Tmpfs: spec.Tmpfs,
+			NetworkMode: spec.NetworkMode,
+			CapDrop:     []string{"ALL"}, CapAdd: spec.Capabilities, Tmpfs: spec.Tmpfs,
 			Dns: spec.DNS, DnsOptions: spec.DNSOptions, Devices: dockerDevices(spec.Devices),
 			PidsLimit: spec.PidsLimit, Memory: spec.MemoryBytes,
 			SecurityOpt:   []string{"no-new-privileges=true"},
@@ -275,6 +324,63 @@ func (c *Client) StopContainer(ctx context.Context, identifier string) error {
 
 func (c *Client) RemoveContainer(ctx context.Context, identifier string) error {
 	return c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(identifier)+"?force=1", nil, nil)
+}
+
+// PutArchive writes a tar stream into a container's mounted volume. The
+// caller owns validation of the tar members and must close its input.
+func (c *Client) PutArchive(ctx context.Context, identifier, destination string, archive io.Reader) (resultErr error) {
+	requestPath := "/containers/" + url.PathEscape(identifier) + "/archive?path=" + url.QueryEscape(destination)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+"/"+dockerAPIVersion+requestPath, archive)
+	if err != nil {
+		return fmt.Errorf("create Docker archive request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/x-tar")
+	archiveClient := *c.httpClient
+	archiveClient.Timeout = 0 // The preparation round's context owns the archive budget.
+	response, err := archiveClient.Do(request)
+	if err != nil {
+		return Uncertain(fmt.Errorf("write Docker archive: %w", err))
+	}
+	defer joinResponseCloseError(&resultErr, response.Body.Close)
+	if response.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, response.Body)
+		return ErrNotFound
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		err := fmt.Errorf("write Docker archive returned %s: %s", response.Status, strings.TrimSpace(string(detail)))
+		if response.StatusCode >= 500 {
+			return Uncertain(err)
+		}
+		return err
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	return nil
+}
+
+// GetArchive returns the raw tar stream from Docker. The caller must close it.
+func (c *Client) GetArchive(ctx context.Context, identifier, source string) (io.ReadCloser, error) {
+	requestPath := "/containers/" + url.PathEscape(identifier) + "/archive?path=" + url.QueryEscape(source)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/"+dockerAPIVersion+requestPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Docker archive request: %w", err)
+	}
+	archiveClient := *c.httpClient
+	archiveClient.Timeout = 0 // The preparation round's context owns the archive budget.
+	response, err := archiveClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("read Docker archive: %w", err)
+	}
+	if response.StatusCode == http.StatusNotFound {
+		_ = response.Body.Close()
+		return nil, ErrNotFound
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		_ = response.Body.Close()
+		return nil, fmt.Errorf("read Docker archive returned %s: %s", response.Status, strings.TrimSpace(string(detail)))
+	}
+	return response.Body, nil
 }
 
 func (c *Client) do(ctx context.Context, method, requestPath string, input, output any) (resultErr error) {
@@ -358,6 +464,17 @@ type inspectContainerResponse struct {
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
+	Mounts     []dockerObservedMount `json:"Mounts"`
+	HostConfig struct {
+		Mounts []dockerMount `json:"Mounts"`
+	} `json:"HostConfig"`
+}
+
+type dockerObservedMount struct {
+	Type        string `json:"Type"`
+	Name        string `json:"Name"`
+	Destination string `json:"Destination"`
+	RW          bool   `json:"RW"`
 }
 
 type dockerEvent struct {
@@ -379,10 +496,15 @@ func (e responseDecodeError) Error() string {
 func (e responseDecodeError) Unwrap() error { return e.cause }
 
 type dockerMount struct {
-	Type     string `json:"Type"`
-	Source   string `json:"Source"`
-	Target   string `json:"Target"`
-	ReadOnly bool   `json:"ReadOnly"`
+	Type          string               `json:"Type"`
+	Source        string               `json:"Source"`
+	Target        string               `json:"Target"`
+	ReadOnly      bool                 `json:"ReadOnly"`
+	VolumeOptions *dockerVolumeOptions `json:"VolumeOptions,omitempty"`
+}
+
+type dockerVolumeOptions struct {
+	NoCopy bool `json:"NoCopy"`
 }
 
 type dockerDevice struct {
@@ -439,6 +561,7 @@ type dockerEndpointSettings struct{}
 type dockerHostConfig struct {
 	ReadonlyRootfs bool                `json:"ReadonlyRootfs"`
 	Mounts         []dockerMount       `json:"Mounts"`
+	NetworkMode    string              `json:"NetworkMode,omitempty"`
 	CapDrop        []string            `json:"CapDrop"`
 	CapAdd         []string            `json:"CapAdd"`
 	Tmpfs          map[string]string   `json:"Tmpfs"`

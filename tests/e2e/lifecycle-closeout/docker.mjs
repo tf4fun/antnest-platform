@@ -111,6 +111,7 @@ export async function configuration(signal, beforeEffects = () => {}) {
     ANTNEST_RUNTIME_CONTROLLER_SCOPE: project,
     ANTNEST_RUNTIME_MANAGEMENT_NETWORK: `${project}-runtime-management`,
     ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: `${project}-system-skills`,
+    ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME: `${project}-legacy-skill-backups`,
     ANTNEST_RUNTIME_MANAGEMENT_SUBNET: `10.243.${octet}.0/24`,
     ANTNEST_EGRESS_IPV4: `10.243.${octet}.3`,
     ANTNEST_JAEGER_RUNTIME_IPV4: `10.243.${octet}.4`,

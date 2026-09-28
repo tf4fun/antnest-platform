@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ErrNotFound               = errors.New("record not found")
-	ErrDisabledReference      = errors.New("reference is disabled")
-	ErrRequestConflict        = errors.New("request identity conflict")
-	ErrConcurrentChange       = errors.New("concurrent catalog change")
-	ErrInvalidModelCandidates = errors.New("invalid template model candidates")
+	ErrNotFound                 = errors.New("record not found")
+	ErrDisabledReference        = errors.New("reference is disabled")
+	ErrRequestConflict          = errors.New("request identity conflict")
+	ErrConcurrentChange         = errors.New("concurrent catalog change")
+	ErrLegacyMigrationProofLost = errors.New("legacy migration proof lost after lifecycle admission")
+	ErrInvalidModelCandidates   = errors.New("invalid template model candidates")
 )
 
 type SealedSecret struct {

@@ -209,7 +209,8 @@ export type AgentTemplate = {
   max_model_requests: number;
   context_policy_version: string;
   runtime: RuntimeSpec;
-  skill_refs: string[];
+  skill_refs: import("./skills").FrozenSkill[];
+  skill_set_digest?: string;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -283,6 +284,17 @@ export type LifecycleOperation = {
 export type CreateAgentResult = {
   agent: Agent;
   operation: LifecycleOperation;
+};
+
+export type AgentSkillPreparation = {
+  request_id: string;
+  agent_id: string;
+  kind: "create" | "rebuild" | "enable";
+  state: "preparing" | "queued" | "retry_wait" | "paused" | "ready" | "rejected" | "invalidated" | "cleanup_pending" | "abandoned" | "released";
+  progress: { verified_packages: number; verified_bytes: number; total_packages: number; total_bytes: number };
+  retry_after?: string;
+  error_code?: string;
+  updated_at: string;
 };
 
 export type AgentEvent = {

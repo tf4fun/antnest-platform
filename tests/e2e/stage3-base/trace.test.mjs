@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectLifecycle } from "./trace.mjs";
+import {
+  clockWarningsOnly,
+  inspectLifecycle,
+  reviewedFencedRestartOnly,
+} from "./trace.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { fixture } from "./trace-fixtures.mjs";
 
@@ -26,6 +30,112 @@ test("an explicitly expected unknown-effect Rebuild requires the current Runtime
   delete f.expected.settlementOutcome;
   assert.throws(() => inspectLifecycle(f.trace, f.expected));
 });
+test("lost Docker Start response is accepted only after allocation and reconciliation", () => {
+  const { trace, expected } = fixture("rebuild");
+  const add = (id, name, parent, start, duration, tags) =>
+    trace.spans.push({
+      traceID: trace.traceID,
+      spanID: id,
+      processID: "runtime-controller",
+      operationName: name,
+      startTime: start,
+      duration,
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: parent },
+      ],
+      tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
+    });
+  add(
+    "start-loss-lifecycle",
+    "runtime.lifecycle.update_runtime",
+    "rpc-lifecycle.runtime_update",
+    42.05,
+    0.9,
+    { "antnest.outcome": "completed" },
+  );
+  add(
+    "start-loss-platform",
+    "runtime.platform.create",
+    "start-loss-lifecycle",
+    42.1,
+    0.8,
+    {
+      "antnest.outcome": "completed",
+      "antnest.agent.id": "agent-test",
+      "antnest.platform": "docker",
+      "antnest.runtime.generation": 2,
+    },
+  );
+  add(
+    "start-loss-absence",
+    "HTTP GET docker",
+    "start-loss-platform",
+    42.15,
+    0.02,
+    {
+      "span.kind": "client",
+      "peer.service": "docker",
+      "http.request.method": "GET",
+      "http.response.status_code": 404,
+      "antnest.outcome": "absent",
+    },
+  );
+  add(
+    "start-loss-create",
+    "HTTP POST docker",
+    "start-loss-platform",
+    42.2,
+    0.1,
+    {
+      "span.kind": "client",
+      "peer.service": "docker",
+      "http.request.method": "POST",
+      "http.response.status_code": 201,
+    },
+  );
+  add(
+    "start-loss-fault",
+    "HTTP POST docker",
+    "start-loss-platform",
+    42.4,
+    0.1,
+    {
+      "span.kind": "client",
+      "peer.service": "docker",
+      "http.request.method": "POST",
+      "antnest.error.code": "transport_failed",
+      "antnest.error.stage": "http_send",
+      "otel.status_code": "ERROR",
+      error: true,
+    },
+  );
+  add(
+    "start-loss-reconcile",
+    "HTTP GET docker",
+    "start-loss-platform",
+    42.6,
+    0.1,
+    {
+      "span.kind": "client",
+      "peer.service": "docker",
+      "http.request.method": "GET",
+      "http.response.status_code": 200,
+    },
+  );
+  assert.throws(() => inspectLifecycle(trace, expected));
+  const result = inspectLifecycle(trace, {
+    ...expected,
+    startResponseLoss: true,
+  });
+  assert.equal(result.expected_transport_faults, 1);
+  assert.equal(result.platform_probe_errors, 0);
+  trace.spans
+    .find((span) => span.spanID === "start-loss-platform")
+    .tags.find((field) => field.key === "antnest.outcome").value = "unknown";
+  assert.throws(() =>
+    inspectLifecycle(trace, { ...expected, startResponseLoss: true }),
+  );
+});
 for (const kind of ["create", "disable", "enable", "rebuild", "delete"])
   test(`${kind}: current Temporal, SQL and transport boundaries`, () => {
     const { trace, expected } = fixture(kind);
@@ -37,6 +147,117 @@ for (const kind of ["create", "disable", "enable", "rebuild", "delete"])
       ["disable", "rebuild", "delete"].includes(kind),
     );
   });
+test("Skill preparation queue retry is expected only when declared and followed by successful admission", () => {
+  const { trace, expected } = fixture("create");
+  const success = trace.spans.find(
+    (span) => span.operationName === "RunActivity:admit_agent",
+  );
+  const retry = structuredClone(success);
+  retry.spanID = "skill-queued-retry";
+  retry.startTime = success.startTime - 4;
+  retry.duration = 1;
+  retry.tags.push(
+    { key: "span.kind", value: "server" },
+    { key: "otel.status_code", value: "ERROR" },
+    { key: "error", value: true },
+    {
+      key: "otel.status_description",
+      value: "dependency unavailable: Skill preparation queued",
+    },
+  );
+  trace.spans.push(retry);
+  const preparing = structuredClone(retry);
+  preparing.spanID = "skill-preparing-retry";
+  preparing.startTime = success.startTime - 2;
+  preparing.tags.find((tag) => tag.key === "otel.status_description").value =
+    "dependency unavailable: Skill preparation preparing";
+  trace.spans.push(preparing);
+  assert.throws(() => inspectLifecycle(trace, expected));
+  const result = inspectLifecycle(trace, {
+    ...expected,
+    skillPreparation: true,
+  });
+  assert.equal(result.strict_trace, "passed");
+  assert.equal(result.skill_preparation_retries, 2);
+  retry.tags.find((tag) => tag.key === "otel.status_description").value =
+    "dependency unavailable: Skill preparation rejected";
+  assert.throws(() =>
+    inspectLifecycle(trace, { ...expected, skillPreparation: true }),
+  );
+});
+test("clock warning waiver rejects platform errors and unrelated trace warnings", () => {
+  const warning = {
+    strict_trace: "failed",
+    warning_count: 1,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of -201.857µs",
+    ],
+    platform_probe_errors: 0,
+  };
+  assert.equal(clockWarningsOnly([warning]), true);
+  assert.equal(
+    clockWarningsOnly([
+      {
+        ...warning,
+        warnings: [
+          "clock skew adjustment disabled; not applying calculated delta of 717ns",
+        ],
+      },
+    ]),
+    true,
+  );
+  assert.equal(
+    clockWarningsOnly([{ ...warning, platform_probe_errors: 1 }]),
+    false,
+  );
+  assert.equal(
+    clockWarningsOnly([{ ...warning, warnings: ["missing parent span"] }]),
+    false,
+  );
+});
+test("fenced restart waiver accepts only one proven cancellation and clock warnings", () => {
+  const restart = {
+    kind: "rebuild",
+    fenced_restart_cancellation: true,
+    strict_trace: "failed",
+    restart_error_spans: 2,
+    platform_probe_errors: 0,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of -1µs",
+    ],
+  };
+  const ordinary = { strict_trace: "passed" };
+  assert.equal(reviewedFencedRestartOnly([restart, ordinary]), true);
+  assert.equal(
+    reviewedFencedRestartOnly([
+      { ...restart, restart_error_spans: 3 },
+      ordinary,
+    ]),
+    false,
+  );
+  assert.equal(
+    reviewedFencedRestartOnly([
+      { ...restart, platform_probe_errors: 1 },
+      ordinary,
+    ]),
+    false,
+  );
+  assert.equal(
+    reviewedFencedRestartOnly([
+      { ...restart, warnings: ["missing parent span"] },
+      ordinary,
+    ]),
+    false,
+  );
+  assert.equal(reviewedFencedRestartOnly([restart, restart, ordinary]), false);
+  assert.equal(
+    reviewedFencedRestartOnly([
+      restart,
+      { ...ordinary, strict_trace: "failed" },
+    ]),
+    false,
+  );
+});
 for (const [name, mutate] of [
   [
     "missing real commit",

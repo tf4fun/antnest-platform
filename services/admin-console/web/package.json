@@ -11,7 +11,9 @@
     "test:unit": "node --test --experimental-strip-types src/lib/*.test.ts",
     "test:components": "vitest run --config vitest.config.ts",
     "test:browser:audit": "node ../../../tests/integration/admin-console/execution-audit-browser.mjs",
-    "test:browser:catalog": "node ../../../tests/integration/admin-console/catalog-browser.mjs"
+    "test:browser:catalog": "node ../../../tests/integration/admin-console/catalog-browser.mjs",
+    "test:browser:skills": "node ../../../tests/integration/admin-console/skills-browser.mjs",
+    "test:browser:template-skills": "node ../../../tests/integration/admin-console/template-skills-browser.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.23",

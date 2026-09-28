@@ -1,7 +1,7 @@
 # Service Layout And Ownership
 
 > Status: current service boundaries; unstarted services explicitly marked<br>
-> Updated: 2026-09-16
+> Updated: 2026-09-27
 
 This document defines how Antnest Platform services are separated. Its goal is
 not to create more directories. Its goal is to let a maintainer understand and
@@ -20,12 +20,20 @@ Antnest Runtime, Runtime Egress, Runtime Controller, Agent ACP Service,
 Identity Service, Agent Controller, Edge Gateway, and Admin Console are
 implemented. Agent UI and its production Gateway-to-ACP v1 path are implemented.
 Current acceptance is summarized in [current-status.md](current-status.md).
-Channel Gateway and Skill Registry remain pending until their delivery stage
-says otherwise.
-The current [single-node closeout](docker-single-node-closeout.md) defers both
-services, Kubernetes implementation, and horizontal expansion. Scheduler is
-planning-only; no additional service is needed to finish the three current
-business flows.
+The [Stage 4 plan](stage-4-services.md) records Skill Registry (`skill-registry`),
+Channel Manager (`channel-manager`) and Task Scheduler (`task-scheduler`).
+Skill Registry has a [minimal technical design](skill-registry-minimal-design.md)
+for hosting, Template references and read-only Runtime delivery. Its
+[Registry-owned contract](../contracts/skill-registry/registry-api.md) and
+[service code](../services/skill-registry/README.md) are present with unit,
+contract and PostgreSQL evidence. The [Admin Console Skills module](../services/admin-console/docs/skills.md)
+supports publication, frozen Template selection and lifecycle preparation
+progress. Controller/RC consumers and the full Template-to-Runtime integration
+have disposable Docker business and restore acceptance. Channel Manager and Task
+Scheduler are the current names for the earlier planned Channel Gateway and
+Scheduler; historical reports retain their original names. The current
+[single-node closeout](docker-single-node-closeout.md) excludes these new
+services, Kubernetes implementation and horizontal expansion.
 
 ## Repository Layers
 
@@ -64,14 +72,14 @@ under `contracts/`.
 | Identity Service   | Enterprise identity authority                            | Users, organizations, groups, memberships, OIDC, SCIM, sessions, identity events                                                                               | Agent authorization, Channel signatures, model credentials                         |
 | Admin Console      | Administrator UI and thin BFF                            | Page-local presentation state only                                                                                                                             | Business records, direct database access, domain workflows                         |
 | Agent UI           | End-user Agent conversation experience                   | Page-local presentation state only                                                                                                                             | Agent Core implementation, Runtime endpoints, lifecycle state                      |
-| Channel Gateway    | Adapt external IM protocols to ACP semantics             | Connectors, bindings, external conversation mapping, inbound receipts, deliveries                                                                              | Agent lifecycle, Runs, platform resources                                          |
+| Channel Manager (Stage 4 planned) | Own external-channel interaction and adapt it to ACP semantics | Connectors, bindings, external conversation mapping, inbound receipts, deliveries | Agent lifecycle, authoritative Sessions/Runs, platform resources |
 | Agent Controller   | Agent aggregate and lifecycle authority | AgentSpec, immutable build/execution revisions, current Provider/model configuration and credentials, Runtime binding, execution publication, lifecycle workflows, management events | Run admission and execution audit, MCP execution, platform SDKs, packets, Skill package bytes |
 | Runtime Controller | Realize and observe one logical Runtime Environment per Agent | Environment lifecycle head, opaque Runtime revisions, private compute generations, deployment operations, platform associations, bounded Runtime observation journal, platform credentials | Agent desired state, Agent rebuild policy, Agent admission, Tool dispatch, Egress policy |
 | Runtime Egress     | Own Agent network identity and outbound packet decisions | Tunnel IPv4 allocation, address quarantine, policy revisions and assignments, packet flows and conntrack                                                       | Runtime lifecycle, Agent generations, Runs, Tools                                  |
 | Antnest Runtime    | Expose one isolated Agent workspace through MCP          | Process-local execution state, TUN, four built-in tools, managed stdio MCP children and bounded Runtime information                                                                                                             | Durable control state, containers, policy decisions, Agent loop                    |
 | Agent ACP Service  | Execute ACP v1/v2 Sessions and Agent Runs | Local authorization/admission, Sessions, Runs, Turns, context, checkpoints, Tool attempts, approvals, execution state/audit, volatile Provider clients | Agent construction, Runtime rebuild, Provider administration, platform APIs, Channel objects |
-| Skill Registry     | Govern reusable organization Skill packages              | Skill identity, immutable versions, package, review, distribution manifest                                                                                     | Skill execution, Runtime construction, Agent lifecycle                             |
-| Scheduler (planned only) | Initiate scheduled Agent usage | Schedules and trigger records; details deferred until its stage | Agent lifecycle, ACP Sessions/Runs, Tool execution, another service's database |
+| Skill Registry | Host reusable organization Skill packages | Skill identity, package, immutable versions, bounded metadata lists, organization isolation and fixed-artifact distribution | Template selection, Skill execution, Runtime construction, Agent lifecycle, authoritative installation state |
+| Task Scheduler (Stage 4 planned) | Initiate scheduled Agent usage | Schedules and trigger records; detailed semantics pending | Agent lifecycle, ACP Sessions/Runs, Tool execution, another service's database |
 | Edge Gateway       | Be the sole external application entry                    | Browser sessions, trusted principal projection, external routing, admission, request limits, security headers, and trace propagation                           | Business databases and domain state machines                                       |
 
 The Edge Gateway can be absent during internal development stages. Trusted
@@ -129,8 +137,35 @@ ACP Service -> Provider model API / Runtime MCP from its local Run snapshot
 Antnest Runtime -> Runtime Egress UDP/TUN -> destination network
 
 Edge Gateway -> Identity authentication / Controller discovery / ACP state
-Channel Gateway -> ACP Service (planned)
+Channel Manager -> ACP Service (Stage 4 planned; contract pending)
+Task Scheduler -> ACP Service (Stage 4 planned; contract pending)
 ```
+
+Skill Registry package distribution and its Controller/Runtime consumers follow
+the implemented Stage 4 shared contracts.
+The [minimal design](skill-registry-minimal-design.md) assigns package versions to
+Registry, immutable Template/AgentSpec references to Agent Controller, and
+per-Agent artifact preparation/read-only mounts to Runtime Controller. It reuses
+Runtime Skill discovery; ACP rejects the retired full-text channel and reads
+Skill bodies on demand. Preparation precedes lifecycle disruption and reuses
+verified sets by Agent and content identity. Current Agents mount their prepared
+per-Agent Skill volume read-only. There is no old business data to migrate in
+this development deployment; legacy shared-volume migration is outside its scope.
+
+The independent [Skill learning proposal](skill-learning-design.md) assigns
+Agent policy, maintenance scope and budgets to Controller; candidates, evidence,
+confirmation and foreground-priority maintenance to ACP; and bounded file
+operations to Runtime. Its first delivery requires user confirmation before
+idle-time activation and does not execute candidates in the user's Runtime.
+Runtime maintenance uses a planned, credential-checked internal endpoint outside
+`tools/list`; RC bootstraps its current/next verification key set and freezes the
+full set with each accepted operation's deployment identity in a separate L1R
+batch. Recovery must not reread changed key configuration. ACP owns signing-key
+selection and the authenticated user-action record; explicit Runtime rebuilds
+rotate trusted sets, with isolation on compromise. Model tools
+remain the four built-ins plus configured MCP tools. These are planned
+service-owned batches, not additional implemented ownership
+or a fourth Stage 4 service, and do not block the Registry first delivery.
 
 Runtime never calls PostgreSQL or Docker. Runtime Controller owns platform
 credentials but no Agent or Egress database. Runtime Egress owns its private

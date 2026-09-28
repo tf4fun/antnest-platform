@@ -348,6 +348,7 @@ function mockCatalog(overrides: (request: Request) => Response | Promise<Respons
     switch (request.path) {
       case "/api/admin/model-catalog": return Response.json(catalog);
       case "/api/admin/model-profiles": return Response.json({ items: [model] });
+      case "/api/admin/skills": return Response.json({ items: [], next_after_id: null });
       case "/api/admin/model-profiles/model-1": return Response.json(model);
       case "/api/admin/templates/template-1":
       case "/api/admin/templates/template-1/revisions/1": return Response.json(template);
@@ -356,6 +357,25 @@ function mockCatalog(overrides: (request: Request) => Response | Promise<Respons
   }));
   return requests;
 }
+
+it("keeps the frozen Skill version when publishing a Template revision", async () => {
+  const frozen = { skill_id: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", version: 2, name: "review", description: "Review", artifact_digest: `sha256:${"a".repeat(64)}`, content_digest: `sha256:${"b".repeat(64)}`, artifact_size: 100, unpacked_size: 200, package_rules_version: 1 };
+  const withSkill = { ...template, skill_refs: [frozen], skill_set_digest: `sha256:${"c".repeat(64)}` };
+  const requests = mockCatalog((request) => {
+    if (request.path === "/api/admin/templates/template-1" && request.method === "GET") return Response.json(withSkill);
+    if (request.path === "/api/admin/skills") return Response.json({ items: [], next_after_id: null });
+    if (request.path === "/api/admin/templates/template-1/revisions" && request.method === "POST") return Response.json({ ...withSkill, revision: 2 }, { status: 201 });
+    return undefined;
+  });
+  render(<TemplatesPage templateID="template-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Create revision" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(dialog.getByText("review · v2")).toBeTruthy();
+  fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+  await waitFor(() => expect(JSON.parse(requests.find((request) => request.path.endsWith("/revisions") && request.method === "POST")!.body).skill_refs).toEqual([
+    { skill_id: frozen.skill_id, version: 2 },
+  ]));
+});
 
 async function openRevision(workflow: Workflow) {
   render(workflow.component);

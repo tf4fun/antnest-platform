@@ -3,9 +3,15 @@ import assert from "node:assert/strict";
 
 const profile = process.argv[2] ?? "foundation";
 assert(
-  ["foundation", "network", "health", "restore", "loss", "shutdown"].includes(
-    profile,
-  ) && process.argv.length <= 3,
+  [
+    "foundation",
+    "network",
+    "health",
+    "restore",
+    "skill-restore",
+    "loss",
+    "shutdown",
+  ].includes(profile) && process.argv.length <= 3,
 );
 
 process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));

@@ -41,12 +41,62 @@ internal producer contract.
 | Contract | Owner | Required reviewers | Consumers | Purpose |
 | --- | --- | --- | --- | --- |
 | [`agent-ui/workspace-api.json`](agent-ui/workspace-api.json), [`wire schema`](agent-ui/workspace-api.schema.json), [`semantics`](agent-ui/workspace-api.md) | Agent UI | Edge Gateway, ACP Service | Gateway and browser | Authenticated HTTP/SSE route and projection boundary |
-| [`agent-ui/workspace-commands.md`](agent-ui/workspace-commands.md) | Agent UI | ACP Service, Edge Gateway | Browser; future Channel Gateway pending | Control-command discovery, semantics and reuse of existing authorized operations |
+| [`agent-ui/workspace-commands.md`](agent-ui/workspace-commands.md) | Agent UI | ACP Service, Edge Gateway | Browser; future Channel Manager pending | Control-command discovery, semantics and reuse of existing authorized operations |
 | [`agent-acp/workspace-bridge.schema.json`](agent-acp/workspace-bridge.schema.json), [`semantics`](agent-acp/workspace-bridge.md) | Agent ACP Service | Agent UI, Edge Gateway | Node Bridge | Durable prompt receipt, targeted cancel and replay delivery metadata |
 | [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service, Agent UI | Browser and Node Bridge | Active authentication, proxy and SSE admission routes |
+| [`skill-registry/registry-api.schema.json`](skill-registry/registry-api.schema.json), [`semantics`](skill-registry/registry-api.md) | Skill Registry | Agent Controller, Runtime Controller, Admin Console | Internal control-plane callers | Implemented publish, list, resolve and artifact boundary; local, PostgreSQL and Docker business gates pass |
+| [`skill-registry/runtime-delivery.schema.json`](skill-registry/runtime-delivery.schema.json), [`semantics`](skill-registry/runtime-delivery-api.md) | Runtime Controller | Agent Controller, Skill Registry | Agent Controller and Runtime Controller | Stage 4 B0 system-Skill preparation and lifecycle-consumption boundary; B3 endpoints and base I1 business path implemented |
+| [`legacy inventory semantics`](skill-registry/legacy-migration-inventory.md), [`RC machine contract`](../services/runtime-controller/api/control-contract.json) | Runtime Controller | Agent Controller, migration operator | Internal control-plane callers | Implemented shared-volume inventory; historical migration work outside current clean-deployment scope |
+| [`legacy backup semantics`](skill-registry/legacy-migration-backup.md), [`protected export attestation`](skill-registry/legacy-export-attestation.md), [`migration operation`](skill-registry/legacy-migration-operation.md), [`RC machine contract`](../services/runtime-controller/api/control-contract.json) | Runtime Controller | Agent Controller, migration operator | Internal control-plane callers | Implemented local backup, signed-proof consumption and controlled migration; historical work outside current clean-deployment scope |
+| [`active Skill-set verification`](skill-registry/active-skill-set-verification.md), [`RC machine contract`](../services/runtime-controller/api/control-contract.json) | Runtime Controller | Agent Controller | Internal control-plane callers | Implemented Runtime deployment/read-only mount verification and Controller migration consumer; historical migration work outside current clean-deployment scope |
+| [`legacy source recovery`](skill-registry/legacy-source-recovery.md), [`v1 schema`](skill-registry/legacy-source-recovery.schema.json) | Agent Controller | Runtime Controller, Runtime Egress, ACP Service | Internal administrator | Implemented exact-source recovery with Docker evidence; historical migration work outside current clean-deployment scope |
 
 Obsolete prototype contracts are deleted when their service is rewritten; they
 do not remain as an implied compatibility layer.
+
+## Stage 4 Planned Contracts
+
+The [Stage 4 service plan](../docs/stage-4-services.md) records `skill-registry`,
+`channel-manager` and `task-scheduler`. The Registry-owned route/payload boundary
+and its Controller, RC, ACP and Console consumers are implemented; the other two services have no contracts or
+implementation. The
+[minimal Skill Registry design](../docs/skill-registry-minimal-design.md)
+defines package hosting, immutable Template references, and read-only delivery
+on Agent creation/rebuild. It supersedes the wider first-delivery suggestions in
+the [reference analysis](../docs/skill-registry-responsibilities.md).
+The [Registry contract](skill-registry/registry-api.md), JSON schema, shared
+format cases and `skill` resource kind cover its producer-facing boundary.
+The implemented RC preparation/lifecycle boundary provides resumable preparation
+before lifecycle mutation, per-Agent sets under `layout_version`, shared YAML
+verdicts under `package_rules_version`, durable references across Drain/Fence,
+phase-specific invalidation recovery, and Enable preparation before NetworkEnsure.
+The actual Go/Rust format tests cover Runtime's non-core numeric scalars and
+reject merge keys. RC verifies the created container's actual mount, ownership
+and manifest before start or recovery adoption. The execution snapshot constrains
+`skill_instructions` to an empty array; ACP rejects nonempty input and has removed
+the prompt branch. Console omits the old body projection, including historical
+or malformed input. The [acceptance audit](../docs/skill-registry-acceptance-audit-20260928.md)
+records service, component, browser and Docker evidence. Current development has
+no old business data, so legacy migration/export contracts above are historical
+work and do not gate this release.
+The independent [learning design](../docs/skill-learning-design.md) records L0
+inputs for authenticated user-action records, a separate Runtime maintenance
+endpoint excluded from `tools/list`, Runtime rejection of reserved Tool calls,
+bound maintenance credentials, managed-call quiescence with post-swap digest
+checks, exact-candidate confirmation and Controller-owned Agent policy. Credentials
+select a `kid` from the bounded current/next bootstrap key set. That set enters the
+deployment digest and is frozen with each accepted RC operation; configuration
+rotation cannot change replay input. Rotation and compromise require the explicit
+rebuild/isolation procedure in the design, not assumed hot key reload.
+L0 distinguishes `package_rules_version` from ACP's `review_prompt_version` and
+from the collection `layout_version`. Runtime L1, RC bootstrap L1R and ACP L3
+deliver the maintenance boundary separately. The initial UI provides blocker
+details and a normal-Run remediation path, without a new process-kill API.
+These proposals are not current MCP tools or wire guarantees.
+Workspace command semantics are preparation for a future
+Channel Manager consumer, not an existing channel wire contract. Each owning
+service must define its shared boundary before implementation and track consumer
+delivery separately from its own local acceptance.
 
 ## Ownership Rules
 

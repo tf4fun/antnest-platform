@@ -43,7 +43,7 @@ func assertCrossOrganizationLifecycleDenied(t *testing.T, mutate func(*ports.Age
 		mutate(&base.Agent)
 		store := &rebuildLifecycleStoreStub{base: base}
 		dependencies := &rebuildDependenciesStub{}
-		service := NewLifecycleService(
+		service := newTestLifecycleService(
 			lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 			fixedClock{now: time.Unix(1, 0).UTC()},
 			WithLifecycleExecution(testExecutionForStore(store)),
@@ -94,7 +94,7 @@ func assertCrossOrganizationLifecycleDenied(t *testing.T, mutate func(*ports.Age
 		mutate(&base.Agent)
 		store := &deleteLifecycleStoreStub{base: base}
 		dependencies := newDeleteDependencies(base.Agent)
-		service := NewLifecycleService(
+		service := newTestLifecycleService(
 			lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 			fixedClock{now: time.Unix(1, 0).UTC()},
 			WithLifecycleExecution(testExecutionForStore(store)),

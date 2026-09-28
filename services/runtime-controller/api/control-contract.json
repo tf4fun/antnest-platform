@@ -1,5 +1,5 @@
 {
-  "revision": 8,
+  "revision": 12,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "schemas": {
@@ -40,12 +40,75 @@
       "errors": ["runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
     },
     {
+      "operation_id": "inventoryLegacySystemSkills",
+      "method": "GET",
+      "path": "/internal/legacy-system-skills/inventory",
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/legacy_system_skills_inventory"}},
+      "errors": ["legacy_inventory_unavailable"]
+    },
+    {
+      "operation_id": "backupLegacySystemSkills",
+      "method": "POST",
+      "path": "/internal/legacy-system-skills/backups",
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/legacy_system_skills_backup_request",
+      "responses": {"201": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/legacy_system_skills_backup_receipt"}},
+      "errors": ["invalid_request", "idempotency_key_required", "legacy_backup_conflict", "legacy_backup_unavailable"]
+    },
+    {
+      "operation_id": "getLegacySystemSkillsBackup",
+      "method": "GET",
+      "path": "/internal/legacy-system-skills/backups/{backup_ref}",
+      "path_parameters": {"backup_ref": "control-api.schema.json#/$defs/legacy_system_skills_backup_ref"},
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/legacy_system_skills_backup_receipt"}},
+      "errors": ["invalid_request", "legacy_backup_not_found", "legacy_backup_unavailable"]
+    },
+    {
       "operation_id": "inspectRuntime",
       "method": "GET",
       "path": "/internal/runtimes/{agent_id}",
       "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
       "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/runtime_inspection"}},
       "errors": ["invalid_request", "runtime_not_found", "runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
+    },
+    {
+      "operation_id": "prepareRuntimeSkillSet",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/skill-sets/prepare",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/skill_prepare_request",
+      "responses": {"202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/skill_prepare_receipt"}},
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "skill_preparation_unavailable", "skill_cleanup_in_progress", "skill_preparation_closed", "deadline_exceeded", "internal_error"]
+    },
+    {
+      "operation_id": "getRuntimeSkillPreparation",
+      "method": "GET",
+      "path": "/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id", "request_id": "control-api.schema.json#/$defs/request_id"},
+      "query_parameters": {"organization_id": "control-api.schema.json#/$defs/organization_id"},
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/skill_prepare_receipt"}},
+      "errors": ["invalid_request", "preparation_not_found", "skill_preparation_unavailable", "deadline_exceeded", "internal_error"]
+    },
+    {
+      "operation_id": "verifyActiveRuntimeSkillSet",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/skill-sets/verify-active",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/active_skill_verification_request",
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/active_skill_verification_receipt"}},
+      "errors": ["invalid_request", "idempotency_key_required", "runtime_not_found", "runtime_revision_conflict", "prepared_skill_set_invalidated", "runtime_drift", "skill_preflight_unavailable", "deadline_exceeded", "internal_error"]
+    },
+    {
+      "operation_id": "releaseRuntimeSkillPreparation",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id", "request_id": "control-api.schema.json#/$defs/request_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/skill_release_request",
+      "responses": {"204": {}},
+      "errors": ["invalid_request", "idempotency_key_required", "preparation_not_found", "skill_preparation_unavailable", "deadline_exceeded", "internal_error"]
     },
     {
       "operation_id": "initializeRuntime",
@@ -58,7 +121,7 @@
         "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
         "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "runtime_not_ready", "internal_error"]
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "prepared_skill_set_invalidated", "skill_preflight_unavailable", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "runtime_not_ready", "internal_error"]
     },
     {
       "operation_id": "updateRuntime",
@@ -71,7 +134,7 @@
         "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
         "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "prepared_skill_set_invalidated", "skill_preflight_unavailable", "runtime_drift", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
     },
     {
       "operation_id": "disableRuntime",
@@ -97,7 +160,7 @@
         "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
         "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "prepared_skill_set_invalidated", "skill_preflight_unavailable", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
     },
     {
       "operation_id": "deleteRuntime",
@@ -163,8 +226,18 @@
     "agent_mutation_in_progress": {"status": 409, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
     "mutation_lock_lost": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
     "runtime_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "preparation_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "skill_preparation_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "legacy_inventory_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "legacy_backup_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "legacy_backup_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "legacy_backup_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "skill_cleanup_in_progress": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "skill_preparation_closed": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "runtime_lifecycle_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "runtime_revision_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "prepared_skill_set_invalidated": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "skill_preflight_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
     "runtime_drift": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "storage_in_use": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "storage_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
@@ -190,6 +263,12 @@
       "operation_states": ["failed", "unknown"],
       "effects": ["not_started", "unknown"],
       "http_statuses": [409, 202],
+      "retry_same_request_only": true
+    },
+    "skill_mount_verification_failed": {
+      "operation_states": ["unknown"],
+      "effects": ["unknown"],
+      "http_statuses": [202],
       "retry_same_request_only": true
     },
     "storage_in_use": {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -112,6 +113,60 @@ type TemplateRevisionInput struct {
 	MaxModelRequests        int
 	Runtime                 RuntimeSpecInput
 	ContextPolicyVersion    string
+	SkillRefs               []FrozenSkill
+	SkillSetDigest          string
+}
+
+type SkillReference struct {
+	SkillID string `json:"skill_id"`
+	Version int64  `json:"version"`
+}
+
+type FrozenSkill struct {
+	SkillID             string `json:"skill_id"`
+	Version             int64  `json:"version"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	ArtifactDigest      string `json:"artifact_digest"`
+	ContentDigest       string `json:"content_digest"`
+	ArtifactSize        int64  `json:"artifact_size"`
+	UnpackedSize        int64  `json:"unpacked_size"`
+	PackageRulesVersion int    `json:"package_rules_version"`
+}
+
+var skillIDPattern = regexp.MustCompile(`^skill_[0-9a-f]{32}$`)
+var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+var skillDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func ValidSkillReference(ref SkillReference) bool {
+	return skillIDPattern.MatchString(ref.SkillID) && ref.Version > 0
+}
+
+func ValidateFrozenSkills(skills []FrozenSkill) error {
+	if len(skills) > 32 {
+		return fmt.Errorf("too many Skill references")
+	}
+	ids, names := make(map[string]bool, len(skills)), make(map[string]bool, len(skills))
+	var total int64
+	for _, skill := range skills {
+		if !skillIDPattern.MatchString(skill.SkillID) || skill.Version < 1 ||
+			len(skill.Name) > 64 || !skillNamePattern.MatchString(skill.Name) ||
+			strings.TrimSpace(skill.Description) == "" || len(skill.Description) > 512 ||
+			!skillDigestPattern.MatchString(skill.ArtifactDigest) || !skillDigestPattern.MatchString(skill.ContentDigest) ||
+			skill.ArtifactSize < 1 || skill.ArtifactSize > 8<<20 ||
+			skill.UnpackedSize < 1 || skill.UnpackedSize > 32<<20 || skill.PackageRulesVersion != 1 {
+			return fmt.Errorf("invalid frozen Skill metadata")
+		}
+		if ids[skill.SkillID] || names[skill.Name] {
+			return fmt.Errorf("duplicate Skill identity or name")
+		}
+		ids[skill.SkillID], names[skill.Name] = true, true
+		total += skill.UnpackedSize
+	}
+	if total > 128<<20 {
+		return fmt.Errorf("skill collection exceeds 128 MiB")
+	}
+	return nil
 }
 
 type TemplateRevision struct {
@@ -124,6 +179,8 @@ type TemplateRevision struct {
 	maxModelRequests        int
 	runtime                 RuntimeSpecInput
 	contextPolicyVersion    string
+	skillRefs               []FrozenSkill
+	skillSetDigest          string
 }
 
 type TemplateRevisionSnapshot struct {
@@ -136,6 +193,8 @@ type TemplateRevisionSnapshot struct {
 	MaxModelRequests        int              `json:"max_model_requests"`
 	Runtime                 RuntimeSpecInput `json:"runtime"`
 	ContextPolicyVersion    string           `json:"context_policy_version"`
+	SkillRefs               []FrozenSkill    `json:"skill_refs,omitempty"`
+	SkillSetDigest          string           `json:"skill_set_digest,omitempty"`
 }
 
 func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) {
@@ -157,12 +216,28 @@ func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) 
 	if err := validateRuntime(input.Runtime); err != nil {
 		return TemplateRevision{}, err
 	}
+	if err := ValidateFrozenSkills(input.SkillRefs); err != nil {
+		return TemplateRevision{}, err
+	}
+	skillSetDigest, err := SkillSetDigest(input.OrganizationID, input.SkillRefs)
+	if err != nil {
+		return TemplateRevision{}, err
+	}
+	if input.SkillSetDigest != "" && input.SkillSetDigest != skillSetDigest {
+		return TemplateRevision{}, fmt.Errorf("skill collection digest does not match frozen metadata")
+	}
+	// The catalog persists an empty collection as []; keep construction and replay identical.
+	orderedSkills := append([]FrozenSkill{}, input.SkillRefs...)
+	slices.SortFunc(orderedSkills, func(left, right FrozenSkill) int {
+		return strings.Compare(left.SkillID, right.SkillID)
+	})
 	return TemplateRevision{
 		templateID: input.TemplateID, organizationID: input.OrganizationID,
 		revision: input.Revision, modelProfileID: input.ModelProfileID,
 		fallbackModelProfileIDs: append([]string(nil), input.FallbackModelProfileIDs...),
 		systemPrompt:            input.SystemPrompt, maxModelRequests: input.MaxModelRequests,
 		runtime: cloneRuntime(input.Runtime), contextPolicyVersion: input.ContextPolicyVersion,
+		skillRefs: orderedSkills, skillSetDigest: skillSetDigest,
 	}, nil
 }
 
@@ -183,6 +258,7 @@ func (revision TemplateRevision) Snapshot() TemplateRevisionSnapshot {
 		FallbackModelProfileIDs: slices.Clone(revision.fallbackModelProfileIDs),
 		SystemPrompt:            revision.systemPrompt, MaxModelRequests: revision.maxModelRequests,
 		Runtime: cloneRuntime(revision.runtime), ContextPolicyVersion: revision.contextPolicyVersion,
+		SkillRefs: slices.Clone(revision.skillRefs), SkillSetDigest: revision.skillSetDigest,
 	}
 }
 
@@ -198,6 +274,8 @@ type AgentSpecSnapshot struct {
 	ContextPolicyVersion    string           `json:"context_policy_version"`
 	Model                   ModelSpec        `json:"model"`
 	Runtime                 RuntimeSpecInput `json:"runtime"`
+	SystemSkills            []FrozenSkill    `json:"system_skills,omitempty"`
+	SkillSetDigest          string           `json:"skill_set_digest,omitempty"`
 }
 
 type AgentSpec struct{ snapshot AgentSpecSnapshot }
@@ -209,12 +287,22 @@ func MaterializeAgentSpec(template TemplateRevision, model ModelProfileRevision)
 	if template.modelProfileID != model.modelProfileID {
 		return AgentSpec{}, fmt.Errorf("template references a different model profile")
 	}
+	skillSetDigest := template.skillSetDigest
+	if len(template.skillRefs) == 0 {
+		var err error
+		skillSetDigest, err = SkillSetDigest(template.organizationID, []FrozenSkill{})
+		if err != nil {
+			return AgentSpec{}, fmt.Errorf("digest empty Skill collection: %w", err)
+		}
+	}
 	return AgentSpec{snapshot: AgentSpecSnapshot{
 		TemplateID: template.templateID, TemplateRevision: template.revision,
 		ModelProfileID: model.modelProfileID, ModelProfileVersion: model.revision, ModelProfileRevisionID: model.id, SystemPrompt: template.systemPrompt,
 		FallbackModelProfileIDs: slices.Clone(template.fallbackModelProfileIDs),
 		MaxModelRequests:        template.maxModelRequests, ContextPolicyVersion: template.contextPolicyVersion,
 		Model: model.model.Clone(), Runtime: cloneRuntime(template.runtime),
+		SystemSkills:   slices.Clone(template.skillRefs),
+		SkillSetDigest: skillSetDigest,
 	}}, nil
 }
 
@@ -223,6 +311,7 @@ func (spec AgentSpec) Snapshot() AgentSpecSnapshot {
 	snapshot.FallbackModelProfileIDs = slices.Clone(snapshot.FallbackModelProfileIDs)
 	snapshot.Model = snapshot.Model.Clone()
 	snapshot.Runtime = cloneRuntime(snapshot.Runtime)
+	snapshot.SystemSkills = slices.Clone(snapshot.SystemSkills)
 	return snapshot
 }
 

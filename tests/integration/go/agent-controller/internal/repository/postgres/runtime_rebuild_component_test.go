@@ -224,6 +224,6 @@ func TestRuntimeLossRebuildRejectedUpdateDoesNotWaitForDeadExecution(t *testing.
 
 func runtimeRebuildServices(t *testing.T, repository *Repository, deps *runtimeRebuildDependencies) (*application.LifecycleService, *application.LifecycleService) {
 	t.Helper()
-	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
+	service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	return service, service
 }

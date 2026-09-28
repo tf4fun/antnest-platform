@@ -43,6 +43,11 @@ Controller publishes one complete current execution configuration per
 organization. ACP validates the whole configuration before replacing its local
 view. Missing references, duplicate identities and unsupported authentication
 fail the update rather than deleting part of the current configuration.
+The retained `skill_instructions` field must be empty. ACP rejects a nonempty
+publication and a persisted Run snapshot containing legacy Skill bodies before
+accessing Runtime. The system prompt contains no bulk Skill body; each Run reads
+Runtime Skill summaries and fetches a selected body through the existing Runtime
+path when needed.
 
 `execution_configurations` stores only the non-secret current configuration and
 revision in ACP's database. Credentials remain inside volatile logical Provider

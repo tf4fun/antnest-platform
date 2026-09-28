@@ -11,6 +11,7 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/repository"
+	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 var (
@@ -79,6 +80,18 @@ func (r *Repository) GenerationClaim(
 	ctx context.Context, key deployment.Key,
 ) (repository.GenerationClaim, error) {
 	return r.next.GenerationClaim(ctx, key)
+}
+
+func (r *Repository) MaxClaimedGeneration(ctx context.Context, agentID string) (uint64, error) {
+	return r.next.MaxClaimedGeneration(ctx, agentID)
+}
+
+func (r *Repository) ResolvePreparedSkillSet(ctx context.Context, reference skillset.PreparedReference) (skillset.PreparedMaterialization, error) {
+	store, ok := r.next.(repository.PreparedSkillReferenceStore)
+	if !ok {
+		return skillset.PreparedMaterialization{}, repository.ErrPreparedSkillSetInvalidated
+	}
+	return store.ResolvePreparedSkillSet(ctx, reference)
 }
 
 func (r *Repository) CompleteOperation(

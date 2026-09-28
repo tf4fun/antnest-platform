@@ -161,7 +161,8 @@ type templateSource struct {
 	MaxModelRequests        int                                `json:"max_model_requests"`
 	ContextPolicyVersion    string                             `json:"context_policy_version"`
 	Runtime                 templateRuntimeConfigurationSource `json:"runtime"`
-	SkillRefs               []string                           `json:"skill_refs"`
+	SkillRefs               []skillVersion                     `json:"skill_refs"`
+	SkillSetDigest          string                             `json:"skill_set_digest,omitempty"`
 	Enabled                 bool                               `json:"enabled"`
 	CreatedAt               string                             `json:"created_at"`
 	UpdatedAt               string                             `json:"updated_at"`
@@ -285,6 +286,24 @@ type operationProjectionSource struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+type agentSkillPreparationProgressSource struct {
+	VerifiedPackages int   `json:"verified_packages"`
+	VerifiedBytes    int64 `json:"verified_bytes"`
+	TotalPackages    int   `json:"total_packages"`
+	TotalBytes       int64 `json:"total_bytes"`
+}
+
+type agentSkillPreparationSource struct {
+	RequestID  string                              `json:"request_id"`
+	AgentID    string                              `json:"agent_id"`
+	Kind       string                              `json:"kind"`
+	State      string                              `json:"state"`
+	Progress   agentSkillPreparationProgressSource `json:"progress"`
+	RetryAfter *string                             `json:"retry_after,omitempty"`
+	ErrorCode  string                              `json:"error_code,omitempty"`
+	UpdatedAt  string                              `json:"updated_at"`
+}
+
 type createAgentSource struct {
 	Agent     agentProjectionSource     `json:"agent"`
 	Operation operationProjectionSource `json:"operation"`
@@ -391,6 +410,10 @@ func projectAgentList(payload []byte) ([]byte, error) {
 
 func projectOperation(payload []byte) ([]byte, error) {
 	return projectPayload[operationProjectionSource](payload)
+}
+
+func projectAgentSkillPreparation(payload []byte) ([]byte, error) {
+	return projectPayload[agentSkillPreparationSource](payload)
 }
 
 func projectCreateAgent(payload []byte) ([]byte, error) {

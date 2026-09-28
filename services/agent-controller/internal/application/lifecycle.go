@@ -16,16 +16,23 @@ import (
 )
 
 var ErrDependencyUnavailable = errors.New("dependency unavailable")
+var ErrLegacySystemSkillsMigrationRequired = errors.New("legacy system Skills migration required")
+var ErrLegacyMigrationRecoveryRequired = errors.New("legacy Skill migration source requires operator recovery")
 
 type LifecycleService struct {
-	specs        ports.AgentSpecSource
-	store        ports.LifecycleStore
-	egress       ports.EgressClient
-	runtime      ports.RuntimeClient
-	identities   ports.OwnerAuthorizationSource
-	clock        ports.Clock
-	drainTimeout time.Duration
-	execution    ports.LifecycleExecution
+	specs                    ports.AgentSpecSource
+	store                    ports.LifecycleStore
+	egress                   ports.EgressClient
+	runtime                  ports.RuntimeClient
+	identities               ports.OwnerAuthorizationSource
+	clock                    ports.Clock
+	drainTimeout             time.Duration
+	execution                ports.LifecycleExecution
+	skillIntents             ports.SkillPreparationIntentStore
+	skillClient              ports.SkillPreparationClient
+	legacySkills             ports.LegacySkillMigrationGate
+	activeSkillVerifier      ports.ActiveSkillSetVerifier
+	legacyMigrationPreflight LegacyMigrationPreflight
 }
 
 type LifecycleOption func(*LifecycleService)
@@ -38,6 +45,43 @@ func WithIdentityDirectory(directory ports.OwnerAuthorizationSource) LifecycleOp
 	return func(service *LifecycleService) {
 		service.identities = directory
 	}
+}
+
+func WithSkillPreparation(intents ports.SkillPreparationIntentStore, client ports.SkillPreparationClient) LifecycleOption {
+	return func(service *LifecycleService) {
+		service.skillIntents = intents
+		service.skillClient = client
+	}
+}
+
+func WithLegacySkillMigrationGate(gate ports.LegacySkillMigrationGate) LifecycleOption {
+	return func(service *LifecycleService) { service.legacySkills = gate }
+}
+
+func WithActiveSkillSetVerifier(verifier ports.ActiveSkillSetVerifier) LifecycleOption {
+	return func(service *LifecycleService) { service.activeSkillVerifier = verifier }
+}
+
+type LegacyMigrationPreflight interface {
+	VerifyLegacySkillMigrationPrerequisites(context.Context, string, string, int64, LegacyExportAttestation) (ports.LegacySkillChoice, error)
+}
+
+func WithLegacyMigrationPreflight(preflight LegacyMigrationPreflight) LifecycleOption {
+	return func(service *LifecycleService) { service.legacyMigrationPreflight = preflight }
+}
+
+func (service *LifecycleService) requireLegacySkillMigrationResolved(ctx context.Context, agentID string) error {
+	if service.legacySkills == nil {
+		return nil
+	}
+	required, err := service.legacySkills.LegacySystemSkillsMigrationRequired(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("%w: check legacy system Skills migration: %v", ErrDependencyUnavailable, err)
+	}
+	if required {
+		return ErrLegacySystemSkillsMigrationRequired
+	}
+	return nil
 }
 
 const defaultDrainTimeout = 5 * time.Minute
@@ -129,6 +173,8 @@ type AgentConfigurationView struct {
 	MaxModelRequests       int
 	ContextPolicyVersion   string
 	Runtime                domain.RuntimeSpecInput
+	SystemSkills           []domain.FrozenSkill
+	SkillSetDigest         string
 }
 
 type OperationView struct {
@@ -173,19 +219,38 @@ func (service *LifecycleService) CreateAgent(
 		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
 	}
 
-	template, model, spec, err := service.resolveAgentSpec(ctx, input)
-	if err != nil {
-		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
-	}
-	digest, err := spec.Digest()
-	if err != nil {
-		return service.replayAgentCreateAfterFailure(
-			ctx, input.RequestID, fingerprint, fmt.Errorf("digest Agent spec: %w", err),
-		)
-	}
 	now := service.clock.Now()
 	agentID := derivedID("agent", input.RequestID)
 	specID := derivedID("agentspec", input.RequestID)
+	var targetSnapshot domain.AgentSpecSnapshot
+	var digest string
+	intent, existingIntent, err := service.existingSkillPreparation(ctx, input.RequestID, fingerprint, domain.OperationCreate, agentID, input.OrganizationID)
+	if err != nil {
+		return CreateAgentResult{}, err
+	}
+	if existingIntent {
+		targetSnapshot, digest = intent.TargetSpec, intent.TargetSpecDigest
+	} else {
+		_, _, spec, err := service.resolveAgentSpec(ctx, input)
+		if err != nil {
+			return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
+		}
+		targetSnapshot = spec.Snapshot()
+		digest, err = spec.Digest()
+		if err != nil {
+			return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, fmt.Errorf("digest Agent spec: %w", err))
+		}
+	}
+	prepared, err := service.prepareAgentSkills(ctx, ports.SkillPreparationIntent{
+		RequestID: input.RequestID, RequestFingerprint: fingerprint,
+		Kind: domain.OperationCreate, AgentID: agentID, OrganizationID: input.OrganizationID,
+		TargetSpec: targetSnapshot, TargetSpecDigest: digest,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
+	}
+	targetSnapshot, digest = prepared.TargetSpec, prepared.TargetSpecDigest
 	accessRevision := derivedID("accessrev", input.RequestID)
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -213,7 +278,7 @@ func (service *LifecycleService) CreateAgent(
 		},
 		Spec: ports.AgentSpecRecord{
 			ID: specID, AgentID: agentID, Revision: 1,
-			Snapshot: spec.Snapshot(), CanonicalDigest: digest, CreatedAt: now,
+			Snapshot: targetSnapshot, CanonicalDigest: digest, CreatedAt: now,
 		},
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: input.RequestID, RequestFingerprint: fingerprint, AgentID: agentID,
@@ -228,8 +293,8 @@ func (service *LifecycleService) CreateAgent(
 			Data: map[string]any{
 				"organization_id": input.OrganizationID, "owner_user_id": input.OwnerUserID,
 				"actor_principal_id": input.ActorPrincipalID,
-				"template_id":        template.Snapshot().TemplateID,
-				"template_revision":  template.Revision(), "agent_spec_revision_id": specID,
+				"template_id":        targetSnapshot.TemplateID,
+				"template_revision":  targetSnapshot.TemplateRevision, "agent_spec_revision_id": specID,
 			},
 			OccurredAt: now,
 		},
@@ -238,7 +303,6 @@ func (service *LifecycleService) CreateAgent(
 	if err != nil {
 		return CreateAgentResult{}, fmt.Errorf("begin Agent create: %w", err)
 	}
-	_ = model
 	return createAgentResult(state), nil
 }
 
@@ -317,6 +381,10 @@ func (service *LifecycleService) resolveAgentSpecRevision(
 		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
 			fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
 	}
+	if len(templateSnapshot.SkillRefs) != 0 && (service.skillIntents == nil || service.skillClient == nil) {
+		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
+			fmt.Errorf("%w: Skill preparation is not available in Runtime Controller yet", ErrDependencyUnavailable)
+	}
 	model, err := service.specs.GetCurrentModelProfileRevision(ctx, template.ModelProfileID())
 	if err != nil {
 		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
@@ -379,6 +447,9 @@ func (service *LifecycleService) initializeCreateRuntime(
 		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
 		Resources:  runtimeInput.Resources,
 		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
+	}
+	if err := service.attachPreparedSkills(ctx, state.Operation.RequestID, state.Agent.AgentID, state.Agent.OrganizationID, state.Spec.Snapshot, &configuration); err != nil {
+		return state, err
 	}
 	result, err := service.runtime.InitializeRuntime(
 		ctx, state.Operation.ChildRequestID, state.Agent.AgentID, configuration,

@@ -13,6 +13,7 @@ const services = [
   "admin-console",
   "agent-ui",
   "runtime-egress",
+  "skill-registry",
 ];
 const fixture = () =>
   services.map((service) => ({
@@ -34,7 +35,22 @@ const fixture = () =>
     },
   }));
 test("base deployment has Gateway-only application ingress and loopback diagnostics", () => {
-  assert.equal(inspectDeployment(fixture(), "test-project").services, 11);
+  assert.equal(inspectDeployment(fixture(), "test-project").services, 12);
+});
+test("Skill Docker race proxy adds one private healthy service", () => {
+  const rows = fixture();
+  rows.push({
+    Name: "skill-docker-proxy",
+    Config: {
+      Labels: {
+        "com.docker.compose.project": "test-project",
+        "com.docker.compose.service": "skill-docker-proxy",
+      },
+    },
+    State: { Running: true, Health: { Status: "healthy" } },
+    HostConfig: { PortBindings: {} },
+  });
+  assert.equal(inspectDeployment(rows, "test-project", true).services, 13);
 });
 for (const [label, mutate] of [
   [

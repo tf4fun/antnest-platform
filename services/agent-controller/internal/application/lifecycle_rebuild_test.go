@@ -32,7 +32,7 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 			LifecycleState:     "provisioned", Health: "unknown",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -101,7 +101,7 @@ func TestRebuildAgentTreatsAlreadyClosedAttachmentAsLostResponseReplay(t *testin
 			LifecycleState:     "provisioned", Health: "unknown",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(105, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -132,7 +132,7 @@ func TestRebuildAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 		base: rebuildLifecycleBase(t, template, model), drainBlocked: true,
 	}
 	dependencies := &rebuildDependenciesStub{}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(110, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -178,7 +178,7 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 	state.Agent.ActiveOperationRequestID = state.Operation.RequestID
 	store := &rebuildLifecycleStoreStub{base: base, state: state, replayed: true, drainBlocked: true}
 	dependencies := &rebuildDependenciesStub{}
-	service := NewLifecycleServiceWithDrainTimeout(
+	service := newTestLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: createdAt.Add(6 * time.Minute)}, 5*time.Minute, WithLifecycleExecution(testExecutionForStore(
 
@@ -222,7 +222,7 @@ func TestRebuildAgentExpiredDeadlineDoesNotQueryACPOrMutateRuntime(t *testing.T)
 	}
 	store := &rebuildLifecycleStoreStub{base: base, state: state, replayed: true}
 	dependencies := &rebuildDependenciesStub{}
-	service := NewLifecycleServiceWithDrainTimeout(
+	service := newTestLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: now}, time.Minute, WithLifecycleExecution(testExecutionForStore(
 
@@ -258,7 +258,7 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 			LifecycleState:     "provisioned", Health: "healthy",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(115, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -300,7 +300,7 @@ func TestRebuildAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 	dependencies := &rebuildDependenciesStub{
 		network: network, runtimeErr: missing, inspectionErr: missing,
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(117, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -345,7 +345,7 @@ func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 			LifecycleState: "deleted", Health: "absent",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(118, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -388,7 +388,7 @@ func TestRebuildAgentCompletedReplayDoesNotRepeatDependencies(t *testing.T) {
 	state := completedRebuildState(t, base)
 	store := &rebuildLifecycleStoreStub{base: base, state: state, replayed: true}
 	dependencies := &rebuildDependenciesStub{}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(120, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -443,7 +443,7 @@ func TestRebuildAgentReturnsStableAgentStateErrors(t *testing.T) {
 			store := &rebuildLifecycleStoreStub{base: base}
 			testCase.prepare(store)
 			dependencies := &rebuildDependenciesStub{}
-			service := NewLifecycleService(
+			service := newTestLifecycleService(
 				lifecycleSpecSourceStub{template: template, model: model},
 				store, dependencies, dependencies, fixedClock{now: time.Unix(125, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -482,7 +482,7 @@ func TestRebuildAgentRejectsChangedNetworkBeforePublication(t *testing.T) {
 			LifecycleState:     "provisioned", Health: "unknown",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(130, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -521,7 +521,7 @@ func TestRebuildAgentKeepsAmbiguousRuntimeUpdateReplayable(t *testing.T) {
 			RuntimeRevision: "rtv_44444444444444444444444444444444",
 		},
 	}
-	service := NewLifecycleService(
+	service := newTestLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(140, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
 
@@ -673,6 +673,10 @@ func (store *rebuildLifecycleStoreStub) GetAgentLifecycleBase(
 	return store.base, store.baseErr
 }
 
+func (store *rebuildLifecycleStoreStub) GetAgentEnableBase(context.Context, string) (ports.AgentEnableBase, error) {
+	return ports.AgentEnableBase{Agent: store.base.Agent}, nil
+}
+
 func (store *rebuildLifecycleStoreStub) ReplayAgentRebuild(
 	context.Context, string, string,
 ) (ports.AgentRebuildState, bool, error) {
@@ -694,6 +698,7 @@ func (store *rebuildLifecycleStoreStub) BeginAgentRebuild(
 		Agent: agent, SourceSpec: store.base.ConfiguredSpec,
 		SourceExecution: store.base.SourceExecution,
 		TargetSpec:      input.TargetSpec, Operation: input.Operation,
+		LegacyMigration: input.LegacyMigration,
 	}
 	store.replayed = true
 	return store.state, false, nil
