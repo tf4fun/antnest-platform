@@ -1,47 +1,53 @@
-# Interrupted Update migration contract
+# Interrupted Runtime Update contract
 
-Current Runtime Update completes provisioning independently of Runtime readiness.
-The historical startup gate therefore cannot prove a running mutation. Its
-pause/SIGKILL checkpoint and lease-expiry assertions are not normal-restart
-acceptance. Its source assets are retired; the distinct fault scope is recorded
-in [the retirement report](../../../docs/interruption-assets-retirement.md).
+This document defines what the interrupted-update profile
+(`make e2e-lifecycle-interrupted`) must prove: recovery when a completed Runtime
+Update response is lost during a normal Controller restart.
 
-The current disposable Foundation profile owns a transparent HTTP fixture between
-Agent Controller and Runtime Controller. Arm one Agent's next Update. Forward
-the original body, Idempotency-Key and trace context; hold only an actual HTTP 200
-completed Update response. Record identifiers, digests and delivery state, never
-configuration or credentials. Other requests, including observation streams,
-remain transparent. A caller disconnect and hold expiry are distinct outcomes.
+Runtime Update provisioning completes independently of Runtime readiness, so a
+startup gate cannot hold a mutation in a running state. This profile therefore
+holds the response instead.
 
-Before stopping, require Agent Controller running/runtime_update with no saved
-Runtime result and the deterministic child request; Runtime Controller must have
-that exact child completed, with the new target physically present. Stop Agent
-Controller normally, then Runtime Controller normally; both must exit zero.
-The held response must be lost through caller cancellation, never expiry. Verify
-the frozen parent phase, durable child and target, then restart Runtime Controller
-before Agent Controller. Temporal must retry the same Activity/request and reuse
-the terminal child and exact target without another generation or physical effect.
+## Response-hold fixture
 
-Require exact public replay, original workspace bytes, one rebuilt event, one
-updated observation, unchanged child attempt and one new execution publication.
-Create a new Template revision before Rebuild; catalog revision creation must
-leave the Agent configuration unchanged, and recovery must publish that selected
-revision with its changed request budget and otherwise unchanged configuration.
-Delete the temporary Agent through the public lifecycle API. Preserve both real
-Workflow spans, both Update attempts and downstream ancestry, including the
-successful first Runtime response and the canceled caller. Strict cancellation
-and timing results remain failures. Do not edit journals, fabricate spans, change
-production timeouts/export intervals, or replace retained development resources.
+The disposable Foundation profile places a transparent HTTP fixture between the
+Agent Controller and the Runtime Controller and arms one Agent's next Update. The
+fixture forwards the original body, `Idempotency-Key` and Trace context, and
+holds only an actual HTTP 200 completed Update response. It records identifiers,
+digests and delivery state, never configuration or credentials. All other
+requests, including observation streams, pass through unchanged. A caller
+disconnect and a hold expiry are distinct outcomes.
 
-This replaces the normal-restart acceptance entry point. Recovery of an unfinished
-Runtime platform mutation after abrupt process death remains a different fault
-scenario. Existing service recovery tests retain their narrower assertions; no
-current end-to-end passing evidence is claimed for that abrupt-crash boundary.
+## Required behavior
 
-Current Update receipt recovery and Runtime loss import `recovery-support.mjs`
-for bounded polling, scoped inspection and fixed service-owned journal reads.
-Current physical inspection must not execute a startup marker command or return
-historical gate evidence. The historical `interruption-support.mjs`, startup-gate
-flow/overlay/image and exclusive Trace collector are retired after the helper
-split. Current profiles do not execute that graph. Shared observability evidence
-and all current lifecycle/recovery assertions remain.
+- Before stopping anything, the Agent Controller must be at
+  `running/runtime_update` with no saved Runtime result and the deterministic
+  child request, and the Runtime Controller must have that exact child completed
+  with the new target physically present.
+- The Agent Controller stops normally, then the Runtime Controller; both must
+  exit zero. The held response must be lost through caller cancellation, never
+  expiry. The frozen parent phase, durable child and target are verified.
+- The Runtime Controller restarts before the Agent Controller. Temporal must
+  retry the same Activity and request and reuse the terminal child and exact
+  target, with no extra generation or physical effect.
+- Exact public replay, the original workspace bytes, one rebuilt event, one
+  updated observation, an unchanged child attempt and one new execution
+  publication are required.
+- A new Template revision is created before the Rebuild. Creating the catalog
+  revision must leave the Agent configuration unchanged, and recovery must
+  publish the selected revision with its changed request budget and otherwise
+  unchanged configuration.
+- The temporary Agent is deleted through the public lifecycle API.
+
+## Trace rules
+
+Both real Workflow spans, both Update attempts and their downstream ancestry are
+preserved, including the successful first Runtime response and the cancelled
+caller. Strict cancellation and timing results remain failures. Journals,
+spans, production timeouts and export intervals are never edited.
+
+## Out of scope
+
+Recovery of an unfinished Runtime mutation after abrupt process death is a
+different fault scenario; see the [crash contract](crash-contract.md) and
+`make e2e-lifecycle-crash`.

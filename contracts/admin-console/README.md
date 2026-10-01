@@ -1,83 +1,25 @@
 # Admin Console Contracts
 
-Revision 48 adds administrator-only search, bounded text preview and explicit
-promotion of the caller's own dynamic Agent Skill sources. The BFF derives
-identity, Registry owns publication, and Templates continue to accept only
-fixed formal versions. See [the D6 contract](skill-discovery.md).
-
-Revision 46 adds fixed `{skill_id, version}` references to Template creation
-and revision. Console forwards them without resolving or silently upgrading
-versions; Controller freezes the package metadata and collection digest.
-Current and historical Template reads preserve that frozen identity. Applying
-a new revision to an existing Agent still requires an explicit rebuild.
-
-Revision 45 adds administrator-only Skill inventory, initial/revision ZIP
-publication, version listing and fixed-version download. Console derives
-organization/actor and publication identity from its trusted principal and
-command key; Registry is the package/version authority. The audit allowlist no longer
-returns the legacy `skillInstructions` body. See the
-[Skills module contract](../../services/admin-console/docs/skills.md).
-
-Revision 44 adds explicit Provider, Model and current Template availability PUTs.
-Both boolean flags are required; identity and command IDs remain server-derived.
-One Controller command returns a historical receipt. The browser refreshes the
-current resource after success; failed refreshes never retry the write. Structured
-reference conflicts link to Controller-owned resources without automatic edits.
-See [catalog availability and delivery](../../services/admin-console/docs/catalog-availability.md).
-
-Revision 43 adds read-only ACP execution audit list/detail/events and the separate
-Controller configuration synchronization read. Console forwards the verified
-administrator's five management identity headers to ACP, never an Agent owner
-identity. Historical reads have no Controller preflight or Session activation.
-See [the service contract](../../services/admin-console/docs/execution-audit.md).
-
-The Console `#audits` navigation and Agent-detail history links consume these
-reads directly; they do not depend on current Agent inventory. Detail, execution
-events and permission records refresh independently, without reloading another
-stream or merging their cursors. Lifecycle DTOs no longer expose `admission_id`.
-The BFF routes and audit pages are implemented; combined Gateway/ACP acceptance
-remains B5 work, not implied by this route inventory.
-
-Revision 42 requires positive integer `expected_version` on model edits, copied
-from the model's `revision` when the form is opened. The BFF forwards it unchanged;
-it never reads or substitutes the latest version before saving. Controller 409
-`lifecycle_conflict` keeps the draft visible and blocks another save until the
-administrator explicitly reloads the current model. Failed reloads retain the
-draft. An uncertain mutation response may still be retried with the same request
-ID and expected version. Model names are limited to 200 Unicode code points.
-
-Revision 38 moves builtin model defaults to Console. Confirmed configuration
-remains Controller-owned; both builtin and custom parameters are editable.
-
-Revision 37 exposes the safe historical `agent_spec_revision` and
-`last_successful_execution_revision` identifiers for unavailable-Agent recovery.
-These are not executable configuration. Console offers the existing Rebuild
-command for eligible history while Controller remains the identity, lineage and
-admission authority. Initial build failure without history still offers only
-cleanup. Runtime loss events remain distinct from failed lifecycle commands.
-
-Revision 36 adds administrator-only network policy GET/PUT at
-`/agents/{agent_id}/network-policy`. Both reject browser query parameters.
-PUT accepts only `action` (`allow_all` / `deny_all`) and positive, JavaScript-safe
-`expected_resource_version`, plus `Idempotency-Key` and
-`X-Antnest-Expected-Principal` headers. The latter is a URI-encoded JSON pair
-`[organization_id,user_id]`, checked against the trusted principal before
-dispatch (`409 principal_changed` on mismatch); it cannot select an identity.
-Organization and
-actor are derived from the trusted principal. Console maps the action to Egress's
-immutable built-in revision 1 through Controller; it does not call Egress directly.
-GET projects `agent_id`, `action`, `resource_version`, and independent
-`attachment: {state, resource_version}`. PUT returns only the acknowledged
-`agent_id`, `action`, `resource_version`. Policy IDs, digest, Tunnel addresses,
-organization, actor and Runtime metadata do not enter the browser projection.
-Malformed or mismatched success responses fail closed; errors use a bounded
-status/code/message allowlist. Neither path adds retries, read repair or a
-lifecycle operation. See [network policy UX and recovery](../../services/admin-console/docs/network-policy.md).
-
-`admin-contract.json` is the Stage 3A thin-BFF route inventory. Authority fields
-listed under `server_fields` are derived from the trusted Edge Gateway
+This directory holds the browser-to-BFF contract owned by Admin Console.
+`admin-contract.json` (version 48) is the thin-BFF route inventory. Authority
+fields listed under `server_fields` are derived from the trusted Edge Gateway
 principal or generated by Admin Console and are never accepted from browser
-JSON.
+JSON. Admin Console owns no durable records and therefore has no persistence
+contract. Skill source discovery and promotion are specified separately in
+[skill-discovery.md](skill-discovery.md).
+
+## Response allowlists
+
+Responses use explicit browser allowlists. Internal credential references,
+Agent access subjects/revisions, Runtime execution identities, and MCP
+endpoints never cross this boundary merely because an owning service adds a
+field. Organization IDs remain trusted request scope and are stripped from all
+Admin Console resource responses. Read-only Directory Groups do not expose
+their database identity, and OIDC uses its stable Provider name rather than an
+internal record ID. SCIM token ID is retained only as the opaque handle needed
+by the revoke command; the UI never presents it as credential identity.
+
+## Account password
 
 The account-password command always targets the trusted principal. Browser JSON
 cannot select another User. Current and replacement passwords are write-only,
@@ -95,83 +37,178 @@ response from a previous session must not sign out a newly logged-in session.
 The credential error does not certify session validity after Gateway admission;
 concurrent revocation is enforced on the next protected request.
 
-Responses use explicit browser allowlists. Internal credential references,
-Agent access subjects/revisions, Runtime execution identities, and MCP
-endpoints never cross this boundary merely because an owning service adds a
-field. The overview fans out buffered reads under one deadline: Agent inventory
-is required, while directory and catalog sections carry an explicit
-`available` or `unavailable` envelope. Admin Console owns no durable records and
-therefore has no persistence contract.
-Unavailable section errors contain `status`, `code`, and `message`. Required
-Agent-read failures use the same safe status as the HTTP response. The browser
-offers refresh for transient errors only, keeps loaded snapshots during refresh,
-and prevents duplicate requests. A terminal aggregate failure overrides any
-retry affordance implied by an older partial snapshot.
-Degraded envelopes name the unavailable business resource without forwarding
-the upstream address, response body, or transport error. The Overview's active
-member count requires both the global User and Organization Membership to be
-active; disabled identities remain visible in Directory but do not inflate
-launch readiness.
-The same distinction applies to Agent ownership: only active Users with an
-active Organization Membership are offered for new Agents, while the complete
-Directory projection remains the presentation index for existing and deleted
-Agents. Disabling an owner must not erase its human identity from fleet or audit
-views.
+## Overview and resource pages
 
-Organization IDs remain trusted request scope and are stripped from all Admin
-Console resource responses. Read-only Directory Groups do not expose their
-database identity, and OIDC uses its stable Provider name rather than an
-internal record ID. SCIM token ID is retained only as the opaque handle needed
-by the revoke command; the UI never presents it as credential identity.
+The overview fans out buffered reads under one deadline: Agent inventory is
+required, while directory and catalog sections carry an explicit `available`
+or `unavailable` envelope. Unavailable section errors contain `status`, `code`,
+and `message`. Required Agent-read failures use the same safe status as the
+HTTP response. The browser offers refresh for transient errors only, keeps
+loaded snapshots during refresh, and prevents duplicate requests. A terminal
+aggregate failure overrides any retry affordance implied by an older partial
+snapshot. Degraded envelopes name the unavailable business resource without
+forwarding the upstream address, response body, or transport error.
+
+The Overview's active member count requires both the global User and
+Organization Membership to be active; disabled identities remain visible in
+Directory but do not inflate launch readiness. The same distinction applies to
+Agent ownership: only active Users with an active Organization Membership are
+offered for new Agents, while the complete Directory projection remains the
+presentation index for existing and deleted Agents. Disabling an owner must not
+erase its human identity from fleet or audit views.
 
 Overview is a bounded snapshot, not a hidden count service. Catalog and Agent
 sections preserve their owner-service continuation cursor. A browser may show
 an exact total only when that cursor is absent; otherwise the loaded count is a
 lower bound and lifecycle distributions apply only to the loaded snapshot.
-It is reserved for the Overview page. Resource pages call their primary query
-and direct dependencies independently, so an unrelated overview section cannot
-erase an otherwise usable Template or Agent inventory. Template creation reads
-the BFF's non-persistent Runtime image default through `GET /template-defaults`
-instead of triggering the four-owner overview aggregate.
-Template commands may explicitly select `runtime.image_ref` as a repository/tag;
-the BFF forwards the choice to Agent Controller, never directly to Docker or a
-registry. Omitted creation input uses the configured default. Revision forms
-explicitly send the current immutable image when keeping it. The optional
-response `runtime.image_source` is server-derived display metadata and is not
-accepted in browser commands. Runtime projections allow only image identity,
-human source, and resource limits, not arbitrary platform metadata.
-Model Profile reads are likewise independent from the release-managed Model
-Catalog. If Catalog metadata is unavailable, existing Profiles and immutable
-revision details retain their stored human label and remain readable; only
+The aggregate is reserved for the Overview page. Resource pages call their
+primary query and direct dependencies independently, so an unrelated overview
+section cannot erase an otherwise usable Template or Agent inventory.
+
+Core catalog and Agent lists expose bounded cursor traversal. Browser callers
+may supply only the single-value query fields listed on each route; the BFF
+rejects unknown fields, caps `limit` at 100, and always derives organization
+scope from the trusted principal. `view=deleted` is a product-level view that
+the BFF maps to Agent Controller's retained lifecycle query. Model and Template
+selectors used by create, revise, and rebuild workflows continue through those
+same cursors on demand. A non-empty continuation cursor therefore prevents the
+browser from treating an eligible-empty first page as proof that no eligible
+dependency exists.
+
+## Providers and models
+
+`GET /api/admin/model-catalog` is local to Console and lists the builtin model
+defaults (currently DeepSeek). It does not request Controller, an external
+provider or a database. Presets only initialize editable drafts; both builtin
+and custom parameters are editable, and writes submit explicit model values,
+including selected estimated prices. An omitted price remains unknown.
+Reading or editing a saved model uses Controller's configuration, not current
+catalogue values. Controller validates and persists organization data and
+credentials; Console owns no persistent model or credential store.
+
+The contract covers Provider connection creation, list and detail, and
+independent credential rotation. Model creation references
+`provider_connection_id`; model revisions accept no credential or endpoint.
+`credential_version` is exposed only on connection reads as the opaque CAS
+precondition, not a credential. See the
+[Console provider contract](../../services/admin-console/docs/provider-management.md)
+and [Provider credentials and models](../../docs/provider-credentials-and-models.md).
+
+Model edits require a positive integer `expected_version`, copied from the
+model's `revision` when the form is opened. The BFF forwards it unchanged; it
+never reads or substitutes the latest version before saving. Controller 409
+`lifecycle_conflict` keeps the draft visible and blocks another save until the
+administrator explicitly reloads the current model. Failed reloads retain the
+draft. An uncertain mutation response may still be retried with the same request
+ID and expected version. Model names are limited to 200 Unicode code points.
+
+Models store current parameters; there is no model-history route or page.
+Model detail reads the current configuration, and model links open current
+settings. Agent detail presents build-time model parameters from its own
+snapshot, including rates and input capabilities. Changing a command's payload
+replaces its pending retry intent rather than retaining older keys.
+
+Model Profile reads are independent from the release-managed Model Catalog. If
+Catalog metadata is unavailable, existing Profiles and immutable revision
+details retain their stored human label and remain readable; only
 connect/revise actions close until a local Catalog retry succeeds.
 Model projections and create/revise commands retain optional `supports_audio`
 and `supports_pdf` (absent means false), in addition to `supports_images`.
 Known presets use Controller metadata; custom model input capabilities are
 administrator-configured. No converter or additional credential is inferred.
 See [native input configuration](../../services/admin-console/docs/multimodal-models.md).
-Revision 35 adds optional model pricing to the read allowlist, including Agent
-lineage and Overview. Invalid/incomplete/null upstream prices fail projection
+
+Optional model pricing is part of the read allowlist, including Agent lineage
+and Overview. Invalid, incomplete or null upstream prices fail projection
 instead of becoming zero; private nested fields remain excluded. Create/revise
 commands forward the original optional pricing to Controller for validation.
 The browser preserves saved prices, explicit omission and uncertain-publication
 retry identity (including malformed successful responses). See
 [model pricing](../../services/admin-console/docs/model-pricing.md).
-Model detail reads the current configuration; only Templates have revision-qualified
-historical detail. Template detail resolves its stable Model identity as
-an independent presentation dependency; failure leaves the Template prompt,
+
+## Catalog availability
+
+Provider, Model and current Template availability use explicit PUTs. Both
+boolean flags are required; identity and command IDs remain server-derived.
+One Controller command returns a historical receipt. The browser refreshes the
+current resource after success; failed refreshes never retry the write.
+Structured reference conflicts link to Controller-owned resources without
+automatic edits. See
+[catalog availability and delivery](../../services/admin-console/docs/catalog-availability.md).
+
+## Templates
+
+Template create, revise and read DTOs use Controller's `model_profile_id`
+contract. A template keeps the selected model identity while metadata changes.
+Template detail resolves the current model; Agent build audit reads its own
+snapshot. The BFF does not translate a stable ID back to a pinned revision or
+accept the obsolete template `model_profile_revision_id` field. Only Templates
+have revision-qualified historical detail; Template revision links remain
+historical. Template detail resolves its stable Model identity as an
+independent presentation dependency; failure leaves the Template prompt,
 Runtime policy, and revision facts readable and exposes a local retry.
-Agent detail likewise treats the Agent projection as primary and lifecycle
-history as an independently recoverable evidence section. Event-list or SSE
-recovery failure does not erase lifecycle state, executable configuration, or
-valid actions; loaded events remain visible. Transient failures expose an
-authoritative retry, while `403`, `404`, and `410` remain terminal and stop
-automatic replay.
+
+Template creation reads the BFF's non-persistent Runtime image default through
+`GET /template-defaults` instead of triggering the overview aggregate.
+Template commands may explicitly select `runtime.image_ref` as a
+repository/tag; the BFF forwards the choice to Agent Controller, never directly
+to Docker or a registry. Omitted creation input uses the configured default.
+Revision forms explicitly send the current immutable image when keeping it. The
+optional response `runtime.image_source` is server-derived display metadata and
+is not accepted in browser commands. Runtime projections allow only image
+identity, human source, and resource limits, not arbitrary platform metadata.
+
+Template creation and revision accept fixed `{skill_id, version}` references.
+Console forwards them without resolving or silently upgrading versions;
+Controller freezes the package metadata and collection digest. Current and
+historical Template reads preserve that frozen identity. Applying a new
+revision to an existing Agent still requires an explicit rebuild.
+
+## Skills
+
+Administrator-only routes cover Skill inventory, initial and revision ZIP
+publication, version listing and fixed-version download. Console derives
+organization, actor and publication identity from its trusted principal and
+command key; Registry is the package/version authority. The audit allowlist
+does not return a `skillInstructions` body. See the
+[Skills module contract](../../services/admin-console/docs/skills.md).
+
+Administrator-only search, bounded text preview and explicit promotion of the
+caller's own dynamic Agent Skill sources are defined in
+[skill-discovery.md](skill-discovery.md). The BFF derives identity, Registry
+owns publication, and Templates continue to accept only fixed formal versions.
+
+## Agents
+
+Agent responses expose the safe historical `agent_spec_revision` and
+`last_successful_execution_revision` identifiers for unavailable-Agent
+recovery. These are not executable configuration. Console offers the existing
+Rebuild command for eligible history while Controller remains the identity,
+lineage and admission authority. Initial build failure without history still
+offers only cleanup. Runtime loss events remain distinct from failed lifecycle
+commands. Lifecycle DTOs do not expose `admission_id`.
+
+A scoped read returns Agent Skill preparation state before an Agent row exists.
+The BFF takes organization identity only from the verified principal, rejects
+browser query parameters, and projects bounded state and progress. The browser
+can query the same intent by its original `Idempotency-Key`; the BFF derives
+the lifecycle request ID using the trusted organization scope. It never
+exposes the frozen target specification or RC reference. A transient read
+failure does not create another lifecycle command; retrying the command uses
+its original body and idempotency key.
+
+Agent detail treats the Agent projection as primary and lifecycle history as
+an independently recoverable section. Event-list or SSE recovery failure does
+not erase lifecycle state, executable configuration, or valid actions; loaded
+events remain visible. Transient failures expose an authoritative retry, while
+`403`, `404`, and `410` remain terminal and stop automatic replay.
 An active lifecycle operation is also an independent progress read. Its failure
 keeps the Agent readable, leaves conflicting actions closed from the Agent's
 authoritative active request, and exposes a local retry only for transient
 failures. An operation returned for another request or Agent is never rendered
 as current progress. Owner resolution and later Agent refreshes use the same
 structured terminal/transient distinction while retaining loaded projections.
+
 After an SSE interruption, event replay and Agent refresh remain independent
 reads rather than a browser-side transaction. Successful replay advances its
 authoritative cursor and reconnects even if Agent refresh fails; a successful
@@ -185,15 +222,41 @@ The BFF translates that header to the upstream global cursor, while deriving
 organization scope only from the trusted principal. Invalid, empty or repeated
 header values return `400`; they never silently reset the replay position.
 
-Core catalog and Agent lists expose bounded cursor traversal. Browser callers
-may supply only the single-value query fields listed on each route; the BFF
-rejects unknown fields, caps `limit` at 100, and always derives organization
-scope from the trusted principal. `view=deleted` is a product-level view that
-the BFF maps to Agent Controller's retained lifecycle query.
-Model and Template selectors used by create, revise, and rebuild workflows
-continue through those same cursors on demand. A non-empty continuation cursor
-therefore prevents the browser from treating an eligible-empty first page as
-proof that no eligible dependency exists.
+## Network policy
+
+Administrator-only network policy GET/PUT live at
+`/agents/{agent_id}/network-policy`. Both reject browser query parameters.
+PUT accepts only `action` (`allow_all` / `deny_all`) and positive,
+JavaScript-safe `expected_resource_version`, plus `Idempotency-Key` and
+`X-Antnest-Expected-Principal` headers. The latter is a URI-encoded JSON pair
+`[organization_id,user_id]`, checked against the trusted principal before
+dispatch (`409 principal_changed` on mismatch); it cannot select an identity.
+Organization and actor are derived from the trusted principal. Console maps
+the action to Egress's immutable built-in revision 1 through Controller; it
+does not call Egress directly. GET projects `agent_id`, `action`,
+`resource_version`, and independent `attachment: {state, resource_version}`.
+PUT returns only the acknowledged `agent_id`, `action`, `resource_version`.
+Policy IDs, digest, Tunnel addresses, organization, actor and Runtime metadata
+do not enter the browser projection. Malformed or mismatched success responses
+fail closed; errors use a bounded status/code/message allowlist. Neither path
+adds retries, read repair or a lifecycle operation. See
+[network policy UX and recovery](../../services/admin-console/docs/network-policy.md).
+
+## Execution audit
+
+Read-only ACP execution audit list, detail and events, and the separate
+Controller configuration synchronization read, are available to
+administrators. Console forwards the verified administrator's five management
+identity headers to ACP, never an Agent owner identity. Historical reads have
+no Controller preflight or Session activation. See
+[the service contract](../../services/admin-console/docs/execution-audit.md).
+
+The Console `#audits` navigation and Agent-detail history links consume these
+reads directly; they do not depend on current Agent inventory. Detail,
+execution events and permission records refresh independently, without
+reloading another stream or merging their cursors.
+
+## Identity provisioning
 
 OIDC Provider and SCIM credential reads are independent management sections.
 Failure of one authority call leaves the other section usable and exposes a
@@ -207,41 +270,3 @@ same-origin Edge location. It never accepts an internal service URL or derives
 an address from the current Console path, query, or fragment. Both addresses
 remain visible and copyable in the workflow where an administrator needs to
 configure the external identity system; copy failure is local and retryable.
-
-## Builtin Model Defaults
-
-`GET /api/admin/model-catalog` is local to Console and currently lists DeepSeek.
-It does not request Controller, an external provider or a database. Presets only
-initialize editable drafts; writes submit explicit model values, including
-selected estimated prices. An omitted price remains unknown. Reading/editing a
-saved model uses Controller's configuration, not current catalogue values.
-Controller validates and persists organization data and credentials; Console
-owns no persistent model or credential store. Contract revision 39 adds connection
-creation/list/detail and independent credential rotation. Model creation references
-`provider_connection_id`; model revisions accept no credential or endpoint.
-`credential_version` is exposed only on connection reads as the opaque CAS
-precondition, not a credential. See the [Console provider contract](../../services/admin-console/docs/provider-management.md)
-and [delivery plan](../../docs/provider-credentials-and-models.md).
-
-Revision 40 aligns template create, revise and read DTOs with Controller's
-`model_profile_id` contract. A template keeps the selected model identity while
-metadata changes. Template detail resolves the current model;
-Agent build audit reads its own snapshot, and model links open current settings.
-There is no independent model history endpoint. The BFF
-does not translate a stable ID back to a pinned revision or accept the obsolete
-template `model_profile_revision_id` field.
-
-Revision 41 removes the model-history GET route and corresponding page. Models
-store current parameters; Agent detail presents build-time model parameters from
-its own snapshot, including rates and input capabilities. Model links open current
-settings, while Template revision links remain historical. Changing a command's
-payload replaces its pending retry intent rather than retaining older keys.
-
-Revision 47 adds a scoped read of Agent Skill preparation before an Agent row
-exists. The BFF takes organization identity only from the verified principal,
-rejects browser query parameters, and projects bounded state and progress.
-The browser can query the same intent by its original `Idempotency-Key`; the
-BFF derives the lifecycle request ID using the trusted organization scope.
-It never exposes the frozen target specification or RC reference. A transient
-read failure does not create another lifecycle command; retrying the command
-uses its original body and idempotency key.

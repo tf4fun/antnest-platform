@@ -1,7 +1,7 @@
 # Console Skill source discovery and promotion
 
-This D6 contract consumes the admitted [Registry discovery API](../skill-registry/discovery-api.md).
-It adds three administrator-only routes through the existing authenticated
+This contract defines how Admin Console consumes the
+[Registry discovery API](../skill-registry/discovery-api.md). It adds three administrator-only routes through the existing authenticated
 Gateway → Console path. Organization and actor always come from the trusted
 principal; administrator status does not grant access to another owner's
 personal Skill. Ordinary members cannot publish through the Console.
@@ -50,9 +50,8 @@ Promotion does not remove or pause the source, change its learning policy,
 change Templates, rebuild Agents, or make a dynamic ref a Template ref. After
 success the UI refreshes formal inventory separately; refresh failure never
 repeats publication. The formal version is eligible for the existing fixed
-Template selection and explicit rebuild workflow. A complete cross-service
-four-step acceptance remains the DI1 integration batch.
+Template selection and explicit rebuild workflow.
 
 Wire shapes are in [the schema](skill-discovery.schema.json). Runtime temporary
-file delivery and ACP cleanup are already admitted in
-[D4A](../../docs/skill-discovery-temporary-consumer-delivery-20261001.md).
+file delivery and ACP cleanup are defined in the
+[ACP temporary consumer contract](../agent-acp/skill-temporary-consumer.md).

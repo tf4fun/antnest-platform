@@ -1,138 +1,145 @@
 # Edge Gateway
 
-## Dependency baseline (2026-09-26)
+Edge Gateway is the single external application entry of Antnest Platform. It
+turns an Identity Service access credential into one trusted internal principal
+and routes the request to the owning service without owning the requested
+business operation. It is written in Go.
 
-Go 1.27.1 and OpenTelemetry 1.46.0 are the current baseline, with refreshed
-stable transitive dependencies. Local race, contract, build, and lint gates
-precede the isolated authentication and workspace HTTP/SSE platform regression.
-See the [dependency refresh record](../../docs/dependency-refresh-20260926.md).
+The Gateway owns the browser credential boundary: cookies, CSRF, same-origin
+checks and identity revalidation. Every other service receives only trusted
+identity headers that the Gateway sets after verification; browser-supplied
+identity headers, cookies and access tokens never reach internal services.
 
-Edge Gateway is Antnest Platform's sole external application entry. It turns
-an Identity Service access credential into one trusted internal principal and
-routes the request without owning the requested business operation.
+## Responsibilities
 
-## Status
+- Public HTTP listener and route policy.
+- Browser cookie and CSRF policy.
+- Access-token resolution and administrator admission.
+- Bounded login admission before Identity performs password verification.
+- Browser OIDC discovery, start and callback, and transparent SCIM protocol
+  ingress to Identity.
+- Metadata-only Agent workspace discovery (`GET /api/app/bootstrap`); ACP owns
+  per-Agent access decisions.
+- Authenticated workspace state snapshots and subscriptions with bounded leases.
+- Same-origin ACP v1/v2 WebSocket routing with per-message browser session
+  revalidation, and ACP v1 Streamable HTTP routing with per-request browser
+  authentication.
+- Scoped Agent UI proxy through `ANTNEST_AGENT_UI_URL`: `/workspace/` HTML,
+  hashed assets, and the Workspace HTTP/SSE API with leased SSE observation.
+- Trusted principal headers, security headers, request limits and tracing.
+- Proxy availability and external error projection.
 
-Implemented for Stage 3A. The canonical cross-service behavior is
-[`../../docs/stage-3-admin-control-plane.md`](../../docs/stage-3-admin-control-plane.md).
-The Agent UI full-stack Gateway route sends `/workspace/` HTML, hashed assets,
-and Workspace HTTP/SSE API requests to the same Node `agent-ui` service through
-`ANTNEST_AGENT_UI_URL`. HTML receives verified principal headers; assets remain
-anonymous and never receive browser-supplied identity. Deployment and
-cross-service acceptance remain separate integration work.
+## Non-responsibilities
 
-## Owns
-
-- public HTTP listener and route policy;
-- browser cookie and CSRF policy;
-- access-token resolution and administrator admission;
-- metadata-only Agent workspace discovery; ACP owns per-Agent access decisions;
-- authenticated workspace state snapshots/subscriptions with bounded leases;
-- same-origin ACP v1/v2 WebSocket routing for ACP clients with per-message
-  browser session revalidation;
-- scoped Agent UI HTTP proxy and leased SSE observation through `ANTNEST_AGENT_UI_URL`;
-- ACP v1 Streamable HTTP routing with per-request browser authentication;
-- trusted principal headers, security headers, request limits, and tracing;
-- browser OIDC discovery/start/callback and transparent SCIM protocol ingress;
-- proxy availability and external error projection.
-
-## Does Not Own
-
-- users, organizations, credentials, or authorization facts;
-- Models, Templates, Agents, lifecycle operations, or Runtime state;
-- Admin Console page state or view aggregation;
-- ACP Session state, messages, model execution, or Tool dispatch;
-- any PostgreSQL schema.
-
-## Dependencies
-
-- Identity Service for login, token resolution, and token revocation;
-- Admin Console for the application and `/api/admin/*` BFF;
-- Agent Controller for principal-scoped discovery and lifecycle/activation/Runtime metadata;
-- Agent UI Node service for `/workspace/*` SSR, HTTP commands, and SSE observation;
-- Agent ACP Service for execution-state reads/watches and authenticated `/api/app/agents/{agent_id}/v1/acp` (stable)
-  and `/api/app/agents/{agent_id}/v2/acp` (draft) WebSockets; the Workspace
-  `/api/app/agents/{agent_id}/acp` alias retains v1 behavior;
-- OTLP collector when observability is enabled.
+- Users, organizations, credentials or authorization facts (Identity Service).
+- Models, Templates, Agents, lifecycle operations or Runtime state (Agent
+  Controller and Runtime Controller).
+- Admin Console page state or view aggregation.
+- ACP Session state, messages, model execution or Tool dispatch (Agent ACP
+  Service).
+- Any PostgreSQL schema. The Gateway has no database, migration, backup or
+  persistent volume.
 
 ## Interfaces
 
-Current availability and active Session observation are documented in
-[Workspace state](docs/workspace-state.md). Gateway consumes ACP state.
-Gateway/Console consumers and the scoped B5 integration have completed;
-later Agent UI browser evidence is tracked separately in
-[current status](../../docs/current-status.md). See
-[delivery boundary](docs/execution-boundary.md). State observation
-does not introduce another conversation API or replace ACP Session operations.
+| Direction | Interface | Purpose |
+| --- | --- | --- |
+| Inbound | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback` | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
+| Inbound | `/scim/v2/*` | Protocol-preserving SCIM proxy to Identity |
+| Inbound | `/api/admin/*` and Console application | Administrator-only BFF routes forwarded to Admin Console with CSRF checks |
+| Inbound | `GET /api/app/bootstrap` | Principal display facts and accessible Agent IDs and names |
+| Inbound | `/api/app/agents/{agent_id}/state`, `/state/watch` | [Workspace state](docs/workspace-state.md) snapshot and SSE watch |
+| Inbound | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias) | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay |
+| Inbound | `/workspace/*`, `/api/app/workspace/v1/*` | Agent UI HTML, assets and Workspace HTTP/SSE API |
+| Inbound | `GET /status` | Local readiness only; it never probes another service |
+| Outbound | Identity Service RPC | Login, token resolution, revocation, OIDC |
+| Outbound | Agent Controller RPC | Principal-scoped Agent ID/name discovery only |
+| Outbound | Agent ACP Service | ACP protocol traffic and execution-state reads/watches |
+| Outbound | Admin Console, Agent UI | Reverse-proxied application traffic |
 
-See [`../../contracts/edge-gateway/session-contract.json`](../../contracts/edge-gateway/session-contract.json).
-All other service interfaces remain private deployment details.
+All other service interfaces are private deployment details. ACP HTTP and
+WebSocket behavior is described in [Architecture](docs/architecture.md).
 
-Admin authentication and ordinary BFF forwarding each have a bounded request
-deadline. The shared proxy boundary applies the forwarding deadline, including
-POST requests; it never retries writes. Agent event watches use the longer stream
-lease instead, so the ordinary request timeout does not terminate subscriptions.
+## Configuration
 
-## Local Verification
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP listen address; the container health check uses its port |
+| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | Identity Service base URL (absolute HTTP(S), no query or fragment) |
+| `ANTNEST_ADMIN_CONSOLE_URL` | yes | - | Admin Console base URL |
+| `ANTNEST_AGENT_UI_URL` | yes | - | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API |
+| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | Agent Controller base URL, used for ID/name discovery only |
+| `ANTNEST_AGENT_ACP_URL` | yes | - | Agent ACP Service base URL |
+| `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | Issue `Secure` cookies; set `false` only for plain-HTTP development |
+| `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | Deadline for non-streaming dependency calls and forwarded admin requests |
+| `ANTNEST_EDGE_STREAM_LEASE` | no | `5m` | Maximum lifetime of an authenticated SSE observation |
+| `ANTNEST_EDGE_LOGIN_WINDOW` | no | `5m` | In-memory login admission window |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX` | no | `30` | Login attempts per source per window |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no | `10` | Login attempts per normalized account per window |
+| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | Graceful drain budget for ordinary HTTP requests |
+| `ANTNEST_ENVIRONMENT` | no | empty | Deployment environment resource attribute for telemetry |
+| `OTEL_*` | no | - | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+
+Durations use Go duration syntax and must be positive. The 10-second request
+timeout bounds forwarded admin requests and is shorter than Admin Console's
+15-second dependency timeout (`ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`), so a slow
+Console dependency surfaces as a Gateway `503` first. Raise both together if
+needed. See [Operations](docs/operations.md) for TLS, shutdown and capacity
+notes.
+
+## Dependencies
+
+- Identity Service: required for login, every authenticated request and
+  per-message revalidation. Unavailability denies access with `503` without
+  clearing browser cookies.
+- Admin Console: required for administrator routes.
+- Agent Controller: required only for first-load workspace discovery. ACP
+  protocol and state traffic never depends on it.
+- Agent ACP Service: required for ACP protocol traffic and workspace state.
+- Agent UI: required for `/workspace/*` and the Workspace API.
+- OTLP collector: optional, when trace export is configured.
+
+`GET /status` reports only Gateway readiness. Downstream outages are reported by
+the affected business request.
+
+## Build and test
+
+Commands run from the repository root unless stated.
 
 ```sh
-go test ./...
-golangci-lint run ./...
-```
+# Unit and component tests (from services/edge-gateway)
+GOWORK=off go test ./...
 
-Go unit and component tests remain in the service packages. HTTP/TCP stream
-shutdown integration tests live in
-[`tests/integration/go/edge-gateway`](../../tests/integration/go/edge-gateway).
-Run them from the repository root through the Go overlay runner:
+# Lint all Go services
+make go-lint
 
-```sh
-node tests/integration/go/run.mjs edge-gateway --package cmd/edge-gateway -- -count=1
-```
+# HTTP/TCP stream shutdown integration tests
+node tests/integration/go/run.mjs edge-gateway
 
-Gateway-owned unit tests are complemented by the real-stack
-[Identity closeout client](../../tests/e2e/identity-closeout/README.md), run by
-`make e2e-stage3`. It checks browser HTTP and existing ACP v1/v2 logout
-revocation, SCIM provisioning, controlled OIDC and Console projections through
-the public entry, plus causal Jaeger spans. The separate HTTP access profile
-tests organization isolation and natural expiry. `make e2e-acp-session` uses
-the separate disposable ACP fault profile for post-upgrade expiry, dependency
-outage/recovery and durable Run completion after browser logout/disconnect.
+# Docker image (build context is the repository root)
+docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 
-Run the [Docker signal regression](../../tests/e2e/edge-gateway/shutdown-docker.mjs)
-from the repository root with the Gateway image installed:
-
-```sh
+# Docker signal regression for long-lived receive streams
 node tests/e2e/edge-gateway/shutdown-docker.mjs
 ```
 
-See [architecture](docs/architecture.md) and [operations](docs/operations.md).
+Integration sources live in
+[`tests/integration/go/edge-gateway`](../../tests/integration/go/edge-gateway).
+Root targets: `make test-go-unit`, `make test-go` and `make test-integration-go`
+include the Gateway;
+`make e2e-stage3` runs the real-stack
+[Identity end-to-end client](../../tests/e2e/identity-closeout/README.md)
+through the public entry (browser HTTP and ACP v1/v2 logout revocation, SCIM
+provisioning, OIDC, Console projections and causal Jaeger spans);
+`make e2e-acp-session` covers post-upgrade expiry, dependency outage and
+recovery, and durable Run completion after logout or disconnect.
 
-Gateway tracing is owned by the HTTP boundary and one shared outbound Transport,
-not individual business clients. See the
-[platform observability contract](../../docs/observability-contract.md).
-`/status` checks only Gateway readiness; it is not a full-stack health probe.
+## Documentation
 
-## ACP HTTP
-
-`POST`, `GET` (SSE), and `DELETE` on `/api/app/agents/{agent_id}/v1/acp`
-and its `/acp` alias relay the official SDK transport to `/v1/acp`. The draft
-v2 endpoint remains WebSocket-only. No ACP method is interpreted by Gateway.
-
-HTTP clients use the existing login cookies. POST and DELETE also send
-`X-Antnest-CSRF-Token` from the CSRF cookie. A supplied Origin must match the
-Gateway origin; HTTP clients without Origin still require valid cookies and
-CSRF for writes. WebSocket continues to require Origin. No new login or bearer
-API is introduced by this transport change.
-
-Only Content-Type, Accept, Acp-Connection-Id and Acp-Session-Id are forwarded
-from the client. Gateway injects trusted Organization/Principal/Agent identity and
-trace context; cookies, authorization and forged internal headers never reach
-ACP Service. Responses preserve ACP routing headers and SSE is flushed without
-buffering. POST/DELETE admission uses the message limit, separate from long-lived
-GET/WebSocket connections, so an open receive stream does not block cancel.
-
-Each new HTTP request revalidates browser identity; ACP authorizes the Agent
-and Session locally. Controller discovery is not a protocol prerequisite.
-Gateway does not poll idle connections or translate disconnect into Run
-cancellation. ACP owns access updates and output subscription revocation. Closing the receiver cancels its upstream HTTP request, not
-the durable Run. ACP Service owns reconnect/load and connection expiry.
+- [Architecture](docs/architecture.md) - request pipeline, OIDC binding, ACP relay and failure semantics.
+- [Operations](docs/operations.md) - configuration, diagnostics, shutdown, capacity and deployment limits.
+- [Workspace state](docs/workspace-state.md) - bootstrap and execution-state observation contract.
+- [Execution boundary](docs/execution-boundary.md) - Controller and ACP ownership split.
+- [Session contract](../../contracts/edge-gateway/session-contract.json) - public browser session interface.
+- [Platform observability contract](../../docs/observability-contract.md).
+- [Stage 3 admin control plane](../../docs/stage-3-admin-control-plane.md) - cross-service behavior.

@@ -1,5 +1,8 @@
 # Antnest Runtime Architecture
 
+This document describes the Runtime domain model, bootstrap sequence, execution
+boundary, network boundary, failure semantics, and module ownership.
+
 ## Mission
 
 Antnest Runtime gives one Agent an isolated Linux workspace and exposes that
@@ -114,7 +117,9 @@ fallible local network transport resource is registered, the assigned Egress
 packet path has returned a matching readiness probe, the network loop is
 running, and MCP can accept tool calls. The probe proves current Runtime-to-
 Egress routing and Agent allocation, but deliberately does not claim public or
-upstream DNS connectivity. Its body is:
+upstream DNS connectivity. If a required managed MCP server later becomes
+unhealthy, `/status` returns HTTP 503 with `"status": "unavailable"` until the
+process exits. The ready body is:
 
 ```json
 {
@@ -253,6 +258,50 @@ for its lease before the process flushes telemetry. Container stop/rebuild owns
 whole-environment reclamation. PID 1 reaps only exited orphans, excluding children
 whose exit status is still owned by a tool or managed MCP task.
 
+The production image provides Python, Node.js with npm, Git, and curl. Runtime
+does not model language-specific Skill runtimes or install dependencies on
+behalf of the control plane; an Agent may use these tools inside its own
+workspace.
+
+## Failure Semantics
+
+Actor admission is fail-closed. Shutdown closes it permanently, and an
+unprovable direct Executor termination or an abnormal Executor coordination
+task exit poisons it before Runtime exits; a finished lease cannot reopen
+either terminal state. Release builds keep Rust panic unwinding so Tokio can
+report a coordination-task panic to this boundary. `panic=abort` is forbidden
+because it would bypass poisoning, structured fatal logs, and telemetry flush.
+HTTP, network, and the Execution Actor drain concurrently under one shutdown
+deadline before telemetry is flushed. Failure of a required managed MCP process
+makes Runtime unavailable and exits; normal tool cancellation does not restart
+managed servers.
+
+Runtime is crash-only. If PID 1 exits, Docker or Kubernetes restarts it, or
+Runtime Controller replaces the complete container or Pod. Bootstrap reconciles
+Runtime-owned network artifacts even when the network namespace survives, and
+Runtime Controller reattaches the workspace.
+
+## Private Skill Endpoints
+
+Two private HTTP route families sit beside `/mcp`. They never appear in
+`tools/list`, the information Resource, or model tool definitions, and ordinary
+`tools/call` rejects the reserved `antnest_skill_maintenance_` and
+`antnest_skill_temporary_` names.
+
+- `POST /internal/skill-maintenance/{action}` applies Skill learning
+  candidates. See [MCP contract](mcp-contract.md#skill-maintenance-boundary)
+  and the [learning contract](../../../contracts/skill-learning/learning-api.md).
+- `POST /internal/skill-temporary/install` and `/release` deliver signed,
+  Run-bound temporary Skill packages as UID/GID 1000 files under a reserved
+  workspace namespace and remove them on release, startup, and normal shutdown.
+  While a temporary scope is active, new Bash calls are foreground-only and
+  retire their own remaining subprocesses before returning. See the
+  [temporary Skill contract](../../../contracts/runtime/temporary-skills.md).
+
+Both require an Ed25519-signed ticket verified against keys in RuntimeSpec, and
+all file effects still run through the Execution Actor and the UID/GID 1000
+Executor. Missing verifier configuration keeps both route families closed.
+
 ## Explicit Runtime Replacement
 
 Agent Controller owns the rebuild workflow without choosing physical generations:
@@ -314,7 +363,12 @@ carries packet data and Runtime Egress never carries tool calls.
 | `processes` | Direct-child wait ownership and PID 1 reaping of exited orphans |
 | `startup` | Drive network forwarding during managed MCP initialization before HTTP readiness |
 | `mcp` | Official SDK adapter, `/mcp`, and `/status` HTTP composition |
-| `telemetry` | Structured logs and optional OTLP traces |
+| `telemetry` | Structured logs and optional OTLP traces and metrics |
+| `information` | Bounded Runtime information Resource collection |
+| `file_observation` / `file_observation_wire` | File location and diff facts and their bounded wire encoding |
+| `skill_maintenance_*` / `skill_candidate` | Signed maintenance tickets, candidate storage, check, and commit |
+| `skill_temporary_*` / `skill_package_*` | Signed temporary Skill install/release and package validation |
+| `tool_error` | Closed tool error code set and effect projection |
 
 Runtime must not import Docker, Kubernetes, PostgreSQL, Agent scheduling,
 templates, Skills Registry, ACP, Channel, or end-user authentication logic.
@@ -337,15 +391,16 @@ Adding another built-in tool requires a deliberate architecture decision; it
 is not a local handler-only edit. Configured managed tools use the existing
 discovery/dispatch contract rather than extending this built-in list.
 
-### Implemented Execution Identity Fence
+### Execution Identity Fence
 
-Runtime, the language-neutral contract, and consumer integration implement:
+Runtime, the language-neutral contract, and its consumers implement:
 
 1. PID 1 generates a fresh random `execution_id` on every process start.
 2. `/status` returns that value with `agent_id`, `generation`, and readiness.
 3. Every MCP request carries the execution ID expected by the Agent Run
-   snapshot, for example in `X-Antnest-Expected-Execution-ID`.
-4. Runtime rejects a mismatch before Tool dispatch.
+   snapshot in `X-Antnest-Expected-Execution-ID`.
+4. Runtime rejects a missing or mismatched value with HTTP 409 before Tool
+   dispatch.
 
 This identity is a stale-execution consistency check, not an authentication
 credential or rollout generation. A stale execution fails before Tool dispatch;

@@ -1,117 +1,186 @@
-# 跨服务可观测性与埋点规范
+# Cross-Service Observability And Instrumentation Contract
 
-> 更新：2026-09-11。用户确认：客户端仅基础采集，单次 RPC 正文可开关，消息流不采集正文。
-> 本版替代此前的 metadata/diagnostic、逐 DTO 白名单及客户端正文预算设计。
-> 实现进度见 [收敛清单](observability-simplification.md)，不把目标规范当作已部署事实。
-> 数据库边界整改与推广见 [实施报告](observability-database-remediation.md)。
+This document defines what every Antnest service records in traces, where
+instrumentation is installed, and how RPC content capture is controlled.
+Clients collect only basic data, single request/response RPC content capture is
+switchable, and message streams never capture content.
 
-## 1. 职责
+## 1. Responsibilities
 
-Trace 用来核对真实调用关系、耗时、参数与返回结果、失败位置，不充当聊天存储或业务审计。
-业务正常返回结果或 error；埋点安装在 HTTP、RPC、存储和执行器边界，不侵入领域模型。
-不为观测新增业务接口、重试、状态机、可靠事件投递或数据库。
+Traces verify real call relationships, latency, parameters and results, and the
+location of failures. They are not a chat store or a business audit log.
+Business code returns normal results or errors; instrumentation is installed at
+HTTP, RPC, storage and executor boundaries and does not intrude on the domain
+model. Observability does not add business interfaces, retries, state machines,
+reliable event delivery or databases.
 
-| 边界 | 采集 |
+| Boundary | Captured |
 | --- | --- |
-| HTTP/静态资源/代理 | 方法、路由、状态、目标、耗时、错误和父子关系；不采集 Header 值及正文 |
-| 单次请求/响应 RPC | 基础记录；开关开启时采集已有参数和返回对象，不筛选字段 |
-| SSE/WebSocket/模型输出/通知等消息流 | 基础连接、操作结果、取消与错误；不采集内容、不累积或拼接消息 |
-| 数据库/Executor | 已有操作边界、关联 ID、结果与错误；不为采集补读数据 |
-| Egress 转发数据面 | 不做逐包/逐流 OTLP；保留聚合指标与控制 RPC |
+| HTTP/static assets/proxies | Method, route, status, target, latency, error and parent-child relationship; no header values or bodies |
+| Single request/response RPC | Basic record; when the switch is on, the existing parameter and result objects, without field filtering |
+| Message streams (SSE/WebSocket/model output/notifications) | Basic connection, operation result, cancellation and error; content is never captured, accumulated or concatenated |
+| Database/Executor | Existing operation boundary, correlation IDs, result and error; no additional reads for capture |
+| Egress forwarding data plane | No per-packet or per-flow OTLP; aggregate metrics and control RPCs are retained |
 
-RPC 由已有协议适配器识别，不根据 URL 或 JSON 字段猜测。
-例如 Gateway 登录 HTTP 只记录基本信息，Identity `local_login` RPC 可采集正文。
-同一边界不重复增加 HTTP CLIENT/SERVER 与 RPC CLIENT/SERVER；优先复用已有 Span。
-协议上有单独 dispatcher 的请求可以使用现有操作 Span；消息通知不因内部解码为对象而变成正文采集入口。
-普通 HTTP 代理不抓取内部 RPC 报文，避免同一内容在每一跳复制。
+RPCs are identified by the existing protocol adapters, not guessed from URLs or
+JSON fields. For example, the Gateway login HTTP request records only basic
+information, while the Identity `local_login` RPC may capture content.
+Do not add both HTTP CLIENT/SERVER and RPC CLIENT/SERVER spans at the same
+boundary; reuse the existing span. A request with its own protocol dispatcher
+may use the existing operation span. A message notification does not become a
+content capture point just because it is decoded into an object internally.
+Ordinary HTTP proxies do not capture internal RPC payloads, so the same content
+is not copied at every hop.
 
-## 2. 一个正文开关
+## 2. One Content Switch
 
 ```env
 ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 ```
 
-- 默认不采集 RPC 正文；受控开发实例可显式设为 `true`。
-- 开启后将整个已有 RPC 参数/返回值序列化到 `antnest.request` / `antnest.response` 事件。
-- 事件使用 `antnest.payload.json`、协议方法及方向，不维护 DTO 字段白名单、嵌套脱敏规则或安全投影。
-- 不对未知新增字段做默认删除，不另设固定 16 KiB、事件累计字节数或逐接口预算。
-- 关闭时不序列化正文；采集失败不改变业务结果。不提前读取网络 Body，不缓存或聚合流。
-- HTTP、流式协议不受这个开关影响，始终不采集正文。
-- 此开关只控制正文；是否导出 Trace、采样、队列和 SDK 资源限制使用标准 OTel 配置。
+- RPC content is not captured by default. A controlled development instance may
+  set it to `true` explicitly.
+- When on, the entire existing RPC parameter and return value is serialized into
+  `antnest.request` / `antnest.response` events.
+- Events use `antnest.payload.json`, the protocol method and the direction. There
+  is no DTO field allowlist, nested redaction rule or safe projection.
+- Unknown new fields are not dropped by default, and there is no fixed 16 KiB
+  limit, cumulative event byte budget or per-interface budget.
+- When off, content is not serialized. Capture failures do not change business
+  results. Network bodies are not read early, and streams are not buffered or
+  aggregated.
+- HTTP and streaming protocols are not affected by this switch and never capture
+  content.
+- The switch controls content only. Trace export, sampling, queues and SDK
+  resource limits use standard OTel configuration.
 
-完整指字段不被业务白名单删减，不承诺绕过 SDK、传输和接收端的标准容量限制。
-不得将 SDK 截断后的 JSON 当作可用于业务重放的完整记录。
-跨语言 SDK 的配置支持必须以实际版本为准；不另造远程配置中心或应用层限流框架。
+"Complete" means fields are not trimmed by a business allowlist. It does not
+promise to bypass the standard capacity limits of the SDK, transport or
+receiver. JSON truncated by the SDK must not be treated as a complete record for
+business replay. Configuration support in each language SDK follows the actual
+SDK version; there is no custom remote configuration center or application-level
+rate limiting framework.
 
-开发原文可能包含密码、令牌、Provider 凭证和业务数据。
-Jaeger 必须处于受控网络；正文不能再复制到普通日志或提交到 Git。
-过滤、脱敏、采样、存储容量、留存和查询权限集中在采集/存储部署侧治理，后续使用标准组件。
-集中处理不等于秘密没有离开服务，也不能恢复源头未采集或已截断的数据。
+Raw development content can contain passwords, tokens, Provider credentials and
+business data. Jaeger must run on a controlled network; captured content must
+not be copied into ordinary logs or committed to Git. Filtering, redaction,
+sampling, storage capacity, retention and query permissions are governed
+centrally on the collector and storage side using standard components.
+Central processing does not mean that secrets never left the service, and it
+cannot restore data that was never captured or was truncated at the source.
 
-## 3. 基础链路
+## 3. Basic Trace Structure
 
-- 入站提取 W3C context 后创建 SERVER；出站先创建 CLIENT 再注入 context。
-- 同步调用保持真实父子关系；独立重试或可恢复的后台 attempt 使用有界 root 和 Links。
-  当前进程内由请求提交的 ACP Run 按服务合同保留同一 Trace 的因果父子关系；准入返回或
-  v2 请求确认结束不代表 Run 完成。不能把所有 CHILD_OF 都解释成时间包含关系。
-- 名称统一为 `HTTP <METHOD> <route template>` 和 `HTTP <METHOD> <target>`，不包含查询串、资源实例 ID 或正文。
-- 保留已有 request/operation/Agent/session/run/revision ID；不以 Trace ID 替代业务幂等键。
-- 服务身份使用 OTel Resource；指标不按正文或用户/Agent ID 建立无限标签。
-- HTTP CLIENT 在响应读完、关闭或失败时结束；不能刚收到 Header 就结束流式请求 Span。
-- 包装保留取消、背压、Flush、Hijack、双向传输及原始 error；观测不能修改协议结果。
-- HTTP 200 中的 RPC error/MCP isError 由协议边界标记业务失败，不伪造 HTTP 状态。
-- 导出关闭不等于停止上下文传播。标准 SDK 批量异步导出，导出失败不得改变业务结果。
+- Inbound requests extract the W3C context and then create a SERVER span;
+  outbound requests create a CLIENT span first and then inject the context.
+- Synchronous calls keep the real parent-child relationship. Independent retries
+  or recoverable background attempts use bounded roots and Links. An ACP Run
+  submitted by a request in the current process keeps the causal parent-child
+  relationship in the same trace, as defined by the service contract; the end of
+  admission or v2 request acknowledgement does not mean the Run is complete.
+  Not every CHILD_OF relationship implies time containment.
+- Names are `HTTP <METHOD> <route template>` and `HTTP <METHOD> <target>`, without
+  query strings, resource instance IDs or bodies.
+- Existing request/operation/Agent/session/run/revision IDs are retained. A trace
+  ID never replaces a business idempotency key.
+- Service identity uses the OTel Resource. Metrics do not create unbounded labels
+  from content or user/Agent IDs.
+- An HTTP CLIENT span ends when the response is fully read, closed or fails. A
+  streaming request span must not end as soon as headers arrive.
+- Wrappers preserve cancellation, backpressure, Flush, Hijack, bidirectional
+  transfer and the original error. Observability must not change protocol results.
+- An RPC error or MCP `isError` inside HTTP 200 is marked as a business failure at
+  the protocol boundary, without faking an HTTP status.
+- Disabling export does not stop context propagation. The standard SDK exports
+  asynchronously in batches, and export failures must not change business results.
 
-### ACP 消息与异步 Run 的观测边界
+### ACP messages and asynchronous Runs
 
-Gateway 的 WebSocket 消息根 Span 只覆盖准入和转发，`antnest.operation.phase=relay`；
-其出站 `PRODUCER` Span 在消息写入连接后结束，标记 `antnest.operation.phase=forward`，
-不代表 ACP 已处理请求或返回响应。该 Span 的 W3C context 是 ACP 入站协议 Span
-的直接父 context；父子关系表示转发因果，不要求远端处理落在发送耗时内。
-普通 HTTP 请求/响应出站仍使用 `CLIENT`。ACP 的 `acp.session.prompt` 只覆盖 Run 准入，
-标记 `antnest.operation.phase=admit`；`acp.session.output` 只覆盖持久化输出快照读取，
-标记 `antnest.operation.phase=read`。`agent.run` 的 `execute` 阶段独立于准入。
-这些标记只描述已有边界，不改变 Span 父子关系、结束时机或协议行为；
-异步子 Span 晚于父 Span 结束仍表示因果关系。跨主机亚毫秒时间倒挂保留原始告警，
-按实际来源单独评估，不通过调整业务等待或时间戳消除。
+The Gateway WebSocket message root span covers only admission and forwarding,
+with `antnest.operation.phase=relay`. Its outbound `PRODUCER` span ends after the
+message is written to the connection and is marked
+`antnest.operation.phase=forward`; it does not mean ACP has processed the request
+or returned a response. That span's W3C context is the direct parent context of
+the ACP inbound protocol span. The parent-child relationship expresses forwarding
+causality and does not require remote processing to fall within the send
+duration.
 
-### 数据库事务
+Ordinary HTTP request/response outbound calls still use `CLIENT`. ACP's
+`acp.session.prompt` covers only Run admission and is marked
+`antnest.operation.phase=admit`; `acp.session.output` covers only reading the
+persisted output snapshot and is marked `antnest.operation.phase=read`. The
+`execute` phase of `agent.run` is independent of admission. These markers only
+describe existing boundaries and do not change span parentage, end timing or
+protocol behavior. An asynchronous child span that ends after its parent still
+expresses causality. Sub-millisecond cross-host clock inversions keep their raw
+warnings and are evaluated by their actual source; they are not removed by
+adjusting business waits or timestamps.
 
-数据库埋点使用技术边界，而不是 Repository 业务方法名。SQL 由驱动或私有数据库适配器自动记录；
-事务单独使用 `postgresql transaction` INTERNAL Span，从原生 Begin 到实际 Commit/Rollback 返回。
-事务内 SQL CLIENT 是该事务的子 Span；非事务 SQL 直接归属请求或后台 attempt。保留实际连接和 batch
-包裹层；不为 prepare 或 pool.acquire 单独创建 Span，避免把预编译误读为重复执行。
-事务结果使用 `antnest.transaction.outcome`。SQL 标题使用 SDK 默认 OP，具体访问内容查看 SQL 属性。
-重复清理不能重复结束 Span，失败不能标为已提交，未确认的自动回滚不能宣称成功。
-`database/sql` 的取消自动回滚必须在 `driver.Tx` 边界收尾，不能仅依赖调用方的 defer。
-不新增 SQL 解析、表名猜测、额外查询或事务重试；SQL 文本保留占位符，不记录参数和结果行。
+### Database transactions
 
-## 4. 健康检查
+Database instrumentation uses technical boundaries, not repository business
+method names. SQL is recorded automatically by the driver or the private database
+adapter. A transaction uses a separate `postgresql transaction` INTERNAL span,
+from the native Begin until the actual Commit/Rollback returns. SQL CLIENT spans
+inside a transaction are children of that transaction span; non-transactional SQL
+belongs directly to the request or background attempt. The actual connection and
+batch wrappers are kept. Prepare and `pool.acquire` do not get separate spans, so
+that preparation is not misread as repeated execution.
 
-`GET /status` 只反映本服务初始化、停止状态及自有存储等必要本地依赖。
-不递归调用其他业务服务的 `/status`。实际业务访问下游失败时，记录实际调用失败。
-带上游 context 的请求保留正常 SERVER 层级；自主高频成功探针可以整条降采样。
-Runtime 创建时的就绪等待属于业务流程，不是 Gateway 的健康聚合。
+The transaction result uses `antnest.transaction.outcome`. SQL span titles use
+the SDK default operation; the concrete access is in the SQL attributes.
+Repeated cleanup must not end a span twice, a failure must not be marked as
+committed, and an unconfirmed automatic rollback must not claim success. The
+automatic rollback on cancellation in `database/sql` must be finalized at the
+`driver.Tx` boundary, not only through the caller's defer. There is no SQL
+parsing, table-name guessing, extra querying or transaction retry. SQL text keeps
+its placeholders; parameters and result rows are not recorded.
 
-## 5. 验收
+## 4. Health Checks
 
-1. 真实 HTTP 证明 SERVER → CLIENT → SERVER 的直接 parent ID 与调用次数；无重复健康探测。必须同时检查 Jaeger 的 Trace/Span `warnings`，有 warning 不能仅因树结构完整就判定验收通过。
-2. RPC 开关关闭时正文不序列化、不上报；开启时新增/嵌套字段和超过旧 16 KiB 的对象仍可被采集。
-3. 普通 HTTP 与所有消息流即使开关开启也不产生正文；不新增读操作或破坏取消、背压。
-4. RPC 错误响应、取消和异常仍被记录，采集错误不替换业务结果。
-5. 不在新正文验收里断言秘密必须消失；开发原文的风险是本次明确接受的取舍。
-6. SDK、导出和接收端异常测试与产品测试分别报告，不用“能看到 Trace”代替业务正确性。
-7. 按服务完成 doc → test → code，再串行执行统一验收和镜像构建。
-8. 只保留最终指标、缺口和 Jaeger 链接；原始内容不落仓库。
+`GET /status` reflects only the service's own initialization, stopping state and
+necessary local dependencies such as its own storage. It does not recursively
+call other business services' `/status`. When a real downstream business call
+fails, that actual call failure is recorded. Requests with upstream context keep
+the normal SERVER hierarchy; autonomous high-frequency successful probes may be
+sampled down as whole traces. Readiness waiting during Runtime creation is part
+of the business flow, not Gateway health aggregation.
 
-各语言保留薄采集组件，不导入兄弟服务的 internal，不建设全能观测框架。
+## 5. Verification Requirements
 
-### Jaeger 查询验收
+1. Real HTTP calls prove the direct SERVER -> CLIENT -> SERVER parent IDs and call
+   counts, with no duplicate health probes. Jaeger trace/span `warnings` must
+   also be checked; a complete tree with warnings does not pass.
+2. With the RPC switch off, content is neither serialized nor exported. With it
+   on, new or nested fields and objects larger than 16 KiB are still captured.
+3. Ordinary HTTP and all message streams produce no content even with the switch
+   on. Capture adds no read operations and does not break cancellation or
+   backpressure.
+4. RPC error responses, cancellation and exceptions are still recorded, and
+   capture errors do not replace business results.
+5. Content capture tests do not assert that secrets are absent. The risk of raw
+   development content is a deliberate trade-off of the content switch.
+6. SDK, export and receiver failure tests are reported separately from product
+   tests. "A trace is visible" does not substitute for business correctness.
+7. Test output keeps only final metrics, gaps and Jaeger links; raw content is
+   never stored in the repository.
 
-开发环境 Jaeger 2.20.0 的内存存储存在查询副作用：对尚未收齐的 Trace 做普通查询，
-clock-skew adjuster 会追加缺失父 Span 的 warning，父 Span 后到达也不会清除旧 warning。
-自动验收在业务请求完成后先等待 6 秒，再做一次普通查询。等待和查询都只在验收脚本中执行，
-不修改任何服务或 SDK 的导出配置，不做 raw 查询或自动轮询。
-6 秒是当前默认 5 秒批量导出周期的验收缓冲，不保证数据必然收齐；仍需检查父子关系、正文边界
-和零 warning。缺失 Span、API 错误或 warning 都必须报错，稍后可重新执行验收。
-不得过滤 warning、关闭 clock-skew 或强制业务请求同步导出。
+Each language keeps a thin instrumentation component, does not import a sibling
+service's internals, and does not build an all-purpose observability framework.
+
+### Jaeger queries in tests
+
+The in-memory storage of the development Jaeger 2.20.0 has a query side effect: a
+normal query on a trace that has not fully arrived causes the clock-skew adjuster
+to append missing-parent warnings, and a parent span that arrives later does not
+clear the old warning. Automated tests therefore wait 6 seconds after the
+business request completes and then run one normal query. The wait and the query
+happen only in the test scripts; they do not change any service or SDK export
+configuration, and there are no raw queries or automatic polling.
+
+The 6 seconds is a buffer over the default 5-second batch export interval and
+does not guarantee that all data has arrived. Tests still check parent-child
+relationships, content boundaries and zero warnings. Missing spans, API errors
+or warnings must fail the test, which can be rerun later. Do not filter
+warnings, disable clock-skew adjustment or force business requests to export
+synchronously.

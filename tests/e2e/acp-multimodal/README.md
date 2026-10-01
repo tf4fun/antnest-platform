@@ -1,61 +1,76 @@
-# Deployed Native Input Acceptance
+# ACP multimodal input E2E
 
-The [2026-09-22 follow-up](../../../docs/timeout-failure-followup-20260922.md)
-records shared cleanup diagnostics and targeted regression. Cleanup keeps
-its existing time limits and reports each failed Agent independently.
+This scenario verifies native multimodal prompt input (images, audio, PDF,
+embedded text and links) through the deployed ACP service on a disposable full
+stack. It validates platform delivery and recovery, not a real model's
+recognition quality.
 
-Run `make test-multimodal-fixtures`, then `make e2e-multimodal` with current local
-service images. The root driver owns a disposable Compose project, separate
-service databases, model fixture, clients and Runtime resources. The profile
-ignores local `.env`, removes the fixed Temporal host port, separates dynamic
-Docker ranges from fixed addresses and disables RPC payload capture. Cleanup
-checks both Compose and Runtime scopes. Retained development resources and real
-Provider credentials are not used.
+## Running
 
-## Current Contract
+```sh
+npm --prefix services/agent-acp-service ci
+make docker-build-stage3
+make test-multimodal-fixtures
+make e2e-multimodal
+```
 
-1. Create one Provider connection with native and text-only Models through
-   Gateway/Console. Check current Model detail capability projections and the
-   credential boundary. Templates reference stable Model identities; Agents use
-   the returned Template revision and wait for executable Runtime readiness.
+`make test-multimodal-fixtures` runs the model and Trace mutation tests without
+Docker. The E2E driver owns a disposable Compose project, separate service
+databases, the model fixture, clients and Runtime resources. The profile
+ignores the local `.env`, removes the fixed Temporal host port, separates
+dynamic Docker ranges from fixed addresses and disables RPC payload capture. No
+existing development resources or real Provider credentials are used.
+
+## Contract
+
+1. Create one Provider connection with a native Model and a text-only Model
+   through the Gateway and Admin Console. Check the Model detail capability
+   projections and the credential boundary. Templates reference stable Model
+   identities; Agents use the returned Template revision and wait for
+   executable Runtime readiness.
 2. Official SDK clients use v1 WebSocket, v2 WebSocket and v1 Streamable HTTP.
-   Verify negotiated capabilities and validate Session updates against the SDK
-   schemas installed in the ACP image. Mixed text/PNG/WAV/PDF/embedded text/link
-   input reaches the deterministic model with exact bytes, order and reference
-   semantics. The model's reference endpoint records even an ignored fetch;
-   reference fetch attempts must stay zero.
-3. A text continuation retains native context. Reconnect, load/resume and fork
-   restore original content without new model requests. Cross-Agent operations
-   and foreign-user `session/new` fail with exact ACP authorization errors and
-   no content disclosure. Successful initialization is not resource access.
-4. Unsupported ZIP and oversized WAV fail before creating a Run. Selecting an
-   authorized text-only Model on a Session with native history fails locally,
-   makes no Provider HTTP request and durably ends the Run. Restoring the native
-   Model permits a new successful prompt without losing attachment context.
+   Negotiated capabilities are verified, and Session updates are validated
+   against the SDK schemas installed in the ACP image. Mixed text, PNG, WAV,
+   PDF, embedded text and link input reaches the deterministic model with exact
+   bytes, order and reference semantics. The model's reference endpoint records
+   even an ignored fetch, and reference fetch attempts must stay at zero.
+3. A text continuation keeps native context. Reconnect, load, resume and fork
+   restore the original content without new model requests. Cross-Agent
+   operations and a foreign user's `session/new` fail with exact ACP
+   authorization errors and no content disclosure. Successful initialization
+   does not grant resource access.
+4. Unsupported ZIP content and an oversized WAV fail before a Run is created.
+   Selecting an authorized text-only Model on a Session with native history
+   fails locally, makes no Provider HTTP request and durably ends the Run.
+   Restoring the native Model permits a new successful prompt without losing
+   attachment context.
 5. Each JSON-RPC request has its own Trace evidence. SDK request observation
-   records actual IDs; WebSocket traces link to their original connection and
-   HTTP requests use the Gateway response Trace ID. Run traces require actual
-   PostgreSQL terminal persistence and model HTTP correlation, fresh Runtime
-   information/catalog reads and no Tool execution. Replay, configuration and
-   denial traces must not execute Runs or contact model/Runtime services.
+   records actual IDs; WebSocket Traces link to their original connection, and
+   HTTP requests use the Gateway response Trace ID. Run Traces require
+   PostgreSQL terminal persistence, model HTTP correlation, fresh Runtime
+   information and catalog reads, and no Tool execution. Replay, configuration
+   and denial Traces must not execute Runs or contact model or Runtime services.
 
-Three transports produce exactly nine successful Provider requests and three
-local failed Runs. The 48 declared request traces cover 12 executions, 18
-successful setup/configuration/replay requests and 18 rejected requests. Native
-capability failures permit only the matching model/Run/request diagnostics;
-unrelated errors fail. Credentials, session cookies and attachment sentinels
-must be absent from telemetry, and raw RPC payload capture is forbidden.
+Across the three transports there are exactly nine successful Provider requests
+and three locally failed Runs. The declared request Traces cover 12 executions,
+18 successful setup, configuration and replay requests, and 18 rejected
+requests. Native capability failures permit only the matching model, Run and
+request diagnostics; unrelated errors fail. Credentials, Session cookies and
+attachment sentinels must be absent from telemetry, and raw RPC payload capture
+is forbidden.
 
-The driver reports business/topology/privacy evidence separately from strict
-Trace timing. Timing warnings or a negative model-to-closure timestamp gap
-retain a nonzero process exit, with the raw timing evidence recorded. Model and Trace
-mutation tests reject changed bytes, missing history, detached spans, missing
-terminal writes, extra Provider calls, unrelated errors and unexpected Tools.
-The optional local HTTP reference test uses only a loopback temporary port and
-closes all sockets when done.
+## Results
 
-This validates platform delivery and recovery, not a real model's recognition
-quality. Current migration results are in
-[the revalidation report](../../../docs/multimodal-revalidation.md). The original
-[2026-09-09 F09 record](../../../services/agent-acp-service/docs/protocol-conformance.md#multimodal-deployment-f09-2026-09-09)
-remains historical evidence for its original candidate.
+The driver reports business, topology and privacy results separately from strict
+Trace timing. Timing warnings or a negative model-to-closure timestamp gap keep
+a nonzero exit, and the raw timing evidence is recorded. Mutation tests reject
+changed bytes, missing history, detached spans, missing terminal writes, extra
+Provider calls, unrelated errors and unexpected Tools. The optional local HTTP
+reference test uses only a loopback temporary port and closes all sockets when
+done.
+
+## Cleanup
+
+Cleanup checks both the Compose and Runtime scopes. The shared
+`withAgentCleanup` helper keeps its time limits, attempts every created Agent and
+reports each failed Agent independently.

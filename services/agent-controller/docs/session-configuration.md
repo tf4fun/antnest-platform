@@ -22,17 +22,16 @@ See [Agent configuration](agent-configuration.md),
 [publication](execution-publication.md) and the
 [management contract](../../../contracts/agent-controller/control-api.md).
 
-## Removed Surface And Verification
+## Absent Surface And Verification
 
 `get-session-configuration`, `acquire-run`, `resolve-agent-access`,
 `resolve-credential` and `finish-run` are not registered by Controller.
-The old HTTP chain is replaced by tests of default-authorization CAS, foreign-owner
-rejection, current credential rotation and publication through a real PostgreSQL
-source and HTTP ACP peer. Configuration changes must not mutate Runtime or Egress.
+Tests cover default-authorization CAS, foreign-owner rejection, current
+credential rotation and publication through a real PostgreSQL source and HTTP
+ACP peer. Configuration changes must not mutate Runtime or Egress.
 Protocol/Session override tests belong to ACP, not a simulated Controller Run.
 
-Controller's old execution application, Port, repository, Run table and
-workspace execution readers have been removed. Access bindings keep owner,
-access revision and active status, not opaque routing subjects or Model capabilities.
-Gateway/Console switching and Docker/Jaeger acceptance remain pending;
-service-local tests do not establish an operational cross-service deployment.
+Controller has no execution application, Port, repository, Run table or
+workspace execution reader. Access bindings keep owner, access revision and
+active status, not opaque routing subjects or Model capabilities.
+Service-local tests do not establish an operational cross-service deployment.

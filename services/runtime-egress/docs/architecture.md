@@ -1,5 +1,9 @@
 # Runtime Egress Architecture
 
+This document describes the Runtime Egress domain model, process shape, module
+boundaries, persistence, policy barriers, packet algorithms, concurrency, and
+failure semantics.
+
 ## 1. Domain
 
 Runtime Egress has five durable concepts and two ephemeral concepts.
@@ -25,9 +29,34 @@ Runtime generation is deliberately absent. All generations of one Agent share
 its address and policy. Agent Controller prevents concurrent Agent operations
 and resets flows between generations.
 
+### Process shape
+
+The Rust crate is one process and one failure domain:
+
+```text
+control HTTP -> application -> policy / allocator -> PostgreSQL
+                                  |
+Runtime UDP -> packet -> flow -> policy snapshot -> TUN -> Linux NAT
+               ^          |
+               `----------`------------------------ return UDP
+```
+
+The control path may allocate and open database transactions. The packet path
+must not query PostgreSQL, spawn commands, serialize JSON, or wait for a global
+service lock. Agent admission is a non-blocking snapshot lookup: a fenced Agent
+is dropped and counted without delaying packets owned by another Agent. A
+short output barrier drains at most the packet already being written when a
+fence begins; it is released before database or kernel work starts.
+
+The deployment is deliberately single-replica. PostgreSQL preserves durable
+allocation and policy state, but the TUN device, flow table, UDP peers, kernel
+rules, and process-local snapshot revision have exactly one writer. A generic
+load balancer or a second active Egress replica is unsupported until a separate
+ownership and failover design is introduced.
+
 ## 2. Trust Model
 
-Docker or Kubernetes networking is trusted for Stage 1. The control listener
+Docker or Kubernetes networking is trusted. The control listener
 binds one explicit control-network address and is reachable only by internal
 control-plane services; a wildcard control bind is rejected. The UDP listener
 binds the single advertised Runtime-network address rather than a wildcard, so
@@ -41,7 +70,7 @@ address to be an active Agent Tunnel IPv4.
 
 ## 3. Rust Module Boundaries
 
-The target crate uses the following modules:
+The crate uses the following modules:
 
 | Module | Responsibility | Must not depend on |
 | --- | --- | --- |
@@ -65,7 +94,10 @@ safe Rust.
 The crate's public Rust modules exist only so the service binary and black-box
 integration tests can share implementation code. They are not a cross-service
 library API. Other Antnest services consume only the contracts under
-`contracts/` and must not take a path dependency on this crate.
+`contracts/` and must not take a path dependency on this crate. Conversely, the
+crate depends on the root contracts as an intentional versioned monorepo
+dependency rather than a copy, so it is built and tested from the repository
+root.
 
 ## 4. Persistence
 
@@ -195,7 +227,7 @@ the old Agent row has completed quarantine.
 
 ## 6. Policy Model
 
-Policy revisions are immutable. Stage 1 schema version 1 is:
+Policy revisions are immutable. Schema version 1 is:
 
 ```json
 {"schema_version":1,"action":"allow_all"}
@@ -267,8 +299,8 @@ mutation retry settles the barrier.
 
 ## 7. Packet Contract
 
-Stage 1 accepts one complete, unfragmented IPv4/TCP packet no larger than 1400
-bytes per UDP datagram. It rejects trailing bytes, invalid total length, IP
+The packet contract accepts one complete, unfragmented IPv4/TCP packet no
+larger than 1400 bytes per UDP datagram. It rejects trailing bytes, invalid total length, IP
 options outside the supported contract, fragments, invalid TCP header length,
 unsupported protocols, and invalid source Tunnel addresses.
 
@@ -411,3 +443,5 @@ flow, reaching an upstream, or adding a session protocol to the data plane.
 4. Egress never gains Runtime-generation lifecycle state.
 5. Horizontal Egress scaling requires explicit address-pool sharding and is not
    approximated with a stateless load balancer.
+6. Dependency updates, in particular to hashing libraries, must preserve
+   persisted policy digests and migration checksums.

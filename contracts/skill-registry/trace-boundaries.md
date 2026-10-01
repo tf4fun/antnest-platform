@@ -1,8 +1,8 @@
 # Skill Registry HTTP Trace boundaries
 
-2026-10-01: D1T contract. This is an HTTP observability repair, with no change to
-discovery authority, package ownership, lifecycle or response/error contracts.
-The owning producer must pass its gates before deployment and DI3 are admitted.
+This document defines Skill Registry's HTTP tracing behavior. It does not
+change discovery authority, package ownership, lifecycle or response/error
+contracts.
 
 The service follows [the shared observability contract](../../docs/observability-contract.md):
 
@@ -32,14 +32,13 @@ The service follows [the shared observability contract](../../docs/observability
   settings and endpoint variables. Invalid exporter/protocol configuration
   fails startup. Service identity defaults to `skill-registry`.
 
-Deployment must pass these settings to Registry using ordinary Compose and
-enable its exporter in the disposable acceptance environment. No new public
-port or Runtime/Egress network membership is needed. D1T does not claim a new
-Registry SQL/transaction instrumentation rollout or OTLP metrics/log exporter.
+Deployment passes these settings to Registry using ordinary Compose. No public
+port or Runtime/Egress network membership is needed. Registry has no SQL or
+transaction span instrumentation and no OTLP metrics or log exporter.
 
-Admission requires native SDK unit evidence for real parent IDs, body lifetime,
-cancellation, safe error metadata and export/propagation configuration; a root
-HTTP component proves SERVER → CLIENT → source SERVER/observation. DI3 then
-proves the chain with actual ACP, Runtime, Registry and Jaeger. Missing parents
-or missing source observations remain failures; cross-host timing is assessed
-under the previously agreed clock policy.
+Unit tests cover real parent IDs, body lifetime, cancellation, safe error
+metadata and export/propagation configuration; a root HTTP component test
+checks SERVER → CLIENT → source SERVER/observation, and
+`make e2e-skill-registry-trace` checks the chain with actual ACP, Runtime,
+Registry and Jaeger. Missing parents or missing source observations are
+failures.

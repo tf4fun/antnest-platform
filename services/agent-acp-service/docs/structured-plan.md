@@ -1,7 +1,7 @@
-# Structured Plans (F04)
+# Structured Plans
 
-Status: service implementation and separate Gateway/Jaeger deployment integration
-accepted, 2026-09-09.
+This document describes the ACP-owned `update_plan` tool, how plans are stored
+and replayed, and how they map to v1 `plan` and v2 `plan_update` notifications.
 
 ## Contract
 
@@ -53,7 +53,7 @@ toolCalls and tool-call arguments) as escaped JSON text inside the existing
 payload. Replay, context and interrupted-call recovery decode them. NUL and lone
 surrogates remain exact without leaking a database restriction into PlanEntry.
 
-## Acceptance
+## Verification
 
 1. Schema and domain tests: full replacements, empty clear, valid priorities and
    statuses, invalid entries, bounds, and catalog name collisions.
@@ -62,40 +62,19 @@ surrogates remain exact without leaking a database restriction into PlanEntry.
    do not manufacture a plan or remote unknown effect.
 3. Real PostgreSQL and ACP v1/v2: initial/update/clear notifications before final
    reply, SDK validation, atomic rollback, load/resume/fork, application restart,
-   next-Run context after compaction, and cross-user/Agent isolation.
-4. Serial service tests, PostgreSQL profile, build, repository format/lint and
-   independent read-only review. Gateway/Jaeger deployment acceptance is a
-   separate integration batch; service tests alone do not close that boundary.
-   No new browser UI behavior is introduced by F04.
+   next-Run context after compaction, and cross-user/Agent isolation. JSONB
+   string handling and stale-plan labelling have dedicated regressions.
+   Real budget-driven compaction is covered separately from a database checkpoint
+   test. Recovery tests exercise the actual PostgreSQL interrupted-call algorithm
+   before/after local commit; they are not an OS-process kill/restart test.
+4. The [deployment profile](../../../tests/e2e/acp-plan/README.md)
+   (`make e2e-structured-plan`) runs v1/v2 scenarios through Gateway with real
+   Controller, PostgreSQL and Runtime services and a deterministic SSE model.
+   It validates local plan commits, rejected invalid plans, actual Runtime
+   writes, exact snapshots, early notifications, replay/fork and access
+   rejections. Replay and denial traces contain no execution. Private
+   plan/prompt/credential sentinels must be absent from Jaeger traces; this is
+   not a claim about every stdout log, metrics export or browser rendering.
 
-Reference: Goose `agents/platform_extensions/todo.rs` explicitly persists a full
-Todo value and supplies it again via `get_moim`. This inspires the workflow, not
-the wire format: the inspected Goose ACP implementation does not emit standard
-plan events. Its Markdown storage and ignored cancellation token are not copied.
-
-Read-only implementation review identified unsupported JSONB strings and a stale
-plan labelled as current system state; both have failing-then-passing regressions.
-Real budget-driven compaction is covered separately from a database checkpoint
-test. Recovery tests exercise the actual PostgreSQL interrupted-call algorithm
-before/after local commit; they do not claim an OS-process kill/restart E2E.
-
-Final service acceptance: 377 unit/component tests across 46 files and 106
-PostgreSQL protocol/integration tests across 14 files passed. The F04 PostgreSQL
-file contains 11 cases. Production build, root `make fmt-check` and `make lint`
-passed without weakening gates. Both read-only reviewers are closed. The
-disposable database and role were removed from the reused PostgreSQL instance;
-existing acceptance containers and databases were preserved. That service batch
-did not call an external Provider or establish browser/deployment acceptance.
-
-## Deployment Acceptance
-
-The [separate deployment profile](../../../tests/e2e/acp-plan/README.md) passed
-twelve v1/v2 scenarios through Gateway using real Controller, PostgreSQL and
-Runtime services with a deterministic SSE model. It validates six local plan
-commits, two rejected invalid plans, two actual Runtime writes, exact snapshots,
-early notifications, replay/fork and six access rejections. Four execution traces
-cover twelve Runs; eight independent replay/denial traces have no execution.
-Private plan/prompt/credential sentinels are absent from these Jaeger traces;
-this is not a claim about every stdout log, metrics export or browser rendering.
-All batch-owned deployment resources were removed; no new service API or table
-was introduced to obtain this evidence.
+The design persists a full plan value and supplies it again as context on the
+next Run, rather than storing Markdown or inferring progress from model text.

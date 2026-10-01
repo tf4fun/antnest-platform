@@ -1,8 +1,7 @@
 # ACP Tool Presentation
 
-Status: F03 foundation, Runtime producer and ACP file fact consumer service
-batches passed (2026-09-09).
-Cross-service deployment acceptance also passed; its separate evidence is below.
+This document describes how Tool kinds, titles, locations, structured output
+and Runtime file diffs are derived, persisted and mapped to ACP v1/v2 Tool updates.
 
 ## Contract And Ownership
 
@@ -16,7 +15,7 @@ stores facts, not Tool classification rules. No new table or RPC is needed.
 | `title`     | MCP title, then deterministic builtin action/target or Tool name                         | Single line, at most 120 Unicode code points; no additional model request.                                                     |
 | `locations` | Initial named workspace target; final accepted Runtime file observation takes precedence | Initial location is intent. Final location is observed; read/omitted diffs do not claim modification. No guessed line numbers. |
 | `rawInput`  | Original Tool arguments                                                                  | Unchanged by presentation.                                                                                                     |
-| `rawOutput` | Actual MCP `structuredContent`, as in Goose                                              | Independent of display content; absent for text-only results, transport errors and recovery-generated endings.                 |
+| `rawOutput` | Actual MCP `structuredContent`                                                           | Independent of display content; absent for text-only results, transport errors and recovery-generated endings.                 |
 | `content`   | Bounded output/previews plus separate standard diff from complete Runtime file facts     | Previews never become final results. File facts never become model context.                                                    |
 
 Runtime roots are configurable. Builtin inputs now use string paths: relative,
@@ -47,16 +46,16 @@ Tool result content remains the model's source of execution output.
 Recovery of an interrupted Tool updates status/content only, preserving the
 initial title/kind/locations. It has no confirmed raw output to attach.
 
-## Runtime File Fact Consumer (F03)
+## Runtime File Fact Consumer
 
-The Runtime producer is complete. This service-owned batch consumes only
+ACP consumes only
 `_meta["io.antnest.runtime/file"]` from exact platform builtin read/write/edit
 identities after a successful, settled result. Malformed, conflicting, oversized
 or unexpected metadata is omitted without changing the tool outcome. Other
 metadata, Bash and managed MCP tools do not provide builtin file observations.
 The encoded namespace envelope has the producer's 32 KiB bound; paths must be
 absolute normalized POSIX paths without NUL or invalid Unicode. No guessed line
-number, path rewrite, extra filesystem read or tool replay is introduced.
+number, path rewrite, extra filesystem read or tool replay is performed.
 
 The domain stores one optional `file` observation with `path` and optional
 `change: { before, after }`. Missing before content means creation only when
@@ -82,11 +81,11 @@ this excludes lossy filename formatting such as trailing spaces. NUL content,
 empty creation and exhausted budgets retain structured v2 changes without
 fabricating patch text or file modes. Identical existing content is not a modification.
 
-Acceptance adds parser rejection/bounds cases, official MCP HTTP metadata
+Service tests cover parser rejection/bounds cases, official MCP HTTP metadata
 round-trip, v1/v2 schema-checked live/replay/fork/restart and identity isolation,
 NUL/Unicode persistence, unchanged model history, and no extra tool calls.
-The fixture-backed service tests are distinct from the subsequent
-Gateway + actual Rust Runtime + Jaeger deployment evidence below.
+These fixture-backed tests are distinct from the Gateway, real Rust Runtime and
+Jaeger deployment profile below.
 
 ## Deployment Boundary
 
@@ -96,20 +95,17 @@ ACP must not perform extra reads or replay edits to synthesize a diff. Failed,
 cancelled or unknown outcomes must not fabricate successful modifications.
 
 Runtime Bash is not an ACP client Terminal. Do not synthesize terminal IDs.
-Runtime diff production, ACP consumption and the deployed file observation
-workflow have passed their respective acceptance profiles.
 
-Deployment evidence (2026-09-09): [reusable profile](../../../tests/e2e/acp-files/README.md)
-passed 16 scenarios through Gateway ACP v1/v2 and real Rust Runtime, using 32
-deterministic SSE model requests. Sixteen execution traces each contain one
-preparation and one actual Tool dispatch/invocation with the correct ancestry.
-Sixteen independently collected replay/fork traces contain no model or Runtime
-execution. Two cross-user upgrades are rejected. The profile validates complete
-diffs, empty/unchanged/oversized/error semantics, SDK schemas, parsed patch paths,
-model-content isolation and content-free telemetry. Owned containers, volumes
-and networks were removed without changing retained acceptance instances.
+The [file-diff deployment profile](../../../tests/e2e/acp-files/README.md)
+(`make e2e-file-observations`) runs scenarios through Gateway ACP v1/v2 and the
+real Rust Runtime with deterministic SSE model requests. Each execution trace
+must contain one preparation and one actual Tool dispatch/invocation with the
+correct ancestry. Independently collected replay/fork traces must contain no
+model or Runtime execution, and cross-user upgrades are rejected. The profile
+validates complete diffs, empty/unchanged/oversized/error semantics, SDK
+schemas, parsed patch paths, model-content isolation and content-free telemetry.
 
-## Acceptance
+## Verification
 
 1. Unit tests cover exact Tool identity, managed MCP title preservation, Unicode
    title bounds, configurable workspace paths and unknown/invalid path omission.
@@ -119,27 +115,8 @@ and networks were removed without changing retained acceptance instances.
    success/error/unknown endings, single Tool ID and cross-identity isolation.
    JSONB-incompatible keys/values must round trip unchanged through live,
    replay and fork; recovery must not replace the initial human-readable title.
+   Trailing-space patch paths have a dedicated path-fidelity regression.
 4. Neither presentation metadata nor progress previews leak into model context;
    no fake diff or terminal is emitted. Existing content remains compatible.
-5. Run service tests, production build and repository admission gates serially.
 
-References: [ACP Tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls),
-local Goose `crates/goose/src/acp/server/tool_calls/conversion.rs` and
-`crates/goose/src/acp/fs.rs` (read-only comparison).
-
-Foundation evidence (2026-09-08): 317 unit/component cases in 41 files, 85
-PostgreSQL cases in 12 files, production build and root formatting/lint gates.
-Read-only reviews identified JSONB and recovery-title defects, both repaired
-with regression coverage in that batch.
-
-Consumer regression results (2026-09-09): 358 unit/component cases in 43 files
-(13.98 s), 95 PostgreSQL cases in 13 files (94.08 s), including 10 new
-SDK/ACP/PostgreSQL file-observation cases. Independent read-only review identified
-lossy trailing-space patch paths; the regression first failed, then passed after
-the path fidelity check. The reviewer is closed. Production build, repository
-`make fmt-check` and `make lint` passed, without rule or test-scope relaxation.
-The dedicated test database and role were removed; no new container or image
-was created, existing acceptance stacks are unchanged, and no test child process
-remains. The 10 new PostgreSQL cases also passed after the final lint-only fixes.
-No F03 real-Runtime deployment, external Provider,
-browser or Jaeger claim is made by these service tests.
+Reference: [ACP Tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls).

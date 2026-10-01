@@ -26,10 +26,9 @@ Activities and other SDK spans retain their SDK lifetime. Disabled/nonrecording
 spans are not retained. Concurrent End/shutdown is idempotent, completed spans
 are removed immediately, and a closed tracker cannot accumulate new spans.
 
-Verification is service-first: unit/race tests, actual SDK propagation contract,
-Temporal worker replacement and Controller PostgreSQL/component gates. Only
-then adapt the Foundation consumer to validate the two real Workflow spans and
-drain attempts, preserving cancellation errors and strict timing failures, and
-run an isolated candidate deployment. Existing historical traces stay failed.
-Retained deployment, SIGKILL guarantees and exporter/clock tuning are outside
-this batch.
+Verification covers unit/race tests, the actual SDK propagation contract,
+Temporal worker replacement and Controller PostgreSQL/component tests. A trace
+consumer validating this contract should expect both real Workflow spans for a
+replaced worker and the drain attempts, and should preserve cancellation errors
+and strict timing failures. This contract makes no guarantee for processes
+killed with SIGKILL and does not tune exporters or clocks.

@@ -1,290 +1,258 @@
-# Gateway Identity Closeout
+# Identity and access E2E
 
-This integration batch exercises the real Edge Gateway, Admin Console BFF and
-Identity Service against their disposable Stage 3 PostgreSQL databases. The
-default HTTP/SCIM client has no database or Docker access and uses only synthetic
-credentials. Business mutations go through Gateway. The separate ACP fault
-profile below additionally uses a read-only ACP database connection to verify
-that rejected requests and history replay have no durable side effects.
+These disposable Stage 3 profiles exercise the real Edge Gateway, Admin Console
+BFF and Identity Service against disposable PostgreSQL databases. They cover
+local login, SCIM, OIDC, HTTP access isolation and expiry, Agent organization
+access and owner offboarding, and the effect of identity changes on ACP
+connections. The [contract](migration-contract.md) lists what each profile must
+prove.
 
-## Migration status
+The default HTTP and SCIM client has no database or Docker access and uses only
+synthetic credentials. Business mutations go through the Gateway. The ACP
+profiles additionally use a read-only connection to ACP-owned tables to verify
+that rejected requests and history replay have no durable side effects. Strict
+Trace warnings and expected rejection errors are reported as failures.
 
-The HTTP/SCIM/OIDC, HTTP access, ACP session and Agent access/offboarding
-profiles have current disposable deployment business/topology evidence. Strict
-Trace warnings and expected rejection errors remain failures. See
-[migration evidence](../../../docs/identity-access-revalidation.md) and the
-[batch contract](migration-contract.md). Retained/extended parent branches
-remain separate; historical descriptions do not imply full platform acceptance.
+## Running
 
-## Scope
+| Command | Profile |
+| --- | --- |
+| `make e2e-identity-core` | Local login, SCIM and OIDC |
+| `make e2e-identity-access` | HTTP access isolation, Identity outage and token expiry |
+| `make e2e-agent-access` | Agent organization access and owner offboarding |
+| `make e2e-acp-session` | Browser logout and Identity faults on existing ACP connections |
 
-1. Local login establishes HttpOnly session cookies without returning the token
-   in JSON. Member access, rejected CSRF logout, successful logout and replay of
-   the revoked cookie are tested separately.
-2. Membership deactivation denies an existing HTTP session and a new login.
-   Global User deactivation also revokes issued tokens; reactivation requires a
-   new login. This does not claim cancellation of an already-admitted ACP Run.
-3. SCIM discovery, read/write scope enforcement, Users and Groups CRUD, filtered
-   listing, group membership PATCH, inactive/reactivate, deletion and
-   reprovisioning are exercised through `/scim/v2`. Public Location URLs and
-   Console directory projections must agree with those mutations.
-4. SCIM rotation means issuing a replacement and revoking the old credential.
-   Lists must not redisclose secrets; browser cookies do not authorize SCIM.
-5. Jaeger assertions require actual parent chains from Gateway through Identity
-   to its repository, including Console for administrator mutations. Presence
-   of service names alone is not evidence. Passwords, session cookies and SCIM
-   credentials must not appear in these traces.
+All targets require Docker and the local Stage 3 images
+(`make docker-build-stage3`). Each profile is independent and must not be
+combined with another fault profile or `ANTNEST_E2E_KEEP_STACK=true`. The fixture
+helpers run without Docker as part of `make test`:
 
-These initial local/SCIM cases do not by themselves cover cross-organization
-isolation or expiry; see the separate HTTP access profile below. Already-open
-ACP connections are covered separately below; browser UI acceptance remains
-separate work. The suites do
-not accept the whole C2 or C6 milestone.
+```sh
+node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
+```
 
-## HTTP Access Isolation Batch
+Helper tests do not replace the real integration run.
 
-`make e2e-identity-access` runs a separate disposable Stage 3 profile. It does
-not combine its login attempts with the OIDC/ACP fault profiles or change login
-limits. Identity's private RPC is used only to prepare two organizations and
-ordinary organization administrators (not system administrators). All access
-assertions go through Gateway; no database rows or clocks are modified.
-
-The same email is provisioned with separate identities/passwords in each
-organization. Tests compare directory and SCIM projections, reject foreign
-resource mutation and forged scope headers/body fields, and exercise password
-rotation and logout independently. Password change currently preserves issued
-sessions; logout revokes only the presented session. Tests must describe these
-semantics explicitly rather than infer revocation from a successful password
-change response.
-The password-command assertions distinguish BFF `401 invalid_current_password`
-(no session cookie mutation, subsequent access succeeds) from Gateway
-`401 unauthenticated` after real token expiry (both session cookies cleared,
-the password is not changed). Console's API/App tests consume these same error
-codes and verify dialog retention versus returning to login, including late
-responses from an older in-page session.
-
-Finally the coordinator stops only Identity, proving protected requests return
-503 without deleting cookies. It restores Identity with the existing token TTL
-configuration set to five seconds for new tokens only: the prior long-lived
-cookie must recover, while a new short-lived cookie must pass before its stated
-deadline and fail after it, even when manually replayed. A fresh login must
-work afterward. This is not browser cookie eviction or a forged expired record.
-The short TTL override exists only in the disposable fixture Compose. The profile always
-cleans its containers/volumes/networks; keep-stack is not supported.
-
-HTTP logout/expiry evidence must not be claimed as WebSocket token revocation.
-
-## Agent Organization Access Batch
-
-`make e2e-agent-access` is an independent disposable profile. Identity's owning
-RPC prepares two organizations, separate organization administrators and one
-User who is an administrator in A and a member in B. All subsequent Agent,
-catalog, membership and ACP actions enter through Gateway. Each organization
-has its own model configuration, Template and Agent; both Agents have the same
-User owner, so user-only filtering cannot accidentally pass the test.
-
-The acceptance matrix covers scoped administrator lists/details/operations and
-events (including watch rejection), rejected foreign lifecycle commands,
-forged organization/role headers and body/query scope, member versus admin
-surfaces, owner-only workspace lists and v1/v2 ACP authorization. Gateway authenticates
-the connection; ACP rejects unauthorized Agent requests with `access_denied`. Within an authorized
-connection to one's local Agent, foreign Session load/resume, fork, close,
-delete and prompt must fail without history or persisted effects. Deactivating
-only B's Membership must reject B's already-open connection without invalidating
-the same User in A. The Controller must finish automatic Disable before
-restoration is tested. Restoring B preserves the disabled Agent; only explicit
-Enable permits reconnecting with the still-valid token and replaying history.
-
-The same profile accepts C2-05 owner offboarding. It checks both protocol
-versions, global User deactivation across A/B, an unaffected second owner,
-and SCIM Membership deletion. Business mutations enter Gateway. Runtime's
-own inspection API independently confirms `disabled/absent`, and a sentinel
-seeded/read through the official MCP client proves workspace retention after
-Enable. The test client joins the Runtime management network only for this
-fixture oracle; product routing/permissions do not change. Existing ACP-owned
-read-only snapshots prove that Disable does not delete history or Runs.
-After explicit Enable, fresh Gateway ACP Runs prove that admission and the
-shared model credential still work. The SCIM owner logs in through the same
-real OIDC flow/HTTPS fixture used below, has a peer Membership/Agent in A, and
-owns nonempty chat history in B before deletion. A must remain usable while B
-is disabled; reprovisioning keeps the User, creates a new Membership, and
-permits old Session replay and a new Run only after explicit Enable. The
-owning Identity RPC prepares A's peer Membership; no SQL writes are used.
-The coordinating shell stops Controller before the global revocation and
-restarts it afterward. The committed event must be consumed after restart
-without duplicating earlier offboarding. The client only requests named
-checkpoints; it has no Docker socket or lifecycle process permissions.
-
-Jaeger evidence must connect each source Gateway request to Identity receipt,
-Controller scheduling and the matching Temporal Disable workflow using exact
-parent IDs. Each activity must commit its owned driver write. Drain must
-acknowledge current ACP publication and settlement; Runtime Controller and
-Egress control RPC must descend from their matching activity, including the mutating method/route (Inspect is insufficient).
-Unrelated spans or service-name presence cannot pass. This does
-not test packet tracing, mid-Disable crash recovery, emergency cancellation or arbitrary
-unavailable Runtime convergence. Temporary containers, networks and volumes are cleaned by the parent.
-Compact final metrics and unmodified raw traces are retained in private
-`artifacts/verification/` evidence directories. `ANTNEST_IDENTITY_EVIDENCE_DIR`
-must stay outside `.cache`, including symbolic aliases and missing descendants.
-Collectors validate known output files before HTTP, and access clients validate
-the directory and applicable failure log before login or database setup. Ordinary
-raw snapshots can be updated; linked or non-regular output files are rejected,
-and writes retain mode 600.
-
-Official SDKs drive both protocol versions. A local model fixture verifies the
-organization-specific credential and context before answering; positive Runs
-must persist and replay their private history. Denials must leave owner-side
-Agent/catalog/event projections and ACP tables unchanged, with no model calls.
-Authorized load/resume with identical empty client MCP sources is idempotent:
-the oracle preserves every Session row, revision, pointer, timestamp, Run,
-message and checkpoint. Fresh connections must receive matching persisted
-Session metadata; already attached connections need not repeat unchanged info. Model input and replay both reject foreign
-history, even when the expected own answer is present too.
-The replay oracle also compares ordered message IDs and content with persisted
-history. Error replies and revocation notifications must not disclose history;
-context checkpoints are included in the no-mutation snapshot.
-The test client reads only ACP-owned tables for this negative-effect oracle;
-product services do not gain database access across ownership boundaries.
-Jaeger assertions also check actual Gateway ancestry for Console/Controller
-access decisions and ACP model requests. No real Provider or browser UI
-acceptance is implied by this profile.
-
-## ACP Browser Session Batch
-
-The independent `make e2e-acp-session` now includes the ordinary logout cases
-alongside its fault cases. The retained/extended legacy parent also keeps
-`acp-session-client.mjs`. Both use official SDK clients against real Gateway,
-Identity and ACP services. For each explicit
-v1/v2 route it creates a Session, completes browser logout through Gateway, then
-submits a prompt on the original WebSocket. The request must fail with close
-1008. A new login must load/resume the same Session with no rejected prompt or
-Run events in its history. These are synthetic credentials and a local model
-fixture, not an external Provider test. Gateway-rooted Identity repository
-traces are checked for parent chains and credential disclosure.
-
-The service relay tests separately cover identity changes, dependency failure,
-timeout, fragmented/pipelined messages, bounded capacity and shutdown cleanup.
-Real post-upgrade natural expiry and dependency-outage recovery use the
-separate fault profile below. No test claims immediate idle-socket revocation or automatic
-cancellation of already-admitted Runs.
-
-## Existing ACP Connection Fault Profile
-
-`ANTNEST_E2E_ACP_SESSION=true sh tests/e2e/e2e-stage3a.sh` is a separate disposable
-profile (not compatible with keep-stack or the other fault profiles). It creates
-one synthetic owner/Agent through Gateway. Official v1/v2 SDK clients establish
-connections before the coordinator stops only Identity. A prompt on each old
-connection must close with 1013 without any durable Run/message/Tool mutation.
-The same long-lived cookies must reconnect after Identity recovery.
-
-An empty recovered Session must contain its current command catalog, one
-untitled Session info update with a valid timestamp and, for
-v2 replay only, exactly one idle control update. Reuse `assertEmptySession`
-from the ordinary logout profile: an all-`state_update` predicate incorrectly
-rejects valid catalogs while accepting an empty response. User messages, Tool
-activity, execution state and duplicate catalogs remain failures. Identity ACP
-clients use the shared bounded connection helper and the SDK's
-`cancellationSignal` option; socket errors are observed and no upgrade retry is
-silently introduced.
-
-The coordinator then starts Identity with its existing five-second token TTL
-setting. New connections must work before their issued deadlines and reject
-prompts with 1008 after natural expiry, without changing DB rows or clocks.
-Previously issued long-lived credentials remain usable. Deployment Compose is
-unchanged; the normal TTL is restored before the last scenario.
-
-For already-admitted work, a local model fixture holds a real request. Only after
-the Run is running does the client log out and force old-connection rejection.
-Releasing the fixture must let that same Run complete one real Runtime Tool,
-finish with a quiescent executor and settled Tool effect, and resume without
-re-execution on reconnect. The Run/request ID and captured execution snapshot
-must remain unchanged, with Runtime stopping evidence for the one Tool. The structured
-Bash result must show exit code zero, complete output and an exact ordered file
-append per Run; a marker in an error or arbitrary result text cannot pass.
-Each rejected message has its own Gateway root linked to the actual connection.
-Successful requests bind the SDK request ID and returned Session ID; execution
-binds the actual Provider HTTP span IDs.
-Both rejected-message and execution traces scan the current synthetic cookies
-and model credential, including URL-encoded forms.
-This tests browser-session revocation/disconnect,
-not owner/Agent deactivation or indefinite execution during an Identity outage.
-The coordinator alone operates Docker; the SDK client only requests named
-checkpoints. Its ACP-owned database connection is read-only and serves as a
-negative-effect oracle, not a cross-service product dependency. Final output
-contains counts and trace assertions, never credentials or intermediate dumps.
-
-## Run
-
-`make e2e-identity-core` runs local/SCIM and OIDC against current local images.
-`make e2e-identity-access` runs the independent access/outage/expiry profile.
-The default `make e2e-stage3` now runs its separate base management profile.
-The parent owns resource cleanup, including when a client assertion fails.
-
-The client is invoked by the parent as:
+The core client is invoked by the parent as:
 
 ```sh
 node tests/e2e/identity-closeout/client.mjs "$gateway_url" "$jaeger_url"
 ```
 
 It requires a Stage 3 synthetic administrator and creates uniquely named test
-users, groups and tokens. Do not point it at production. Test users intentionally
-remain until the parent removes the disposable databases. All HTTP requests are
-bounded; there are no background workers or external Providers. The output is
-compact final counts and trace summaries, not a dump of credentials or payloads.
+users, groups and tokens. Never point it at production. All HTTP requests are
+bounded; there are no background workers or external Providers. Output is
+compact final counts and Trace summaries, never credentials or payloads.
 
-`node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs` tests the
-HTTP/assertion helpers. These helper tests are not substitutes for the real
-integration run. Formatting and fixture tests are part of the root Make gates.
+## Local login and SCIM
 
-## OIDC Gateway Batch
+1. Local login establishes HttpOnly session cookies without returning the token
+   in JSON. Member access, rejected CSRF logout, successful logout and replay of
+   the revoked cookie are tested separately.
+2. Membership deactivation denies an existing HTTP session and a new login.
+   Global User deactivation also revokes issued tokens; reactivation requires a
+   new login. This does not cancel an already-admitted ACP Run.
+3. SCIM discovery, read and write scope enforcement, Users and Groups CRUD,
+   filtered listing, group membership PATCH, deactivation and reactivation,
+   deletion and reprovisioning are exercised through `/scim/v2`. Public
+   Location URLs and Console directory projections must agree with those
+   mutations.
+4. SCIM rotation issues a replacement and revokes the old credential. Lists
+   never redisclose secrets, and browser cookies do not authorize SCIM.
+5. Jaeger assertions require actual parent chains from the Gateway through
+   Identity to its repository, including the Console for administrator
+   mutations. Service names alone are not evidence. Passwords, session cookies
+   and SCIM credentials must not appear in Traces.
 
-The Identity core profile starts a disposable HTTPS IdP fixture. It implements discovery,
+## OIDC
+
+The core profile starts a disposable HTTPS IdP fixture. It implements discovery,
 authorization-code redirects, one-use code redemption with exact client and
-redirect binding, PKCE S256, and RSA-signed ID tokens verified via JWKS by the
-real Identity service. This fixture auto-authenticates selected synthetic
-accounts; it is not acceptance of a particular vendor's IdP login UI.
+redirect binding, PKCE S256, and RSA-signed ID tokens that the real Identity
+service verifies through JWKS. The fixture auto-authenticates selected synthetic
+accounts; it does not test any vendor's IdP login UI.
 
-The test-only Compose override trusts a fresh, one-day certificate through
-`SSL_CERT_FILE`. TLS verification is never disabled. The host test client maps
-the fixture DNS name to its loopback-published port while preserving certificate
-hostname verification. Neither this CA nor the fixture is enabled in deployment
-Compose. A shared named test certificate volume allows keep-stack restarts;
-normal teardown removes it together with the fixture.
+The test-only Compose override trusts a fresh one-day certificate through
+`SSL_CERT_FILE`; TLS verification is never disabled. The host client maps the
+fixture DNS name to its loopback-published port while keeping hostname
+verification. Neither the CA nor the fixture is enabled in deployment Compose. A
+named test certificate volume allows keep-stack restarts and is removed with the
+fixture on normal teardown.
 
-The OIDC suite exercises SCIM/local account convergence, stable subject binding,
-inactive and unknown-account rejection, refusal to federate system admins,
-wrong nonce rejection, browser-transaction transfer denial before token
-exchange, callback replay and concurrent-start replacement. Provider disable
-and secret rotation are verified against real discovery/exchange. Gateway-rooted
-start/callback traces and service logs are checked for synthetic secrets.
-All provisioning and login requests enter Gateway, with no direct SQL writes.
-The fixture's counters are only a protocol-execution oracle.
+The suite covers SCIM and local account convergence, stable subject binding,
+inactive and unknown account rejection, refusal to federate system
+administrators, wrong nonce rejection, browser-transaction transfer denial
+before token exchange, callback replay and concurrent-start replacement.
+Provider disable and secret rotation are verified against real discovery and
+exchange. All provisioning and login requests enter through the Gateway, with no
+direct SQL writes. The fixture's counters serve only as a protocol-execution
+oracle.
 
-Trace acceptance also requires exact successful IdP HTTP client spans under the
-same Identity request as its owned persistence. Provider registration covers
-Discovery; login callback covers Token and JWKS. A separate `/profile` issuer
-returns an ID token without email and exposes authenticated UserInfo, proving
-the fallback path without changing the existing denial issuer. The fallback
-must converge to the same provisioned User and Membership.
+The denial cases use a second issuer path, respecting Identity's
+one-issuer-per-organization rule. Re-login with the same subject but a changed
+email must keep the original User and Membership instead of re-linking by email.
+A separate `/profile` issuer returns an ID token without email and exposes
+authenticated UserInfo, proving the fallback path; the fallback must converge to
+the same provisioned User and Membership.
 
-The fixture records actual received method/path and traceparent, excluding
-queries, credentials and bodies. Their span IDs bind each endpoint to the
-current exported host/scheme/port attributes; full URL export is not required.
-Each expected method/endpoint must have one finished client span, successful
-status and a same-trace parent chain whose nearest Identity server span is the
-same one that owns persistence. An outbound client span cannot substitute for
-that server span. Missing,
-detached, foreign-request, duplicate or failed spans must fail the verifier.
-Compact summaries contain method, path and span identity, never credentials or
-response bodies. Transport errors (including nested causes) and JSON parser
-errors cannot redisclose raw Gateway, Jaeger or IdP fixture responses.
+Trace checks require exactly one finished, successful IdP HTTP client span per
+expected method and endpoint, under the same Identity server span that owns the
+persistence. Provider registration covers Discovery; the login callback covers
+Token and JWKS. The fixture records received method, path and `traceparent`
+(never queries, credentials or bodies), and their span IDs bind each endpoint to
+the exported host, scheme and port attributes. Missing, detached,
+foreign-request, duplicate or failed spans fail the verifier.
 
-The denial cases use a second issuer path, respecting Identity's one-issuer-per-
-organization registration rule. Re-login with the same subject but a changed
-email must retain the original User/Membership, rather than re-link by email.
 Test-only evidence endpoints expose synthetic PKCE verifiers, signed ID tokens
 and Basic credentials to the coordinator's scanner, never to product clients.
-Trace and log scans include these canaries and URL-encoded forms. Logs must
-contain correlated request records from Gateway, Console and Identity; empty
-or startup-only output cannot pass. Failure diagnostics print only bounded
-service/level counts, never raw logs, callback URLs or credential values.
+Trace and log scans include these canaries and their URL-encoded forms. Logs
+must contain correlated request records from the Gateway, Console and Identity;
+empty or startup-only output cannot pass. Transport errors (including nested
+causes) and JSON parser errors cannot redisclose raw Gateway, Jaeger or IdP
+responses. Failure diagnostics print only bounded service and level counts.
+
+## HTTP access isolation
+
+`make e2e-identity-access` does not share login attempts with the other
+profiles and does not change login limits. Identity's private RPC prepares two
+organizations and ordinary organization administrators (not system
+administrators). All access assertions go through the Gateway; no database rows
+or clocks are modified.
+
+The same email is provisioned with separate identities and passwords in each
+organization. Tests compare directory and SCIM projections, reject foreign
+resource mutation and forged scope headers or body fields, and exercise password
+rotation and logout independently. A password change preserves issued sessions,
+and logout revokes only the presented session; tests state these semantics
+explicitly. The password command assertions distinguish BFF
+`401 invalid_current_password` (no session cookie change, later access succeeds)
+from Gateway `401 unauthenticated` after real token expiry (both session cookies
+cleared, password unchanged). Console API and App tests consume the same error
+codes and verify dialog retention versus returning to login, including late
+responses from an older in-page session.
+
+Finally the coordinator stops only Identity and proves that protected requests
+return 503 without deleting cookies. It restarts Identity with the token TTL set
+to five seconds for new tokens: the earlier long-lived cookie must recover, and a
+new short-lived cookie must work before its deadline and fail after it, even when
+replayed manually. A fresh login must then work. The short TTL override exists
+only in the fixture Compose. HTTP logout and expiry results are not WebSocket
+token revocation results.
+
+## Agent organization access and offboarding
+
+`make e2e-agent-access` uses Identity's RPC to prepare two organizations,
+separate organization administrators and one User who is an administrator in A
+and a member in B. All later Agent, catalog, membership and ACP actions go
+through the Gateway. Each organization has its own model configuration,
+Template and Agent, and both Agents have the same User owner, so user-only
+filtering cannot pass by accident.
+
+The access matrix covers scoped administrator lists, details, operations and
+events (including watch rejection), rejected foreign lifecycle commands, forged
+organization and role headers and body or query scope, member versus
+administrator surfaces, owner-only workspace lists and v1 and v2 ACP
+authorization. The Gateway authenticates the connection; ACP rejects
+unauthorized Agent requests with `access_denied`. Within an authorized
+connection to a local Agent, foreign Session load, resume, fork, close, delete
+and prompt must fail without history or persisted effects. Deactivating only
+B's Membership must reject B's already-open connection without invalidating the
+same User in A. The Controller must finish automatic Disable before restoration
+is tested. Restoring B keeps the Agent disabled; only an explicit Enable allows
+reconnecting with the still-valid token and replaying history.
+
+Owner offboarding is checked for both protocol versions: global User
+deactivation across A and B, an unaffected second owner, and SCIM Membership
+deletion. The Runtime's own inspection API confirms `disabled/absent`, and a
+sentinel seeded and read through the official MCP client proves workspace
+retention after Enable. The test client joins the Runtime management network
+only for this oracle. ACP-owned read-only snapshots prove that Disable does not
+delete history or Runs. After explicit Enable, fresh Gateway ACP Runs prove that
+admission and the shared model credential still work.
+
+The SCIM owner logs in through the same OIDC fixture, has a peer Membership and
+Agent in A, and owns nonempty chat history in B before deletion. A stays usable
+while B is disabled. Reprovisioning keeps the User, creates a new Membership and
+permits old Session replay and a new Run only after explicit Enable. The
+coordinating shell stops the Controller before global revocation and restarts it
+afterwards; the committed event must be consumed after restart without
+duplicating earlier offboarding. The client only requests named checkpoints and
+has no Docker socket.
+
+Jaeger evidence must connect each source Gateway request to Identity receipt,
+Controller scheduling and the matching Temporal Disable workflow by exact parent
+IDs. Each activity must commit its own driver write. Drain must acknowledge the
+current ACP publication and settlement. Runtime Controller and Egress control
+RPCs must descend from their activity, including the mutating method and route
+(Inspect alone is not enough).
+
+Official SDKs drive both protocol versions. A local model fixture verifies the
+organization-specific credential and context before answering; positive Runs
+must persist and replay their private history. Denials must leave owner-side
+Agent, catalog and event projections and ACP tables unchanged, with no model
+calls. Authorized load and resume with identical empty client MCP sources are
+idempotent: every Session row, revision, pointer, timestamp, Run, message and
+context checkpoint is preserved. Fresh connections receive matching persisted
+Session metadata. Model input and replay reject foreign history, and the replay
+oracle compares ordered message IDs and content with persisted history. Error
+replies and revocation notifications must not disclose history.
+
+Not covered: packet tracing, crash recovery during Disable, emergency
+cancellation and convergence of arbitrary unavailable Runtimes.
+
+## ACP connections and browser sessions
+
+`make e2e-acp-session` uses official SDK clients against the real Gateway,
+Identity and ACP services, with synthetic credentials and a local model fixture.
+
+**Logout.** For each v1 and v2 route, the client creates a Session, completes
+browser logout through the Gateway, then submits a prompt on the original
+WebSocket. The request must fail with close code 1008. A new login must load or
+resume the same Session with no rejected prompt or Run events in its history.
+
+**Identity outage.** Official v1 and v2 clients connect before the coordinator
+stops only Identity. A prompt on each old connection must close with 1013
+without any durable Run, message or Tool change, and the same long-lived cookies
+must reconnect after Identity recovers. An empty recovered Session must contain
+its current command catalog, one untitled Session info update with a valid
+timestamp and, for v2 replay only, exactly one idle control update
+(`assertEmptySession`). User messages, Tool activity, execution state and
+duplicate catalogs are failures. Clients use the shared bounded connection
+helper and the SDK's `cancellationSignal`; socket errors are observed, and no
+upgrade retry is introduced.
+
+**Expiry.** The coordinator restarts Identity with a five-second token TTL. New
+connections must work before their deadlines and reject prompts with 1008 after
+natural expiry, without changing database rows or clocks. Earlier long-lived
+credentials keep working. The normal TTL is restored before the last scenario.
+
+**Admitted work.** A local model fixture holds a real request. Only after the
+Run is running does the client log out and force rejection on the old
+connection. Releasing the fixture must let the same Run complete one real
+Runtime Tool, finish with a quiescent executor and a settled Tool effect, and
+resume without re-execution on reconnect. The Run and request IDs and the
+captured execution snapshot stay unchanged. The structured Bash result must
+show exit code zero, complete output and an exact ordered file append per Run.
+
+Each rejected message has its own Gateway root linked to the connection.
+Successful requests bind the SDK request ID and returned Session ID, and
+execution binds the Provider HTTP span IDs. Traces are scanned for the synthetic
+cookies and model credential, including URL-encoded forms. The service relay
+unit tests separately cover identity changes, dependency failure, timeout,
+fragmented and pipelined messages, bounded capacity and shutdown cleanup. No
+test claims immediate revocation of idle sockets or automatic cancellation of
+admitted Runs.
+
+## Evidence and cleanup
+
+Compact final metrics and unmodified raw Traces are kept in private
+`artifacts/verification/` directories. `ANTNEST_IDENTITY_EVIDENCE_DIR` must stay
+outside `.cache/`, including symbolic aliases and missing descendants.
+Collectors validate known output files before any HTTP request, and access
+clients validate the directory and failure log before login or database setup.
+Linked or non-regular output files are rejected, and files are written with
+mode 0600.
+
+The coordinator alone operates Docker. The parent owns cleanup of all containers,
+volumes and networks, including when a client assertion fails. Test users stay
+until the parent removes the disposable databases.

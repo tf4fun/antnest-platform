@@ -1,237 +1,193 @@
 # Agent Controller
 
-Skill Learning L2 adds an Agent-owned policy with an independent SHA-256
-revision. Its default is `automatic` for generated personal Skills, with no
-adopted or pinned paths and the bounded v1 budgets. `GET` and `PUT
-/internal/agents/{agent_id}/skill-learning-policy` require current owner scope;
-PUT uses a stable request ID and expected revision. PostgreSQL commits the
-policy and idempotent receipt together. Policy changes do not create Agent
-Spec or Runtime revisions. The read/result policy includes the server-owned
-`activation_cut_at`: lazy default creation uses the persisted Agent creation
-time, and `off` → `automatic` sets a new cut without accepting a caller-selected
-timestamp. An owner can pin a canonical personal Skill path to forbid automatic
-updates, including if the path is created later. The reserved `adopted_paths`
-field must remain empty in this delivery; explicit adoption is deferred.
-ACP owns the background learner and its execution. See the
-[shared contract](../../contracts/skill-learning/learning-api.md).
-
-Stage 4 Skill delivery: the Template catalog freezes exact Registry versions,
-and the Runtime Controller client now supports durable Skill preparation,
-status reads, release, and prepared collection identity in lifecycle
-configuration. A separate PostgreSQL preparation intent freezes the target
-and source revisions without changing Agent admission. Create, rebuild, and
-enable now wait for a ready RC collection before entering their lifecycle;
-the Runtime request carries the persistent reference and terminal operations
-release it. Deterministically rejected preparations are abandoned so a new
-operation can proceed. Pre-admission invalidation starts a new durable attempt;
-a fenced rebuild with an unaccepted RC Update restores its source before ending
-the operation.
-Old shared-volume Skill migration, protected export, migration admission gates,
-and special recovery workflows are absent from this release. Normal Skill
-preparation and frozen Template lifecycle rules remain in place. See the
-[release cleanup](../../docs/legacy-skill-release-cleanup-20261001.md).
-The organization-scoped `GET /internal/agent-skill-preparations/{request_id}`
-projects preparation progress before the Agent row exists. It combines the
-durable intent with RC's live receipt, omits the frozen spec and prepared
-reference, and reports RC read failures as retryable dependency errors.
-
-## Dependency baseline (2026-09-26)
-
-Go 1.27.1, Temporal SDK 1.49.0 / API 1.63.6, pgx 5.11.0, and
-OpenTelemetry 1.46.0 / log 0.22.0 are the current baseline. The service-local
-race, contract, build, and lint gates precede database and Temporal workflow
-regression on the refreshed platform images. See the
-[dependency refresh record](../../docs/dependency-refresh-20260926.md).
-
-Runtime-managed stdio MCP configuration is documented in
-[Managed MCP](docs/managed-mcp.md), including immutable revision ownership,
-create/rebuild/enable forwarding, privacy, and verification boundaries.
-
 Agent Controller is the Agent aggregate and lifecycle authority for Antnest
 Platform. It turns an immutable Agent specification into one published
-executable Agent by coordinating Runtime Controller and Runtime Egress.
+executable Agent by coordinating Runtime Controller and Runtime Egress. It is
+written in Go.
 
-## Resource identifiers
+Lifecycle commands are durable Temporal workflows. PostgreSQL stores business
+state, immutable revisions and audit history, not retry queues or worker
+leases. Resource creation completes separately from executable availability:
+an Agent becomes runnable only after independent healthy Runtime observation
+publishes its execution binding.
 
-The [platform resource ID contract](../../contracts/resource-identifiers.md)
-separates resource kind from retry purpose. Create and Rebuild both generate
-`agentspec_` IDs; execution revisions use `execution_`, and all lifecycle,
-Runtime observation and owner-revocation events use `event_`. Stable namespaces
-retain retry deduplication, and Agent ID derivation is byte-for-byte unchanged.
-Existing records, client request keys, content digests and Runtime incarnation
-tokens are unchanged. Identity and ACP own their respective resource generators.
+## Responsibilities
 
-## Status
-
-The Controller/ACP execution-boundary refactor was closed by the user's scoped
-acceptance decision on 2026-09-15. Configuration publication
-and lifecycle settlement are wired in the main process; the five old execution
-RPCs, their RunService injection, workspace execution queries and occupancy
-notifications, Run application/storage/schema and Session override merging have been removed.
-Service-local gates, including the management synchronization read follow-up,
-have passed. Gateway and Console have switched and passed the scoped integration.
-Agent UI was excluded from that refactor's gate; its subsequent workspace and
-browser batches are tracked in [current status](../../docs/current-status.md).
-It remains an ACP client, not a management authority. Nine Controller/ACP Docker and protocol-client scenarios and trace
-topology checks passed. Jaeger clock warnings are deferred as OBS-ACP-CLOCK;
-the strict script still reports failure and its result is not rewritten. See the
-[final results and explicit exception](../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付).
-
-The Stage 2B service surface is implemented. The runnable slices provide
-ModelProfile and Template Catalog RPC plus Agent create, rebuild, disable,
-enable, and delete. Create validates the active owner through Identity Service
-and freezes an exact Template/Model graph. Create, rebuild and enable complete
-after platform creation and Egress attachment opening, without waiting for
-Runtime health. The Agent is `created/enabled` and cannot Run until independent
-healthy observation publishes its execution binding. Rebuild uses the existing
-attachment barrier; disable retains the workspace. Never-ready Agents still
-support rebuild, disable, enable and delete. See
-[creation versus availability](docs/runtime-availability.md).
-Desired network policy remains owned by Runtime Egress and is never rewritten by
-Agent lifecycle operations. Delete removes Runtime compute and workspace, releases
-the Egress attachment, deactivates owner access, and retains immutable audit
-facts. Controller publishes current non-secret configuration and current Provider
-credentials to ACP. ACP owns Run admission, execution and terminal audit.
-Current Agent projection queries and authoritative event replay/watch
-routes are runnable. Lifecycle HTTP commands return `202` after durable admission.
-[All lifecycle operations use Temporal](docs/lifecycle-workflows.md), with an
-embedded SDK Worker and automatic workflow/activity tracing. Identity-triggered
-Disable uses the same executor. PostgreSQL retains business state, not a second
-scheduler. Every workflow preserves the original business trace. A separate bounded observation consumer
-reads Runtime Controller's ordered journal. A same-revision process restart
-invalidates the executable binding, marks the Agent unavailable, and requires
-an explicit rebuild instead of silently using a stale execution identity.
-Stage 3 Docker and Jaeger evidence covers the administrator lifecycle and
-managed MCP create/chat/rebuild path. Broader restart, Identity integration,
-and operational acceptance remains tracked in the
-[single-node closeout](../../docs/docker-single-node-closeout.md).
-
-## Owns
-
-- Agent identity, organization, owner user, desired state, and current status;
-- [Provider connections and model management](docs/provider-management.md), with independent encrypted credential versions;
-- mutable Template heads and immutable Template revisions referencing stable model identities and fixed Registry Skill versions;
-- immutable Agent configuration and execution revisions;
-- the current opaque Runtime binding returned by Runtime Controller;
-- durable Skill preparation intent and its organization-scoped progress view;
-- durable lifecycle operations for create, rebuild, disable, enable, and delete;
-- current execution configuration publication and Agent-level lifecycle settlement;
-- Agent default authorization and the organization model catalog (Session selection belongs to ACP);
-- Agent ownership/access bindings and revisions published to ACP;
-- the ordered Agent domain-event journal.
-- the persisted Runtime-observation consumer cursor and its Agent-state
+- Agent identity, organization, owner user, desired state and current status.
+  The `agents` record is the current global status projection; immutable
+  revisions, operations and events explain how it reached that state.
+- [Provider connections and model management](docs/provider-management.md),
+  with independently versioned encrypted credentials.
+- Mutable Template heads and immutable Template revisions that reference stable
+  model identities and exact Skill Registry versions.
+- Immutable Agent configuration (AgentSpec) and execution revisions.
+- The current opaque Runtime binding returned by Runtime Controller.
+- Durable Skill preparation intents and their organization-scoped progress view.
+- Durable lifecycle operations for create, rebuild, disable, enable and delete.
+- Publication of current execution configuration to ACP and Agent-level
+  lifecycle settlement.
+- Agent default authorization and the organization model catalog.
+- Agent ownership and access bindings, and the revisions published to ACP.
+- The per-Agent Skill learning policy, with its own SHA-256 revision.
+- The ordered Agent domain-event journal.
+- The persisted Runtime-observation consumer cursor and its Agent-state
   projection.
+- Consumption of Identity Service owner revocations, which close execution
+  permission and schedule the Disable workflow.
 
-The `agents` record is the current global Agent status projection. Immutable
-revisions, operations and management events explain how it reached that
-state.
+## Non-responsibilities
 
-## Does Not Own
+- ACP Sessions, Runs, execution audit, messages, context, Turns, model calls,
+  Tool attempts and Session model selection.
+- Docker, Kubernetes, container, Pod, workspace or physical generation IDs.
+- Tunnel allocation, Egress policy, packet flow or conntrack. Desired network
+  policy is owned by Runtime Egress and is never rewritten by lifecycle
+  operations.
+- Runtime MCP execution.
+- Identity Service users or organization records.
+- Skill package bytes. The execution projection always emits
+  `skill_instructions: []`; Runtime reads Skill content on demand.
+- The background Skill learner, which runs in ACP.
 
-- ACP Sessions, Runs, execution audit, messages, context, Turns, model calls, or Tool attempts;
-- Docker, Kubernetes, container, Pod, workspace, or physical generation IDs;
-- Tunnel allocation, Egress policy, packet flow, or conntrack;
-- Runtime MCP execution;
-- Identity Service users or organization records;
-- Skill package bytes. The current projection emits `skill_instructions: []`.
-  The [Stage 4 design](../../docs/skill-registry-minimal-design.md) permanently
-  retires this full-text channel: Registry integration adds frozen references,
-  not instructions in the execution snapshot. Schema enforcement and ACP
-  rejection/removal are implemented in B0/B5; Console audit-body removal is
-  complete.
-
-Template create/revise can now resolve exact `skill_id` and `version` pairs in
-Registry and freeze their metadata beside the model configuration. Historical
-revisions and command replays read the stored metadata without selecting a new
-version. The current AgentSpec domain copies those fixed records, but lifecycle
-admission waits for Runtime Controller's independent prepared set. This prevents a successful
-Agent creation that silently lacks its configured Skills. The preparation-intent
-store supports durable replay, ready receipts, release, and source checks for
-rebuild and enable. Lifecycle admission retries preparation while queued and
-only changes the Agent after RC returns ready. Empty-set Agents retain
-their existing lifecycle behavior. See the [Stage 4 plan](../../docs/skill-registry-minimal-design.md).
-
-## Internal Interfaces
-
-- authorized workspace Agent IDs/names and lifecycle/activation/Runtime metadata:
-  see [Workspace metadata](docs/workspace-state.md). ACP owns execution state and
-  active Session observation; these management fields never grant admission.
-- Agent default authorization: see [Agent configuration](docs/agent-configuration.md).
-  Session model selection and per-Session authorization overrides belong to ACP.
-- current configuration publishing and lifecycle settlement: see
-  [Execution publication](docs/execution-publication.md).
-- stored configuration revision and ACP acknowledgement:
-  `GET /internal/execution-synchronization?organization_id=...` returns this
-  service's synchronization record, or null if none exists. It is not an ACP
-  health, Agent readiness or Run occupancy check.
-- lifecycle and management RPC: see
-  [`../../contracts/agent-controller/control-api.md`](../../contracts/agent-controller/control-api.md);
-- Runtime lifecycle dependency: Runtime Controller internal control API;
-- network lifecycle dependency: Runtime Egress control API.
-- organization-scoped network policy read/CAS commands: see
-  [Network policy management](docs/network-policy.md). These do not rebuild
-  Runtime or change its lifecycle attachment.
-- owner-binding dependency: Identity Service `resolve_principal` internal RPC.
+## Interfaces
 
 All interfaces are trusted internal JSON-over-HTTP RPC. Edge Gateway
 authenticates external requests through Identity Service. Organization
-ownership, owner-user binding, and Agent access are still enforced here as
-domain rules; Gateway authentication does not replace management authorization.
-ACP independently checks synchronized resource authorization at its protocol boundary.
+ownership, owner binding and Agent access are still enforced here as domain
+rules.
 
-## Persistence
+| Direction | Interface | Purpose |
+| --- | --- | --- |
+| Inbound | `/internal/provider-connections`, `/internal/model-profiles`, `/internal/agent-templates` | Provider, model and Template catalog management ([control API](../../contracts/agent-controller/control-api.md)) |
+| Inbound | `POST /internal/agents`, `POST /internal/agents/{agent_id}/{rebuild,disable,enable,delete}` | Lifecycle commands; return `202` after durable admission |
+| Inbound | `GET /internal/agents`, `GET /internal/agent-operations/{request_id}` | Agent projections and lifecycle operation status |
+| Inbound | `GET /internal/agent-events`, `GET /internal/agents/{agent_id}/events` and their `/watch` routes | Authoritative event replay and best-effort SSE wake-up |
+| Inbound | `GET /internal/agent-skill-preparations/{request_id}` | Skill preparation progress before the Agent row exists |
+| Inbound | `GET`/`PUT /internal/agents/{agent_id}/network-policy` | Organization-scoped network policy read and CAS ([network policy](docs/network-policy.md)) |
+| Inbound | `GET`/`PUT /internal/agents/{agent_id}/skill-learning-policy` | Owner-scoped Skill learning policy ([learning API](../../contracts/skill-learning/learning-api.md)) |
+| Inbound | `GET /internal/execution-synchronization` | Stored configuration revision and ACP acknowledgement; not a health check |
+| Inbound | `POST /rpc/agent-controller/list-workspace-agents`, `POST /rpc/agent-controller/set-agent-authorization` | [Workspace metadata](docs/workspace-state.md) and [Agent default authorization](docs/agent-configuration.md) |
+| Inbound | `GET /status` | Readiness probe |
+| Outbound | Runtime Controller internal control API | Runtime create, update, disable, enable, delete, inspection, observation journal and Skill preparation |
+| Outbound | Runtime Egress control API | Network allocation, attachment open/close and policy reads/CAS |
+| Outbound | Identity Service internal RPC | `resolve_principal`, owner authorization and revocation receipt |
+| Outbound | Agent ACP Service | [Execution configuration publication](docs/execution-publication.md) and lifecycle settlement |
+| Outbound | Skill Registry | Resolve exact Skill versions for Template revisions (optional) |
 
-Agent Controller owns one PostgreSQL database/schema and its migrations. It
-never reads or writes another service's tables and has no cross-service foreign
-keys, views, triggers, or transactions.
+Resource identifiers follow the
+[platform resource ID contract](../../contracts/resource-identifiers.md). Create
+and Rebuild generate `agentspec_` IDs, execution revisions use `execution_`,
+and lifecycle, Runtime observation and owner-revocation events use `event_`.
 
-Identity deactivation is consumed through the private revocation RPC. A durable
-owner fence closes the published execution permission and schedules the existing Disable saga.
-Identity restoration never automatically enables an Agent. See
-[Identity offboarding](docs/identity-offboarding.md) for scope, races, recovery,
-and pending-runtime semantics.
+## Configuration
 
-## Local Verification
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_AGENT_CONTROLLER_DATABASE_URL` | Yes | - | PostgreSQL connection URL for the service-owned database. |
+| `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` | Yes | - | Canonical base64 encoding of exactly 32 bytes; encrypts Provider credentials. |
+| `ANTNEST_AGENT_ACP_SERVICE_URL` | Yes | - | Agent ACP Service HTTP(S) origin, without user info, path, query or fragment. |
+| `ANTNEST_RUNTIME_CONTROLLER_URL` | Yes | - | Runtime Controller base URL. |
+| `ANTNEST_RUNTIME_EGRESS_URL` | Yes | - | Runtime Egress base URL. |
+| `ANTNEST_IDENTITY_SERVICE_URL` | Yes | - | Identity Service base URL. |
+| `ANTNEST_SKILL_REGISTRY_URL` | No | - | Skill Registry base URL. Must be set together with `ANTNEST_SKILL_REGISTRY_API_TOKEN`. |
+| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | No | - | Skill Registry API token. Must be set together with `ANTNEST_SKILL_REGISTRY_URL`. |
+| `ANTNEST_AGENT_CONTROLLER_LISTEN` | No | `:8080` | HTTP listen address; also used by `--healthcheck`. |
+| `ANTNEST_TEMPORAL_ADDRESS` | No | `127.0.0.1:7233` | Temporal frontend address. |
+| `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` | No | `150s` | Timeout for dependency RPC clients and the HTTP write timeout. |
+| `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` | No | `5m` | Lifecycle drain timeout. |
+| `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` | No | `15s` | Graceful shutdown timeout for the server and Temporal worker. |
+| `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL` | No | `2s` | Runtime Controller observation journal poll interval. |
+| `ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL` | No | `2s` | Identity Service revocation poll interval. |
+| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES` | No | `16777216` | Maximum published configuration size, between `1024` and `67108864`. |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL` | No | `30s` | Periodic configuration resynchronization interval. |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_RETRY_INTERVAL` | No | `1s` | Initial publication retry interval. |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_MAX_RETRY_INTERVAL` | No | `30s` | Maximum publication retry interval; must not be lower than the initial interval. |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_REQUEST_TIMEOUT` | No | `15s` | Timeout for one publication request to ACP. |
+| `ANTNEST_ENVIRONMENT` | No | - | Deployment environment recorded in telemetry resource attributes. |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` or `false`; development-only RPC payload capture. Provider and credential routes stay metadata-only. |
+| `OTEL_SDK_DISABLED` | No | - | `true` disables all OpenTelemetry export. |
+| `OTEL_SERVICE_NAME` | No | `agent-controller` | Telemetry service name. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` | No | - | OTLP endpoints. A signal exports only when an endpoint is set or its exporter is `otlp`. |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` | No | - | `otlp` or `none` per signal. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_PROTOCOL` | No | `http/protobuf` | Only `http/protobuf` is supported. |
 
-Run these commands serially from the repository root:
+Duration values use Go duration syntax and must be positive.
+
+## Dependencies
+
+- PostgreSQL: one service-owned database and schema with its own migrations.
+  The service never reads or writes another service's tables and has no
+  cross-service foreign keys, views, triggers or transactions. Required at
+  startup.
+- Temporal: runs all lifecycle workflows through an embedded SDK worker.
+- Runtime Controller and Runtime Egress: required for lifecycle progress. Outages
+  leave operations retryable at their current phase.
+- Identity Service: owner resolution at create and enable, and the revocation
+  feed. See [Identity offboarding](docs/identity-offboarding.md).
+- Agent ACP Service: receives published configuration. A background publisher
+  retries failed publication with bounded backoff; lifecycle drain waits for ACP
+  to confirm the closed configuration and settlement.
+- Skill Registry: optional. Without it, the catalog has no Skill version
+  resolver and cannot freeze Template Skill references.
+
+## Build and test
+
+Run these commands serially from the repository root unless stated otherwise.
 
 ```sh
-go test ./services/agent-controller/...
+(cd services/agent-controller && GOWORK=off go test ./...)
+node tests/integration/go/run.mjs agent-controller
 make test-agent-controller-postgres
-make lint
+make go-lint
+docker compose --profile stage3 build agent-controller
 ```
 
-Unit and isolated component tests remain alongside the service packages.
-Real PostgreSQL, Temporal and HTTP-with-PostgreSQL test sources live in
-[`tests/integration/go/agent-controller`](../../tests/integration/go/agent-controller).
-The root Go runner overlays these tests into their owning packages, preserving
-private implementation access without duplicating the test sources.
+- `GOWORK=off go test ./...` runs unit and isolated component tests from the
+  service directory.
+- Real PostgreSQL, Temporal and HTTP-with-PostgreSQL test sources live in
+  [`tests/integration/go/agent-controller`](../../tests/integration/go/agent-controller).
+  The root Go runner overlays them into their owning packages, so they keep
+  access to private implementation without duplicating test sources. To run
+  only the Temporal package, use
+  `node tests/integration/go/run.mjs agent-controller --package internal/orchestration -- -count=1`.
+- `make test-agent-controller-postgres` starts disposable PostgreSQL and
+  Temporal dependencies and runs the full integration set.
+- The image builds from `services/agent-controller/Dockerfile` with the
+  repository root as build context.
+- Root targets `make test-go`, `make test-go-unit`, `make lint` and
+  `make docker-build-stage3` include this service.
 
-To run the Temporal integration package, set `ANTNEST_TEMPORAL_TEST_ADDRESS`
-and use:
+Test-only variables:
 
-```sh
-node tests/integration/go/run.mjs agent-controller --package internal/orchestration -- -count=1
-```
+- `ANTNEST_TEMPORAL_TEST_ADDRESS`: Temporal address for workflow integration tests.
+- `ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL`: disposable database for the
+  commit-before-acknowledgement recovery test.
 
-The repository's commit-before-acknowledgement recovery test additionally needs
-`ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL` for a disposable database. With both
-dependencies configured, the root runner can run the complete service integration
-set by omitting `--package`.
+Docker and Jaeger verification procedures are described in
+[Operations](docs/operations.md).
 
-Docker and Jaeger acceptance commands are documented in
-[`docs/operations.md`](docs/operations.md).
+## Documentation
 
-## Further Reading
-
-- [Execution configuration publication: B2 in progress](docs/execution-publication.md)
-- [Owner-managed Agent default authorization](docs/agent-configuration.md)
-- [Observability guarantees and pending acceptance](docs/observability.md)
-- [Workflow span lifetime during graceful worker shutdown](docs/workflow-span-lifecycle.md)
-- [Architecture](docs/architecture.md)
-- [Operations](docs/operations.md)
-- [Identity offboarding](docs/identity-offboarding.md)
-- [Model pricing and immutable Run snapshots](docs/model-pricing.md)
-- [Stage 2 Agent and ACP design](../../docs/stage-2-agent-and-acp.md)
-
-All lifecycle commands, including Identity-triggered disable, use [Temporal workflows](docs/lifecycle-workflows.md). PostgreSQL stores business state and audit history, not retry queues or worker leases.
+- [Architecture](docs/architecture.md) - aggregate model, lifecycle sagas, persistence and extension rules
+- [Operations](docs/operations.md) - startup, migrations, recovery and verification procedures
+- [Lifecycle workflows](docs/lifecycle-workflows.md) - Temporal workflow and activity design
+- [Runtime availability](docs/runtime-availability.md) - creation versus executable availability
+- [Agent state](docs/agent-state.md) - lifecycle, activation and Runtime state hierarchy
+- [Execution publication](docs/execution-publication.md) - configuration publication to ACP and lifecycle settlement
+- [Agent configuration](docs/agent-configuration.md) - owner-managed Agent default authorization
+- [Session configuration](docs/session-configuration.md) - Agent defaults versus ACP Session settings
+- [Provider management](docs/provider-management.md) - Provider connections, credentials and models
+- [Model pricing](docs/model-pricing.md) - model pricing and immutable Run snapshots
+- [Multimodal input](docs/multimodal-input.md) - model input capabilities
+- [Managed MCP](docs/managed-mcp.md) - Runtime-managed stdio MCP configuration
+- [Network policy](docs/network-policy.md) - network policy management through Runtime Egress
+- [Identity offboarding](docs/identity-offboarding.md) - owner revocation handling
+- [Workspace metadata](docs/workspace-state.md) - workspace Agent list
+- [Observability](docs/observability.md) - tracing, metrics and logging guarantees
+- [Workflow span lifecycle](docs/workflow-span-lifecycle.md) - workflow spans during graceful worker shutdown
+- [Control API contract](../../contracts/agent-controller/control-api.md)
+- [Skill learning contract](../../contracts/skill-learning/learning-api.md)
+- [Platform resource identifiers](../../contracts/resource-identifiers.md)
+- [Skill Registry design](../../docs/skill-registry-minimal-design.md)
+- [Agent lifecycle state model](../../docs/agent-lifecycle-state-model.md)
+- [Docker single-node operations](../../docs/docker-single-node-operations.md)

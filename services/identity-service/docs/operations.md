@@ -1,5 +1,9 @@
 # Identity Service Operations
 
+This document covers Identity Service startup, readiness, configuration,
+bootstrap, secret handling, telemetry, protocol operations, revocation feed
+recovery, and shutdown.
+
 ## Startup And Readiness
 
 Startup validates configuration, connects to the private database, applies
@@ -36,7 +40,12 @@ and do not affect process readiness.
 | `OTEL_EXPORTER_OTLP_ENDPOINT`         | no          | OTLP HTTP base endpoint                    |
 | `OTEL_SERVICE_NAME`                   | no          | Defaults to `identity-service`             |
 
-Bootstrap variables are all-or-none. Repeated startup verifies the same
+The full variable list, including OpenTelemetry exporter settings and
+`ANTNEST_ENVIRONMENT`, is in the [service README](../README.md#configuration).
+Duration values must be positive Go durations.
+
+Bootstrap variables are all-or-none. The bootstrap password must be 12 to 1024
+bytes; no other complexity rule is applied. Repeated startup verifies the same
 organization/admin identity and never resets an existing password.
 Keep the configured slug/name and email stable: an existing Organization with
 a different name or inactive state fails bootstrap; a new unmatched email can
@@ -56,7 +65,7 @@ the explicit override and credential/data ownership precautions.
   query value. Treat the entire URL as a secret; do not place it in logs,
   analytics, support tickets, or telemetry.
 - Token hashes and encrypted payloads are not returned by list/query methods.
-- Online encryption-key rotation is not implemented in Stage 2. Replacing the
+- Online encryption-key rotation is not implemented. Replacing the
   key without first re-provisioning encrypted Provider/session data makes that
   data intentionally unreadable and is therefore a planned maintenance
   operation, not a supported live command.
@@ -91,8 +100,7 @@ is `pgx.sql_state`. The shared boolean
 `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` defaults to `false`; enabling it records
 complete RPC parameters and results, including credentials they contain.
 There is no per-field filtering or bespoke payload size limit. See
-[Identity observability](observability.md) for the development-data warning and
-pending integration acceptance.
+[Identity observability](observability.md) for the development-data warning.
 
 ## Protocol Operations
 
@@ -161,7 +169,7 @@ Back up `principal_revocations` with the rest of the Identity database. Do not
 truncate it, reset its sequence, change sequence caching, or manually insert
 rows outside the producer's transaction lock. A consumer begins at zero and
 persists only sequences of actually received records. There is no automatic
-feed retention or compaction in this stage. Consumers own retries and cursors;
+feed retention or compaction. Consumers own retries and cursors;
 Identity never writes their databases. Database rollback/replacement requires
 coordinated consumer recovery, not silently reusing a cursor from another
 history. Existing inactive identities predating this feed have no synthetic

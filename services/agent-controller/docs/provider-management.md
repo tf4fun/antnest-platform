@@ -1,5 +1,9 @@
 # Provider Management
 
+This document describes how Agent Controller stores Provider connections,
+encrypted credentials and model parameters, how availability and references are
+enforced, and where the execution boundary lies.
+
 Model discovery belongs entirely to Console. The internal, organization-scoped
 `GET /internal/provider-connections/{connection_id}/access?organization_id=...`
 returns the enabled connection and its current credential to a trusted service.
@@ -45,8 +49,8 @@ nonblank display names of at most 200 Unicode code points.
 
 Connections currently support `provider_key=deepseek|openrouter`, `credential.method=api_key`,
 and the OpenAI Chat Completions request protocol. Other providers and OAuth are
-rejected, not silently interpreted as API keys. A connection endpoint is immutable
-in this batch; moving to another endpoint means creating another connection.
+rejected, not silently interpreted as API keys. A connection endpoint is
+immutable; moving to another endpoint means creating another connection.
 
 Model commands reference `provider_connection_id`, never authentication material.
 The model's API ID is immutable; another API ID is a new model. It is unique inside
@@ -62,7 +66,7 @@ and automatic PostgreSQL driver spans follow the service's
 
 ## Availability And References
 
-Control contract revision 24 defines all three availability commands. They require
+The control contract defines three availability commands. They require
 `request_id`, `organization_id`, `expected_enabled` and `enabled`. Both booleans
 must be explicit. A successful response contains `resource_id`, `enabled` and
 `updated_at`. A state conflict returns 409; it is independent of credential,
@@ -109,9 +113,9 @@ Rejected commands leave no receipt and may be retried after references are remov
 Provider disable preserves each model's own enabled flag. Only effective Provider
 or Model changes advance execution configuration; template-only toggles do not.
 There is no physical deletion, new retirement table, automatic template rewriting
-or Provider lifecycle workflow. Console availability controls and Gateway/ACP
-consumers are implemented; [current status](../../../docs/current-status.md)
-records the B5 and later real Provider fallback acceptance boundaries.
+or Provider lifecycle workflow. Console provides the availability controls, and
+Gateway and ACP consume the resulting configuration. Provider fallback behavior
+is described in [Provider failover](../../../docs/provider-failover.md).
 
 ## Persistence And Execution Boundary
 
@@ -127,7 +131,7 @@ All tables are in this service's `agent_controller` schema:
 There is no historical credential or model revision table. A model configuration
 ID is an opaque diagnostic stamp in existing snapshots, not a queryable historical
 resource. The update counter provides optimistic concurrency, not version storage.
-The retired model-history GET endpoint returns 404. Template history is unchanged.
+There is no model-history read route. Template revision history remains readable.
 Agent configuration reads its own build-time snapshot; new Runs freeze current
 model parameters independently. Model edits that were never consumed do not have
 a history browsing or rollback API.
@@ -139,7 +143,7 @@ order survives persistence and is copied into the Agent's configuration; the
 Controller does not choose a fallback for an individual Session or Run.
 Agent build snapshots retain that
 identity plus the build-time revision/parameters for audit, without credentials.
-The new [execution publication boundary](execution-publication.md) sends current
+The [execution publication boundary](execution-publication.md) sends current
 organization configuration to ACP. ACP owns Session model selection, local Run
 admission and logical Provider clients; credential rotation is not a per-Run
 Controller call. No secret is copied into an Agent build spec or Run audit snapshot.
@@ -149,23 +153,22 @@ ACP owns effective model selection and the no-available-model error. This permit
 session configuration/history access even when every Provider is disabled.
 See [the cross-service delivery contract](../../../docs/provider-failover.md).
 
-Delivery status: B1 ACP is locally implemented. B2 Controller publication and
-catalog components are wired into production composition and covered by
-service-local tests. The old execution RPCs, Run application/Port/repository
-and admission storage have been removed. Gateway/Console consumer migration
-and Docker acceptance must complete before deploying the combined change.
+Controller publication and catalog components are wired into production
+composition. Controller has no execution RPCs, Run application, Port,
+repository or admission storage.
 
-This MVP schema change is accepted against a fresh test database, not by resetting
-the running human acceptance instance. Builtin catalogue updates never rewrite
-already persisted organization configuration.
+The connection/credential/model schema has no in-place upgrade from an earlier
+schema; see [Operations](operations.md#configuration). Builtin catalogue updates
+never rewrite already persisted organization configuration.
 
-Control contract revision 21 removes model-history reads. The existing model
-mutation route retains its `/revisions` name, but updates the current row and
+The model mutation route keeps its `/revisions` name, but updates the current row and
 counter; it does not create a separately addressable historical resource.
 Model edits and credential rotations are ordered under the command receipt lock,
 with version CAS in the transaction. An outer read is not a conflict authority:
 the same command may have committed between the first receipt check and that read.
 
-Deleting historical secret rows is not a telemetry retention guarantee. With
-development RPC payload capture enabled, credential request/response DTOs can
-still appear in traces; see the telemetry policy above.
+Deleting secret rows does not remove data that was already exported to
+telemetry. Provider creation, credential rotation and credential access routes
+are metadata-only, so their credential DTOs are not captured even when
+development RPC payload capture is enabled. Other catalog routes follow the
+normal capture policy; see the telemetry policy above.

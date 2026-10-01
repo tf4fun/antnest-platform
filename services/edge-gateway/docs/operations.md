@@ -1,30 +1,42 @@
 # Edge Gateway Operations
 
+This document covers Edge Gateway configuration, deployment limits, request
+diagnostics, shutdown behavior for long-lived streams, and capacity bounds.
+
 ## Configuration
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `ANTNEST_EDGE_LISTEN` | no | HTTP listen address, default `:8080` |
-| `ANTNEST_IDENTITY_SERVICE_URL` | yes | trusted Identity Service base URL |
-| `ANTNEST_ADMIN_CONSOLE_URL` | yes | trusted Admin Console base URL |
-| `ANTNEST_AGENT_UI_URL` | yes | internal Node Agent UI base URL for authenticated HTML, static assets, HTTP API and SSE |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL for ID/name discovery only |
-| `ANTNEST_AGENT_ACP_URL` | yes | trusted Agent ACP Service base URL |
-| `ANTNEST_EDGE_COOKIE_SECURE` | no | require HTTPS cookies, default `true` |
-| `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | non-streaming dependency timeout |
-| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | ordinary HTTP graceful-drain budget, default `15s` |
-| `ANTNEST_EDGE_STREAM_LEASE` | no | maximum authenticated SSE lifetime, default `5m` |
-| `ANTNEST_EDGE_LOGIN_WINDOW` | no | in-memory login admission window, default `5m` |
-| `ANTNEST_EDGE_LOGIN_SOURCE_MAX` | no | attempts per source/window, default `30` |
-| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no | attempts per normalized account/window, default `10` |
-| `OTEL_*` | no | standard OTLP HTTP/protobuf signal configuration |
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP listen address |
+| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | trusted Identity Service base URL |
+| `ANTNEST_ADMIN_CONSOLE_URL` | yes | - | trusted Admin Console base URL |
+| `ANTNEST_AGENT_UI_URL` | yes | - | internal Node Agent UI base URL for authenticated HTML, static assets, the Workspace HTTP API and SSE |
+| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL for ID/name discovery only |
+| `ANTNEST_AGENT_ACP_URL` | yes | - | trusted Agent ACP Service base URL |
+| `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | require HTTPS cookies |
+| `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | non-streaming dependency and forwarded admin request timeout |
+| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | ordinary HTTP graceful-drain budget |
+| `ANTNEST_EDGE_STREAM_LEASE` | no | `5m` | maximum authenticated SSE lifetime |
+| `ANTNEST_EDGE_LOGIN_WINDOW` | no | `5m` | in-memory login admission window |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX` | no | `30` | attempts per source per window |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no | `10` | attempts per normalized account per window |
+| `ANTNEST_ENVIRONMENT` | no | empty | deployment environment telemetry attribute |
+| `OTEL_*` | no | - | standard OTLP HTTP/protobuf signal configuration |
 
-The accepted deployment is the direct, loopback HTTP Docker entry with the
-explicit development cookie policy. Production TLS termination needs separate
-proxy/trust design and acceptance: same-origin checks derive the scheme from
-the actual request TLS state, not forwarded headers. An HTTPS-facing proxy
-forwarding plain HTTP is not supported merely by preserving the Host or adding
-`X-Forwarded-Proto`. Secure cookies alone do not resolve that mismatch.
+The forwarded admin request timeout (10 seconds by default) is shorter than
+Admin Console's 15-second `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`. A Console request
+whose dependencies take longer than the Gateway deadline is cut off by the
+Gateway with `503`, even though Console itself would still be waiting. Keep the
+Gateway timeout at least as long as the Console timeout if Console's own error
+responses should reach the browser.
+
+The supported deployment is the direct, loopback HTTP Docker entry with the
+explicit development cookie policy (`ANTNEST_EDGE_COOKIE_SECURE=false`).
+Production TLS termination needs a separate proxy and trust design: same-origin
+checks derive the scheme from the actual request TLS state, not from forwarded
+headers. An HTTPS-facing proxy forwarding plain HTTP is not supported merely by
+preserving the Host or adding `X-Forwarded-Proto`. Secure cookies alone do not
+resolve that mismatch.
 
 `GET /status` reports Gateway's own initialized listener. It never probes
 Identity, Controller, Console, UI or ACP. Check each container's health and real
@@ -35,8 +47,8 @@ timeout.
 ## Request Diagnostics
 
 The public response carries `X-Antnest-Trace-ID`. In Jaeger, expect Gateway
-SERVER -> shared HTTP CLIENT -> downstream SERVER. Identity/Controller RPC
-clients no longer create a second CLIENT span. Reverse proxies share the same
+SERVER -> shared HTTP CLIENT -> downstream SERVER. Identity and Controller RPC
+clients do not create a second CLIENT span. Reverse proxies share the same
 Transport; the WebSocket dial wrapper traces its handshake separately from messages.
 
 Each client ACP request or notification starts a bounded Gateway message trace,
@@ -46,13 +58,12 @@ to ACP, not waiting for the eventual protocol response. W3C context is injected
 into standard ACP `params._meta`; caller-supplied trace context is replaced.
 `antnest.operation.phase=relay` on the message SERVER and `forward` on the
 outbound PRODUCER make those bounded lifetimes explicit in Jaeger. The outbound
-span ending before ACP dispatch or Run completion is expected; these attributes
-do not suppress clock-skew warnings or change propagation.
+span ending before ACP dispatch or Run completion is expected.
 ACP dispatch, Run execution, model and Runtime calls inherit this context.
 Message spans record method and byte count only, never prompt or response content.
 Responses, binary frames and malformed envelopes remain unchanged; validation
-and execution semantics remain ACP responsibilities. No per-chunk spans or
-Gateway Run state is introduced.
+and execution semantics remain ACP responsibilities. Gateway creates no
+per-chunk spans and holds no Run state.
 The HTTP CLIENT span ends when its response body reaches EOF, fails, or closes,
 not when response headers arrive. SSE is not pre-read or buffered for tracing.
 
@@ -70,11 +81,11 @@ custom payload budget or omission event. Typed RPC diagnostics belong to the
 receiving service's protocol adapter and its shared RPC-content switch, not to
 this HTTP forwarding layer. Standard SDK export configuration remains available.
 
-This Gateway implementation does not claim that other services already obey
-the [platform contract](../../../docs/observability-contract.md). In particular,
-Gateway cannot repair a missing downstream SERVER span itself.
+Gateway follows the [platform observability contract](../../../docs/observability-contract.md)
+but cannot repair a missing downstream SERVER span itself.
 
 ## Shutdown And Streams
+
 Signal and listener-error exits cancel and drain WebSocket handlers separately
 before telemetry shutdown; ordinary HTTP requests keep their normal drain
 window. Deadline exhaustion is reported as a shutdown failure, not a clean drain.
@@ -88,18 +99,19 @@ WebSockets, ACP v1 GET/SSE (including the unversioned v1 alias), Workspace state
 Watch and administrator Agent event Watch. Stop cancels their upstream receive
 requests and waits for handlers and request telemetry. It never sends an ACP
 cancel command or retries a prompt. Ordinary HTTP requests, including ACP
-POST/DELETE, keep graceful drain. The C5-04 regression batch must prove all four
-HTTP receive routes on a real listener and signal/restart behavior in Docker;
+POST/DELETE, keep graceful drain. Regression tests must cover all four HTTP
+receive routes on a real listener and signal/restart behavior in Docker;
 testing only WebSocket or one Watch route is insufficient.
-Managed HTTP receive streams must also interrupt blocked downstream writes on
+
+Managed HTTP receive streams also interrupt blocked downstream writes on
 stop. Later per-frame deadlines cannot reopen writing after that cancellation.
-If graceful drain expires, force-close connections and allow a separate bounded
-five-second handler/telemetry cleanup; retain the original deadline error.
-The request-completion counter covers ordinary HTTP as well as streams, while
-only receive streams are cancelled before their graceful-drain window.
-Compose gives Gateway 30 seconds: the default 15-second grace, up to five
-seconds for cancelled handlers, up to five seconds for exporter shutdown, and
-margin. Increase the platform stop grace as well when increasing the HTTP
+If graceful drain expires, Gateway force-closes connections and allows a
+separate bounded five-second handler/telemetry cleanup, retaining the original
+deadline error. The request-completion counter covers ordinary HTTP as well as
+streams, while only receive streams are cancelled before their graceful-drain
+window. Compose gives Gateway 30 seconds: the default 15-second grace, up to
+five seconds for cancelled handlers, up to five seconds for exporter shutdown,
+and margin. Increase the platform stop grace as well when increasing the HTTP
 shutdown budget.
 
 Run the service-owned signal regression from the repository root after building
@@ -114,20 +126,23 @@ The regression starts only a Gateway container and a controlled Node HTTP
 dependency. Four active receive routes must close on SIGTERM, reopen after a
 restart, and close on SIGINT, with both exits zero and no extra upstream
 commands. It verifies the image ID and removes only its labeled containers and
-network. No database, model Provider or retained deployment is used; the local
-trace-order tests do not substitute for C6's Jaeger report.
+network. No database, model Provider or retained deployment is used.
+
+## State, Limits And Capacity
 
 The service has no database, migration, backup, or persistent volume.
 Login admission is deliberately replica-local and bounded to 4096 source and
-account keys per replica. It protects Argon2 work before Identity is called; a
-future shared limiter is justified only if deployment-scale measurements require
-cross-replica enforcement. Event streams are force-reconnected at the stream
-lease so Identity revocation and principal disable are rechecked without an
-Identity call for every event.
+4096 account keys per replica. When a table is full and pruning expired windows
+frees no space, new keys are refused with `429` instead of evicting existing
+windows. It protects Argon2 work before Identity is called; a shared limiter is
+justified only if deployment-scale measurements require cross-replica
+enforcement. Event streams are force-reconnected at the stream lease so
+Identity revocation and principal disable are rechecked without an Identity
+call for every event.
 
 OIDC method discovery and login start are public, no-store browser APIs. The
 callback establishes cookies and redirects to `/`; it never returns an access
-token to JavaScript. Unknown OIDC paths must return JSON `404`, not Console HTML.
+token to JavaScript. Unknown OIDC paths return JSON `404`, not Console HTML.
 SCIM clients use the Identity-issued Bearer credential at the Edge
 `/scim/v2` path. A SCIM upstream transport failure is a canonical SCIM `503`.
 
@@ -137,34 +152,34 @@ Browser-supplied identity and the retired access subject are discarded.
 ACP owns Agent/Session authorization; Controller is not a chat dependency.
 Each client data message performs a bounded Identity resolution before relay;
 server output and ping/pong do not create Identity requests. There is no idle
-polling or new configuration. A 1008 close requires fresh session/Agent access;
+polling. A 1008 close requires fresh session/Agent access;
 1013 signals temporary admission unavailability. Neither close changes HTTP
 cookies or promises Run cancellation. A reconnect must repeat admission.
 The relay supports complete messages up to 64 MiB in either direction and uses
 the request timeout for socket writes, not as a maximum Run duration.
+
 The process permits 64 admitting/open ACP connections and four buffered
 messages across both directions; this also bounds concurrent message-level
 Identity calls. Capacity waits use the dependency timeout. Message assembly
 has a one-minute absolute deadline after acquiring a buffer slot, with compression
 disabled. Capacity errors return HTTP 503 or WebSocket 1013. Allow memory
 headroom beyond the 256 MiB live-payload ceiling for Go allocation/GC and other
-service work; these limits are not per-user quotas or a claim of load acceptance.
-Ping/pong are hop-local; Edge does not generate a new heartbeat. The current
-direct Docker entry has no idle-proxy lease. An additional load balancer must
-configure its WebSocket idle timeout explicitly; arbitrary third-party proxy
-keepalive behavior has not been accepted by this batch.
+service work; these limits are not per-user quotas.
+Ping/pong are hop-local; Edge does not generate a new heartbeat. The direct
+Docker entry has no idle-proxy lease. An additional load balancer must
+configure its WebSocket idle timeout explicitly; keepalive behavior through
+arbitrary third-party proxies is not verified.
 
-HTTP/SSE trace completion must also run when a handler unwinds, including
-`http.ErrAbortHandler` from interrupted reverse-proxy streams. End the Gateway
-span, retain any already-written HTTP status and mark the execution as aborted.
-Do not swallow the panic, write a second response or log its payload. This keeps
-the exported ACP/Controller spans attached to an observable Gateway parent.
-The boolean `antnest.http.request_cancelled` is emitted only when the handler
-unwinds with `http.ErrAbortHandler` and its request context is cancelled. The
-span remains `handler_aborted`, not a successful completion. Maintenance
-verification combines this marker with the exact Watch trace, HTTP 200, the
-observed stop window and clean service exits. An arbitrary panic, a live-context
-abort or an errored dependency is not accepted as normal stream cancellation.
+HTTP/SSE trace completion also runs when a handler unwinds, including
+`http.ErrAbortHandler` from interrupted reverse-proxy streams. Gateway ends the
+span, retains any already-written HTTP status and marks the execution as
+aborted. It does not swallow the panic, write a second response or log its
+payload. This keeps the exported ACP/Controller spans attached to an observable
+Gateway parent. The boolean `antnest.http.request_cancelled` is emitted only
+when the handler unwinds with `http.ErrAbortHandler` and its request context is
+cancelled. The span remains `handler_aborted`, not a successful completion. An
+arbitrary panic, a live-context abort or an errored dependency is not treated
+as normal stream cancellation.
 
 Workspace state GET/SSE uses the same browser identity boundary, with no caller
 scope parameters. Its stream is capped by `ANTNEST_EDGE_STREAM_LEASE`; every
@@ -172,7 +187,7 @@ reconnect revalidates Identity and reads fresh ACP state. A quiet stream
 may therefore retain its last snapshot until lease expiry. On transport loss,
 the UI must close actionable state and reconnect with backoff, not poll or
 replay a prompt. See [Workspace state](workspace-state.md) for the consumer
-contract. New subscriptions have 64 independent slots and do not consume ACP
-cancellation capacity. On shutdown they are explicitly cancelled and drained,
-including their trace spans. No Controller/ACP operation is cancelled by this
-observation cleanup. This batch does not add a Gateway database.
+contract. State subscriptions have 64 independent slots and do not consume ACP
+cancellation capacity. Workspace API SSE streams have their own 64 slots. On
+shutdown they are explicitly cancelled and drained, including their trace spans.
+No Controller/ACP operation is cancelled by this observation cleanup.

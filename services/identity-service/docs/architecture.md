@@ -1,12 +1,23 @@
 # Identity Service Architecture
 
-> Status: Stage 2 implementation contract  
-> Updated: 2026-08-31
+This document describes the Identity Service domain model, application modules,
+transaction rules, protocol boundaries, failure semantics, and invariants. The
+platform-level identity design is [Stage 2 identity](../../../docs/stage-2-identity.md);
+this service directory is the only implementation authority for the service.
 
 ## Mission
 
 Resolve enterprise authentication and directory protocols into stable Antnest
 principals without importing Agent, Channel, Runtime, or UI concepts.
+
+## Resource Identifiers
+
+New owned records use `<kind>_<32 lowercase hex digits>` from the
+[platform resource ID contract](../../../contracts/resource-identifiers.md).
+Bootstrap, local login, directory administration, OIDC, and SCIM request the
+specific resource kind from the same secure generator. Existing IDs remain
+opaque and unchanged, including SCIM resource references. Token record IDs are
+separate from bearer credential bytes.
 
 ## Domain Aggregates
 
@@ -279,11 +290,13 @@ Trusted internal `list_principal_revocations` exposes ascending pages of 1..500
 records after an exclusive nonnegative cursor. Empty pages return `events: []`
 and the unchanged cursor. No feed pruning is implemented; consumers own their
 durable cursor and processing state. The
-[contract](../../../contracts/identity/principal-revocations.md) defines scope,
-replay and the accepted Controller/integration batches. The Controller consumes
-this feed with its own cursor and idempotent Disable workflow. Feed delivery
-itself is not proof of completed Runtime shutdown; the lifecycle owner publishes
-that outcome only after confirmed effects.
+[contract](../../../contracts/identity/principal-revocations.md) defines scope
+and replay. Agent Controller consumes this feed with its own durable cursor and
+an idempotent Disable workflow. Workspace and history are retained, uncertain
+Runtime effects stay fenced or pending, and reactivation never automatically
+enables an Agent. Feed delivery itself is not proof of completed Runtime
+shutdown; the lifecycle owner publishes that outcome only after confirmed
+effects. Identity does not own Agent lifecycle or read Controller storage.
 
 Agent owner validation continues to use the narrow synchronous
 `resolve_owner_authorization` for explicit create/enable: activity and the latest
@@ -294,4 +307,14 @@ checks retain the existing
 enumerates the directory nor exposes profile data. Its dedicated repository
 projection requires a Membership row and computes active state from User,
 Membership, and Organization activity without the system-administrator bypass
-used by administrative mutations.
+used by administrative mutations. It therefore requires an active organization
+Membership even for a system administrator, and is intentionally stricter than
+administrative authorization. Agent Controller uses it to validate an opaque
+organization/user binding without reading Identity storage or receiving
+profile data.
+
+The `get_current_account` RPC separately returns the signed-in actor's safe
+organization profile, Organization name and slug, and an authoritative boolean
+that indicates whether a local password credential exists. Internal consumers
+use its identity IDs for binding but must explicitly project browser-safe
+fields; the RPC never returns credential material.

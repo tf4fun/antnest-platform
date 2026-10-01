@@ -1,7 +1,7 @@
 # Skill Registry internal API v1
 
-Status: Stage 4 B0 contract for the service-owned B1 implementation. Template,
-Runtime preparation, Console and ACP consumers are separate pending batches.
+This document defines the Skill Registry's private control-plane HTTP API for
+publishing, listing, resolving and downloading immutable Skill versions. The
 [JSON payload schema](registry-api.schema.json) and the
 [package-rules-v1 shared cases](../../tests/integration/skill-registry/package-rules-v1.json)
 are part of this boundary. Multipart ZIP bytes and HTTP status mapping are
@@ -25,7 +25,7 @@ are positive integers, starting at 1. JSON objects reject unknown fields.
 
 ## Package rules v1
 
-`package_rules_version=1` is the [Registry design's](../../docs/skill-registry-minimal-design.md#32-必须与-runtime-相交的-frontmatter-规则)
+`package_rules_version=1` is the [Registry design's](../../docs/skill-registry-minimal-design.md)
 validation policy and language-neutral sample version. The whole ZIP is at most
 8 MiB; each entry is at most 8 MiB; unpacked regular files total at most 32 MiB;
 at most 256 entries, including directories. Names are UTF-8 relative paths of

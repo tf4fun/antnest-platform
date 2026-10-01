@@ -1,7 +1,10 @@
 # Docker Offline Backup And Restore
 
-Scope: the current single-node Docker deployment, the same service versions and
-deployment identity. This is a planned maintenance procedure, not online
+This document describes the offline backup and restore procedure for the
+single-node Docker deployment.
+
+Scope: the single-node Docker deployment, the same service versions and the
+same deployment identity. This is a planned maintenance procedure, not online
 cross-service snapshots, host migration, or high availability. Never copy live
 PostgreSQL data files. PostgreSQL's [pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html)
 is database-scoped; consistency across services and workspace files requires
@@ -15,33 +18,56 @@ Keep one protected recovery set, with a timestamp and checksums:
 | --- | --- | --- |
 | Identity | `antnest_identity` | `ANTNEST_IDENTITY_ENCRYPTION_KEY`, IdP configuration, database role/DSN |
 | Agent Controller | `antnest_agent_controller` | `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`, provider credentials/configuration, deployment identity |
-| ACP | `antnest_agent_acp` | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context |
-| Runtime Controller | `antnest_runtime_controller` | Controller scope, network/volume names, immutable Runtime image digests |
+| ACP | `antnest_agent_acp` | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context, Skill maintenance signing keys |
+| Runtime Controller | `antnest_runtime_controller` | Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration |
 | Egress | `antnest_egress` | Tunnel CIDR/resolver and deployment network configuration |
+| Skill Registry | `antnest_skill_registry` | Registry API token and source configuration |
 | Temporal | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data |
-| Runtime filesystem | none | Every retained `antnest-workspace-<agent-id>` volume and the configured system Skills volume, including ownership, modes and symlinks |
+| Runtime filesystem | none | Every retained `antnest-workspace-<agent-id>` volume, every referenced per-Agent Skill volume and the configured system Skills volume, including ownership, modes and symlinks |
 
 The three encryption keys are independent of database login passwords. Preserve
 the keys and working connection configuration, plus the exact Compose files and
-deployment environment, outside Git in an
-access-controlled secret backup. A database dump without its required key is not
-a complete recovery set. Dump contents and workspace files are sensitive too.
-Use a private backup directory (0700) and restrict archive/key files to 0600;
-encrypt and restrict off-host storage according to operator policy. Do not print
-environment values or put credentials in terminal transcripts.
+deployment environment, outside Git in an access-controlled secret backup. A
+database dump without its required key is not a complete recovery set. Dump
+contents and workspace files are sensitive too. Use a private backup directory
+(0700) and restrict archive/key files to 0600; encrypt and restrict off-host
+storage according to operator policy. Do not print environment values or put
+credentials in terminal transcripts.
 
 The shared development PostgreSQL server uses private service roles created by
-`scripts/postgres-init.sh` and `scripts/temporal/init-databases.sh`. Recreate those exact roles and database owners before
-restoring; database passwords may change if their DSNs are updated consistently.
-Application encryption keys must still match the existing ciphertext. Do not restore everything as one shared application
-owner. Nonstandard roles, grants or tablespaces also need their own reviewed
-global-object backup; the development fixture does not exercise custom globals.
+`scripts/postgres-init.sh`, `scripts/temporal/init-databases.sh` and
+`scripts/skill-registry/init-database.sh`. Recreate those exact roles and
+database owners before restoring; database passwords may change if their DSNs
+are updated consistently. Application encryption keys must still match the
+existing ciphertext. Do not restore everything as one shared application owner.
+Nonstandard roles, grants or tablespaces also need their own reviewed
+global-object backup; the development setup does not use custom globals.
 
-Gateway, Console and Agent UI have no service-owned database. Current Jaeger
-memory is diagnostic, not the authoritative Agent audit store; preserving an
-external telemetry backend is that backend's separate operational responsibility.
+Gateway, Console and Agent UI have no service-owned database. Jaeger memory is
+diagnostic, not the authoritative Agent audit store; preserving an external
+telemetry backend is that backend's separate operational responsibility.
 Container IDs, sockets, PID values, `/tmp` and in-memory Tool processes are not
 restored. Required images must remain available by the saved immutable digest.
+
+### Skill Registry and per-Agent Skill state
+
+The recovery set must also include:
+
+- the Registry database, including immutable package bytes and publication
+  receipts, exported within the same quiesced maintenance window;
+- Runtime Controller preparation checkpoints, logical set identities, physical
+  materializations and retained references as part of its database backup;
+- every per-Agent system-Skill volume referenced by a running or disabled Agent
+  or by an unfinished lifecycle operation, including empty-set manifests,
+  numeric ownership, modes, labels and full content checksums;
+- candidate volumes if preparation is to resume from its saved progress. Any
+  deliberately omitted candidate must be listed, and restored progress must be
+  invalidated before preparation resumes.
+
+Retained ready volumes are backed up so a disabled Agent can be enabled while
+Registry is offline. The restore tooling derives the required volume manifest
+from Runtime Controller current and lifecycle references and set
+materializations.
 
 ## Quiesce And Back Up
 
@@ -52,12 +78,13 @@ restored. Required images must remain available by the saved immutable digest.
 2. Confirm no owned Runtime containers remain and retained workspaces still
    belong to the expected Agent and Controller scope. Record the Agents that were
    enabled so the operator can explicitly re-enable them later.
-3. Close external access and stop Gateway, Console, Agent UI, ACP, Agent
-   Controller, Runtime Controller, Egress and Identity, then stop Temporal after
-   its Controller client has stopped. Verify every writer's stopped container
-   and clean service exit. Keep the telemetry collector available until writer
-   exporters have flushed; stop it afterward. Leave only PostgreSQL running for
-   logical export.
+3. Close external access and stop Gateway, Console, Agent UI, ACP, Skill
+   Registry, Agent Controller, Runtime Controller, Egress and Identity, then stop
+   Temporal after its Controller client has stopped. Stopping Runtime Controller
+   and Skill Registry also stops Registry uploads and all preparation, retry and
+   cleanup workers. Verify every writer's stopped container and clean service
+   exit. Keep the telemetry collector available until writer exporters have
+   flushed; stop it afterward. Leave only PostgreSQL running for logical export.
    No privileged maintenance client may mutate the databases during this window.
 4. For each database above, execute `pg_dump --format=custom --file=<private-file>
    --username=<backup-role> --dbname=<database>`. Do not omit ownership or ACLs.
@@ -82,7 +109,7 @@ restored. Required images must remain available by the saved immutable digest.
    --dbname=<database> <archive>` for each database. Do not suppress errors or
    treat a partially restored set as usable. Run only role/database creation
    before restore; defer Temporal schema initialization and all writers until
-   all seven restored databases have been verified. See the
+   every restored database has been verified. See the
    [PostgreSQL restore reference](https://www.postgresql.org/docs/17/app-pgrestore.html).
 3. Recreate the exact persistent volume identities and ownership labels. Extract
    the archives, preserving numeric UID/GID and permissions; compare against the
@@ -102,101 +129,19 @@ the original recovery set, generate replacement encryption keys, automatically
 replay uncertain work, or edit migration journals. An active-runtime/host-loss
 recovery procedure is a different scenario from this deliberately quiesced set.
 
-## Reusable Acceptance
+### Restoring Skill volumes
 
-The bounded `restore` lifecycle profile implements this procedure only for its
-own disposable test project. It uses all seven actual databases and
-synthetic credentials, never `.secret`. It must:
+On restore, validate actual volume existence, ownership, complete file hashes,
+permissions and set manifests before honoring any persisted `ready` record. A
+database marker or matching volume name alone is insufficient evidence.
 
-- Create an Agent and completed Tool-backed ACP Session through Gateway.
-- Disable the Agent and stop writers before snapshots.
-- Stop Temporal after application writers, then export all seven databases and
-  volume archives plus protected encryption keys.
-- Actually remove the temporary PostgreSQL, workspace and system Skills volumes;
-  restore into new empty storage, not verify against surviving original data.
-- Require an independent complete seven-database/two-volume manifest before any
-  destructive step; a missing workspace must not survive and produce false success.
-- Compare database row/sequence and schema/object ownership/ACL fingerprints plus
-  filesystem archives before any service can mutate restored data. Transactional
-  permission-only mutations must change the fingerprint and roll back cleanly.
-- Compare all three actual container-injected encryption keys with pre-backup
-  digests, including Identity. Direct Prompt on an untouched old ACP Session
-  exercises its original encrypted MCP revision; load alone is insufficient.
-- Log in again, replay history without a model request, enable the Agent and run
-  a real Tool against restored files, proving decrypted model configuration works.
-- Preserve public Agent events and the original completed Run. History replay
-  must not create or change an execution audit. The new Run must use the restored
-  Agent's newly admitted execution revision.
-- Keep isolated in-memory Jaeger available across storage replacement and
-  collect both pre/post-restore lifecycle and SDK request traces. Trace topology
-  or platform errors fail acceptance. Preserve `strict_trace: failed` for the
-  reviewed clock-only warnings but allow that narrow timing exception. Jaeger
-  is diagnostic, outside the recovery set.
-- Delete only its own labelled resources and temporary backup files on success,
-  failure or interruption. Conflicting ownership labels block deletion even in
-  finally cleanup. Preserve retained human-acceptance stacks.
-
-```sh
-make e2e-lifecycle-restore
-```
-
-Current migration results belong in [Restore revalidation](lifecycle-restore-revalidation.md);
-[C5-02](docker-single-node-closeout.md) retains historical evidence. Do not commit
-dumps, secret bundles or step-by-step execution logs.
-
-## Stage 4 Skill Registry Addendum
-
-Current development acceptance covers freshly created Registry packages and
-per-Agent Skill volumes. Shared-volume migration and protected legacy export
-commands are absent from this release. Their historical implementation is
-recoverable from Git commit `5e86f46`, not the current service image or RPC
-contract. See the [release cleanup](legacy-skill-release-cleanup-20261001.md).
-
-The procedure and seven-database acceptance above describe the earlier Stage 3
-profile. The Stage 4 recovery tooling defines an eight-database manifest and
-derives physical Skill volumes from RC current/lifecycle references and set
-materializations. Its current storage fixture covers two workspaces and three
-per-Agent Skill volumes (ready, empty and candidate); the real-Agent fixture
-covers two workspaces and their independent frozen Skill volumes. Neither
-fixture requires legacy backup storage or a protected-export receipt.
-
-The real-Agent flow enables both restored Agents with Registry stopped, checks
-new ACP Runs reading the pinned Skill, and verifies that removing one retained
-Skill volume leaves that Agent pending without an empty replacement while its
-peer remains usable. Dated pre-cleanup results in the
-[2026-09-28 acceptance audit](skill-registry-acceptance-audit-20260928.md) describe
-the earlier fixture. Current rerun results belong to the release cleanup report.
-
-The new recovery set must additionally include:
-
-- the Registry database, including immutable package bytes and publication
-  receipts, exported within the same quiesced maintenance window;
-- RC preparation checkpoints, logical set identities, physical materializations
-  and retained references as part of its database backup;
-- every per-Agent system-Skill volume referenced by a running/disabled Agent or
-  an unfinished lifecycle operation, including empty-set manifests, numeric
-  ownership, modes, labels and full content checksums;
-- candidate volumes if preparation is to resume from its saved progress. Any
-  deliberately omitted candidate must be listed, and restored progress must be
-  invalidated before preparation resumes.
-
-Retained ready volumes are backed up so a disabled Agent can be enabled while
-Registry is offline. The restore tooling derives the required volume manifest
-from ownership and retained references; the storage fixture covers multiple
-Agents, multiple retained sets and an empty set. The real-Agent scenario verifies
-independent personal workspaces and offline reuse of two retained sets.
-
-Quiescence must stop Registry uploads and all RC preparation/retry/cleanup
-workers, in addition to the writers listed above. On restore, validate actual
-volume existence, ownership, complete file hashes, permissions and set manifests
-before honoring any persisted `ready` record. A database marker or matching
-volume name alone is insufficient evidence.
-Before starting each restored/recreated container, B3 must also check its actual
-Skill mount, RC volume labels and stored set manifest. Docker can recreate a
-missing named volume during container creation; a pre-create check cannot prove
-the mounted volume is the restored one. Replayed/adopted targets use the same gate.
-Do not start a mismatched target or delete a foreign volume based only on its name
-or missing labels; uncertain effects follow the existing recovery contract.
+Before starting each restored or recreated container, Runtime Controller also
+checks its actual Skill mount, volume labels and stored set manifest. Docker can
+recreate a missing named volume during container creation, so a pre-create
+check cannot prove the mounted volume is the restored one. Replayed and adopted
+targets use the same gate. Do not start a mismatched target or delete a foreign
+volume based only on its name or missing labels; uncertain effects follow the
+existing recovery contract.
 
 If a ready record has no intact volume and no live compute references it,
 invalidate that materialization and prepare an exact replacement from the backup
@@ -204,36 +149,81 @@ or pinned Registry version under a new private materialization identity. If
 Registry is unavailable too, retain a pending/unavailable state; never mount an
 empty set or silently choose the latest version. If restoration or a lifecycle
 check finds a mismatched active mount or set manifest, keep admission closed
-and recover through Controller; never write to a live read-only volume. The
-first release does not continuously hash Skill files in an already running
-Runtime to detect privileged host-side edits.
+and recover through Controller; never write to a live read-only volume. Skill
+files in an already running Runtime are not continuously hashed to detect
+privileged host-side edits.
 
-## Skill Learning Key Recovery Addendum
+### Skill learning key recovery
 
-The separate [learning design](skill-learning-design.md) requires L1R/L3/LI1 to
-cover bootstrap key recovery. L1R now persists each accepted operation's complete
-public-key set in the RC PostgreSQL backup alongside its deployment identity.
-Back up the RC bootstrap environment configuration separately and compare it with
-the active Runtime and unfinished operation snapshots before resuming maintenance.
-ACP signing
-keys stay in its protected secret backup, outside RuntimeSpec, logs and Git.
-Restore must reconcile these records with current revocation/incident records
-before opening maintenance. New global RC key configuration cannot rewrite an
-unfinished operation's snapshot; a compromised key in an old backup cannot be
-made trusted again by replay. Keep affected execution isolated, settle old
-effects through the lifecycle recovery process, and explicitly rebuild with a
-safe key set. The frozen-snapshot database behavior has passed an isolated
-PostgreSQL test. Cross-service normal rotation also has Docker evidence. The
-L3/LI1 manual incident drill now passes `make e2e-skill-learning-key-compromise`:
-it clears ACP signing, proves the original Runtime still trusts the leaked key,
-disables the Agent and verifies that Runtime's actual endpoint stops. It restores
-a protected RC dump to a separate database held outside lifecycle replay,
-compares accepted verifier sets/deployment identities, and identifies the stale
-key. A new Enable against the safe configuration installs a Runtime that rejects
-the old key and preserves learned Skill use. Evidence:
-`artifacts/verification/skill-learning/antnest-lifecycle-706dabfe.json`, with an
-archive checksum, 0700 directory and 0600 file. No test containers remain.
-This drill has no unfinished lifecycle operation in its backup. It verifies
-one operator-controlled quarantine/recovery path, not automated revocation or
-arbitrary full-platform restore; unfinished revoked targets still require the
-documented isolation and factual settlement before resuming.
+The [Skill learning design](skill-learning-design.md) relies on maintenance
+signing keys held by ACP and verifier key sets held by Runtime Controller.
+Runtime Controller persists each accepted operation's complete public-key set in
+its PostgreSQL database alongside its deployment identity. Back up the Runtime
+Controller bootstrap environment configuration separately and compare it with
+the active Runtime and unfinished operation snapshots before resuming
+maintenance. ACP signing keys stay in its protected secret backup, outside
+RuntimeSpec, logs and Git.
+
+Restore must reconcile these records with current revocation and incident
+records before opening maintenance. New global Runtime Controller key
+configuration cannot rewrite an unfinished operation's snapshot, and a
+compromised key in an old backup cannot be made trusted again by replay. Keep
+affected execution isolated, settle old effects through the lifecycle recovery
+process, and explicitly rebuild with a safe key set.
+
+The manual incident drill `make e2e-skill-learning-key-compromise` exercises one
+operator-controlled quarantine and recovery path. It clears ACP signing, shows
+that the original Runtime still trusts the leaked key, disables the Agent and
+verifies that the Runtime endpoint stops. It restores a protected Runtime
+Controller dump to a separate database outside lifecycle replay, compares
+accepted verifier sets and deployment identities, and identifies the stale key.
+A new Enable against the safe configuration installs a Runtime that rejects the
+old key and preserves learned Skill use. The drill does not implement automated
+revocation or arbitrary full-platform restore; unfinished revoked targets still
+require isolation and factual settlement before resuming.
+
+## Restore Test Profile
+
+The bounded `restore` lifecycle profile implements this procedure only for its
+own disposable test project. It uses all the actual service databases and
+synthetic credentials, never real secrets. It:
+
+- Creates Agents and a completed Tool-backed ACP Session through Gateway.
+- Disables the Agents and stops writers before snapshots.
+- Stops Temporal after application writers, then exports every database and
+  volume archive plus protected encryption keys.
+- Actually removes the temporary PostgreSQL, workspace and Skill volumes and
+  restores into new empty storage rather than verifying against surviving
+  original data.
+- Requires an independent complete database and volume manifest before any
+  destructive step; a missing workspace must not survive and produce false
+  success.
+- Compares database row/sequence and schema/object ownership/ACL fingerprints
+  plus filesystem archives before any service can mutate restored data.
+  Transactional permission-only mutations must change the fingerprint and roll
+  back cleanly.
+- Compares all three container-injected encryption keys with pre-backup
+  digests, including Identity. A direct Prompt on an untouched old ACP Session
+  exercises its original encrypted MCP revision; loading alone is insufficient.
+- Logs in again, replays history without a model request, enables the Agents and
+  runs a real Tool against restored files, proving that decrypted model
+  configuration works.
+- Enables restored Agents with Registry stopped, checks that new ACP Runs read
+  the pinned Skill, and verifies that removing one retained Skill volume leaves
+  that Agent pending without an empty replacement while its peer remains usable.
+- Preserves public Agent events and the original completed Run. History replay
+  must not create or change an execution audit. A new Run must use the restored
+  Agent's newly admitted execution revision.
+- Keeps an isolated in-memory Jaeger available across storage replacement and
+  collects lifecycle and SDK request traces before and after restore. Trace
+  topology or platform errors fail the test. Jaeger is diagnostic and outside the
+  recovery set.
+- Deletes only its own labelled resources and temporary backup files on success,
+  failure or interruption. Conflicting ownership labels block deletion even in
+  final cleanup.
+
+```sh
+make e2e-lifecycle-restore
+```
+
+Do not commit dumps, secret bundles or step-by-step execution logs.

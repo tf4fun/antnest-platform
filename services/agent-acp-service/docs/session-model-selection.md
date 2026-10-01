@@ -1,5 +1,8 @@
 # Session Model Selection
 
+This document describes the Session `model` and `thinking_effort` configuration
+options and how they map to provider requests.
+
 The Controller owns organization models and provider credentials. ACP owns Session
 overrides and execution. The UI renders standard ACP configuration options; it
 does not maintain a model catalog or provider-specific request parameters.
@@ -28,10 +31,10 @@ their own capability and request mapping, never client-side model-name guesses.
 
 ## Reference And Verification
 
-Goose `crates/goose/src/acp/response_builder.rs` publishes provider/model/effort
-configuration and derives effort choices from actual provider capabilities.
-Antnest uses one model-profile selection because each profile already identifies
-a credentialed provider connection.
+Effort choices are derived from actual provider capabilities rather than from a
+fixed list. Antnest uses one model-profile selection instead of separate
+provider and model options because each profile already identifies a
+credentialed provider connection.
 
 [DeepSeek thinking API](https://api-docs.deepseek.com/guides/thinking_mode/)
 specifies `thinking.type` plus `reasoning_effort`; enabled thinking ignores

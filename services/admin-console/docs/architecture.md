@@ -1,5 +1,8 @@
 # Admin Console Architecture
 
+This document describes Admin Console's modules, its BFF projection boundary,
+read and recovery semantics for each page, and its failure rules.
+
 Builtin model defaults are maintained by this service in
 `internal/server/builtin_catalog.go` and served by `/api/admin/model-catalog`.
 The catalogue is draft input only: organization configurations and credentials
@@ -21,13 +24,21 @@ server ID/command summaries. All responses are `no-store`. See
 ## Modules
 
 ```text
-web/                 React application and shadcn UI components
-internal/principal/  trusted Edge Gateway principal parser
-internal/upstream/   traced Identity, Agent Controller and ACP clients
-internal/server/     BFF request shaping, scope checks, and static fallback
-internal/telemetry/  HTTP spans, correlated logs, and OTLP lifecycle
-cmd/admin-console/   composition and shutdown only
+web/                         React application and shadcn UI components
+internal/config/             environment configuration
+internal/principal/          trusted Edge Gateway principal parser
+internal/upstream/           traced Identity, Agent Controller and ACP clients
+                             (client.go) and Skill Registry client (registry.go)
+internal/providerdiscovery/  outbound Provider GET /models discovery and pricing decoding
+internal/server/             BFF request shaping, scope checks, builtin catalog and static fallback
+internal/telemetry/          HTTP spans, correlated logs, and OTLP lifecycle
+cmd/admin-console/           composition and shutdown only
 ```
+
+The Skill Registry client is created only when `ANTNEST_SKILL_REGISTRY_URL` is
+set; it authenticates with the configured service token, which never reaches
+the browser. The Provider discovery client calls administrator-supplied
+Provider base URLs directly; see [operations](operations.md#outbound-network-access).
 
 The BFF receives a verified principal from Edge Gateway. It generates request
 IDs and authority fields, then calls the existing language-neutral internal
@@ -36,8 +47,8 @@ actor.
 
 Execution audit is read directly from ACP, independently of Controller's current
 Agent projection. Configuration synchronization is a separate Controller read.
-See [execution audit](execution-audit.md) for routes, trusted identity forwarding,
-and the completed B5 integration scope. [Catalog availability](catalog-availability.md)
+See [execution audit](execution-audit.md) for routes and trusted identity
+forwarding. [Catalog availability](catalog-availability.md)
 uses one Controller command per explicit change; the browser renders reference
 conflicts and configuration acknowledgement without becoming their authority.
 
@@ -153,6 +164,125 @@ The mapping is not a guarantee that the session is still valid when the
 response arrives. Revocation after Gateway admission is checked on the next
 protected request. Inactive actors, missing credentials, concurrent password
 replacement and dependency failure retain their distinct upstream errors.
+
+## Page Behavior
+
+### Overview and first-run guidance
+
+First-run guidance on Overview is deliberately stateless. It derives Model,
+Template, Directory, and Agent readiness from the BFF overview; owner-service
+failures are never presented as empty resources, and core list pages expose an
+in-place retry or the precise missing-prerequisite action. Overview names each
+degraded resource without exposing upstream diagnostics. Its Catalog and Agent
+sections are bounded owner-service pages that preserve continuation cursors;
+counts are labelled as lower bounds and lifecycle breakdowns are scoped to
+loaded records whenever another page exists. Active members counts only entries
+whose User and Organization Membership are both active, while Directory still
+shows disabled records for administration.
+
+### Inventories and dependency selectors
+
+Model Profile, Template, and Agent inventories traverse bounded owner-service
+cursors. The BFF accepts only documented single-value pagination inputs,
+injects organization scope, and translates the explicit deleted Agent view into
+an authority-side lifecycle filter. Page failures preserve already loaded rows.
+Model and Template dependency selectors reuse the same cursor contract across
+Template create/revise and Agent create/rebuild. Disabled records are filtered
+from choices without discarding the continuation cursor, and a failed later
+page can be retried without closing the form or losing loaded choices. Deleted
+Agent reads start on first use and persist failures across tab switches rather
+than triggering an automatic fetch loop.
+
+Agent creation uses the active Directory subset, but Fleet presentation
+resolves owners from the complete Directory projection, so existing and deleted
+Agents retain a searchable human owner label after an account or Membership is
+disabled.
+
+### Template Runtime image
+
+`GET /api/admin/template-defaults` exposes only the configured Runtime image
+reference and performs no owner-service read. The Template form offers the
+platform default or an explicit repository/tag, without a digest input. If no
+default is configured, the tag input is required. Revision forms default to
+keeping the current pinned image and do not read a potentially changed
+deployment default. An explicit tag choice is sent to Agent Controller, which
+resolves and freezes it through Runtime Controller. The BFF does not inspect
+Docker, pull images, or assert an image-to-tag mapping. Template and Agent
+details show the server-derived `image_source` when present, otherwise a
+repository/tag or `Platform runtime` for an unnamed image ID. Rejected tag
+choices remain editable inside the dialog; no unpublished revision is shown as
+successful.
+
+Template creation and revision also include optional managed MCP servers
+([Managed MCP](managed-mcp.md)) and fixed Skill versions ([Skills](skills.md)).
+Publishing a revision never changes existing Agents; an explicit rebuild
+applies it.
+
+### Agent Fleet and lifecycle
+
+Agent Fleet presents current records by default, retains deleted projections
+behind an explicit audit view, gates lifecycle commands from authoritative
+state, and re-synchronizes Agent, event, and durable operation state after an
+event-stream interruption. An unfinished deletion remains in the current
+fleet. A failed cleanup can be explicitly retried, but cannot be enabled or
+rebuilt. Only a completed deletion enters the retained view. Unknown HTTP
+results retain their request key; observing the resulting terminal operation
+establishes a new intent boundary for the next explicit command.
+
+Deleted Agent details stay open for audit, including after a live deletion
+completes. Replaying a completed operation never redirects the page. The active
+request distinguishes `Current operation` from `Last operation`; a terminal
+phase that duplicates the state is omitted without hiding failure diagnostics.
+Lifecycle admission is acknowledged independently of the following Agent read.
+A refresh failure preserves that receipt, closes stale-state actions, and
+retries only the read. Rebuild and delete rejections stay inside their
+originating dialog; pending dialogs cannot be dismissed. Agent identity scopes
+this local form state, so a different Agent cannot inherit an earlier command's
+pending form or error.
+
+Agent detail shows the immutable Template revision and model parameters saved
+in its build snapshot while keeping Provider credentials, Runtime execution
+identity, and MCP routing outside the browser projection. Template revision
+links open read-only historical detail; Model links open current settings.
+Fleet summaries present human names, ownership, lifecycle, and time rather than
+opaque Runtime revisions. A desired state appears only while lifecycle has not
+converged; exact Agent/revision identifiers and lifecycle trace correlation
+stay in default-collapsed technical details for support work. Agent detail
+also links to the separately deployed Agent workspace
+([workspace navigation](agent-workspace-navigation.md)), includes an
+independent [network policy](network-policy.md) section, and links to filtered
+[execution audit](execution-audit.md) history. Authenticated non-administrators
+are redirected to the Agent workspace instead of being shown administrator
+navigation.
+
+### Directory and provisioning
+
+OIDC Provider and SCIM credential inventories load independently, so one failed
+Identity read cannot erase the other management surface. Directory and
+Provisioning mutations report failures inside the active form or confirmation
+and retain entered values for retry. One-time SCIM credentials remain only in
+page memory, including when clipboard access fails. Group and OIDC database IDs
+are omitted from browser DTOs; a SCIM token ID is retained only for its revoke
+action and is not rendered as user-facing credential identity.
+
+### Account, sign-out and session expiry
+
+The account area shows the administrator's display name, email, and
+Organization name/slug instead of opaque internal IDs, and exposes local
+password rotation only when Identity confirms a local credential. Unknown or
+unreadable protected-API `401` responses end the current page session. Pending
+requests cannot emit expiry notifications into a later in-page session. This
+does not replace Edge's cookie and revocation authority.
+
+Sign-out waits for Edge to confirm revocation and cookie removal before showing
+the login page. While pending, the action is disabled; a rejection stays visible
+beside the account controls. Confirmed logout and authoritative session
+expiration close the drawer and account dialog. A late response to an earlier
+logout cannot affect a subsequent login. Startup preserves HTTP failure
+semantics: only a missing or expired session opens login. Terminal access or
+missing-endpoint errors have no retry action; transient failures retry the
+session query in place, without document reload or early protected-resource
+reads.
 
 ## Failure Semantics
 

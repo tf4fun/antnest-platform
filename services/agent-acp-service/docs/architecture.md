@@ -1,17 +1,17 @@
 # Agent ACP Service Architecture
 
-> Status: execution boundary implemented; scoped B5 integration completed<br>
-> Updated: 2026-09-16
+This document describes the service's domain model, prompt acceptance, Tool
+loop, persistence, recovery, protocol capability matrix and module layout.
+Skill-related behavior (Runtime Skill commands, automatic learning, dynamic
+Skill sources and discovery tools) is specified in the
+[Skill commands](../../../contracts/agent-acp/skill-commands.md) and
+[Skill discovery tools](../../../contracts/agent-acp/skill-discovery-tools.md)
+contracts and the [Skill learning design](../../../docs/skill-learning-design.md).
 
-> Production composition uses [local execution configuration](execution-configuration.md).
-> Agent settlement, old Runtime protection and workspace-state queries are locally wired.
-> Gateway/Console consumers and nine Docker business scenarios passed the B5 scope.
-> Strict clock-warning failures and later workspace/model evidence remain separately
-> recorded in [current status](../../../docs/current-status.md).
-
-The Stage 4 Skill delivery boundary permanently rejects nonempty legacy
-`skill_instructions` in execution publications and persisted Run snapshots.
-Runtime remains the source for Skill summaries and on-demand content.
+Production composition uses [local execution configuration](execution-configuration.md)
+published by Controller. Execution publications and persisted Run snapshots
+with nonempty legacy `skill_instructions` are rejected. Runtime remains the
+source for Skill summaries and on-demand content.
 
 ## Mission
 
@@ -27,6 +27,12 @@ share one application port and never branch inside Session or Run business
 logic. Generating or hand-maintaining either wire model would make protocol
 drift an Antnest responsibility. TypeScript is confined to this service
 boundary and does not leak into internal RPC schemas.
+
+Each endpoint feeds the matching official SDK surface: the stable package root
+for v1 and the batch-capable experimental `WireStream` for v2. ACP success
+shapes are not extended outside their standard schema; optional Antnest
+extensions such as `antnest.dev/bridge` and `antnest.dev/skill-commands` use
+SDK-supported `_meta`.
 
 Both endpoints accept WebSocket. `/v1/acp` also accepts the official SDK's
 Streamable HTTP transport; its [contract](http-transport.md) defines transport
@@ -276,8 +282,8 @@ and rejects client-source calls before dispatch. There is no client dialer in
 the production composition and no client MCP capability advertisement.
 
 Historical encrypted MCP revisions remain referenced by Session and Run
-snapshots. Empty revisions continue to use the existing persistence contract;
-schema consolidation is outside this protocol-verification batch. The official
+snapshots. Empty revisions continue to use the existing persistence contract,
+which is why `ANTNEST_ACP_CLIENT_MCP_KEY` is still required. The official
 MCP client still serves the mandatory Runtime endpoint. Low-level client-network
 adapter tests are retained, but that adapter is not wired as a client tool source.
 
@@ -300,7 +306,7 @@ There are no cross-service foreign keys, views, triggers, or SQL queries.
 External identifiers are opaque text values. One transaction may update only
 this service's records.
 
-F06 permission decisions precede Tool attempts. A separate approval ledger binds
+Permission decisions precede Tool attempts. A separate approval ledger binds
 the exact Run/tool-call/arguments; only a committed allow decision permits Tool
 dispatch. Always merges a Session-only rule under Session-then-Run locks, while
 the active Run retains its admitted model/mode and uses only its own learned
@@ -317,6 +323,8 @@ src/ports/                execution configuration, repository, model, MCP, telem
 src/adapters/postgres/    private migrations and repository
 src/adapters/model/       OpenAI-compatible model adapter
 src/adapters/mcp/         platform Runtime MCP client and network helpers
+src/adapters/*.ts         Controller policy, Registry, Skill source and Runtime
+                          Skill maintenance/temporary-Skill HTTP clients
 src/transport/acp/        scoped official HTTP transport, WebSocket stream and versioned SDK adapters
 src/telemetry/            logs, traces, low-cardinality metrics
 src/main.ts               composition only
@@ -371,7 +379,7 @@ never queries Controller's tables or endpoints.
   The service emits idle/cancelled only after local executors become quiescent
   or records unresolved if that cannot be proven.
 
-Stage 2 permits one active Run worker per service database. Startup acquires a
+The service permits one active Run worker per service database. Startup acquires a
 PostgreSQL session advisory lock on a dedicated connection before recovery and
 holds it until shutdown. A second worker fails startup; lock-connection loss
 is detected by a same-session heartbeat, stops readiness, aborts startup
@@ -459,7 +467,7 @@ The native model adapter checks the frozen model's audio/PDF flags, including
 on historical input after a Session model change. Typed ModelPort errors retain
 their bounded classification in Run finalization, not provider response bodies.
 Snapshot recovery retains the same modality flags. See
-[F09 input contract and delivery boundaries](multimodal-content.md). Image
+[multimodal input contract](multimodal-content.md). Image
 Tool results remain in durable history. For vision models, the OpenAI adapter
 places them in an attributed user image message after the entire Tool batch;
 for non-vision models it sends an explicit omission note. Local conversion
@@ -473,6 +481,81 @@ Shutdown first clears readiness, then terminates ACP transports and cancels
 active execution. Server, supervisor, worker-lock, and PostgreSQL cleanup are
 all attempted even when one cleanup operation fails; an incomplete shutdown
 exits non-zero for platform replacement.
+
+## Connection Identity
+
+Gateway supplies a trusted organization/principal/Agent tuple in internal
+headers (`X-Antnest-Organization-ID`, `X-Antnest-Principal-ID`,
+`X-Antnest-Agent-ID`). It authenticates external users and must strip spoofed
+identity headers. ACP authorizes resource methods against the locally applied
+current organization snapshot; there is no opaque subject or outbound identity
+lookup. It advertises no ACP `authMethods` because authentication completed at
+the transport boundary.
+
+## Runtime Rebuild Integration
+
+Controller owns Runtime lifecycle and publishes only its confirmed current
+binding through execution configuration. ACP fixes the Runtime identity in each
+accepted Run; it never changes a running Tool loop's endpoint. Configuration
+application is distinct from Runtime readiness or Agent settlement.
+`POST /rpc/agent-acp/settle-agent` checks the closed lifecycle operation, waits
+outside configuration publication and reports local quiescence plus durable
+stopping evidence. New prompts cannot reuse a protected Runtime revision.
+
+Skill-maintenance barriers are tied to the Runtime execution that produced the
+unknown effect. A confirmed replacement with a different execution ID can
+accept foreground Runs while the old ledger entry remains unresolved; a
+configuration update retaining the same Runtime cannot clear its barrier.
+
+## Workspace Bridge Extension
+
+The [workspace Bridge extension](../../../contracts/agent-acp/workspace-bridge.md)
+adds durable prompt intent IDs with Session append compare-and-swap, targeted Run
+cancellation, scoped execution/intent observation, and sequenced replay/live
+delivery marks. A client opts in through `antnest.dev/bridge` in initialize
+`_meta`; standard ACP clients do not negotiate the extension and keep their
+existing wire behavior. The internal `GET /rpc/agent-acp/workspace/...` routes
+require trusted organization, principal and Agent headers and repeat
+authorization before reading; they are not browser endpoints. ACP remains the
+execution and history authority when the Agent UI Node Bridge reconnects.
+
+## Resource Identifiers
+
+New Session, Run, message, MCP revision, checkpoint and Tool attempt records
+follow the [platform resource ID contract](../../../contracts/resource-identifiers.md).
+Random IDs carry their resource kind; fork/recovery IDs use stable namespaced
+hashes. Forks retain bulk SQL copying and rewrite message payload references to
+the copied IDs. Existing records and externally supplied protocol IDs are opaque
+and unchanged. Connection IDs and model Tool-call IDs are not affected.
+
+## ACP Capability Matrix
+
+| Surface               | Implemented                                                                                                                                                                                                                                                                                                                                                                                   | Not implemented                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1 stable             | `initialize`, `session/new`, `session/load`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, `session/set_config_option`, `session/set_mode`, reverse `session/request_permission`, replayable message/thought/Tool/usage/plan updates, command catalog, session-info and config/mode notifications; SDK-experimental `session/fork` | Client filesystem and terminal delegation, authentication, Provider administration, elicitation, NES, document synchronization                                            |
+| v1 Antnest extensions | Runtime Skill commands in the command catalog and initialize `_meta["antnest.dev/skill-commands"]`; experimental SDK learning notices for clients that declare `session.notices`; workspace Bridge `_meta["antnest.dev/bridge"]` (including `learningNotices` when negotiated)                                                                                                                | -                                                                                                                                                                         |
+| v2 draft              | `initialize`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/fork`, `session/prompt`, `session/cancel`, `session/set_config_option`, reverse `session/request_permission`, replayable message/thought/Tool/usage/state/session-info/plan updates, built-in command catalog and config notifications                                             | Authentication, Provider administration, message-tunneled MCP, elicitation, NES, document synchronization; Runtime Skill commands and learning notices are not advertised |
+
+The executable coverage matrix is maintained in
+[protocol conformance](protocol-conformance.md). Stable ACP v1 requires client
+stdio MCP support. Antnest deliberately accepts only `mcpServers: []` on both
+ACP versions. Every nonempty list (HTTP, stdio, SSE, MCP-over-ACP) fails
+explicitly with `client_mcp_not_allowed`; no client MCP capability is
+advertised. Only platform Runtime MCP tools are available. Platform-configured
+stdio children are hosted inside Runtime, not on the shared ACP host. See
+[Runtime context](runtime-context.md). This restricted profile must not be
+described as generic full v1 conformance. Client injection as a whole is
+deferred; future administrator opt-in and the client transport are separate
+decisions described in [MCP trust and injection boundary](client-mcp-policy.md).
+
+The matrix describes current behavior. Methods are advertised only when their
+semantics are implemented. Platform authentication and Provider authority
+remain in their owning services; authorized Session options can be exposed
+without transferring that authority. Client-owned filesystem/terminal
+delegation remains outside the Runtime execution model. The service targets all
+applicable stable ACP capabilities, including optional ones; only explicit
+architecture incompatibilities and protocol-stability deferrals exclude work.
+Unsupported surfaces are not stubbed with false success responses.
 
 ## Invariants
 

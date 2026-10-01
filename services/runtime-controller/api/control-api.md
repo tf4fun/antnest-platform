@@ -69,9 +69,8 @@ effects keep their slot and continue to require exact-request reconciliation.
 
 Consumers must not equate an unpublished executable Runtime revision with
 absence of deployment resources. Agent Controller must resolve the owner
-service's retained revision before deleting a failed Agent. That consumer and
-Gateway integration are implemented in the C3 failed-build cleanup batch of
-[single-node closeout](../../../docs/docker-single-node-closeout.md).
+service's retained revision before deleting a failed Agent; the Agent Controller
+failed-build cleanup does this before it deletes the Agent.
 
 All mutations for one Agent are serialized across Controller replicas. The
 PostgreSQL lock session is monitored while a mutation runs. A database

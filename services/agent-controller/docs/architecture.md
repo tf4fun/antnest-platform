@@ -1,5 +1,8 @@
 # Agent Controller Architecture
 
+This document describes Agent Controller's service boundary, aggregate model,
+lifecycle sagas, persistence ownership, observability and extension rules.
+
 ## Mission And Boundary
 
 Agent Controller is the sole writer of Agent business state. It validates one
@@ -12,18 +15,15 @@ See [Runtime availability](runtime-availability.md) for the two-stage contract.
 It depends on language-neutral HTTP contracts. It does not import another
 service implementation or inspect another service database.
 
-The execution-boundary refactor completed its scoped B5 integration on 2026-09-15;
-strict clock-warning failures remain recorded separately in [current status](../../../docs/current-status.md).
-Controller owns ModelProfile/Template Catalog, management projections and the five
-Agent lifecycle workflows. Configuration publication and lifecycle settlement
-are wired; the five old execution RPCs and RunService injection are removed.
+Controller owns the ModelProfile/Template Catalog, management projections and
+the five Agent lifecycle workflows. It publishes execution configuration to ACP
+and requests lifecycle settlement from ACP; it exposes no execution RPCs.
 Temporal owns management work scheduling; PostgreSQL retains phases and CAS,
 not worker leases. Execution state and audit belong to ACP.
 
-The [workspace metadata reader](workspace-state.md) no longer reads execution state.
-Legacy Run application and persistence code have been removed; no second execution
-authority remains in Controller. Gateway/Console consumers have switched. See the
-[current implementation state](../../../docs/controller-acp-execution-boundary-plan.md#102-当前实施进度).
+The [workspace metadata reader](workspace-state.md) does not read execution
+state. Controller has no Run application or persistence code, so it is never a
+second execution authority.
 
 A small Runtime-observation consumer is intentionally not a general event bus.
 It polls Runtime Controller's authoritative ordered journal with a persisted
@@ -119,12 +119,23 @@ deployment uses locally installed images; registry pull policy is not added by
 this change. No image database or cross-service persistence is introduced.
 
 Templates do not contain users, active Runtime endpoints, Egress policy, or
-Skill package bytes. The Stage 4 catalog accepts exact Skill versions and stores
-Registry-resolved immutable metadata in each Template revision. AgentSpec copies
-those records alongside the model configuration. For nonempty sets, lifecycle
-admission waits for Runtime Controller preparation before creation, Drain, or
-network Ensure, and supplies the prepared reference to the Runtime operation.
-Invalidated-set recovery and cross-service acceptance remain pending.
+Skill package bytes. The catalog accepts exact Skill versions and stores
+Registry-resolved immutable metadata in each Template revision. Historical
+revisions and command replays read the stored metadata without selecting a new
+version. AgentSpec copies those records alongside the model configuration. For
+nonempty sets, lifecycle admission waits for Runtime Controller preparation
+before creation, Drain, or network Ensure, and supplies the prepared reference
+to the Runtime operation. This prevents a successful Agent creation that
+silently lacks its configured Skills. Agents with an empty Skill set keep the
+same lifecycle without a preparation phase.
+
+A separate PostgreSQL preparation intent freezes the target and source
+revisions without changing Agent admission. Lifecycle admission retries
+preparation while it is queued and changes the Agent only after Runtime
+Controller reports the prepared collection ready. Deterministically rejected
+preparations are abandoned so a new operation can proceed. An invalidated
+preparation before admission is released and restarted as a new durable
+attempt. Terminal operations release the prepared reference.
 
 Updating a Template creates a revision. It does not silently mutate existing
 Agents. Applying that revision to an Agent is an explicit rebuild operation.
@@ -217,10 +228,10 @@ Managed MCP arguments and environment are not copied into the ACP Agent
 configuration payload or operational events.
 The current projection always emits `skill_instructions: []`. The
 [Skill Registry design](../../../docs/skill-registry-minimal-design.md) keeps it
-permanently empty and deprecates the full-text channel. B0 will constrain the
-wire schema and B5 will reject nonempty input and remove ACP prompt expansion;
-Console B4 will also remove its audit projection of `skillInstructions` bodies.
-Those changes remain pending. Registry integration must not populate this field.
+permanently empty and retires the full-text channel. The execution snapshot
+schema constrains the field to `maxItems: 0`, ACP rejects nonempty input, and
+Console does not project `skillInstructions` bodies. Registry integration must
+not populate this field.
 
 ### ExecutionRevision
 
@@ -310,7 +321,7 @@ Only created/enabled/available with a valid execution binding, desired enabled,
 current owner authorization and no conflicting Operation or Run admits new Runs.
 Progress and failure belong to the existing Operation, not additional lifecycle
 states. See [Agent state](agent-state.md). Rebuild and
-delete wait for a settled active Run. Stage 2 has no force mutation and no
+delete wait for a settled active Run. There is no force mutation and no
 candidate Runtime.
 
 ## Business Scenarios
@@ -470,8 +481,8 @@ Ownership inspection is not executable readiness: stable provisioned/disabled he
 may report degraded live health and still supply a cleanup revision. Publishing
 an execution binding requires an independently inspected healthy Runtime.
 
-Runtime Controller contract revision 8 completes initialize/update/enable with
-`provisioned/unknown`, without execution identity or endpoint. Historical
+The Runtime Controller contract completes initialize/update/enable with
+`provisioned/unknown`, without execution identity or endpoint. Stored
 `runtime_not_ready` failures remain readable for cleanup and exact replay but
 are not produced by current creation. Error reconciliation still uses the exact
 request journal and never adopts another operation. Runtime readiness does not
@@ -504,23 +515,37 @@ an `off` to `automatic` transition refreshes
 it, and other mutations preserve it. It participates in the policy revision
 but cannot be selected by a mutation caller. Owner-authorized canonical pins
 are accepted because they only remove automatic maintenance rights; no existing
-path or ownership is inferred. The reserved `adopted_paths` list remains empty
-in the first automatic-learning delivery; explicit adoption is deferred.
-ACP consumes the policy through the
-scoped internal read and recheck it before an L3 candidate commit. See the
+path or ownership is inferred. A pin may name a path that does not exist yet.
+The reserved `adopted_paths` list must remain empty; explicit adoption is
+planned. Policy changes create no Agent Spec or Runtime revision. ACP owns the
+background learner, consumes the policy through the scoped internal read, and
+rechecks it before committing a learning candidate. See the
 [Skill Learning contract](../../../contracts/skill-learning/learning-api.md).
 
-The initial schema owns:
+The schema owns:
 
 - `provider_connections` (connection metadata and current encrypted credential);
 - `model_profiles` (current model parameters, version and configuration stamp);
+- `catalog_requests` (catalog command idempotency receipts);
 - `agent_templates`, `agent_template_revisions`;
 - `agents`, `agent_spec_revisions`, `execution_revisions`;
 - `agent_access_bindings` (one owner binding per Agent, keyed by `agent_id`);
 - `agent_lifecycle_operations`;
+- `agent_skill_preparation_intents`;
 - `execution_configuration_sync`;
 - `runtime_observation_cursor`;
-- `agent_events`.
+- `identity_revocation_cursor`, `owner_revocations`;
+- `skill_learning_policies`, `skill_learning_policy_requests`;
+- `event_journal_cursor`, `agent_events`.
+
+Resource identifiers follow the
+[platform resource ID contract](../../../contracts/resource-identifiers.md),
+which separates resource kind from retry purpose. Create and Rebuild both
+generate `agentspec_` IDs; execution revisions use `execution_`, and all
+lifecycle, Runtime observation and owner-revocation events use `event_`. Stable
+namespaces retain retry deduplication. Existing records, client request keys,
+content digests and Runtime incarnation tokens keep their own formats. Identity
+and ACP own their respective resource generators.
 
 `agents` is the global current-state projection; it is not an event-sourced
 reconstruction requirement. Events and immutable revisions provide audit and
@@ -613,20 +638,18 @@ Required metrics are low-cardinality:
   and admission before completing that attempt as failed; never wait fenced
   for another download. RC owns preparation and references. The Controller
   stores the intent before lifecycle admission and exposes its scoped progress
-  through `GET /internal/agent-skill-preparations/{request_id}`. The endpoint
-  reads RC's live receipt while preparing or ready and returns a dependency
-  error if that read fails. ACP/Console delivery is verified in the explicit
-  integration batch. Old shared-volume migration and exceptional recovery are
-  absent from the clean-development release; see the
-  [release cleanup](../../../docs/legacy-skill-release-cleanup-20261001.md).
+  through `GET /internal/agent-skill-preparations/{request_id}`, which is
+  available before the Agent row exists. The endpoint combines the durable
+  intent with RC's live receipt while preparing or ready, omits the frozen spec
+  and prepared reference, and returns a retryable dependency error if the RC
+  read fails. There is no shared-volume Skill migration, protected export,
+  migration admission gate or special recovery workflow.
 - The separate [learning design](../../../docs/skill-learning-design.md)
   assigns automatic-learning policy, scope/pinning, authorization and budgets to
-  Controller. Its policy persistence and scoped read/mutation have passed local
-  gates; Controller accepts owner-authorized pins and rejects nonempty
+  Controller. Controller persists the policy, serves the scoped read and
+  mutation, accepts owner-authorized pins and rejects nonempty
   `adopted_paths`. ACP owns triggers, managed provenance, candidates,
   policy-bound application records and execution; manual saving is optional.
-  Current automatic-learning delivery and integration evidence is maintained in
-  the [acceptance index](../../../docs/current-status.md).
 - A Kubernetes adapter changes Runtime Controller only.
 - A KMS adapter replaces local encrypted credential storage behind the
   credential port without changing Run contracts.
@@ -637,5 +660,5 @@ Required metrics are low-cardinality:
 
 Controller lists Agent IDs and names for the requested organization and principal using active access bindings and the owner revocation watermark.
 The list is management metadata, not execution admission: disabled or unavailable Agents remain discoverable while authorized; deleted Agents do not.
-Contract revision 26 removes availability and opaque access subjects from list items, and removes Controller workspace state get/watch.
-Execution state, current Session and cancellation belong to ACP. Gateway and UI consumers migrate in B3/B4U before deployment.
+List items carry no availability or opaque access subjects, and Controller provides no workspace state get/watch.
+Execution state, current Session and cancellation belong to ACP.

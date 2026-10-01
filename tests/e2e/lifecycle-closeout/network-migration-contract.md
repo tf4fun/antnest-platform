@@ -1,37 +1,50 @@
-# Lifecycle real-network acceptance migration
+# Runtime network policy contract
 
-This batch owns the network profile and its acceptance assets. Production service
-implementations and other historical profiles are outside this batch.
+This document defines what the network policy profile
+(`make e2e-lifecycle-network`) must prove. It changes no production service
+implementation, host firewall or route, and depends on no Internet endpoint.
 
-Retain two ordinary-user Runtime Bash clients, actual TCP/NDJSON and DNS, and the
-isolated target behind a fail-closed test-only Egress forwarding guard. Prove
-allow -> deny -> allow, A's original conntrack removal at deny acknowledgement,
-blocked reverse push, prompt reset/rejection instead of timeout, and B's same
-socket and DNS continuing across A's policy change and B's stale CAS conflict.
-Keep private-address rejection, exact target hit history, policy replay,
-unchanged physical/configuration identity and workspace bytes. Never change host
-firewalls/routes or depend on an Internet endpoint.
+## Packet-path behavior
 
-Use the current Foundation setup (Provider connection, stable Model ID, returned
-Template revision, immutable Runtime image and readiness before exact replay).
-The separate network deployment adds exactly one healthy target on Egress only,
-with no host ports. Temporal stays private; infrastructure addresses are reserved.
-All thirteen services and eight application image identities must be verified.
+The profile uses two ordinary-user Runtime Bash clients, real TCP/NDJSON and DNS,
+and an isolated target behind a fail-closed, test-only Egress forwarding guard.
+It must prove:
 
-Each actual SDK session/new and session/prompt request supplies its JSON-RPC ID
-and connection trace link. Six completed Runs bind public execution audits to the
-correct Agent/Session and immutable execution revision. Their twelve actual model
-HTTP calls and six Runtime Bash executions descend from those Runs. There is no
-Controller acquire/finish admission oracle or private Runtime snapshot dependency.
-Four lifecycle operations retain current Temporal/SQL/publication/settlement
-traces. Policy writes retain Gateway/Console/Controller/Egress ancestry and exact
-Agent identity. Raw warnings and errors stay visible and strict status stays
-separate from topology; no clocks, exporter intervals or raw spans are changed.
+- allow, then deny, then allow on Agent A;
+- removal of A's original conntrack entry at the deny acknowledgement;
+- a blocked reverse push to A, and a prompt reset or rejection instead of a
+  timeout;
+- that B's same socket and DNS keep working across A's policy change and across
+  B's stale CAS conflict;
+- private-address rejection, exact target hit history, policy replay, and
+  unchanged physical identity, configuration and workspace bytes.
 
-Delete both Agents through business APIs. Require their original Runtime IDs to
-emit one clean exit/stop/destroy sequence, and gracefully stop remaining trace
-producers with exit zero before collection. Save raw traces and failures privately,
-continue collecting independent trace failures, and clean only owned resources.
-Retained development containers/data must remain unchanged. No old shared assets
-are removed. Add negative tests before implementing new acceptance behavior and
-run verification serially, including local socket components and Docker evidence.
+## Deployment
+
+Setup uses the Foundation flow (Provider connection, stable Model ID, returned
+Template revision, immutable Runtime image, and readiness before exact replay).
+The network deployment adds exactly one healthy target on the Egress network
+only, with no host ports. Temporal stays private, and infrastructure addresses
+are reserved. All thirteen services and eight application image identities are
+verified.
+
+## Trace rules
+
+Each SDK `session/new` and `session/prompt` request supplies its JSON-RPC ID and
+connection Trace link. Six completed Runs bind public execution audits to the
+correct Agent, Session and immutable execution revision; their twelve model HTTP
+calls and six Runtime Bash executions descend from those Runs. Four lifecycle
+operations keep the Temporal, SQL, publication and settlement Trace checks.
+Policy writes keep Gateway, Console, Controller and Egress ancestry and the exact
+Agent identity. Raw warnings and errors stay visible, and strict status is
+reported separately from topology. Clocks, exporter intervals and raw spans are
+never changed.
+
+## Cleanup
+
+Both Agents are deleted through business APIs. Their original Runtime containers
+must each emit one clean exit, stop and destroy sequence, and the remaining Trace
+producers are stopped gracefully with exit zero before collection. Raw Traces and
+failures are saved privately, independent Trace failures are still collected, and
+only owned resources are removed. Negative tests come first, and local socket
+components and Docker checks run serially.

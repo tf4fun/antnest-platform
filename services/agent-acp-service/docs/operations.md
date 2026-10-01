@@ -1,5 +1,8 @@
 # Agent ACP Service Operations
 
+This document covers startup and readiness, configuration rules, the ACP
+endpoints, telemetry, failure handling and the network deployment boundary.
+
 ## Startup And Readiness
 
 The process starts accepting ACP connections only after:
@@ -18,7 +21,7 @@ this service's storage, never Controller RPCs or model/Tool execution.
 Serving the protocol is not permission to execute: the current-process organization
 snapshot and volatile credentials must also have been applied. Production composition
 wires that directory to access, execution and revocation; see
-[batch status and remaining integration](execution-configuration.md).
+[local execution configuration](execution-configuration.md).
 
 The migration journal must be an exact prefix of the ordered migration catalog
 embedded in the running release. A changed checksum, gap, or unknown future
@@ -28,10 +31,9 @@ journal matches that older release.
 
 Migration `0004_session_configuration.sql` adds Session overrides/revision and
 the configuration captured in each Run intent. Historical intents may retain
-NULL, but startup does not replay any intent. The current configuration is supplied by Controller's inbound snapshot publication,
-not by per-Run outbound RPC. Snapshot publication and the remaining management
-operations require coordinated Controller/Gateway deployment after B1 is complete.
-An unavailable
+NULL, but startup does not replay any intent. The current configuration is
+supplied by Controller's inbound snapshot publication, not by per-Run outbound
+RPC. An unavailable
 selected model rejects admission; it does not silently fall back to a default.
 
 Migration `0005_tool_permissions.sql` adds this service's permission ledger,
@@ -60,21 +62,8 @@ before a Provider reports usage cannot be given invented token counts.
 
 ## Configuration
 
-| Variable                                | Required | Meaning                                                                                                                     |
-| --------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_ACP_LISTEN`                    | no       | HTTP/WebSocket listen address, default `:8080`                                                                              |
-| `ANTNEST_ACP_DATABASE_URL`              | yes      | Private `postgres://` or `postgresql://` database URL                                                                       |
-| `ANTNEST_ACP_DATABASE_TIMEOUT`          | no       | Connection acquisition, PostgreSQL statement and client read timeout, default `10s`; accepts `ms`, `s`, or `m`              |
-| `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`    | no       | Workspace state write/terminal flush deadline, default `10s`; does not expire idle subscriptions; accepts `ms`, `s`, or `m` |
-| `ANTNEST_ACP_CLIENT_MCP_KEY`            | yes      | Base64-encoded 32-byte key for retained Session MCP revisions                                                               |
-| `ANTNEST_ACP_RUN_TIMEOUT`               | no       | Local Run deadline, default `30m`; fixed at acceptance and independent of lifecycle settlement                              |
-| `ANTNEST_ACP_MAX_PROMPT_BYTES`          | no       | ACP WebSocket message bound, default `16777216` bytes                                                                       |
-| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`   | no       | Internal execution snapshot body bound, default `16777216` bytes; independent of prompt size, range 1024-67108864           |
-| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`          | no       | Graceful shutdown deadline, default `15s`                                                                                   |
-| `OTEL_SDK_DISABLED`                     | no       | `true` disables OTLP even when an endpoint is present                                                                       |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`           | no       | OTLP base endpoint; empty disables export                                                                                   |
-| `OTEL_SERVICE_NAME`                     | no       | Defaults to `agent-acp-service`                                                                                             |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no       | `false` by default; `true` captures full discrete RPC JSON, which may include secrets                                       |
+The complete variable table, including the optional Skill learning and Skill
+discovery settings, is in the [service README](../README.md#configuration).
 
 Durations accept a positive integer followed by `ms`, `s`, or `m`. Invalid,
 empty required, unsupported-scheme, and out-of-range values fail startup before
@@ -190,8 +179,7 @@ Collector retention. This service adds no retention service.
   quiescent Run.
 - Nonempty ACP client MCP input fails with `client_mcp_not_allowed`, without
   persistence, replay or a client connection. Use platform-managed Runtime MCP.
-  The old `ANTNEST_ACP_CLIENT_MCP_BLOCKED_CIDRS` option has been removed; no
-  deployment allowlist can enable client injection.
+  No deployment allowlist option can enable client injection.
 - A confirmed Runtime-managed MCP error is returned to the model as a Tool
   result; an unknown transport effect still terminates the Run as unresolved.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
@@ -233,4 +221,9 @@ Compose or Kubernetes network policy permits:
 - inbound only from Edge Gateway, Agent UI bridge, Channel Gateway, and trusted
   development clients;
 - outbound to its private PostgreSQL, configured model APIs,
-  and the Runtime MCP endpoint in a Run snapshot.
+  the Runtime MCP endpoint in a Run snapshot and that Runtime's private
+  Skill maintenance and temporary-Skill endpoints;
+- outbound to Agent Controller's internal Skill learning policy endpoint and the
+  Skill Registry internal API, only when those optional features are configured;
+- inbound from Skill Registry to `/internal/skill-sources/*` when Skill
+  discovery is configured.

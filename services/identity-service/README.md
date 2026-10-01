@@ -1,50 +1,15 @@
 # Identity Service
 
-Identity Service is Antnest's enterprise identity authority. It owns people,
-organizations, directory membership, local login, OIDC federation, SCIM 2.0,
-and opaque access credentials. It does not own Agents, Channels, Runtimes, or
-model credentials.
+Identity Service is the enterprise identity authority for Antnest. It resolves
+local login, OIDC federation, and SCIM 2.0 provisioning into stable Antnest
+principals and opaque access credentials, so that no other service stores
+people, organizations, or credentials. It is written in Go.
 
-## Resource identifiers
+The global User is a stable subject with no profile or credential attributes.
+Organization-scoped profiles, group edges, local passwords, external OIDC
+identities, and tokens are separate records that point at that subject.
 
-New owned records use `<kind>_<32 lowercase hex digits>` from the
-[platform resource ID contract](../../contracts/resource-identifiers.md).
-Bootstrap, local login, directory administration, OIDC and SCIM request the
-specific resource kind from the same secure generator. Existing IDs remain
-opaque and unchanged, including SCIM resource references. Token record IDs are
-separate from bearer credential bytes; token hashing and OIDC secrets are unchanged.
-
-## Status
-
-The [2026-09-26 dependency refresh](../../docs/dependency-refresh-20260926.md)
-targets Go 1.27.1, go-oidc 3.21.0, pgx 5.11.0, OpenTelemetry 1.46.0/0.22.0,
-otelhttp 0.71.0, x/crypto 0.57.0 and x/oauth2 0.37.0. Authentication,
-directory and revocation behavior continue through the service's race/contract
-gates and the final isolated PostgreSQL/Docker acceptance batch.
-
-The identity model and the documented OIDC/SCIM profile are independently
-deployable. A narrow `resolve_principal` RPC lets Agent Controller validate an
-opaque organization/user binding without reading Identity storage or receiving
-profile data. It requires an active organization membership even for a system
-administrator; it is intentionally stricter than administrative authorization.
-The `get_current_account` RPC separately returns the signed-in actor's safe
-organization profile, Organization name/slug, and an authoritative boolean
-indicating whether a local password credential exists. Internal consumers use
-its identity IDs for binding but must explicitly project browser-safe fields;
-the RPC never returns credential material.
-The internal `list_principal_revocations` RPC supplies a durable, replayable
-deactivation feed, separate from synchronous authorization and the general audit
-journal. Agent Controller now consumes it with a durable cursor and idempotent
-Disable operations; C2-05 Docker acceptance covers scoped/global/SCIM revocation
-and offline catch-up. Workspace and history are retained, uncertain Runtime
-effects stay fenced/pending, and reactivation never automatically enables an
-Agent. Create/Enable use `resolve_owner_authorization` to read the active owner
-and latest revocation sequence atomically. Identity still does not own Agent
-lifecycle or read Controller storage. The service contract is
-[`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md); this
-directory is the only implementation authority for this service.
-
-## Owns
+## Responsibilities
 
 - Users, Organizations, OrganizationMemberships, Groups, and GroupMemberships.
 - OIDC Providers, external identities, and durable login state.
@@ -52,10 +17,14 @@ directory is the only implementation authority for this service.
   are separate records and are not attributes of the global User subject.
 - SCIM Users/Groups projection and the transactional Identity event journal.
   The general journal is private; `principal_revocations` is the narrow ordered
-  cross-service feed. See the [delivery contract](../../contracts/identity/principal-revocations.md).
+  cross-service feed defined by the
+  [principal revocation contract](../../contracts/identity/principal-revocations.md).
+- Narrow internal queries for other services: `resolve_principal`,
+  `resolve_owner_authorization`, `get_current_account`, and
+  `list_principal_revocations`.
 - Its private PostgreSQL schema and migrations.
 
-## Does Not Own
+## Non-responsibilities
 
 - Agent access policy, Agent lifecycle, Templates, or Provider model secrets.
 - Channel connectors, webhook signatures, or external conversations.
@@ -64,54 +33,101 @@ directory is the only implementation authority for this service.
 
 ## Interfaces
 
-| Interface                          | Direction | Purpose                                         |
-| ---------------------------------- | --------- | ----------------------------------------------- |
-| `GET /status`                      | inbound   | Liveness/readiness                              |
-| `/rpc/identity/*` JSON RPC         | inbound   | Trusted internal identity commands and queries, including current-account capability projection |
-| `GET /protocol/oidc/callback`      | inbound   | Standard Authorization Code callback            |
-| `/scim/v2/*`                       | inbound   | SCIM 2.0 discovery and directory provisioning   |
-| OIDC discovery/token/UserInfo/JWKS | outbound  | Federated login                                 |
-| Private PostgreSQL                 | owned     | Identity facts, credentials, events, migrations |
+| Direction | Interface | Purpose |
+| --- | --- | --- |
+| Inbound | `GET /status` | Liveness and readiness |
+| Inbound | `/rpc/identity/*` JSON RPC | Trusted internal identity commands and queries, including current-account capability projection |
+| Inbound | `GET /protocol/oidc/callback` | Standard Authorization Code callback |
+| Inbound | `/scim/v2/*` | SCIM 2.0 discovery and directory provisioning |
+| Outbound | OIDC discovery, token, UserInfo, and JWKS endpoints | Federated login |
+| Owned | Private PostgreSQL | Identity facts, credentials, events, and migrations |
 
 Internal transport is trusted. Administrator mutations still carry a
 principal and are authorized against Identity Service's own system or
-organization role facts.
+organization role facts. The internal RPC schema is
+[`contracts/identity/identity-contract.json`](../../contracts/identity/identity-contract.json).
 
-## Local Commands
+## Configuration
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_IDENTITY_DATABASE_URL` | Yes | None | Private PostgreSQL URL. |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Yes | None | Canonical base64 encoding of exactly 32 bytes; AES key for OIDC client secrets. |
+| `ANTNEST_IDENTITY_PUBLIC_BASE_URL` | Yes | None | Absolute base URL for the OIDC callback and SCIM locations. No credentials, query, or fragment. HTTPS is required unless the host is `localhost`, `127.0.0.1`, or `::1`. A trailing `/` is removed. |
+| `ANTNEST_IDENTITY_LISTEN` | No | `:8080` | Listen address. The `--healthcheck` mode reads the same port. |
+| `ANTNEST_IDENTITY_TOKEN_TTL` | No | `12h` | Local and OIDC access-token lifetime. Positive Go duration. |
+| `ANTNEST_IDENTITY_OIDC_SESSION_TTL` | No | `10m` | OIDC login state lifetime. Positive Go duration. |
+| `ANTNEST_IDENTITY_HTTP_TIMEOUT` | No | `10s` | Outbound OIDC request deadline. Positive Go duration. |
+| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT` | No | `15s` | Graceful shutdown deadline. Positive Go duration. |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG` | Conditional | None | Initial Organization slug. The four bootstrap variables are all set or all empty. |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME` | Conditional | None | Initial Organization name. |
+| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL` | Conditional | None | Initial local system administrator email. |
+| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD` | Conditional | None | Initial administrator password, 12 to 1024 bytes. Not trimmed. |
+| `ANTNEST_ENVIRONMENT` | No | None | Recorded as the `deployment.environment.name` telemetry resource attribute. |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` records complete RPC parameters and results, including credentials. Must be `true` or `false`. |
+| `OTEL_SDK_DISABLED` | No | None | `true` installs propagation only and exports nothing. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | None | OTLP HTTP base endpoint. A signal is exported only when this or its per-signal endpoint is set, or its exporter is `otlp`. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | No | None | Per-signal OTLP endpoints. |
+| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | No | None | `otlp` or `none` per signal. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` and per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL` | No | `http/protobuf` | Only `http/protobuf` is supported. |
+| `OTEL_SERVICE_NAME` | No | `identity-service` | Telemetry service name. Other resource attributes are read from the standard OpenTelemetry resource environment. |
+
+Bootstrap is enabled when the bootstrap variables are set. Repeated startup
+verifies the same identity and never resets an existing password. See
+[Operations](docs/operations.md) for bootstrap stability rules and secret
+handling. Never use the Compose development defaults outside a disposable
+development environment.
+
+## Dependencies
+
+- Private PostgreSQL database. Startup fails without it, and readiness requires
+  a bounded database probe to succeed.
+- External OIDC Providers. They are request-time dependencies and do not affect
+  readiness.
+- No other Antnest service. Agent Controller, Admin Console, and Edge Gateway
+  call this service; it never calls them or reads their storage.
+
+## Build and test
+
+Run unit tests from `services/identity-service`:
 
 ```bash
-go test ./...
-go test -race ./...
-golangci-lint run ./...
+GOWORK=off go test ./...
 ```
 
-Run the real PostgreSQL profile from the repository root:
+Run these commands from the repository root:
 
 ```bash
+node tests/integration/go/run.mjs identity-service
 make test-identity-postgres
-docker compose --profile stage2 build identity-service
+docker compose --profile stage3 build identity-service
 ```
 
-Unit tests remain in this service. Repository and protocol integration tests
-live in [`tests/integration/go/identity-service`](../../tests/integration/go/identity-service).
+Repository and protocol integration tests live in
+[`tests/integration/go/identity-service`](../../tests/integration/go/identity-service).
 The root runner uses a Go overlay to compile them in their original service
-packages, preserving access to internal helpers without duplicating test source.
-With `ANTNEST_IDENTITY_TEST_DATABASE_URL` set to a dedicated disposable database,
-run the integration suite from the repository root:
+packages, so they can use internal helpers without duplicating test source.
+`make test-identity-postgres` starts an isolated PostgreSQL dependency and runs
+the PostgreSQL suite. The suite covers deterministic login-admission races and
+a local HTTPS OIDC fixture (authorization redirect, PKCE, client
+authentication, signed ID token, and JWKS). It also checks completion
+deadlines, immutable client registration, and secret rotation.
 
-```bash
-node tests/integration/go/run.mjs identity-service -- -race
-```
+Root `make` targets that cover this service: `make fmt-check`, `make lint`,
+`make test-go`, `make test-identity-postgres`, and `make docker-build-stage3`.
 
-The PostgreSQL suite includes deterministic login-admission races plus a local
-HTTPS OIDC fixture (authorization redirect, PKCE, client authentication, signed
-ID token and JWKS). It checks completion deadlines, immutable client registration,
-and successful secret rotation. These are service-owned component tests, not
-Gateway/browser acceptance. To reuse a development PostgreSQL instance, supply
-`ANTNEST_IDENTITY_TEST_DATABASE_URL` for a dedicated disposable database and run
-`node tests/support/verification/go-service.mjs identity-service` from the
-repository root; never point tests at business data.
+Test-only variables:
 
-See [`docs/architecture.md`](docs/architecture.md) for the module and domain
-model and [`docs/operations.md`](docs/operations.md) for configuration,
-secrets, readiness, telemetry, and recovery.
+- `ANTNEST_IDENTITY_TEST_DATABASE_URL` points the PostgreSQL suite at a
+  dedicated disposable database, for example when running
+  `node tests/support/verification/go-service.mjs identity-service` against an
+  existing development PostgreSQL instance. Never point tests at business data.
+
+## Documentation
+
+- [Architecture](docs/architecture.md) - domain model, modules, transactions, protocol boundaries, and invariants.
+- [Operations](docs/operations.md) - startup, readiness, bootstrap, secrets, protocol operations, and recovery.
+- [Observability](docs/observability.md) - spans, metrics, content capture, and database tracing.
+- [Stage 2 identity](../../docs/stage-2-identity.md) - platform identity design.
+- [Identity contracts](../../contracts/identity/README.md) - RPC schema and principal revocation feed.
+- [Resource identifiers](../../contracts/resource-identifiers.md) - platform ID format.

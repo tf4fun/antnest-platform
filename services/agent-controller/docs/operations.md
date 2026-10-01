@@ -1,10 +1,13 @@
 # Agent Controller Operations
 
+This document covers the Agent Controller process model, configuration,
+readiness, lifecycle recovery, tracing, retention and verification procedures.
+
 ## Process Model
 
 All lifecycle operations use [Temporal workflows](lifecycle-workflows.md).
 The official SDK Worker runs inside this binary; Temporal Server is a separate
-dependency. The old PostgreSQL-leased executor has been removed.
+dependency. PostgreSQL does not lease or schedule lifecycle work.
 
 `ANTNEST_TEMPORAL_ADDRESS` defaults to `127.0.0.1:7233`; Compose sets
 `temporal:7233`. The namespace is `antnest`, task queue `agent-lifecycle`.
@@ -20,7 +23,7 @@ workflow storage while admitted operations remain open. Before upgrading an exis
 operation using the old binary; no live migration of those operations is provided.
 
 Temporal failure blocks new lifecycle admission; it does not affect `/status`
-dependency fan-out or cancel existing work. Existing accepted workflows resume
+dependency fan-out or cancel existing work. Existing admitted workflows resume
 when the engine and worker are available. Inspect business progress through the
 existing operation endpoint; inspect activity retries through Temporal history.
 No Temporal management UI is required. Do not use workflow termination as a
@@ -35,9 +38,9 @@ PostgreSQL is authoritative. Lifecycle mutations commit durable intent and
 return `202 Accepted`; only the worker executes their Runtime Controller and
 Runtime Egress lifecycle effects. Network policy management is a separate
 synchronous read/CAS RPC path, described in [Network policy management](network-policy.md).
-It never executes a lifecycle phase or opens an attachment. The current runnable slices serve ModelProfile/Template Catalog
-operations, Agent create,
-rebuild, disable, enable, delete, and durable lifecycle-operation inspection. Create
+It never executes a lifecycle phase or opens an attachment. The service serves
+ModelProfile/Template Catalog operations, Agent create, rebuild, disable, enable,
+delete, and durable lifecycle-operation inspection. Create
 advances through Egress ensure, Runtime initialize, attachment open, and atomic
 publication. Rebuild drains, closes the attachment, replaces Runtime, reopens
 the attachment, and publishes. Disable drains, closes the attachment, removes
@@ -51,7 +54,7 @@ then atomically publishes `deleted` and deactivates all Agent access bindings.
 Management clients can read `GET /internal/execution-synchronization?organization_id=...`
 without contacting ACP. A null record means no configuration revision exists;
 an older applied revision means a newer configuration has not been confirmed.
-An equal applied revision is historical acknowledgement, not ACP health or
+An equal applied revision is a past acknowledgement, not ACP health or
 proof that credentials remain loaded after a restart. Database read failures
 are errors, never a synchronized result. See the
 [read contract](../../../contracts/agent-controller/control-api.md#execution-configuration-synchronization).
@@ -60,7 +63,7 @@ Configuration commits notify the execution publisher; startup and periodic passe
 resend the current organization snapshot. Lifecycle drain confirms a closed
 configuration at ACP, then waits for or cancels execution through its Agent-level
 settlement RPC. It never reads Run/Tool state or writes execution audit.
-The old resolve/access/acquire/credential/finish RPCs are removed.
+Controller exposes no Run resolve, access, acquire, credential or finish RPCs.
 Current projection reads are served from `GET /internal/agents` and
 `GET /internal/agents/{agent_id}`. Lists use `(created_at, agent_id)` keyset
 pagination, hide desired state `deleted` by default, and may filter by opaque
@@ -81,33 +84,27 @@ do not consume the lifecycle/query connection pool. A disconnect is
 recovered by List from the consumer-owned cursor, never by assuming the last
 socket write was applied.
 
-The current release targets one Controller instance. Temporal dispatches lifecycle
+The service targets one Controller instance. Temporal dispatches lifecycle
 Activities; PostgreSQL management locks and phase/Agent-ownership CAS remain the
-business serialization guard. Horizontal deployment is not part of this batch.
+business serialization guard. Horizontal deployment is not supported.
 
 ## Configuration
 
-Required:
+The complete list of environment variables, defaults and validation rules is
+in the [service README](../README.md#configuration). Required:
 
 - `ANTNEST_AGENT_CONTROLLER_DATABASE_URL`;
-- `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`: base64-encoded 32-byte AES key;
+- `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`: canonical base64 for a 32-byte AES key;
 - `ANTNEST_RUNTIME_CONTROLLER_URL`;
-- `ANTNEST_RUNTIME_EGRESS_URL`.
+- `ANTNEST_RUNTIME_EGRESS_URL`;
 - `ANTNEST_IDENTITY_SERVICE_URL`;
 - `ANTNEST_AGENT_ACP_SERVICE_URL` (execution configuration/settlement RPC).
 
 The Runtime-reachable Egress endpoint is returned by Runtime Egress and is not
-duplicated in Agent Controller configuration.
-
-Optional:
-
-- `ANTNEST_AGENT_CONTROLLER_LISTEN` (default `:8080`);
-- `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `150s`);
-- `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
-- `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL` (default `2s`);
-- `ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL` (default `2s`);
-- `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
-- standard OTEL environment variables using OTLP HTTP/protobuf.
+duplicated in Agent Controller configuration. `ANTNEST_SKILL_REGISTRY_URL` and
+`ANTNEST_SKILL_REGISTRY_API_TOKEN` are optional but must be set together.
+OpenTelemetry uses the standard OTEL environment variables with OTLP
+HTTP/protobuf only.
 
 Activities use a 15-minute attempt timeout, 30-second heartbeat timeout and
 5-second heartbeats. Retry delays grow from 1 second to at most 1 minute.
@@ -115,24 +112,22 @@ These are SDK execution settings, not a second database scheduling mechanism.
 
 Secrets must come from environment/secret mounts and must never be printed.
 
-Startup applies the service-owned numbered forward migration chain, currently
-`0001` through `0009`. Stored history must be an exact prefix with matching
+Startup applies the service-owned numbered forward migration chain embedded from
+`internal/repository/postgres/migrations/`. Stored history must be an exact prefix with matching
 names/checksums; drift fails startup. Add a new migration for a schema change
 rather than editing an applied migration or bypassing validation. Dropping and
 recreating a database is only an explicitly authorized disposable-development
 reset, never the normal upgrade procedure. Back up before changing versions.
 
-Provider P1 is an explicit fresh-MVP-schema baseline (2026-09-11): `0001`
-now separates connections, credential versions and model parameters. It has no
-in-place conversion of pre-P1 data. An old schema history intentionally fails
-checksum validation; never bypass that check. Recreate only an explicitly approved
-disposable instance when the matching Console consumer is ready. The running
-8090 acceptance instance has not been upgraded or reset by this batch.
+Migration `0001` separates Provider connections, credential versions and model
+parameters. It has no in-place conversion from an earlier schema, so a database
+created by an older schema history fails checksum validation. Never bypass that
+check.
 
 ## Readiness
 
 `GET /status` returns ready when PostgreSQL is reachable and its migrations
-were accepted at startup. Runtime Controller and Runtime Egress outages are
+were validated at startup. Runtime Controller and Runtime Egress outages are
 recorded on the affected lifecycle operation and do not make the process unready;
 otherwise a downstream outage would cause an unrelated restart loop.
 
@@ -163,18 +158,13 @@ can still be rebuilt, disabled or deleted. An initial construction failure with
 no committed configured target remains a failed operation, not a pending Runtime.
 
 A definite failure before replacement keeps the Agent unavailable and its
-historical source intact. Correct the reported dependency/configuration problem
+source configuration intact. Correct the reported dependency/configuration problem
 before submitting a fresh Rebuild request. An uncertain effect keeps the
 original operation running; inspect/replay that request instead of creating a
-second operation. Neither historical source lookup nor an unchanged logical
-Runtime head clears an unresolved Run effect: exact replacement evidence is
-still required. Do not repair availability by editing the database or
+second operation. Neither a source lookup nor an unchanged logical Runtime
+head clears an unresolved Run effect: an exact replacement result is still
+required. Do not repair availability by editing the database or
 reattaching an old endpoint; that bypasses lifecycle admission.
-
-The current service tests cover never-ready management and unavailable-Agent
-recovery. Fresh Gateway/Console and Docker acceptance for the creation/observation
-split remains a separate integration batch; previous deployment traces are not
-evidence for this new contract.
 
 Identity Service is checked before initial Agent creation and before Agent
 access resolution. Missing or inactive organization membership fails closed;
@@ -196,7 +186,7 @@ an Identity transport failure is retryable and does not create or admit work.
   Agent unavailable and append an audit event. Unknown external effects stay
   pending and retry rather than being incorrectly compensated.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
-  operation. Stage 2 uses the idempotency request ID as the lifecycle operation
+  operation. The idempotency request ID is the lifecycle operation
   identity; there is no second alias to lose or reconcile.
 - A create transport timeout may occur before or after intent commit. Replay
   the exact request ID and body to obtain the same operation. The replay never
@@ -244,12 +234,10 @@ an Identity transport failure is retryable and does not create or admit work.
 - Never edit operation phases or Agent projection rows by hand. Repair the
   dependency and replay the durable operation.
 
-Migration 6 preserves existing checksums and permits unresolved delete sources
-only before the Runtime barrier. It does not turn historical
-`agent_runtime_unassigned` claims into verified absence or repair historical
-false-completed deletions. That reason is no longer accepted as authority.
-This batch validates fresh instances; older affected development data requires
-separate reconciliation or an explicitly authorized blank-instance reset.
+Migration `0006` permits unresolved delete sources only before the Runtime
+barrier. It does not turn stored `agent_runtime_unassigned` claims into
+verified absence or repair deletions that were previously marked complete
+without proof. That reason is not accepted as absence authority.
 
 ## OpenTelemetry And Jaeger
 
@@ -269,8 +257,8 @@ The Compose `observability` profile starts Jaeger and exposes its UI on the
 configured loopback port. The create admission trace shows the bounded HTTP
 route, Identity owner resolution, and atomic lifecycle-intent commit. The
 durable lifecycle attempts correlated by request ID collectively show Runtime
-Egress ensure, Runtime Controller initialize, and atomic publication. Once
-the boundary refactor is integrated, a Run trace must show:
+Egress ensure, Runtime Controller initialize, and atomic publication. A Run
+trace shows:
 
 ```text
 Gateway authentication and ACP forwarding
@@ -283,13 +271,13 @@ Gateway authentication and ACP forwarding
 No per-Run Controller or Identity RPC belongs below ACP. Configuration publication
 and Agent lifecycle settlement have their own management request chains.
 Controller does not own execution tickets, terminal reports or Session overrides.
-This is the target B5 trace; the unintegrated worktree is not deployment evidence.
 
 Lifecycle tracing is provided by official SDK interceptors and common RPC/SQL
 boundaries. Gateway -> Console -> admission -> Workflow -> Activities remains
 one causal trace. Wait six seconds after terminal state before opening Jaeger.
-No application-specific recovery spans or traceparent scheduling columns remain.
-See [lifecycle workflows](lifecycle-workflows.md) for rollout prerequisites.
+There are no application-specific recovery spans or traceparent scheduling
+columns. See [lifecycle workflows](lifecycle-workflows.md) for deployment
+prerequisites.
 
 ## Retention And Backup
 
@@ -315,12 +303,15 @@ OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
 
 `make e2e-stage2` builds an isolated blank deployment, creates an Agent, proves
 Runtime readiness and one ACP Runtime Tool Run, verifies workspace effects,
-and deletes the Agent with its external Runtime resources. These scripts still
-require B5 migration to the new contracts. Final lifecycle evidence must preserve
-Gateway ancestry through official Temporal workflow/Activity instrumentation,
-Agent Controller, Runtime Egress and Runtime Controller. Execution traces pass
-through Gateway, ACP and Runtime MCP; neither Controller belongs in the Tool data
-path. Earlier traces are not acceptance of the new boundary.
+and deletes the Agent with its external Runtime resources. Lifecycle traces
+preserve Gateway ancestry through official Temporal workflow/Activity
+instrumentation, Agent Controller, Runtime Egress and Runtime Controller.
+Execution traces pass through Gateway, ACP and Runtime MCP; neither Controller
+belongs in the Tool data path. `make e2e-stage3` runs the stage 3 Docker
+deployment scenario; `make e2e-managed-mcp-v1` and `make e2e-managed-mcp-v2`
+exercise managed MCP configuration. Single-node Docker
+operation is described in
+[Docker single-node operations](../../../docs/docker-single-node-operations.md).
 
 ## Creation And Readiness
 
@@ -335,7 +326,5 @@ Owner revocation, concurrent lifecycle changes, consumed restart observations
 and mismatched Runtime revisions fence stale publication. Once an available
 execution is invalidated, it is not automatically resurrected.
 
-This service batch requires Runtime Controller contract revision 8. The existing
-development containers have not been replaced by these source changes.
-Cross-service image rebuild and fresh Jaeger acceptance belong to the next
-integration batch; old readiness timings are not evidence for this contract.
+Lifecycle completion without readiness requires a Runtime Controller contract
+that completes initialize/update/enable with `provisioned/unknown`.

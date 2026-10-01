@@ -1,10 +1,9 @@
 # Workspace document navigation
 
-Status: implemented and deployed to the human acceptance preview on 2026-09-26.
-Focused route checks pass; broad visual regression and C4 remain pending user
-style approval. This replaces query-based document selection in development;
-no legacy query-route compatibility is required. The HTTP/SSE business API
-remains unchanged.
+This document defines the browser document paths for the Workspace and how
+Agent UI, Admin Console and Edge Gateway parse, produce and forward them.
+Document selection uses paths only; there are no query-based document routes.
+The HTTP/SSE business API is unaffected.
 
 | Document | Path |
 | --- | --- |
@@ -35,17 +34,9 @@ Malformed, external, query-bearing or unknown return destinations fall back to
 the existing safe landing page. Existing HTTP/SSE API query parameters are
 unaffected.
 
-Delivery order (one service implementation at a time):
+## Testing
 
-1. Agent UI: shared parser, browser navigation, SSR, local unit/component gates.
-2. Console: Open chat and login return, local unit/component gates.
-3. Gateway: validated login return and escaped-path forwarding, local Go gates.
-4. Integration: direct load, refresh, login return and Back/Forward across the
-   deployed services. Broad visual regression remains gated by the user's style
-   approval; a preview is not a completed acceptance claim.
-
-All three service batches have passed their focused local checks. Production
-SSR/HTTP integration covers direct load and reload; the navigation browser case
-covers Back/Forward, draft retention and zero Session/Prompt writes. The deployed
-preview was checked for Console links, unauthenticated login redirect and the
-existing conversation's direct load, reload and browser history.
+Agent UI, Admin Console and Edge Gateway each test their own parsing and
+production of these paths. Production SSR/HTTP integration covers direct load
+and reload; the navigation browser test covers Back/Forward, draft retention
+and the absence of Session or Prompt writes during navigation.

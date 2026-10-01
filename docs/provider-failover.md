@@ -1,11 +1,15 @@
 # Provider Availability And Ordered Fallback
 
+This document defines how Provider availability switches work, how ACP selects
+a model from a Template's ordered default and fallback list, and how disabling
+a Provider revokes clients that are in use.
+
 ## Product Contract
 
 Provider availability is an operational switch, not resource deletion. Disabling
 a Provider preserves Template/Agent references and model preferences. Deletion
-must remain unavailable while a resource is referenced; this change does not
-introduce a cascading delete API.
+must remain unavailable while a resource is referenced; there is no cascading
+delete API.
 
 A Template retains `model_profile_id` as its default and adds ordered
 `fallback_model_profile_ids`. Each entry identifies both a Provider connection
@@ -32,7 +36,7 @@ upstream failures. A timeout/429/5xx is reported on the current execution; it
 does not silently retry the conversation with another paid model. Administrators
 can disable a faulty connection and later restore it.
 
-## Ownership And Delivery
+## Ownership
 
 1. Controller: validate and persist ordered references, publish them with Agent
    configuration, support the OpenRouter connection type, and allow Provider
@@ -45,9 +49,10 @@ can disable a faulty connection and later restore it.
    configure ordered Provider/model choices in Templates; explain disable impact.
 4. Agent UI: render ACP's effective selection and fallback notice. It does not
    own credentials, model metadata, or fallback policy.
-5. Integration: verify the producer/consumer contract, two-provider selection,
-   disable during execution, restoration, manual override, and no-candidate
-   failure. No claim of real OpenRouter verification without an actual credential.
+5. Integration tests verify the producer/consumer contract, two-provider
+   selection, disable during execution, restoration, manual override, and
+   no-candidate failure. Real OpenRouter behavior is verified only with an
+   actual credential.
 
 ## Correctness Cases
 
@@ -74,34 +79,20 @@ can disable a faulty connection and later restore it.
 OpenRouter endpoint and wire format follow the
 [official API reference](https://openrouter.ai/docs/api/reference/overview).
 
-## Verification (2026-09-15)
+## Verification
 
-| Scope                                                     | Final result                                                                                        |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Controller, including isolated PostgreSQL and race checks | 531 tests and 567 subtests passed; 3 separate Temporal tests skipped without their test environment |
-| ACP unit/component tests                                  | 956 passed                                                                                          |
-| ACP PostgreSQL/protocol integration                       | 224 passed, including v1/v2 configuration updates and fallback                                      |
-| Console web                                               | 111 unit and 272 component tests passed                                                             |
-| Agent UI                                                  | 67 unit and 127 component tests passed                                                              |
-| Admission                                                 | `make lint`, `make fmt-check`, affected Go service tests passed                                     |
+Service tests in Controller, ACP, Admin Console and Agent UI cover the
+correctness cases above. In-flight revocation and accounting are covered by
+deterministic service tests, not by real-provider fault injection.
 
-Real browser acceptance uses the deployed Gateway, Console, Controller, ACP and
-Agent UI with actual DeepSeek and OpenRouter credentials. It checks the selected
-Provider/model against each Run's persisted audit, not just a UI label. Cases:
-default DeepSeek, disabling a referenced Provider, automatic OpenRouter fallback,
-reload, manual OpenRouter selection, all Providers unavailable, and no prompt
-replay. Desktop and 390/320px layouts are inspected. In-flight revocation and
-accounting are deterministic service tests, not claimed as real-provider fault
-injection.
+Real browser verification uses the deployed Gateway, Console, Controller, ACP
+and Agent UI with actual DeepSeek and OpenRouter credentials. It checks the
+selected Provider/model against each Run's persisted audit, not just a UI
+label. Cases: default DeepSeek, disabling a referenced Provider, automatic
+OpenRouter fallback, reload, manual OpenRouter selection, all Providers
+unavailable, and no prompt replay. Desktop and 390/320px layouts are inspected.
 
-The recorded browser run passed on 2026-09-15 at 23:12 +08:00. Its local result,
-`artifacts/verification/provider-failover-acceptance/result.json`, records three real responses,
-ordered backups, referenced Provider disable, live configuration updates,
-reload/manual selection, no available candidate, no prompt replay and layout
-checks. See [current status](current-status.md) for the evidence boundary; this
-does not make the separate development-browser strict Trace profile pass.
-
-Run the reusable acceptance script from the repository root:
+Run the opt-in browser verification script from the repository root:
 
 ```sh
 node tests/e2e/workspace-closeout/provider-failover-browser.mjs \
@@ -112,6 +103,6 @@ This opt-in script reads bootstrap settings from `.env` and OpenRouter's key fro
 `../.secret`, makes three short paid requests, and may add the Provider/model,
 publish a Template revision and rebuild one development Agent. Availability
 switches are restored in `finally`. No secret is printed. Compact results and
-screenshots go to ignored `artifacts/verification/provider-failover-acceptance/`; the script itself
-is maintained under `scripts/`, not in the cache. No live Provider error causes
-automatic replay or silent paid-model retries.
+screenshots go to the Git-ignored
+`artifacts/verification/provider-failover-acceptance/` directory. No live
+Provider error causes automatic replay or silent paid-model retries.

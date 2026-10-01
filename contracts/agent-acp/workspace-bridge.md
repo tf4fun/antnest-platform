@@ -1,46 +1,55 @@
 # ACP workspace Bridge extension
 
-Status: **B0 contract, ACP producer and Node consumer implemented**. Targeted `session/cancel`
-metadata checks the durable Run ID and in-memory execution slot. Durable intent
-records, principal-scoped observation RPC, negotiated delivery marks and
-capability advertisement are implemented. ACP unit, integration,
-PostgreSQL/E2E, production-image and container smoke gates passed. Node and
-Gateway local gates and the six-service browser regression passed. Two independent
-ACP connections racing on one configuration revision have exactly one winner in
-the production-image regression. The real-stack two-Node-owner race also passes:
-one write succeeds, the other returns 409, and both views converge on the
-winner. Schemas for platform-owned values are
-[`workspace-bridge.schema.json`](workspace-bridge.schema.json). The public ACP
-v1 message shapes remain those of installed SDK 1.5.0; clients that do not
-negotiate the extension retain existing behavior.
+This document defines the Antnest `_meta` extension that the Agent UI Node
+Bridge negotiates with Agent ACP Service: durable prompt receipts, targeted
+cancellation, conditional Session configuration, delivery marks for replay,
+learning notices, and the principal-scoped observation routes.
 
-The installed SDK also includes experimental `notice` updates. The current
-Bridge does not advertise `clientCapabilities.session.notices` or project them.
-The separate [Skill learning notification proposal](../../docs/skill-learning-notifications-design.md)
-selects SDK `notice` for live delivery, with a planned `learningNotices` Bridge
-capability and namespaced change metadata. SDK HTTP routes notices through an
-associated delivery Session; learning-source IDs are separate metadata. Durable
-learning-result reads restore Node/FE projections after gaps; they do not reuse this contract's ACP transcript
-watermarks or add notices to `session/load` replay. This capability, recovery
-routes and workspace fields are reserved by the
-[L0 contract](../skill-learning/learning-api.md) and not yet implemented here.
+Schemas for platform-owned values are
+[`workspace-bridge.schema.json`](workspace-bridge.schema.json). The public ACP
+v1 message shapes remain those of the installed ACP SDK (1.5.0); clients that
+do not negotiate the extension retain existing behavior.
 
 ## Capability and wire shape
 
-The Bridge requests the namespaced capability `antnest.dev/bridge` during
-`initialize`. ACP advertises `bridgeCapabilities` in the response `_meta`
-only when all three version-1 parts are ready: durable intent receipts, target
-Run cancellation and delivery marks. If any is absent, Node must not expose
-reliable prompt admission for that connection. The official SDK's `PromptRequest`,
+The Bridge requests the extension by sending the capability object
+`_meta["antnest.dev/bridge"]` in `initialize` with `intentReceipt: 1`,
+`targetCancel: 1` and `deliveryMark: 1` (plus `learningNotices: 1` when it
+wants learning notices). ACP answers with the same object under
+`InitializeResponse._meta["antnest.dev/bridge"]` only when the request carries
+all three version-1 parts: durable intent receipts, target Run cancellation
+and delivery marks. If any is absent, Node must not expose reliable prompt
+admission for that connection. The official SDK's `PromptRequest`,
 `CancelNotification`, `LoadSessionResponse`, `InitializeResponse` and Session
 notifications permit `_meta`; the names below are Antnest extensions, not
-official ACP fields:
+official ACP fields.
 
-`bridgeCapabilities.configurationCas: 1` is an additional, independently
-advertised capability. The Bridge must require it for conditional Session
-configuration writes; its absence does not change prompt admission. The ACP
-producer batch will advertise it only after the durable comparison and
-transport metadata are implemented.
+The advertised capability object contains:
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `intentReceipt` | `1` | Durable prompt intent receipts |
+| `targetCancel` | `1` | `session/cancel` with an expected Run ID |
+| `deliveryMark` | `1` | Delivery marks on `session/update` and `session/load` |
+| `configurationCas` | `1` | Conditional Session configuration writes |
+| `learningNotices` | `1`, optional | Live Skill learning notices on this connection |
+
+`configurationCas: 1` is advertised whenever the Bridge extension is
+negotiated. The Bridge requires it for conditional Session configuration
+writes; its absence does not change prompt admission.
+
+`learningNotices: 1` is advertised only when the Bridge extension is
+negotiated, the request's `_meta["antnest.dev/bridge"]` contains
+`learningNotices: 1`, the client declares `clientCapabilities.session.notices`,
+and the ACP process has a learning notice publisher configured. ACP then
+delivers learning results as SDK experimental `notice` Session updates with
+namespaced change metadata, routed through the associated delivery Session.
+Learning-source IDs are separate metadata. Durable learning-result reads
+restore Node and browser projections after gaps; they do not reuse this
+contract's ACP transcript watermarks, and `session/load` replay never includes
+notices. Notice metadata, recovery routes and workspace fields are defined by
+the [Skill learning contract](../skill-learning/learning-api.md); the design is
+described in [Skill learning notifications](../../docs/skill-learning-notifications-design.md).
 
 - `session/prompt.params._meta["antnest.dev/intent"]` has `intentId` and
   `expectedAppendVersion`.
@@ -61,7 +70,7 @@ required. They can also seal gaps caused by filtered or non-visible events.
 
 The negotiated transport remains official ACP v1 Streamable HTTP
 (`POST` messages, `GET` SSE). These fields do not add a new method or change a
-standard response body. B1 tests cover actual SDK encoder, HTTP/SSE transport
+standard response body. Tests cover the actual SDK encoder, HTTP/SSE transport
 and parser preservation in addition to schema acceptance of `_meta`.
 
 ## Conditional Session configuration
@@ -119,9 +128,10 @@ count. A duplicate standard ACP prompt request may receive
 Bridge reads the original receipt by intent ID. Neither response authorizes
 a new ID or automatic resubmission.
 
-The principal-scoped internal `GET` observation routes are proposed as
+The principal-scoped internal `GET` observation routes are
 `/rpc/agent-acp/workspace/sessions/{sessionId}/execution` and
-`/rpc/agent-acp/workspace/sessions/{sessionId}/intents/{intentId}`. They receive
+`/rpc/agent-acp/workspace/sessions/{sessionId}/intents/{intentId}`. Other
+methods return 405. They receive
 trusted organization/principal/Agent headers from the Node caller, no identity
 body fields, and recheck current access before reading. The first returns
 `executionObservation`, the second `intentReceipt`; the latter may return
@@ -133,8 +143,7 @@ Bridge restart needs no old Bridge epoch or old history token.
 
 `session/prompt` still gives the official `PromptResponse` to the original
 request. A duplicate SDK prompt may wait for that same Run or return its
-recorded standard result; B1 freezes which behavior the transport supports.
-It may never start another Run. Receipt queries supply the richer durable
+recorded standard result, but it never starts another Run. Receipt queries supply the richer durable
 state. Bridge `202` is not evidence of ACP acceptance.
 
 `session/cancel` remains a notification. With the negotiated target metadata,
@@ -173,8 +182,8 @@ sequences or are deduplicated against the cut. Node only replaces a replay
 candidate or clears a completed overlay when its observed delivery marks
 prove it has all required output through the receipt's terminal watermark.
 Replay/live boundaries and split update ordering have transport and database
-tests in B1; the Node consumer additionally checks complete batches and keeps
-the prior view when a replay fails.
+tests; the Node consumer additionally checks complete batches and keeps the
+prior view when a replay fails.
 
 The metadata gives stable Run/message identifiers for historical turn
 anchors. It must not fabricate missing original timestamps. ACP retains
@@ -182,18 +191,14 @@ complete content as authority; compact views and pages are Node projections.
 
 ## Rollout
 
-B1 ACP producer and the Node Bridge consumer have passed their separate local
-unit, contract, transaction, transport and service-container gates. Ordinary
-ACP clients retain the standard method behavior. The six-service regression
-passes with the current producer and consumer, including a browser Mode change;
-the producer's isolated PostgreSQL and production-image tests reject a stale
-conditional change. The production-image test also races two independent ACP
-connections and checks that the persisted revision advances once. The real-stack
-Docker/Chromium test races two separate Node Bridge containers on an isolated
-Session and checks one 200, one `configuration_conflict` 409, and two converged
-views. Deploy the ACP extension first; the Node Bridge fails closed
-for reliable submission when the negotiated capability is missing, and rejects
-conditional configuration without `configurationCas: 1`. Rolling back ACP
-while Node uses receipts is unsafe;
-first drain/switch Node scopes, then roll back the producer without deleting
-stored intent records.
+Ordinary ACP clients retain the standard method behavior. When two ACP
+connections or two Node Bridge owners race a conditional configuration change
+on one Session, exactly one write succeeds; the other receives
+`configuration_conflict` (HTTP 409 at the Bridge) and both views converge on
+the winner.
+
+Deploy the ACP extension first; the Node Bridge fails closed for reliable
+submission when the negotiated capability is missing, and rejects conditional
+configuration without `configurationCas: 1`. Rolling back ACP while Node uses
+receipts is unsafe; first drain or switch Node scopes, then roll back the
+producer without deleting stored intent records.

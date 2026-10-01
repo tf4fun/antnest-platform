@@ -1,5 +1,8 @@
 # Agent State In The Console
 
+This document describes how Admin Console presents Agent lifecycle, activation
+and Runtime condition, and which actions it offers in each state.
+
 The BFF preserves Agent Controller's lifecycle, confirmed activation, Runtime
 condition, diagnostic reason/detail and observation timestamp. It never derives
 health from a completed lifecycle operation and never probes Runtime directly.

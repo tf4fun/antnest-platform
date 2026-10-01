@@ -1,10 +1,12 @@
 # Session Configuration
 
+This document covers Session-scoped configuration options: model, thinking
+effort and authorization mode overrides.
+
 ACP owns Session overrides, not management of the organization model catalog,
 Agent defaults, credentials or Runtime lifecycle. Controller publishes current
-configuration through the [execution snapshot contract](../../../contracts/agent-acp/execution-api.md).
-The [execution-boundary batch](execution-configuration.md) is not yet accepted
-as a complete platform deployment.
+configuration through the [execution snapshot contract](../../../contracts/agent-acp/execution-api.md);
+see [local execution configuration](execution-configuration.md) for how ACP applies it.
 
 ## Boundaries
 
@@ -14,7 +16,7 @@ as a complete platform deployment.
    `agent_default` means inherit the Agent's configured default, not the catalog head.
 2. `session/set_config_option` changes model, thinking effort or authorization mode. The v1
    `session/set_mode` adapter uses the same application command. There is no
-   standard `session/set_model` method in SDK 1.4.0. `agent_default` clears that
+   standard `session/set_model` method in the pinned SDK. `agent_default` clears that
    override through set_config_option. Actual modes remain `auto`,
    `approve`, `smart_approve`, `chat`. No invented boolean setting is advertised.
 3. Persist overrides in `acp_sessions.configuration`, with a local revision for
@@ -39,7 +41,7 @@ as a complete platform deployment.
    cleanup never resends a captured payload or executes the latest Session
    selection. A new admission without the required configuration rejects.
 6. Chat supplies no tools, including the local plan tool. Auto permits execution.
-   Approve/SmartApprove honor exact-source allow/deny rules. F06 now supplies
+   Approve/SmartApprove honor exact-source allow/deny rules and use
    [permission interaction](tool-permissions.md); missing clients never imply
    approval. Smart Approve conservatively trusts non-conflicting read-only hints.
    Session-only always rules are not copied by Fork; model/mode/thinking overrides are.
@@ -48,9 +50,9 @@ Provider-grouped model options and capability-driven `thinking_effort` are defin
 in [Session model selection](session-model-selection.md). Their values are
 Session-scoped, not Agent template or credential changes.
 
-## Bridge conditional writes
+## Bridge Conditional Writes
 
-The principal-scoped execution observation now returns a non-null opaque
+The principal-scoped execution observation returns a non-null opaque
 `configurationRevision` derived from the Session's persisted configuration
 revision. When a Bridge client supplies
 `session/set_config_option.params._meta["antnest.dev/configuration"].expectedRevision`,
@@ -66,27 +68,22 @@ The ACP service unit, SDK transport, isolated PostgreSQL and production-image
 Docker tests cover the condition, stale writes and revision changes. The
 production-image test races two independent ACP connections on one revision
 and verifies one winner and one persisted increment. The Node
-Bridge consumer now forwards the observed producer revision and rejects writes
+Bridge consumer forwards the observed producer revision and rejects writes
 when the producer lacks the negotiated capability. The cross-service
 Docker/Chromium regression races two separate Node Bridge owners, checks one
 successful write and one conflict, then confirms both views show the winner.
 
 ## Verification
 
-Cover snapshot publication and completeness, inherited versus
+Tests cover snapshot publication and completeness, inherited versus
 explicit selections, ownership denial, revision conflicts, Session restart/fork,
 preserved audit configuration after a concurrent setting change, v1/v2 option responses and
 notifications, the v1 mode alias, unchanged active snapshots, Chat tool
-exclusion and authorization rules. Use deterministic component tests and real
-PostgreSQL tests before the separate Gateway/Runtime/Jaeger integration batch.
+exclusion and authorization rules. They use deterministic component tests and
+real PostgreSQL tests; Gateway/Runtime/Jaeger coverage comes from the
+[tool permission deployment profile](../../../tests/e2e/acp-permissions/README.md).
 
 Configuration operations have ACP and local database spans. Attributes identify
 Agent/Session/request and operation only; rule bodies and secrets are not logged.
 Configuration writes use transaction-local 5s lock and 10s statement timeouts;
 a blocked write rolls back its event and releases the local publication boundary.
-
-Prior deployed-baseline evidence (2026-09-09), not acceptance of the boundary refactor:
-401 ACP unit/component tests and 114 PostgreSQL
-protocol/integration tests pass. The full Node admission suite passes 725 tests,
-including Console, Agent UI and shared test oracles. No external Provider or
-new Gateway/Jaeger deployment was exercised in this batch.

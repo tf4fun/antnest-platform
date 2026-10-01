@@ -1,855 +1,980 @@
-# Skill 驱动的经验学习与演进：技术方案草案
+# Skill Learning and Evolution
 
-> 范围修正（2026-09-29）：首版只交付完成 Run 后自动复盘、生成/更新受管个人
-> Skill、空闲激活、结果提示，以及后续 Run 使用。事后撤销、变更差异查看和旧版本
-> 保留不是用户要求的首版能力。L0 首版合同与批次表已移除相关接口和验收条目；
-> 已写入工作区的实验实现也不得作为当前开发或验收门禁。
+This document describes how Antnest Platform turns completed work into reusable
+experience. After a Run completes, the platform can review it, create or update a
+managed personal Skill, activate the change when the Agent is idle, notify the
+user, and use the updated Skill in later Runs. The shared contract is
+[Skill learning shared contract v1](../contracts/skill-learning/learning-api.md).
 
-> 后续传播设计（2026-10-01）：已生效的受管个人 Skill 自动登记到 Registry 的
-> 动态来源目录，检索后按需回源临时使用，内容与生命周期仍归来源 Agent；
-> 有发布权限的用户可提升为正式系统 Skill，此时才由 Registry 托管完整包，
-> 再通过 Template/rebuild 交付。详见
-> [四步流程](evolver-technical-analysis.md#112-用户确定的四步产品流程)。
-> Registry/source 合同及 Registry D1 已交付，详见
-> [本批记录](skill-discovery-registry-delivery-20261001.md)；ACP
-> [D2 自动投影/真实来源](skill-discovery-acp-delivery-20261001.md)和
-> [D3 模型搜索/正文加载](skill-discovery-tools-delivery-20261001.md)已通过门禁。
-> [Runtime D4](skill-discovery-runtime-delivery-20261001.md) 的临时文件接口已通过
-> 所属门禁；[ACP D4A](skill-discovery-temporary-consumer-delivery-20261001.md) 的
-> 交付/回收及 [Console D6](skill-discovery-console-delivery-20261001.md) 提升入口
-> 已通过所属门禁，[DI1](skill-propagation-integration-delivery-20261001.md) 四步
-> 集成已通过，不改变本文个人学习验收范围。
+Version 1 does not include undo after activation, change-detail diffs, or
+retention of previous package versions.
 
-> 更新日期：2026-09-30；依据用户意见将自动生成及自动更新调整为首版主流程。
-> 开发顺序调整：沿用已有样式，优先完成功能与回归；样式细调在人类体验验收阶段进行，不再以样式审批阻塞开发回归。
->
-> 状态：技术方案及 [L0 共享合同](../contracts/skill-learning/learning-api.md)；
-> L0 已固定首版参数及边界；L1 Runtime 已开始入口隔离、公钥 bootstrap、
-> 私有 HTTP 验签、`prepare`/`check` 候选包校验及 UID 1000 executor 目录发布已接入。
-> `commit` 已通过 Actor 接入条件目录安装、后置摘要核验与同请求重放；`observe`
-> 已通过 Docker HTTP 验证重启后确认、缺记录保持未知及活动内容冲突。
-> `cancel` 已关闭并结算当前代次、持久阻止其跨重启提交。首版不包含事后撤销或保留旧包。
-> 后台 Bash 执行组及 managed MCP 后代进程已纳入准入扫描，空闲 managed MCP
-> 本体不阻塞；签名 `release`、256 MiB 隐藏目录上限及释放后重试已通过
-> Runtime Docker HTTP 验证。交换后未写回执、release 脱离/删除后未写回执的
-> 恢复由独立执行器测试覆盖；L1、L1R 本地门禁已通过。L2 策略持久化与接口门禁已通过，显式纳入已有个人 Skill 不属于首版。L3 自动创建/更新、前景抢占、未知效果恢复与候选清理，以及 LI1 的模型故障恢复后新来源学习已有本地/隔离 Docker 证据；L4 来源跳转和按需诊断现已通过144项前端组件、5项基础浏览器与2项真实 Docker 浏览器回归。当前首版功能门禁已通过，可进入人类体验验收；完整范围及证据边界见 [验收核对](skill-learning-acceptance-audit-20260930.md)。
+Applied managed personal Skills are registered automatically in the Skill
+Registry's dynamic source directory. Other Agents can find them through search
+and load them temporarily from the source on demand. The content and its
+lifecycle stay with the source Agent. A user with publish permission can promote
+such a Skill to a formal system Skill. Only then does the Registry host the full
+package, which is delivered through Templates and Runtime rebuilds.
 
-源码复核及本轮决策见 [Hermes 自动学习研究](hermes-skill-learning-research-20260929.md)。
-此前逐项回应见 [评审处理记录](skill-design-review-20260927.md)；其中人工优先及
-逐次确认的旧产品选择已被本轮替代，其余适用的工程边界继续保留。
+## 1. Goals and Scope
 
-## 1. 目标、首版范围与本轮决定
+A **Skill is the carrier for reusable strategy and experience**. Learning follows
+a closed loop: execute, review, check, update, and use again. The Skill body
+describes when it applies, the steps to follow, and the cautions. Source
+evidence, the application basis, and control state are stored separately and do
+not enter the model context each time the Skill is used.
 
-采用 **Skill 作为可复用策略与经验的载体**，参考 Hermes 的生成/维护方式，保留
-Evolver 的“执行 → 复盘 → 检查 → 更新 → 再使用”闭环。Skill 正文描述适用场景、
-步骤和注意事项；来源证据、应用依据与控制状态独立保存，不随每次 Skill 使用
-全部进入模型上下文。
+The version 1 goal is: **after a task completes, the platform conditionally
+reviews it and creates or updates a managed personal Skill. When checks pass,
+the Agent's automatic learning policy activates the change once the Agent is
+idle and managed invocations are quiescent. The platform verifies the actual
+digest and notifies the user after the change takes effect. The normal path
+does not require the user to start or confirm each change.**
 
-首版目标调整为：**完成任务后有条件自动复盘，生成或更新受管个人 Skill；检查
-通过后按 Agent 的自动学习策略，在空闲且满足受管调用静止条件时自动激活，
-核验实际摘要，并在生效后提示用户。正常路径不要求用户逐次发起或确认。**
-用户主动保存是补充选择。自动维护不接管系统包或未纳入范围的用户个人包；
-静止不表示所有常驻进程退出，定义见第 7.3 节。
+Manual saving by the user is an optional path. The contract defines it
+(`apply_basis=user_action`), but it is not implemented. Automatic maintenance
+never takes over system packages or user personal packages outside its scope.
+Quiescence does not mean that every long-running process has exited; Section 7.3
+defines it.
 
-| 评审问题               | L0 的设计输入                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------ |
-| 后台占用 Run/Runtime   | 独立维护任务，不占前景 Run；共享准入门，前景取消复盘后再准备 Run                                       |
-| 外部指令固化           | 证据分级、逐项可追溯；低可信内容不能独立支撑自动规则，自动候选须通过范围及来源检查；保留语义误判的限制 |
-| 活动引用不兼容 Runtime | 真实目录、同卷候选；更新整体原子交换，新建不覆盖地 rename，不用符号链接/指针文件                       |
-| 验证无隔离环境         | 仅结构检查和来源 Run 已有结果；用户确认是可选人工路径的应用依据，不是业务验证；不执行新候选来“自证”    |
-| Run 一致性与成本       | 空闲激活；记录实际读取的个人 Skill 内容身份，不逐 Run 哈希全部包                                       |
-| 维护入口暴露给模型     | 独立受保护的 Runtime 维护端点，不进 tools/list；Runtime 拒绝普通 tools/call，ACP 来源校验作第二层      |
-| 自动/人工发起依据      | 自动任务绑定真实完成 Run 和 Controller 策略修订；可选用户入口绑定真实操作 ID；模型不创造授权           |
-| 无须逐次确认           | `apply_basis=policy` 绑定自动策略、目标范围及精确摘要；人工采用用 `user_action`，两者不可互相冒充      |
-| 配置与发布归属         | Controller 拥有 Agent 学习配置；已交付首版正式发布需手动导出、管理员上传，自动投影与用户提升另行交付   |
+| Concern | Design decision |
+| --- | --- |
+| Background work occupying a Run or Runtime | Maintenance is an independent task and does not occupy a foreground Run. It shares an admission gate with foreground work; a foreground request cancels the review before the Run is prepared. |
+| Persisting external instructions as rules | Evidence is graded and each item is traceable. Low-trust content cannot on its own support an automatic rule. Automatic candidates must pass scope and source checks. Semantic misjudgment remains a known limit. |
+| Active references incompatible with the Runtime | Packages are real directories, and candidates live on the same volume. An update is an atomic whole-directory exchange. A new Skill is created with a non-overwriting rename. Symbolic links and pointer files are not used. |
+| No isolated validation environment | Checks are limited to structural checks and results the source Run already produced. User confirmation is the application basis of the optional manual path, not business validation. A new candidate is never executed to validate itself. |
+| Run consistency and cost | Activation happens only when idle. Each Run records the content identity of the personal Skills it actually read; the platform does not hash every package for every Run. |
+| Maintenance entry points exposed to the model | Maintenance uses a separate protected Runtime endpoint that is not listed in `tools/list`. The Runtime rejects ordinary `tools/call` requests for it, and ACP source validation is a second layer. |
+| Basis for automatic or manual initiation | An automatic task is bound to a real completed Run and a Controller policy revision. The optional user entry point is bound to a real operation ID. The model cannot create authorization. |
+| No per-change confirmation | `apply_basis=policy` is bound to the automatic policy, the target scope, and the exact digest. Manual adoption uses `user_action`. Neither basis can impersonate the other. |
+| Ownership of configuration and publication | Agent Controller owns the Agent learning configuration. Applied managed personal Skills are projected automatically into the Registry dynamic source directory. Promotion to a formal system Skill is a separate action by a user with publish permission. |
 
-[Skill Registry 最小方案](skill-registry-minimal-design.md)已交付托管、模板引用
-和只读交付。学习在现有服务中独立实现，既不增加阶段四第四个服务，也不要求
-Registry 在线。首版的集成完成标准是自动触发到自动生效；人工保存作为补充批次，
-不能用只有候选展示或文件工具的实现宣称自动学习已完成。
+The [Skill Registry](skill-registry-minimal-design.md) provides hosting,
+Template references, and read-only delivery. Learning is implemented inside the
+existing services. It does not add another Stage 4 service and does not require
+the Registry to be online. Learning is complete only when the path runs from the
+automatic trigger to automatic activation. An implementation that only displays
+candidates or exposes file tools does not count as automatic learning.
 
-## 2. 参考依据及边界
+## 2. Design Constraints
 
-下述参考是静态源码研究，不是本平台已实现或上游效果已实测的证明。Hermes
-已在 2026-09-29 重新固定源码，核对方式及采用/调整说明见
-[本轮研究](hermes-skill-learning-research-20260929.md)。不直接嵌入 Evolver 引擎、
-GEP 资产选择器或 Hub 协议。
+The design does not embed an external learning engine, asset selector, or hub
+protocol. It adopts the following rules:
 
-| 参考                                                | 采用的思路                                                      | 保留的区别                                                  |
-| --------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------- |
-| Hermes，`1b91b8eaa576b3c3dfe08e4592bdd698d1aca019`  | 有条件自动生成/更新、受管归属、先读后改、优先已有主题、事后通知 | 独立 ACP 任务、Runtime 单槽准入、策略应用记录及系统只读边界 |
-| Evolver，`31b0691acd97ba18878019312e646f1f2d970d43` | 策略、案例、失败反馈、验证与过程记录分工                        | 知识以 Skill 为主，不重复维护 Gene/Capsule 正文权威         |
+| Rule | Reason |
+| --- | --- |
+| Conditional automatic creation and update of Skills, with managed ownership | Users get learned Skills without a confirmation step for each change. Managed ownership limits automatic writes to packages the learning system created. |
+| Read before modify, and prefer extending an existing topic over creating a new Skill | This avoids duplicate or conflicting Skills for the same subject. |
+| Notify the user after the change takes effect | The normal path does not wait for approval, so the user still learns what changed and why. |
+| Review runs as an independent ACP task behind the Runtime single-slot admission gate | Background learning must not compete with or corrupt foreground Runs. |
+| Every applied change records its policy basis | Each automatic change can be traced to the policy revision, path, and digest that authorized it. |
+| System Skills are read-only to learning | Template system Skills remain immutable; learning writes only managed personal Skills. |
+| Strategies, cases, failure feedback, validation, and process records have separate roles | Each kind of information has one owner and one purpose (see Section 3). |
+| Skills are the primary form of knowledge; no separate gene or capsule store holds an authoritative copy of the body | A single authoritative copy avoids drift between two knowledge stores. |
+| Automatic merging of existing Skills by a curator model is a separate feature | Its default setting does not change whether automatic creation is enabled. |
 
-Hermes 的后台复盘会实际写入受管 Skill，再发布结果摘要，并不逐次等待用户
-批准；Curator 模型合并是另一功能，其默认关闭不能被解释为自动生成默认关闭。
-参见 [触发](https://github.com/NousResearch/hermes-agent/blob/1b91b8eaa576b3c3dfe08e4592bdd698d1aca019/agent/turn_finalizer.py#L734-L764)、
-[复盘](https://github.com/NousResearch/hermes-agent/blob/1b91b8eaa576b3c3dfe08e4592bdd698d1aca019/agent/background_review.py)、
-[写入检查](https://github.com/NousResearch/hermes-agent/blob/1b91b8eaa576b3c3dfe08e4592bdd698d1aca019/tools/skill_manager_guards.py#L165-L244)、
-[Curator 配置](https://github.com/NousResearch/hermes-agent/blob/1b91b8eaa576b3c3dfe08e4592bdd698d1aca019/agent/curator.py#L31-L35)。
+## 3. Knowledge, Evidence, and Control Records Are Separate
 
-Evolver 的资产和实现限制见 [独立分析](evolver-technical-analysis.md)。本文采用
-可观察的概念分工，不依赖尚未完整审计的混淆核心算法。本轮没有重新运行或接入
-这两个项目。
+| Information | Storage location and purpose |
+| --- | --- |
+| Trigger conditions, preconditions, strategies, and anti-patterns | The applicability, steps, and cautions sections of `SKILL.md` |
+| Generalizable cases and failure mechanisms | The distilled body, plus a small number of files under `references/`, `templates/`, and `scripts/` |
+| Raw conversations, tool output, and the trajectory of a single task | The existing Session and Run records; they are not copied wholesale into a Skill |
+| Why a change was made, which policy or user action it relied on, and the result of applying it | ACP maintenance task, candidate, and change records, linked to the source and to the before and after digests |
+| Structural checks, source results, and future independent validation | Typed evidence records, bound to specific content and an applicability scope |
 
-## 3. 知识、证据和控制记录分开
+For example, "after a timeout, check whether the request landed before
+retrying" can become a procedure rule. The request ID from that occasion, full
+logs, and credentials must not enter the shared package with the rule. Ordinary
+facts, user profile data, and short-lived task state stay with their existing
+context and memory owners. Learning does not turn all of them into long
+procedural Skills.
 
-| 信息                                        | 保存位置与用途                                             |
-| ------------------------------------------- | ---------------------------------------------------------- |
-| Gene 的触发条件、前提、策略、反模式         | `SKILL.md` 的适用场景、步骤和注意事项                      |
-| Capsule 中可推广的案例、失败机制            | 提炼后的正文及少量 `references/`、`templates/`、`scripts/` |
-| 原始对话、工具输出、一次任务的轨迹          | 原有 Session/Run 记录；不整段复制到 Skill                  |
-| 为什么变更、依据哪项策略/用户操作、应用结果 | ACP 维护任务/候选/变更记录，关联来源和前后摘要             |
-| 结构检查、来源结果、未来独立验证            | 分类型证据记录，绑定具体内容和适用范围                     |
+Skill files live in the Runtime workspace. ACP owns the control records. Agent
+Controller owns maintenance authorization and budget configuration. Workspace
+files are not trusted audit storage, so `trusted`, `validated`, or self-reported
+sources written in a Skill body cannot raise privileges. The search index is
+rebuildable derived data and is not a second authority for knowledge.
 
-例如“超时后先查请求是否落地再重试”可以成为流程规则；当次请求 ID、日志全文
-和凭据不能随规则进入共享包。普通事实、用户资料、短期任务状态仍按原上下文/
-记忆职责处理，不因为引入学习就全部变成长流程 Skill。
+## 4. Asset Format, Identity, and Model-Visible Scope
 
-文件在 Runtime 工作区，控制记录归 ACP；维护授权/预算配置归 Controller。工作区
-文件不是可信审计存储，正文中的 `trusted`、`validated` 或自报来源不能提升权限。
-检索索引是可重建派生数据，不成为第二份知识权威。
+### 4.1 Asset Ownership
 
-## 4. 资产格式、身份与模型可见范围
+This document calls the Runtime `system` source a **system Skill** and the `personal` source a **personal Skill**.
 
-### 4.1 资产归属
+| Asset                                                    | How it changes                                                                                                                         |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| System Skill delivered by a template                     | New Registry version, then template revision, then explicit rebuild; read-only inside the Runtime                                     |
+| Personal Skill maintained by the user                    | Targeted changes by the user; living in the personal directory alone does not permit background maintenance                          |
+| Auto-generated personal Skill with a registered managed identity | Can be generated, and later updates applied automatically, while an automatic policy is in effect; pinning or a manual edit pauses it |
+| Personal Skill the user explicitly puts under maintenance | Automatic takeover is not supported in the first version; supporting it later requires a separately defined authorization model and full package verification |
+| Candidate package                                        | Stored in an area that discovery entry points do not scan; it cannot become a capability of a normal Run automatically                |
 
-本文统一称 Runtime `system` 来源为**系统 Skill**，`personal` 为**个人 Skill**。
+A package is still `SKILL.md` plus optional `references/`, `templates/`, `scripts/`, and `assets/`.
+Longer background material goes into reference files. Prefer updating an existing topic over adding a new fragment for each conversation.
 
-| 资产                               | 修改方式                                                       |
-| ---------------------------------- | -------------------------------------------------------------- |
-| 模板交付的系统 Skill               | Registry 新版本 → 模板修订 → 显式重建；Runtime 只读            |
-| 用户维护的个人 Skill               | 用户定向修改；不能仅因位于个人目录就允许后台维护               |
-| 自动生成且登记受管身份的个人 Skill | 有效自动策略下可生成并自动应用后续更新；固定或人工改动后暂停   |
-| 用户显式纳入维护的个人 Skill       | 首版不支持自动接管；后续如需支持，必须另行定义授权与完整包验证 |
-| 候选包                             | 放在未被发现入口扫描的区域，不能自动成为普通 Run 的能力        |
+Permission to create Skills automatically comes from the Controller `auto_generated_personal` scope. ACP records per-package provenance from the creation intent and the verified result. A package with no control record is treated as user-maintained. A path prefix or a self-reported `created_by` field does not grant background permissions. A save initiated by the user creates a user-maintained personal package by default; enrolling it in continuous automatic maintenance is a separate, explicit choice.
 
-包仍为 `SKILL.md` 加按需的 `references/`、`templates/`、`scripts/`、`assets/`。
-较长背景放参考文件；优先更新主题，不按每次对话新增碎片。
+### 4.2 Candidates Use Publishable Rules from the Start
 
-自动创建权限来自 Controller 的 `auto_generated_personal` 范围，ACP 以创建意图
-和已核验结果登记逐包来源。控制记录缺失的包按用户维护处理；路径前缀或
-`created_by` 自报字段不授予后台权限。用户主动保存默认创建用户维护的个人包，
-纳入持续自动维护是另外的明确选择。
+Candidate structure checks **apply the Registry package rules in full** (see the [Registry API](../contracts/skill-registry/registry-api.md)): the complete `SKILL.md` is at most 16 KiB; package size, path, and file type limits apply; frontmatter has no BOM, exact delimiters, and a single document; and YAML AST string type checks apply, including the cross-library union of rejected numeric forms, conservative prefix and symbol rules, and the ban on merge keys.
+Even if the Runtime can read a file with a longer body, that file cannot pass as a compliant maintenance candidate.
+Registry, RC, and learning checks use shared samples and a shared package rules version. Local validation does not require an online Registry. The version names are explicit and are never recorded generically as "spec version" or "rules version":
 
-### 4.2 候选从一开始使用可发布规则
+| Field                   | Definition and owner                                                                                                         | How it is recorded                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package_rules_version` | Version of the shared package admission rules and their samples; the Registry and learning use the same rules, registered by the shared contract | Positive integer starting at 1; each candidate and each structure check records the version used, and Registry/RC validation records store it as well |
+| `review_prompt_version` | Version of the ACP internal review prompt template; it identifies the distillation method and its prompt content, not the package format | Positive integer starting at 1; ACP keeps the immutable template content and freezes it when the task is created; both explicit requests and background suggestions record it |
 
-候选结构检查**完整采用 Registry 第 3 节的包规则**：完整 `SKILL.md` ≤ 16 KiB，
-包大小/路径/文件类型限制，frontmatter 无 BOM、精确分隔、单文档，以及 YAML AST
-字符串类型检查，包括跨库数字拒绝并集、保守前缀/符号规则及禁止 merge key。
-即使 Runtime 可以读取一个正文更长的文件，它也不能作为合规维护候选通过。
-共享样例与包规则版本供 Registry、RC 和学习检查使用；不要求先有在线 Registry
-才能运行本地校验。版本名明确如下，不能笼统记为“规范版本”或“规则版本”：
+Neither is the Registry collection `layout_version`, a Skill release version, an Agent configuration revision, or a model version. A task records both the package rules version and the prompt version, and a retry never silently switches to a newer prompt.
+When new package rules are released, candidates waiting to be applied are rechecked under the current rules and the old check records are kept. A candidate that no longer complies is blocked from commit. If its bytes must change, a new candidate is generated and the basis for applying it is re-evaluated; the old pass flag is not reused. A manual-confirmation branch must confirm the new content again.
 
-| 字段                    | 定义及归属                                                           | 记录方式                                                                          |
-| ----------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `package_rules_version` | 共享包准入规则及配套样例的版本；B0/L0 使用同一份规则，由共享合同登记 | 从 1 起的正整数；候选及每次结构检查记录所用版本，Registry/RC 校验记录同样保存     |
-| `review_prompt_version` | ACP 内部复盘提示模板版本，标识提炼方法及其提示内容，不是包格式       | 从 1 起的正整数；ACP 保留不可变模板内容，任务创建时冻结；显式发起与后台建议都记录 |
+A personal candidate starts as a directory, but it must also be checked against the 8 MiB compressed limit of a future ZIP export. This is verified by a bounded count of the actual packing and encoding, not estimated from the unpacked size. Packing never runs scripts, and the artifact and its temporary space count toward the candidate budget. The exported file list must match the candidate bound to the apply record.
 
-两者均不是 Registry 集合的 `layout_version`，也不是 Skill 发布版本、Agent
-配置修订或模型版本。任务同时记录包规则与提示版本，重试不静默改用新提示。
-新包规则发布后，在当前规则下重新检查待应用候选，保留旧检查记录；不再合规
-则阻止提交，需要修改字节时生成新候选并重新评估应用依据，不能沿用旧的通过
-标记；人工确认分支仍须对新内容重新确认。
+In a hosted package, the ZIP root contains only the package contents. A personal active directory uses `name`. The automatic maintenance scope requires the directory basename to be **exactly equal** to the frontmatter `name`. The scope is pinned to `(organization, agent, personal, path)` and the maintenance authorization revision; authorization is never transferred by searching for a name. Before creating a package, check the complete directory and the 32-entry capacity; do not infer the absence of a duplicate name from the truncated Runtime summary.
 
-个人候选最初是目录，也须检查将来导出 ZIP 的 8 MiB 压缩上限；以受限的实际
-打包/编码计数验证，不能由解包大小猜测。打包不执行脚本，产物及临时空间也计入
-候选预算。导出的文件清单必须与应用记录绑定的候选一致。
+When the user renames or moves the directory, changes `name`, or changes the content basis, the existing authorization is paused and any unapplied candidate becomes conflicted or invalid. Maintenance resumes only after the user explicitly re-enrolls the package, the new basis is read, and the candidate is re-evaluated. An older non-compliant personal package can still be used under the current Runtime rules, but the user must clean it up before it enters the maintenance scope. It is never truncated silently.
 
-托管时 ZIP 根只有包内容；个人活动目录使用 `name`。自动维护范围要求目录 basename
-与 frontmatter `name` **完全相同**，固定到 `(organization, agent, personal, path)`
-及维护授权修订，不能只依名称搜索后转移授权。新建前核对完整目录和 32 项容量，
-不能仅用被截断的 Runtime 摘要推断没有重名。
+### 4.3 The Learning Method Is Not a Normal System Skill
 
-用户改名、移动目录、修改 name 或改变内容基础时，原授权暂停，未应用候选变成
-冲突/失效；用户明确重新纳入范围、读取新基础并重新评估后才能恢复。旧个人包不合规时
-仍可按当前 Runtime 规则使用，但需要用户整理后才进入维护范围，不静默截断。
+The review method uses a versioned prompt template internal to ACP. It is used only in maintenance contexts and never appears as a normal system Skill in the summary of each foreground Run. The prompt distills the method; program code enforces permissions, budget, tool scope, and the apply basis. The prompt cannot grant publish rights or change the read-only boundary of system Skills.
 
-### 4.3 学习方法不是普通系统 Skill
+Maintenance uses a **separate internal Runtime HTTP endpoint** with the fixed path `POST /internal/skill-maintenance/{action}`. The action is limited to `prepare`, `check`, `commit`, `observe`, `cancel`, and `release` (candidate preparation, check, commit, observation, cancellation, and cleanup). It is not an MCP Tool and is not added to `tools/list`, Runtime information, or any model-callable definition. The Runtime built-in model tools remain only `read/write/edit/bash`, and existing managed MCP tools are still discovered from the real catalog. See [tool boundaries](runtime-context-and-managed-mcp.md).
 
-复盘方法采用 ACP 内部、版本化的提示模板，只在维护上下文使用，不作为普通系统
-Skill 出现在每个前景 Run 的摘要里。提示负责提炼方法，程序负责权限、预算、工具
-范围和应用依据；提示不能授予发布权或改变系统只读边界。
+Protection has two layers and does not rely on ACP filtering alone:
 
-L0 选择**独立的 Runtime 内部 HTTP 维护端点**，固定路径为
-`POST /internal/skill-maintenance/{action}`，动作限定为候选准备、检查、提交、
-观察、取消和清理；它不是 MCP Tool，不加入 `tools/list`、Runtime information 或模型
-可调用定义。Runtime 的模型内置工具仍只有 `read/write/edit/bash`，现有 managed
-MCP 工具继续按真实目录发现。[工具边界](runtime-context-and-managed-mcp.md)。
+1. The Runtime rejects reserved maintenance names and aliases on normal `tools/call` and never creates tool bindings for them. The managed MCP catalog must not register reserved names either. Even if ACP misses a filter, the model guesses a name, or a historical call is replayed, nothing can be committed through the Tool channel. The separate endpoint first verifies the maintenance credential and the execution binding, then enters the same Execution Actor, where an executor with dropped privileges (UID/GID 1000) operates on files.
+2. The ACP internal maintenance adapter accepts only maintenance contexts that program code established. The model Tool dispatcher has no route that forwards to this endpoint. The call source is never taken from parameters, names, or `role=maintenance` text. As a second layer, a reserved definition that unexpectedly appears in the catalog is rejected separately and reported as a contract error.
 
-防护分为两层，不能只依赖 ACP 过滤：
+The maintenance credential is a restricted request credential that ACP issues on the server side and the Runtime verifies. It is bound to the Agent, the current `execution_id`, the maintenance task and generation, the action, and the request and candidate/parameter digest. A repeated request can only recover the same effect; a cancelled generation or an old `execution_id` cannot continue writing. The ACP private key stays in ACP. RC supplies the verification public key set, with a `kid` per key, through the controlled Runtime bootstrap. Issued credentials are never handed to the model, normal tools, the workspace, or child processes.
+The current `X-Antnest-Expected-Execution-ID` header is only an identity consistency field and cannot serve as an authentication credential.
+The credential fields, the rotation and revocation boundaries in the next section, replay handling, and cancellation observation are fixed by the shared contract and implemented separately by the Runtime, RC, and ACP. When no valid verification identity is configured, the endpoint stays closed. This addition does not change the current internal-network trust model of normal MCP, and it does not make the maintenance endpoint an authorization entry point for browsers or foreground scripts.
 
-1. Runtime 在普通 `tools/call` 上拒绝维护保留名称/别名，不为它们建立工具绑定；
-   managed MCP 目录也不得注册保留名称。即使 ACP 漏过滤、模型猜名或重放历史
-   调用，也无法从 Tool 通道提交。独立端点先验证维护凭据及 execution binding，
-   再进入同一 Execution Actor，由降权 UID/GID 1000 的 executor 操作文件。
-2. ACP 内部维护适配器只接受程序建立的维护上下文，模型 Tool dispatcher 没有
-   转发到此端点的路由。调用来源不从参数、名称或 `role=maintenance` 文本取得；
-   对意外出现在目录中的保留定义另行拒绝并报合同错误，作为第二层防护。
+The separate control channel and the reserved-name rules are registered in the shared contract. `tools/list` remains the only authority for **model tool** definitions. The design never mixes maintenance capabilities into the real catalog first and then relies on filtering.
 
-维护凭据采用 ACP 服务端签发、Runtime 校验的受限请求凭据，绑定 Agent、当前
-`execution_id`、维护任务/世代、动作、请求及候选/参数摘要；重复请求只能恢复同一
-效果，取消后的世代和旧 execution_id 不可续写。ACP 私钥留在 ACP，RC 通过受控
-Runtime bootstrap 提供带 `kid` 的验证公钥集合；不把签发凭据交给模型、普通工具、
-工作区或子进程。
-当前 `X-Antnest-Expected-Execution-ID` 只是身份一致性字段，不能充当认证凭据。
-凭据字段、下节的轮换/撤销边界、重放和取消观察已在 L0 冻结，L1 Runtime、L1R RC 与 L3 ACP
-分别交付；端点未配置有效验证身份时保持关闭。此增量不改变普通 MCP 当前的内网
-信任模式，也不使维护端点成为浏览器或前景脚本的授权入口。
+Normal `write/edit/bash` still let the user edit the personal directory under existing permissions. Such edits are manual or foreground changes. They invalidate the maintenance basis and cannot pose as a learning commit made under policy. This entry-point isolation does not claim to turn the user-writable workspace into tamper-proof storage. The trusted apply basis and commit results come only from ACP control records and cannot be fabricated by files inside a package or by normal tool output.
 
-L0 同步登记独立控制通道与保留名称规则；`tools/list` 仍是**模型工具**定义的唯一
-权威，不再提出“真实目录先混入维护能力，再依赖过滤”的方案。
+### 4.4 Public Key Set, Deployment Identity, and Rotation
 
-普通 `write/edit/bash` 仍允许用户按既有权限编辑个人目录。这类编辑属于人工/
-前景变更，会使维护基础失效，不能冒充按策略完成的学习提交。上述入口隔离不声称把用户
-可写工作区变成防篡改存储；可信应用依据与提交结果只来自 ACP 控制记录，不能由包内
-文件或普通工具输出制造。
+The Runtime loads its bootstrap once from the `ANTNEST_RUNTIME_SPEC` environment variable. The Docker create request, including environment variables, is part of the deployment digest, which RC recomputes and compares when it recovers an operation.
+See [Runtime configuration](../runtimes/antnest-runtime/src/config.rs),
+[deployment digest](../services/runtime-controller/internal/platform/docker/driver.go), and
+[operation recovery](../services/runtime-controller/internal/control/service.go). The first version therefore uses an **immutable bootstrap public key set, changed only by an explicit rebuild**. It does not assume that the Runtime can hot-reload trust.
 
-### 4.4 公钥集合、部署身份与轮换
+| Item                  | Fixed design input                                                                                                                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public key identity   | Each key has a non-reusable `kid` bound to an algorithm and public key bytes. The credential carries the `kid`; the Runtime matches it only against its local trusted set and never downloads a key from a URL supplied in a request |
+| Set limit             | When maintenance is enabled, the set holds at most two keys: the current signing key and a pre-provisioned next key. An empty set means maintenance is off. Duplicate kids, the same kid with different bytes, and unsupported algorithms are rejected at configuration time; an unknown kid is rejected at request time |
+| Current signer        | Protected ACP configuration names exactly one signing `kid`. The Runtime set holds only trusted keys and does not depend on a mutable "current" role; switching the signer between the two pre-provisioned keys does not change the deployment digest |
+| Deployment identity   | The complete public key set, in canonical sort order, and its enabled state are written into the RuntimeSpec and **count toward the deployment/spec digest**. The set content digest identifies only that trust set; it is not `layout_version` or the package rules version |
+| Configuration ownership | ACP owns the signing private key. RC owns the platform bootstrap public key configuration and its per-operation snapshots. Neither belongs to the user's Agent learning configuration, and the public key configuration version is not inserted into the Controller request digest to follow global key changes |
+| Accepted operations   | RC takes a snapshot of the set when it computes the candidate deployment digest and persists it atomically with the BeginTransition acceptance. Request replay, restart recovery, and concurrent BeginTransition replay rebuild the deployment from the stored snapshot and never reread the current RC configuration |
 
-现有 Runtime 从 `ANTNEST_RUNTIME_SPEC` 环境变量一次性加载 bootstrap；Docker
-创建请求（包括环境变量）计入部署摘要，RC 恢复操作时会重算并比较。
-[Runtime 配置](../runtimes/antnest-runtime/src/config.rs)、
-[部署摘要](../services/runtime-controller/internal/platform/docker/driver.go)、
-[操作恢复](../services/runtime-controller/internal/control/service.go)。因此首版明确
-采用**不可变 bootstrap 公钥集合＋显式重建换集合**，不假设 Runtime 能热更新信任。
+The private operation record must store the public key bytes and their identities. Storing only a configuration revision number while old configurations cannot be retrieved is not enough.
+A new global configuration applies only to create, rebuild, or Enable operations accepted after it. The input digest, public key snapshot, and deployment digest of an already accepted request are never rewritten. If the snapshot is missing or fails validation, recovery is blocked explicitly with the reason. The target is never reconstructed from the latest keys, and the `ErrRequestConflict` check is never skipped. Changing the trusted set changes the actual deployment identity, but it does not automatically change Skill, template, or Agent business configuration.
 
-| 项目         | L0 固定的设计输入                                                                                                                                                          |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 公钥身份     | 每把钥匙有不可复用的 `kid`，绑定算法与公钥字节；凭据携带 `kid`，Runtime 只在本地受信集合中匹配，不按请求提供的 URL 下载公钥                                                |
-| 集合上限     | 启用维护时最多两把，即当前签发钥匙与预置的下一把；空集合表示维护关闭。重复 kid、同 kid 换字节及不支持的算法均拒绝配置，未知 kid 拒绝请求                                   |
-| 当前签发选择 | ACP 的受保护配置指定唯一签发 `kid`。Runtime 的集合只有受信键，不靠可变的“当前”角色判定；在已预置的两把之间切换签发不修改部署摘要                                           |
-| 部署身份     | 规范化排序的完整公钥集合及启用状态写入 RuntimeSpec，**计入 deployment/spec digest**。集合内容摘要只标识该信任集合，不是 layout_version 或包规则版本                        |
-| 配置所有权   | ACP 管签发私钥；RC 管平台 bootstrap 公钥配置及逐操作快照。它们不归用户 Agent 学习配置，也不把公钥配置版本塞入 Controller 请求摘要来追随全局换钥                            |
-| 已受理操作   | RC 在计算候选部署摘要时取得集合快照，与 BeginTransition 的操作受理原子持久化；请求重放、重启恢复、BeginTransition 并发重放均使用已存快照重建部署，不能重新读取当前 RC 配置 |
+Normal rotation:
 
-私有操作记录须保存公钥字节及其身份，只有一个配置修订号且旧配置不可找回不够。
-新的全局配置只作用于之后新受理的创建/重建/Enable；已受理请求的输入摘要、
-公钥快照和部署摘要不得回写。快照丢失或校验失败时明确阻止恢复并报告原因，
-不能用最新公钥凑出目标，也不能跳过 `ErrRequestConflict` 检查。L1R 已加入
-这些字段和恢复逻辑；更换受信集合会改变实际部署身份，
-但不自动改动 Skill、模板或 Agent 的业务配置。
+1. RC pre-provisions `{K_current, K_next}` for new targets. Operators check the sets held by running Runtimes **and by the frozen targets of unfinished operations**. An existing Runtime does not receive new keys when the RC configuration changes. An instance that lacks K_next is first rebuilt explicitly in a maintenance window, or learning maintenance for that Agent is paused.
+2. ACP switches the signing `kid` only after it is confirmed that the targets trust K_next. A target that does not support the kid rejects maintenance requests and keeps its candidates; normal Runs are not blocked by the key change. There is no fallback through trial signing, automatic downgrade, or skipping signature verification. Old snapshots still under recovery must be included in the switch checklist, so that a late completion cannot bring back an unprepared instance.
+3. RC configuration is updated to `{K_next, K_future}`. Instances are rebuilt explicitly one by one, or picked up by a later controlled Enable, and maintenance resumes only after the new execution binding and key set are verified. Accepted operations are settled under their original snapshot first and then updated with new requests. Switching the ACP signer alone does not revoke a running Runtime's trust in K_current. The first version does not promise online immediate revocation; removing an old trusted key requires completing this round of rebuilds.
 
-正常轮换流程：
+If the private key leaks, first close new learning admission and signing, and settle in-flight maintenance. **Stopping ACP signing does not revoke the leaked key.** The maintenance entry point of affected Runtimes must be isolated. If the current deployment cannot reliably block every entry point, including direct connections from normal processes inside the Runtime, the Controller disables the affected Runtime and confirms that execution has stopped, accepting the foreground interruption for that Agent. Blocking only the external network is not a revocation. Within the isolation or maintenance window, inventory running instances, disabled configurations, and in-flight targets; replace the key and rebuild with a set that does not contain the leaked kid. Recover or settle old operations according to the facts. Do not rewrite frozen snapshots to bypass digest conflicts, and do not reopen targets that carry the old key. Maintenance reopens only after the new `execution_id` and the new trust set are verified.
 
-1. RC 为新目标预置 `{K_current, K_next}`；运维核对运行中 Runtime **及未结操作的
-   冻结目标**所持集合。现有 Runtime 不会因 RC 配置改动自动获得新钥匙；缺少
-   K_next 的实例先在维护窗口显式重建，或暂停该 Agent 的学习维护。
-2. 已确认目标信任 K_next 后，ACP 才切换签发 `kid`。不支持该 kid 的目标拒绝
-   维护请求并保留候选，普通 Run 不因换钥被阻塞；不以试签、自动降级或忽略验签
-   兜底。仍在恢复的旧快照必须纳入切换清单，不能在稍后完成时带回未准备实例。
-3. RC 配置更新为 `{K_next, K_future}`，逐个显式重建/后续受控 Enable，核验新的
-   执行绑定与集合后才恢复维护。已受理操作先按原快照结算，再用新请求更新；
-   仅切换 ACP 签发并不撤销运行中 Runtime 对 K_current 的信任。首版不承诺在线
-   即时撤销，删除旧受信键须完成这轮重建。
+RC public key snapshots and deployment records, and the ACP protected private key configuration, must be included in their respective backup and restore checklists. The private key is never written into the RuntimeSpec, business logs, or the repository. When restoring an old backup, check the revocation records first; never re-enable a leaked key or an old target that carries it. Rotation, in-flight recovery during configuration changes, empty sets and unknown kids, leak isolation, and restore restrictions are each covered by the local gates of the Runtime, RC, and ACP and by cross-service integration tests. The manual leak-response path is exercised by `make e2e-skill-learning-key-compromise`. It does not provide automatic revocation or startup blocking, and it does not cover leak recovery with in-flight lifecycle operations; the operator performing a recovery must still inventory and settle unfinished targets as described in this section.
 
-私钥泄露时先关闭学习新准入/签发并结算在途维护；**停 ACP 签发不等于撤销泄露
-密钥**。必须隔离受影响 Runtime 的维护入口；若现有部署无法可靠阻断所有入口
-（包括 Runtime 内普通进程的直连），则由 Controller 停用受影响 Runtime 并确认
-执行停止，接受该 Agent 前景中断，不能只封外部网络后宣称已撤销。在隔离/维护
-窗口内，清点运行实例、disabled 配置及在途目标，换新密钥并重建为不含泄露 kid
-的集合；按事实恢复/结算旧操作，不能改写冻结快照绕过摘要冲突，也不能重开带
-旧钥匙的目标。新 `execution_id` 与新信任集合核验通过后才开放维护。
-
-RC 公钥快照/部署记录和 ACP 受保护私钥配置需纳入各自备份及恢复清单，不把私钥
-写入 RuntimeSpec、业务日志或仓库。恢复旧备份时先核对撤销记录；不能重新启用
-已泄露钥匙或带有该钥匙的旧目标。轮换、配置修改时的在途恢复、空集合/未知 kid、
-泄露隔离及恢复限制分别纳入 L1/L1R/L3 本地门禁和 LI1 集成。L1R 已验证
-配置、受理冻结、数据库重放和部署摘要。L3/LI1 的人工泄露处置路径已在
-`make e2e-skill-learning-key-compromise` 通过：ACP 清除签发配置后，旧钥对原
-Runtime 仍有效；Controller 停用后 Runtime 确实停止且原地址不可达。RC 数据库
-以受保护 archive 备份、恢复到未接入服务的隔离数据库，冻结公钥集合与部署摘要
-逐项一致，含泄露 kid 的恢复目标继续保持离线；新请求 Enable 使用安全配置，
-新的 Runtime 拒绝旧钥、接受新钥，原 Session 的后续 Run 仍读取已学规则。
-本例没有在途生命周期操作，不证明其泄露恢复场景，也不提供自动撤销/启动拦截
-能力；恢复操作者仍须按本节清点和结算未结目标。私有证据为
-`artifacts/verification/skill-learning/antnest-lifecycle-706dabfe.json`；archive
-目录 0700、文件 0600，校验摘要随证据保存，测试容器已清理。
-Runtime 的一次性 Docker HTTP 用例已在同一启动信任集合内
-分别用下一把与当前钥匙签名重放同一 `prepare` 请求，并验证未知 `kid` 被拒；
-同一 Runtime 门禁在保留工作区卷的条件下只带下一把公钥重建实例，旧钥匙对新请求
-返回 401，下一把仍可成功准备。此项只证明 Runtime 本地信任移除，不代替 RC/ACP
-协调的泄露隔离与旧备份恢复演练。
-一次性全栈用例再用首把钥匙创建 Skill，仅重建 ACP 并切换下一把签发钥匙，
-核对 Runtime 容器身份未变、更新 Skill 成功且后续 Run 读取更新内容；再将 RC
-配置改为只信任下一把钥匙，显式重建 Agent，核对新 Runtime 的 bootstrap 和
-`execution_id`，旧钥匙的签名请求返回 401、新钥匙的签名请求被受理。此用例覆盖
-正常轮换后的跨服务旧钥匙移除；原 Session 的后续真实 Run 还会读取重建后保留的
-两条 Skill 规则。它不代替泄露隔离或旧备份恢复演练。
-
-## 5. 首版流程、状态与证据分级
+## 5. Flow, States, and Evidence Levels
 
 ```mermaid
 flowchart TD
-    R["来源 Run 完成并持久化"] --> T["自动策略、经验线索、预算及空闲检查"]
-    T --> J["低优先级复盘，先读已有相关 Skill"]
-    J --> C["生成更新或新建候选及来源映射"]
-    C --> V["包结构检查、信任检查、关联已有结果"]
-    V -->|"符合自动策略"| P["ACP 记录应用依据及目标摘要"]
-    V -->|"可选人工分支"| D["展示差异并确认具体内容"]
+    R["Source Run completes and is persisted"] --> T["Check automatic policy, experience cues, budget, and idleness"]
+    T --> J["Low-priority review; read related existing Skills first"]
+    J --> C["Generate an update or new candidate with a source mapping"]
+    C --> V["Package structure check, trust check, link to existing results"]
+    V -->|"Matches automatic policy"| P["ACP records the apply basis and target digest"]
+    V -->|"Optional manual branch"| D["Show the diff and confirm the exact content"]
     D --> P
-    P --> W["等待空闲，复核应用依据与基础"]
-    W --> A["目录激活、读回核验目标摘要、记录结果"]
-    A --> N["轻量通知及后续 Run 使用"]
-    V -->|"失败或来源不足"| Q["保留原因或修订建议，不应用"]
-    U["可选：用户主动保存"] --> E["真实用户操作及限定证据"]
+    P --> W["Wait for idle; recheck apply basis and base"]
+    W --> A["Activate in the directory, read back and verify the target digest, record the result"]
+    A --> N["Lightweight notice; later Runs use the Skill"]
+    V -->|"Failure or insufficient sources"| Q["Keep the reason or a revision suggestion; do not apply"]
+    U["Optional: user saves explicitly"] --> E["Real user action and scoped evidence"]
     E --> C
-    A -. "手动导出，管理员另行发布" .-> S["Registry → Template → 重建"]
+    A -. "Manual export; an administrator publishes separately" .-> S["Registry → Template → rebuild"]
 ```
 
-主路径的触发是 ACP 观察到真实的完成 Run，并检查 Controller 下发的自动策略。
-任务记为 `trigger=run_completed`；模型不能伪造完成事件、来源用户角色或策略。
-**正常自动路径用策略授权生成并应用，不依赖 user_action_id、浏览器在线、
-通知已读或逐次审批。** 检查后的候选仍是内部暂存内容，符合条件就自动进入
-激活，不把“候选”强制等同于“等待人工”。
-
-可选人工入口仍可采用 Agent UI 原生“保存为 Skill”，后续单独交付：
-
-1. 用户选择本会话的消息/已完成 Run，点击操作，查看来源范围，并可输入希望
-   保存的流程或纠正。UI 通过自己的已认证 BFF 调用 ACP 的学习请求接口；不直连
-   Runtime，不提供可由助手文本自动提交的隐藏入口。
-2. ACP 使用可信用户身份核对组织、Agent/Session 权限、来源归属与学习预算，
-   生成并持久化 `user_action_id`，保存用户实际输入、所选消息/Run ID 及请求
-   幂等身份。不能接受客户端自报的 actor、用户角色或模型伪造的消息 ID。
-3. 维护任务以 `trigger=user_action` 绑定这个不可伪造的操作 ID 和授权证据范围。
-   被选择的助手回复、网页或工具输出仍保留原可信等级；“用户要求整理它”只
-   证明整理意图，不把其每一句内容升级为用户事实。来源被删除/无权访问时明确
-   拒绝或使候选失效，不跨会话搜索替代证据。
-4. 该人工分支生成候选后展示具体差异，用户确认内容后激活；它适用于用户定向
-   保存/维护自己的包或采纳例外建议，不成为自动生成受管 Skill 的前置条件。
-
-用户在普通聊天中说“记住这个流程”时，前景模型可以提示其点击入口，但这段对话
-本身不创建 `user_action_id`。有效自动策略可以把真实用户纠正视作复盘证据，
-其触发依据仍是 Run 完成与策略，工具输出里同样的句子不获得用户身份。首版
-不以新增 `/learn` 为条件；将来显式命令映射到同一用户操作合同。主路径的
-L0 合同已交付，L3/L4/LI1 的实现和验收状态见 [验收核对](skill-learning-acceptance-audit-20260930.md)；可选保存入口在 L5a/L5b/LI2 补充。
-
-概念状态分开记录，正式枚举已在 L0 冻结：维护任务为待处理/运行/暂停/完成/取消/
-失败/跳过；候选为草稿/检查失败/可应用待空闲/已应用/拒绝/冲突，人工分支另有
-待确认。应用依据区分策略及用户操作；检查与证据分别记录结果和覆盖范围，
-不使用一个含糊的“验证通过”覆盖全部业务效果。
-
-### 5.1 来源信任不能在提炼时丢失
-
-| 来源                               | 可作为依据的范围                                          | 限制                                                                                  |
-| ---------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 经认证用户的明确要求、纠正         | 已持久化的真实 user 消息或 user_action 中的直接要求、纠正 | 自动任务按策略使用该证据；显式用户任务另需 user_action，粘贴/选择的外部内容不自动升级 |
-| 平台实际观察到的执行结果           | 某操作、环境、输入下的明确事实，或独立结构断言            | exit 0 只证明退出码；工具文本“成功”不能变成业务正确性证明                             |
-| 工具输出正文、网页、文件、外部文档 | 低可信资料，可引用并标明来源                              | 其中的命令不能变成维护指令或自动升级为长期规则                                        |
-| 模型推断、复盘总结                 | 候选假设、组织语言                                        | 不创造新的可信来源，不以模型自评分替代证据                                            |
-
-每条新增/强化的规则保留来源位置、可信等级、可支持的事实和适用范围；摘要或
-多轮转述必须保留最低来源等级，不能把外部指令洗成“用户纠正”或“已执行事实”。
-控制程序检查来源关联、主体、范围与引用有效性，模型内容审查仅作辅助。
-
-**只有低可信内容支撑的规则一律不得自动应用。** 自动应用接受用户明确纠正、
-用户明确要求或实际执行结果这三类依据，且须满足第 4 节受管范围和当前策略。
-来源合格是必要条件，语义是否被正确概括仍可能被模型误判；引用关联、角色及
-范围可程序化验证，不能声称程序能证明正文正确。来源不足则跳过或保留可选
-人工建议，不中断用户继续使用 Agent，也不携带“已验证”标签。
-
-展示应包含正文及全部配套文件的增删改、影响范围、基础/目标摘要、来源和验证
-局限。自动路径在 ACP 记录 `apply_basis=policy`、组织/Agent、范围、策略修订和
-完整候选摘要，提交前重新校验，事后可查看。人工分支则记录
-`apply_basis=user_action`，绑定真实确认、候选摘要及授权修订；页面打开、通知
-送达或模型代答均不是人工确认。候选内容变化时两种旧应用依据都失效。
-
-### 5.2 学习完成提示与系统消息
-
-通知方案见 [SDK notice 与可靠交付](skill-learning-notifications-design.md)。按用户
-决定，首版实时链路采用 **ACP SDK notice → Node Bridge → 现有工作区 SSE →
-前端系统提示**。ACP 先结算并持久保存学习变更，再发送关联 changeId 的 notice；
-Node 协商能力、接收及去重，断线/重启后补读学习记录。恢复查询不作为常驻通知
-长轮询。普通自动生成/更新仅在 Runtime 核验且 ACP 持久结算后提示成功。
-
-系统提示可以事后查看，但不进入模型上下文，不改变来源 Run 的
-完成状态/交付水位，不归入正在执行的 Tool 过程。断线、刷新和会话切换后从
-持久结果恢复，通知送达不成为学习成功的条件。第一版按当前 Agent 范围观察。
-
-当前 SDK 1.5.0 已有 UNSTABLE `notice`，本方案选用该能力。ACP 已协商并发布，
-Node Bridge 已接收、补读和投影 View/SSE；前端呈现、来源跳转和去重恢复已通过组件及真实浏览器回归。
-持久身份通过命名空间 `_meta` 关联平台变更；SDK HTTP 按 Session 分流，
-notice 投递到连接已关联的真实会话，元数据另存真实学习来源，Bridge 独立于
-Session transcript 缓存处理。标准 notice 仍是实时提示，
-可靠性由 Server 的持久记录/发布恢复、Bridge 补读/SSE 恢复和 FE 去重共同保证。
-不向标准 notice 添加回执或塞进 `session/load` 回放。相关协商/元数据/恢复语义
-归 L0，ACP 生产者归 L3，Node/浏览器归 L4，完整链路纳入 LI1。
-
-## 6. 后台复盘与前景准入
-
-### 6.1 现有限制与维护任务身份
-
-ACP 当前每 Agent 只有一个活动 Run，第二个返回 `agent_busy`；Runtime 对所有
-工具和 `antnest://runtime/info` 共用单个执行位，忙时直接 `runtime_busy`，不排队。
-[Run 准入](../services/agent-acp-service/src/application/run-supervisor.ts)、
-[Runtime 合同](../runtimes/antnest-runtime/docs/mcp-contract.md)。后台流程不能直接
-“沿用普通 Run”，也不能绕开 Run 后随意并发访问 Runtime。
-
-后台复盘是 ACP 拥有的**维护任务**，复用模型客户端、计费和取消基础设施，但不
-创建活动用户 Run、不占其 slot、不写伪造用户消息或修改来源 Run。每个 Agent
-维护任务与前景 Run 共用一把程序准入门；Runtime 仍保留自己的单执行位约束。
-
-任务按“读到有限证据 → 释放 Runtime → 模型推理 → 重新检查准入 → 写候选”运行：
-推理期间不持有 Runtime slot；只有 Agent 没有前景 Run、没有前景准入意图且绑定
-有效时，才能发起维护读写。资源读取也受同一门控制，不能在前景准备 `info` 时
-偷偷读取个人目录。模型不持有通用 shell、外部业务工具或任意写路径能力。首版
-优先采用有界的结构化生成：程序读取证据/相关 Skill，模型输出目标、变更及
-逐项依据，再由程序校验和写候选；不复制 Hermes 整个自由工具循环。格式修正
-计入同一任务预算。
-
-### 6.2 前景、Drain 和取消的具体顺序
-
-1. 前景提交先原子登记优先准入意图，禁止该 Agent 新的维护 Runtime 调用；如果
-   原本已有另一个前景 Run，仍按既有 `agent_busy` 处理。
-2. 取消复盘模型请求，使当前维护 generation/租约失效。晚到的模型响应只丢弃，
-   不能重新写候选；无需等待模型服务把整次推理自然做完。
-   纯模型调用不持有 Runtime 执行位。即使模型适配器忽略取消，ACP 也停止等待
-   该响应；调用费用保守记为 unknown、不返还预算、不重发，晚到成功或错误都
-   不进入候选。模型费用未结不能被当作 Runtime 文件副作用未结。
-3. 对已发出的维护文件调用请求取消，并等待 Runtime 明确结束/观察结果。仅触发
-   AbortSignal 或关闭 HTTP 不证明执行位已经释放。已进入短小原子提交的请求
-   先完成或按目标摘要结算，不能把已完成交换说成取消未生效。
-4. 确认维护调用已静止，才开始前景 Run 准备、读取 `info` 及进入正常执行。普通
-   复盘不得导致 `agent_busy` 或让前景撞上 `runtime_busy`。
-5. 取消/结算有独立短时限；超时且无法证明 Runtime 静止时，保留未结状态并报告
-   可诊断的暂时不可用，不伪造成功、忙等或启动相撞的 Run。L1/L3 的取消时限须
-   按真实文件操作验收确定；不承诺在未知副作用下仍强行接收前景。
-
-Drain/停用/重建收到请求就封闭维护准入、撤销租约并取消复盘，**不等待复盘模型
-自然结束**，也不把复盘加进前景 Run 的 Drain 等待列表。已经发出的短文件副作用
-仍须有界结算或记为未结，再按既有生命周期语义处理；“直接取消”不能被解释为
-忽略尚在写文件的子任务。新的 Runtime binding 必须使用新租约，旧任务无权续写。
-
-后台学习暂缓不等于聊天不可用。首版沿用 Hermes 的前景优先和事后通知体验：
-普通暂缓安静重试/保留状态，只有实际应用后发送 notice。不增加常驻“学习阻塞”
-提示或单独状态轮询；诊断及处理指引放在用户主动打开的学习结果入口内。
-“可通过普通 Run 请求停止后台任务”只是用户希望继续学习时的选项，不能成为
-继续聊天的前置要求。Runtime 文件调用结果未知仍按本节有界结算处理，不把取消
-HTTP 当成执行位已释放的证据；这项故障限制不得宣传为与 Hermes 完全相同。
-
-实现进度：ACP 已在执行配置关闭时停止同 Agent 的维护准入，并让生命周期结算等待
-维护调用有界静止；不明 Runtime 副作用仍按 `runtime_barrier_required` 处理。隔离
-Docker Disable 和 Rebuild 验收覆盖模型请求取消、`lifecycle_closed` 暂停、零 Skill
-变更和零成功提示；Rebuild 后新 Agent 也进入 ready。恢复 worker 可在关闭期间观察旧副作用，但重新派发候选前还会
-验证当前生命周期准入；Disable/Rebuild Docker 用例均等待下一轮 worker 扫描并
-确认任务仍暂停。ACP 服务内测试也覆盖已派发维护文件调用：生命周期结算等到
-调用与账本明确静止，应答因取消丢失则记 `unknown` 并保留 Runtime 阻断。真正
-Docker 用例还在 Runtime 已完成原子提交但 ACP 未收到应答时发起 Disable：活动
-Skill 文件已存在，停用保持运行直到应答释放，然后只记录一次应用结果。文件系统
-原子安装后、回执前的停用竞争另由测试专用 Runtime 闸门覆盖：停用后旧提交保持
-`unknown`，新 Runtime 启用并恢复准入后读取保留卷中的真实内容，结算旧提交且只
-登记一次变更；普通前景 Run 随后成功。配对的 Docker 故障用例丢弃这次应答，ACP
-在 Runtime 停用前通过一次 `observe` 认领真实效果，原 `commit` 记录为
-`observed_effect|applied`，没有再次提交，最终也只产生一条变更。
-另一隔离 Docker 用例在 ACP 持久化提交意图之后、实际向 Runtime 发请求之前
-发起 Disable：停用完成，工作区卷没有新增 Skill，变更数为零；ACP 对无法证明
-是否已送达的提交及一次观察仍保留 `unknown`，不冒充确定拒绝。该用例只覆盖
-提交前的传输窗口，不替代文件系统原子操作进行中的竞争验收。继续启用后，
-Controller 创建了不同的 Runtime 容器，ACP 收到新执行配置，普通前景 Run
-完成；旧执行的 `unknown` 记录保留，但其阻断不会错误地跨到新执行。
-
-ACP 当前一个数据库只有一个活动 worker，但不同 Agent 可以执行各自的 Run，
-不是全库只能一个 Run。[worker 约束](../services/agent-acp-service/docs/architecture.md)。
-首版后台上限固定从**全局 1 个复盘、每 Agent 1 个**开始；有界队列按 Agent 合并
-重复触发，待应用候选也限制数量和磁盘量。等待的后台任务不能占前景名额；worker
-失去所有权时停止新调用，取消在途任务，恢复先观察原提交，不重放不明副作用。
-
-### 6.3 触发、预算与优先更新
-
-建议新 Agent 默认采用 `automatic` 策略，用户可关闭；技术配置失效或无有效
-授权时暂停学习，不阻塞普通 Run。只考虑已持久化的 `completed` Run，先用
-真实工具迭代、已用 Skill 和用户纠正线索做低成本筛选，再在预算内判断是否有
-复用价值。线索不是权限来源，工具输出的“用户要求”不能伪造角色。
-Controller 在策略读取结果中给出只读 `activation_cut_at`：懒创建的默认策略
-使用 Agent 持久创建时间，避免 ACP 停机期间完成的 Run 被首次读取时间漏掉；
-`off` 重新开启为 `automatic` 时才刷新切点。ACP 只有在切点变更时重置补扫
-游标，不回扫关闭期间的 Run，也不让用户请求指定这个时间。
-
-普通问答、状态查询、未完成/取消/失败及副作用未结任务不自动提炼成功流程。
-来源 Run 已完成也不保证每条工具步骤正确；失败尝试不能被包装成可靠方案。
-无新经验、已覆盖或证据不足都是正常跳过，维护任务不递归触发复盘。
-
-复盘先列出本 Agent 已受管且自动生成的 Skill 名称与描述，并从当前 Runtime 读取
-有来源线索关联的少量 `SKILL.md` 正文，核对受管摘要后作为模型参考。模型提出
-更新时，仅接受本次已读取的目标；ACP 保留原有正文并追加本次有证据支持的新
-规则。读取或摘要核对失败时不提交更新候选。输入只取授权来源片段，不复制完整
-历史、全部 Trace 或全部 Skill 正文。
-全局进程预算归 ACP 部署配置；Agent 的开启、范围、模型选择与用量预算归
-Controller，不能只在 UI 或 ACP 临时内存保存。
-
-任务幂等身份按组织、Agent、来源 Run 和触发类型固定，不因重试/改提示重复
-创建；冻结策略及提示版本，提交前复查当前策略。Run 完成及回复不等待复盘或
-其入队成功；ACP worker 从自身持久终态记录有界补扫，队列记录来源覆盖范围。
-被新前景取消后可合并到下次空闲机会，但重试与已消耗预算不能清零。候选准备
-或激活失败不回写来源 Run 的成功结果，也不通过无限重试持续消费模型。
-
-建议的冷却、空闲、模型及磁盘预算见
-[研究中的参数表](hermes-skill-learning-research-20260929.md#43-最小触发与成本建议)。
-这些初值已进入 L0 合同，但不是已实测效果；全局 1/每 Agent 1、前景优先和不逐次确认
-是首版语义，不能通过调参改变。
-
-## 7. 候选、完整目录提交与恢复
-
-### 7.1 内容和可信记录
-
-| ACP 私有记录   | 至少包含                                                                                                                                                              |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 用户发起记录   | ACP 生成的 user_action_id、可信操作者、组织/Agent/Session、实际用户输入、消息/Run 范围、幂等请求                                                                      |
-| 维护任务       | 组织、Agent、发起/归属主体、trigger 与 user_action_id（用户发起时必填）、来源消息/Run、review_prompt_version、package_rules_version、配置修订、预算、请求/worker 身份 |
-| 候选           | 稳定个人路径、基础摘要、目标包清单/摘要、package_rules_version、原因、逐项来源等级、Runtime binding                                                                   |
-| 检查/应用依据  | 候选摘要、检查类型/覆盖及 package_rules_version、结果、证据引用；apply_basis=policy 时保存范围和策略修订，user_action 时保存具体确认的身份/时间/授权修订              |
-| 受管个人包身份 | 稳定路径、自动创建依据、最后已应用摘要、暂停原因；不得从普通工作区文件推断归属                                                                                        |
-| 提交意图/结果  | 请求身份、前后摘要、绑定与准入租约、预期基础及观察结果                                                                                                                |
-
-个人活动根仍是 `/workspace/.antnest/skills/`；候选和效果观察收据放同一工作区卷的
-`/workspace/.antnest/skill-learning/`。这个位置不在 Skill 目录扫描下，也不是
-`.cache/`。候选只是普通工作区数据，可能被用户改变；检查/展示/提交前须核验，
-与 ACP 记录不符就使旧应用依据失效。Runtime 不新增业务数据库或拥有发布决策。
-
-### 7.2 用真实目录原子替换
-
-本节仅用于工作区内**个人 Skill** 的候选激活。系统 Skill 按
-[Registry 方案](skill-registry-minimal-design.md)下载并将实际文件保存到专用 volume，
-由 Runtime 只读挂载；更新通过准备目标卷和显式重建完成，不在 `/skills` 执行
-本节的目录交换。
-
-Runtime 用 `RESOLVE_NO_SYMLINKS` 解析路径，扫描只承认真目录。
-[路径实现](../runtimes/antnest-runtime/src/roots.rs)。因此不采用软链接活动版本、
-指针文件或另一套发现协议；候选和活动目录必须处于同一 mounted filesystem：
-
-1. 在候选区准备**完整目录**，检查 Registry 包规则、配套文件、基础/目标摘要；
-   保证候选停止写入。ACP 先持久化策略/人工应用依据与提交意图，再发起条件提交。
-2. 提交时取得维护准入门及 Runtime 文件执行位，复核身份/授权、目标真实目录、
-   基础内容和第 7.3 节的受管静止条件。只哈希本次目标包，不扫描哈希全部个人库。
-3. 更新用 Linux `renameat2(RENAME_EXCHANGE)` 交换完整候选目录与活动目录；旧包
-   留在原候选位置供未知效果观察，结算后清理。新建用 `renameat2(RENAME_NOREPLACE)`，已存在则
-   冲突，不能把意外出现的用户目录覆盖掉。这两个标志分开使用。
-4. 保持执行位，对新活动目录重新读回完整文件清单/内容/模式，与应用依据绑定的完整
-   包摘要比较，再对新内容和相关父目录执行适用的持久化同步。匹配才向 ACP 报告
-   已应用及核验时点；不匹配返回已发生交换的内容冲突，按第 7.3 节恢复。不得将
-   多文件逐个 rename 或“先删旧再移动新”称为原子激活。
-
-这些系统调用的原子交换/不覆盖语义来自
-[Linux man-pages 的 rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html)。
-它们不支持跨挂载交换，也不保证每个文件系统支持所需标志。L1 必须在 Linux
-Docker named volume 与 Docker Desktop 的真实卷上验证交换、新建、权限、同步
-和崩溃观察；不支持时返回 `atomic_skill_replace_unsupported`、保留原包与候选，
-不能降级为逐文件覆盖后仍报成功。当前 Linux Runtime 测试已验证该原语的
-新建、交换和不覆盖语义；Docker Desktop 的 named volume 探针已验证两种
-`renameat2` 标志及父目录 `fsync`。Runtime 的 `commit` 已接入条件安装、
-后置核验和同请求重放，并通过 Docker HTTP 用例；独立 `observe` 也已通过
-重启后的已应用、未知记录及内容冲突用例。`cancel` 已通过代次关闭、重复取消和
-重启后拒绝提交的 Docker HTTP 用例。首版不提供 `revert` 入口。
-后台 Bash 执行组已通过真实 HTTP 用例验证阻塞、释放执行位、前景停止和重试；
-managed MCP 后代与空闲本体的区分已通过 Linux 进程组件测试，并用官方 SDK
-fixture 在 Docker HTTP 链路验证跨调用存活的子进程阻塞及退出后重试。
-中断、应答丢失及已结算候选清理的现有证据见 [验收核对](skill-learning-acceptance-audit-20260930.md)；真实目录操作未结仍按效果观察处理，不能仅凭 HTTP 取消就开放执行位。
-
-### 7.3 受管调用静止、常驻进程与可重放边界
-
-本方案将“静止”精确定义为**ACP 无前景 Run/优先准入意图，Runtime 除本次提交外
-的受管调用已经结算，提交独占 Execution Actor，且没有下表所列阻塞项**。不再要求“所有
-可写进程已经退出”，也不把此条件称为整个工作区没有写者。
-[现有后台进程边界](runtime-context-and-managed-mcp.md)。
-
-| 执行/进程状态                                                        | 是否阻止激活 | 处理                                                                    |
-| -------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------- |
-| 前景 Run、Tool/info、维护文件调用、未结取消                          | 是           | 等待/取消结算；新前景优先，维护不能跨调用检查后再抢占提交               |
-| managed MCP 有在途请求、已观察到的关联异步工作未结算，或取消结果未知 | 是           | 由 Runtime 观察结算；未知状态不能当空闲                                 |
-| managed MCP 进程已初始化、无在途协议操作，仅常驻等待请求             | 否           | 不因 PID 存在就永远阻塞；提交期间不向其派发新调用；后置摘要核验仍必须做 |
-| Bash 发起的仍存活后台任务/后代进程组，含 dev server、watcher         | 是           | 首版不按 cwd 或自报“只读”豁免；用户自行停止，或保留候选稍后应用         |
-| 发现来源不明的工作区执行进程、后台任务归属/退出无法确认              | 是           | `writers_unknown`，给出可诊断原因；补全 L1 观察能力前不默认放行         |
-| 已确认退出的任务、已回收的僵尸记录                                   | 否           | 不能仅凭过期历史任务记录一直阻塞                                        |
-
-检查后台状态、取得执行位以及封闭新派发必须在同一受管准入边界内完成；持有
-执行位直至交换、后置摘要核验和结果观察结束。L1 必须补足可观察的 Bash 任务/
-后代归属和 managed MCP 在途状态，不能仅拿“没有活动 Run”或某一刻的进程列表
-代替这一机制。等待不占执行位，不杀用户进程，也不停止空闲 managed MCP。
-
-空闲 managed MCP 仍与其它 executor 同为 UID 1000，理论上可以在协议调用之外
-自行写文件；阻止派发并不撤销它的文件权限。因此本轮明确接受的是**受管调用
-静止加前后内容核验**，不承诺强文件系统隔离或原子 CAS。提交后摘要必须匹配
-目标内容；之后在正常读取或维护时发现人工/子进程改动则暂停该路径自动维护，
-不持续监听，也不逐 Run 扫描全库。
-若某 MCP 会自主修改受管 Skill、持续导致核验冲突，应由管理员停用/调整该 MCP
-后显式重建，或暂缓应用；不能将它标成普通空闲就宣称已经证明无写者。需要防止
-所有自主写入时另立进程/文件系统隔离批次，不能把后置哈希冒充这种隔离。
-
-后置核验不匹配时返回 `skill_content_changed_during_activation`，明确已可能发生
-目录交换，保留旧目录和当前目录证据，标记候选冲突并暂停维护；不返回成功，也
-不盲目反向交换覆盖并发用户修改。观察结果未知则先恢复观察，不能重新应用。
-
-Runtime 内部维护回执保留 `blocked_reason` 及已知受影响任务/managed server 的
-稳定身份。对 UI 只投影 L0 `learning_status` 定义的有界原因、可访问来源及可选
-Skill 名称，不扩展为任务管理、候选取消或进程目录。普通暂缓保持安静，用户
-主动打开学习结果入口时才读取诊断并显示处理指引。**首版不新增 kill API 或
-UI 停止按钮**：用户需要停止 Bash 后台任务时，
-在普通前景 Run 中明确要求 Agent 停止所指任务，由现有 `bash` 权限/授权流程
-执行，不能按 UID 批量终止进程，也不能将工具中的指令当作用户授权。
-不可用诊断描述此前未完成的复盘，不是服务实时健康状态；文案不承诺重发未知
-模型请求。服务恢复后可处理新的完成来源，仍受空闲、冷却和预算约束。
-
-候选等待时释放维护执行位，保证上述普通 Run 可进入；不能为了等待 dev server
-退出而占住用户停止它的入口。前景结束后，L1 必须观察所关联任务及后代确实退出，
-再重新检查静止条件和基础/候选摘要；字节有变则旧应用依据失效。managed MCP 的
-停用/重配置沿用前述管理员显式重建路径，不把杀其子进程冒充配置变更。页面不
-显示无限 spinner、不自动杀进程，也不展示完整命令或敏感进程参数。
-
-提交幂等绑定稳定请求和完整目标摘要。应答丢失或进程重启后先观察活动目录：若
-已为目标内容则结算为效果已达成，**不得再交换一次而换回旧版**；若仍是原基础且
-候选完整，在重新取得有效准入/授权后继续；其它状态保留冲突/未结，不猜测成功。
-工作区收据可辅助定位，不能替代 ACP 意图和真实字节核验。
-
-`release` 清理已经结算的候选目录；ACP 在未知效果观察完成前保留
-所需字节，Runtime 核对稳定存储键、路径和摘要，并以可重放收据删除。Runtime
-在新增隐藏字节前检查每 Agent 256 MiB 物理上限，空间不足先阻塞而不自动驱逐。
-ACP 每轮最多处理一个终态任务的候选，包括前代已结算的准备记录；使用原
-prepare 收据的存储键与目标摘要，不用交换后旧包的摘要替代。清理复用维护
-准入；发送前允许前景抢占，发送后保留应答，最长五秒，worker 停止仍取消。
-未知 release 按原请求重放；替代 worker 持有独占锁后恢复遗留 pending。
-本批单元、PostgreSQL、共享合同和真实 Docker 丢失应答/物理清理回归已通过，
-证据及完整工作流剩余门禁见 [当前状态](current-status.md)。
-首版不保留供用户撤销的旧版本，也不提供撤销入口。
-
-## 8. 验证边界与 Run 使用记录
-
-### 8.1 首版不执行候选自测
-
-目前可用 Runtime 属于用户，挂载其工作区和 Egress，也只有一个执行位；不把它
-临时当作无副作用验证沙箱。首版区分执行证据与应用依据：
-
-| 证据                  | 可以证明                                                | 不能证明                             |
-| --------------------- | ------------------------------------------------------- | ------------------------------------ |
-| 结构/身份/来源检查    | 包可解析，路径/大小/授权/引用满足规则                   | 流程正确、没有危险脚本或未来结果正确 |
-| 来源 Run 已有执行结果 | 原输入与环境下实际观察到的事实                          | 新提炼或修改后的候选已经执行通过     |
-| 自动策略及适用范围    | Controller 允许这一类受管个人更新，当前候选满足程序准入 | 正文语义正确、已做候选业务测试       |
-| 人工分支的具体确认    | 用户在所示范围内允许应用该内容                          | 等于业务测试通过、允许突破其它权限   |
-
-模型审查可辅助发现重复、泄露和明显错误，不是额外的事实验证等级。凭据/私人
-资料应在候选检查时拦截或要求用户删去；不能认为模型说“无敏感信息”就足够。
-结构结果绑定候选完整摘要；来源结果绑定来源执行及原内容身份，不能给新候选
-复制一个“实测通过”徽标。
-
-新的脚本或验证说明只作为文件，不在生成、结构检查和激活中执行。未来如需
-可执行评估，另列 Controller/RC 所属批次提供隔离验证 Runtime、最小权限/网络/
-临时存储及成本归属，之后再集成评估；不能塞进现有 L1 或占用用户执行位凑证据。
-
-### 8.2 空闲激活，不做全库逐 Run 冻结
-
-首版明确选择空闲激活，与新 Run 准入共用第 6 节门控。维护程序不能在前景运行中
-替换活动包；新 Run 使用当时可发现的目录。**这不等于整个 Run 的工作区字节被
-快照冻结**，前景自己的编辑、后台进程及人工编辑仍可能改变内容。
-
-系统版本可从 Run 快照的 `agentSpecRevision` 追溯固定引用，结合 RC 清单中的
-逐 Skill 摘要；当前全新开发部署没有旧业务资产迁移前置项。
-[现有快照字段](../services/agent-acp-service/src/domain/run-snapshot.ts)。
-学习链路不以 Runtime 新增系统版本字段为首版前提。
-
-个人 Skill 只记录本次**实际读取**的 `SKILL.md` 内容摘要和路径；配套文件实际读到
-时可同样记摘要。L1 为读取结果提供字节范围/完整性与内容身份，ACP 保存对应记录。
-完整正文可在实际读取时对其字节计算摘要；截断或分页片段须标为片段，不能拿显示
-文本、行号包装或部分内容冒充完整文件摘要。只看目录摘要没有读正文时，记录为
-“仅发现”，不能说已经使用。
-
-不在每个 Run 开始遍历 32 个、每包最大 32 MiB 的个人集合。完整包摘要仅在候选
-检查及提交校验时计算本次目标。实际读取中同一路径变了就记录
-新的观察身份/冲突，暂停对应维护；已进入上下文的旧文本不会因此被回写。首版
-不承诺拦住任意外部写者或禁止前景主动编辑，不把“有摘要”描述为全包隔离。
-
-### 8.3 系统只读、重名和正式发布
-
-系统 Skill 继续由工具拒写及只读挂载保护。维护流程没有 Docker 控制、重新挂载
-或系统卷可写别名。派生关系只能追溯来源，不能继承系统可信等级或覆盖权限。
-
-重建新增系统 Skill 与已有受管个人 Skill 同名时，保留个人文件，但暂停其维护、
-使待提交候选失效并提示用户选择改名/重新绑定。Runtime 当前两种来源均可展示，
-不能静默遮蔽、删除或认为系统新增就自动批准个人改名。
-
-Registry 首版**没有个人 Skill 发布/转换的产品流程**。可行路径是用户手动导出
-选定内容，管理员按包规则检查并上传新版本，再保存模板修订、显式重建。
-
-后续按[动态发现与传播设计](evolver-technical-analysis.md#112-用户确定的四步产品流程)
-增加自动投影和用户提升：ACP 在学习确认生效后异步提交元数据及来源引用，
-Registry 保存动态映射；正文、包文件和源生命周期仍归来源 Agent。投影故障
-不撤回本地学习成果。其它获授权 Agent 检索后经来源接口获取，在当前 Run
-临时使用。用户提升时按需取包、校验并由 Registry 托管独立正式版本；来源
-后续学习不改变它，目标 Agent 仍经模板修订与 rebuild 获得新预设。投影不自动授予组织发布
-权限，也不等于自动修改所有 Agent 的基础能力。Registry 接口的 D1 门禁已通过，
-本服务的自动投影与当前来源读取已由
-[D2](skill-discovery-acp-delivery-20261001.md)交付，含真实学习与回源证据。
-[D3](skill-discovery-tools-delivery-20261001.md)模型搜索/正文加载也已交付；
-[Runtime D4](skill-discovery-runtime-delivery-20261001.md)、
-[ACP D4A](skill-discovery-temporary-consumer-delivery-20261001.md) 与
-[Console D6](skill-discovery-console-delivery-20261001.md) 已完成后续消费者。
-完整四步由 [DI1](skill-propagation-integration-delivery-20261001.md) 的真实学习、
-临时使用、登录提升及模板/重建/Run 集成证明，不扩大本文个人学习的原有范围。
-
-## 9. 配置、身份、费用与服务所有权
-
-Agent 的学习开关、维护路径、预算、模型选择和授权修订属于 **Agent Controller**，
-必须单独交付配置、持久化及向 ACP 的投影，不能写成“必要时才适配”。首版默认
-模式建议为 `automatic`，提供 `off`；自动策略允许受管范围内无逐次确认的应用。
-默认范围是自动创建并由 ACP 登记的个人包；固定路径归 Controller 策略，
-ACP 记录生成归属和观察到的内容冲突。用户单次保存与持续维护范围分开。
-`adopted_paths` 是保留字段，首版始终为空；Controller 不接受非空列表，
-ACP 不登记用户原有包。显式纳入及多文件包更新如有产品需要，再单独设计
-完整包验证和服务合同，不阻塞自动学习首版验收。
-`pinned_paths` 仅撤销自动更新权，不授予维护权；Controller 在 owner 校验和
-规范路径校验后即可保存，允许提前固定未来创建的路径，ACP 在应用前按精确路径
-再次检查。固定路径无需等待纳入包的权威读取与完整摘要能力。ACP 不将固定包
-送入复盘的已有受管 Skill 内容；若模型仍提议固定路径，须核对已结算提案与任务
-冻结策略中的精确 pin，再将任务结算为跳过，不生成候选、变更或成功提示。
-隔离 Docker 用例已验证首次自动创建后固定该路径，第二次真实 Run 成功、后台
-同名提案跳过且仅保留首次变更与提示。
-修改学习开关/范围/预算采用独立配置修订并立即供 ACP 复查，不要求重建 Runtime；
-Runtime 维护公钥或系统 Skill 的变化仍按各自的显式重建规则处理。
-
-复盘使用当前 Agent owner 的有效授权及 Controller 配置的模型凭据，通过现有
-Provider 客户端调用，不用管理员兜底 Key，不保存一份复盘专用明文密钥。费用归
-该组织/Agent/owner，区分前景与维护用途，同样受预算约束；后台取消已发生的费用
-也应记录。owner 撤权、模型授权撤销、学习配置关闭或修订失效时停止新调用，
-取消旧任务并使未提交应用依据失效。历史任务的归属不能随新 owner 重新标记。
-
-当前投影的 `principal_ids` 只含 owner。
-[现有投影](../services/agent-controller/internal/application/execution_projection.go)。
-不能据此假设未来多人共享安全：个人 Skill 实际位于 Agent 工作区，不是按用户
-隔离。多人共享、转移所有权或跨用户证据复用必须重新审视内容可见性与授权；
-未交付相应策略前，不允许后台将一个主体的私有证据并入另一个主体的维护任务。
-
-| 所有者             | 新增工作                                                                            | 不承担                                      |
-| ------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------- |
-| Agent Controller   | 自动学习配置、范围/固定/预算与修订投影                                              | 复盘推理、个人文件事务                      |
-| Antnest Runtime    | 候选文件、实际包校验、静止观察、目录提交/恢复、读取摘要                             | 学习策略、发布批准、业务控制数据库          |
-| Agent ACP Service  | 自动触发/候选/来源/应用依据与受管归属记录、前景优先、独立维护客户端与签发凭据、计费 | 容器管理、跨组织证据、自动 Registry 发布    |
-| Agent UI           | 事后学习结果通知、来源与阻塞原因；后续可选保存入口                                  | 维护决策权威、后台独立执行循环              |
-| Runtime Controller | 生命周期绑定、维护公钥集合 bootstrap、已受理操作的冻结快照与摘要恢复；独立 L1R 批次 | 持有 ACP 签发私钥；首版额外创建验证 Runtime |
-| Skill Registry     | 沿用包规则及管理员托管                                                              | 后台学习或个人发布产品工作流                |
-| Task Scheduler     | 未来可按明确合同触发周期整理                                                        | 首版复盘的必要依赖                          |
-
-任务冻结 `review_prompt_version`；模板大小、模型调用数/时间、输入/输出、候选
-数量/磁盘均受限。
-具体阈值已在 L0 固定，仍须在所属服务批次验证；研究依据见本轮研究。自动应用是
-主流程，全局后台并发 1，策略范围不能被提示或参数调优扩大。
-[服务所有权](service-layout.md)。
-
-## 10. 失败处理与验收要求
-
-| 场景                                    | 处理及所需证据                                                                                                                                  |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 无新经验/重复触发                       | 跳过或合并，不递归生成候选                                                                                                                      |
-| 浏览器关闭、用户从未点击保存或确认      | 合格 completed Run 自动生成/更新受管 Skill，下次 Run 能发现并按需读取；不依赖通知送达                                                           |
-| 学习提示、刷新/断线、跨会话             | SDK notice 只报告已结算结果；Server 发布恢复、Bridge 按稳定身份补读/去重、FE 从 SSE 快照恢复；保留真实来源，不进入模型上下文或改变 Run 输出水位 |
-| 自动策略关闭/范围固定/预算耗尽          | 停止新维护、取消旧任务并复核在途结果，不影响已有 Skill 使用及来源 Run 状态                                                                      |
-| 自动更新、手写包、重复主题              | 已用受管主题优先；用户包/系统包/固定包不可自动改；无新经验不强制新建                                                                            |
-| 终态补扫、任务重试、worker 重启         | 同一来源唯一任务，已用预算不清零；未知提交先观察，来源 Run 成功不因复盘失败改变                                                                 |
-| 前景在模型推理/读取/候选写入/提交时到来 | 封闭维护准入、取消及观察静止后再读 info；不因普通复盘出现 agent_busy/runtime_busy                                                               |
-| Drain/重建/停用/worker 失权             | 不等模型自然完成；旧租约禁止新副作用，未结短文件操作按事实恢复                                                                                  |
-| 两 Agent 同时复盘                       | 每 Agent 1、全局 1；有界队列，前景不占维护名额                                                                                                  |
-| 可选用户发起、重复点击与文本注入        | 只有已认证原生操作创建 user_action_id；自动任务绑定真实 Run/策略，模型或工具文字不能伪造任一依据                                                |
-| 网页/工具输出试图注入长期规则           | 低可信标记贯穿提炼，不能变成用户纠正或自动应用依据                                                                                              |
-| 维护目录/猜名/重放/直连端点             | tools/list 从不包含维护定义；Runtime tools/call 拒绝保留名称；私有端点拒绝无效凭据/旧绑定，ACP 来源检查不可由模型参数绕过                       |
-| 公钥轮换与在途部署                      | 当前/下一把按 kid 验证；RC 配置更新后原请求仍以冻结快照恢复且摘要一致，缺快照不得换用最新配置；缺少下一把的 Runtime 暂停维护，不阻塞普通 Run    |
-| 泄露密钥/旧备份恢复                     | 停止签发之外还须隔离实际验证端；必要时停用 Agent 后重建；不恢复已泄露 kid，不改写旧操作快照伪造完成                                             |
-| 候选超大、YAML 非字符串、目录/name 不符 | 共享结构样例拒绝；不能先激活以后才发现无法发布                                                                                                  |
-| 包规则或复盘提示更新                    | 两版本分别记录；任务重试沿用冻结提示，候选按当前包规则复查，不能篡改历史结果或沿用被修改字节的应用依据                                          |
-| 基础/候选改变、目录移动、策略失效       | 冲突/暂停自动维护，旧依据不能套用到新字节；人工确认也不得沿用                                                                                   |
-| 空闲 managed MCP 与在途请求             | 常驻空闲进程不阻塞、无需退出；在途/未结请求阻塞；提交期间无新派发，目录交换后摘要核验                                                           |
-| 常驻 Bash dev server / 未知后台任务     | 学习暂缓并释放执行位，聊天继续；用户主动查看学习结果时可见原因，可选经普通 Run 请求停止后再学习；无常驻告警、新增 kill API/按钮或自动杀进程     |
-| 交换前后有自主文件修改                  | 基础变化则拒绝；后置不匹配标明已交换的冲突，不能成功或盲目换回；不能将观测静止说成强隔离                                                        |
-| 交换/新建/同步中断、应答丢失            | 观察前后摘要，避免重复交换回旧版；不出现逐文件混合活动包                                                                                        |
-| Docker 文件系统不支持                   | 明确能力错误，保留旧包和候选，无不安全降级                                                                                                      |
-| 重建后同名系统包/授权失效               | 个人资产保留，维护暂停，旧候选失效，用户显式重新绑定                                                                                            |
-| Registry 离线                           | 本地生成、自动应用及使用不依赖它；管理员发布等待恢复                                                                                            |
-
-自动生成、策略检查、实际激活及结果提示分别验收；人工入口另验，不以它代替
-无人逐次确认的自动链路。不能只测试 Markdown 看起来合理。
-后续质量比较使用代表性任务和具体内容身份，记录成功、错误触发与回归；使用
-次数、工具成功和模型自评分都不替代业务结果，不预先承诺收益。
-
-## 11. 服务所属交付批次
-
-L0 共享合同与 schema 测试已落地；后续按单一服务本地门禁、
-显式集成推进。**原 L5 的后台生成及前景竞争前移至 L3/LI1，自动应用进入首版；
-人工保存改为补充 L5a/L5b/LI2。** 不把一个 Runtime 文件工具完成说成学习业务完成。
-LI1 的隔离 Docker 正常路径已通过：完成 Run 触发创建和更新、具备 notice 能力的
-ACP v1 客户端实时收到两次 SDK 提示、Agent View 恢复两次结果、后续 Run 读取
-更新后的内容。测试以三轮工具调用满足粗筛，并只在 disposable 测试库中前移
-首次复盘时间来满足十分钟冷却。同一隔离流程把真实更新候选 ZIP 送交临时
-Registry，包规则版本 1 的上传通过，工件与完整内容摘要均与 ACP 记录一致；这只
-覆盖当前单文件候选，不等于个人包发布产品流程或多文件纳入验收。复盘模型等待
-期间的前景抢占也通过：模型请求取消，前景 Run 完成，任务暂停且无 Skill 变更。
-提交回执被延迟的另一隔离用例也通过：Runtime 已安装 Skill 后，新前景 Run
-先取消维护并等待回执结算，回执释放后完成；变更和提交意图各只有一条。
-原子安装后、Runtime 回执前的前景竞争也通过：首次前景请求因未确认效果被
-`runtime_barrier_required` 拒绝；Runtime 结算后 ACP 仅重查同身份的只读
-`observe`，不重发 `commit`，最终只登记一次变更，下一次前景请求成功。该用例
-暴露过同执行实例上的 `unknown observe` 永久 pending，已在 ACP 恢复链修复。
-Runtime 的确定性 Linux 单元测试已在原子安装后、后置摘要核验前模拟外部写入：
-提交返回 `unknown`，效果观察为 `conflict`，不会记录应用成功。跨服务生命周期
-信任集合更替及真实浏览器自动学习/故障恢复已有隔离证据；原子安装后、回执前的生命周期竞争已通过隔离
-Docker 用例。提交前
-请求受阻、提交后应答持有/丢失及普通 ACP 重启已有各自的隔离证据。
-同一 Docker 正常路径中，
-ACP 客户端重连后 Agent View 仍含两条已结算结果，新连接不重放历史 SDK notice；
-Bridge 服务内并发测试验证旧补读快照不会覆盖读取期间到达的新 notice。另一个隔离
-Docker 用例在 Agent UI 离线时完成 Skill 更新与后续真实 Run 读取，UI 重启后的
-Agent View 恢复两条唯一结果；这只证明迟到观察者的补读，不证明 SSE 顺序。
-FE 组件测试已覆盖较旧 notice 晚到：它进入历史但不替换当前新结果提示；乱序
-批次只提示最大序号。Bridge 的根 HTTP/SSE 集成测试已验证选中 Session 下的
-实时增量与去重顺序；此前旧投影延迟读取最新 notice 导致增量丢失，现已固定投影
-时刻的 notice 列表。一次性 Docker 测试还验证首条已提交 notice 的 SDK 发送
-失败会关闭原连接，Agent View 可补读该结果，新连接只接收后续更新的实时 notice。
-真实 Docker 浏览器回归已验证实时结果呈现、来源跳转、刷新无历史提示重放与手机恢复；新增诊断仅在结果面板打开时读取。
-符合粗筛的完成 Run 若经模型复盘决定 `skip`，隔离 Docker 验证任务结算、一次模型
-调用计数、零 Skill 变更及零成功提示。固定路径的 Controller 存储和 ACP
-跳过门禁已有本地与隔离 Docker 证据；显式纳入用户原有 Skill 不属于首版。
-隔离 Docker 还验证模型两次提案都只引用真实工具输出的不可信证据：允许的一次
-格式修复后任务暂停为 `review_inconclusive`，零 Skill 变更及零成功提示；共用模型
-夹具的自动创建、更新和后续真实 Run 正向用例也已重跑通过。
-隔离 Docker 还验证复盘模型返回 503：来源 Run 保持成功，维护任务暂停，一次
-模型调用计数且调用状态为 `unknown`、零 Skill 变更及零成功提示；不能盲目重发
-这个请求。后续隔离 Docker `antnest-lifecycle-cef1dc9b` 已验证：复盘仍不可用时
-普通前景 Run 可完成；模型恢复后，新的三工具轮次完成 Run 自动创建 Skill、
-发送实时 SDK notice，并由后续真实 Run 读取。旧来源保持完成，旧任务、未知
-调用及费用预约不变，未重发旧请求。测试仅推进其隔离数据库中的一次冷却时点，
-未修改生产冷却或预算逻辑；专属容器、网络和卷均已清理。
-ACP 正常重启时若复盘模型请求未结束，隔离 Docker 已验证任务标为 `worker_lost`、
-模型调用保持 `unknown` 且不重复派发；Controller 重发执行配置后原 Session 的
-前景 Run 可继续执行。`foreground_preempted` 仅用于实际前景抢占，不再用于服务停机。
-隔离 Docker 还验证模型请求挂起时将 Controller 学习策略切为 `off`：ACP 的
-有界策略复核发现修订变化后取消在途模型连接，将未知用量记为 `unknown`，任务
-暂停为 `policy_changed`，不生成 Skill 或成功提示，来源 Run 保持完成。临时策略
-读取失败不冒充已确认撤权；提交前仍复核当前授权并拒绝失效依据。
-
-| 批次 | 所有者             | 交付及边界                                                                                                                                                                                                                                                          |
-| ---- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| L0   | 共享合同           | 自动触发及来源、automatic/off 策略/范围/预算、受管归属及 apply_basis、维护端点/凭据与保留名称、kid/公钥集合及部署身份/轮换、两个版本、静止分类、前后摘要/效果恢复、SDK notice 能力/关联元数据/来源路由、学习记录补读及工作区 View；固定参数与行为样例，同步工具边界 |
-| L1   | Runtime            | 私有维护端点、拒绝普通 tools/call、按 kid/有界 bootstrap 公钥集合验签、候选结构、受管调用/后台任务观察、目录交换及后置摘要、隐藏存储容量与签名 release；无新停止接口；Rust/合同/组件和 Docker/Desktop 门禁                                                          |
-| L1R  | Runtime Controller | 公钥集合 bootstrap、规范化部署摘要、受理时冻结完整快照/恢复不读新配置、轮换及泄露/备份恢复步骤；所属服务文档/单元/合同/组件门禁，不夹带 ACP 实现                                                                                                                    |
-| L2   | Agent Controller   | Agent 自动策略、默认范围/固定、预算/owner 授权与独立投影修订；显式纳入保留但首版关闭；必做的单服务批次                                                                                                                                                              |
-| L3   | ACP Service        | 完成 Run 自动触发/补扫去重、有界复盘与先读后改、受管归属、来源检查、策略应用记录、SDK notice 协商/发布恢复及权限查询、前景抢占/Drain 取消、计费、独立维护客户端/签发及恢复；本地单元/合同/组件证据                                                                  |
-| L4   | Agent UI           | Node SDK notice 协商/接收/有界补读、View/SSE 系统提示及 FE 去重恢复、来源和阻塞处理指引；无 kill 按钮；后端先测，沿用已有样式并执行功能回归，细调留在人类验收                                                                                                       |
-| LI1  | 显式集成           | 完成 Run → 自动生成/更新 → 空闲激活 → notice 提示及后续真实 Run 使用，浏览器离线/零审批同样成立；notice 发送失败/乱序/重连补读、前景/后台竞争、拒绝越界、换钥、崩溃恢复及适用 Docker E2E                                                                            |
-| L5a  | ACP Service        | 补充真实 user_action 的手动保存/候选确认及幂等；复用已通过的维护管道；不混入 UI 实现                                                                                                                                                                                |
-| L5b  | Agent UI           | 可选保存为 Skill、来源选择及人工确认；另行立项，沿用已有样式并执行功能回归                                                                                                                                                                                          |
-| LI2  | 显式集成           | 在 LI1 基础上验收人工补充路径、自动关闭时的单次保存、授权范围及重试；不替代自动链路                                                                                                                                                                                 |
-
-自动应用及学习结果提示是上述首版必做项；事后撤销、整库 Curator 合并/淘汰、执行验证环境、
-Registry 一键发布另行立项。手动导出/管理员上传/模板重建的衔接可另验，
-不把组织发布链路列为本地自动学习的启动依赖。
-
-新行为测试先行；单元归所属服务，集成/E2E 归根 `tests/integration/`、`tests/e2e/`，
-共用工具归 `tests/support/`，私有持久证据归 `artifacts/verification/`，不进
-`.cache/`。各批需单元、合同、组件和适用 Docker E2E 证据。
-[测试存储规则](../tests/README.md)。
-
-## 12. 仍可讨论的范围
-
-用户已明确自动生成是主方向，不能重新收缩成逐次人工发起及确认。前景优先、
-受管个人范围、系统只读、独立维护通道、非执行验证、真实目录和内容冲突处理
-继续作为方案边界；公钥 bootstrap 及无新增停止接口也沿用已评审决定。
-
-触发粗筛/冷却、模型和日额度、队列/补扫与存储预算的首版值见
-[L0 合同](../contracts/skill-learning/learning-api.md)。服务批次须用真实行为样例
-检查这些初值能否既学到经验又避免重复生成，必要调整须先修订合同。
-UI 采用事后通知和按需查看，不新增常规逐次审批。完整包 Run 快照、隔离执行
-验证及周期整库合并不纳入首版。L0 并不表示自动学习的实现门禁已通过。
+The main path starts when ACP observes a real completed Run and checks the
+automatic policy issued by the Controller. The task is recorded with
+`trigger=run_completed`. The model cannot forge the completion event, the
+source user role, or the policy. **The normal automatic path uses the policy
+to authorize both generation and application. It does not depend on a
+user_action_id, an online browser, a read notification, or per-change
+approval.** A checked candidate is still internal staged content. When it
+meets the conditions, it proceeds to activation automatically. A "candidate"
+does not mean "waiting for a human".
+
+An optional manual entry point can use a native "Save as Skill" action in
+Agent UI. It is planned and not implemented:
+
+1. The user selects messages or a completed Run in the current session, clicks
+   the action, reviews the source scope, and can enter the procedure or
+   correction to save. The UI calls the ACP learning request API through its
+   own authenticated BFF. It does not call the Runtime directly, and it offers
+   no hidden entry point that assistant text could submit automatically.
+2. ACP uses the trusted user identity to check the organization, Agent and
+   Session permissions, source ownership, and the learning budget. It then
+   generates and persists a `user_action_id` and stores the user's actual
+   input, the selected message and Run IDs, and the request idempotency
+   identity. It does not accept a client-reported actor, a client-reported user
+   role, or message IDs forged by the model.
+3. The maintenance task uses `trigger=user_action` and binds this unforgeable
+   action ID and the authorized evidence scope. Selected assistant replies,
+   web pages, and tool output keep their original trust level. "The user asked
+   to organize this" proves only the intent to organize it. It does not upgrade
+   every sentence in that content to a user fact. If a source is deleted or no
+   longer accessible, ACP rejects the request or invalidates the candidate
+   explicitly. It does not search other sessions for substitute evidence.
+4. After the manual branch generates a candidate, it shows the exact diff and
+   activates the candidate after the user confirms the content. This branch
+   serves targeted saving or maintenance of the user's own packages and
+   adoption of exception suggestions. It is not a precondition for automatic
+   generation of managed Skills.
+
+When a user says "remember this procedure" in a normal chat, the foreground
+model can suggest the entry point, but that conversation does not create a
+`user_action_id`. An active automatic policy can treat real user corrections
+as review evidence, but the trigger is still Run completion plus the policy.
+The same sentence inside tool output does not gain user identity. The design
+does not require a new `/learn` command. A future explicit command maps to the
+same user action contract.
+
+Conceptual states are recorded separately, and the formal enumerations are
+fixed in the contract. A maintenance task is pending, running, paused,
+completed, cancelled, failed, or skipped. A candidate is draft, check failed,
+ready to apply when idle, applied, rejected, or conflict. The manual branch
+adds awaiting confirmation. The apply basis distinguishes policy from user
+action. Checks and evidence each record their result and coverage. A single
+vague "verified" flag never stands in for the full business effect.
+
+### 5.1 Source Trust Must Survive Distillation
+
+| Source                                                     | What it can support                                                                              | Limits                                                                                                                                      |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Explicit requests and corrections from an authenticated user | Direct requests and corrections in persisted real user messages or in a user_action              | Automatic tasks use this evidence under the policy. Explicit user tasks also need a user_action. Pasted or selected external content is not upgraded automatically. |
+| Execution results the platform actually observed           | Specific facts about an operation, environment, and input, or an independent structural assertion | Exit code 0 proves only the exit code. Tool text that says "success" does not prove business correctness.                                 |
+| Tool output body, web pages, files, external documents     | Low-trust material that can be cited with its source                                             | Commands inside it cannot become maintenance instructions or be promoted to long-term rules automatically.                                 |
+| Model inference and review summaries                       | Candidate hypotheses and wording                                                                 | They create no new trusted source. A model self-score does not replace evidence.                                                           |
+
+Every added or strengthened rule keeps its source location, trust level,
+supported facts, and scope. A summary or multi-step paraphrase must keep the
+lowest source level. It cannot launder an external instruction into a "user
+correction" or an "executed fact". The control program checks source links,
+subjects, scope, and reference validity. Model content review is only an aid.
+
+**A rule supported only by low-trust content is never applied automatically.**
+Automatic application accepts three kinds of basis: an explicit user
+correction, an explicit user request, or an actual execution result. It must
+also fall within the managed scope in section 4 and the current policy. A
+qualified source is necessary but not sufficient, because the model can still
+summarize the meaning incorrectly. The program can verify reference links,
+roles, and scope, but the design never claims that the program proves the body
+correct. When sources are insufficient, the task skips or keeps an optional
+manual suggestion. It does not stop the user from continuing to use the Agent,
+and it carries no "verified" label.
+
+The display includes additions, deletions, and changes to the body and every
+supporting file, the impact scope, the base and target digests, the sources,
+and the verification limits. On the automatic path, ACP records
+`apply_basis=policy`, the organization and Agent, the scope, the policy
+revision, and the full candidate digest. It revalidates them before commit,
+and they remain reviewable afterwards. The manual branch records
+`apply_basis=user_action` and binds the real confirmation, the candidate
+digest, and the authorized revision. Opening a page, delivering a notice, or
+the model answering on the user's behalf is not a human confirmation. Any
+change to the candidate content invalidates both kinds of earlier apply basis.
+
+### 5.2 Learning Completion Notices and System Messages
+
+The notification design is described in
+[SDK notice and reliable delivery](skill-learning-notifications-design.md). The
+real-time path is **ACP SDK notice → Node Bridge → existing workspace SSE →
+frontend system notice**. ACP first settles and persists the learning change,
+and then sends a notice linked to the changeId. Node negotiates the
+capability, receives and deduplicates notices, and rereads learning records
+after a disconnect or restart. The recovery query is not a standing long poll
+for notices. A normal automatic creation or update is reported as successful
+only after the Runtime verifies it and ACP settles it persistently.
+
+The system notice can be reviewed later. It does not enter the model context,
+does not change the completion state or delivery watermark of the source Run,
+and is not grouped under a Tool call in progress. After a disconnect, a
+refresh, or a session switch, the notice is restored from the persisted
+result. Notice delivery is not a condition for learning success. Notices are
+scoped to the current Agent.
+
+SDK 1.5.0 provides an UNSTABLE `notice` capability, and this design uses it.
+ACP negotiates and publishes it. The Node Bridge receives and rereads notices
+and projects them into the View and SSE. The frontend renders the notice,
+links to its source, and deduplicates on recovery. The persistent identity
+links to the platform change through a namespaced `_meta`. SDK HTTP routes by
+Session, so a notice is delivered to the real session the connection is
+associated with. The metadata separately records the real learning source,
+and the Bridge handles notices independently of the Session transcript cache.
+A standard notice is still only a real-time hint. Reliability comes from the
+Server's persistent records and publication recovery, the Bridge's reread and
+SSE recovery, and frontend deduplication together. The design adds no receipt
+to the standard notice and does not insert notices into `session/load`
+replay.
+
+## 6. Background Review and Foreground Admission
+
+### 6.1 Existing Limits and Maintenance Task Identity
+
+ACP allows one active Run per Agent. A second Run returns `agent_busy`. The
+Runtime shares a single execution slot across all tools and
+`antnest://runtime/info`. When the slot is busy, the Runtime returns
+`runtime_busy` immediately and does not queue the call. See
+[Run admission](../services/agent-acp-service/src/application/run-supervisor.ts)
+and the [Runtime contract](../runtimes/antnest-runtime/docs/mcp-contract.md).
+A background flow therefore cannot simply reuse an ordinary Run, and it cannot
+bypass Runs to access the Runtime concurrently.
+
+Background review is a **maintenance task** owned by ACP. It reuses the model
+client, billing, and cancellation infrastructure. It does not create an active
+user Run, does not take the Run slot, does not write fabricated user messages,
+and does not modify the source Run. For each Agent, maintenance tasks and
+foreground Runs share one programmatic admission gate. The Runtime still keeps
+its own single-slot constraint.
+
+A task runs in this order: read bounded evidence, release the Runtime, run
+model inference, recheck admission, write the candidate. Inference does not
+hold the Runtime slot. A maintenance read or write starts only when the Agent
+has no foreground Run, no pending foreground admission intent, and a valid
+binding. Resource reads go through the same gate, so maintenance cannot read
+the personal directory while a foreground Run prepares `info`. The model has no
+general shell, no external business tools, and no arbitrary write path. The
+first version uses bounded structured generation: the program reads the
+evidence and related Skills, the model outputs a target, a change, and the
+evidence for each item, and the program validates the output and writes the
+candidate. It does not run a free-form tool loop. Format correction counts
+against the same task budget.
+
+### 6.2 Ordering of Foreground Admission, Drain, and Cancellation
+
+1. A foreground submission first atomically registers a priority admission
+   intent. This blocks new maintenance Runtime calls for that Agent. If another
+   foreground Run is already active, the submission still fails with
+   `agent_busy`.
+2. ACP cancels the review model request and invalidates the current
+   maintenance generation and lease. A late model response is discarded and
+   cannot write a candidate. ACP does not wait for the model service to finish
+   inference.
+   A pure model call does not hold the Runtime slot. If the model adapter
+   ignores cancellation, ACP still stops waiting for the response. The call
+   cost is conservatively recorded as unknown. The budget is not refunded and
+   the request is not resent. A late success or error never becomes a
+   candidate. An unsettled model cost is not treated as an unsettled Runtime
+   file side effect.
+3. ACP cancels any maintenance file call already sent and waits until the
+   Runtime explicitly finishes the call or the result is observed. Firing an
+   AbortSignal or closing the HTTP connection does not prove that the slot is
+   free. A request that has already entered its short atomic commit either
+   completes or is settled by target digest. A completed exchange is never
+   reported as an ineffective cancellation.
+4. Only after the maintenance call is confirmed quiescent does the foreground
+   Run start preparation, read `info`, and enter normal execution. Ordinary
+   review never causes `agent_busy` and never makes a foreground Run hit
+   `runtime_busy`.
+5. Cancellation and settlement have their own short timeout. If the timeout
+   expires and Runtime quiescence cannot be proven, ACP keeps the unsettled
+   state and reports a diagnosable temporary unavailability. It does not fake
+   success, busy-wait, or start a colliding Run. Cancellation timeouts are set
+   from real file operation behavior. ACP does not promise to admit a
+   foreground Run while a side effect is unknown.
+
+Drain, disable, and rebuild close maintenance admission as soon as the request
+arrives. They revoke the lease and cancel the review. They **do not wait for
+the review model to finish**, and the review is not added to the Drain wait
+list of foreground Runs. A short file side effect that has already been sent
+must still be settled within a bound or recorded as unsettled, and then the
+existing lifecycle semantics apply. "Cancel directly" never means ignoring a
+subtask that is still writing files. A new Runtime binding must use a new
+lease. An old task cannot continue writing.
+
+Deferred background learning does not make chat unavailable. The design is
+foreground first with after-the-fact notification. An ordinary deferral
+retries quietly and keeps its state. A notice is sent only after a change is
+actually applied. There is no persistent "learning blocked" indicator and no
+separate status polling. Diagnostics and guidance live in the learning results
+view that the user opens explicitly. Asking an ordinary Run to stop a background
+task is only an option for users who want learning to continue. It is never a
+precondition for continuing to chat. An unknown Runtime file call result is
+still settled within the bounds described in this section. Cancelling HTTP is
+not evidence that the slot is free.
+
+Lifecycle behavior:
+
+- When the execution configuration closes, ACP stops maintenance admission for
+  that Agent. Lifecycle settlement waits for maintenance calls to become
+  quiescent within a bound. An unknown Runtime side effect is handled as
+  `runtime_barrier_required`.
+- Disable and rebuild cancel the model request and pause the task with
+  `lifecycle_closed`. No Skill change and no success notice is produced.
+  After a rebuild, the new Agent reaches ready.
+- The recovery worker can observe old side effects while the lifecycle is
+  closed, but it checks current lifecycle admission again before it dispatches
+  a candidate. A paused task stays paused across later worker scans.
+- If a maintenance file call has been dispatched, lifecycle settlement waits
+  until the call and the ledger are explicitly quiescent. If cancellation
+  loses the response, the call is recorded as `unknown` and the Runtime barrier
+  stays in place.
+- If the Runtime has completed an atomic commit but ACP has not received the
+  response, disable stays in progress until the response releases it. The
+  result is recorded once.
+- If the response is lost after the filesystem atomic install, the old commit
+  stays `unknown` after disable. When the Runtime is enabled again and
+  admission resumes, ACP reads the real content from the retained volume,
+  settles the old commit, and records the change once. If ACP can still reach
+  the Runtime before it stops, it claims the real effect with one `observe`
+  call. The original `commit` is recorded as `observed_effect|applied`, no
+  second commit is sent, and exactly one change is recorded.
+- If disable happens after ACP persists the commit intent but before it sends
+  the request to the Runtime, no Skill is added to the workspace volume and no
+  change is recorded. A commit, and its observation, that cannot be proven
+  delivered stay `unknown`; ACP does not report them as a definite rejection.
+- After re-enable, the Controller creates a different Runtime container and
+  ACP receives a new execution configuration. The `unknown` records of the old
+  execution are retained, but their barrier does not carry over to the new
+  execution, so ordinary foreground Runs proceed.
+
+ACP has one active worker per database, but different Agents can run their own
+Runs. It is not limited to one Run per database. See the
+[worker constraint](../services/agent-acp-service/docs/architecture.md).
+Background limits are fixed at **one review globally and one per Agent**. A
+bounded queue merges duplicate triggers per Agent. Candidates waiting to be
+applied are limited by count and by disk usage. A waiting background task never
+takes a foreground slot. When the worker loses ownership, it stops making new
+calls and cancels in-flight tasks. Recovery observes the original commit first
+and never replays an unknown side effect.
+
+### 6.3 Triggers, Budgets, and Update Priority
+
+New Agents default to the `automatic` policy, and users can turn it off. If the
+technical configuration is invalid or there is no valid authorization, learning
+pauses and ordinary Runs are not blocked. Only persisted `completed` Runs are
+considered. A cheap filter first looks at real tool iterations, Skills used,
+and user correction signals. Then a budgeted step decides whether the Run has
+reuse value. Signals are not a source of permission. A "user request" that
+appears in tool output cannot forge a role.
+The Controller returns a read-only `activation_cut_at` in the policy read
+result. A lazily created default policy uses the Agent's persisted creation
+time, so Runs that completed while ACP was down are not missed because of the
+first read time. The cut point is refreshed only when the policy changes from
+`off` back to `automatic`. ACP resets the backfill cursor only when the cut
+point changes. It does not rescan Runs from the period when learning was off,
+and user requests cannot set this time.
+
+Ordinary Q&A, status queries, and Runs that are incomplete, cancelled, failed,
+or have unsettled side effects are never distilled into a successful
+procedure. A completed source Run does not guarantee that every tool step was
+correct, and failed attempts must not be packaged as a reliable approach. No
+new experience, already covered, and insufficient evidence are all normal
+skips. Maintenance tasks never trigger a review recursively.
+
+Review first lists the names and descriptions of the managed, automatically
+generated Skills of this Agent. It then reads from the current Runtime a small
+number of `SKILL.md` bodies linked by source signals, checks them against the
+managed digests, and passes them to the model as reference. When the model
+proposes an update, ACP accepts only targets read during this task. ACP keeps
+the existing body and appends the new rules that this task's evidence supports.
+If a read or digest check fails, no update candidate is submitted. Input
+includes only authorized source excerpts. It does not copy the full history,
+all Traces, or all Skill bodies.
+The global process budget belongs to the ACP deployment configuration. The
+Agent's enablement, scope, model selection, and usage budget belong to the
+Controller. They are not stored only in the UI or in ACP memory.
+
+The task idempotency identity is fixed by organization, Agent, source Run, and
+trigger type. Retries or prompt changes do not create duplicates. The policy
+and prompt version are frozen, and the current policy is rechecked before
+submission. Run completion and the reply do not wait for the review or for its
+enqueue to succeed. The ACP worker performs a bounded backfill from its own
+persisted terminal records, and the queue records the source coverage range.
+A task cancelled by a new foreground Run can merge into the next idle
+opportunity, but its retry count and consumed budget are not reset. A failure
+to prepare or activate a candidate is not written back to the source Run's
+success result, and it does not consume the model through unbounded retries.
+
+Cooldown, idle, model, and disk budgets have initial values defined in the
+[learning API contract](../contracts/skill-learning/learning-api.md). These
+values are not tuned from measured results. One review globally, one per Agent,
+foreground priority, and no per-change confirmation are fixed semantics that
+tuning cannot change.
+
+## 7. Candidates, Whole-Directory Commit, and Recovery
+
+### 7.1 Content and Trusted Records
+
+| ACP private record                | Minimum contents                                                                                                                                                                                                                         |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| User-initiated action             | ACP-generated user_action_id, trusted operator, organization/Agent/Session, the actual user input, message/Run scope, idempotent request                                                                                                 |
+| Maintenance task                  | Organization, Agent, initiating/owning principal, trigger and user_action_id (required when user-initiated), source messages/Run, review_prompt_version, package_rules_version, configuration revision, budget, request/worker identity |
+| Candidate                         | Stable personal path, base digest, target package manifest/digest, package_rules_version, reason, per-item source level, Runtime binding                                                                                                 |
+| Check/apply basis                 | Candidate digest, check type/coverage and package_rules_version, result, evidence references; for apply_basis=policy, the scope and policy revision; for user_action, the identity, time, and authorization revision of the specific confirmation |
+| Managed personal package identity | Stable path, automatic-creation basis, last applied digest, pause reason; ownership is never inferred from ordinary workspace files                                                                                                      |
+| Commit intent/result              | Request identity, before/after digests, binding and admission lease, expected base, and observed result                                                                                                                                  |
+
+The active personal root is `/workspace/.antnest/skills/`. Candidates and effect
+observation receipts live on the same workspace volume under
+`/workspace/.antnest/skill-learning/`. This location is outside the Skill directory
+scan and is not `.cache/`. A candidate is ordinary workspace data that the user may
+change. It is verified before every check, display, and commit. If it no longer
+matches the ACP record, the old apply basis is invalidated. The Runtime adds no
+business database and owns no publication decision.
+
+### 7.2 Atomic Replacement with Real Directories
+
+This section applies only to candidate activation of **personal Skills** in the
+workspace. System Skills are downloaded as described in the
+[Registry design](skill-registry-minimal-design.md), their files are stored on a
+dedicated volume, and the Runtime mounts that volume read-only. System Skill updates
+prepare a target volume and require an explicit rebuild. They never use the directory
+exchange in this section on `/skills`.
+
+The Runtime resolves paths with `RESOLVE_NO_SYMLINKS`, and the scan accepts only
+real directories. See the
+[path implementation](../runtimes/antnest-runtime/src/roots.rs). The design therefore
+uses no symlinked active version, no pointer file, and no separate discovery protocol.
+The candidate and active directories must be on the same mounted filesystem:
+
+1. Prepare a **complete directory** in the candidate area. Check the Registry package
+   rules, supporting files, and base/target digests, and ensure the candidate is no
+   longer being written. ACP first persists the policy or user apply basis and the
+   commit intent, then issues the conditional commit.
+2. At commit time, acquire the maintenance admission gate and the Runtime file
+   execution slot. Re-check identity/authorization, the real target directory, the
+   base content, and the managed quiescence conditions in section 7.3. Hash only the
+   target package; do not scan or hash the whole personal library.
+3. For an update, use Linux `renameat2(RENAME_EXCHANGE)` to swap the complete
+   candidate directory with the active directory. The old package stays at the
+   former candidate location for unknown-effect observation and is cleaned up after
+   settlement. For a new package, use `renameat2(RENAME_NOREPLACE)`. If the target
+   already exists, the operation conflicts, so an unexpected user directory is never
+   overwritten. The two flags are used separately.
+4. While still holding the execution slot, read back the full file list, contents,
+   and modes of the new active directory. Compare them with the full package digest
+   bound to the apply basis, then run the applicable durability syncs on the new
+   content and the relevant parent directories. Only on a match does the Runtime
+   report "applied" to ACP together with the verification time. On a mismatch it
+   returns a content conflict stating that the exchange has already happened, and
+   recovery follows section 7.3. Renaming multiple files one by one, or deleting the
+   old package and then moving the new one, is never called atomic activation.
+
+The atomic exchange and no-replace semantics of these system calls come from
+[rename(2) in the Linux man-pages](https://man7.org/linux/man-pages/man2/rename.2.html).
+They do not support exchange across mounts, and not every filesystem supports the
+required flags. When the flags are unsupported, the Runtime returns
+`atomic_skill_replace_unsupported` and keeps both the original package and the
+candidate. It never falls back to per-file overwrite while still reporting success.
+
+The Runtime `commit` operation performs the conditional install, post-commit
+verification, and same-request replay. A separate `observe` operation reports the
+applied, unknown, and content-conflict outcomes, including after a restart. `cancel`
+closes the generation, is safe to repeat, and causes later commits to be rejected
+after a restart. There is no `revert` operation. While a real directory operation is
+unsettled, it is handled as an effect to observe; an HTTP cancellation alone never
+releases the execution slot.
+
+### 7.3 Managed-Call Quiescence, Resident Processes, and Replay Boundaries
+
+"Quiescence" has a precise meaning here: **ACP has no foreground Run and no priority
+admission intent, every Runtime managed call other than this commit has settled, the
+commit holds the Execution Actor exclusively, and none of the blockers in the table
+below is present.** It does not require that every process able to write has exited,
+and it does not claim that the workspace has no writers. See
+[background process boundaries](runtime-context-and-managed-mcp.md).
+
+| Execution/process state                                                                                    | Blocks activation | Handling                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Foreground Run, Tool/info call, maintenance file call, unsettled cancellation                              | Yes               | Wait for or cancel to settlement. New foreground work takes priority; maintenance cannot check in one call and then preempt with a commit later    |
+| Managed MCP with an in-flight request, observed related asynchronous work not yet settled, or an unknown cancellation result | Yes | The Runtime observes settlement. An unknown state is never treated as idle                                                                         |
+| Managed MCP process initialized, with no in-flight protocol operation, only waiting for requests           | No                | A live PID does not block forever. No new calls are dispatched to it during the commit. Post-commit digest verification still runs                |
+| Background task or descendant process group started by Bash that is still alive, including dev servers and watchers | Yes      | No exemption based on cwd or a self-declared "read-only" flag. The user stops it, or the candidate is kept for later application                    |
+| Workspace execution process of unknown origin, or background task whose ownership or exit cannot be confirmed | Yes            | `writers_unknown` with a diagnosable reason. Not allowed by default                                                                                |
+| Task confirmed as exited, reaped zombie record                                                             | No                | A stale historical task record cannot block indefinitely                                                                                           |
+
+Checking background state, acquiring the execution slot, and closing new dispatch
+happen inside the same managed admission boundary. The slot is held until the
+exchange, post-commit digest verification, and result observation finish. The Runtime
+tracks Bash task and descendant ownership and managed MCP in-flight state; "no active
+Run" or a single process listing does not substitute for this mechanism. Waiting does
+not hold the execution slot, does not kill user processes, and does not stop idle
+managed MCP servers.
+
+An idle managed MCP server still runs as UID 1000 like the other executors, so in
+principle it can write files outside protocol calls. Blocking dispatch does not revoke
+its file permissions. The design therefore accepts **managed-call quiescence plus
+before/after content verification**. It does not promise strong filesystem isolation
+or an atomic compare-and-swap. The post-commit digest must match the target content.
+If a manual or child-process change is found later, during a normal read or
+maintenance, automatic maintenance for that path is paused. There is no continuous
+watcher and no per-Run scan of the whole library. If an MCP server autonomously
+modifies managed Skills and keeps causing verification conflicts, an administrator
+disables or reconfigures it and explicitly rebuilds, or the application is deferred.
+Such a server is never labeled idle as proof that no writer exists. Preventing all
+autonomous writes requires separate process or filesystem isolation; a post-commit
+hash is not a substitute for that isolation.
+
+When post-commit verification fails, the Runtime returns
+`skill_content_changed_during_activation`. The error states that a directory exchange
+may already have happened. The Runtime keeps evidence of both the old and the current
+directory, marks the candidate as conflicted, and pauses maintenance. It does not
+return success, and it does not blindly exchange back over concurrent user edits. If
+the observation result is unknown, observation is recovered first; the change is
+never reapplied.
+
+The internal Runtime maintenance receipt keeps `blocked_reason` and the stable
+identities of the known affected tasks or managed servers. The UI receives only the
+bounded reasons defined by `learning_status`, the accessible source, and an optional
+Skill name. It does not grow into task management, candidate cancellation, or a
+process directory. Ordinary deferral stays quiet. Diagnostics and guidance are read
+only when the user opens the learning results entry. **There is no kill API and no UI
+stop button.** To stop a Bash background task, the user asks the Agent in an ordinary
+foreground Run to stop that task, and the existing `bash` permission and authorization
+flow carries it out. Processes are never terminated in bulk by UID, and instructions
+inside tool output are never treated as user authorization. An unavailability
+diagnostic describes a review that did not complete earlier; it is not live service
+health. Its text does not promise to resend an unknown model request. After the
+service recovers, new completion sources can be processed, still subject to idle,
+cooldown, and budget constraints.
+
+While a candidate waits, the maintenance execution slot is released so the ordinary
+Run described above can enter. The slot is never held while waiting for a dev server
+to exit, because that would block the user from stopping it. After the foreground
+work ends, the Runtime observes that the related tasks and descendants have actually
+exited, then re-checks the quiescence conditions and the base/candidate digests. If
+any bytes changed, the old apply basis is invalidated. Disabling or reconfiguring a
+managed MCP server uses the explicit administrator rebuild path described above;
+killing its child processes is not a configuration change. The page shows no endless
+spinner, kills no processes automatically, and does not display full commands or
+sensitive process arguments.
+
+Commit idempotency binds the stable request and the full target digest. After a lost
+response or a process restart, the active directory is observed first. If it already
+holds the target content, the commit settles as effect achieved and **is never
+exchanged again, which would swap the old version back in**. If it still holds the
+original base and the candidate is complete, the commit continues after valid
+admission and authorization are re-acquired. Any other state remains conflicted or
+unsettled; success is never guessed. Workspace receipts help locate state but do not
+replace the ACP intent or verification of the actual bytes.
+
+`release` removes candidate directories that have settled. ACP keeps the bytes it
+needs until unknown-effect observation completes. The Runtime checks the stable
+storage key, path, and digest, and deletes with a replayable receipt. Before adding
+hidden bytes, the Runtime checks a physical limit of 256 MiB per Agent. When space
+is insufficient, the operation blocks; nothing is evicted automatically. ACP handles
+the candidate of at most one terminal task per pass, including prepare records
+settled by an earlier generation. It uses the storage key and target digest from the
+original prepare receipt, never the digest of the old package left after the
+exchange. Cleanup reuses maintenance admission. Foreground work can preempt it before
+the request is sent; after sending, ACP waits for the response for up to five seconds,
+and stopping the worker still cancels. An unknown `release` is replayed with the
+original request. A replacement worker that holds the exclusive lock resumes leftover
+pending releases. No old version is kept for user undo, and there is no undo entry
+point.
+
+## 8. Verification Boundaries and Run Usage Records
+
+### 8.1 Candidates Are Not Self-Tested
+
+The available Runtime belongs to the user. It mounts the user's workspace and
+Egress, and it has a single execution slot. The system does not borrow it as a
+side-effect-free verification sandbox. Learning separates execution evidence
+from the basis for applying a change:
+
+| Evidence                                   | What it proves                                                                                   | What it does not prove                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Structure, identity, and source checks     | The package parses; paths, sizes, authorization, and references satisfy the rules               | That the procedure is correct, that no script is dangerous, or future results |
+| Existing results of the source Run         | Facts actually observed with the original input and environment                                  | That a newly distilled or modified candidate has been executed successfully  |
+| Automatic policy and its scope             | The Controller allows this class of managed personal update, and the candidate passes admission | That the body is semantically correct, or that it passed business testing    |
+| The specific confirmation on a manual path | The user allows this content to be applied within the displayed scope                           | A passed business test, or permission to bypass any other control            |
+
+Model review helps find duplicates, leaks, and obvious errors. It is not an
+additional level of factual verification. Candidate checks must block
+credentials and private data or ask the user to remove them. A model stating
+that the content has no sensitive information is not sufficient. Structural
+results bind to the full digest of the candidate. Source results bind to the
+source execution and the identity of the original content. A new candidate
+cannot inherit a "tested" badge from its source.
+
+New scripts or verification instructions are stored only as files. Generation,
+structural checks, and activation never execute them. Executable evaluation, if
+added later, requires a separate Controller and Runtime Controller capability:
+an isolated verification Runtime with least-privilege access, restricted
+network, temporary storage, and cost attribution. Evaluation is integrated only
+after that exists. It must not be folded into the existing Runtime tool layer
+or use the user's execution slot to produce evidence.
+
+### 8.2 Idle Activation Without Per-Run Freezing of the Whole Library
+
+Learning uses idle activation and shares the gate from Section 6 with new Run
+admission. Maintenance cannot replace an active package while a foreground Run
+is in progress. A new Run uses the directory that is discoverable when it
+starts. **This does not mean the workspace bytes are snapshotted and frozen for
+the whole Run.** The foreground Run's own edits, background processes, and
+manual edits can still change content.
+
+For system Skills, the pinned reference is traceable through the
+`agentSpecRevision` in the Run snapshot, combined with the per-Skill digests in
+the Runtime Controller manifest. See the
+[existing snapshot fields](../services/agent-acp-service/src/domain/run-snapshot.ts).
+Learning does not require the Runtime to add a system version field.
+
+For personal Skills, the system records only the content digest and path of the
+`SKILL.md` that the Run **actually read**. Supporting files can be recorded the
+same way when they are actually read. The Runtime tool layer provides the byte
+range, completeness, and content identity of each read result, and ACP stores
+the corresponding record. A full body read can be digested over its bytes. A
+truncated or paged fragment must be marked as a fragment. Displayed text,
+line-number wrapping, or partial content must never stand in for a full-file
+digest. When a Run only saw the directory summary and did not read the body,
+the record is "discovered only" and must not claim that the Skill was used.
+
+The system does not walk the personal collection (up to 32 Skills, each up to
+32 MiB) at the start of every Run. Full package digests are computed only for
+the current target, during candidate checks and submission validation. If the
+same path changes between reads, the system records a new observed identity or
+a conflict and pauses the related maintenance. Old text that is already in the
+model context is not written back. Learning does not promise to stop arbitrary
+external writers or to forbid edits made by the foreground Run, and having a
+digest is not described as full package isolation.
+
+### 8.3 Read-Only System Skills, Name Collisions, and Formal Publication
+
+System Skills remain protected by tool-level write refusal and read-only
+mounts. The maintenance flow has no Docker control, no remount ability, and no
+writable alias for the system volume. A derivation relationship only traces the
+source. It does not inherit the system trust level or override permissions.
+
+When a rebuild adds a system Skill with the same name as an existing managed
+personal Skill, the personal files are kept. The system pauses maintenance of
+that personal Skill, invalidates any pending candidates, and prompts the user
+to rename or rebind it. The Runtime currently shows Skills from both sources.
+The system must not silently shadow or delete the personal Skill, and a new
+system Skill does not automatically approve renaming the personal one.
+
+Learning itself has **no product flow for publishing or converting a personal
+Skill** into a Registry Skill. The manual path is: the user exports the selected
+content, an administrator checks it against the package rules and uploads a new
+version, then saves a template revision and explicitly rebuilds.
+
+Dynamic discovery and propagation, described in the
+[discovery and promotion contract](../contracts/skill-registry/discovery-api.md),
+adds automatic projection and user promotion on top of learning. After a
+learned change takes effect, ACP asynchronously submits metadata and a source
+reference, and the Registry stores the dynamic mapping. The body, package
+files, and source lifecycle stay with the source Agent. A projection failure
+does not roll back the local learning result. Other authorized Agents find the
+Skill through search, fetch it through the source interface, and use it
+temporarily in the current Run. When a user promotes it, the Registry fetches
+the package on demand, validates it, and hosts an independent formal version.
+Later learning in the source does not change that version, and target Agents
+still receive the new preset through a template revision and rebuild.
+Projection does not grant organization publishing permission and does not
+change the base capabilities of every Agent.
+
+ACP implements automatic projection and current source reads. The model-facing
+search and body-loading tools are described in
+[skill discovery tools](../contracts/agent-acp/skill-discovery-tools.md).
+Consumers are the Runtime
+[temporary Skills](../contracts/runtime/temporary-skills.md) support, the ACP
+[temporary Skill consumer](../contracts/agent-acp/skill-temporary-consumer.md),
+and the Admin Console
+[Skill discovery](../contracts/admin-console/skill-discovery.md) surface. The
+complete four-step flow covers real learning, temporary use, promotion by a
+signed-in user, and template, rebuild, and Run integration. It does not widen
+the scope of personal learning described in this document.
+
+## 9. Configuration, Identity, Cost, and Service Ownership
+
+**Agent Controller** owns the per-Agent learning switch, maintenance paths,
+budget, model selection, and authorization revision. It persists this
+configuration and projects it to ACP as a first-class feature, not as an
+adapter added only when needed. The default mode is `automatic`; `off` is also
+available. The automatic policy allows changes inside the managed scope to be
+applied without per-change confirmation. The default scope is personal
+packages that are created automatically and registered by ACP. Pinned paths
+belong to Controller policy; ACP records generation ownership and any content
+conflicts it observes. A one-off user save is separate from the continuously
+maintained scope.
+
+`adopted_paths` is a reserved field and is always empty in v1. Controller
+rejects a non-empty list, and ACP does not register packages the user already
+had. Explicit adoption and multi-file package updates, if the product needs
+them, require their own design for full-package validation and service
+contracts. They do not block automatic learning.
+
+`pinned_paths` only revokes the right to update automatically; it never grants
+the right to maintain. Controller saves a pin after it validates the owner and
+the canonical path, so a user can pin a path before a package exists there.
+ACP checks the exact path again before it applies a change. Pinning does not
+depend on authoritative reads or full digests of adopted packages. ACP does
+not send pinned packages to the review as existing managed Skill content. If
+the model still proposes a pinned path, ACP checks the settled proposal
+against the exact pin in the policy frozen for the task and settles the task as
+skipped. It creates no candidate, no change, and no success notice.
+
+Changes to the learning switch, scope, or budget produce a separate
+configuration revision that ACP can re-check immediately. They do not require
+a Runtime rebuild. Changes to the Runtime maintenance public keys or to system
+Skills still follow their own explicit rebuild rules.
+
+The review calls the model through the existing Provider client, using the
+current Agent owner's effective authorization and the model credentials that
+Controller configures. It never uses an administrator fallback key and never
+stores a separate plaintext key for reviews. Cost is attributed to the
+organization, Agent, and owner, with foreground and maintenance usage
+recorded separately, and is subject to the same budget. Cost already incurred
+by a background task that is later cancelled is also recorded. When the owner
+loses access, the model authorization is revoked, learning is turned off, or
+the configuration revision becomes stale, ACP stops new calls, cancels old
+tasks, and invalidates the basis for any uncommitted application. Historical
+tasks keep their original ownership and are not relabeled under a new owner.
+
+The current projection puts only the owner in `principal_ids`
+([current projection](../services/agent-controller/internal/application/execution_projection.go)).
+This does not make future multi-user sharing safe: personal Skills live in the
+Agent workspace and are not isolated per user. Multi-user sharing, ownership
+transfer, or reuse of evidence across users requires a new review of content
+visibility and authorization. Until such a policy exists, background work must
+never merge one principal's private evidence into another principal's
+maintenance task.
+
+| Owner              | Responsibilities                                                                                                                                       | Not responsible for                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Agent Controller   | Automatic learning configuration, scope, pins, budget, and revision projection                                                                         | Review reasoning, personal file transactions                |
+| Antnest Runtime    | Candidate files, real package validation, quiescence observation, directory commit and recovery, read digests                                          | Learning policy, publish approval, business control database |
+| Agent ACP Service  | Automatic triggers, candidates, sources, apply basis, and managed ownership records; foreground priority; dedicated maintenance client and issued credentials; billing | Container management, cross-organization evidence, automatic Registry publishing |
+| Agent UI           | After-the-fact learning result notices, sources, and blocking reasons; an optional save entry point later                                              | Authority over maintenance decisions, an independent background execution loop |
+| Runtime Controller | Lifecycle binding, bootstrap of the maintenance public key set, frozen snapshots of accepted operations, and digest-based recovery                    | Holding the ACP signing private key; creating an extra verification Runtime in v1 |
+| Skill Registry     | Existing package rules and administrator-managed hosting                                                                                               | Background learning, a personal publishing workflow         |
+| Task Scheduler     | In the future, may trigger periodic curation under an explicit contract                                                                               | Being a required dependency of the v1 review                |
+
+Each task freezes `review_prompt_version`. Template size, model call count and
+duration, input and output size, candidate count, and candidate disk usage are
+all bounded. The concrete limits are defined in the
+[learning contract](../contracts/skill-learning/learning-api.md). Automatic
+application is the main path. Global background concurrency is 1, and neither
+prompts nor parameter tuning can widen the policy scope. See also
+[service ownership](service-layout.md).
+
+## 10. Failure Handling and Correctness Requirements
+
+Each row states an invariant that tests cover.
+
+| Scenario                                                        | Required behavior                                                                                                                                                                                                                              |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No new experience, or a repeated trigger                        | Skip or merge; never generate candidates recursively.                                                                                                                                                                                          |
+| Browser closed, user never clicks save or confirm               | An eligible completed Run automatically creates or updates a managed Skill, and the next Run can discover it and read it on demand. This does not depend on notice delivery.                                                                    |
+| Learning notices, refresh or disconnect, across sessions        | The SDK notice reports only settled results. The server recovers publication, the Bridge re-reads and deduplicates by stable identity, and the frontend recovers from the SSE snapshot. The real source is kept. Notices never enter model context or move the Run output watermark. |
+| Automatic policy off, path pinned, or budget exhausted          | Stop new maintenance, cancel old tasks, and re-check in-flight results. Existing Skill use and the source Run status are unaffected.                                                                                                           |
+| Automatic update, hand-written packages, duplicate topics       | Prefer a managed topic that is already in use. User packages, system packages, and pinned packages are never changed automatically. No new experience means no forced new Skill.                                                               |
+| Terminal-state rescan, task retry, worker restart               | One task per source. Budget already used is not reset. An unknown commit is observed first. A successful source Run never changes because the review failed.                                                                                    |
+| Foreground work arrives during model reasoning, reads, candidate writes, or commit | Close maintenance admission, cancel, and wait for observed quiescence before reading info. Ordinary reviews never cause `agent_busy` or `runtime_busy`.                                                                       |
+| Drain, rebuild, deactivation, or worker loss of authority       | Do not wait for the model to finish. The old lease cannot produce new side effects, and unfinished short file operations are recovered from observed facts.                                                                                   |
+| Two Agents reviewing at the same time                           | At most 1 per Agent and 1 globally, with a bounded queue. Foreground work never consumes a maintenance slot.                                                                                                                                   |
+| Optional user-initiated save, repeated clicks, and text injection | Only an authenticated native action creates a `user_action_id`. Automatic tasks bind to a real Run and policy. Model or tool text cannot forge either basis.                                                                                  |
+| Web or tool output trying to inject long-term rules             | The low-trust marking is carried through extraction. Such content can never become a user correction or a basis for automatic application.                                                                                                     |
+| Maintenance listing, name guessing, replay, direct endpoint access | `tools/list` never includes maintenance definitions. Runtime `tools/call` rejects reserved names. The private endpoint rejects invalid credentials and stale bindings. Model parameters cannot bypass the ACP source check.                 |
+| Public key rotation during an in-flight deployment              | Verify the current and next keys by `kid`. After a Runtime Controller configuration update, the original request still recovers from its frozen snapshot with a matching digest. A missing snapshot must never fall back to the latest configuration. A Runtime without the next key pauses maintenance but does not block ordinary Runs. |
+| Leaked key or restore from an old backup                        | Besides stopping issuance, isolate the actual verifier. If needed, deactivate the Agent and rebuild. Never restore a leaked `kid`, and never rewrite an old operation snapshot to fake completion.                                             |
+| Oversized candidate, non-string YAML, directory and `name` mismatch | Rejected by the shared structure examples. A candidate is never activated first and found unpublishable later.                                                                                                                             |
+| Package rules or review prompt updated                          | Both versions are recorded. A task retry keeps the frozen prompt, and the candidate is re-checked against the current package rules. Historical results are never altered, and an apply basis is never reused for modified bytes.              |
+| Base or candidate changed, directory moved, policy invalidated  | Mark a conflict or pause automatic maintenance. An old basis never applies to new bytes, including for manual confirmation.                                                                                                                    |
+| Idle managed MCP and in-flight requests                         | A resident idle process does not block and does not need to exit. In-flight or unsettled requests block. No new dispatch happens during commit, and digests are verified after the directory swap.                                            |
+| Resident Bash dev server or unknown background task             | Learning is deferred and releases its execution slot; chat continues. When the user opens learning results, the reason is visible, and the user may stop the process through an ordinary Run request before learning resumes. There is no persistent warning, no new kill API or button, and no automatic process killing. |
+| Autonomous file changes before or after the swap                | A changed base is rejected. A post-swap mismatch is reported as a conflict after the swap; it is never reported as success and never blindly swapped back. Observed quiescence is not strong isolation and is never described as such.        |
+| Swap, creation, or sync interrupted, or response lost           | Observe digests before and after so the old version is never swapped back twice. A partially updated, mixed active package never appears.                                                                                                     |
+| Docker file system not supported                                | Return an explicit capability error, keep the old package and the candidate, and never fall back to an unsafe mode.                                                                                                                           |
+| Same-named system package after rebuild, or authorization invalidated | Personal assets are kept, maintenance pauses, old candidates become invalid, and the user must explicitly rebind.                                                                                                                       |
+| Registry offline                                                | Local generation, automatic application, and use do not depend on it. Administrator publishing waits for recovery.                                                                                                                            |
+
+Automatic generation, policy checks, actual activation, and result notices are
+each tested separately. The manual entry point is tested on its own and never
+substitutes for the automatic path that runs without per-change confirmation.
+Tests check real behavior, not only whether the generated Markdown looks
+reasonable. Quality comparisons use representative tasks and concrete content
+identities and record successes, false triggers, and regressions. Usage
+counts, tool success, and model self-scores never replace business outcomes,
+and no benefit is promised in advance.
+
+## 11. Service Ownership
+
+- **Shared contracts:** automatic triggers and sources, the `automatic`/`off`
+  policy, scope and budget, managed ownership and `apply_basis`, maintenance
+  endpoints, credentials and reserved names, `kid` and public key sets with
+  deployment identity and rotation, the two recorded versions, quiescence
+  classification, before and after digests and effect recovery, SDK notice
+  capability, correlation metadata and source routing, and learning record
+  re-reads in the workspace View.
+- **Antnest Runtime:** the private maintenance endpoint, rejection of ordinary
+  `tools/call` on reserved names, signature verification against a bounded
+  bootstrap public key set by `kid`, candidate structure checks, observation of
+  managed calls and background tasks, directory swap with post-swap digests,
+  and hidden storage capacity. It adds no new stop interface.
+- **Runtime Controller:** public key set bootstrap, canonical deployment
+  digests, complete snapshots frozen at acceptance so recovery never reads new
+  configuration, and the rotation, key leak, and backup restore procedures.
+- **Agent Controller:** the per-Agent automatic policy, default scope and pins,
+  budget, owner authorization, and the separate projection revision. Explicit
+  adoption is reserved but disabled in v1.
+- **Agent ACP Service:** automatic triggering from completed Runs with rescan
+  deduplication, bounded review that reads before it changes, managed
+  ownership, source checks, policy application records, SDK notice negotiation,
+  publication recovery and permission queries, foreground preemption and Drain
+  cancellation, billing, and the dedicated maintenance client with credential
+  issuance and recovery.
+- **Agent UI:** Node SDK notice negotiation, receipt, and bounded re-reads; View
+  and SSE system notices with frontend deduplication and recovery; and guidance
+  on sources and blocking reasons. It has no kill button.
+- **Skill Registry:** existing package rules and administrator-managed hosting.
+  Local automatic learning does not depend on organization publishing.
+
+Unit tests belong to the owning service. Integration and E2E tests belong in
+root `tests/integration/` and `tests/e2e/`, shared tooling in `tests/support/`,
+and durable private evidence in `artifacts/verification/`, never in `.cache/`.
+See the [test storage rules](../tests/README.md).
+
+## 12. Open Questions
+
+Automatic generation is the main direction and is not reduced to per-change
+manual initiation and confirmation. Foreground priority, the managed personal
+scope, read-only system packages, the dedicated maintenance channel,
+non-executing validation, real directories, content conflict handling, public
+key bootstrap, and the absence of a new stop interface are settled boundaries.
+The UI uses after-the-fact notices and on-demand viewing, with no routine
+per-change approval.
+
+The following remain open:
+
+- **Initial limits.** The initial values for trigger screening and cooldown,
+  model and daily quotas, queue and rescan, and storage budgets are defined in
+  the [learning contract](../contracts/skill-learning/learning-api.md). Whether
+  these values learn useful experience while avoiding duplicate generation
+  needs checking against real behavior. Any change must update the contract
+  first.
+- **Manual save path.** An optional "save as Skill" entry with source selection
+  and human confirmation, backed by real `user_action_id` handling and
+  idempotency in ACP, including one-off saves while automatic learning is off.
+  It reuses the existing maintenance pipeline and is a separate project.
+- **Explicit adoption and multi-file updates.** Adopting existing user Skills
+  through `adopted_paths` and updating multi-file packages need a full-package
+  validation design and service contracts.
+- **Multi-user sharing.** Sharing, ownership transfer, and cross-user evidence
+  reuse need a content visibility and authorization policy.
+- **Later features.** After-the-fact undo, whole-library curation (merge and
+  retirement), full-package Run snapshots, isolated execution verification,
+  periodic curation, and one-click Registry publishing are outside v1 and are
+  planned as separate projects. The handoff to manual export, administrator
+  upload, and template rebuild can be validated separately.
+

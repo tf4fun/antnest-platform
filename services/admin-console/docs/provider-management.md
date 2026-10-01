@@ -1,5 +1,9 @@
 # Provider connections and models
 
+This document describes how Admin Console manages Provider connections,
+credential rotation, model discovery and model metadata, and the BFF routes
+behind those workflows.
+
 Model edits send `expected_version` from the read model's `revision`, alongside
 the administrator's input. Console never substitutes a fresh version silently.
 On Controller 409 `lifecycle_conflict`, retain the draft, disable saving and offer
@@ -10,19 +14,22 @@ version. Display-name validation counts Unicode code points, matching Controller
 
 Models are mutable current configurations, not independently browsable histories.
 Agent details retain their build-time snapshot; model links open current settings.
-Template history is unchanged. The model-history API and route are removed.
+Template history is unchanged. There is no model-history API or route.
 Command receipts preserve submitted results on retry but are not model history.
 
-Console owns the builtin catalogue; Controller owns saved organization data.
-DeepSeek and OpenRouter API-key connections are supported. Custom providers,
-and subscription login are not exposed as working
-features. Add future catalogue entries and credential flows explicitly.
+Console owns the builtin catalog; Controller owns saved organization data.
+DeepSeek and OpenRouter API-key connections are supported. Custom providers
+and subscription login are not exposed. Future catalog entries and credential
+flows must be added explicitly.
 
 ## Workflows
 
-Discovery happens in Console, never Controller. The provider adapter makes a
-bounded GET /models without redirects; its HTTP spans record metadata, not keys
-or payloads. Existing connections resolve their current credential through an
+Discovery happens in Console, never Controller. The provider adapter
+(`internal/providerdiscovery`) makes a bounded `GET {base_url}/models` with the
+connection's Bearer key, no redirects, the dependency timeout and an 8 MiB
+response limit. The base URL is administrator-supplied and is not restricted to
+an allowlist of hosts, so Console needs outbound HTTP(S) network access to
+Provider endpoints. Its HTTP spans record metadata, not keys or payloads. Existing connections resolve their current credential through an
 internal, organization-scoped read. Draft connections use the entered key without
 creating a connection or model. Candidate state exists only in the open dialog.
 
@@ -65,7 +72,7 @@ retries only the remaining selection.
 
 ## BFF contract
 
-Contract revision 41 removes model-history reads. Each command scope has one
+The BFF contract (revision 41) has no model-history reads. Each command scope has one
 pending intent: an identical retry reuses its key; changing the payload abandons
 that intent. Returning to an earlier payload is a new command, not replay of an
 older successful response. Browser storage contains only opaque keys and hashes,
@@ -107,23 +114,24 @@ Template writes never resolve a model revision in the BFF and reject the obsolet
 `model_profile_revision_id` input. Reference read failures preserve the template
 and any publication acknowledgement, with a local retry for transient failures.
 
-## Verification
+## Testing
 
-Cover BFF authority, request shaping, write-only credentials, stable retries,
-CAS conflicts, and cursor handling. Component tests cover creation, independent
-rotation/model edits, saved metadata, immutable identity, loading/failure states
-and responsive presentation. Run Go tests, frontend tests/build and admission
-gates serially. Browser inspection supplements these reusable tests.
+Go tests cover BFF authority, request shaping, write-only credentials, stable
+retries, CAS conflicts, and cursor handling. Component tests cover creation,
+independent rotation/model edits, saved metadata, immutable identity,
+loading/failure states and responsive presentation.
 
-The opt-in real discovery acceptance runs against the local development Gateway:
+An opt-in discovery test runs against a local development Gateway and a real
+Provider:
 
 ```sh
 node tests/e2e/admin-console/model-discovery-browser.mjs --confirm-development
 ```
 
-Run from the platform root with the development `.env` and parent `.secret`
-available. It discovers OpenRouter models, checks the unsaved-connection flow,
+Run it from the repository root with the development environment and Provider
+credentials configured. It discovers OpenRouter models, checks the unsaved-connection flow,
 adds one explicitly selected model to an existing enabled OpenRouter connection,
 and verifies merged/saved/fallback views on desktop and mobile. It never calls a
 completion endpoint or changes credentials. Only final screenshots and a compact
-summary are written to ignored `artifacts/verification/model-discovery-acceptance/`.
+summary are written to the Git-ignored
+`artifacts/verification/model-discovery-acceptance/` directory.

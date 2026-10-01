@@ -1,5 +1,8 @@
 # Model discovery and explicit selection
 
+This document describes how administrators discover a provider's models in
+Console and explicitly choose which ones to save.
+
 ## Scope and ownership
 
 The Console owns builtin model defaults and model selection. Agent Controller
@@ -54,19 +57,17 @@ does not follow redirects with credentials, and uses shared HTTP instrumentation
 
 API references: [DeepSeek](https://api-docs.deepseek.com/api/list-models/),
 [OpenRouter](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties).
-UI reference: local Cherry Studio's provider model management and explicit add flow.
 
 ## Verification
 
-Recorded browser acceptance passed on 2026-09-16 at 00:40 +08:00, using
-[`model-discovery-browser.mjs`](../tests/e2e/admin-console/model-discovery-browser.mjs).
-It covered real read-only discovery without secret exposure, unsaved/unselected
+The browser test
+[`model-discovery-browser.mjs`](../tests/e2e/admin-console/model-discovery-browser.mjs)
+covers read-only discovery without secret exposure, unsaved and unselected
 drafts, explicit subset persistence without overwriting existing settings,
-saved-model preservation through refresh and a browser-injected discovery 502,
-duplicate prevention and mobile
-layout. The local result is `artifacts/verification/model-discovery-acceptance/summary.json`;
-see [current status](current-status.md) for candidate/evidence limits. This is not
-a model-completion or full-platform acceptance result.
+saved-model preservation through refresh and an injected discovery 502,
+duplicate prevention and mobile layout. It does not perform model completions.
+
+Test coverage by component:
 
 - Controller: organization scope, current credential, disabled references,
   read-only access, absence of provider discovery responsibilities.
@@ -77,5 +78,5 @@ a model-completion or full-platform acceptance result.
   model protection, missing parameters, refresh races, partial save retry.
 - Integration: discover against a provider fixture, select and persist a subset;
   repeat discovery without changing saved configuration; exercise static fallback.
-- Real provider discovery and desktop/mobile browser checks are coordinator-owned;
-  no external model completions are required for this feature.
+- Real provider discovery and desktop/mobile browser checks require no external
+  model completions.

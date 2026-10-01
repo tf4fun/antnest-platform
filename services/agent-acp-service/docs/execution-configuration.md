@@ -1,5 +1,12 @@
 # Local Execution Configuration
 
+This document describes how Agent ACP Service receives Controller-published
+execution configuration, authorizes and admits Runs locally, owns execution
+lifetimes, settles Agents for lifecycle operations and serves workspace
+execution state. The internal
+[execution configuration contract](../../../contracts/agent-acp/execution-api.md)
+defines the wire format; it is not an ACP extension.
+
 ## Ordered Provider Fallback
 
 The [shared availability contract](../../../docs/provider-failover.md) adds ordered
@@ -14,13 +21,9 @@ cancel execution. Platform publications refresh current ACP configuration option
 without adding synthetic model replies to the transcript. OpenRouter uses the
 OpenAI-compatible transport without DeepSeek-specific thinking parameters.
 
-The owning cross-service design is the
-[Controller/ACP boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
-The [internal contract](../../../contracts/agent-acp/execution-api.md) is not an
-ACP extension. Controller production publication and Gateway/Console integration
-are complete within the [B5 acceptance scope](../../../docs/current-status.md).
-The service-local evidence below retains its original scope; strict clock-warning
-failures remain separately recorded.
+Cross-service ownership between Controller and ACP is summarized in
+[service layout](../../../docs/service-layout.md) and
+[Stage 3 admin control plane](../../../docs/stage-3-admin-control-plane.md).
 
 ## Configuration Authority
 
@@ -172,8 +175,8 @@ The Runtime MCP adapter reports stopping evidence separately from effect state:
 Classification uses tool identity and structured protocol fields, never message
 text. A failed connection before `tools/call` is not dispatched. Connection
 cleanup failure after a confirmed result does not reverse its stopping evidence.
-Unknown result codes cannot prove a builtin stopped. No helper kills previous
-background jobs or modifies Runtime's producer contract in this batch.
+Unknown result codes cannot prove a builtin stopped. ACP does not kill previous
+background jobs or modify Runtime's producer contract.
 
 Stopping evidence is retained on the existing `tool_attempts` record as
 `runtime_call_stopped`, initially false. Only the adapter's positive evidence
@@ -233,9 +236,8 @@ Only stream metadata, not contents, enters telemetry.
 
 The configuration comparison token excludes occupancy, lifecycle status,
 organization revision and credential rotation. It changes for relevant Agent,
-Runtime or model-catalog settings. Existing workspace bootstrap and state
-consumers require B3/B4U migration; service-local routes do not constitute
-cross-service integration acceptance.
+Runtime or model-catalog settings. Gateway and Agent UI consume these routes
+for workspace bootstrap and state.
 
 ## Local Run Inputs
 
@@ -274,26 +276,24 @@ uncertain old Runtime command stopped. Prompt admission reads durable protection
 before creating a new intent. Agent-level settlement reports whether the current
 binding requires replacement, independently of startup cleanup.
 
-## Remaining Integration
+## Test Boundaries
 
-Test migration follows the new ownership boundary: model transport tests still
-verify authentication on the outgoing request, while TurnRunner/context tests
-must carry no credential. Snapshot fixtures keep model/Runtime/deadline facts
-without Controller tickets or credential versions. Tests for retired Controller
-RPC transport are replaced by inbound snapshot contract and local execution
-tests, not kept alive through a fake compatibility client. Cancellation,
-ownership loss, storage failures, protocol isolation and output replay remain
-required behaviors even when their old fixtures are removed.
+Tests follow the ownership boundary: model transport tests verify authentication
+on the outgoing request, while TurnRunner/context tests carry no credential.
+Snapshot fixtures keep model/Runtime/deadline facts without Controller tickets
+or credential versions. Inbound snapshot contract and local execution tests
+cover configuration application; there is no test-only Controller adapter.
+Cancellation, ownership loss, storage failures, protocol isolation and output
+replay remain required behaviors.
 
-The retired Controller transport's pricing, optional native-input flags and
-closed configuration validation now belong to `execution-contract.test.ts`
-and `execution-configuration.test.ts`. Local rejection, acceptance commit
-uncertainty and non-secret terminal storage belong to the coordinator/executor
-tests. Outbound acquire/finish serialization, Controller status probing and
-credential-version rejection are removed behavior, not compatibility promises.
-No test-only Controller adapter or obsolete catalog decoder is retained.
+Pricing, optional native-input flags and closed configuration validation are
+covered by `execution-contract.test.ts` and `execution-configuration.test.ts`.
+Local rejection, acceptance commit uncertainty and non-secret terminal storage
+are covered by the coordinator/executor tests. Outbound acquire/finish
+serialization, Controller status probing and credential-version rejection are
+not part of the service.
 
-PostgreSQL protocol fixtures now apply an actual execution directory backed by
+PostgreSQL protocol fixtures apply an actual execution directory backed by
 the configuration repository, not an outbound Controller mock. Trusted identities
 enter through the same transport headers. Configuration changes are published
 before checking access, model selection, approval or output effects. Provider
@@ -308,9 +308,8 @@ Session organization ownership and the local `deadline_at` are explicit in SQL
 fixtures, including lock-wait/expiry tests. Application recreation uses current
 synthetic configuration to rehydrate volatile credentials, never a Run snapshot.
 
-Subsequent B5 integration verified Controller-driven close, settlement and confirmed
-replacement, Gateway state consumption, and Console execution-audit reads after
-deletion/restart. Historical queries use immutable Session organization ownership,
-not live execution grants. Normal execution is locally assembled without Controller
-calls. The [final integration record](../../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付)
-distinguishes the passed business/topology scope from strict clock-warning failures.
+The [Controller/ACP integration scenarios](execution-boundary-e2e.md) verify
+Controller-driven close, settlement and confirmed replacement, Gateway state
+consumption, and Console execution-audit reads after deletion/restart.
+Historical queries use immutable Session organization ownership, not live
+execution grants. Normal execution is locally assembled without Controller calls.

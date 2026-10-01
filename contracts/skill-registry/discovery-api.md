@@ -1,16 +1,16 @@
 # Skill discovery and promotion v1
 
-D0 freezes the Registry/source boundary and model tool inputs for the four-step
-[product design](../../docs/evolver-technical-analysis.md#112-用户确定的四步产品流程).
+This document defines the Registry/source boundary and model tool inputs for
+Skill propagation between Agents. The workflow has four steps: an Agent learns
+a personal Skill; Registry projects it as a dynamic source mapping; another
+Agent of the same owner finds and temporarily uses it; an administrator
+promotes it to an immutable formal version that Templates can reference.
 The [JSON schema](discovery-api.schema.json) supplements the
-[fixed-version API](registry-api.md). Registry D1 implements the producer-side
-boundary; ACP D2 implements the real producer/source routes and ACP D3 implements
-the model find/load text tools. Runtime D4, ACP D4A and Console D6 are admitted
-through separate owning gates; [DI1](../../docs/skill-propagation-integration-delivery-20261001.md)
-proves the combined workflow. [DI2](../../docs/skill-source-lifecycle-delivery-20261001.md)
-and [DI3](../../docs/skill-discovery-caller-integration-delivery-20261001.md)
-cover normal source lifecycle and active-caller discovery/source Trace.
-Producer evidence still does not substitute for independent workflow admission.
+[fixed-version API](registry-api.md). Skill Registry implements the projection,
+search, load and promotion routes; Agent ACP Service implements the source
+routes and the model `find_skill`/`load_skill` tools; Antnest Runtime
+implements temporary file delivery; Admin Console implements source preview
+and promotion.
 
 ## Ownership, identities and scope
 
@@ -19,8 +19,7 @@ Agent, owner, canonical Skill name, description, source sequence, current
 content digest and active/removed state. It stores no projected ZIP, Skill body
 or complete file copy. Source content and lifecycle remain Agent-owned.
 
-First-delivery Agent sources are confirmed applied, ACP-managed personal
-learning packages. Owner-only access matches the existing Agent permission
+Agent sources are confirmed applied, ACP-managed personal learning packages. Owner-only access matches the existing Agent permission
 model: another Agent of that owner may find/use them; organization membership
 does not grant access to another owner's personal Skills. Organization-wide
 sharing is not introduced. Formal Registry Skills retain existing organization
@@ -71,7 +70,7 @@ unavailable inspection is source_unavailable, not an empty successful result.
 Missing or unauthorized source entries are omitted. The index can lag; refreshed
 source metadata is authoritative and only still-matching results are returned.
 Sorting is deterministic by name, kind and source identity. Filtering may
-produce fewer than limit results; this first boundary has no pagination.
+produce fewer than limit results; there is no pagination.
 
 Loading formal refs reads exact Registry-owned versions. Loading Agent refs
 checks the mapping and calls the source artifact endpoint with the selected
@@ -103,7 +102,7 @@ formal version lifecycle ownership. Source edits/removal no longer affect it;
 the original Agent package remains Agent-owned. Templates consume only formal
 skill_id+version refs, using the existing create/rebuild read-only delivery.
 
-## ACP-owned source routes (D2)
+## ACP-owned source routes
 
 Registry uses one configured ACP origin, never a caller-supplied download URL.
 Two private endpoints require a distinct source-reader bearer token, scoped
@@ -127,16 +126,16 @@ and expected_digest. It returns the same ZIP headers as load plus
 X-Antnest-Source-Sequence matching the selected sequence. The read must obtain
 one internally consistent package; unknown/drifted content is not replaced by
 a historical candidate. No new Run or model inference is started for these
-read routes. Runtime availability requirements are source-owned and must be
-tested in D2, not inferred from Registry's directory. D2 requires an available,
-accepting source Runtime and an idle source Agent. Busy/offline/unknown reads
+read routes. Runtime availability requirements are source-owned, not inferred
+from Registry's directory. ACP requires an available, accepting source Runtime
+and an idle source Agent. Busy/offline/unknown reads
 return source_unavailable without replaying a model or substituting candidate
 bytes. A signed read-only observe checks the full current directory manifest;
 matching content-addressed applied bytes can then be served. Extra files or
 changed modes also invalidate the selection. Source access, binding and managed
 identity are rechecked after observation. Reads and catalog refreshes share idle
 admission with learning; foreground preemption discards delivery and awaits an
-already dispatched bounded read. See the [D2 report](../../docs/skill-discovery-acp-delivery-20261001.md).
+already dispatched bounded read.
 
 Normal Disable preserves owner access and the managed content identity, but
 removes the available Runtime binding: current source search/load return
@@ -146,9 +145,9 @@ unchanged content retains its source sequence/digest. Delete removes current
 Agent access: old source refs are immediately not_found (404), current search
 omits them, and the producer eventually delivers a higher-sequence tombstone.
 Formal versions and installed presets remain independently readable throughout
-these source lifecycle operations. [DI2](../../docs/skill-source-lifecycle-delivery-20261001.md)
-tests these through normal Controller
-operations, without directly changing producer or Registry database state.
+these source lifecycle operations. Tests exercise these through normal
+Controller operations, without directly changing producer or Registry database
+state.
 
 Registry has a 10-second per-source-request timeout, refuses redirects,
 caps inspect responses at 128 KiB and ZIP at 8 MiB, propagates cancellation,
@@ -157,15 +156,15 @@ and returns bounded errors. Invalid source JSON/header/ZIP is source_invalid
 content_changed; other transport/availability failures are source_unavailable.
 Search checks current metadata; load/promotion independently check current bytes.
 
-## Model tools and temporary Runtime use (D3 and Runtime D4 admitted)
+## Model tools and temporary Runtime use
 
 find_skill input is query plus optional limit; load_skill input is skill_ref
 plus expected_digest. ACP derives tenant/actor from the active Run and adds
 these platform tools through an explicit catalog/dispatch contract. They grant
 no Registry publishing authority and do not modify Template or AgentSpec.
-The ACP-owned [D3 tool contract](../agent-acp/skill-discovery-tools.md) defines
+The ACP-owned [tool contract](../agent-acp/skill-discovery-tools.md) defines
 reserved identities, Session permissions, durable request budgets, result
-scope and read-only recovery. D3 text results do not claim D4 file delivery.
+scope and read-only recovery. Text results alone do not imply file delivery.
 
 Temporary use is **Run-scoped**. Text enters that Run's tool result/context.
 Packages that need paths are delivered as **real files** into a Run-owned
@@ -174,11 +173,12 @@ volume mounts, changes to the system /skills volume or permanent personal-Skill
 registration are permitted. Once acquired, source updates do not rewrite the
 Run's bytes. This does not freeze the entire workspace or forbid ordinary edits.
 
-Runtime D4 implements the separate [private delivery/cleanup contract](../runtime/temporary-skills.md)
-and [wire schema](../runtime/temporary-skills.schema.json); its owning gates pass.
-ACP's file delivery and durable Run cleanup consumer is admitted in
-[D4A](../../docs/skill-discovery-temporary-consumer-delivery-20261001.md), including
-completion, cancellation, normal restart recovery and subsequent Run admission.
+Runtime implements the separate [private delivery/cleanup contract](../runtime/temporary-skills.md)
+and [wire schema](../runtime/temporary-skills.schema.json). ACP's file delivery
+and durable Run cleanup consumer is defined in the
+[temporary consumer contract](../agent-acp/skill-temporary-consumer.md),
+including completion, cancellation, normal restart recovery and subsequent Run
+admission.
 Storage is bounded by the existing per-package limits,
 at most four packages and 128 MiB unpacked per Run. Delivery uses the Runtime
 single execution slot and ordinary UID 1000 file ownership; it does not expose
@@ -187,29 +187,27 @@ and performs idempotent cleanup. While a temporary scope is active, new Bash
 calls are foreground-only: Runtime stops remaining subprocesses from that
 invocation before returning a settled result, regardless of command spelling,
 cwd or script use. Existing unrelated background jobs are preserved. Long-running
-use needs a durable installation/preset. D4's real named-volume gate covers
-path handling and cleanup after normal shutdown/restart; see its
-[delivery record](../../docs/skill-discovery-runtime-delivery-20261001.md).
-Durable private files remain outside this feature.
+use needs a durable installation/preset. Runtime's named-volume tests cover
+path handling and cleanup after normal shutdown/restart. Durable private files
+remain outside this feature.
 
 Trace records use bounded source refs/digests and outcomes; no package bodies or
 dialogue evidence is captured. A search hit or successful Run is not proof of
 Skill quality. Registry unavailability does not undo completed learning or
 prevent already installed local/system Skills from being used.
 The [HTTP Trace boundary contract](trace-boundaries.md) defines Registry context
-extraction, actual source CLIENT propagation, native export and graceful shutdown;
-the service and deployment/DI3 gates are admitted independently.
+extraction, actual source CLIENT propagation, native export and graceful shutdown.
 
-## Errors and delivery evidence
+## Errors and testing
 
 Existing errors/status mappings remain. New codes are content_changed/409,
 source_unavailable/503 and source_invalid/502. Missing permissions/existence
 share not_found; wrong service token stays unauthorized/401. Provider error
 bodies/URLs and database secrets are never forwarded.
 
-D1 evidence must prove metadata-only persistence, update/replay/removed order,
+Registry tests cover metadata-only persistence, update/replay/removed order,
 cross-owner/org rejection, current-source checks, digest drift and offline
 failure, promotion rollback/CAS/idempotence and independent formal reads after
-source removal. Source fixtures are explicitly fixtures. Full dual-Agent
-learning → projection → temporary use → promotion → Template/rebuild evidence
-belongs to DI1 after all owning service batches pass.
+source removal. The complete dual-Agent learning → projection → temporary use →
+promotion → Template/rebuild workflow is covered by the
+`make e2e-skill-propagation` Docker E2E target.

@@ -36,14 +36,14 @@ children, or allow ACP clients to start processes on the ACP service host.
    Controller as `configuration.mcp_servers`. Rebuild uses the selected target
    revision; enable restores the Agent's saved spec, not the latest template.
 4. Runtime Controller deploys the configuration. Agent Controller publishes a
-   usable execution only after the existing Runtime readiness barrier. Required
+   usable execution only after independent healthy Runtime observation. Required
    MCP startup/discovery failure is an ordinary Runtime preparation failure.
 5. ACP receives the bound Runtime MCP endpoint and execution identity, never
    the process command, arguments or environment through configuration publication. It
    discovers tools and reads Runtime information through that endpoint.
 
-This introduces no extra tables, lifecycle states, desired-state replicas or
-cross-service database access. The existing `agent_controller.agent_template_revisions`
+There are no extra tables, lifecycle states, desired-state replicas or
+cross-service database access. The `agent_controller.agent_template_revisions`
 and `agent_controller.agent_spec_revisions` JSON snapshots own persistence.
 Runtime deployment itself remains the responsibility of Runtime Controller.
 
@@ -56,12 +56,14 @@ configuration; they must not be exposed as public user APIs. Database access and
 backups therefore require the same protection as other sensitive configuration.
 Operational observations, lifecycle events, ACP Agent configuration and prompts
 must not copy this configuration. Diagnostic formatting displays server IDs only.
-Future credential references can replace inline values without changing process
-ownership. This batch does not add a Console MCP configuration editor.
+Credential references could later replace inline values without changing process
+ownership. There is no Console MCP configuration editor.
 
 ## Verification
 
 Domain tests cover validation, snapshot isolation and digest changes. Lifecycle
 tests cover create/rebuild/enable forwarding; HTTP client tests check the wire
-payload. PostgreSQL integration verifies revision round trips. Final cross-service
-acceptance is tracked in the [feature plan](../../../docs/runtime-context-and-managed-mcp.md).
+payload. PostgreSQL integration verifies revision round trips. The cross-service
+design is described in
+[Runtime context and managed MCP](../../../docs/runtime-context-and-managed-mcp.md);
+`make e2e-managed-mcp-v1` and `make e2e-managed-mcp-v2` exercise the deployed flow.

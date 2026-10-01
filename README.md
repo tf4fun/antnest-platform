@@ -1,216 +1,179 @@
 # Antnest Platform
 
-Antnest Platform is the Docker-first service architecture for Antnest. This
-repository is organized around independently understandable services rather
-than around one shared application package.
+[![CI](https://github.com/tf4fun/antnest-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/tf4fun/antnest-platform/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-The [current implementation and acceptance index](docs/current-status.md)
-distinguishes the latest service boundaries, recorded verification and remaining
-scope. Updated 2026-10-01; historical stage reports retain their original scope.
-The [dependency refresh and regression](docs/dependency-refresh-20260926.md)
-records the verified pre-Stage-4 candidate. Development uses Node 24.21.0 LTS
-(`.nvmrc`), Go 1.27.1 (`go.work`) and Rust 1.98.1 (`rust-toolchain.toml`).
-The [Stage 3 current-service closeout](docs/stage-3-current-services-closeout.md)
-records the reviewed clock-warning exception and manual acceptance limits.
-The [Stage 4 service plan](docs/stage-4-services.md) records three new services:
-`skill-registry` for Skill hosting, `channel-manager` for external-channel
-interaction, and `task-scheduler` for scheduled tasks. Skill Registry and its
-Controller, Runtime Controller, ACP and Console consumers are implemented;
-service, component, browser and disposable Docker business/restore gates pass.
-The [minimal Skill Registry design](docs/skill-registry-minimal-design.md)
-limits its first delivery to hosting, pinned Template references, and read-only
-Runtime delivery on Agent creation/rebuild.
-Its review revision requires resumable preparation before lifecycle changes and
-verified per-Agent set reuse. The separate [Skill learning design](docs/skill-learning-design.md)
-is implemented with automatic personal-Skill generation, bounded background
-review and learning notices. Skill Registry is accepted for the current clean
-development deployment, which has no old business data to migrate.
-The [release cleanup](docs/legacy-skill-release-cleanup-20261001.md) removes
-legacy migration/export binaries, RPCs, published contracts and dedicated
-recovery workflows from the build and deployment. This release provisions a
-fresh database; it does not upgrade the retired legacy development schema.
+English | [简体中文](README.zh-CN.md)
 
-[Test ownership and commands](tests/README.md) define the repository test layout:
-unit tests stay within their service, integration tests live in
-`tests/integration/`, deployed acceptance tests in `tests/e2e/`, and shared
-verification tools in `tests/support/`.
+Antnest Platform runs AI Agents for an organization. Every Agent gets its own
+isolated Runtime container, a stable network identity with enforced egress
+policy, and a durable lifecycle managed by a control plane. Users talk to Agents
+through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) from
+a browser workspace; administrators manage identities, model providers,
+templates, Skills and Agents from an admin console.
 
-## Service Map
+The platform is Docker-first and is built as a set of small, independently
+deployable services. Each service owns its data and communicates only through
+language-neutral contracts.
 
-| Component          | Target role                                                                                                                       | Status                                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Antnest Runtime    | Executes one Agent's process and filesystem operations and transports Agent packets                                               | Implemented and aligned with Egress    |
-| Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
-| Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
-| Agent Controller   | Owns Agent lifecycle, configuration, Provider credentials, execution publication, Runtime rebuild, and management events | Execution-boundary integration accepted within B5 scope |
-| Agent ACP Service  | Owns local admission, ACP v1/v2 Sessions, Runs, model/Tool execution, Runtime MCP calls, and execution audit | Declared profile and scoped Docker integration accepted |
-| Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Identity and owner-offboarding profile accepted |
-| Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
-| Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
-| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, attachments, and model settings | HTTP/SSE Bridge implemented; automated regression passed; human review pending |
-| Skill Registry (`skill-registry`) | Hosts reusable Skill packages, versions and distribution metadata | Hosting, frozen Template references and read-only Runtime delivery implemented; clean-deployment business/restore gates pass |
-| Channel Manager (`channel-manager`) | Owns external-channel connections, Agent/conversation bindings and message delivery | Stage 4 planned; not implemented |
-| Task Scheduler (`task-scheduler`) | Owns task schedules and trigger records for Agent usage | Stage 4 planned; not implemented |
-| Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
+## Features
 
-The repository layout and ownership rules are defined in
-[`docs/service-layout.md`](docs/service-layout.md). The greenfield Stage 1
-Runtime/Egress design is canonical in
-[`docs/stage-1-runtime.md`](docs/stage-1-runtime.md).
+- **Isolated Agent Runtimes.** One container per Agent exposes a workspace through
+  MCP with built-in `read`, `write`, `edit` and `bash` tools plus
+  platform-managed stdio MCP servers. Agent commands run as an unprivileged user.
+- **Per-Agent network policy.** Runtime traffic is tunneled to Runtime Egress,
+  which assigns each Agent a stable address and allows or rejects every flow
+  according to versioned policy.
+- **ACP v1 and v2 execution.** Agent ACP Service owns Sessions, Runs, model and
+  tool execution, permissions, plans, multimodal input, cost tracking and
+  execution audit.
+- **Durable lifecycle.** Agent Controller drives create, rebuild, enable, disable
+  and delete through Temporal workflows and publishes execution configuration.
+- **Enterprise identity.** Organizations, users, groups, local login, OIDC and
+  SCIM 2.0 provisioning, with Agent offboarding when a principal is revoked.
+- **Skills.** A Skill Registry hosts immutable Skill packages; Templates pin exact
+  versions and Runtimes receive them read-only. Agents can also learn and
+  propagate Skills automatically under administrator policy.
+- **Observability.** OpenTelemetry traces and metrics across HTTP, RPC, database
+  and workflow boundaries, viewable in Jaeger.
 
-The earlier Stage 2 baseline is retained in
-[`docs/stage-2-agent-and-acp.md`](docs/stage-2-agent-and-acp.md).
-The implemented execution boundary and its staged acceptance are documented in
-[`docs/controller-acp-execution-boundary-plan.md`](docs/controller-acp-execution-boundary-plan.md):
-Controller publishes Agent execution policy and configuration; ACP owns local
-admission, Sessions and execution audit behind Gateway. Controller Run admission,
-credential callbacks and finish receipts have been removed.
+## Architecture
 
-The Stage 3A administrator control-plane contract and its browser-to-Jaeger
-acceptance path are defined in
-[`docs/stage-3-admin-control-plane.md`](docs/stage-3-admin-control-plane.md).
-The shared browser product language is defined in
-[`docs/design-language.md`](docs/design-language.md).
-The target ownership and restoration status of browser workflows are tracked
-in [`docs/product-surfaces.md`](docs/product-surfaces.md).
+```text
+                      Browser (Admin Console / Agent UI)
+                                     |
+                               Edge Gateway  (sole public entry)
+              +----------------------+---------------------+
+              |                      |                     |
+        Admin Console BFF        Agent UI bridge     Identity Service
+              |                      |
+              +-----------+----------+
+                          |
+      Agent Controller ---+--- Agent ACP Service ---> Model providers
+        |       |                    |
+        |       +--> Skill Registry  +--> Antnest Runtime (MCP, per Agent)
+        |                                      |
+        +--> Runtime Controller --> Docker     +--> Runtime Egress --> network
+        +--> Runtime Egress (policy)
+```
 
-Start with the [business-flow entrypoint index](docs/business-flow-entrypoints.md)
-for the current user, protocol, background and operational flow inventory.
-Earlier entry-to-storage sequences and architecture findings are retained in
-[`docs/business-sequences.md`](docs/business-sequences.md).
-Its current-flow links identify the contracts that supersede retired paths.
+| Component | Language | Role |
+| --- | --- | --- |
+| [Antnest Runtime](runtimes/antnest-runtime/README.md) | Rust | Executes one Agent's tools and filesystem operations inside its container |
+| [Runtime Egress](services/runtime-egress/README.md) | Rust | Agent network addresses, egress policy and packet forwarding |
+| [Runtime Controller](services/runtime-controller/README.md) | Go | Realizes and observes one Runtime Environment per Agent on Docker |
+| [Agent Controller](services/agent-controller/README.md) | Go | Agent lifecycle, configuration, provider credentials and execution publication |
+| [Agent ACP Service](services/agent-acp-service/README.md) | TypeScript | ACP Sessions, Runs, model and tool execution, execution audit |
+| [Identity Service](services/identity-service/README.md) | Go | Organizations, users, local login, OIDC, SCIM and access credentials |
+| [Edge Gateway](services/edge-gateway/README.md) | Go | Browser ingress, sessions, admission, routing and security headers |
+| [Admin Console](services/admin-console/README.md) | Go + React | Administrator application and thin backend-for-frontend |
+| [Agent UI](services/agent-ui/README.md) | TypeScript + React | End-user conversation workspace and its server-side bridge |
+| [Skill Registry](services/skill-registry/README.md) | Go | Immutable Skill packages, versions and distribution |
 
-The cross-service [observability contract](docs/observability-contract.md)
-defines span boundaries, optional RPC content capture, stream non-capture,
-database tracing and local-only readiness. Implementation evidence is tracked in
-the [RPC capture record](docs/observability-simplification.md),
-[database rollout](docs/observability-database-remediation.md) and
-[ACP database report](services/agent-acp-service/docs/observability.md).
-The earlier [service-owned rollout](docs/observability-rollout.md) is historical.
-The [clock-skew maintenance decision](docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
-defers dedicated timing work for inspected, recorded warnings while retaining
-strict Trace failures and separate business/structure results; it does not waive
-new unexplained warnings or other verification failures.
+Planned components: Channel Manager (external chat channels), Task Scheduler
+(scheduled Agent tasks) and a Kubernetes adapter for Runtime Controller. See
+[docs/stage-4-services.md](docs/stage-4-services.md).
 
-The agreed closeout scope and ordered acceptance checklist are maintained in
-[`docs/docker-single-node-closeout.md`](docs/docker-single-node-closeout.md).
-The Docker single-node closeout is accepted as of 2026-09-11: 25 items pass,
-with five Agent Web UI client checks explicitly deferred, not passed. Identity,
-Agent management and server-side ACP/Runtime usage have Gateway-rooted evidence
-in the [verification report](docs/docker-single-node-verification-report.md).
-Admin Console recovery and live Jaeger navigation are included; this is not a
-claim of universal ACP conformance or completed Agent Web UI acceptance.
-Skill Registry has current Stage 4 business and restore acceptance. Channel
-Manager and Task Scheduler remain planned; their implementation has not started.
-Kubernetes, horizontal scaling and HA
-remain outside this three-service plan.
+Ownership rules, identities and dependency directions are described in
+[docs/service-layout.md](docs/service-layout.md). Wire contracts live in
+[contracts/](contracts/README.md).
 
-Runtime-owned stdio MCP and per-Run context construction are described in
-[`docs/runtime-context-and-managed-mcp.md`](docs/runtime-context-and-managed-mcp.md).
-The reproducible Docker acceptance profile is documented in
-[`tests/e2e/managed-mcp/README.md`](tests/e2e/managed-mcp/README.md).
+## Quick start
 
-## Current Integration Status
-
-Runtime, Egress and Runtime Controller have scoped Docker acceptance. Identity,
-Gateway and Console support browser login, directory/provisioning and Agent
-lifecycle management. The 2026-09-15 Controller/ACP integration passed nine
-business scenarios, including credential rotation, Controller outage, active-Run
-rebuild, disable/enable, crash interruption without replay, revocation and retained
-audit after deletion/restart. Trace structure checks passed; strict clock-warning
-failures remain recorded under the maintenance decision above.
-
-Agent UI now provides a Session-first workspace. Targeted real-browser model
-selection and Provider fallback checks passed on 2026-09-15; model discovery
-checks passed on 2026-09-16. Console owns builtin/remote model discovery, Controller
-persists selected models, and ACP owns effective model selection. See
-[ordered fallback](docs/provider-failover.md) and [model discovery](docs/model-discovery.md).
-
-This is scenario-specific acceptance, not unrestricted ACP conformance or a
-generic Identity event bus. ACP stable v1 and draft v2 are accepted for the
-declared platform-owned MCP profile; client-injected MCP remains explicitly
-rejected. Identity's narrow principal-revocation feed now drives Agent
-offboarding. The 2026-09-11 checklist closed its in-scope operations/regression
-items and deferred five C4 client checks. Later targeted browser results do not
-retroactively close those checks or make the full development-browser Trace
-profile pass. Exact dates, evidence and limits are in the
-[current status index](docs/current-status.md).
-
-## Stage 3 Local Applications
-
-Follow the [single-node runbook](docs/docker-single-node-operations.md) for
-configuration, secrets, image ownership, readiness, diagnosis and cleanup.
-The commands below are a short local-development entry, not production setup.
-
-Build and start the production-shaped administrator stack:
+Requirements: Linux or macOS with Docker Engine and Compose v2, and GNU Make.
+The stack below is for local evaluation only.
 
 ```bash
+git clone https://github.com/tf4fun/antnest-platform.git
+cd antnest-platform
+cp .env.example .env
+
+# Build all images (sequential builds keep memory use predictable).
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
+
+# Start the platform with Jaeger.
 ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
   docker compose -f compose.yaml -f compose.stage3.yaml \
   --profile stage3 --profile observability up -d --wait
 ```
 
-Open `http://127.0.0.1:8090` for Admin Console or
-`http://127.0.0.1:8090/workspace/` for Agent UI. Development defaults are organization
-`engineering`, email `admin@example.com`, and password `antnest-admin-dev`.
-Override the corresponding `ANTNEST_BOOTSTRAP_*` variables outside disposable
-local environments. Jaeger is available at `http://127.0.0.1:16686` when the
-observability profile is enabled. Only Edge Gateway exposes an application
-port in this topology.
+Then open:
 
-## Repository Commands
+- Admin Console: <http://127.0.0.1:8090>
+- Agent UI: <http://127.0.0.1:8090/workspace/>
+- Jaeger: <http://127.0.0.1:16686>
 
-Install the ACP service's locked Node dependencies before host-side checks or
-Stage 3 E2E scripts: `npm --prefix services/agent-acp-service ci`. The E2E
-network selector reuses its `ipaddr.js` parser to avoid existing Docker subnets.
+Sign in to organization `engineering` as `admin@example.com` with password
+`antnest-admin-dev`. Connect a model provider, create a Template, then create an
+Agent. Only Edge Gateway publishes an application port.
+
+> The values in `.env.example` are public development defaults. Replace all
+> passwords, tokens and encryption keys before using any other environment. See
+> [SECURITY.md](SECURITY.md).
+
+Stop the stack with `docker compose -f compose.yaml -f compose.stage3.yaml
+--profile stage3 --profile observability down`. Add `-v` to delete its data.
+
+For configuration, secrets, readiness checks, backups and troubleshooting, follow
+the [single-node operations runbook](docs/docker-single-node-operations.md) and
+the [backup and restore guide](docs/docker-backup-restore.md).
+
+## Development
+
+Toolchains: Go 1.27.1, Rust 1.98.1, Node.js 24.21.0 and Docker. Install the locked
+Node dependencies first:
 
 ```bash
-make fmt-check   # Go, Rust, TypeScript and test-fixture formatting
-make lint        # Go golangci-lint standard rules, Rust clippy, and Node lint/typecheck
-make test        # Unit and integration tests that need no running Compose stack
-make docker-build
-make compose-up
-make e2e-stage1  # Isolated disposable Stage 1 Runtime/Egress acceptance
-make e2e-runtime-controller  # Isolated Runtime Controller lifecycle acceptance
-make e2e-stage3  # Empty Stage 3 stack, lifecycle, Agent workspace ACP, port, and Jaeger acceptance
-make e2e-lifecycle-network  # Real Runtime TUN policy/revocation/isolation and Gateway-rooted traces
-make e2e-workspace  # Scoped state, ACP reconnect/cancel/rebuild/revocation and Jaeger; not browser acceptance
-make test-postgres  # All persistence suites against one disposable PostgreSQL instance
+npm --prefix services/agent-acp-service ci
+npm --prefix services/admin-console/web ci
+npm --prefix services/agent-ui/web ci
 ```
 
-Use the service-local README before changing a component. It states what that
-component owns, what it must not own, and which narrower command validates it.
+Common commands, run from the repository root:
 
-## Test Resource Hygiene
+```bash
+make fmt-check        # formatting for Go, Rust and TypeScript
+make lint             # golangci-lint, cargo clippy, ESLint and type checks
+make test             # unit and integration tests without a running stack
+make test-postgres    # persistence suites against a disposable PostgreSQL
+make docker-build-stage3
+make e2e-stage3       # disposable full-stack Docker acceptance
+```
 
-Container-backed verification must run serially and clean up resources created
-only for that verification when it finishes or is interrupted.
-`ANTNEST_E2E_KEEP_STACK=true` is [retired](docs/retained-seed-retirement.md): the
-launcher rejects it before resource discovery or creation. Unset or `false`
-keeps the disposable path; existing development environments are unaffected.
-Use the disposable [current browser profiles](tests/e2e/workspace-closeout/README.md)
-for acceptance. After each run,
-check for residual test containers and stop or remove the ones that are no
-longer needed; remove volumes only when they belong to a disposable test
-project. Repository E2E scripts must keep cleanup traps for both success and
-failure paths.
+Each service README lists its own build, test and configuration details. The
+[test guide](tests/README.md) explains the test layout and the Docker E2E
+targets. E2E targets create disposable Compose projects and clean them up on
+success and failure; run them one at a time.
 
-Development and test Compose reuse one physical PostgreSQL server to reduce
-resource use. Every service still owns a separate database, login role,
-migration journal, and DSN; sharing the test server does not permit cross-service
-table access. Production may place those logical databases on separate servers
-without changing service code.
+Development and test Compose files share one PostgreSQL server to save resources,
+but every service still has its own database, role and migrations. Services never
+read each other's tables.
 
-The [offline backup/restore runbook](docs/docker-backup-restore.md) covers the
-five service databases, application encryption keys and persistent Runtime
-volumes. Its disposable `restore` profile verifies actual storage replacement;
-it does not promise an atomic online snapshot or recovery of running processes.
+## Documentation
 
-Periodic CPU spikes have been observed in otherwise idle containers after test
-runs. The [bounded CPU investigation](docs/docker-single-node-closeout.md#c5-idle-cpu-and-runtime-health-batch-2026-09-10)
-identified frequent health probes as a measurable contributor; it did not
-reproduce sustained 100% service CPU. New Runtimes probe every two seconds during
-startup and every ten seconds in steady state. Existing Runtimes receive this
-setting on explicit recreation. Post-test inspection and cleanup remain required;
-do not leave disposable test stacks running indefinitely.
+- [Service layout and ownership](docs/service-layout.md)
+- [Runtime and Egress design](docs/stage-1-runtime.md)
+- [Identity design](docs/stage-2-identity.md)
+- [Administrator control plane](docs/stage-3-admin-control-plane.md)
+- [Agent lifecycle and Runtime state](docs/agent-lifecycle-state-model.md)
+- [Provider credentials and models](docs/provider-credentials-and-models.md),
+  [model discovery](docs/model-discovery.md) and
+  [provider fallback](docs/provider-failover.md)
+- [Runtime context and managed MCP](docs/runtime-context-and-managed-mcp.md)
+- [Skill Registry design](docs/skill-registry-minimal-design.md),
+  [Skill learning](docs/skill-learning-design.md) and
+  [Skill deployment](docs/skill-deployment.md)
+- [Observability contract](docs/observability-contract.md)
+- [Product surfaces](docs/product-surfaces.md) and
+  [design language](docs/design-language.md)
+- [Contracts index](contracts/README.md)
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development workflow and review expectations. Report security issues privately
+as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+Antnest Platform is released under the [MIT License](LICENSE).

@@ -1,7 +1,8 @@
-# Tool Permissions (F06)
+# Tool Permissions
 
-Status: F06 implementation, Gateway/Runtime/Jaeger integration and Agent UI
-acceptance complete. Final gates are recorded in protocol-conformance.md.
+This document describes Tool authorization modes, the reverse
+`session/request_permission` interaction, Session-scoped rules, the Smart
+Approve read-only judge, and recovery of pending approvals.
 
 ## Ownership And Ordering
 
@@ -66,7 +67,7 @@ wall-clock time, not transaction-start `now()`, plus the current cancellation
 and worker-authority signals. Closing/deleting a Session releases its approval
 connection registration without closing unrelated Sessions.
 
-## Correctness Evidence
+## Verification
 
 1. Domain tests: four responses, malformed/unknown outcomes, policy precedence,
    read-only hints and conflicting annotations, exact scoped rules.
@@ -79,14 +80,14 @@ connection registration without closing unrelated Sessions.
 5. Judge tests: exact arguments, no conversation history or Tool dispatch,
    strict result shape/identity, timeout/cancellation, shared request budget,
    usage persistence failure and no judgment text in chat.
-6. Deployed profile: `make e2e-tool-permissions` exercises 26 v1/v2 scenarios
-   through Gateway and a real managed-MCP Runtime. Jaeger correlates 26 Runs,
-   52 model calls (including four judgments), 16 waits and 16 Runtime calls.
-   Model configuration overrides reach admission; two cross-user upgrades fail.
+6. Deployed profile: `make e2e-tool-permissions` exercises v1/v2 scenarios
+   through Gateway and a real managed-MCP Runtime. Jaeger correlates each Run
+   with its model calls (including judgments), permission waits and Runtime calls.
+   Model configuration overrides reach admission; cross-user upgrades fail.
    Denial/cancellation/Chat produces no Runtime call. The model is deterministic,
    so this proves orchestration, not the accuracy of an external model's judgment.
 7. Agent UI: approval inbox cancellation/stale-answer tests and configuration
-   notification ordering tests; browser acceptance covers allow once, reject once,
+   notification ordering tests; browser tests cover allow once, reject once,
    Chat mode, completion unlocking and a 390px mobile approval layout.
 
 Permission wait/decision telemetry carries Run/Session/tool-call identifiers and
@@ -95,5 +96,4 @@ not copied into OTLP. The model span distinguishes `permission_judge` from
 `response`; this observes the classifier request, not Tool/IP packet traffic.
 See the reusable [deployment profile](../../../tests/e2e/acp-permissions/README.md).
 
-Reference: local ACP SDK 1.4.0 schemas; Goose `acp/server.rs`,
-`permission/permission_inspector.rs` and `agents/tool_execution.rs`.
+The wire shapes follow the pinned official ACP SDK schemas.

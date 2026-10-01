@@ -1,5 +1,8 @@
 # Edge Gateway Architecture
 
+This document describes how Edge Gateway admits browser requests, binds OIDC
+transactions, routes Admin Console, Agent UI and ACP traffic, and how it fails.
+
 ## OIDC Browser Transaction
 
 Identity owns the authorization transaction, PKCE, nonce, expiry and identity
@@ -62,20 +65,45 @@ HTTP limits/security headers
   -> Admin Console or Agent UI application proxy
 ```
 
-The planned full-stack Workspace route `/api/app/workspace/v1/*` uses a separate
-Node Bridge base URL. Each business request resolves the browser session,
-replaces incoming identity headers with the verified Organization, Principal,
-User, Membership and path Agent IDs, and enforces same-origin and CSRF checks
-before forwarding. Ordinary requests allow the Node response deadline; SSE
-forwards `Last-Event-ID` and flushes immediately, while a bounded lease
-revalidates browser identity and closes only the observer on revocation.
+## Agent UI and Workspace API
+
+One reverse proxy target, `ANTNEST_AGENT_UI_URL`, serves both the `/workspace/`
+application (SSR HTML and hashed assets) and the Workspace HTTP/SSE API at
+`/api/app/workspace/v1/*`. There is no separate Bridge base URL.
+
+The Workspace API accepts only `GET` and `POST`. Each request resolves the
+browser session and replaces incoming identity headers with the verified
+Organization, Principal, User, Membership, administrator flag and path Agent ID.
+Only `Accept`, `Content-Type`, `If-Match`, `Idempotency-Key`, `Last-Event-ID`
+and the trusted identity headers are forwarded. Origin and CSRF rules are
+exact:
+
+- A request that carries an `Origin` header is rejected with `403` unless the
+  Origin matches the Gateway origin. A request without `Origin` is not rejected
+  for that reason.
+- Every `POST` (mutation) requires a valid CSRF token, independent of Origin.
+  A missing or mismatched token returns `403 csrf_failed`.
+
+Request bodies are limited to the ACP message limit (64 MiB). Ordinary requests
+have a fixed 65-second deadline so the Node service can return its own response
+deadline. `GET .../agents/{agent_id}/events` is an SSE stream: it forwards one
+validated `Last-Event-ID` (at most 4096 bytes), flushes immediately, uses one of
+64 stream slots and is bounded by `ANTNEST_EDGE_STREAM_LEASE`. During the stream
+Gateway periodically revalidates browser identity and closes only the observer
+on revocation.
+
 Workspace documents require a browser session and preserve a validated
 `/workspace/{agentId}/` or `/workspace/{agentId}/sessions/{sessionId}` path through
-login; hashed assets remain public. IDs are validated after splitting the escaped
-path, so encoded separators stay inside their ID. Query-bearing and malformed
-return destinations fall back to `/workspace/`, per the
+login. HTML receives verified principal headers; hashed assets remain anonymous
+and never receive browser-supplied identity. IDs are validated after splitting
+the escaped path, so encoded separators stay inside their ID. Query-bearing and
+malformed return destinations fall back to `/workspace/`, per the
 [document navigation contract](../../../contracts/agent-ui/workspace-navigation.md).
-The Node Bridge remains a separate internal target from the current static UI.
+ACP retains durable execution authority.
+
+## Routing
+
+
 
 Login and logout call Identity Service directly because the Gateway owns the
 browser credential boundary. Every administrative command goes to Admin
@@ -114,10 +142,6 @@ IDs and names only. During a same-origin WebSocket upgrade at
 Organization/Principal and the route Agent ID. ACP owns Agent and Session
 authorization, including unavailable targets and protocol errors. Incoming
 cookies, authorization and forged internal identity headers are not forwarded.
-The Agent UI application is served under `/workspace/` by the Node service.
-Gateway preserves the path for SSR, forwards verified identity only for HTML,
-and routes hashed assets without identity. The Workspace HTTP/SSE API targets
-that same Node service; ACP retains durable execution authority.
 
 The existing `/api/app/agents/{agent_id}/acp` Workspace route remains a v1
 alias. Versions are an explicit route allowlist, not arbitrary upstream paths;
@@ -157,12 +181,19 @@ there is no distributed transaction between that check and ACP Run creation.
 ACP retains responsibility for Agent access revision, Session ownership and
 durable Run behavior; it does not receive browser credentials.
 
+## ACP Streamable HTTP
+
 The v1 route and its alias also accept POST/GET/DELETE Streamable HTTP through
-an opaque reverse proxy. Each request repeats browser authentication; ACP owns resource authorization;
-POST/DELETE also enforce the existing CSRF policy. A supplied Origin must match;
-HTTP clients without Origin are allowed only with the same authentication and
-CSRF requirements. Only the four documented ACP/content headers are forwarded,
-with trusted identity and trace context injected by Edge.
+an opaque reverse proxy to ACP `/v1/acp`, relaying the official SDK transport.
+The draft v2 endpoint is WebSocket-only. Gateway does not interpret ACP methods.
+Each request repeats browser authentication with the existing login cookies;
+ACP owns resource authorization. POST and DELETE also require
+`X-Antnest-CSRF-Token` matching the CSRF cookie. A supplied Origin must match
+the Gateway origin; HTTP clients without Origin are allowed only with the same
+authentication and CSRF requirements. WebSocket upgrades always require a
+matching Origin. Only `Content-Type`, `Accept`, `Acp-Connection-Id` and
+`Acp-Session-Id` are forwarded from the client, with trusted identity and trace
+context injected by Edge. Responses preserve ACP routing headers.
 
 GET SSE responses are flushed immediately and live until disconnect or upstream
 closure, not an ordinary short request timeout. They consume receive-connection
@@ -170,10 +201,18 @@ capacity separately from POST/DELETE message admission. Cancelling the client
 HTTP request cancels the upstream receive request; it does not become a
 session/cancel command. ACP Service owns connection IDs, expiry and recovery;
 Gateway owns no ACP connection registry. HTTP reuses the new-message admission
-policy above, including its explicit already-admitted-work boundary.
+policy above, including its explicit already-admitted-work boundary. Gateway
+does not poll idle connections or translate disconnect into Run cancellation;
+ACP owns access updates, output subscription revocation, reconnect and
+connection expiry.
+
+## Login, Logout and Protocol Routes
 
 Login admission consumes bounded per-source and normalized-account windows
-before Identity performs Argon2 verification. Logout asks Identity to revoke
+before Identity performs Argon2 verification. Each table holds at most 4096
+keys per replica. When a table is full, expired windows are pruned; if it is
+still full, a login for a new key is refused with `429` rather than evicting an
+existing window. Logout asks Identity to revoke
 the presented opaque access token directly and clears browser cookies only
 after `revoked` or `already_invalid`. Agent event watches have a bounded stream
 lease; reconnect repeats normal token resolution.

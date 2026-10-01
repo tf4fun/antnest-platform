@@ -1,28 +1,46 @@
 # Edge Gateway Contracts
 
-`session-contract.json` defines the Stage 3 browser-session, administrator, and
-Agent workspace routes plus the trusted headers Edge Gateway may inject into
-internal services. It is a product-facing browser contract, not the future
-third-party OpenAPI.
+This directory holds the browser-facing session contract owned by Edge Gateway.
+`session-contract.json` defines the browser-session, administrator, and Agent
+workspace routes plus the trusted headers Edge Gateway may inject into internal
+services. It is a product-facing browser contract, not a public third-party
+OpenAPI.
 
-Version 13 of `session-contract.json` includes the active Node Workspace HTML,
-HTTP API and SSE routes. Gateway authenticates HTML and business API requests,
-while hashed static assets are served without a browser session. The browser
-uses this route set instead of a direct ACP connection.
+## Workspace routes
+
+Version 13 of `session-contract.json` includes the Node Workspace HTML, HTTP
+API and SSE routes. Gateway authenticates HTML and business API requests, while
+hashed static assets are served without a browser session. The browser uses
+this route set instead of a direct ACP connection.
+
+For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
+`X-Antnest-*` identity header and injects verified `X-Antnest-Organization-ID`,
+`X-Antnest-Principal-ID`, `X-Antnest-User-ID`, `X-Antnest-Membership-ID` and
+`X-Antnest-Administrator` values. When the path names an Agent
+(`agents/{agent_id}/...`), Gateway also sets `X-Antnest-Agent-ID`; otherwise it
+removes that header. The Agent UI Node Bridge rejects Agent-scoped requests
+that lack the Organization, Principal or Agent header. POST requests require
+the CSRF token. The `Origin` header is optional: when a request supplies it,
+it must match the Gateway origin; when it is absent, the request is not
+rejected for that reason.
 
 Identity access tokens are cookie-only secrets. Token IDs remain Identity audit
 identifiers and are not stored in the browser session. Neither may appear in
 the JSON response schemas described by this contract.
 
-Revision 11 workspace state GET/SSE expose six ACP-owned fields: Agent ID,
-availability, access permission, nullable configuration digest, nullable active
-Session ID and nullable unavailability reason. Missing/revoked access returns a
-sanitized offline view; source failure is never an idle state.
-They reject supplied scope and replay cursors. Identity determines the
-User/Organization; ACP determines Agent access and Session disclosure.
+## Workspace state
+
+Workspace state GET/SSE expose six ACP-owned fields: Agent ID, availability,
+access permission, nullable configuration digest, nullable active Session ID
+and nullable unavailability reason. Missing or revoked access returns a
+sanitized offline view; source failure is never reported as an idle state.
+The routes reject supplied scope and replay cursors. Identity determines the
+User and Organization; ACP determines Agent access and Session disclosure.
 Subscriptions have a bounded authentication lease and never renew inside
 Gateway. See [Workspace state](../../services/edge-gateway/docs/workspace-state.md)
 for response validation, revocation, shutdown and client recovery requirements.
+
+## OIDC and SCIM
 
 OIDC discovery/start and callback routes bridge Identity Service into the
 browser session boundary. The callback consumes Identity's one-time access
@@ -34,20 +52,26 @@ SCIM requests pass through to Identity Service with their protocol Bearer
 credential intact. Browser cookies and forged trusted-principal headers are
 removed; Identity remains the sole SCIM authentication and business authority.
 
-Workspace bootstrap returns only Agent ID/name discovery metadata from
+## ACP routing
+
+Workspace bootstrap returns only Agent ID and name discovery metadata from
 Controller. It does not aggregate execution availability. Protocol and state
-requests go directly to ACP with trusted Organization/Principal/Agent headers,
-without a Controller lookup. Incoming identity headers, including the retired
-access subject, are removed. Pending Agent UI/Console consumer changes and
-Docker acceptance are tracked in the execution-boundary plan.
+requests go directly to ACP with trusted Organization, Principal and Agent
+headers, without a Controller lookup. Incoming identity headers, including the
+retired access subject, are removed. See
+[Execution boundary](../../services/edge-gateway/docs/execution-boundary.md)
+for the Gateway side of the Controller/ACP split.
+
+## WebSocket relay
 
 After upgrade, Edge terminates both WebSocket hops and relays opaque complete
-messages using the existing Gorilla WebSocket library. Before each client data
-message is forwarded, Identity resolves the original cookie token again; its
-active User, Organization and Membership must match upgrade admission. Revoked,
-expired or mismatched identity closes both hops with 1008. An unavailable
-Identity closes with 1013 and never forwards the waiting message. No cookie is
-changed after upgrade; reconnect uses normal HTTP authentication.
+messages using the Gorilla WebSocket library. The upgrade requires a
+same-origin request. Before each client data message is forwarded, Identity
+resolves the original cookie token again; its active User, Organization and
+Membership must match upgrade admission. Revoked, expired or mismatched
+identity closes both hops with 1008. An unavailable Identity closes with 1013
+and never forwards the waiting message. No cookie is changed after upgrade;
+reconnect uses normal HTTP authentication.
 
 This applies to v1, v2 and the v1 alias without inspecting JSON methods, IDs or
 envelopes. Replies and notifications are also client data messages. Ping/pong
@@ -59,17 +83,18 @@ is recorded by the relay; admission checks retain the Gateway trace context.
 The check is the admission point, not a distributed revocation transaction:
 messages already admitted can finish, and an idle connection is not polled.
 Server output for admitted work may continue until another client message or
-disconnection. Closing a socket does not claim to cancel a durable Run. ACP continues to own Agent and Session authorization. No Identity or
-ACP RPC contract or database is added for browser session revalidation.
+disconnection. Closing a socket does not cancel a durable Run. ACP continues to
+own Agent and Session authorization. No Identity or ACP RPC contract or
+database exists for browser session revalidation.
 
-Per Gateway process, 64 upgraded/admitting connections and four buffered data
-messages bound relay concurrency (including Identity calls). Permits are taken
-after a message header is available, so idle sockets do not consume payload
-capacity. Permit waits and writes use the dependency timeout; a started message
-has an absolute one-minute assembly deadline after a buffer slot is acquired,
-unaffected by ping/pong. Capacity
-failure closes with 1013 (HTTP 503 before upgrade). Compression is disabled on
-both hops. These are live-work bounds, not an RSS guarantee or per-user quota.
-A structurally invalid Identity resolution is unavailable (1013), not evidence
-of revocation. Checks overlapping revocation can authorize a message even if
-its eventual ACP intent or Run is created after the revocation response.
+Per Gateway process, 64 upgraded or admitting connections and four buffered
+data messages bound relay concurrency (including Identity calls). Permits are
+taken after a message header is available, so idle sockets do not consume
+payload capacity. Permit waits and writes use the dependency timeout; a started
+message has an absolute one-minute assembly deadline after a buffer slot is
+acquired, unaffected by ping/pong. Capacity failure closes with 1013 (HTTP 503
+before upgrade). Compression is disabled on both hops. These are live-work
+bounds, not an RSS guarantee or per-user quota. A structurally invalid Identity
+resolution is unavailable (1013), not evidence of revocation. Checks
+overlapping revocation can authorize a message even if its eventual ACP intent
+or Run is created after the revocation response.

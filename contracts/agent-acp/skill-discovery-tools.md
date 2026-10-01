@@ -1,11 +1,12 @@
-# ACP Skill discovery tools (D3)
+# ACP Skill discovery tools
 
-This is the ACP-owned catalog/dispatch contract for
+This is the ACP-owned catalog and dispatch contract for the model tools
+`find_skill` and `load_skill`, which consume
 [Registry discovery v1](../skill-registry/discovery-api.md). Tool inputs use
-`find_skill_input` and `load_skill_input` in its shared schema. Runtime D4 file
-delivery has a separate [contract](../runtime/temporary-skills.md) and passes
-Runtime admission. The ACP [D4A consumer contract](skill-temporary-consumer.md)
-adds installation and durable cleanup; its owning delivery gates pass.
+`find_skill_input` and `load_skill_input` in its shared schema. Runtime file
+delivery has a separate [contract](../runtime/temporary-skills.md), and the ACP
+[temporary consumer contract](skill-temporary-consumer.md) defines installation
+and durable cleanup.
 
 ## Catalog and authority
 
@@ -16,11 +17,11 @@ These names are reserved: any colliding Runtime definition rejects preparation;
 they are never dispatched to `tools/call`. The existing `update_plan` path is
 restricted to `source=agent, sourceId=plan, name=update_plan`.
 
-`find_skill` carries `readOnlyHint=true`; D4A changes `load_skill` to
+`find_skill` carries `readOnlyHint=true`; `load_skill` carries
 `readOnlyHint=false` because it may deliver files. Both obey ordinary Session authorization,
 including explicit deny rules and permission interaction. Chat mode exposes no
-tools. They grant no publication, template mutation or permanent installation.
-No new Agent/Template configuration is introduced in this batch.
+tools. They grant no publication, template mutation or permanent installation, and
+they add no Agent or Template configuration.
 
 ACP derives organization, actor and target Agent from the persisted active Run
 and its Session, checks that its execution snapshot matches, and checks current
@@ -37,10 +38,9 @@ projections before limit selection/inspection, preventing a self-read through
 the idle maintenance gate. The model's strict `find_skill_input` does not accept
 this field. Local Skills use ordinary Runtime reads; formal versions and other
 authorized Agent sources remain searchable. UI source preview has no foreground
-Run and omits this context. D1A delivers the Registry producer and D3A delivers
-ACP derivation; the separately admitted
-[DI3 batch](../../docs/skill-discovery-caller-integration-delivery-20261001.md) proves
-real foreground loads and complete Registry/source Trace parents.
+Run and omits this context. Registry applies the exclusion; ACP derives the
+value. Foreground loads propagate the Trace parent through Registry to the
+source read.
 
 ## Results and temporary text use
 
@@ -53,9 +53,8 @@ the ZIP size, HTTP length/type/digest headers, actual artifact SHA-256, bounded
 entry sizes/CRC and complete canonical content manifest. The Registry remains
 the package-rules-v1/YAML authority. Responses expose the exact `SKILL.md` text,
 the selected ref, content/artifact digests and `requires_runtime_delivery`.
-The original D3 result had `temporary_files=null` for every package. D4A retains
-null for text-only packages and returns a usable path only after validating a
-real Runtime install receipt. Multi-file bytes are request-local, never a
+`temporary_files` is null for text-only packages; for multi-file packages it is
+a usable path only after ACP validates a real Runtime install receipt. Multi-file bytes are request-local, never a
 durable discovery cache. See its consumer contract for dispatch and cleanup.
 
 Loaded text enters the current Run's ordinary tool result/context, subject to
@@ -72,9 +71,10 @@ return `content_changed`; inaccessible/missing sources return `not_found`.
 Malformed upstream bytes/headers return `source_invalid`; outages remain
 `source_unavailable`; budget exhaustion is `discovery_budget_exceeded`.
 Caller cancellation closes I/O. Search/text reads have no mutable effect.
-D4A file installs preserve settled or unknown Runtime effects, and a persisted
-temporary scope requires confirmed cleanup before subsequent admission. The
-original D3 read-only recovery shortcut applies only without a temporary scope.
+Temporary file installs preserve settled or unknown Runtime effects, and a
+persisted temporary scope requires confirmed cleanup before subsequent
+admission. The read-only recovery shortcut applies only without a temporary
+scope.
 
 Normal durable tool attempts include the platform identity. Interrupted pure reads
 settle as failed with `tool_effect_state=none`; interrupted temporary loads use
@@ -83,9 +83,7 @@ their existing conservative recovery. Trace spans `skill.discovery.search` and
 `skill.discovery.load` record Run, organization, source ref/digest and outcome.
 They exclude queries, bodies, packages, dialogue, source URLs and credentials.
 
-Admission requires service unit/contract tests, real HTTP and PostgreSQL
+Coverage includes service unit and contract tests, real HTTP and PostgreSQL
 components, and a deployed deterministic model choosing these tools in a real
-Run. Full dual-Agent temporary file use, publishing UI and Template/rebuild
-integration are independently admitted in
-[DI1](../../docs/skill-propagation-integration-delivery-20261001.md); normal source
-lifecycle and active-caller source Trace have separate DI2/DI3 evidence.
+Run. Cross-Agent temporary file use, promotion and Template/rebuild propagation
+are covered by the `make e2e-skill-propagation` Docker E2E target.

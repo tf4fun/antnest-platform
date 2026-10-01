@@ -1,111 +1,193 @@
 # Skill Registry
 
-Skill Registry owns immutable system Skill packages and versions. It validates
-ZIPs, stores metadata and exact artifact bytes in its own PostgreSQL database,
-and serves fixed-version resolution and downloads to trusted control-plane
-callers. The [B0 API contract](../../contracts/skill-registry/registry-api.md)
-defines limits, canonical digests, routes and errors. The
-[Stage 4 design](../../docs/skill-registry-minimal-design.md) records separate
-Controller, Runtime Controller, ACP and Console delivery batches.
+Skill Registry is Antnest's private store of immutable system Skill packages.
+It validates Skill ZIP archives, stores their metadata and exact artifact bytes
+in its own PostgreSQL database, and serves fixed-version resolution and
+downloads to trusted control-plane callers. It is written in Go.
 
-Registry D1 now also owns a metadata-only dynamic source directory, literal
-name/description search, current-source inspection, verified temporary package
-reads and explicit promotion into immutable formal versions. Projection never
-stores the source ZIP/body or takes over its lifecycle. Only promotion persists
-the complete package, source provenance and command receipt atomically. The
-[discovery contract](../../contracts/skill-registry/discovery-api.md) defines
-this boundary. The [D1 report](../../docs/skill-discovery-registry-delivery-20261001.md)
-records admission and pending consumers. ACP's automatic producer/source routes
-are admitted separately in [D2](../../docs/skill-discovery-acp-delivery-20261001.md).
-ACP's model find/load text tools are admitted in
-[D3](../../docs/skill-discovery-tools-delivery-20261001.md). Runtime/ACP temporary
-file delivery is admitted in [D4A](../../docs/skill-discovery-temporary-consumer-delivery-20261001.md),
-and Console source preview/promotion in [D6](../../docs/skill-discovery-console-delivery-20261001.md).
-[DI1](../../docs/skill-propagation-integration-delivery-20261001.md) passes actual
-automatic learning, source use, login/promotion and frozen Template/create/rebuild/Run.
+The Registry also keeps a metadata-only directory of personal Skills that
+Agents have learned. These dynamic source mappings let another Agent of the
+same owner find and temporarily load such a Skill, and let an administrator
+promote it into an immutable formal version. A mapping never stores the source
+ZIP or Skill body; the Registry takes custody of package bytes only when a
+promotion commits.
 
-[D1A](../../docs/skill-discovery-caller-registry-delivery-20261001.md) adds optional
-trusted `requesting_agent_id` search context. Personal projections of that Agent
-are excluded before candidate limits and source inspection; formal versions stay
-eligible. Null/empty/invalid IDs are rejected. This grants no reading authority.
-Console preview omits the context. ACP derivation and real foreground acceptance
-have separate gates: [D3A](../../docs/skill-discovery-caller-acp-delivery-20261001.md)
-passes consumer unit/HTTP/PostgreSQL checks;
-[DI3](../../docs/skill-discovery-caller-integration-delivery-20261001.md) now also
-passes actual active-Run formal/peer loads, local Skill availability and source Trace parents.
+## Responsibilities
 
-Run from this module with `go run ./cmd/skill-registry`. Required settings:
+- Own a private PostgreSQL schema and its embedded, checksum-checked migrations.
+- Validate Skill ZIP archives under package rules version 1 and compute the
+  canonical `artifact_digest` and `content_digest`.
+- Store immutable Skill versions, their file manifests and exact ZIP bytes,
+  with organization-scoped unique names and compare-and-set version appends.
+- Record organization-scoped idempotency receipts shared by upload and
+  promotion requests.
+- List Skills and versions, resolve fixed `skill_id` + `version` references,
+  and serve exact artifacts.
+- Store dynamic source mappings (organization, Agent, owner, name,
+  description, sequence, content digest, active state) with sequence ordering
+  and tombstones.
+- Search formal heads and owner-scoped source mappings with literal,
+  case-insensitive name and description matching, then confirm source
+  candidates against the current source.
+- Load a selected formal or source Skill as verified ZIP bytes without
+  retaining source bytes.
+- Promote a source Skill into a formal version, committing the version,
+  receipt and source provenance atomically.
+- Emit OpenTelemetry traces for inbound HTTP requests and outbound source reads.
 
-- `ANTNEST_SKILL_REGISTRY_DATABASE_URL`: URL of this service's dedicated
-  PostgreSQL database and restricted account.
-- `ANTNEST_SKILL_REGISTRY_API_TOKEN`: secret of at least 32 bytes, held only by
-  trusted internal callers. Do not place it in a URL, image or repository.
-- `ANTNEST_SKILL_REGISTRY_LISTEN`: optional, defaults to `:8080`.
-- `ANTNEST_SKILL_REGISTRY_SOURCE_URL` and `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`:
-  optional paired settings for one private ACP source origin and a distinct
-  read-only source-route bearer secret of at least 32 bytes. Both unset leaves
-  formal reads/search available and Agent source reads explicitly unavailable.
-  URL credentials, query/fragment and path prefixes are rejected. Do not enable
-  this unless it points to ACP's admitted [D2 source implementation](../../docs/skill-discovery-acp-delivery-20261001.md),
-  with matching ACP Registry/source settings; shared development deployment stays opt-in.
+## Non-responsibilities
 
-In the standard Compose stack, the source URL/token pair and ACP's matching
-settings derive from one `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`. The
-[deployment guide](../../docs/skill-deployment.md) describes opt-in configuration;
-the formal Registry API bearer remains separate.
+- It does not authenticate end users or decide publication permissions. Callers
+  derive the organization and actor from their own trusted principal.
+- It does not prepare Skill volumes, mount Skills into Runtimes or manage Agent
+  lifecycle. Runtime Controller owns preparation and mounting.
+- It does not store, edit or delete Agent-owned source packages. Agent ACP
+  Service owns personal Skill content and its lifecycle.
+- It does not run learning, model inference or Runtime tool calls.
+- It does not offer update or delete routes for committed versions.
+- It does not rank results with vectors or popularity, and search has no
+  pagination.
+- It does not export metrics or logs over OTLP, and it does not trace SQL.
+- It does not read another service's database.
 
-Registry HTTP tracing follows the [D1T boundary contract](../../contracts/skill-registry/trace-boundaries.md).
-Inbound W3C context becomes a native SERVER span; the source reader injects its
-actual HTTP CLIENT child, retained through response EOF/close/cancellation. HTTP
-tracing never records headers, queries, Skill/projection bodies or package bytes,
-including when the RPC-content switch is enabled. Export uses the pinned Go OTel
-SDK with `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT` (or its traces
-endpoint) and `http/protobuf`. `OTEL_SDK_DISABLED=true` or exporter `none` keeps
-context propagation while disabling export. Shutdown flushes after HTTP shutdown
-with a five-second bound. Ordinary deployment wiring and the independent
-[DI3 integration](../../docs/skill-discovery-caller-integration-delivery-20261001.md)
-now pass, including Registry SERVER/CLIENT parents in the actual calling Run Trace.
+## Interfaces
 
-Startup pings PostgreSQL and applies the embedded, ordered checksum-checked schema
-migration. `GET /status` checks database readiness. Service routes require the
-bearer token; the service must be placed on a private control network. The
-deployment must keep it off `antnest-runtime-management` and deny Runtime
-direct and Egress access to its addresses. The development Compose topology
-connects Admin Console, Agent Controller and Runtime Controller as separate
-consumers. The disposable I1 check covers their basic creation, Run and rebuild
-chain and Runtime denial of the Registry service name and actual private IPv4
-through `antnest0`. The same check proves this deployment has no Registry IPv6
-address and fails if one appears without a corresponding denial probe.
-The current per-Agent Skill volumes also pass offline backup/restore and
-Registry-offline Enable gates. Legacy shared-volume migration is outside the
-current clean-development-deployment scope.
+| Direction | Interface | Purpose |
+| --- | --- | --- |
+| Inbound | `GET /status` (no authentication) | Readiness; pings PostgreSQL with a two-second bound |
+| Inbound | `POST /internal/skills`, `POST /internal/skills/{skill_id}/versions` | Multipart upload of a new Skill or a new version |
+| Inbound | `GET /internal/skills`, `GET /internal/skills/{skill_id}/versions` | Paged lists of Skill heads and versions |
+| Inbound | `POST /internal/skill-versions/resolve` | Resolve up to 32 fixed references to version metadata |
+| Inbound | `GET /internal/skills/{skill_id}/versions/{version}/artifact` | Exact ZIP download |
+| Inbound | `PUT /internal/skill-projections` | Apply a source mapping event |
+| Inbound | `POST /internal/skill-discovery/search`, `POST /internal/skill-discovery/load` | Find and load formal or source Skills |
+| Inbound | `POST /internal/skill-projections/promote` | Promote a source Skill to a formal version |
+| Outbound | `POST /internal/skill-sources/inspect`, `POST /internal/skill-sources/artifact` on Agent ACP Service | Confirm current source metadata and fetch current source bytes |
+| Outbound | PostgreSQL | Registry-owned schema |
+| Outbound | OTLP HTTP | Trace export when enabled |
 
-Run local unit tests with `GOWORK=off go test ./...` from this directory;
-`go.work` also includes unrelated service modules. The scoped
-Registry＋PostgreSQL＋Admin Console Docker E2E has passed. Controller and Runtime
-Controller have local gates, and the basic full-chain Docker E2E passes via
-`make e2e-stage3-skill-delivery` after the Stage 3 images are built.
-The isolated PostgreSQL component test under root `tests/integration/go/skill-registry/`
-verifies restart replay, exact artifact persistence, organization isolation,
-and concurrent revision CAS with rollback of the losing receipt. Run it through
-`tests/integration/go/run.mjs skill-registry --package internal/registry` with
-`ANTNEST_SKILL_REGISTRY_TEST_DATABASE_URL` pointed at an isolated database.
-The root `tests/integration/skill-registry/run-registry-rc-prepare.sh` checks
-Registry→Runtime Controller preparation and Initialize consumption using isolated
-processes, PostgreSQL, a Docker named volume and a test Runtime image. The full
-Agent workflow is covered by the separate Stage 3 Skill delivery E2E; this
-focused check remains useful for volume and mount fault localization.
-Set `ANTNEST_TEST_REAL_RUNTIME_IMAGE=antnest/antnest-runtime:local` after building
-the Runtime image to include its real `info`/`read`/`write`/`edit` checks.
-The focused Docker check also verifies that root and UID 1000 cannot mutate
-the mounted system Skill by writing, deleting, renaming, changing permissions,
-or creating a link, and that a workspace link cannot write through to it.
-Run `make integration-stage4-skill-slow-prepare` for the opt-in duration gate.
-It delays five exact-version artifact downloads by 25 seconds each, then checks
-that one RC preparation exceeds the default 120-second lifecycle mutation
-budget, reports per-package progress, and finishes with a verified five-Skill
-Docker volume. Its proxy and Docker resources are disposable.
-Run `make integration-stage4-skill-restart-prepare` to interrupt that same
-five-package preparation after its first persistent checkpoint with a graceful
-RC restart. It verifies continuation without downloading the first package
-again, the final progress and manifest, and disposable resource cleanup.
+All `/internal/` routes require `Authorization: Bearer <ANTNEST_SKILL_REGISTRY_API_TOKEN>`.
+Admin Console, Agent Controller, Runtime Controller and Agent ACP Service are
+the callers in the standard Compose deployment. The route contracts are in
+[`registry-api.md`](../../contracts/skill-registry/registry-api.md) and
+[`discovery-api.md`](../../contracts/skill-registry/discovery-api.md).
+
+## Configuration
+
+Configuration is read from the environment at startup.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_SKILL_REGISTRY_DATABASE_URL` | yes | none | PostgreSQL connection URL for this service's dedicated database and restricted role |
+| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | yes | none | Bearer secret for all `/internal/` routes; at least 32 bytes with no leading or trailing whitespace. Never place it in a URL, image or repository |
+| `ANTNEST_SKILL_REGISTRY_LISTEN` | no | `:8080` | HTTP listen address in `host:port` form; `--healthcheck` uses its port |
+| `ANTNEST_SKILL_REGISTRY_SOURCE_URL` | no | empty | Agent ACP Service origin for source reads: `http` or `https`, no credentials, query, fragment or path prefix. Set together with the source token |
+| `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` | no | empty | Bearer secret for the ACP source routes; at least 32 bytes, no surrounding whitespace or line breaks. Set together with the source URL |
+| `OTEL_SDK_DISABLED` | no | unset | `true` (case-insensitive) disables trace export while keeping W3C propagation |
+| `OTEL_TRACES_EXPORTER` | no | unset | `otlp` or `none`; any other value fails startup |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | unset | OTLP HTTP base URL |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | no | unset | OTLP HTTP traces endpoint; overrides the base URL |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | no | unset | Only `http/protobuf` is accepted |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | no | unset | Only `http/protobuf` is accepted; overrides the general protocol |
+| `OTEL_SERVICE_NAME` | no | `skill-registry` | `service.name` resource attribute |
+
+If both source settings are empty, formal routes and formal search results
+work, but any search or load that needs an Agent source returns
+`source_unavailable`. Setting only one of the pair fails startup.
+
+Trace export is enabled only when it is not disabled and at least one of
+`OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set. The OTLP exporter and resource
+detector also read the standard OpenTelemetry SDK variables, such as
+`OTEL_RESOURCE_ATTRIBUTES` and exporter header or timeout settings.
+
+In the standard Compose stack, one `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` value
+enables the source pair on both the Registry and ACP. The
+[Skill deployment guide](../../docs/skill-deployment.md) and the
+[deployment wiring contract](../../contracts/skill-registry/deployment.md)
+describe that opt-in.
+
+## Dependencies
+
+- PostgreSQL database and role owned by this service. Startup pings the
+  database once and exits if it is unreachable, then applies migrations before
+  opening the listener. Later database loss makes `/status` and data routes
+  return 503.
+- Agent ACP Service, only when the source settings are configured. Source
+  failures affect only searches and loads that involve Agent sources; formal
+  reads keep working.
+- An OTLP collector is optional and is not part of readiness.
+- Network placement: the Registry belongs on a private control network. Keep
+  it off the Runtime management and Egress networks, deny Runtime direct and
+  Egress access to its addresses, and expose no host port.
+
+## Build and test
+
+Run unit tests from this directory. `GOWORK=off` keeps the root `go.work`
+from pulling in unrelated service modules:
+
+```bash
+cd services/skill-registry && GOWORK=off go test ./...
+```
+
+Run from the repository root:
+
+```bash
+node tests/integration/go/run.mjs skill-registry
+make integration-stage4-skill-prepare
+make e2e-skill-discovery-registry
+docker compose --profile stage3 build skill-registry
+```
+
+- `node tests/integration/go/run.mjs skill-registry` overlays the component
+  tests in [`tests/integration/go/skill-registry`](../../tests/integration/go/skill-registry)
+  onto this module and runs them. Add `--package internal/registry` to limit
+  the run. The PostgreSQL tests cover restart replay, exact artifact
+  persistence, organization isolation, concurrent version compare-and-set and
+  rollback of the losing receipt.
+- `make integration-stage4-skill-prepare` checks Registry to Runtime
+  Controller preparation and Runtime Initialize consumption with isolated
+  processes, PostgreSQL, a Docker named volume and a test Runtime image. It
+  also checks that root and UID 1000 cannot modify the mounted system Skill.
+  `make integration-stage4-skill-slow-prepare` and
+  `make integration-stage4-skill-restart-prepare` add slow-download and
+  graceful-restart variants.
+- `make e2e-skill-discovery-registry` runs the Registry discovery Docker E2E.
+  `make e2e-skill-registry-trace` adds the trace chain check.
+- `docker compose --profile stage3 build skill-registry` builds
+  `antnest/skill-registry:local`. The equivalent direct command is
+  `docker build -f services/skill-registry/Dockerfile -t antnest/skill-registry:local .`
+  with the repository root as the build context.
+- `make test-go-unit` and `make test-go` include this module.
+  `make e2e-stage3-skill-delivery` runs the full Agent Skill delivery workflow
+  after the Stage 3 images are built, and `make e2e-skill-propagation` runs the
+  learning, discovery, temporary use and promotion workflow.
+
+Test-only variables:
+
+- `ANTNEST_SKILL_REGISTRY_TEST_DATABASE_URL` - isolated PostgreSQL database for
+  the component tests. The PostgreSQL tests skip when it is unset.
+- `ANTNEST_TEST_REAL_RUNTIME_IMAGE` - set to `antnest/antnest-runtime:local`
+  after building the Runtime image to include real Runtime file-tool checks in
+  the preparation test.
+
+## Documentation
+
+- [Architecture](docs/architecture.md) - package layout, ownership boundaries,
+  storage, request flows, security, observability and failure handling.
+- [Skill Registry design](../../docs/skill-registry-minimal-design.md) -
+  cross-service design for system Skills, discovery and promotion.
+- [Skill learning design](../../docs/skill-learning-design.md) - how Agents
+  produce the personal Skills that become source mappings.
+- [Skill deployment guide](../../docs/skill-deployment.md) - operator
+  configuration for learning and discovery.
+- [Registry API](../../contracts/skill-registry/registry-api.md) - package
+  rules, digests, formal routes and errors.
+- [Discovery API](../../contracts/skill-registry/discovery-api.md) - source
+  mappings, search, load, promotion and ACP source routes.
+- [Runtime delivery API](../../contracts/skill-registry/runtime-delivery-api.md) -
+  Runtime Controller system-Skill preparation boundary.
+- [Trace boundaries](../../contracts/skill-registry/trace-boundaries.md) -
+  HTTP span model.
+- [Deployment wiring](../../contracts/skill-registry/deployment.md) - Compose
+  wiring for source and trace settings.

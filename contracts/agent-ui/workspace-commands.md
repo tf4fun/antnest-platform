@@ -1,12 +1,12 @@
 # Workspace control commands v1
 
-Status: backend acceptance passed; browser preview awaits human style review
-and frontend regression. Owner: Agent UI. Reviewed boundaries: ACP
-remains the Session/Run authority; Edge Gateway retains authentication, CSRF and
-trusted identity injection. Future Channel Manager is a pending consumer of
-these semantics, not an implemented integration. Its scope is recorded in the
-[Stage 4 service plan](../../docs/stage-4-services.md); a channel-facing contract
-remains to be designed.
+This document defines workspace control commands: their discovery, the
+private dispatch route and the initial command set. Agent UI owns the contract.
+ACP remains the Session/Run authority; Edge Gateway retains authentication,
+CSRF and trusted identity injection. A future Channel Manager is expected to
+reuse these semantics, but no channel integration exists. Its scope is
+described in [Stage 4 services](../../docs/stage-4-services.md); a
+channel-facing contract is not yet defined.
 
 ## Discovery and execution
 
@@ -43,7 +43,7 @@ new ACP standard method.
 
 | Name | Aliases | Scope and behavior |
 | --- | --- | --- |
-| `/help [command]` | `/帮助` | Show current workspace/native catalogue or one command; available before a Session exists |
+| `/help [command]` | `/帮助` (Chinese alias) | Show current workspace/native catalogue or one command; available before a Session exists |
 | `/status` | — | Read Agent availability, selected Session and active work without interrupting execution |
 | `/usage` | — | Selected Session's reported context/cost; absent measurements stay unknown |
 | `/new` | — | Select an empty local draft; allocate no Session until its first ordinary prompt; preserve existing work |
@@ -65,27 +65,16 @@ from the observed selection; it never guesses another active Session.
 It can be negotiated on a v1 connection through `agentCapabilities.sessionCapabilities.fork`;
 the protocol version alone does not imply support. The previous SDK 1.4.0 and
 the [SDK 1.5.0 schema](https://raw.githubusercontent.com/agentclientprotocol/typescript-sdk/v1.5.0/schema/schema.json)
-both mark its request, response and capability unstable (checked 2026-09-26).
-The ACP service already implements and advertises it; this UI batch exposes
-that existing capability. Passing its tests does not make it stable protocol.
+both mark its request, response and capability unstable. The ACP service
+implements and advertises it, and the workspace exposes that capability. This
+does not make it stable protocol.
 
 Fork is advertised only when upstream advertises/supports it. Like existing
 Session creation, a lost fork response may leave a created Session: refresh
-the directory and inspect it; do not retry automatically. This batch introduces
-no durable creation idempotency promise.
+the directory and inspect it; do not retry automatically. Fork has no durable
+creation idempotency promise.
 
-## Delivery and admission
+## Not covered
 
-1. Shared contract and failing service tests.
-2. Agent UI Node command registry, dispatcher and existing ACP adapters; unit,
-   HTTP/SSE contract/component and backend Docker gates first. Backend-only
-   acceptance is independent of human style approval.
-3. Browser consumer, draft/busy input handling and transient command feedback;
-   demonstrate the deployed interface before the user-requested UI regression.
-4. Browser integration after the requested style review, building on backend
-   evidence for busy status/stop, configuration CAS, scope denial and no model
-   calls for controls. A preview is not final acceptance.
-
-Channel bindings, external delivery deduplication, Skill Registry, Task Scheduler,
-`/queue` and `/steer` remain pending separate deliveries. No new service is
-created by this preparation batch.
+Channel bindings, external delivery deduplication, Task Scheduler integration,
+`/queue` and `/steer` are not part of this contract.

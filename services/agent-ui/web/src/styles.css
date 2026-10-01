@@ -2377,7 +2377,7 @@ details[open] > summary > .disclosure-chevron {
   cursor: pointer;
 }
 
-/* The Agent directory follows attyd's project browser, without project semantics. */
+/* The Agent directory is a flat browser list without project semantics. */
 .agent-chooser {
   height: 100%;
   overflow-y: auto;

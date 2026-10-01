@@ -1,13 +1,13 @@
-# Stage 3A Administrator Control Plane
+# Stage 3 Administrator Control Plane
 
-> Status: administrator workflow implemented; acceptance remains scoped by batch
-> Updated: 2026-09-17. Latest execution/workspace evidence: [current status](current-status.md).
+Stage 3 adds the supported browser entry to Antnest Platform. It connects an
+administrator from login through Agent lifecycle management without moving
+Identity or Agent business rules into the presentation tier. This document
+covers the service boundaries, trust and session model, public and BFF route
+surfaces, frontend workflow, trace contract, deployment rules and end-to-end
+verification of that control plane.
 
-Stage 3A adds the first supported browser entry to Antnest Platform. It connects
-one administrator from login through Agent lifecycle management without moving
-Identity or Agent business rules into the presentation tier.
-
-Stage 3A delivered two services:
+The administrator control plane consists of two services:
 
 - **Edge Gateway** is the sole externally reachable application service. It
   terminates browser trust, resolves Identity credentials, enforces coarse
@@ -18,14 +18,10 @@ Stage 3A delivered two services:
   The BFF translates page commands into existing Identity Service and Agent
   Controller management RPCs and ACP audit reads. It owns no durable business records.
 
-The implemented Stage 3 surface also includes **Agent UI** behind Edge Gateway.
-Service and Docker tests cover ACP v1 Session, Tool activity, attachment,
-cancellation and replay paths without moving Agent execution into the browser.
-The original five [C4](docker-single-node-closeout.md) browser checks were
-explicitly deferred in the 2026-09-11 closeout. Subsequent model selection,
-Provider fallback and discovery have targeted real-browser evidence; the full
-development-browser profile retains its strict Trace failure. See [current status](current-status.md).
-Channel Gateway and Skill Registry remain outside this stage.
+The Stage 3 surface also includes **Agent UI** behind Edge Gateway. Agent UI
+renders ACP v1 Sessions, Tool activity, attachments, cancellation and replay
+without moving Agent execution into the browser. Channel Manager and Skill
+Registry are outside this stage; see [Stage 4 services](stage-4-services.md).
 
 ## Service Boundaries
 
@@ -124,8 +120,7 @@ offer an in-form retry, and never infer global absence from a partial page.
 
 ## Admin Console BFF Surface
 
-The BFF retains the Stage 3A management path and includes the first catalog
-convergence extension:
+The BFF provides the management path and the model catalog routes:
 
 ```text
 GET    /api/admin/overview
@@ -163,6 +158,13 @@ GET    /api/admin/operations/{request_id}
 GET    /api/admin/agents/{agent_id}/events
 GET    /api/admin/agents/{agent_id}/events/watch
 ```
+
+The BFF also serves route families that this list does not enumerate,
+including `/api/admin/provider-connections`, `/api/admin/provider-models`,
+`/api/admin/execution-audits`, `/api/admin/skills` and
+`/api/admin/skill-sources`. The
+[Admin Console service documentation](../services/admin-console/docs/architecture.md)
+covers them.
 
 The Model Profile and Template list routes accept only `after_id` and `limit`.
 The Agent list accepts only `view=current|deleted`, `cursor`, and `limit`.
@@ -312,11 +314,11 @@ truth.
 
 ## Trace Contract
 
-The [cross-service observability contract](observability-contract.md) replaces
-ad hoc instrumentation and recursive readiness.
-It adds consistent client/server boundaries and bounded request/response/error
-diagnostics. Until its per-service rollout is verified, the following sections
-describe the existing implementation, not conformance with that target.
+The [cross-service observability contract](observability-contract.md) defines
+consistent client/server boundaries, bounded request/response/error
+diagnostics, and local readiness in place of ad hoc instrumentation and
+recursive readiness. The following sections describe the trace behavior of the
+administrator control plane.
 
 Edge Gateway starts or continues one server span for each request and returns
 its trace ID in `X-Antnest-Trace-ID`. Every internal HTTP client injects W3C
@@ -362,22 +364,20 @@ each trace, and all returned lifecycle traces are checked for secret material.
 - Admin Console, Identity Service, Agent Controller, Agent ACP Service, Runtime
   Controller, and Runtime Egress use internal Compose networks only.
 - Edge Gateway readiness is local and does not probe downstream services.
-  Deployment acceptance checks every container and actual business requests.
+  Deployment verification checks every container and actual business requests.
 - Admin Console readiness is local. Services with an owned database may check
-  that database, but do not recursively probe another business service. See the
-  [service rollout](observability-rollout.md) for implementation and acceptance
-  status; deployment ordering does not change this readiness contract.
+  that database, but do not recursively probe another business service.
+  Deployment ordering does not change this readiness contract.
 - No service may read another service's database or bootstrap secret.
 
-## Stage 3A Acceptance
+## End-To-End Verification
 
-The repository acceptance starts from a disposable Compose project and empty
-volumes. It must prove, in order:
+The repository end-to-end test starts from a disposable Compose project and
+empty volumes. It must prove, in order:
 
-1. build all Stage 3A images and start an empty deployment;
+1. build all Stage 3 images and start an empty deployment;
 2. bootstrap the configured organization and local system administrator;
-3. log in through Edge Gateway and load the management projection; interactive
-   browser evidence is recorded separately in the C4 reports;
+3. log in through Edge Gateway and load the management projection;
 4. view the organization directory and bootstrap administrator;
 5. rotate the bootstrap administrator's local password, prove the replacement
    credential can log in, and restore the disposable fixture credential;
@@ -392,7 +392,7 @@ volumes. It must prove, in order:
     its terminal state;
 12. query Jaeger for the lifecycle command and Temporal workflow/activity chain
     correlated with its operation; prove actual ancestry, required boundaries
-    and secret exclusions, keeping strict warning results explicit;
+    and secret exclusions;
 13. prove that only Edge Gateway has an externally reachable application port;
 14. log in as the ordinary member, obtain a browser-safe Agent projection and
     Workspace HTML, and execute/replay real Tool effects on ACP v1 WebSocket,
@@ -406,36 +406,31 @@ volumes. It must prove, in order:
 
 Unit and contract tests cover authentication, privilege checks, header
 spoofing, organization scoping, request shaping, secret redaction, trace
-propagation, static fallback, and lifecycle forwarding. The Compose acceptance
-is the cross-service proof, not a replacement for those tests.
+propagation, static fallback, and lifecycle forwarding. The Compose test is the
+cross-service proof, not a replacement for those tests.
 
 Run `make e2e-stage3` to build images first, or `make e2e-stage3-local` to use
-existing local images. The [current base fixture](../tests/e2e/stage3-base/README.md)
+existing local images. The [base fixture](../tests/e2e/stage3-base/README.md)
 uses an isolated Compose project with empty volumes, all five lifecycle command
-traces and independent ACP message traces. It verifies current configuration
+traces and independent ACP message traces. It verifies configuration
 publication/settlement, real Runtime operations and host-port isolation, then
-tears down owned resources on success or failure. Clock warnings still produce
-a nonzero result.
+tears down owned resources on success or failure. Clock warnings produce a
+nonzero result.
 
-Managed MCP now has an independent disposable [current fixture](../tests/e2e/managed-mcp/README.md)
-for both SDK versions and active-Run Rebuild.
-The [current RPC fault fixture](../tests/e2e/rpc-response-loss/README.md) covers
-both-version publication/settlement acknowledgement loss. Its business checks
-pass; the subsequent Controller candidate closes background publication SQL
-tracing. Strict warnings and Docker probe errors remain failed. The separate
-[ACP persistence fixture](../tests/e2e/acp-persistence/README.md) now has six
-committed-response-loss cases and 32 scoped Trace checks; strict faults remain
-failed. [Process interruption](../tests/e2e/acp-restart/README.md) now has eight
-business cases, 18 replays and two physical Rebuilds. Its 44 complete Trace checks
-passed in the original run. The [Trace follow-up](trace-acceptance-followup.md)
-separates intentional SIGKILL diagnostics from normal-request completeness and
-validates expected Docker absence in the independent candidate; strict timing
-warnings remain outside this scope.
-See the [separate P1/P2 record](acp-persistence-revalidation.md).
+Related disposable fixtures cover narrower paths:
 
-OIDC and fault profiles now dispatch to their separately migrated launchers.
-The explicit `ANTNEST_E2E_KEEP_STACK=true` mode is now [retired](retained-seed-retirement.md)
-and rejects before Node/Docker or resource creation. Unset or `false` uses the
-current disposable path. The [historical inline tail](stage3-tail-retirement.md)
-and its exclusive CLI/input helpers are removed; shared current helpers remain. The
-[asset inventory](acceptance-asset-migration.md) retains each profile's scoped evidence.
+- [Managed MCP](../tests/e2e/managed-mcp/README.md): both ACP SDK versions and
+  active-Run Rebuild.
+- [RPC response loss](../tests/e2e/rpc-response-loss/README.md): loss of
+  publication and settlement acknowledgements for both versions.
+- [ACP persistence](../tests/e2e/acp-persistence/README.md): committed-response
+  loss with scoped Trace checks.
+- [Process interruption](../tests/e2e/acp-restart/README.md): business cases,
+  replays and physical Rebuilds after ACP process interruption. Its Trace
+  checks separate intentional SIGKILL diagnostics from normal-request
+  completeness.
+
+OIDC and fault profiles dispatch to their own launchers.
+`ANTNEST_E2E_KEEP_STACK=true` is not supported: the launcher rejects it before
+starting Node, Docker or any resource creation. Unset or `false` uses the
+disposable path.

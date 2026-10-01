@@ -1,7 +1,9 @@
 # Runtime Skill commands
 
-ACP owns Skill discovery and invocation. Agent UI consumes the catalog without
-reading Registry packages or accepting client-supplied file paths.
+This document defines how Agent ACP Service advertises Runtime Skills as slash
+commands and expands them into ordinary Prompts. ACP owns Skill discovery and
+invocation. Agent UI consumes the catalog without reading Registry packages or
+accepting client-supplied file paths.
 
 - Each discoverable Runtime Skill is advertised as
   `skill:system:<name>` or `skill:personal:<name>`, with its description and
@@ -28,7 +30,3 @@ reading Registry packages or accepting client-supplied file paths.
   conversation storage; never persist the expanded body into context checkpoints.
   Reads are complete UTF-8 content, at most 16 KiB; missing, incomplete or oversized
   Skills and empty tasks fail before model inference, with a clear error.
-
-Delivery batches: ACP producer and tests first; Agent UI consumer and tests next;
-then Docker integration and browser verification. Upload-dialog styling is an
-independent Admin Console batch.

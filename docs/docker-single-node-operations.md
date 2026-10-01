@@ -1,28 +1,22 @@
 # Docker Single-Node Operations
 
-The all-in-one Temporal service advertises `127.0.0.1` for internal membership
-so normal stop/start cannot leave it trying a reallocated Docker interface
-address. Its frontend still binds `0.0.0.0` and clients use `temporal:7233`.
-This assumes all server roles share one container; split-role or multi-node
-deployments require mutually reachable node addresses. See the
-[restart verification](temporal-membership-revalidation-20260926.md).
-
-This runbook covers one development/acceptance deployment on a trusted Docker
-Engine. It is not an Internet-facing production installation: TLS termination,
-production secret delivery, external backup storage and HA are outside this
-profile. [The closeout checklist](docker-single-node-closeout.md) remains the
-acceptance authority; a healthy container alone does not prove a usable Agent.
+This runbook covers deploying, operating and removing one development or
+evaluation deployment of Antnest Platform on a trusted Docker Engine. It is not
+an Internet-facing production installation: TLS termination, production secret
+delivery, external backup storage and high availability are outside this
+profile. A healthy container alone does not prove a usable Agent; follow
+section 4 to verify the full path.
 
 ## 1. Prerequisites And Ownership
 
 - Use a Linux Docker Engine, or Linux containers in Docker Desktop/OrbStack.
   Egress and Runtime require `/dev/net/tun` and container network administration;
   the Runtime also drops privileges for Tool execution. Do not remove these
-  controls to make readiness pass. Rootless Docker is not an accepted profile.
+  controls to make readiness pass. Rootless Docker is not supported.
 - BuildKit must support Dockerfile cache mounts. Compose must understand
   `!reset`, `healthcheck.start_interval` and `networks.gw_priority`. Inspect
   `docker version` and `docker compose version`; a rejected Compose file is a
-  prerequisite failure, not a reason to omit the Stage 3 override.
+  prerequisite failure, not a reason to omit the `compose.stage3.yaml` override.
 - The selected Docker context is the deployment target. Runtime Controller uses
   that Engine's socket, image store, networks and volumes. A local Runtime image
   on a different Engine is not available to the Controller.
@@ -38,23 +32,28 @@ docker version
 docker compose version
 ```
 
-With Stage 3 enabled, one PostgreSQL container hosts six independently owned
-application databases and roles:
+With the `stage3` profile enabled, one PostgreSQL container hosts six
+independently owned application databases and roles:
 `antnest_egress`, `antnest_runtime_controller`, `antnest_agent_acp`,
 `antnest_identity`, `antnest_agent_controller`, and `antnest_skill_registry`.
 Their schemas are not shared.
 Each service runs its own migrations; the database initializer only creates
 roles/databases and removes public connection privileges.
-Stage 2/3 additionally uses `antnest_temporal` and `antnest_temporal_visibility`,
+Temporal additionally uses `antnest_temporal` and `antnest_temporal_visibility`,
 both owned by the separate `antnest_temporal` role. Temporal does not access
 application tables.
 
 ## 2. Configuration Before First Start
 
 Copy `.env.example` to the ignored `.env` and use it as the configuration
-inventory. Its passwords and zero-valued keys are deliberately public synthetic
-development values. Replace them before storing any non-disposable data.
-Keep `.env`, `.secret`, `auth.json` and nested credential copies out of Git and
+inventory.
+
+> **Warning:** the passwords, tokens and zero-valued keys in `.env.example` and
+> the Compose defaults are public, disposable local development values. Anyone
+> can read them in this repository. Override every one of them before storing
+> any non-disposable data or exposing the deployment beyond your workstation.
+
+Keep `.env`, `.secret`, `auth.json` and any other credential files out of Git and
 Docker build contexts. Do not publish `docker compose config` or `docker inspect`
 output containing resolved environments.
 
@@ -95,15 +94,16 @@ Also update `ANTNEST_EDGE_PUBLIC_BASE_URL` to the selected Gateway port/domain
 IP and collector port. These example values are literal URLs, not dynamically
 derived from the port/subnet variables.
 
-Optional automatic Skill maintenance and dynamic source discovery use the
-[normal Skill deployment guide](skill-deployment.md). Standard Compose forwards
-the ACP private signer, RC public verifier set and a separate shared source
-bearer; test configuration overrides are unnecessary. Existing Runtimes acquire
-new verifier configuration only through explicit rebuild.
+Optional automatic Skill maintenance and dynamic source discovery are configured
+as described in the [Skill deployment guide](skill-deployment.md). Standard
+Compose forwards the ACP private signer, the Runtime Controller public verifier
+set and a separate shared source bearer; no test configuration override is
+needed. Existing Runtimes acquire new verifier configuration only through
+explicit rebuild.
 
 ## 3. Build And Start
 
-Build all eleven project images from the current source, serially:
+Build all project images from the current source, serially:
 
 ```sh
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
@@ -121,8 +121,13 @@ The Temporal image `antnest/temporal:local` uses server 1.32.0 and adds the
 same-version official `tdbg` binary plus a read-only readiness probe. Its health
 check requires frontend initialization and nonempty frontend/history/matching
 gossip rings. A listening 7233 port alone does not establish readiness after
-restart. The local HTTP probe port 7243 is not published. See the
-[readiness repair](temporal-readiness-revalidation.md) for scope and evidence.
+restart. The local HTTP probe port 7243 is not published.
+
+The all-in-one Temporal service advertises `127.0.0.1` for internal membership
+so a normal stop/start cannot leave it trying a reallocated Docker interface
+address. Its frontend still binds `0.0.0.0` and clients use `temporal:7233`.
+This assumes all server roles share one container; split-role or multi-node
+deployments require mutually reachable node addresses.
 
 Enable telemetry and retain these settings for subsequent `up` commands:
 
@@ -150,7 +155,8 @@ No Runtime, ACP, Identity, Controller or BFF host port should be published.
 The loopback defaults and insecure-cookie setting are for local HTTP only.
 Do not merely bind them to `0.0.0.0` for public deployment.
 
-The Stage 3 observability deployment has twelve resident containers.
+With the `stage3` and `observability` profiles, the deployment runs one
+resident container per service plus PostgreSQL, Temporal and Jaeger.
 `temporal-databases`, `temporal-schema`, and `temporal-namespace` are additional
 one-shot initialization jobs, not resident workers: they provision databases,
 apply engine schemas, and register the `antnest` namespace, respectively.
@@ -167,8 +173,9 @@ overlays. Confirm initialization already completed; this is not first deployment
 ## 4. Empty Instance To A Usable Agent
 
 1. Log in to Console with the configured bootstrap organization, email and
-   password. The example uses `engineering` / `admin@example.com` /
-   `antnest-admin-dev`; these are not recommended production credentials.
+   password. The disposable local defaults are `engineering` /
+   `admin@example.com` / `antnest-admin-dev`. They are public; override them in
+   `.env` for any deployment that is not a throwaway local environment.
 2. Add a Model Profile with an available model and credential. Add an active
    organization member when testing the end-user role.
 3. Create a Template using that model revision and the built Runtime image tag.
@@ -195,10 +202,9 @@ It checks real Runtime tools, immutable image resolution, persistent workspace,
 replay, startup failure and Jaeger linkage. It also inspects exact built-image
 identity, service health and loopback-only host bindings, rejecting accidental
 publication of internal application ports. Its extra model port is test-only.
-It does not perform browser actions.
-Keep only its successful final metrics; a failed or interrupted run is not
-acceptance. The [lifecycle profile](../tests/e2e/lifecycle-closeout/README.md)
-also documents loss/network/crash subcases, which must run separately.
+It does not perform browser actions. A failed or interrupted run is not a
+passing result. The [lifecycle profile](../tests/e2e/lifecycle-closeout/README.md)
+also documents loss/network/crash subcases, which run separately.
 
 ## 5. Diagnose Before Retrying
 
@@ -236,4 +242,4 @@ Never use global Docker prune as an application cleanup procedure.
 
 Disposable E2E runners own their cleanup on success, failure and interruption;
 they stop resource creators first and verify exact-label container, volume and
-network absence. Retained human-acceptance stacks are not theirs to remove.
+network absence. They never remove stacks they did not create.

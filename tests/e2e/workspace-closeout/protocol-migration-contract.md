@@ -1,8 +1,8 @@
-# Workspace protocol acceptance migration
+# Workspace protocol contract
 
-This batch migrates `make e2e-workspace` onto the current disposable Foundation
-profile and installed ACP SDK. It changes acceptance assets only. Historical
-browser, upload and layout profiles remain separate batches; keep their assets.
+`make e2e-workspace` runs on the disposable Foundation profile with the
+installed ACP SDK. Browser, upload and layout coverage belongs to the separate
+browser profile.
 
 - Bootstrap Provider, Model and immutable Template using current public APIs.
 - State is the six-field Gateway/ACP execution summary, with a nullable opaque
@@ -37,5 +37,5 @@ browser, upload and layout profiles remain separate batches; keep their assets.
   SDK export settings. Keep classified errors and timing warnings as strict
   failures; do not rewrite traces, use SIGKILL or tune clocks to obtain a pass.
 
-Admission: negative unit/contract fixtures, SSE component tests, isolated Docker
-protocol E2E and the shared Foundation regression. All verification is serial.
+Coverage: negative unit/contract fixtures, SSE component tests, the isolated
+Docker protocol E2E and the shared Foundation regression, all run serially.

@@ -16,7 +16,7 @@ control characters are rejected. Each ID is decoded and encoded as one segment;
 encoded separators cannot change the route hierarchy. The URL is not a
 persistence layer for chats or execution state.
 
-This batch changes only Console presentation/navigation. Existing Gateway
-Node hosting and ACP transport routes are reused; no Controller/ACP management
-or execution method is added. Unit tests cover safe login destinations and a
+Navigation is Console presentation only. It reuses the Gateway's Agent UI
+hosting and ACP transport routes and adds no Controller or ACP management or
+execution method. Unit tests cover safe login destinations and a
 component test asserts the per-Agent link without starting a lifecycle operation.

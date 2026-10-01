@@ -1,103 +1,112 @@
 # Managed Tool Elicitation
 
-## Status And Decision
+This document explains why Runtime does not implement MCP tool elicitation,
+how Runtime behaves while the feature is deferred, and the conditions for
+resuming the work.
 
-F07 remains deferred after the production SDK upgrade check on 2026-09-26; the original
-decision was made on 2026-09-09. The maintainer requires an official SDK
-implementation: check the latest release first, and wait for upstream support
-if it remains incomplete. Do not vendor, fork or patch the SDK, write a custom
-protocol adapter, or present partial form support as completed elicitation.
+## Decision
 
-Production Runtime now uses official `rmcp 3.4.1`. Its normal tools,
-progress and managed stdio process lifecycle remain available. F07 adds no
-session, durable table, background waiter or deployment dependency while
-deferred. ACP and Agent UI elicitation work and its deployment acceptance are
-deferred with the producer.
-This does not defer F06 tool permission requests, which are a separate feature.
+Managed tool elicitation is deferred until the official MCP Rust SDK supports
+the current protocol's URL input. Runtime relies on the official SDK
+implementation only. When reconsidering the decision, check the latest official
+release first and wait for upstream support if it is still incomplete. Do not
+vendor, fork or patch the SDK, write a custom protocol adapter, or present
+partial form support as completed elicitation.
 
-## Verified SDK Boundary
+Production Runtime uses the official `rmcp 3.4.1` crate. Normal tools, progress
+and the managed stdio process lifecycle work as usual. Deferred elicitation adds
+no session, durable table, background waiter or deployment dependency. ACP and
+Agent UI elicitation work is deferred together with the Runtime producer.
+Tool permission requests are a separate feature and are not affected by this
+deferral.
+
+## SDK Boundary
 
 The external Runtime protocol is MCP `2026-07-28`. Its
 [elicitation contract](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation)
 returns `InputRequiredResult` for form or URL input through
 [multi-round requests](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr).
 The client repeats the original tool and arguments with `inputResponses` and
-opaque `requestState`; it must not treat consent to open a URL as completed
-external authorization.
+opaque `requestState`. A client must not treat consent to open a URL as
+completed external authorization.
 
-The [official SDK 3.4.0](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.4.0),
-published on 2026-09-15, was the latest non-yanked stable release in the
-[crates.io registry](https://crates.io/api/v1/crates/rmcp) when checked on
-2026-09-17. Its [typed URL codec](https://docs.rs/crate/rmcp/3.4.0/source/src/model.rs)
+The official SDK's [typed URL codec](https://docs.rs/crate/rmcp/3.4.0/source/src/model.rs)
 still requires `elicitationId` in `ElicitRequestParams::UrlElicitationParams`.
-The current protocol's URL input no longer requires that field. A separately
-locked executable probe reproduced rejection without the field and lossless
-roundtrip after adding only the old field. The same gap was previously
-reproduced against production's locked 3.2.0 crate.
+The current protocol's URL input no longer requires that field. The SDK
+therefore rejects a standard URL input without the field, and round-trips the
+same input losslessly once only the legacy field is added. The same gap exists
+in the `3.4.1` release that production uses.
 
-The deferred SDK test is a reminder to revisit this decision on upgrade, not
-a claim of protocol conformance. Basic standard form data already round-trips;
-the URL gap is the concrete reason the whole F07 producer remains deferred.
-Earlier experiments also observed lost JSON Schema `pattern` data. The MCP
-form schema is a restricted subset, so an unsupported extension is not evidence
-of a missing standard capability and is not used to justify the deferral.
+Standard form data already round-trips through the SDK. The URL gap is the
+concrete reason the whole elicitation producer remains deferred. JSON Schema
+`pattern` data can also be lost, but the MCP form schema is a restricted subset,
+so an unsupported extension is not evidence of a missing standard capability
+and does not justify the deferral.
 
 ## Behavior While Deferred
 
-1. Use the official typed codec and request path. Remove the experimental raw
-   JSON result preservation, schema adapter and multi-round forwarding.
+1. Use the official typed codec and request path. Runtime keeps no raw JSON
+   result preservation, schema adapter or multi-round forwarding.
 2. Managed clients advertise no elicitation capability. HTTP caller capabilities
-   are not delegated; a child must not request unsupported user interaction.
+   are not delegated, so a child must not request unsupported user interaction.
 3. Reject incoming tool continuations before any built-in or managed dispatch.
-   Do not ignore their fields and accidentally execute a fresh call instead.
-4. If a child nevertheless returns an intermediate input requirement, report
-   an explicit tool error with unknown effects. Do not auto-retry, fabricate a
-   user decision, log input data, or report a successful completed tool.
+   Runtime does not ignore their fields and accidentally execute a fresh call.
+4. If a child still returns an intermediate input requirement, report an
+   explicit tool error with unknown effects. Do not auto-retry, fabricate a user
+   decision, log input data, or report a successful completed tool.
 5. Child discovery uses the SDK's `Auto` lifecycle: prefer `2026-07-28` discovery
-   and allow SDK-managed fallback to `2025-11-25` initialization. No hand-written
-   negotiation or reverse-elicitation bridge is maintained.
+   and allow SDK-managed fallback to `2025-11-25` initialization. Runtime keeps
+   no hand-written negotiation or reverse-elicitation bridge.
 
 ## Resume Conditions
 
 1. Recheck the latest official release by updating the independent probe's
-   exact version and lockfile. Remove the SDK-gap expectation when upstream
-   fixes it; then upgrade Runtime and reproduce lossless standard form and URL
-   results at its actual HTTP/stdio boundary, including URLs without a legacy ID.
-2. Resume service-owned batches: Runtime producer, ACP interaction/persistence,
-   Agent UI, then Gateway/Runtime/Jaeger integration. Do not combine those
-   service implementations into one batch.
-3. Verify accept/decline/cancel, original arguments, opaque state, bounded
-   rounds, per-request capability isolation and cancellation without replay.
-   Runtime owns one transport call; ACP owns Session/Run/Tool binding, user
+   exact version and lockfile. Remove the SDK-gap expectation once upstream
+   fixes it. Then upgrade Runtime and reproduce lossless standard form and URL
+   results at its actual HTTP and stdio boundaries, including URLs without a
+   legacy ID.
+2. Deliver the work as separate service-owned changes: Runtime producer, ACP
+   interaction and persistence, Agent UI, and then Gateway, Runtime and Jaeger
+   integration. Do not combine those service implementations into one change.
+3. Verify accept, decline and cancel; original arguments; opaque state; bounded
+   rounds; per-request capability isolation; and cancellation without replay.
+   Runtime owns one transport call. ACP owns Session, Run and Tool binding, user
    interaction, schema validation, deadlines and durable recovery.
 4. Resolve ACP `elicitation/complete` from a real completion source. The current
-   MCP URL flow has no legacy completion notification; opening a URL alone is
-   not evidence of external business completion.
-5. Require non-root managed-process/HTTP acceptance, UI interaction and
-   Gateway-rooted deployed traces before marking F07 complete. Native SDK
-   compatibility tests alone are not end-to-end evidence.
+   MCP URL flow has no legacy completion notification, and opening a URL alone is
+   not evidence that the external business step completed.
+5. Require managed-process and HTTP end-to-end tests running as a non-root
+   user, UI interaction tests, and Gateway-rooted deployed traces before
+   treating elicitation as complete. SDK compatibility tests alone are not
+   end-to-end coverage.
 
-## Final Local Checks
+## Tests
 
-### Production Dependency Refresh, 2026-09-26
+The Runtime suite includes SDK boundary tests in
+[elicitation_tests.rs](../../../tests/integration/antnest-runtime/elicitation_tests.rs).
+They check that a standard URL input without the legacy `elicitationId` is
+rejected, that form input and legacy-ID URL input round-trip, and that modern
+discovery and legacy initialization keep managed tools non-interactive. Other
+Runtime tests cover continuation rejection without replay, error-effect
+preservation and error trace classification. These tests validate the deferred
+behavior, not a completed elicitation workflow. They run with the rest of the
+Runtime suite:
 
-The [official 3.4.1 release](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.4.1)
-is the production dependency baseline. The existing SDK boundary tests passed
-in the 104-test Runtime suite: standard URL input still fails without the legacy
-`elicitationId`, while form and legacy-ID URL input round-trip. F07 therefore
-remains deferred. This is a compatibility check, not interaction acceptance.
-Evidence is in the [dependency refresh record](../../../docs/dependency-refresh-20260926.md).
-The independently pinned 3.4.0 probe and its dated evidence below are retained
-as the earlier upstream reproduction, not the active production dependency.
+```sh
+make test-rust
+make fmt-check
+make lint
+```
 
-### Latest SDK Recheck, 2026-09-17
-
-The independent [probe package](../../../tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml) pins
-official `rmcp =3.4.0` with its own lockfile. It imports the official
-typed codec directly; no vendor source, patch or protocol adapter is involved.
-The registry archive and lockfile agree on SHA-256
-`b23c62fe489ac1d401ab32688cfacac3737a8978dc3343e5361464c7724fd3cb`.
-Production `Cargo.toml` and `Cargo.lock` were not changed.
+The independent [probe package](../../../tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml)
+pins official `rmcp =3.4.0` with its own lockfile. It imports the official
+typed codec directly, with no vendored source, patch or protocol adapter.
+Production `Cargo.toml` and `Cargo.lock` are independent of it. The probe checks
+three cases: standard form input with opaque state round-trips; standard URL
+input without a legacy ID is rejected; adding only the legacy ID makes the same
+URL input round-trip. The rejection check records the SDK gap on purpose and
+must be replaced when upstream support arrives. Passing the probe does not mean
+elicitation is implemented.
 
 Run from the repository root:
 
@@ -106,29 +115,3 @@ cargo test --locked --manifest-path tests/integration/antnest-runtime/sdk-probes
 cargo fmt --manifest-path tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml --check
 cargo clippy --locked --manifest-path tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml --all-targets -- -D warnings
 ```
-
-All three codec checks passed: standard form with opaque state roundtrips;
-standard URL without a legacy ID is rejected; adding only the legacy ID makes
-the same URL roundtrip. The rejection check deliberately records the SDK gap
-and must be replaced when upstream support arrives. Passing this probe does
-not mean F07 passes or is implemented. Formatting and Clippy also passed.
-
-The codec prerequisite is still unsatisfied, so no production SDK upgrade,
-Runtime/ACP/UI implementation, HTTP/stdio interaction acceptance, Docker or
-browser integration was started for F07. Follow the resume conditions above
-when this prerequisite changes. Local registry and command logs are under
-`artifacts/verification/f07-sdk-20260917/`; they are not guaranteed in a fresh clone.
-
-### Production SDK Update, 2026-09-09
-
-The 2026-09-09 native macOS suite passed 95 tests (0 failed, 0 ignored) against
-locked `rmcp 3.2.0`. Coverage includes the SDK URL gap, standard form roundtrip,
-modern discovery and simulated legacy initialization, rejection without replay,
-error-effect preservation, and error trace classification. Fixture negotiation,
-discovery and shutdown are bounded. An earlier stalled fixture run was discarded
-and its complete test process group terminated before rerunning successfully.
-
-`make fmt-check` and `make lint` passed, including all-target Rust Clippy with
-warnings denied. No Docker rebuild, Linux integration, browser, external
-Provider or deployed Jaeger acceptance was performed for this SDK update.
-These checks validate the deferred behavior, not a completed F07 workflow.

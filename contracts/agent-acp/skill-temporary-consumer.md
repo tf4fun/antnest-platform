@@ -1,7 +1,8 @@
-# ACP temporary Skill consumer (D4A)
+# ACP temporary Skill consumer
 
-This ACP-owned batch consumes the admitted [Runtime temporary contract](../runtime/temporary-skills.md)
-and extends the [D3 discovery tools](skill-discovery-tools.md). Registry keeps
+This document defines how Agent ACP Service consumes the
+[Runtime temporary contract](../runtime/temporary-skills.md) to deliver
+multi-file packages for the [Skill discovery tools](skill-discovery-tools.md). Registry keeps
 dynamic source mappings; only promotion transfers full package custody. This
 consumer never registers a personal Skill or modifies the system Skill volume.
 
@@ -44,7 +45,7 @@ reconciles scopes before reporting settled. Inaccessibility does not permit
 silent cleanup success or admission.
 
 Startup Run recovery treats an interrupted load with a persisted scope as a
-potential Runtime write, rather than using D3's read-only shortcut. An ended
+potential Runtime write, rather than using the read-only recovery shortcut. An ended
 Run's pending cleanup is retried by a serial ownership-bound worker, excluding
 foreground and maintenance through the existing per-Agent gate. One scope is
 processed per pass, with bounded paging and a delay after unavailable/busy work.
@@ -71,15 +72,10 @@ Pending rows contain scoped identities and target binding only. Source, Run,
 content/artifact digests and cleanup outcomes are traced; credentials, ZIP bytes,
 Skill bodies and arbitrary upstream messages are excluded.
 
-## Admission
+## Testing
 
-Required evidence: test-first catalog/dispatch, strict signed HTTP receipts,
+Coverage includes catalog/dispatch tests, strict signed HTTP receipts,
 cancel/lost-response and bounded cleanup, real PostgreSQL intent/recovery/admission,
 and a disposable deployed dual-Agent model loading and using actual package
 files through ordinary read/Bash. Completion/cancellation, ACP restart and
-subsequent Run/learning must prove cleanup without SIGKILL timing. Console
-promotion UI and complete Template/rebuild propagation remain separate batches.
-
-Status: ACP implementation and unit/contract/component/PostgreSQL/Docker gates
-pass. See the [D4A delivery record](../../docs/skill-discovery-temporary-consumer-delivery-20261001.md).
-Publishing UI and the complete four-step DI1 remain separate.
+subsequent Run/learning prove cleanup without depending on SIGKILL timing.

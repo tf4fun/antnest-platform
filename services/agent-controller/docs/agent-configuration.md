@@ -4,9 +4,9 @@ Agent Controller owns the Agent's default authorization preference. ACP owns
 Session overrides, approvals and the effective policy of an execution. Updating
 the default is a management operation, not a Run admission or an ACP request.
 
-`POST /rpc/agent-controller/set-agent-authorization` keeps its existing request
-and response contract. The handler uses `AgentConfigurationService`, independently
-of the legacy Run service. Its storage port reads the Agent and updates its
+`POST /rpc/agent-controller/set-agent-authorization` updates the default. The
+handler uses `AgentConfigurationService`, which has no dependency on any Run
+service. Its storage port reads the Agent and updates its
 default; it has no credential, Session, Run or Runtime operations.
 
 1. Validate the request and authorization rules. Resolve the current Agent owner
@@ -22,7 +22,7 @@ default; it has no credential, Session, Run or Runtime operations.
 3. Compare the expected authorization revision and write the new default,
    management event and organization execution revision atomically. Capacity or
    CAS failure rolls back all writes and sends no publication hint.
-4. Notify the existing configuration publisher only after commit. ACP receives
+4. Notify the configuration publisher only after commit. ACP receives
    the default through the execution snapshot, not through a per-Run callback.
 
 A disabled or temporarily unavailable Agent may still have its default changed
@@ -33,11 +33,9 @@ The RPC is owner-scoped, not administrator-only. `request_id` identifies the
 request; concurrency uses `expected_authorization_revision`. A repeated stale
 write returns a conflict rather than allocating a second revision or event.
 
-The production publisher is wired into Controller; Gateway/Console consumers
-still require migration before deployment. See
-[execution publication](execution-publication.md) and the
-[boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
+See [execution publication](execution-publication.md) for how the default
+reaches ACP.
 
-This method belongs to the revision 27
+This method belongs to the
 [management contract](../../../contracts/agent-controller/control-contract.json).
-It survives removal of execution RPCs; no Session or Run repository is required.
+No Session or Run repository is required.

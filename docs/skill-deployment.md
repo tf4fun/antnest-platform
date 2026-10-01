@@ -1,35 +1,47 @@
-# Skill 学习与动态传播的常规部署
+# Deploying Skill Learning And Dynamic Propagation
 
-普通 `compose.yaml` 与 `compose.stage3.yaml` 现已接入已有的签名维护、学习策略
-读取、自动来源投影与动态发现配置。无需使用测试目录里的配置覆盖文件。
-接口及权限不变，部署边界见[配置合同](../contracts/skill-registry/deployment.md)。
+This document describes how to enable automatic personal Skill maintenance and
+dynamic Skill source discovery in the standard Docker deployment.
 
-## 配置
+The standard `compose.yaml` and `compose.stage3.yaml` already wire signed
+maintenance, learning policy reads, automatic source projection and dynamic
+discovery. No configuration override from the test directories is needed. The
+interfaces and permissions are defined by the
+[deployment contract](../contracts/skill-registry/deployment.md).
 
-下列值全部为空时，个人 Skill 维护与动态来源发现保持关闭，Registry 正式包托管、
-模板引用和只读预设交付仍然可用。由部署操作者显式提供稳定配置：
+## Configuration
 
-| 配置项                                        | 使用位置                                                        |
-| --------------------------------------------- | --------------------------------------------------------------- |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`   | ACP 签名 key id                                                 |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`   | ACP 的 Ed25519 PKCS8 DER，标准 base64                           |
-| `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` | RC 的公开 current/next 验证集合；创建/重建时冻结进 Runtime      |
-| `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`         | ACP 与 Registry 共用的独立来源读取 bearer，至少 32 个可打印字符 |
+When all of the following values are empty, personal Skill maintenance and
+dynamic source discovery stay off. Registry package hosting, Template references
+and read-only preset delivery remain available. The operator provides stable
+values explicitly:
 
-Registry API bearer 继续使用已有的 `ANTNEST_SKILL_REGISTRY_API_TOKEN`，必须与
-来源 bearer 不同。Compose 根据来源 bearer 同时设置两侧私有地址和 token；
-设置签名私钥则连接已有的 Controller 学习策略读取入口。Agent 自身仍按既有
-维护策略决定自动学习是否开启、何时触发及预算，不另加用户学习命令。
+| Variable                                      | Used by                                                                                   |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`   | ACP signing key ID                                                                        |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`   | ACP Ed25519 PKCS8 DER private key, standard base64                                        |
+| `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` | Runtime Controller public current/next verifier set; frozen into a Runtime on create/rebuild |
+| `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`         | Separate source-read bearer shared by ACP and Registry; at least 32 printable characters  |
 
-Registry 与其他服务共用 `OTEL_SDK_DISABLED`、`OTEL_TRACES_EXPORTER`、
-`OTEL_EXPORTER_OTLP_ENDPOINT` 和 `http/protobuf` 配置，也支持 traces 专属
-endpoint/protocol；默认仍关闭导出，服务名固定为 `skill-registry`。源码
-由 [D1T](skill-registry-trace-delivery-20261001.md) 单独验收，完整来源 Trace
-仍以 [DI3](skill-discovery-caller-integration-delivery-20261001.md) 的真实回归
-为准。关闭导出会保留 W3C 传播，HTTP span 不采集正文/查询/凭证。
+The Registry API bearer remains the existing `ANTNEST_SKILL_REGISTRY_API_TOKEN`
+and must differ from the source bearer. From the source bearer, Compose sets the
+private addresses and tokens on both sides. Setting the signing private key also
+connects ACP to the existing Controller learning policy endpoint. Each Agent's
+maintenance policy still decides whether automatic learning is on, when it
+triggers and its budget; there is no separate user learning command.
 
-已有密钥时直接使用对应值。首次空白开发部署可以在本机 nvm Node 环境生成
-一份忽略 Git/Docker 上下文的 `.env.skills`，命令不会打印私钥或覆盖已有文件：
+Registry shares `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`,
+`OTEL_EXPORTER_OTLP_ENDPOINT` and the `http/protobuf` protocol with the other
+services, and also supports trace-specific endpoint/protocol settings. Export is
+off by default and the service name is fixed to `skill-registry`. With export
+off, W3C context propagation is retained. HTTP spans do not capture bodies,
+query strings or credentials. See the
+[trace boundaries contract](../contracts/skill-registry/trace-boundaries.md).
+
+Use existing keys if you have them. For a first, empty development deployment
+you can generate a `.env.skills` file with a local Node installation. Keep the
+file out of Git and Docker build contexts. The command does not print the
+private key and does not overwrite an existing file:
 
 ```sh
 node --input-type=module <<'JS'
@@ -50,31 +62,42 @@ writeFileSync('.env.skills', Object.entries(values).map(([k, v]) => `${k}=${v}`)
 JS
 ```
 
-保持这些值稳定，并将它们纳入现有受保护配置备份。不要把解析后的 Compose
-环境输出到工单、截图或公共日志。上面只生成新的维护凭据，不读取、解密或
-重放模型 Provider 凭据。
+Keep these values stable and include them in the existing protected
+configuration backup. Do not paste the resolved Compose environment into
+tickets, screenshots or public logs. The command only generates new maintenance
+credentials; it does not read, decrypt or replay model Provider credentials.
 
-## 启动及应用
+## Start And Apply
 
-按[单节点运行手册](docker-single-node-operations.md)准备现有 `.env`、镜像与
-网络后，用普通配置启动；两个 env 文件按顺序读取，后者只补充 Skill 选项：
+Prepare `.env`, images and networks as described in the
+[single-node operations runbook](docker-single-node-operations.md), then start
+with the standard configuration. The two env files are read in order; the
+second only adds the Skill options:
 
 ```sh
 docker compose --env-file .env --env-file .env.skills \
   -f compose.yaml -f compose.stage3.yaml --profile stage3 up -d --build --wait
 ```
 
-RC 配置变化不会修改运行中 Runtime 的公钥集合。新建 Agent 会使用当前配置；
-已有 Agent 必须经过现有模板／显式重建流程。不要在已有在途生命周期操作中
-更换验证集合，轮换与泄露处理遵守[学习密钥合同](../contracts/skill-learning/learning-api.md)。
-仅希望启用个人自动学习时，可不设置来源 bearer；配置签名与公开验证集合即可。
-本轮代码交付不会自动生成实际部署凭据或启动此前停止的验收环境。
+Changing the Runtime Controller configuration does not modify the public key
+set of a running Runtime. New Agents use the current configuration; existing
+Agents pick it up only through the normal Template and explicit rebuild flow.
+Do not change the verifier set while a lifecycle operation is in flight.
+Rotation and compromise handling follow the
+[learning key contract](../contracts/skill-learning/learning-api.md).
+To enable only personal automatic learning, leave the source bearer unset and
+configure the signing key and public verifier set.
 
-## 验证
+## Verification
 
-`make test-skill-deployment` 使用合成临时密钥渲染普通配置，校验独立开关、
-两侧 bearer、一致的私有地址、私钥隔离及标准构建包含 Registry。
-`make e2e-skill-deployment` 构建隔离
-候选服务，以这些常规环境变量执行真实学习、来源投影、临时使用、浏览器提升
-及模板创建／重建／Run；配置覆盖只选择候选镜像、网络范围和本地模型。
-它不使用实际 `.env`、不消耗真实模型额度，结束后清理所有本批资源。
+`make test-skill-deployment` renders the standard configuration with synthetic
+temporary keys and checks the independent switches, the bearers on both sides,
+consistent private addresses, private-key isolation, and that the standard build
+includes Registry.
+
+`make e2e-skill-deployment` builds isolated candidate services and, using these
+standard environment variables, runs real learning, source projection,
+temporary use, browser promotion, and Template create/rebuild/Run. Its
+configuration override selects only candidate images, network ranges and a
+local model. It does not use the real `.env`, consumes no real model quota, and
+removes all of its resources when it finishes.

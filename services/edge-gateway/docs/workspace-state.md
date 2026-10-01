@@ -1,5 +1,9 @@
 # Workspace State Gateway
 
+This document describes the Gateway's workspace bootstrap and Agent
+execution-state observation routes, their scope, streaming rules and failure
+behavior.
+
 ## Boundary
 
 `GET /api/app/bootstrap` lists every authorized, non-deleting Agent via the
@@ -63,7 +67,7 @@ state uncertain and reconnect with backoff; they must not replay prompts.
 Disconnect cancels the ACP watch request only, not the Run. Service shutdown
 cancels and drains watches before telemetry shutdown.
 
-## Verification And Consumer Delivery
+## Testing
 
 Service tests cover trusted scope, no Controller dependency, malformed and
 sanitized views, fragmented SSE, source failure, identity changes, lease
@@ -71,7 +75,4 @@ expiry, browser disconnect, shutdown, trace parenting and capacity release.
 Tests use controlled HTTP dependencies, not another service's database.
 Identity and ACP client spans must be children of the Gateway HTTP span.
 
-Bootstrap management state is browser contract revision 12. Agent UI
-bootstrap/state migration is the separate B4U batch; Console audit consumption
-is B4. Docker/Temporal/Jaeger acceptance is B5. Previous stack evidence does
-not establish acceptance of this producer/consumer change.
+Bootstrap management state is browser contract revision 12.

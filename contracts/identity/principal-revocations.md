@@ -1,5 +1,9 @@
 # Principal Revocations
 
+This document defines the Identity Service revocation feed and the owner
+authorization query that Agent Controller consumes to disable a deactivated
+principal's Agents.
+
 Identity deactivation must eventually disable the owner's Agents and Runtime,
 retaining their data. Access denial alone is not offboarding. Identity restoration
 does not enable Agents; administrators must explicitly enable them afterwards.
@@ -29,14 +33,16 @@ unchanged inactive value. A delete following inactivity is a distinct fact.
 Quick restoration does not retract a previously committed revocation.
 
 Identity owns `principal_revocations` in its private database. Mutation, audit
-and revocation commit atomically. Producers take a transaction-scoped exclusive
-writer lock on this table **before allocating the sequence**, after other
-mutation writes. Thus a committed higher sequence cannot overtake an uncommitted
-lower sequence. Rollbacks may leave gaps. Ordinary `identity_events` sequences
-have no such guarantee and are not a consumer cursor. Feed rows are retained;
-this phase has no pruning or cross-service database access.
+and revocation commit atomically. After its other mutation writes, a producer
+runs `LOCK TABLE principal_revocations IN SHARE ROW EXCLUSIVE MODE` inside the
+transaction **before allocating the sequence**. That lock mode conflicts with
+itself, so revocation writers are serialized and a committed higher sequence
+cannot overtake an uncommitted lower sequence. Rollbacks may leave gaps.
+Ordinary `identity_events` sequences have no such guarantee and are not a
+consumer cursor. Feed rows are retained; there is no pruning or cross-service
+database access.
 
-## Controller Consumer Batch
+## Controller Consumer
 
 `POST /rpc/identity/resolve-owner-authorization` accepts `user_id` and
 `organization_id`. It returns `authorization` containing those IDs,
@@ -48,41 +54,33 @@ reduces this watermark. This internal query is for explicit create/enable
 authorization, not an OAuth token or a subscription cursor.
 
 Agent Controller owns durable consumption and reuses the normal asynchronous
-disable lifecycle. A notification is not proof of Runtime shutdown. Preserve
-pending work across busy/provisioning/rebuilding states and drain failures;
-record the source sequence and trace context in lifecycle/audit correlation.
-Identity access checks remain authoritative while delivery is delayed.
+disable lifecycle. A notification is not proof of Runtime shutdown. Pending
+work is preserved across busy/provisioning/rebuilding states and drain
+failures; the source sequence and trace context are recorded in lifecycle and
+audit correlation. Identity access checks remain authoritative while delivery
+is delayed.
 
-The read-only design review identified two consumer prerequisites: a durable
-owner revocation boundary shared with Agent creation/explicit enable, and a
-stop constraint that disable-failure compensation cannot undo. A feed scan
-alone misses creation committed after the scan; rechecking current `active`
-alone loses rapid deactivate/reactivate history. The consumer batch must define
-an authoritative authorization watermark (read atomically with current Identity
-state), freeze it on create/explicit enable, and compare it with received
-revocations. Ordinary login or rebuild must not advance that authorization.
-Do not compare clocks across services or equate a failed disable with success.
+The consumer depends on two invariants: a durable owner revocation boundary
+shared with Agent creation and explicit enable, and a stop constraint that
+disable-failure compensation cannot undo. A feed scan alone misses creation
+committed after the scan; rechecking current `active` alone loses rapid
+deactivate/reactivate history. Controller therefore freezes the authorization
+watermark (read atomically with current Identity state) on create and explicit
+enable, and compares it with received revocations. Ordinary login or rebuild
+does not advance that authorization. Clocks are never compared across
+services, and a failed disable is never treated as success.
 
-The consumer must cover creation/admission overlapping revocation, scoped owner
-matching, duplicate delivery, restart, and rapid deactivate/reactivate. It must
-not disable another organization's Agents or revoke shared Model Profile
-credentials. Already-admitted Runs drain under the existing disable contract;
-this is not emergency cancellation. Terminal failures remain visible and
-retryable rather than being silently acknowledged as completed offboarding.
+The consumer handles creation/admission overlapping revocation, scoped owner
+matching, duplicate delivery, restart, and rapid deactivate/reactivate. It
+never disables another organization's Agents or revokes shared Model Profile
+credentials. A revocation-driven disable settles ACP execution in `cancel`
+mode: already-admitted Runs are cancelled rather than drained, within the
+lifecycle drain deadline. Terminal failures remain visible and retryable
+rather than being silently acknowledged as completed offboarding.
 
-## Delivery Batches
+## Recovery Semantics
 
-1. Identity: transactional feed, bounded RPC, service tests and documentation.
-2. Agent Controller: durable consumption, lifecycle convergence, race tests.
-3. Integration: Gateway -> Identity -> Agent/Runtime disabled, retained data,
-   scoped restoration, interruption recovery and Jaeger causal links.
-
-Producer completion alone does not complete the business workflow.
-
-All three batches have passed the scoped Docker acceptance recorded in
-[C2-05](../../docs/docker-single-node-closeout.md). The restart scenario creates
-a global revocation while Controller is stopped, then verifies catch-up after
-restart. It does not claim arbitrary mid-Disable crash recovery. Restoration
-and SCIM reprovisioning are followed by explicit Enable, real ACP replay/new
-Runs, and retained workspace reads; no product service accesses another
-service's tables.
+Controller catches up from its persisted cursor after restart, including
+revocations created while it was stopped. Restoration and SCIM reprovisioning require an explicit Enable before
+new Runs start; retained workspace data stays readable. No product service
+accesses another service's tables.

@@ -1,9 +1,9 @@
 # ACP Observability
 
-This service implements a scoped portion of the platform
+This document describes how Agent ACP Service implements the platform
 [observability contract](../../../docs/observability-contract.md) at transport,
-SDK dispatch and existing application/adapter boundaries. Acceptance is coordinator-owned; current results are tracked in
-[the simplification checklist](../../../docs/observability-simplification.md).
+SDK dispatch and existing application/adapter boundaries: span boundaries,
+optional RPC content capture, PostgreSQL tracing, span names and known limits.
 
 ## Implementation Contract
 
@@ -11,7 +11,7 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
   W3C trace context before starting it; never propagate inbound baggage.
 - A common fetch wrapper creates CLIENT before injection and ends at response
   EOF, cancellation or read failure. Model and Runtime MCP use it; ordinary
-  execution no longer calls Controller.
+  execution does not call Controller.
   Adapter operations are INTERNAL, not duplicate CLIENT spans.
 - The ACP dispatcher records registered v1/v2 requests with their own context,
   complete decoded request/response values (when enabled) and protocol outcome. WebSocket requests
@@ -48,9 +48,11 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
   producer check; ordinary prompts and unrelated admission failures do not
   increment it. The metric never labels identity, Agent, Session, intent or
   Prompt content. Service tests verify both outcomes and label privacy. A
-  production-image Docker E2E runs the exported application decorator against
-  both outcomes, flushes OTLP/HTTP on normal shutdown, and verifies the actual
-  counter data points and their sole `result` label. Other existing ACP metrics
+  production-image Docker test
+  (`tests/e2e/agent-acp-service/bridge-intent-metric-container.test.mjs`) runs
+  the exported application decorator against both outcomes, flushes OTLP/HTTP on
+  normal shutdown, and verifies the actual counter data points and their sole
+  `result` label. Other existing ACP metrics
   retain their own attribute policies.
 
 ### PostgreSQL Boundary
@@ -82,46 +84,12 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
   transaction outcomes, SQL metadata, failures and absence of bind/result data.
   In-memory kernel mocks alone cannot establish driver instrumentation coverage.
 
-### Database Alignment Verification (2026-09-15)
-
-- 931 unit tests and 216 PostgreSQL integration tests passed, including nine
-  driver tracing contracts. ACP lint, typecheck, formatting and container build
-  passed. Only the ACP service image was replaced; business data was retained.
-- Three real Gateway chat traces passed the database contract: native SQL
-  metadata, transaction children, no nested duplicate SQL spans, no bind values
-  or result rows. The old `postgres.query` / `postgres.transaction` spans are gone.
-- [Real tool execution with database spans](http://127.0.0.1:16686/trace/7ea9aee5daa8bbc0390cd6e504aee620)
-  contains 34 transactions and 327 SQL executions, with no errors or Jaeger
-  warnings. These are observed execution counts, not newly added SQL calls.
-- The complete browser profile is not declared strictly passed: another trace,
-  `970c510b1b22df1e4da962c4c32c0d30`, retains a Runtime `/mcp`
-  `client_disconnected` event and clock-skew warnings (up to 1.659 ms). Its ACP
-  database contract passed; Runtime classification is outside this service-owned
-  change. Original strict failures and timestamps remain unchanged.
-- The separate [2026-09-16 Runtime follow-up](../../../runtimes/antnest-runtime/docs/observability.md#mcp-response-close-classification)
-  fixes error diagnostics for successful MCP handlers followed by response close,
-  with controlled HTTP and isolated Docker evidence. The old trace now returns
-  404; this does not retrospectively reclassify it. The separate
-  [deployment integration](../../../docs/runtime-http-close-integration.md)
-  subsequently verified three real chat traces without error spans/events and
-  retained the deliberate Runtime failure. Strict clock-warning failures remain.
-- The [2026-09-16 maintenance decision](../../../docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
-  defers dedicated SDK/clock work for inspected, recorded timing warnings while
-  preserving strict results. It does not waive the Runtime event above or any
-  unexplained warning, and does not make the complete browser profile pass.
-- The instrumentation batch's dependency audit reported the AJV 8.17.1 `$data`
-  ReDoS advisory (GHSA-2g4f-4pwh-qvx6, moderate). AJV was unchanged in that batch.
-  The separate [2026-09-17 dependency remediation](ajv-remediation.md) updates
-  the package and records its own exposure analysis and verification boundary.
-
 ## Verification And Remaining Limits
 
 Service-owned tests specify exact parent IDs, concurrent request isolation,
 complete RPC values, HTTP/stream non-capture, protocol failures, stream EOF,
 close/cancellation and disabled behavior. Export-disabled HTTP boundaries keep
 valid incoming W3C context and propagate it without capturing payloads or baggage.
-Final serial admission results are recorded in the
-[platform rollout](../../../docs/observability-rollout.md).
 
 The SDK owns malformed/unknown wire requests before application dispatch,
 HTTP size enforcement, protocol parsing, streaming queues and notification
@@ -143,9 +111,9 @@ pre-dispatch protocol-error or streaming pressure coverage is made.
 No per-token/chunk spans or content preview is implemented. Recovery retains
 existing counters and business telemetry coupling pending a separately scoped
 runner refactor. Cross-restart Links require a durable source context contract;
-this change adds no trace fields to business storage. Exporter failure, queue
-saturation, shutdown pressure and deployed Jaeger acceptance remain coordinator
-profiles, not inferred from unit-test span counts.
+the service adds no trace fields to business storage. Exporter failure, queue
+saturation, shutdown pressure and deployed Jaeger behavior are verified by
+integration profiles, not inferred from unit-test span counts.
 
 Explicit `AbortError`/`ABORT_ERR` cancellation is an `antnest.cancelled` event
 with a phase and cancellation type, not an `antnest.error` event. This includes
@@ -153,10 +121,11 @@ MCP SDK response-stream cleanup. The outcome remains visible as `cancelled`;
 it does not erase an earlier HTTP error. Timeouts, send/read failures and invalid
 model responses still retain error status and typed error events.
 
-## Coordinator Integration
+## Span Names And Integration Expectations
 
-- Removed operations: `acp.http` (replaced by the actual HTTP SERVER lifetime)
-  and `agent_controller.status` (readiness no longer calls Controller).
+- There is no `acp.http` operation (the HTTP SERVER span covers the actual
+  request lifetime) and no `agent_controller.status` operation (readiness does
+  not call Controller).
 - Existing meaningful INTERNAL names remain, including `agent.run`,
   `acp.session.*`, `model.complete`, `mcp.tools.*`,
   `mcp.runtime.info`, `acp.permission.wait` and `postgres.ready`.
@@ -174,10 +143,10 @@ model responses still retain error status and typed error events.
   flush on v1, but returns the acknowledgement on v2. `acp.session.output`
   covers a durable snapshot read, not notification delivery. The output pump
   inherits the trigger that starts its drain, including reads from coalesced
-  invalidations; this is causal context, not temporal containment. See the
-  [timing review](../../../docs/acp-async-timing-review-20260923.md) for actual
-  warning origins and completion-barrier verification.
-- These existing application spans now expose `antnest.operation.phase=admit`
+  invalidations; this is causal context, not temporal containment. Because these
+  asynchronous spans can start after their trigger ends, small Node/Go timestamp
+  differences can produce Jaeger clock-skew warnings without a broken parent.
+- These application spans expose `antnest.operation.phase=admit`
   for `acp.session.prompt` and `antnest.operation.phase=read` for
   `acp.session.output`. Gateway message spans expose `relay` and `forward`;
   the forwarding span is a PRODUCER because it ends after the WebSocket send.
@@ -196,8 +165,8 @@ model responses still retain error status and typed error events.
   the string `antnest.error.code`.
 - Readiness assertions must expect private PostgreSQL only, zero Controller
   status calls and a SERVER span even for a successful traced health request.
-- PostgreSQL tracing adds the pinned official `@opentelemetry/instrumentation-pg`
-  dependency and its lockfile entries; other boundaries use existing SDK exports.
+- PostgreSQL tracing uses the pinned official `@opentelemetry/instrumentation-pg`
+  dependency; other boundaries use existing SDK exports.
 - Stage 2 assertions reject Controller/Identity calls in execution traces and
   require model requests, Runtime MCP calls and ACP-owned persistence under the
   descendant `agent.run`. Identity validation may precede ACP at Gateway; it must
@@ -210,10 +179,10 @@ model responses still retain error status and typed error events.
   complete trace; interruption is proved by retained execution audit and absence
   of replay, not by pretending the interrupted span tree is complete.
 
-Service and integration checks, executed serially:
+Service and integration checks, run serially from the repository root:
 
 ```sh
-npm --prefix services/agent-acp-service run format
+npm --prefix services/agent-acp-service run format:check
 npm --prefix services/agent-acp-service run typecheck
 npm --prefix services/agent-acp-service run lint
 npm --prefix services/agent-acp-service test
@@ -223,22 +192,8 @@ make fmt-check
 make lint
 ```
 
-Run the applicable repository architecture/documentation gates and root
-observability/Jaeger profiles after integrating the changed span expectations.
-
-Admission results and integration status are recorded in the platform
-[service rollout](../../../docs/observability-rollout.md).
-
-### Stage 2 Oracle Alignment, 2026-09-22
-
-The [final candidate regression](../../../docs/final-candidate-regression-20260922.md)
-found an old lowercase-operation predicate in the Stage 2 execution oracle.
-It now checks actual `INSERT`/`UPDATE` CLIENT spans with matching operation titles
-and native query metadata. Test-first fixtures reject reads, wrapper spans,
-missing metadata and legacy lowercase operations; all 55 Stage 2 helper tests
-pass. The real rerun passes all nine business scenarios and its audit, execution,
-lifecycle and Gateway connection topology checks. Strict clock diagnostics retain
-exit 1, and the existing ACP process-kill case retains its explicit incomplete
-Trace boundary. Raw responses now survive disposable stack cleanup under
-`artifacts/verification/stage2-boundary/<project>/traces/` with private permissions. This changes
-acceptance evidence only, not service instrumentation.
+The Stage 2 execution oracle checks actual `INSERT`/`UPDATE` CLIENT spans with
+matching operation titles and native query metadata; fixtures reject reads,
+wrapper spans, missing metadata and legacy lowercase operation names. Raw trace
+responses from `make e2e-stage2` are kept under
+`artifacts/verification/stage2-boundary/<project>/traces/` with private permissions.

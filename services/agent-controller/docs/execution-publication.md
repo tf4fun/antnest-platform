@@ -2,39 +2,35 @@
 
 This service owns Agent configuration, lifecycle intent, Provider connections
 and credential material. ACP owns protocol authorization, Sessions, Runs,
-Tools and execution audit. The authoritative design is the
-[Controller/ACP boundary plan](../../../docs/controller-acp-execution-boundary-plan.md)
-and its [internal RPC contract](../../../contracts/agent-acp/execution-api.md).
+Tools and execution audit. This document describes how Controller publishes
+current execution configuration to ACP and requests lifecycle settlement. The
+wire format is defined by the
+[internal RPC contract](../../../contracts/agent-acp/execution-api.md).
 
-## Service-Owned Delivery
+## Components
 
-B2 and the scoped B5 integration are complete. Projection, the outbound client, the PostgreSQL source,
-mutation hooks, commit hints, the publication worker and catalog availability are implemented.
-The main process now wires the shared publisher into the worker and lifecycle
-service. Legacy execution applications, repository methods and storage are now
-removed. Whole-service format/lint/build and PostgreSQL/race gates have passed.
-Three real Temporal recovery tests and nine Docker business scenarios passed in
-the final integration batch. Gateway and Console consumers are switched; strict
-clock-warning failures remain separately recorded in [current status](../../../docs/current-status.md).
-The service was delivered in this order:
+The publication path consists of a typed current-configuration projection, an
+outbound ACP client, a private PostgreSQL source, mutation hooks, commit hints
+and a publication worker. The main process wires one shared publisher into the
+worker and the lifecycle service. It follows these rules:
 
-1. Typed current-configuration projection and an outbound ACP client. Use
-   organization-scoped source records, not Run/admission snapshots or public
-   paginated catalog APIs. Open current credentials only for publication or
-   local capacity measurement; never persist the plaintext projection.
-2. A consistent private PostgreSQL source and one current synchronization row
-   per organization. Advance the revision in the same transaction as effective
-   configuration changes. Keep acknowledgements separate from desired revision.
-3. Use the shared publisher after commits and periodically resend the current snapshot. Do not
-   skip equal revisions: ACP restart loses volatile credentials. Keep network
-   waits outside database transactions and serialize publication per organization.
-4. Integrate lifecycle close/publication/settlement and independent Runtime
-   readiness; remove old RunAdmissions and reverse ACP business RPCs.
+1. The projection uses organization-scoped source records, not Run/admission
+   snapshots or public paginated catalog APIs. Current credentials are opened
+   only for publication or local capacity measurement; the plaintext projection
+   is never persisted.
+2. A consistent private PostgreSQL source keeps one current synchronization row
+   per organization. The revision advances in the same transaction as effective
+   configuration changes. Acknowledgements are kept separate from the desired
+   revision.
+3. The shared publisher runs after commits and periodically resends the current
+   snapshot. Equal revisions are not skipped, because an ACP restart loses
+   volatile credentials. Network waits stay outside database transactions and
+   publication is serialized per organization.
+4. Lifecycle operations close execution, publish, and request settlement; Runtime
+   readiness is published independently. Controller has no Run admissions and
+   ACP makes no business RPCs back into Controller.
 
-The new client and source are not a compatibility mode or a second permanent
-execution path. Production composition uses this publisher and its mutation
-hooks. Service-local tests and the subsequent lifecycle/Gateway integration
-provide separate evidence.
+This is the only execution configuration path; there is no compatibility mode.
 
 ## Management Synchronization Read
 
@@ -114,9 +110,7 @@ The recording attempt context lets existing PostgreSQL driver instrumentation
 capture the source transaction and acknowledgement UPDATE beside the real ACP
 HTTP CLIENT. There are no per-query application wrappers and no global enabling
 of unparented database traces; periodic enumeration stays untraced. Lifecycle
-publication keeps its existing Temporal activity context and is unchanged.
-The owning-service gate precedes the separate RPC response-loss integration
-rerun; until then the consumer still reports its previous SQL evidence gap.
+publication keeps its Temporal activity context.
 
 Commit-triggered outbound RPCs inherit the originating span context through
 the shared transport instrumentation. Periodic repair has no fabricated user
@@ -151,11 +145,10 @@ Runtime replacement, disable and deletion must only persist management facts.
 They must not release Run admissions, interpret unknown Tool effects or append
 execution events. Runtime result and absence validation remain local management
 checks; ACP alone retains and clears its execution protection. Component tests
-must complete these lifecycle paths without access to the legacy Run table.
+complete these lifecycle paths without any Controller Run table.
 
-Legacy Run-admission storage and its execution methods have been removed.
-No per-Run ticket, completion receipt, Run recovery or additional workflow is
-introduced. Whole-service and later B5 evidence remain separate.
+Controller has no Run-admission storage, per-Run ticket, completion receipt,
+Run recovery or additional workflow.
 
 Production composition uses `ANTNEST_AGENT_ACP_SERVICE_URL` as the internal ACP
 origin. `ANTNEST_ACP_MAX_CONFIGURATION_BYTES` must have the same value on both
@@ -233,7 +226,8 @@ fail-closed source validation, creation/readiness distinctions, response-loss an
 replay semantics, caller cancellation and secret-excluding trace propagation.
 Then cover PostgreSQL snapshot consistency, atomic revision/acknowledgement updates,
 capacity reservation, every mutation site, lifecycle and production composition.
-Cross-service deployment and Jaeger acceptance remain the integration batch.
+Cross-service deployment and Jaeger tracing are verified by the root Docker E2E
+suites, not by service-local tests.
 
 ## PostgreSQL Publication State
 
@@ -264,10 +258,9 @@ never perform HTTP, KMS or database calls. No plaintext or budget is stored.
 Replacing local secret opening with a remote KMS requires revisiting this
 transaction boundary, not silently adding network waits under the lock.
 
-Catalog integration is followed by lifecycle/authorization mutation coverage
-before production composition enables publication. Neither an optional
-adapter hook in this intermediate batch nor a passing catalog test proves
-that every lifecycle mutation already enforces the invariant.
+Catalog, lifecycle and authorization mutations all invoke the guard. A passing
+catalog test alone does not prove that every lifecycle mutation enforces the
+invariant; each mutation site needs its own coverage.
 
 ### Mutation Boundary
 
@@ -299,19 +292,17 @@ organization: desired `revision`, `applied_revision`, and update/acknowledgement
 timestamps. Revisions start at one on the first committed configuration change.
 No snapshot payload,
 credential copy, message queue, delivery lease or per-Run receipt is stored here.
-This reconstruction is accepted on a fresh database, as specified in the main
-plan. Migration 0012 creates the table without backfilling organizations from an
-older development instance. Applying it to a populated pre-B2 database is not a
-supported data upgrade; it must not be used to claim those organizations were
-synchronized. Startup on databases written by this implementation retains and
-enumerates the already committed synchronization rows normally.
+Migration 0012 creates the table without backfilling organizations that existed
+before it. Applying it to a database populated by an earlier schema is not a
+supported data upgrade and does not mean those organizations are synchronized.
+Startup retains and enumerates already committed synchronization rows.
 
 A configuration writer takes a transaction-scoped organization advisory lock before changing execution
 inputs and advances its revision before committing the same transaction.
 Catalog request replay returns its existing receipt without advancing the
 execution revision. An aborted resource write leaves neither the resource nor
 its proposed revision visible. Lock ordering is request identity, organization,
-then resource rows; remaining lifecycle integration must preserve that order.
+then resource rows; lifecycle writers preserve that order.
 This also covers the first write, before an organization synchronization row
 exists, without a zero-revision placeholder or a no-op row update.
 
@@ -338,25 +329,19 @@ separate facts. The Controller does not expose per-Run admission or credential R
 Service-local tests exercise consistent snapshots, mutation/ACK atomicity, current
 credential resend, capacity/references, worker cancellation and trace propagation.
 Lifecycle confirmation is bounded by its original deadline, including database
-lock waits; each Runtime-result write verifies Agent operation ownership. Independent
-read-only review confirmed both fixes. See the
-[current verification record](../../../docs/controller-acp-execution-boundary-plan.md#102-当前实施进度)
-for final metrics rather than relying on historical counts.
+lock waits; each Runtime-result write verifies Agent operation ownership.
 
-Workspace metadata no longer reads Run state; the old state endpoints and Run
-notification triggers are removed. Legacy Run application/store/schema and
-execution event fields are also removed. Gateway/Console consumption and real
-Temporal/Docker integration passed their B5 scope; trace topology passed while
-the strict clock-warning failures remain recorded.
+Workspace metadata does not read Run state. Controller has no workspace state
+endpoints, Run notification triggers, Run application/store/schema or execution
+event fields.
 
-Owner default authorization now belongs to an independent
+Owner default authorization belongs to an independent
 [Agent configuration service](agent-configuration.md), with a narrow storage port
 and required HTTP/production dependency. It preserves default CAS, management
 events and commit-triggered publication without calling a Run service. Identity
 proof must match the Agent's current authorization sequence and cover the scoped
 revocation watermark, including revoke/Enable before event consumption catches up.
-The new race regression reproduced the old-proof defect before the fix; the
-independent reviewer confirmed the correction. No default update clears an
+A race test covers a stale proof submitted after a revocation. No default update clears an
 identity fence or enables an Agent, and no Session override is written back.
 
 Catalog retirement uses the existing enabled flags and command ledger; see
@@ -372,9 +357,8 @@ Capacity tests cover actual organization-lock contention, mixed Provider/Model
 writes, credential/model rollback including command receipts, zero-Agent
 closure, escaped payloads, retained fallback and a real never-ready disable
 failure. Source tests reject missing/foreign retained execution and enforce
-same-Agent execution/Spec ownership. Read-only review found two fallback defects;
-both were corrected and re-reviewed. The local suite does not establish T30's
-complete lifecycle or real ACP deployment acceptance.
+same-Agent execution/Spec ownership. The local suite does not cover a complete
+deployed lifecycle against a real ACP.
 
 `execution_publication*_test.go` covers publication ordering, equal-revision
 resend, source/acknowledgement scope, failure and cancellation. Standard Go

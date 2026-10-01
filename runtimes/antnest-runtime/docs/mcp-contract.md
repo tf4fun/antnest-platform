@@ -1,5 +1,10 @@
 # Runtime MCP Contract
 
+This document defines the MCP surface that the Antnest Runtime exposes inside an
+Agent container: the protocol endpoints, the status and information resources,
+built-in and managed tools, the private Skill maintenance boundary, and error
+and cancellation semantics.
+
 ## Protocol
 
 Runtime implements MCP `2026-07-28` with the official Rust `rmcp` `3.4.1` SDK and its
@@ -19,10 +24,10 @@ Streamable HTTP server transport.
 Antnest tests the SDK-facing tool list and calls. It does not copy the complete
 MCP specification into a local schema.
 
-### Skill Maintenance Boundary (L1 Local Gates Passed)
+### Skill Maintenance Boundary
 
 The [learning design](../../../docs/skill-learning-design.md) and
-[L0 contract](../../../contracts/skill-learning/learning-api.md) define a separate
+[learning API contract](../../../contracts/skill-learning/learning-api.md) define a separate
 `POST /internal/skill-maintenance/{action}` control endpoint, not a Tool or an
 additional built-in. It must not appear in `tools/list`, the information Resource,
 or model definitions. Ordinary `tools/call` must reject reserved maintenance
@@ -43,74 +48,101 @@ maintenance cannot be isolated. `X-Antnest-Expected-Execution-ID` remains only a
 identity and cannot authorize this path. ACP's internal-origin check is a second
 layer. All file operations still use the Execution Actor and UID/GID 1000 executor.
 
-Runtime now rejects `antnest_skill_maintenance_` and `antnest_skill_temporary_`
-names in ordinary `tools/call`
-and validates up to two Ed25519 public keys in RuntimeSpec. The private HTTP
-route rejects missing/invalid credentials before it can reach the actor and
-checks the ticket signature, action, body digest, Agent, execution and time.
-The private executor subcommands also reject direct invocation by UID 1000,
-so an Agent Bash call cannot bypass the HTTP ticket check.
+Runtime rejects `antnest_skill_maintenance_` and `antnest_skill_temporary_`
+names in ordinary `tools/call` and validates up to two Ed25519 public keys in
+RuntimeSpec. The private HTTP route rejects missing or invalid credentials
+before a request can reach the actor, and checks the ticket signature, action,
+body digest, Agent, execution and time. The private executor subcommands also
+reject direct invocation by UID 1000, so an Agent Bash call cannot bypass the
+HTTP ticket check.
+
 The separate [temporary Skill contract](../../../contracts/runtime/temporary-skills.md)
-defines signed install/release endpoints, ordinary read/foreground Bash use,
-effect-aware receipts and local cleanup. These operations stay outside
-`tools/list` and personal/system Skill discovery. Runtime D4 passes its Linux
-executor and named-volume HTTP gates; ACP's durable Run consumer follows in a
-separate batch.
-For `check`, `commit`, `observe`, `cancel` and `release`, it strictly parses
-the bounded JSON body and binds request ID, job and generation to the ticket.
-`prepare` now parses exactly two bounded multipart parts after verifying the
-signature over the raw body. It checks Registry v1 manifest examples, archive
-paths/types/limits, and artifact/content identities against signed metadata.
-The private HTTP route passes valid `prepare`, `check`, `commit`, `observe`, `cancel` and `release` requests through the Execution
-Actor to the UID/GID 1000 executor. It writes a hidden, no-overwrite candidate
-tree with a bounded receipt, binds it to the current execution ID, and verifies
-the original expected base digest and existing bytes on an exact retry. `check` independently validates the
-complete candidate inventory and canonical content digest. `commit` checks the
-saved check marker, active base digest, and candidate bytes; it records an
-intent before atomic directory installation, then verifies the active digest.
-The Actor holds its single execution slot and conservatively blocks when live
-child ownership cannot be established. Linux executor and Docker HTTP tests
-cover ownership, duplicate requests, restart identity, drift rejection,
-conditional create and commit replay. RC/ACP integration
-remains pending. `observe` reads the persisted commit intent and
-current active digest after restart; missing, ambiguous, or unreadable intent remains
-`unknown`, and changed active content is `conflict`.
-`cancel` closes the in-memory generation, cancels and waits for active Runtime
-maintenance executors, then persists a cancellation marker in the workspace
-volume. Prepare, check, and commit reject that generation, including after a
-Runtime restart.
-The L1 filesystem primitive has Linux unit coverage for `RENAME_NOREPLACE`
-and `RENAME_EXCHANGE`; a Docker Desktop named-volume probe confirms those flags
-and directory `fsync` on the actual volume. It is now used by `commit`.
-`ChildRegistry` also has a Linux-tested scan for live direct children outside
-its managed set. It retains Bash process groups after their launching shell exits,
-and scans managed MCP descendants while excluding the idle server process itself.
-Commit admission returns a bounded blocker identity and releases the
-execution slot; unknown children remain fail-closed. Docker HTTP coverage starts
-a Bash background process, observes the blocked receipt, stops it through a
-normal Bash call, then completes the commit. The same Docker flow uses an
-official SDK managed MCP fixture to create a child that survives its Tool reply;
-the Runtime reports `managed_call_in_flight` and `managed:<server id>`, then
-allows the commit after the child exits. Deterministic executor tests model
-the post-exchange, pre-receipt commit window and release's post-detach and
-post-unlink windows without relying on SIGKILL timing. Lost responses, normal
-Runtime restarts, cancellation, and later observation are covered by the Docker
-HTTP flow. The L1 local gates pass; full cross-service recovery remains LI1 work.
-The L0 retention amendment adds signed `release` and a 256 MiB hidden-storage
-cap. `prepare` returns a storage key. The Runtime now accepts signed
-`release` through its private HTTP route, checks the stored identity/content,
-atomically detaches one hidden directory, and keeps an idempotent completion
-receipt. A Docker HTTP flow covers candidate storage,
-including cleanup after cancellation and replay after a same-name directory
-appears. The 256 MiB scanner includes candidates
-and detached release trees; it rejects symlinks and checks capacity before
-each new hidden write. Docker HTTP coverage fills storage, observes
-`skill_storage_full`, releases space, then retries successfully. ACP retention
-decisions and calls remain L3 work; Runtime's physical release boundary has
-passed its local gates.
-Ordinary MCP's existing
-trusted-network policy is unchanged. `tools/list` remains the sole authority
-for model-callable tools.
+defines signed install and release endpoints, ordinary read and foreground Bash
+use, effect-aware receipts and local cleanup. These operations stay outside
+`tools/list` and outside personal and system Skill discovery.
+
+#### Request parsing
+
+For `check`, `commit`, `observe`, `cancel` and `release`, the route strictly
+parses the bounded JSON body and binds the request ID, job and generation to
+the ticket. `prepare` parses exactly two bounded multipart parts after
+verifying the signature over the raw body. It checks Registry v1 manifest
+examples, archive paths, types and limits, and artifact and content identities
+against the signed metadata.
+
+The route passes valid `prepare`, `check`, `commit`, `observe`, `cancel` and
+`release` requests through the Execution Actor to the UID/GID 1000 executor.
+
+#### Actions
+
+- `prepare` writes a hidden, no-overwrite candidate tree with a bounded
+  receipt and binds it to the current execution ID. On an exact retry it
+  verifies the original expected base digest and the existing bytes. It
+  returns a storage key.
+- `check` independently validates the complete candidate inventory and the
+  canonical content digest.
+- `commit` checks the saved check marker, the active base digest and the
+  candidate bytes. It records an intent before atomic directory installation,
+  then verifies the active digest.
+- `observe` reads the persisted commit intent and the current active digest,
+  including after a restart. A missing, ambiguous or unreadable intent remains
+  `unknown`; changed active content is `conflict`.
+- `cancel` closes the in-memory generation, cancels and waits for active
+  Runtime maintenance executors, then persists a cancellation marker in the
+  workspace volume. `prepare`, `check` and `commit` reject that generation,
+  including after a Runtime restart.
+- `release` checks the stored identity and content, atomically detaches one
+  hidden directory, and keeps an idempotent completion receipt.
+
+#### Filesystem and process guarantees
+
+`commit` uses `RENAME_NOREPLACE` and `RENAME_EXCHANGE` together with directory
+`fsync` on the workspace volume.
+
+The Actor holds its single execution slot during maintenance and blocks
+conservatively when live child ownership cannot be established.
+`ChildRegistry` scans for live direct children outside its managed set. It
+retains Bash process groups after their launching shell exits, and scans
+managed MCP descendants while excluding the idle server process itself. Commit
+admission returns a bounded blocker identity and releases the execution slot;
+unknown children remain fail-closed. A managed MCP child that survives its Tool
+reply is reported with blocked reason `managed_call_in_flight` and subject
+`managed:<server id>`, and the commit is allowed after the child exits.
+
+Hidden storage is capped at 256 MiB. The scanner includes candidates and
+detached release trees, rejects symlinks, and checks capacity before each new
+hidden write. A write that would exceed the cap fails with
+`skill_storage_full`; the caller can release space and retry.
+
+Ordinary MCP keeps its trusted-network policy. `tools/list` remains the sole
+authority for model-callable tools.
+
+#### Tests
+
+- Linux executor tests cover ownership, duplicate requests, restart identity,
+  drift rejection, conditional create and commit replay. Deterministic executor
+  tests model the window after the exchange and before the receipt in `commit`,
+  and the windows after detach and after unlink in `release`, without relying
+  on SIGKILL timing.
+- Linux unit tests in `runtimes/antnest-runtime/src/roots.rs` cover
+  `RENAME_NOREPLACE` and `RENAME_EXCHANGE`.
+  `tests/integration/antnest-runtime/processes.rs` covers the live-child scan
+  in `ChildRegistry`, including Bash background groups and managed MCP
+  descendants.
+- `tests/integration/antnest-runtime/executor_cli.rs` covers candidate
+  preparation as UID 1000, conditional atomic commit, and rejection of direct
+  maintenance subcommand invocation by the Agent user.
+- `tests/integration/antnest-runtime/mcp_wire.rs` covers the private HTTP route
+  without trusted credentials, signed but invalid control bodies, and multipart
+  `prepare` validation.
+- `make e2e-skill-learning-runtime` runs the Docker HTTP flow on a named
+  volume. It starts a Bash background process, observes the blocked receipt,
+  stops it through a normal Bash call and completes the commit; repeats the
+  blocker check with an official SDK managed MCP fixture; covers lost responses,
+  normal Runtime restarts, cancellation and later observation; covers candidate
+  cleanup after cancellation and replay after a same-name directory appears;
+  and fills hidden storage until `skill_storage_full`, releases space and
+  retries successfully.
 
 ## Status
 
@@ -145,8 +177,7 @@ ready, the HTTP listener is not exposed. Unreachable status means unavailable.
 defined by `contracts/runtime/runtime-information.schema.json`. Unknown resource
 URIs are rejected. This is an MCP Resource, not a model-selected Tool or
 a new Controller RPC. `tools/list` remains authoritative for executable tool
-names, descriptions, and schemas. The managed-MCP work adds stdio tools to this
-same catalog, alongside the four built-ins, without creating per-server HTTP
+names, descriptions, and schemas. Managed stdio tools join this same catalog, alongside the four built-ins, without creating per-server HTTP
 endpoints or embedding a second tool catalog in the information Resource.
 
 The resource reports the current process `execution_id`, operating system and
@@ -186,14 +217,15 @@ execution uses the existing executor span. Neither traces nor request logs
 contain instruction bodies, Skill descriptions, or serialized resource content.
 The packet-forwarding path remains untraced.
 
-Delivery is implemented across service-owned batches: Runtime supplies this
-resource and managed stdio hosting; Controllers transport immutable configuration
-and publish readiness. ACP reads the resource after Run admission and before
-model context construction, budgets it, and preserves the two Skill namespaces.
-Refresh on the next Run avoids caching mutable workspace guidance for an entire
-Session. The delivery plan records the separate Docker/Jaeger integration.
-See [the delivery plan](../../../docs/runtime-context-and-managed-mcp.md) for
-managed-tool aggregation and stdio dispatch. Skill Registry remains outside this work.
+Responsibilities are split by service: Runtime supplies this resource and
+managed stdio hosting; Controllers transport immutable configuration and
+publish readiness. ACP reads the resource after Run admission and before model
+context construction, budgets it, and preserves the two Skill namespaces.
+Refreshing on the next Run avoids caching mutable workspace guidance for an
+entire Session. See
+[Runtime context and managed MCP](../../../docs/runtime-context-and-managed-mcp.md)
+for managed-tool aggregation and stdio dispatch. Skill Registry is outside this
+resource.
 
 ## Tools
 
@@ -282,8 +314,8 @@ stdout/stderr previews; managed tools forward their actual child progress,
 rewriting the child token to the outer request token. No token means no
 notifications; silent/file tools do not invent progress. The result remains
 authoritative, and notifications stop on completion or cancellation. See the
-[progress contract](tool-progress.md) for limits, process framing, failure
-semantics and the completed ACP consumer / deployment evidence.
+[progress contract](tool-progress.md) for limits, process framing and failure
+semantics.
 
 ### File Observations
 
@@ -294,7 +326,7 @@ explicit omission reason. The JSON-encoded metadata budget is 32 KiB. Existing
 `content`, `structuredContent` and tool output schemas remain unchanged. These
 facts are not additional model text, progress, a stable inode/version identity,
 or a file history. See [File observations](file-observations.md) for the exact
-contract and producer-only acceptance boundary.
+contract.
 
 ### `bash`
 
@@ -436,7 +468,7 @@ Stable tool error codes:
 | Scope                     | Codes                                                                                                                                                                                                                      |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | shared execution boundary | `invalid_params`, `runtime_failed`, `runtime_busy`, `runtime_unavailable`, `canceled`, `timeout`, `outcome_unknown`, `encode_result_failed`, `spawn_failed`, `output_capture_failed`, `child_process_containment_unproven` |
-| `bash`                    | `invalid_path`, `wait_failed`                                                                                                                                                                                              |
+| `bash`                    | `invalid_path`, `wait_failed`, `temporary_background_not_supported`                                                                                                                                                        |
 | `read`                    | `read_failed`, `content_not_utf8`, `result_too_large`                                                                                                                                                                      |
 | `write`                   | `write_failed`                                                                                                                                                                                                             |
 | `edit`                    | `edit_read_failed`, `old_string_not_found`, `old_string_not_unique`, `result_too_large`, `edit_failed`                                                                                                                     |

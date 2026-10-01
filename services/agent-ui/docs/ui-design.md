@@ -1,9 +1,13 @@
 # Agent UI Design Rules
 
-Agent UI is a session-first work surface behind Gateway. Keep the attyd-inspired
-neutral surfaces, restrained lime selection, readable role colors, and flat
-conversation flow. Do not introduce project navigation or move ACP decisions
-into presentation code.
+This document defines the visual, interaction, navigation and accessibility
+rules for Agent UI and how they are checked.
+
+Agent UI is a session-first work surface behind Gateway. Keep neutral surfaces,
+restrained lime selection, readable role colors, and a flat conversation flow.
+Do not introduce project navigation or move ACP decisions into presentation
+code. The platform-wide rules are in the
+[design language](../../../docs/design-language.md).
 
 Reference: [UI UX Pro Max web checklist](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/blob/main/.claude/skills/ui-ux-pro-max/references/quick-reference.md).
 Use its accessibility, interaction, responsive layout, and consistency guidance;
@@ -32,11 +36,11 @@ its marketing layouts and native-platform measurements are not web requirements.
 
 ## Navigation And Responsive Layout
 
-- Agent selection follows attyd's `ProjectBrowser`: a centered, 960px content
-  region, heading and action toolbar, full-width search, result count, and a
-  two-column grid of individual cards. Narrow screens use one column. It does
-  not carry the chat sidebar, drawer or conversation controls.
-- Map projects to Agents, not to a new cwd/project level. Cards show Agent name,
+- Agent selection is a browser page: a centered, 960px content region, heading
+  and action toolbar, full-width search, result count, and a two-column grid of
+  individual cards. Narrow screens use one column. It does not carry the chat
+  sidebar, drawer or conversation controls.
+- Each card is an Agent; there is no separate cwd/project level. Cards show Agent name,
   ID and management state; do not invent Session totals or update times before
   connecting. Use real links, preserving modified-click/new-tab navigation.
   Search and refresh do not establish ACP connections. Clear search supports
@@ -60,27 +64,31 @@ New live content advances the projection; explicit server metadata remains
 authoritative. The sidebar exposes the exact timestamp on its relative time.
 Do not correct a server timestamp by inventing a separate browser access date.
 
-## Verification
+## Composer Controls
 
 Model, permission mode and thinking use compact icon/current-value triggers
 inside the composer. Popovers retain ACP provider groups and descriptions,
 search models, mark the active choice and support keyboard navigation. Popup
 placement is clamped to the viewport; no model catalog lives in Agent UI.
 
-For the local development instance, run from the repository root:
+## Testing
+
+For a local development instance, run from the repository root:
 
 ```sh
 node tests/e2e/workspace-closeout/model-selection-browser.mjs --confirm-development --real-models
 ```
 
-This opt-in check uses the bootstrap account from `.env`, adds DeepSeek V4 Pro
+This opt-in check uses the development bootstrap account, adds DeepSeek V4 Pro
 through Console if missing, switches Flash/Pro before two real prompts, reloads
-the Session and checks desktop/mobile layouts. It retains the model and test
-conversation for human acceptance. Screenshots and the compact final result go
-to `artifacts/verification/model-selection-acceptance`; credentials are never included.
+the Session and checks desktop/mobile layouts. It keeps the model and test
+conversation for manual review. Screenshots and the compact final result go
+to `artifacts/verification/model-selection-acceptance`; credentials are never
+included.
 
-`npm test` covers presentation semantics and protocol behavior. The reusable
-`npm run test:browser` suite covers real computed styles, contrast pairs,
+`npm test` covers presentation semantics and protocol behavior. The
+`npm run test:browser` suite (Playwright with axe accessibility checks) covers
+real computed styles, contrast pairs,
 disclosure/keyboard behavior, navigation focus, resize, reduced motion, and
 responsive layout with deterministic Gateway/ACP fixtures. Screenshots support
 visual inspection; they are not a substitute for assertions. Deployed smoke

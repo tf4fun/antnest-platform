@@ -1,10 +1,8 @@
-# Session Cost (F10)
+# Session Cost
 
-The earlier F10 delivery was verified in September 2026. The current
-Controller/ACP boundary follows [execution configuration](execution-configuration.md);
-its B5 integration and subsequent Agent UI evidence are tracked separately in
-[current status](../../../docs/current-status.md). The earlier F10 result is not
-a fresh full-browser acceptance of the latest workspace.
+This document describes how Agent ACP Service measures model usage, projects a
+known USD cost per Session and exposes it through standard ACP
+`usage_update` notifications. Known cost is partial accounting, not an invoice.
 
 ## Ownership And Contract
 
@@ -19,9 +17,10 @@ accepts prices from ACP clients. Old/unknown model snapshots may omit pricing.
 
 The ACP domain uses the same shape in camelCase. Prices travel with the immutable
 model snapshot and remain in execution history after restart, without resuming
-the old Run. Prices arrive through the current execution snapshot publication;
-Controller model-profile management supports prices, and Console submits this contract. No separate price
-revision or billing service is introduced.
+the old Run. Prices arrive through the current
+[execution snapshot publication](execution-configuration.md); Controller
+model-profile management supports prices, and Console submits this contract.
+There is no separate price revision or billing service.
 
 ## Measurement And Projection
 
@@ -51,8 +50,8 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    usage are not guessed. Losing execution ownership still forbids new writes.
 5. Under the existing Session write lock, append the measurement and its known
    cumulative cost together. Retrying the same event ID with the same measurement
-   returns the saved event; conflicting reuse fails. No second mutable total,
-   attachment table, billing ledger or per-token write is introduced.
+   returns the saved event; conflicting reuse fails. There is no second mutable
+   total, attachment table, billing ledger or per-token write.
    An unrepresentable cumulative amount retains the last representable known
    baseline and the new receipt, never silently resetting the next sum to zero.
    As with unpriced calls, the projection is a partial amount, not a bill.
@@ -64,35 +63,25 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    `cost: {amount, currency}`. Private measurement/source/rates are not leaked as
    extra ACP fields. Known cost can be partial and is not a reconciled bill.
 
-## Verification Batches
+## Verification
 
 1. ACP: pure pricing and accumulation tests; exact JSON/SSE usage normalization,
    absent/invalid/zero/non-USD/cache cases; saved per-call receipts; PostgreSQL
    concurrency/idempotency, recovery and fork independence; standard v1/v2
-   notification and replay schema checks. Include permission-judge model calls.
+   notification and replay schema checks, including permission-judge model calls.
+   See the rows `V1-COST-01` and `V2-COST-01` in [protocol conformance](protocol-conformance.md#stable-acp-v1-matrix).
 2. Controller: validated optional pricing, admin authority, preservation of
-   submitted current values and execution snapshot propagation; update
-   the shared producer contract and prove the existing ACP consumer accepts it.
+   submitted current values and execution snapshot propagation. See
+   [Controller pricing](../../agent-controller/docs/model-pricing.md).
 3. Console/BFF: bounded price inputs, clear per-million-token units, unknown vs
-   explicit zero, response projections and immutable revision inspection.
+   explicit zero, response projections and immutable revision inspection. See
+   [Console pricing](../../admin-console/docs/model-pricing.md).
 4. Agent UI: optional known-cost presentation without implying complete billing;
    protocol replay rebuilds authoritative usage, without cross-Session leakage
-   or duplicate counting; successful unpriced replay resets cost to unknown.
-5. Deployed: Gateway v1 HTTP/v1/v2 WebSocket, model price switching, Provider
-   precedence, no-price calls, restored/forked Sessions and Jaeger ancestry.
-   Tests use deterministic USD rates; no external Provider spend is required.
-
-References: local Goose `agents/state_machine/usage.rs`,
-`providers/canonical_cost.rs`, `canonical/model.rs::Pricing::estimate_cost` and
-`acp/server.rs::build_usage_updates`, as recorded in W5 of the completion plan.
-
-Final service metrics are maintained once in [protocol conformance](protocol-conformance.md#session-cost-f10-acp-consumer-2026-09-09).
-
-Controller authority, catalog sources, snapshot semantics and its final metrics
-are maintained in [Controller pricing](../../agent-controller/docs/model-pricing.md).
-Console editing, history, retry behavior and its final service/browser metrics
-are maintained in [Console pricing](../../admin-console/docs/model-pricing.md).
-Agent UI projection, replay/freshness and final service/browser metrics are in
-[Session usage](../../agent-ui/docs/session-usage.md#verification).
-Gateway/Controller/ACP/Runtime restart, isolation and Jaeger acceptance is in
-[deployed integration](protocol-conformance.md#session-cost-f10-deployed-integration-2026-09-10).
+   or duplicate counting; successful unpriced replay resets cost to unknown. See
+   [Session usage](../../agent-ui/docs/session-usage.md).
+5. Deployed: the [Session cost profile](../../../tests/e2e/acp-cost/README.md)
+   (`make e2e-session-cost`) covers Gateway v1 HTTP/v1/v2 WebSocket, model price
+   switching, Provider precedence, no-price calls, restored/forked Sessions and
+   Jaeger ancestry. Tests use deterministic USD rates; no external Provider
+   spend is required.

@@ -1,23 +1,47 @@
 # Admin Console Operations
 
+This document covers Admin Console configuration, network requirements,
+shutdown behavior, and lifecycle and network-policy recovery from an
+operator's point of view.
+
 ## Configuration
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | HTTP listen address, default `:8080` |
-| `ANTNEST_IDENTITY_SERVICE_URL` | yes | trusted Identity Service base URL |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL |
-| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | trusted ACP execution-audit base URL |
-| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
-| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | bounded non-streaming RPC timeout |
-| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | graceful HTTP drain budget, default `15s` |
-| `OTEL_*` | no | standard OTLP HTTP/protobuf signal configuration |
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | `:8080` | HTTP listen address |
+| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | trusted Identity Service base URL |
+| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL |
+| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | trusted ACP execution-audit base URL |
+| `ANTNEST_SKILL_REGISTRY_URL` | no | empty | Skill Registry base URL; when empty, Skill routes return `503 dependency_unavailable` |
+| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | with Registry URL | - | Registry service token, at least 32 bytes without surrounding whitespace; must be set together with the URL and rejected without it |
+| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | empty | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
+| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | `15s` | bounded non-streaming dependency timeout, including Provider model discovery |
+| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | `15s` | graceful HTTP drain budget |
+| `ANTNEST_ENVIRONMENT` | no | empty | deployment environment telemetry attribute |
+| `OTEL_*` | no | - | standard OTLP HTTP/protobuf signal configuration |
+
+Edge Gateway forwards admin requests with its own 10-second
+`ANTNEST_EDGE_REQUEST_TIMEOUT`, which is shorter than the 15-second Console
+dependency timeout. A slow dependency can therefore produce a Gateway `503`
+before Console returns its own error.
 
 `GET /status` checks local initialization and stopping state only. It never
-probes Identity, Agent Controller or ACP; downstream failures are reported by the
-actual business request. The compiled React assets are embedded into the
-binary, so no writable web volume is required. See [observability](observability.md)
-for capture guarantees and pending acceptance.
+probes Identity, Agent Controller, ACP or Skill Registry; downstream failures
+are reported by the actual business request. The compiled React assets are
+embedded into the binary, so no writable web volume is required. See
+[observability](observability.md) for capture guarantees and limits.
+
+## Outbound Network Access
+
+Provider model discovery runs in Console, not in Controller. It makes outbound
+HTTP(S) `GET {base_url}/models` requests to the base URL an administrator enters
+for a Provider connection, using that connection's API key. Console therefore
+needs outbound network access to the Provider endpoints in use. There is no
+host allowlist: any absolute HTTP(S) base URL without credentials, query or
+fragment is accepted, so an administrator can direct these requests at any
+host reachable from the Console container, including internal addresses.
+Restrict Console egress at the network layer if that is not acceptable.
+Redirects are not followed and responses are limited to 8 MiB.
 
 The default Runtime image is a Template input, not an already published
 execution binding. `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` may contain a local
@@ -70,13 +94,12 @@ separate drain error; its unfinished telemetry is not guaranteed. Expected Watch
 cancellation is not an invalid-upstream-response warning. Telemetry shutdown
 follows the HTTP drain so completed request spans can be exported.
 
-Regression coverage must use real HTTP connections through the production BFF
+Regression coverage uses real HTTP connections through the production BFF
 and upstream client: stop with a quiet Watch still open, drain a concurrent
-ordinary request, and preserve an actual shutdown-deadline error. Include
+ordinary request, and preserve an actual shutdown-deadline error, including
 downstream write backpressure and handler/trace completion after forced close.
-This local coverage does not replace Docker signal/restart acceptance in C5.
 
-From the platform root, build the current image and run the bounded container
+From the repository root, build the current image and run the bounded container
 regression serially:
 
 ```sh
@@ -85,15 +108,16 @@ node tests/e2e/admin-console/shutdown-docker.mjs
 ```
 
 The runner reuses the repository's bounded Docker-command helpers; install the
-root quickstart's Agent ACP Service Node dependencies before running it. The
+Agent ACP Service Node dependencies (`npm --prefix services/agent-acp-service ci`)
+before running it. The
 controlled upstream container itself uses only Node built-ins.
 
 The regression uses two disposable containers on its own labelled network,
 synthetic trusted headers and a quiet controlled upstream. It tests SIGTERM,
 restart and SIGINT with an open Watch, exit codes and stream cancellation. It
 does not start PostgreSQL, call model providers or inspect integration secrets.
-Success, failure and interruption clean only its own labelled resources. This
-is service shutdown evidence, not the Gateway-rooted Jaeger acceptance report.
+Success, failure and interruption clean only its own labelled resources. It
+tests service shutdown only, not Gateway-rooted tracing.
 
 ## Lifecycle Recovery
 
@@ -157,11 +181,11 @@ upstream Watch cursor, taking precedence over a stale `after_sequence` URL.
 Malformed or repeated header values must fail instead of silently replaying
 from zero. Organization scope always comes from the trusted Gateway principal.
 
-Run Console Go tests and `npm --prefix services/admin-console/web test` from
-the platform root for BFF and component evidence. These tests use controlled
-upstreams and events. Docker startup, workspace retention/deletion, lifecycle
-worker restart and cross-service trace acceptance remain integration work in
-[C3](../../../docs/docker-single-node-closeout.md#3-agent-control-workflow-closure-c3).
+Console Go tests and `npm --prefix services/admin-console/web test` cover the
+BFF and components with controlled upstreams and events. Docker startup,
+workspace retention/deletion, lifecycle worker restart and cross-service traces
+are covered by the platform Docker end-to-end suite; see
+[Docker single-node operations](../../../docs/docker-single-node-operations.md).
 
 ## Network Policy Recovery
 
@@ -183,4 +207,5 @@ Console does not follow dependency redirects. Incoming W3C trace context is
 continued through the BFF and its single Controller request; body, credential,
 policy internals and packet data are not logged as trace attributes. Real
 HTTP component tests validate parentage without a Collector; deployed
-Gateway/Jaeger and live TUN evidence remain C3 integration acceptance.
+Gateway-rooted traces and live packet enforcement are verified by the platform
+Docker end-to-end suite.

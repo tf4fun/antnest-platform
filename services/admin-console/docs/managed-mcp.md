@@ -1,6 +1,9 @@
 # Managed MCP Configuration
 
-Admin Console extends the existing Template workflow, not a new MCP registry.
+This document describes how administrators configure platform-managed stdio
+MCP servers as part of a Template in Admin Console.
+
+Admin Console extends the existing Template workflow; it is not an MCP registry.
 Platform-managed stdio servers belong to the frozen Runtime configuration.
 Client MCP injection is disabled: both ACP versions accept only `mcpServers: []`.
 This screen configures administrator-managed Runtime stdio servers, not an
@@ -33,9 +36,10 @@ omit process configuration. Agent detail exposes only server IDs and executables
 from its published configuration, not argument/environment values. The exact
 frozen Template revision remains linked for inspection. Revision publication
 does not restart existing Agents: the existing explicit rebuild action applies
-the selected revision. No new database, command endpoint or Runtime proxy is added.
+the selected revision. Console has no MCP database, command endpoint or Runtime
+proxy.
 
-## Contract And Verification
+## Contract And Testing
 
 The BFF accepts `runtime.mcp_servers` on existing create/revise endpoints and
 forwards that JSON intact to the owning service, including explicit `[]`.
@@ -46,7 +50,7 @@ only, organization-scoped and `no-store`.
 
 Tests cover BFF transport/projection and scope, create/edit/removal, lossless
 argument/environment round trips, validation, rejection retry, pending controls,
-historical read-only inspection, and Agent deployed summaries. The existing
-managed-MCP Docker profile must configure templates through the BFF, then verify
-real child execution/rebuild and Gateway-rooted traces. Browser acceptance covers
-desktop/mobile form layout and the administrator navigation workflow.
+historical read-only inspection, and Agent deployed summaries. The managed-MCP
+Docker profile configures Templates through the BFF, then verifies real child
+execution, rebuild and Gateway-rooted traces. Browser tests cover desktop/mobile
+form layout and the administrator navigation workflow.

@@ -1,12 +1,13 @@
 # Stage 2 Identity Service
 
-> Status: implementation contract  
-> Updated: 2026-08-31
+This document is the implementation contract for Identity Service: its identity
+model, owned data, internal RPC, OIDC and SCIM protocols, credential handling,
+observability, and startup and failure semantics.
 
 ## Goal
 
 Identity Service is the sole authority for enterprise principals and directory
-membership. Stage 2 must prove one closed path:
+membership. Stage 2 provides one closed path:
 
 ```text
 bootstrap organization/admin
@@ -100,9 +101,10 @@ transactions. IDs referenced by other services are opaque strings.
 `principal_revocations` feed is atomically emitted for deactivation/SCIM delete
 and exposed by bounded internal RPC, with commit-ordered replay. Agent
 Controller consumes it with a durable cursor and idempotent Disable operations.
-Scoped/global/SCIM offboarding, offline catch-up and retained workspace/history
-have Docker acceptance in C2-05 of the
-[closeout checklist](docker-single-node-closeout.md). Reactivation does not
+Scoped, global and SCIM offboarding, offline catch-up and retained
+workspace/history are described in
+[Agent Controller identity offboarding](../services/agent-controller/docs/identity-offboarding.md).
+Reactivation does not
 automatically Enable Agents; uncertain Runtime effects remain fenced/pending.
 This is not a generic event bus. See the
 [delivery contract](../contracts/identity/principal-revocations.md).
@@ -314,7 +316,7 @@ on one bootstrap identity and event.
 - SIGTERM clears readiness, drains HTTP, and closes PostgreSQL and telemetry
   within the configured deadline.
 
-## Acceptance
+## Verification Requirements
 
 1. Local bootstrap admin can log in and its token resolves to the same User and
    Organization membership.
@@ -328,6 +330,4 @@ on one bootstrap identity and event.
 5. Composite PostgreSQL constraints reject cross-organization Provider,
    Membership, external-identity, Token, and AuthSession combinations.
 6. Unit tests, real PostgreSQL integration, protocol HTTP tests, race,
-   `golangci-lint`,
-   formatting, production image build, and independent architecture review
-   pass.
+   `golangci-lint`, formatting and the production image build pass.

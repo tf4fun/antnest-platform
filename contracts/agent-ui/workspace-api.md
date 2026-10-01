@@ -1,19 +1,24 @@
 # Agent UI workspace API v1
 
-Status: **implemented shared contract under acceptance**. The browser uses the
-Gateway Workspace HTTP/SSE routes. The route catalog is
-[`workspace-api.json`](workspace-api.json); browser-safe wire values are
-[`workspace-api.schema.json`](workspace-api.schema.json). The Node
-implementation and Gateway routing are checked against both. The [full design](../../services/agent-ui/docs/fullstack-bridge-refactor.md)
-defines service ownership and acceptance batches.
+This document defines the HTTP and SSE API between the Workspace browser
+application and the Agent UI Node Bridge, reached through Edge Gateway. The
+route catalog is [`workspace-api.json`](workspace-api.json); browser-safe wire
+values are [`workspace-api.schema.json`](workspace-api.schema.json). The Node
+implementation and Gateway routing are checked against both. Service ownership
+is described in the [Agent UI architecture](../../services/agent-ui/docs/architecture.md).
 
 ## Authority and identity
 
 The public prefix is `/api/app/workspace/v1`. Gateway authenticates each request,
-enforces CSRF and Origin on mutations, and overwrites all internal identity
-headers. Node receives organization, principal, user and membership in trusted
-headers, plus a verified administrator flag for `/bootstrap`, then verifies
-Agent and Session access through its upstream calls. Gateway overwrites the
+enforces the CSRF token on POST, and overwrites all internal identity headers.
+Gateway checks `Origin` only when the request supplies it: a present `Origin`
+must match the Gateway origin, and an absent one is not rejected. Node receives
+organization, principal, user and membership in trusted headers, plus a
+verified administrator flag for `/bootstrap`. For Agent-scoped paths
+(`/agents/{agentId}/...`), Gateway also sets `X-Antnest-Agent-ID` from the
+path; Node requires the Organization, Principal and Agent headers and rejects
+an Agent-scoped request without them. Node then verifies Agent and Session
+access through its upstream calls. Gateway overwrites the
 flag from the resolved Identity principal; a browser-supplied value is never
 forwarded.
 Neither path, body, cursor nor `Idempotency-Key` can select an identity. All
@@ -67,9 +72,9 @@ requests. An older operation not discoverable in that set remains available
 through its direct operation URL; the arrays are not an archive of every
 Session. Entries retain their `sessionId`, and the Bridge must not hide a
 running operation merely because a different Session was selected.
-The [Skill learning L0 contract](../skill-learning/learning-api.md) reserves an
-optional `systemNotices` Agent View field and corresponding delta path. L4
-populates it from SDK `notice` plus bounded learning-record recovery. The
+The [Skill learning contract](../skill-learning/learning-api.md) defines the
+optional `systemNotices` Agent View field and corresponding delta path. Node
+populates it from SDK `notice` updates plus bounded learning-record recovery. The
 Node/FE projection carries the committed record's `changeId`, `sequence`,
 `agentId`, `kind`, `occurredAt`, `skillName` and `changeSummary`, with optional
 source Session/Run identifiers. Notice delivery does not
@@ -272,8 +277,7 @@ its intent metadata against that configured ceiling; an oversized Prompt
 returns `413 request_too_large` without reserving an operation. The Node and
 ACP containers receive the same deployment value when this ceiling is
 overridden. This is independent of the retired browser WebSocket path. Values
-in the route catalog are initial configuration defaults to verify with real
-workload before cutover.
+in the route catalog are initial configuration defaults.
 
 ## SSE envelope and handoff
 
@@ -322,8 +326,8 @@ snapshot journals. Each journal retains at most 256 KiB of replay suffix.
 When a journal limit is reached, an unsubscribed journal may be retired; a
 subscribed journal is protected and new demand gets
 `429 stream_capacity_exceeded` if none can be retired. An expired suffix
-causes a fresh reset snapshot. These caps are separate from the history
-retained history, so tab count and old SSE cursors cannot silently consume unbounded
+causes a fresh reset snapshot. These caps are separate from retained
+history, so tab count and old SSE cursors cannot silently consume unbounded
 owner memory.
 The initial heartbeat interval is 15 seconds. Gateway must revalidate the
 original Identity session within a maximum five-minute lease, including when
@@ -336,15 +340,14 @@ The ACP extension is specified in
 [`../agent-acp/workspace-bridge.md`](../agent-acp/workspace-bridge.md).
 The active Gateway route contract is
 [`../edge-gateway/session-contract.json`](../edge-gateway/session-contract.json).
-The development deployment uses the Node Bridge and business HTTP/SSE routes as
-its sole Workspace path. The Gateway route contract and ACP extension are
-verified together with the browser workflow.
+The Node Bridge and business HTTP/SSE routes are the only Workspace path. The
+Gateway route contract and ACP extension are verified together with the
+browser workflow.
 
 The contract integration test lives at
 [`../../tests/integration/agent-ui/fullstack-contract.test.mjs`](../../tests/integration/agent-ui/fullstack-contract.test.mjs).
 Service unit and component tests stay with their service; real stack checks
-live at root `tests/e2e/`. Cutover requires local gates and the subsequent
-cross-service batches in the design.
+live at root `tests/e2e/`.
 
 A delta additionally carries `fromCursor`, the opaque Agent View cursor before
 its patch. This allows the browser to apply the first SSE delta directly to its
@@ -357,9 +360,7 @@ The optional `learningStatus` Agent View field and delta path carry the minimal
 owner-scoped learning blocker from the learning contract. `null` means no
 current authoritative read; `{agentId, blocked:null}` means a successful read
 with no blocker. The status Agent must match the enclosing View. Read failures
-must not become a success notice or an authoritative empty status. Node
-consumer wiring is in development; frontend guidance and integration acceptance
-remain pending. Only an explicit `GET /agents/A/view?learningStatus=1` requests
+must not become a success notice or an authoritative empty status. Only an explicit `GET /agents/A/view?learningStatus=1` requests
 a diagnostic read (coalesced for five seconds); the optional `sessionId` selection retains its usual
 semantics. Duplicate or other `learningStatus` values are invalid. Ordinary
 View reads, SSE refreshes and runtime sweeps do not query learning status.

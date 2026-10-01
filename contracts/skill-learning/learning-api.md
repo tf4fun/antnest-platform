@@ -1,38 +1,21 @@
-# Skill learning shared contract v1 (L0)
+# Skill learning shared contract v1
 
-Scope correction (2026-09-29): the first delivery is automatic review,
-generation/update, idle activation, result notice and later Run use. The v1
-schema excludes undo, change-detail diffs and retained rollback versions.
-Existing implementation experiments in those areas are outside this contract.
+This document is the shared contract for automatic Skill learning: Agent-level
+learning policy, automatic review and candidate generation, idle activation of
+applied changes, result notices, and later Run use. It spans Antnest Runtime,
+Runtime Controller, Agent Controller, Agent ACP Service and Agent UI. Version 1
+excludes undo, change-detail diffs, retained rollback versions and explicit
+adoption of existing Skills. Optional manual saving (`apply_basis=user_action`)
+is defined in the schema but not implemented.
 
-Status: L0 shared boundary for the first automatic-learning delivery on
-2026-09-29. Runtime L1 and Runtime Controller L1R passed their service-owned
-gates. Agent Controller L2 has passed its policy persistence, owner-scoped
-read/write and revision gates. Owner-authorized pins are accepted because they
-only remove automatic write authority; explicit adoption is deferred beyond
-this automatic-learning delivery. ACP L3 has locally
-tested completed-Run scan, queue and claim primitives plus startup pausing of
-abandoned claims. Its conditional worker, unknown-effect observation and SDK
-notice publisher now run when the learning Controller URL and maintenance signing
-key are configured; detail/diff and undo are outside the first delivery.
-Agent UI L4 now has local server, Bridge, 144 frontend component tests and real
-browser evidence for notice projection, source navigation and on-demand diagnostics. Integration LI1 has an
-isolated Docker automatic create/update/later-Run case and selected fault
-cases, including model outage followed by new-source learning while the old
-unknown model call remains unreplayed. The on-demand status HTTP projection also
-has real Gateway/UI/ACP Docker evidence. Both real-stack browser gates pass,
-including reload/mobile recovery and learning after model outage. The first
-delivery's functional gates are complete; human experience acceptance remains.
-Development follows existing styles, with visual adjustments in human acceptance. The
-[design](../../docs/skill-learning-design.md),
-[notification analysis](../../docs/skill-learning-notifications-design.md),
+The [design](../../docs/skill-learning-design.md),
+[notification design](../../docs/skill-learning-notifications-design.md),
 [machine-readable values](learning-api.schema.json), and
 [contract tests](../../tests/integration/skill-learning/contracts.test.mjs)
 form one boundary. Schema additions to the existing
 [RuntimeSpec](../runtime/runtime-spec.schema.json),
 [ACP Bridge](../agent-acp/workspace-bridge.schema.json) and
-[workspace View](../agent-ui/workspace-api.schema.json) reserve consumer fields;
-those optional fields are not evidence that a service already implements them.
+[workspace View](../agent-ui/workspace-api.schema.json) define consumer fields.
 Organization, Agent and principal IDs follow existing opaque service/Identity
 ID syntax rather than requiring generated `org_`, `agent_` or `user_` prefixes.
 Syntactic acceptance never establishes ownership; every read and mutation
@@ -43,13 +26,12 @@ checks the stored organization, owner and current authorization.
 Agent Controller owns one Agent-level learning policy and its independent
 revision. A new Agent defaults to `automatic`, with
 `scope.auto_generated_personal=true`, no adopted or pinned paths, and the
-limits below. Existing Agents receive the same initial policy when L2 is
-delivered; this development environment has no historical business data to
-migrate. `off` stops new review admission and invalidates uncommitted automatic
+limits below. Agents without a stored policy receive the same initial policy.
+`off` stops new review admission and invalidates uncommitted automatic
 apply bases. Existing Skills remain readable. Policy changes do not require a
 Runtime rebuild. Existing user Skills are not automatically adopted. The
-reserved `adopted_paths` field remains empty in the first delivery; any
-future explicit adoption needs its own scoped design and acceptance.
+reserved `adopted_paths` field is always empty; explicit adoption is not
+implemented.
 `pinned_paths` prevent automatic
 updates, including a future Skill created at that canonical path. A pin never
 grants maintenance authority, so Controller validates its exact path syntax and
@@ -71,7 +53,7 @@ cut changes and never reviews Runs created during an `off` interval.
 ACP receives the policy only through Controller's trusted Agent projection or
 a scoped read; an ACP request cannot select another organization, Agent, owner,
 policy revision or model authorization. Controller exposes a revision-checked
-policy mutation and owner-scoped read in L2. Effective model authorization and
+policy mutation and owner-scoped read. Effective model authorization and
 provider credentials continue to follow Controller's existing ownership.
 ACP charges completed maintenance model calls to the Agent/owner/organization,
 distinguished from foreground usage. Owner or model authorization loss pauses
@@ -81,9 +63,9 @@ The policy's v1 per-Agent ceilings are 20 reviews/day, 320,000 model input
 tokens/day and 80,000 output tokens/day. Owner/organization limits can only
 lower these caps. A default `automatic` Agent does not require a per-change
 click; `apply_basis=policy` records the exact policy revision, path, target
-digest and supporting evidence IDs. Optional manual saving uses
-`apply_basis=user_action` with an authenticated action and exact confirmation,
-and is delivered only in L5a/L5b/LI2. A model-produced `user_action_id`,
+digest and supporting evidence IDs. Optional manual saving would use
+`apply_basis=user_action` with an authenticated action and exact confirmation;
+it is not implemented. A model-produced `user_action_id`,
 confirmation, role or policy revision is never authority.
 
 ## 2. Automatic trigger, evidence and budget
@@ -108,10 +90,10 @@ missing, source access has gone, or only untrusted/model evidence supports a
 rule, the candidate stays unapplied. `package_rules_version=1` means the
 [Registry package rules](../skill-registry/registry-api.md#package-rules-v1),
 including its shared YAML/parser cases. `review_prompt_version=1` is the
-first immutable ACP review prompt. Neither is the Skill collection
+standard immutable ACP review prompt. Neither is the Skill collection
 `layout_version`.
 
-The first limits are: one global review worker, one review per Agent, at most
+The limits are: one global review worker, one review per Agent, at most
 two model requests per task (one format repair), 16,000 total input and 4,000
 total output tokens, 90 seconds total model time, and one Skill candidate per
 review. After a completed source Run, wait for 15 seconds of Agent idle time;
@@ -234,10 +216,10 @@ the signed release intent before atomically detaching the directory and keeps
 a durable completion receipt: replaying the same request cannot delete a new
 directory with the same key. A missing item without that receipt is `unknown`,
 not success. Deletion and readback run as UID/GID 1000 and do not affect the
-active Skill directory. L1 implements this physical boundary and its local
-gates have passed; L3 still owns cleanup after settlement.
+active Skill directory. Runtime implements this physical boundary; ACP owns
+cleanup after settlement.
 
-L3 cleanup consumes the durable `prepare` receipt's `storage_key`, package
+ACP cleanup consumes the durable `prepare` receipt's `storage_key`, package
 path and target digest; it must not derive the release digest from the old
 bytes left in the candidate directory after an update. Runtime validates the
 candidate receipt's target identity even when that directory contains the
@@ -302,18 +284,18 @@ with a fresh ticket.
 RC freezes the sorted `skill_maintenance_verifiers.keys` array inside each
 accepted RuntimeSpec/deployment digest. Zero keys disable maintenance; at most
 two keys are trusted. Every `kid` is unique and bound to exact Ed25519 public
-bytes. The base64url field decodes to exactly 32 bytes. L1R stores the complete
+bytes. The base64url field decodes to exactly 32 bytes. RC stores the complete
 public-key snapshot atomically with operation acceptance and uses that snapshot
 on replay and restart, never the latest RC config. ACP has one current signing
 `kid`; it may switch to the preloaded next key only after checking all relevant
 running and in-flight Runtime targets. Removing a trusted key requires an
 explicit rebuild. Compromise requires stopping signing **and** isolating or
 stopping affected Runtimes, then rebuilding them without the leaked key.
-See the [rotation procedure](../../docs/skill-learning-design.md#44-公钥集合部署身份与轮换).
+See the rotation procedure in the [learning design](../../docs/skill-learning-design.md).
 
 ## 5. Controller, ACP and UI reads
 
-L2 adds `GET /internal/agents/{agent_id}/skill-learning-policy` with exactly
+Agent Controller provides `GET /internal/agents/{agent_id}/skill-learning-policy` with exactly
 `organization_id` and `principal_id` query keys, and
 `PUT /internal/agents/{agent_id}/skill-learning-policy` with a
 `policy_mutation_request` body. These are trusted internal routes; the caller
@@ -329,7 +311,7 @@ not from browser-provided scope. All policy changes are checked again just
 before candidate commit. Disabling/revoking maintenance cancels uncommitted
 work but does not erase its provenance or applied files.
 
-L3 stores learning tasks, evidence, candidate facts, managed path identities,
+ACP stores learning tasks, evidence, candidate facts, managed path identities,
 apply bases, intents, outcomes and immutable changes in ACP persistence.
 
 ### Development debug learning
@@ -352,10 +334,6 @@ the deployment setting does not change a task's frozen prompt version; existing
 source decisions and model receipts are not cleared or replayed by enabling it.
 
 ### Minimal blocked-learning projection
-
-ACP and Node producers/consumers have local gates and real cross-service HTTP
-evidence. The new frontend diagnostic preview still awaits style confirmation
-before its component and browser gates.
 
 `GET /rpc/agent-acp/workspace/agents/{agentId}/learning-status` returns
 `learning_status`, with the same trusted identity and owner/Agent access checks
@@ -385,11 +363,6 @@ check. Do not promise to replay an unresolved model call; new completed sources
 may be reviewed after recovery under the same idle, cooldown and budget limits.
 An inconclusive review reports that no Skill was
 applied. This is one status projection, not a learning-task management API.
-
-Delivery order: shared contract, ACP producer with local gates, Agent UI
-consumer with backend gates and style preview, then explicit integration.
-These routes and fields are not implemented merely because this contract
-defines them.
 
 Tool-free review inference must stop participating in foreground admission as
 soon as it is cancelled, even if the model adapter has not yet returned. ACP
@@ -427,12 +400,16 @@ direction; expiry or scope mismatch returns `cursor_expired` or
 notice sequence as a sealed cursor. Sequence assignment and change commit are
 one transaction; rolled-back allocations cannot create a visible gap.
 
-The public Node routes under `/api/app/workspace/v1` are
+This contract reserves the public Node routes
 `GET /agents/{agentId}/learning-changes`,
 `GET /agents/{agentId}/skill-learning-policy`, and
-`POST /agents/{agentId}/skill-learning-policy`. Node forwards the same strict
-DTOs after Gateway identity/CSRF validation and fresh upstream authorization;
-it does not accept browser-selected organization or actor IDs.
+`POST /agents/{agentId}/skill-learning-policy` under `/api/app/workspace/v1`.
+They are not yet implemented by the Node Bridge or listed in
+[`workspace-api.json`](../agent-ui/workspace-api.json); Node currently reads
+learning changes internally for notice recovery. When implemented, Node
+forwards the same strict DTOs after Gateway identity/CSRF validation and fresh
+upstream authorization, and does not accept browser-selected organization or
+actor IDs.
 
 The live notification is SDK v1 `session/update` with
 `update.sessionUpdate="notice"`, `severity="info"`, plain-text title/description
@@ -440,28 +417,29 @@ and `update._meta["antnest.dev/skill-learning"]` matching `notice_metadata`.
 The metadata includes the committed `occurredAt`, `skillName`, and
 `changeSummary` alongside change identity and source IDs. Bridge projects
 these recorded facts; it does not substitute local receipt time for completion.
-Node declares `clientCapabilities.session.notices={}` and proposed
-`_meta["antnest.dev/bridge"].learningNotices=1`; Server confirms the latter.
-Server checks the standard capability before sending; SDK 1.5.0 does not do
-this check for the app. The outer sessionId is a real associated **delivery**
+Node declares `clientCapabilities.session.notices={}` and
+`_meta["antnest.dev/bridge"].learningNotices=1`; ACP confirms the latter in
+`InitializeResponse._meta["antnest.dev/bridge"]`. ACP checks the standard
+capability before sending; SDK 1.5.0 does not do this check for the app. The outer sessionId is a real associated **delivery**
 Session, while `_meta.sourceSessionId` identifies the real learning source.
 Prefer the source if associated; otherwise use one associated Session of that
 Agent. If no Session is available, the durable change is recovered on later
 association. Never invent a Session or fan out one change to all Sessions on
-one connection. See the [SDK probe](../../docs/skill-learning-notifications-design.md#21-server-与-bridge-两侧-sdk-核验).
+one connection. See the SDK verification notes in the
+[notification design](../../docs/skill-learning-notifications-design.md).
 
 Bridge handles notice before transcript delivery-mark or cached-Session
 filtering. One `(organization,principal,agent)` owner deduplicates by changeId,
 does bounded record sync after attach/reconnect/reset, and projects at most 20
 recent records as optional `AgentView.systemNotices` with normal
-snapshot/delta/reset. L4 makes this field present on every View. It neither
+snapshot/delta/reset. The field is present on every View. It neither
 advances ACP `appendVersion`/`outputWatermark` nor changes Run stopReason.
 FE merges duplicate notices and restores from View after browser reload;
 initial history does not emit a toast per record. It renders Antnest system
 items outside model messages and folded Tool process lists. A notice being
 sent, rendered, closed or read is never approval.
 
-## 6. Error and acceptance examples
+## 6. Errors and required outcomes
 
 Private errors use bounded JSON `{error:{code,message,retryable}}`, no
 candidate bytes, prompt, command text, token or private key. Invalid request,
@@ -491,5 +469,5 @@ these identifiers are diagnostic, never authorization or a kill target.
 
 The [contract tests](../../tests/integration/skill-learning/contracts.test.mjs)
 cover machine-readable values and links to existing Runtime/ACP/UI schemas.
-Service unit, component and applicable Docker checks belong to their owning
-batches. L0 alone does not satisfy the automatic-learning business gate.
+Service unit and component tests live with each service; the
+`make e2e-skill-learning-*` targets run the Docker E2E scenarios.

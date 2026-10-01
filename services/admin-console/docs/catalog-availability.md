@@ -1,8 +1,9 @@
 # Catalog Availability And Configuration Delivery
 
-This B4 batch consumes existing Controller contracts. Console does not own
-reference validation, dependency enablement, credential rotation or Agent
-lifecycle. No other service implementation changes in this batch.
+This document describes the Provider, Model and Template availability commands
+and the configuration delivery status shown in Admin Console. Console consumes
+existing Controller contracts; it does not own reference validation, dependency
+enablement, credential rotation or Agent lifecycle.
 
 ## Commands
 
@@ -71,21 +72,19 @@ pending delivery; equality means a historical acknowledgement, never live ACP
 health, Agent readiness or idle execution. Failures mean unknown, not rollback
 of a successful save. Lifecycle and Runtime conditions remain separate views.
 
-## Acceptance
+## Testing
 
-Use request/response contract tests for exact booleans, trusted scope, stable keys,
+Request/response contract tests cover exact booleans, trusted scope, stable keys,
 bounded reference metadata, unchanged error codes, and absent fan-out. Component
 tests exercise all three controls, historical read-only detail, reference links,
-conflict/uncertain retry, saved-but-refresh-failed and late callbacks. Verify null,
-pending, old/current ACK and read failure separately; a successful write must not
-wait for or retry due to failed synchronization reads. Real Controller/ACP delivery
-and Gateway-rooted traces were verified separately in B5; later real Provider
-disable/fallback checks are recorded in [current status](../../../docs/current-status.md).
-Synthetic UI acceptance alone does not establish those results.
+conflict/uncertain retry, saved-but-refresh-failed and late callbacks. Null,
+pending, old/current acknowledgement and read failure are verified separately; a
+successful write does not wait for or retry due to failed synchronization reads.
+Real Controller/ACP delivery, Provider disable/fallback and Gateway-rooted traces
+are covered by the platform Docker end-to-end suite, not by these synthetic UI
+tests.
 
 Owner contract: [Controller catalog availability](../../../contracts/agent-controller/control-api.md#catalog-availability).
-
-## Reusable Checks
 
 `npm --prefix services/admin-console/web test` covers the API adapter, reference
 presentation, all three pages, current-versus-historical Template, uncertain
@@ -95,8 +94,8 @@ route registration; they do not simulate Controller's database business rules.
 
 After `npm --prefix services/admin-console/web run build`, run
 `npm --prefix services/admin-console/web run test:browser:catalog` for desktop and
-mobile synthetic UI acceptance, then `test:browser:audit` for audit independence.
+mobile synthetic UI checks, then `test:browser:audit` for audit independence.
 Both use the same local static-server/browser harness, refuse external requests,
-close the browser and server in `finally`, and overwrite screenshots under the
-repository `.cache`. No credentials, database or Docker are used. These are
-repeatable client checks, not proof of real configuration delivery or B5.
+close the browser and server in `finally`, and write screenshots under
+`artifacts/verification/`. No credentials, database or Docker are used. These
+are client checks, not proof of real configuration delivery.

@@ -1,5 +1,8 @@
 # Execution Audit
 
+This document covers the retained Run input and the administrative audit RPCs
+that read ACP execution history.
+
 ACP owns execution audit independently of Controller's Agent/configuration
 history. Queries never load or activate a Session, invoke tools/models, or
 consult Controller. Deleting an Agent projection does not remove its audit.
@@ -54,9 +57,9 @@ Provider tool-call identifiers are opaque; permission cursors must preserve
 them rather than imposing the format of platform-generated IDs. Request bytes
 remain bounded by the shared HTTP body limit.
 
-## Completion Boundary
+## Verification Boundary
 
-Service-level validation must cover input retention, read-only authorization,
+Service-level validation covers input retention, read-only authorization,
 deleted Session/Agent history, pagination, decoded tool details and permission
 outcomes. No fresh execution configuration is required for historical reads.
 Database failures are unavailable responses, not empty successful lists.
@@ -73,6 +76,7 @@ and the production service startup/shutdown/restart path. The latter reads
 deleted-Session history without any live execution snapshot, rejects ordinary
 users and foreign organizations, and leaves new execution unavailable.
 
-Gateway/BFF integration, real administrator login and cross-organization
-negative tests remain B3/B4/B5 delivery requirements. A locally callable route
-alone is not evidence that the management UI can use this capability.
+Gateway/BFF forwarding, real administrator login and cross-organization
+negative cases are covered by the root
+[Controller/ACP integration scenarios](execution-boundary-e2e.md). A locally
+callable route alone does not show that the management UI can use this capability.

@@ -1,15 +1,18 @@
-# ACP HTTP transport
+# ACP HTTP Transport
+
+This document describes the Streamable HTTP transport on `/v1/acp`: identity
+binding, connection lifetime, limits and tracing.
 
 ## Contract
 
 The v1 endpoint `/v1/acp` accepts the official SDK's Streamable HTTP transport
-in addition to the existing WebSocket transport. `/v2/acp` retains WebSocket;
-this batch does not implement the draft v2 HTTP/batch transport. HTTP itself
-remains an experimental ACP transport, not a claim of additional stable v1
-protocol requirements. Client MCP injection remains disabled.
+in addition to the WebSocket transport. `/v2/acp` accepts only WebSocket; the
+draft v2 HTTP/batch transport is not implemented. HTTP itself is an
+experimental ACP transport, not an additional stable v1 protocol requirement.
+Client MCP injection remains disabled.
 
-Like Goose `serve`, transport parsing, connection IDs, POST message routing,
-GET SSE delivery and DELETE connection closure belong to the official SDK.
+Transport parsing, connection IDs, POST message routing, GET SSE delivery and
+DELETE connection closure belong to the official SDK.
 Antnest supplies the existing v1 Agent handler, bound to authorized platform
 identity. There is no second application API or stdio subprocess bridge.
 
@@ -45,15 +48,14 @@ Null metadata is supported, unrelated metadata is preserved, and an old
 traceparent/tracestate pair is replaced together rather than mixed with the
 receiving HTTP context.
 
-## Delivery batches
+## Gateway Integration
 
-1. ACP Service: official SDK HTTP adapter, immutable binding, bounded lifecycle,
-   real HTTP contract tests and PostgreSQL lifecycle/recovery regression.
-2. Edge Gateway: authenticated POST/GET/DELETE forwarding on the v1 Agent
-   route, unbuffered SSE, protocol headers, origin checks and revocation.
-3. Integration: Gateway to real ACP Service with official HTTP client;
-   initialize/new/prompt/cancel/load and existing WebSocket regression.
+Edge Gateway forwards authenticated POST/GET/DELETE requests on the v1 Agent
+route with unbuffered SSE, protocol headers, origin checks and revocation.
+Integration tests drive the real ACP Service through Gateway with the official
+HTTP client (initialize, new, prompt, cancel and load) alongside the WebSocket
+paths.
 
-Each batch passes its local gates before the next service is modified.
-A2 (identity/provider authority), A3 (remote workspace), and A4 (Controller
-configuration/rebuild authority) are accepted platform boundaries, not defects.
+The following are platform boundaries, not transport defects: identity and
+Provider authority stay outside ACP, the workspace is remote (Runtime-owned),
+and Controller owns configuration and rebuild.

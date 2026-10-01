@@ -1,35 +1,47 @@
-# Runtime loss acceptance migration
+# Runtime loss contract
 
-Own the Loss acceptance consumer only. Preserve prior uncommitted work and
-retained development; no service implementation changes or old asset removal.
-Use current Foundation setup and SDK/public Run audits. Keep live Docker-event
-and cold inventory-reconciliation cases, same-Session recovery and restart
-deduplication.
+This document defines what the unplanned Runtime loss profile
+(`make e2e-lifecycle-loss`) must prove. It uses the Foundation setup and the SDK
+and public Run audits, and covers a live Docker-event case and a cold
+inventory-reconciliation case, same-Session recovery and restart deduplication.
+SIGKILL is never used.
 
-After a completed Tool Run, normally stop the owned idle Runtime and require
-exit zero before deleting its stopped container without force. In the live case,
-wait for the exit to invalidate execution before deletion; the public loss audit
-then retains runtime_exited. Separately require the runtime_deleted producer
-observation. In the cold case, stop Runtime Controller before stop/removal and
-require runtime_missing from platform reconciliation after its normal restart.
-No SIGKILL is an acceptance action.
+## Loss injection
 
-Current Controller loss audits use fresh Inspect evidence (observation sequence
-zero and a runtime-condition-loss event identity); do not fabricate a direct
-journal link. Correlate producer route, Agent, Runtime revision, generation and
-physical resource independently. Require the current provisioned/absent Inspect,
-cleared execution binding and preserved configured spec/history/workspace.
+After a completed Tool Run, the owned idle Runtime is stopped normally (exit
+zero required) and the stopped container is deleted without force.
 
-ACP must report offline/agent_unavailable and reject Prompt semantically with
--32020/agent_unavailable, no Run/model activity. Explicit Rebuild recovers the
-same configuration/workspace under new compute/Runtime/execution revisions.
-Exact Session replay must not execute. Verify four completed Tool Runs and two
-denials, actual SDK request traces and six lifecycle traces. Keep strict timing
-and deliberate rejection errors as failures. Test negatives first, run gates
-serially, verify owned cleanup and retained environment afterwards.
+- **Live case.** The test waits for the exit to invalidate execution before
+  deletion; the public loss audit keeps `runtime_exited`. The `runtime_deleted`
+  producer observation is required separately.
+- **Cold case.** The Runtime Controller is stopped before the Runtime is stopped
+  and removed; after its normal restart, platform reconciliation must report
+  `runtime_missing`.
 
-Missing-source Rebuild Trace evidence must opt in with the physically observed
-old generation. Require a completed absent Inspect under the exact Runtime
-update request, then successful next-generation allocation/start under that same
-update. Preserve the source 404's raw ERROR and strict failure; its classification
-is separate Runtime Controller service work, not an acceptance waiver.
+## Required behavior
+
+- Controller loss audits use fresh Inspect evidence (observation sequence zero
+  and a `runtime-condition-loss` event identity); no direct journal link is
+  fabricated. Producer route, Agent, Runtime revision, generation and physical
+  resource are correlated independently.
+- Inspect must report provisioned/absent, with a cleared execution binding and
+  preserved configured spec, history and workspace.
+- ACP must report `offline/agent_unavailable` and reject Prompt with
+  `-32020/agent_unavailable`, with no Run or model activity.
+- An explicit Rebuild recovers the same configuration and workspace under new
+  compute, Runtime and execution revisions. Exact Session replay must not
+  execute.
+- Four completed Tool Runs, two denials, the actual SDK request Traces and six
+  lifecycle Traces are verified.
+
+## Trace rules
+
+Strict timing failures and the deliberate rejection errors are reported as
+failures. Missing-source Rebuild Trace evidence opts in with the physically
+observed old generation: a completed absent Inspect under the exact Runtime
+update request is required, followed by successful next-generation allocation
+and start under the same update. The source 404's raw ERROR span and strict
+failure are preserved.
+
+Negative tests come first, checks run serially, and owned cleanup and the
+remaining environment are verified afterwards.

@@ -1,31 +1,42 @@
-# Remaining historical closeout migration
+# ACP access contract
 
-Deliver the remaining consumers separately. This batch owns the legacy mixed
-ACP closeout entry and its normal access scenarios. Lifecycle foundation/drain,
-shutdown, network, loss, restore, interrupted-update and older Workspace
-consumers remain pending until their own fixtures and Docker evidence pass.
+This document defines what the [ACP access scenario](README.md)
+(`make e2e-acp-closeout`) must prove and which scenarios own related behavior.
 
-`make e2e-acp-closeout` and the historical `ANTNEST_E2E_ACP_CLOSEOUT=true`
-selector must run a disposable normal-request profile. For both installed SDK
-versions, preserve same-organization foreign-principal and foreign-Agent Session
-denials, exact private history, no rejected-request side effects, owner
-deactivation on an existing connection, automatic Disable of both owned Agents,
-restoration without automatic Enable, and successful explicit recovery.
+## Required behavior
 
-Gateway authenticates the connection; ACP must reject foreign Agent access
-through a specific protocol error. Completed Runs, Tool effects and replay use
-current ACP records and per-message traces, with immutable Runtime images and
-current Provider/Model/Template setup. Physical workspace contents must survive
-Disable/Enable. The unaffected other owner's Agent remains usable.
+`make e2e-acp-closeout` and the `ANTNEST_E2E_ACP_CLOSEOUT=true` selector run a
+disposable normal-request profile. For both installed SDK versions it must
+preserve:
 
-The four historical crash cases are owned by `make e2e-acp-restart`, separately
-opted in. Its P2 record remains the evidence for eight actual SIGKILL recoveries,
-unknown effects, Runtime protection and physical Rebuild. Normal closeout must
-not kill ACP or claim fresh crash coverage. P1 remains separately owned by
-`make e2e-acp-persistence`.
+- same-organization foreign-principal and foreign-Agent Session denials;
+- exact private history, with no side effects from rejected requests;
+- owner deactivation on an existing connection, followed by automatic Disable
+  of both owned Agents;
+- owner restoration without automatic Enable, then successful explicit
+  recovery.
 
-Add negative fixture tests first. Run local unit/contract/component checks and
-Docker profiles serially. Collect complete topology, SQL and privacy evidence
-before export stability; archive raw traces privately and retain strict warning
-and expected-rejection failures. Verify cleanup and retained container identity.
-Do not retire old files or shared helpers in this delivery batch.
+The Gateway authenticates the connection; ACP must reject foreign Agent access
+with a specific protocol error. Completed Runs, Tool effects and replay are
+checked against current ACP records and per-message Traces, using immutable
+Runtime images and current Provider, Model and Template setup. Physical
+workspace contents must survive Disable and Enable. The other owner's Agent
+remains usable throughout.
+
+## Related scenarios
+
+- Crash recovery (completed history across an ACP crash, a model held at crash,
+  a completed Tool followed by a held model, and an in-flight Tool with unknown
+  effect followed by a physical Rebuild) is owned by `make e2e-acp-restart`,
+  which is opted in separately. The normal profile must not kill ACP.
+- ACP persistence faults are owned by `make e2e-acp-persistence`.
+- Cross-organization access and offboarding are owned by `make e2e-agent-access`.
+
+## Verification rules
+
+Negative fixture tests are written first. Unit, contract and component checks
+and the Docker profile run serially. Complete topology, SQL and privacy evidence
+is collected before export stability is checked. Raw Traces are archived
+privately, and strict warnings and expected-rejection errors stay reported as
+failures. Cleanup and the identity of retained containers are verified after the
+run.

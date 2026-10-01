@@ -1,7 +1,8 @@
 # MCP Trust And Injection Boundary
 
-Status: client injection deferred from current closeout. Platform Runtime MCP
-remains supported. This decision supersedes the proposed HTTP-only opt-in batch.
+This document describes which MCP tool sources an Agent can use and why
+client-injected MCP servers are rejected. Platform Runtime MCP is supported;
+client MCP injection is not implemented.
 
 ## Two Trust Sources
 
@@ -40,7 +41,7 @@ silently promote client Session input to platform Runtime configuration.
 - No HTTP-specific policy field, private RPC extension or transport proxy is
   introduced. Controller, Console and Runtime contracts remain unchanged.
 - Stable ACP v1's client-stdio requirement remains a documented compatibility
-  deviation, not a mandatory implementation acceptance item in this closeout.
+  deviation.
 
 ## Future Direction
 
@@ -56,10 +57,10 @@ server's transport responsibilities, not the trust decision. The
 [proposal](https://agentclientprotocol.com/rfds/mcp-over-acp) is currently Draft;
 implementation, SDK integration and the complete client feature are deferred.
 
-## Acceptance In This Batch
+## Test Coverage
 
-Test rejection of every client source at new/load/resume/fork, no partial
-persistence or replay, no capability advertisement, refusal of retained client
-sources, and continued platform/managed-stdio Runtime tool execution. Negative
-tests verify an honest boundary; they are not an obligation to implement the
-deferred transports. Preserve the separate v1 lifecycle and recovery evidence.
+Tests cover rejection of every client source at new/load/resume/fork, absence
+of partial persistence or replay, absence of capability advertisement, refusal
+of retained client sources, and continued platform and managed-stdio Runtime
+tool execution. These negative tests verify the boundary; they do not imply
+that the deferred transports will be implemented.

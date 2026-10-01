@@ -1,8 +1,5 @@
 # Runtime Controller Operations
 
-> Status: implemented Docker operations model<br>
-> Updated: 2026-09-10
-
 ## Runtime Requirements
 
 The service requires:

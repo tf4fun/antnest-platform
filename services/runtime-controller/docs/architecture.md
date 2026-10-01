@@ -1,7 +1,9 @@
 # Runtime Controller Architecture
 
-> Status: implemented for Docker; Kubernetes adapter pending<br>
-> Updated: 2026-09-10
+This document describes the Runtime Controller domain model, lifecycle
+workflows, mutation serialization, observation pipeline, system Skill
+delivery, persistence, and invariants. Docker is the implemented platform
+adapter; a Kubernetes adapter is planned.
 
 ## Mission
 
@@ -43,9 +45,12 @@ RuntimeInspection
   agent_id
   runtime_revision
   lifecycle_state
+  phase: absent | created | running | exited | unknown
   health
+  reason and diagnostic_summary, when present
   endpoint
   execution_id, when status has been verified
+  restart_count
   observed_at
 
 RuntimeObservation
@@ -89,8 +94,10 @@ capability drop/add sets, security options, healthcheck, resource limits, and
 restart policy. A versioned adapter mapping makes a physical mapping change
 explicit.
 
-The observation journal is a bounded diagnostic and delivery history. It does
-not replace platform List/Inspect as current-state authority.
+The observation journal is a time-retained diagnostic and delivery history.
+Entries older than `ANTNEST_OBSERVATION_RETENTION` are pruned when new facts are
+appended; the journal has no size bound. It does not replace platform
+List/Inspect as current-state authority.
 
 ## Identity
 
@@ -115,6 +122,16 @@ Healthy.
 
 Platform resource IDs, container IPs, restart counters, and endpoint addresses
 are observations, not Agent identity.
+
+`execution_id` is a consistency identity, not a credential.
+
+Runtime containers and workspaces use deterministic private names and labels.
+Every resource also carries a stable Controller ownership scope, so independent
+Controller databases on one Docker daemon never consume each other's
+inventory. Inside a container, the trusted root Supervisor prepares TUN and the
+resolver; Agent-selected operations always run as UID/GID 1000 with an empty
+capability set. The persistent Agent workspace and generation-scoped compute
+are separate platform resources that only Runtime Controller manipulates.
 
 Domain inspection, operation, and observation values store Runtime identity
 once. Flattening `agent_id` and `generation` for JSON or SQL is an adapter
@@ -167,8 +184,10 @@ disconnect cannot strand the operation at `running`.
 ## Lifecycle Commands
 
 Every command validates its lifecycle precondition and expected revision while
-holding the Agent mutation lock. The operation journal and Environment head are
-updated transactionally. Platform substeps are idempotent convergence actions;
+holding the Agent mutation lock. A command that fails these checks before
+admission returns a synchronous `409` (`runtime_lifecycle_conflict` or
+`runtime_revision_conflict`) and creates no operation record. The operation
+journal and Environment head are updated transactionally. Platform substeps are idempotent convergence actions;
 the service does not persist an imperative step counter.
 
 ### Initialize
@@ -237,10 +256,11 @@ is retried under the same operation identity.
 
 Inspect loads the logical Environment head. For `provisioned`, it verifies the private
 generation claim against platform identity and performs one bounded Runtime
-`/status` request. The cross-service response contains lifecycle, opaque
-revision, health, MCP endpoint, execution identity, and observation time only.
-It never returns generation, digest, container/Pod ID, volume ID, or platform
-phase.
+`/status` request. The cross-service response always contains lifecycle state,
+opaque revision, normalized platform `phase`, health, restart count, and
+observation time, plus `reason`, `diagnostic_summary`, MCP endpoint, and
+execution identity when known. It never returns generation, digest,
+container/Pod ID, or volume ID.
 
 Runtime Controller does not resolve Egress configuration or choose an image.
 Agent Controller and Runtime Egress provide that policy input. Runtime
@@ -271,20 +291,97 @@ Containers receive `ANTNEST_RUNTIME_IMAGE_REFERENCE` and
 `ANTNEST_RUNTIME_IMAGE_ID` as startup metadata outside RuntimeSpec. The retained
 operation exposes the same pair after container deletion. Selected image metadata
 alone does not mean a build succeeded; callers must inspect its lifecycle state.
-Historical operations without metadata remain unknown; unfinished ones must not
-silently resolve a new image during recovery.
+An operation stored without image metadata reports it as unknown; an unfinished
+operation never silently resolves a new image during recovery.
 Resolution has the ordinary RPC deadline and a short platform child span, with
 bounded operation labels rather than image names or IDs in metric dimensions.
 
-For Skill Learning, RC also normalizes its global Ed25519 verifier bootstrap and
-freezes the complete public-key set in the operation row at acceptance. The set
-is injected into RuntimeSpec before the physical deployment digest is computed.
-Retries and recovery load the accepted snapshot, even if RC's current bootstrap
-has changed; a missing or invalid snapshot cannot be replaced with current keys.
-The caller does not own this configuration, and the signing private key never
-enters RuntimeSpec. Empty keys leave Runtime maintenance closed. Rotation of
-running instances requires explicit lifecycle rebuild and separate ACP signer
-coordination, as described in the [learning design](../../../docs/skill-learning-design.md).
+### Skill maintenance verifier keys
+
+`ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` is a JSON object with a `keys`
+array of at most two `{kid,algorithm,public_key_base64url}` entries. Only
+`Ed25519` with canonical unpadded base64url 32-byte public keys is accepted.
+Omission yields an empty set, which leaves Runtime Skill maintenance disabled;
+a malformed explicit value fails startup.
+
+Runtime Controller sorts and freezes the complete set in the operation row when
+it accepts each Initialize, Update, or Enable operation. The set is injected
+into RuntimeSpec before the physical deployment digest is computed. Retries and
+recovery load the accepted snapshot, even if the current configuration has
+changed; a missing or invalid snapshot is never replaced with current keys.
+Changing the configuration therefore affects only later accepted operations.
+The caller does not own this configuration, and the signing private key belongs
+to Agent ACP Service and never enters Runtime Controller or RuntimeSpec.
+Rotating keys on running instances requires an explicit lifecycle rebuild plus
+ACP signer coordination, as described in the
+[learning design](../../../docs/skill-learning-design.md).
+
+## System Skill Delivery
+
+System Skills reach a Runtime as a read-only, per-Agent Docker volume prepared
+from exact Skill Registry versions. The
+[Runtime delivery contract](../../../contracts/skill-registry/runtime-delivery-api.md)
+defines the preparation routes, frozen-set digest, and recovery flow.
+
+Preparation:
+
+1. `POST /internal/runtimes/{agent_id}/skill-sets/prepare` durably admits a
+   preparation intent for a frozen set. Identical collection work is merged,
+   and operation-owned reference identities are retained.
+2. A background worker downloads only scoped exact versions from Skill Registry
+   through a non-redirecting authenticated client. Each ZIP is validated
+   against the shared package rules and the frozen metadata.
+3. Normalized files are streamed as a tar archive into an owned per-Agent
+   volume through a never-started preparation container
+   (`ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE`, `NetworkMode=none`, read-only root
+   filesystem).
+4. Per-package checkpoints are saved. After a restart the worker resumes
+   verified checkpoints instead of downloading completed packages again. On
+   graceful shutdown the worker settles the interrupted round and releases its
+   lease before the process exits.
+5. A collection manifest is written last. The final readback scans the whole
+   volume root, verifies file content, and rejects extra entries before the
+   set is marked `ready`.
+
+A replayed `ready` preparation reads the volume manifest and file contents
+again before returning a consumable reference. Missing or modified content
+fails closed. A missing volume is requeued under a new physical
+materialization identity when no current Runtime or in-flight lifecycle
+operation references that set.
+
+Lifecycle consumption:
+
+- A lifecycle request that references a prepared set carries
+  `organization_id`, `system_skills`, `prepared_skill_set`, and
+  `prepared_reference_id`. Admission resolves the exact active `ready`
+  reference, inspects the owned physical volume in a bounded preflight,
+  repeats the database check in the transition transaction, and records a
+  lifecycle reference with the chosen physical volume.
+- Runtime creation and recovery mount that recorded volume. After container
+  creation and before start, the Docker adapter verifies the actual mount,
+  owned volume labels, and manifest, including the race where Docker
+  auto-creates an empty replacement volume.
+- If Docker starts the Runtime but its Start response is lost, the adapter
+  re-inspects the running candidate and repeats the mount and manifest gate. A
+  changed mount stays `unknown`; a verified running mount may be adopted.
+- Completing an operation atomically transfers its reference to the current
+  Agent set. Disable keeps it, a successful Update replaces it, and Delete or a
+  settled failure releases it. Unknown operations retain their recovery
+  reference. Delete also closes new preparation admission and cancels in-flight
+  work in its lifecycle transaction.
+- Requests without a prepared set mount `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME`
+  read-only instead.
+
+Cleanup:
+
+- A cleanup worker normally claims only sets with no preparation, lifecycle,
+  or current Agent reference, and removes the owned volume.
+- Confirmed content drift in a disabled Agent, or in an unmounted Update target
+  set while a different source Runtime remains active, enters durable cleanup.
+  The worker removes the invalid volume and requeues the same frozen set under
+  a new materialization. An active source Runtime keeps using its current set,
+  which remains protected.
+- Current active sets and in-flight operations remain fail-closed.
 
 ## Observation Pipeline
 
@@ -353,10 +450,11 @@ Rules:
 Runtime Controller records private platform evidence, resolves it through the
 generation claim, and publishes one of three disjoint fact shapes. Service
 facts (`observation_gap`, `reconciled`) carry no Runtime identity. Environment
-facts (`initialized`, `updated`, `disabled`, `enabled`, `deleted`, and storage
-drift) carry Agent ID plus revision but no generation identity. Runtime
-generation facts (`healthy`, `unhealthy`, `restarted`, `exited`,
-`runtime_deleted`, `runtime_missing`, and `status_unverified`) are validated
+facts (`initialized`, `updated`, `disabled`, `enabled`, `deleted`,
+`storage_missing`, and `storage_drift`) carry Agent ID plus revision but no
+generation identity. Runtime generation facts (`starting`, `healthy`,
+`unhealthy`, `restarted`, `exited`, `runtime_deleted`, `runtime_missing`, and
+`status_unverified`) are validated
 against a private generation claim before their logical projection is
 published. Transient platform inspection failure fails reconciliation instead
 of fabricating a fact. Agent Controller decides whether a fact creates an
@@ -402,7 +500,9 @@ The private store contains only facts this service must recover:
    stable or transitional state, and private current/target deployment identity;
 2. idempotent lifecycle operations and payload digests;
 3. immutable private Runtime generation claims mapped to opaque revisions;
-4. ordered, bounded Runtime observations and consumer recovery sequence.
+4. ordered, time-retained Runtime observations and consumer recovery sequence;
+5. system Skill sets, preparations, per-package checkpoints, and lifecycle and
+   current Agent Skill references.
 
 It also provides coordination primitives, not business data: Agent-scoped
 mutation advisory locks, one observation-monitor leadership lock, a separate
@@ -429,7 +529,9 @@ No other service reads these tables. Agent Controller consumes RPCs.
 | `platform/monitor` | Initial List reconciliation, Watch reconnect, gap records, and healthy-status verification | Agent event interpretation |
 | `runtimeclient` | Bounded `/status` verification | MCP Tool execution |
 | `repository` | Platform-neutral Store, Agent lock, observation leadership, and notification ports | SQL records and queries |
-| `repository/postgres` | Private Environment heads, operations, generation claims, and bounded observation journal | Cross-service tables |
+| `repository/postgres` | Private Environment heads, operations, generation claims, observation journal, and Skill set records | Cross-service tables |
+| `skillset` | Frozen Skill set identity, artifact validation, checkpoints, and collection manifest | Docker calls and HTTP DTOs |
+| `registryclient` | Authenticated, non-redirecting exact-version Skill Registry downloads | Skill selection policy |
 | `rpc` | Internal request/response DTO mapping and Watch transport | Public OpenAPI and domain branching |
 | `telemetry` | Structured logs, traces, metrics | Control flow |
 | `cmd/runtime-controller` | Composition and process lifecycle | Domain decisions |
@@ -497,8 +599,8 @@ Recommended metrics use low-cardinality labels only:
 
 RuntimeSpec is never logged. Diagnostic DTO projection excludes MCP bootstrap,
 environment and mount contents, unknown fields and raw exception strings.
-See [`observability.md`](observability.md) for budgets, mode forwarding and
-pending coordinator acceptance.
+See [`observability.md`](observability.md) for SQL tracing, RPC content
+capture, and forwarding to Runtimes.
 
 ## Invariants
 

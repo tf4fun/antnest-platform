@@ -1,9 +1,13 @@
 # Runtime Egress Operations
 
+This document covers how to deploy and run Runtime Egress: privileges,
+configuration guidance, deployment shape, status, PostgreSQL, kernel ownership,
+telemetry, recovery, verification, and release.
+
 ## 1. Process And Privileges
 
 Runtime Egress is one Rust process. The container requires `NET_ADMIN` and
-`/dev/net/tun`. The initial Linux adapter also requires the `ip`, `nft`, and
+`/dev/net/tun`. The Linux adapter also requires the `ip`, `nft`, and
 `conntrack` binaries. It must not receive the Docker socket or Kubernetes
 credentials. The deployment declaration must set
 `net.ipv4.ip_forward=1` in the Egress network namespace; startup verifies this
@@ -17,32 +21,10 @@ NAT and DNS upstream traffic.
 
 ## 2. Configuration
 
-| Variable | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `ANTNEST_EGRESS_DATABASE_URL` | yes | none | Egress-owned PostgreSQL connection URL |
-| `ANTNEST_EGRESS_DATABASE_TLS_MODE` | no | `require` | `require` uses native trust roots; `disable` is restricted to isolated local development |
-| `ANTNEST_EGRESS_DATABASE_STARTUP_TIMEOUT` | no | `30s` | Maximum cold-start wait for PostgreSQL reachability |
-| `ANTNEST_EGRESS_DATABASE_RETRY_DELAY` | no | `250ms` | Delay between cold-start connection attempts |
-| `ANTNEST_EGRESS_CONTROL_LISTEN` | no | `127.0.0.1:8081` | Trusted internal control HTTP listener; deployments must bind one explicit control-network address |
-| `ANTNEST_EGRESS_UDP_ADVERTISE` | yes | none | Literal Runtime-network UDP address used both for bind and for Runtime Controller attachments |
-| `ANTNEST_EGRESS_TUNNEL_CIDR` | no | `100.64.0.0/10` | Agent Tunnel IPv4 pool |
-| `ANTNEST_EGRESS_RESOLVER_IPV4` | no | `100.64.0.1` | Reserved virtual resolver/gateway address |
-| `ANTNEST_EGRESS_QUARANTINE` | no | `5m` | Released-address quarantine duration |
-| `ANTNEST_EGRESS_MAX_FLOWS` | no | `65536` | Global flow bound |
-| `ANTNEST_EGRESS_MAX_AGENT_FLOWS` | no | `1024` | Per-Agent flow bound |
-| `ANTNEST_EGRESS_FLOW_IDLE` | no | `5m` | Inactive flow expiry |
-| `ANTNEST_EGRESS_DNS_UPSTREAM` | yes | none | Deployment-provided DNS-over-TCP upstream used by the virtual resolver |
-| `ANTNEST_EGRESS_TUN_NAME` | no | `antnest-egress0` | Runtime Egress-owned Linux TUN name |
-| `ANTNEST_EGRESS_COMMAND_TIMEOUT` | no | `5s` | Bound for Linux reconciliation and cleanup commands |
-| `RUST_LOG` | no | service default | Structured log filter for Runtime Egress targets only |
-| `OTEL_SDK_DISABLED` | no | `true` | Disable OTLP export while retaining local correlation |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no | `false` | `true` captures complete control RPC JSON, potentially including secrets; packet traffic and HTTP headers remain excluded |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | no | `http://127.0.0.1:4318/v1/traces` | Preferred OTLP HTTP traces endpoint |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | no | `http://127.0.0.1:4318/v1/metrics` | Preferred OTLP HTTP metrics endpoint |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | none | Fallback OTLP HTTP base URL; `/v1/traces` and `/v1/metrics` are appended |
-
-Configuration is immutable after startup. Agent policy changes use the control
-API and PostgreSQL rather than environment variables.
+The full list of environment variables, defaults, and validation rules is in
+the [service README](../README.md#configuration). Configuration is immutable
+after startup. Agent policy changes use the control API and PostgreSQL rather
+than environment variables.
 
 The OTLP collector must be reachable from the Runtime Egress service network.
 The development Compose topology attaches Runtime Egress and Jaeger to a
@@ -55,20 +37,20 @@ Packet revision and inner MTU come only from
 network attachments; MTU has no deployment variable or negotiation field.
 `ANTNEST_EGRESS_UDP_ADVERTISE` must be a stable, usable unicast IPv4 address with
 a non-zero port and must remain reachable across an Egress process restart. It
-is also the bind address; Stage 1 deliberately has no separate wildcard-listen
+is also the bind address; there is deliberately no separate wildcard-listen
 setting or NAT-style advertised endpoint.
 
-Egress never selects a public resolver implicitly. Docker Compose points this
-setting at Docker's embedded resolver (`127.0.0.11:53`); a Kubernetes or
-production deployment supplies its cluster or enterprise resolver. That
-resolver must accept DNS over TCP because Runtime executors use `options
-use-vc`, keeping DNS on the governed TCP-only packet path.
+Egress never selects a public resolver implicitly. Docker Compose points
+`ANTNEST_EGRESS_DNS_UPSTREAM` at Docker's embedded resolver (`127.0.0.11:53`); a
+Kubernetes or production deployment supplies its cluster or enterprise
+resolver. That resolver must accept DNS over TCP because Runtime executors use
+`options use-vc`, keeping DNS on the governed TCP-only packet path.
 
-Stage 1 `allow_all` is external-only: special-use and private IPv4 destinations
-remain denied, except TCP port 53 on the virtual resolver. An enterprise service
-on an internal address requires a later explicit policy schema; operators must
-not work around this boundary by attaching Runtime containers to control
-networks.
+Policy schema version 1 `allow_all` is external-only: special-use and private
+IPv4 destinations remain denied, except TCP port 53 on the virtual resolver. An
+enterprise service on an internal address requires a later explicit policy
+schema; operators must not work around this boundary by attaching Runtime
+containers to control networks.
 
 `ANTNEST_EGRESS_DATABASE_TLS_MODE=require` is the production default and
 validates PostgreSQL against the container's native certificate roots. The
@@ -91,11 +73,10 @@ assigns the control interface a stable private address and binds only that
 address. Kubernetes must provide the equivalent fixed Pod address or bind and
 filter the control port with NetworkPolicy before the service becomes ready.
 
-Stage 1 runs exactly one active Egress replica. Do not place multiple replicas
-behind a generic TCP/UDP load balancer: packet flows, UDP return peers, TUN,
-conntrack, and kernel policy are process-local. Process or container restart is
-supported; active-active ownership and failover are not yet part of the
-contract.
+Egress runs exactly one active replica. Do not place multiple replicas behind a
+generic TCP/UDP load balancer: packet flows, UDP return peers, TUN, conntrack,
+and kernel policy are process-local. Process or container restart is
+supported; active-active ownership and failover are not part of the contract.
 
 A minimal Docker deployment must provide the equivalent of:
 
@@ -138,7 +119,7 @@ states. `control_plane_ready` describes shared control infrastructure, not the
 health of every Agent. Repository connection health is its runtime authority:
 loss of all validated live database connections marks it false while the last
 published data plane remains ready. Losing one pooled connection, a pool wait
-timeout or an individual RPC error is not automatically a global outage.
+timeout, or an individual RPC error is not automatically a global outage.
 Ordinary Agent reads are not proof of a packet-gate repair. A cleanup
 failure fences only the affected Agent and leaves global readiness unchanged;
 its request error, health event, and aggregate fenced-Agent metric expose the
@@ -175,16 +156,15 @@ CREATE DATABASE runtime_egress OWNER runtime_egress;
 
 The service creates and owns only the `runtime_egress` schema in that database
 and rejects a schema owned by a different role. Backups, PITR, and credential
-rotation are deployment responsibilities; restore acceptance requires a clean
-startup migration/ownership check before control traffic is admitted.
+rotation are deployment responsibilities; a restored database must pass the
+startup migration and ownership checks before control traffic is admitted.
 
 Migrations run before listeners open. Bootstrap and all later applied versions,
 names, and SHA-256 checksums must match the embedded ordered catalog exactly.
-Egress retries only initial PostgreSQL
-connection failures, within the configured startup timeout. A migration,
-persisted-pool mismatch, or initial snapshot failure terminates immediately;
-these are not hidden behind retries. Packet tasks never hold a PostgreSQL
-transaction.
+Egress retries only initial PostgreSQL connection failures, within the
+configured startup timeout. A migration, persisted-pool mismatch, or initial
+snapshot failure terminates immediately; these are not hidden behind retries.
+Packet tasks never hold a PostgreSQL transaction.
 
 Control operations use a bounded pool of validated PostgreSQL connections. No
 repository-wide lock is held while SQL is running, so one Agent's row-lock wait
@@ -193,9 +173,10 @@ establishment, SQL statements, and PostgreSQL lock waits are bounded; expiry is
 reported as a scoped, retryable failure through the owning control request, and
 the timed-out connection is retired. Global control readiness becomes false
 only when no validated pooled connection remains live; one Agent's statement,
-lock, or persisted-row failure does not alter it. Stage 1 fixes the pool at
-eight connections and client-side operation deadlines at five seconds, with
-shorter PostgreSQL statement and lock deadlines; they are implementation
+lock, or persisted-row failure does not alter it. The pool is fixed at eight
+connections, and pool acquisition, connection establishment, and complete
+repository operations each have a five-second client-side deadline, with
+shorter PostgreSQL statement and lock deadlines. These are implementation
 limits, not deployment configuration knobs.
 
 ## 6. Kernel Ownership
@@ -221,7 +202,7 @@ produce CLIENT children with SQL text, never bind arguments or rows; SQL capture
 is independent of the RPC content switch. Unconfirmed drop rollback is not success;
 kernel cleanup remains within the control request. The OTLP target allowlist
 accepts only control HTTP and the own-database observation module. Packet
-transport, DNS forwarding, packet rejection and flow maintenance never create
+transport, DNS forwarding, packet rejection, and flow maintenance never create
 spans. See [Control Observability](observability.md) for projections and limits.
 
 Callers propagate W3C `traceparent` and optional `tracestate`; invalid context is
@@ -246,7 +227,7 @@ snapshot record:
 - unattributed destination-level UDP receive errors from asynchronous ICMP;
 - DNS proxy accepted, rejected, completed, failed, and byte counts;
 - service, data-plane, and control-plane readiness;
-- the number of currently fenced Agents and health transitions.
+- the number of currently fenced Agents and health transitions;
 - quarantine allocations removed and Agent-local cleanup failures.
 
 Readiness changes emit one low-frequency `health_transition` event containing
@@ -263,11 +244,11 @@ remain free of Agent labels and packet traffic never creates spans.
 
 Individual packet drops never emit logs, even when debug logging is enabled.
 
-DNS-over-TCP admission is bounded twice: once for the whole process and once
-for each source tunnel address. The per-source guard prevents one Runtime from
-starving every other Agent. These limits are implementation-owned safety
-constants in Stage 1; neither source addresses nor Agent IDs appear as metric
-labels.
+DNS-over-TCP admission is bounded twice: 128 connections for the whole process
+and 8 for each source tunnel address. The per-source guard prevents one Runtime
+from starving every other Agent. These limits are implementation-owned safety
+constants; neither source addresses nor Agent IDs appear as metric labels.
+
 The stderr layer accepts only `antnest_runtime_egress` crate targets, so
 `RUST_LOG` cannot enable PostgreSQL, HTTP, or other dependency payload logs.
 Control RPC failures remain control-plane spans and structured logs. Background
@@ -290,18 +271,19 @@ labels.
 - Address quarantine and policy assignment survive restart.
 - Losing all validated live PostgreSQL connections marks control readiness
   degraded; an individual connection/Agent SQL failure does not necessarily
-  change shared readiness. A subsequent control operation reconnects,
+  change shared readiness. A subsequent control operation reconnects and
   revalidates migrations and seed data. The resulting validated connection
   restores repository health; packet forwarding never waits for that recovery.
 
-## 9. Development Admission
+## 9. Verification
 
-The Rust rewrite is admitted only when all of the following pass serially:
+Run these checks serially from the repository root:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
+cargo clippy --manifest-path services/runtime-egress/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path services/runtime-egress/Cargo.toml --locked
+make test-egress-postgres
 docker build -f services/runtime-egress/Dockerfile -t antnest/runtime-egress:local .
 ```
 
@@ -309,22 +291,23 @@ The policy-read HTTP tests cover exact revisions, built-in opaque IDs, stable
 errors, side-effect-free inspection, and incoming W3C parent/error attributes.
 The control-service tests inject cleanup failures and verify recovery with
 actual data-plane packet decisions, including a failed allow request that must
-not override the persisted deny policy. From the platform root,
-`make test-egress-postgres` additionally checks persisted revisions through the
-HTTP router after database reconnection. Use a test-owned Compose project and
-port for this destructive test-database profile, then remove its resources.
+not override the persisted deny policy. `make test-egress-postgres`
+additionally checks persisted revisions through the HTTP router after database
+reconnection. It provisions an isolated test database; use a test-owned
+Compose project and port for this destructive profile, then remove its
+resources.
 
-Linux container acceptance additionally requires real TUN creation, real
-PostgreSQL migrations, policy allow/deny traffic, flow reset, restart recovery,
-and address quarantine/reuse.
+Linux container tests must cover real TUN creation, real PostgreSQL
+migrations, policy allow/deny traffic, flow reset, restart recovery, and
+address quarantine/reuse.
 
 ## 10. Release And Rollback
 
 Promote one immutable Egress image together with the exact control, policy, and
-packet contract revisions it passed. Roll out only one active replica. Before
-promotion, restore a production-like backup into an isolated database and run
-startup migration, ownership, snapshot-recovery, and Stage 1 allow/deny
-acceptance.
+packet contract revisions it was tested against. Roll out only one active
+replica. Before promotion, restore a production-like backup into an isolated
+database and run startup migration, ownership, snapshot recovery, and policy
+allow/deny checks.
 
 Rollback means stopping the failed image and starting the previous immutable
 image against a database schema that the previous image recognizes. Applied

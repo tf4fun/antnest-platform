@@ -40,7 +40,3 @@ history belong exclusively to ACP, which reads no Controller database.
 4. Concurrent publication: one MVCC snapshot cannot mix a previous revision with
    new credentials or Model parameters.
 5. Contract tests preserve the same pricing shape in management and publication.
-
-Service-local gates and pending consumer/integration work are tracked in
-[the boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
-Older admission-based test totals are not acceptance of the current architecture.

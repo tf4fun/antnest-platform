@@ -1,51 +1,66 @@
-# Normal shutdown and stream acceptance migration
+# Normal shutdown and stream contract
 
-This batch owns the shutdown acceptance consumer only. Preserve the preceding
-uncommitted network migration and leave production services/SDKs unchanged.
+This document defines what the whole-platform shutdown profile
+(`make e2e-lifecycle-shutdown`) must prove. Production services and SDKs are
+unchanged, and SIGKILL, clock and export interval tuning are not used.
 
-Reuse current Foundation setup, stable Provider/Model IDs, returned Template
-revision, immutable Runtime image, exact lifecycle replay and twelve-service
-isolation checks. Hold an administrator lifecycle-event watch, an owner ACP
-execution-state watch and an initialized ACP v1 connection with one persisted
-empty Session. Every stream must receive valid initial data and remain live.
+## Setup
 
-Execution state is ACP-owned: agent_id, availability, access_allowed,
-configuration_revision, active_session_id and unavailable_reason. No aggregate
-agent_revision or Controller workspace-state watch is expected. Watch clients
-must use the actual Gateway response Trace ID and must not invent unexported
-parent spans. Inspect the entire raw topology, capture policy and supplied secrets.
+The profile reuses the Foundation setup, stable Provider and Model IDs, the
+returned Template revision, an immutable Runtime image, exact lifecycle replay
+and the twelve-service isolation checks. It holds three live streams, each of
+which must receive valid initial data:
 
-Use ordinary SIGTERM to stop eight application services while streams are still
-open. Verify remote closure and ACP 1001 without client-triggered cancellation.
-Then stop Temporal before PostgreSQL; all ten stopped containers must exit zero
-without OOM/daemon error or replacement. Keep Jaeger alive through final export.
-Restart the same PostgreSQL, Temporal and application containers in dependency
-order, with no rebuild, image pull, schema reset or database edits.
+- an administrator lifecycle event watch;
+- an owner ACP execution-state watch;
+- an initialized ACP v1 connection with one persisted empty Session.
 
-The dynamically managed Runtime must retain container/process/image/mount and
-execution identity, workspace bytes and configuration. Same cookies must work;
-load the same Session, compare its empty metadata/history, event journal and
-initial watch state. Public audits and model status must remain empty before and
-after maintenance. Trace both actual ACP requests and both watch paths; state
-watch must own the real ACP RPC with no Controller execution-state dependency.
-Create/Delete traces keep current Temporal, SQL and publication/settlement checks.
+Execution state is owned by ACP and contains `agent_id`, `availability`,
+`access_allowed`, `configuration_revision`, `active_session_id` and
+`unavailable_reason`. There is no aggregate `agent_revision` and no Controller
+workspace-state watch. Watch clients use the actual Gateway response Trace ID
+and never invent unexported parent spans.
 
-The first current deployment proved business shutdown/recovery but showed that
-the historical Gateway-only cancellation oracle omits actual downstream stream
-cancellation. The current topology oracle recognizes only the exact watch path,
-HTTP 200, completed spans within the observed stop window, and matching error
-classification: Gateway handler_aborted/direct-client cancelled, Console's event
-watch and its direct Controller client cancelled, Controller event watch canceled
-with request_failed, or ACP's execution-state watch stream_interrupted. Conflicting
-error-event codes, wrong routes/services/methods, unowned clients and other errors
-are rejected. This recognizes observed normal-maintenance termination; it does
-not change service error classification or turn strict errors into passes.
-Missing parents and capture/privacy defects fail topology. Keep warnings,
-errors, spans and timestamps unchanged, collect independent traces after failures,
-and distinguish business/topology from strict status. No SIGKILL, clock or export
-interval tuning. Normal Delete must remove the test Agent resources, cleanup must
-remove only test-owned assets, and retained development must remain unchanged.
+## Shutdown and restart
 
-Write negative tests first; run local stream/protocol components and Docker gates
-serially. Keep other historical lifecycle consumers and old shared assets for
-separate migration batches.
+- Eight application services are stopped with ordinary SIGTERM while the streams
+  are still open. Remote closure and ACP close code 1001 are verified without
+  client-triggered cancellation.
+- Temporal then stops before PostgreSQL. All ten stopped containers must exit
+  zero without OOM, daemon error or replacement. Jaeger stays up through final
+  export.
+- The same PostgreSQL, Temporal and application containers restart in dependency
+  order, with no rebuild, image pull, schema reset or database edits.
+- The dynamically managed Runtime keeps its container, process, image, mounts,
+  execution identity, workspace bytes and configuration.
+- The same cookies work. The same Session loads, and its empty metadata and
+  history, the event journal and the initial watch state are compared. Public
+  audits and model status stay empty before and after maintenance.
+
+## Trace rules
+
+Both ACP requests and both watch paths are traced; the state watch must own the
+real ACP RPC with no Controller execution-state dependency. Create and Delete
+keep the Temporal, SQL and publication and settlement checks.
+
+Stream cancellation during maintenance is recognized only on the exact watch
+path, with HTTP 200, spans completed within the observed stop window and a
+matching error classification:
+
+- Gateway `handler_aborted`, or the direct Gateway client `cancelled`;
+- the Console event watch and its direct Controller client `cancelled`;
+- the Controller event watch `canceled` with `request_failed`;
+- the ACP execution-state watch `stream_interrupted`.
+
+Conflicting error-event codes, wrong routes, services or methods, unowned clients
+and other errors are rejected. This classification does not change service error
+reporting or turn strict errors into passes. Missing parents and capture or
+privacy defects fail topology. Warnings, errors, spans and timestamps are kept
+unchanged, independent Traces are still collected after failures, and business
+and topology results are reported separately from strict status.
+
+## Cleanup and verification
+
+A normal Delete removes the test Agent's resources, and cleanup removes only
+test-owned resources. Negative tests come first; local stream and protocol
+components and Docker checks run serially.

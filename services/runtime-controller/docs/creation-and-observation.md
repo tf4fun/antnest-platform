@@ -59,30 +59,25 @@ one particular healthy event after creation completes.
 5. Agent Controller does not admit Runs before a matching ready snapshot;
    early events, repeated reconciliation, stale revisions and restart converge.
 
-Delivery order: Runtime Controller contract/tests/code, then Agent Controller
-consumer/tests/code, then Docker integration and updated business-flow traces.
-One producer batch alone is not end-to-end completion.
+## Verification
 
-## Delivery Boundary
-
-Runtime Controller batch verification: `make fmt-check`, `make lint` (zero
-issues), the full Go suite with a real isolated PostgreSQL database, and
+Service verification runs `make fmt-check`, `make lint`, the full Go suite with a
+real isolated PostgreSQL database, and
 [`creation-observation-e2e.mjs`](../../../tests/e2e/runtime-controller/creation-observation-e2e.mjs)
-against a separately built Docker Controller passed.
+against a separately built Docker Controller.
 The migration test covers completed, running, unknown and failed predecessor
 operations. The Docker test uses the existing Runtime image and an allocated
-Egress network, without invoking an external model. Test resources are removed.
+Egress network, without invoking an external model, and removes its test
+resources.
 
-The Agent Controller consumer now separates configured resources from executable
+The Agent Controller consumer separates configured resources from executable
 bindings, completes creation before readiness, and reconciles pending bindings
 through current observations. Never-ready Agents remain rebuildable, disableable
 and deletable without fabricated execution history or a readiness-waiting
 Temporal activity. See its [availability contract](../../agent-controller/docs/runtime-availability.md).
 
-Both service batches precede deployment integration. The development stack has
-not yet been replaced for this contract. Deploy the matching producer and
-consumer together, then run Gateway lifecycle scenarios and update traces and
-sequence diagrams with fresh evidence; existing traces describe the old behavior.
+Deploy the matching Runtime Controller and Agent Controller together; the
+creation and readiness contract spans both services.
 
 ## Focused Docker Verification
 

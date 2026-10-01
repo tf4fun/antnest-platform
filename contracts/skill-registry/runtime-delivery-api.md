@@ -1,10 +1,8 @@
-# Runtime Controller system-Skill delivery contract (B0)
+# Runtime Controller system-Skill delivery contract
 
 This contract fixes the Controller → Runtime Controller boundary for immutable
-system-Skill collections. B3 preparation, lifecycle consumption, Docker startup
-gating, reference transfer and bounded cleanup are implemented in Runtime
-Controller; cross-service and restore/migration acceptance remain pending.
-Registry owns the versioned ZIP; Runtime Controller
+system-Skill collections: preparation, lifecycle consumption, Docker startup
+gating, reference transfer and bounded cleanup. Registry owns the versioned ZIP; Runtime Controller
 owns preparation, its Docker volume and lifecycle consumption. The old
 `skill_instructions` execution-snapshot body channel remains permanently empty.
 

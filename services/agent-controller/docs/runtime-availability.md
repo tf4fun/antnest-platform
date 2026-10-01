@@ -1,11 +1,15 @@
 # Runtime Creation And Agent Availability
 
+This document explains why lifecycle completion and executable availability
+are separate facts, and how independent Runtime observation publishes an Agent
+as available.
+
 ## Service Contract
 
-Runtime Controller creation commands now finish after platform create/start and
+Runtime Controller creation commands finish after platform create/start and
 persistence. Their result is `completed` / `provisioned`, not a ready execution
 identity. Agent Controller saves that target and completes its lifecycle
-operation. It does not move the removed readiness wait into Temporal.
+operation. No Temporal Activity waits for readiness.
 
 There are two independent facts:
 
@@ -16,7 +20,7 @@ There are two independent facts:
    execution identity and MCP endpoint. Only then is an immutable execution
    revision appended and the Agent projected `available`.
 
-The existing `executable_spec_revision_id` database column retains the configured
+The `executable_spec_revision_id` database column retains the configured
 spec while disabled or awaiting readiness; it alone has never been a Run grant.
 Executable configuration publication requires enabled/available, no active lifecycle
 operation, valid owner binding/authorization and a complete executable binding.
@@ -25,14 +29,14 @@ revisions remain immutable and never substitute for a pending target.
 
 ## Lifecycle And Observation
 
-Create, rebuild and enable keep their existing platform/network phases. Publish
+Create, rebuild and enable keep their platform/network phases. Publish
 commits the configured target, clears old executable fields, preserves historical
 execution records, and emits `agent_created`, `agent_rebuilt` or `agent_enabled`.
 No execution revision is inserted by these commands. `agent_ready` is emitted by
 independent observation only. An unhealthy Runtime never rewrites a completed
 creation into a failed operation.
 
-The existing observation worker drains the Runtime journal and reconciles pending
+The observation worker drains the Runtime journal and reconciles pending
 bindings against fresh Inspect results. It scans only configured pending Agents,
 with pagination; it does not inspect every Agent on every Run. Early/missed healthy
 events and worker restart therefore converge without an additional queue, table,
@@ -59,24 +63,18 @@ configured Spec and Runtime; a retained last-successful execution used during
 enable may belong to an older Spec, but always to the same Agent. Resource replacement, not new
 Runtime readiness, is the barrier that can release a blocked old Runtime Run.
 
-## Verification And Delivery
+## Verification
 
 Tests cover creation completion before readiness, closed execution publication, later
 activation, early/repeated/stale events, restart/cursor recovery, identity
 revocation and all lifecycle actions for a never-ready target. PostgreSQL tests
 check atomic publication, immutable history and the optional source execution
-contract. Runtime Client tests pin the new wire contract separately from current
-health observations.
+contract. Runtime Client tests pin the wire contract separately from current
+health observations. A targeted test covers the stale first-binding race. The
+service HTTP boundary is tested with dependency contract fixtures, not a
+deployed cross-service Docker run.
 
-Service verification (2026-09-13): the full `-race` suite with an isolated real
-PostgreSQL database and real Temporal completed with 14 packages, 436 tests and
-393 subtests, zero skipped or failed. This includes the service HTTP boundary
-with dependency contract fixtures; it is not a deployed cross-service Docker
-run. Targeted regressions reproduced the stale first-binding race before its fix;
-independent read-only follow-up found no remaining defect in that fix.
-
-This service batch is owned by Agent Controller; the related Runtime Controller
-and Console batches are tracked in `docs/agent-lifecycle-state-model.md` at the
-repository root. Gateway/browser/Jaeger acceptance is a separate integration
-batch. The service may reuse one development PostgreSQL server but
+The platform-wide state model is described in
+[Agent lifecycle state model](../../../docs/agent-lifecycle-state-model.md).
+The service may share one development PostgreSQL server with other services but
 owns only its own database/schema and accesses other services through RPC.

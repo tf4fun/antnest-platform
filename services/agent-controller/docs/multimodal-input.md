@@ -35,6 +35,5 @@ execution concern. See [publication](execution-publication.md).
 - ACP owns negotiation and per-completion validation, including historical
   attachments after Session model changes.
 
-B2 service tests are not cross-service acceptance. Gateway/Console consumers
-and Docker/Jaeger integration remain the later delivery batches in
-[the boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
+These service tests do not cover Gateway/Console consumers or Docker
+deployment; `make e2e-multimodal` exercises the deployed flow.

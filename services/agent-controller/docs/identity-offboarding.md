@@ -8,7 +8,7 @@ never reads Identity tables. This is a narrow consumer, not a general event bus.
 
 - A global User deactivation stops that user's Agents in every organization.
   Membership deactivation/deletion stops only Agents in that organization.
-- Receipt durably fences the Agent configuration and schedules the existing Disable
+- Receipt durably fences the Agent configuration and schedules the standard Disable
   workflow when no other lifecycle operation owns the Agent. Controller first
   publishes closed access and obtains ACP acknowledgement, then requests Agent-level
   cancellation/settlement before network and Runtime effects.
@@ -85,7 +85,7 @@ receipt cursor or remove scope rows: that discards the late-create protection.
 
 Identity RPC calls carry dependency spans and bounded error metrics. Each consumed
 revocation continues its source `traceparent`; its Agent event and Disable
-operation retain this causality through the existing lifecycle tracing. Receipt
+operation retain this causality through lifecycle tracing. Receipt
 progress is not a claim that all Runtime shutdowns completed. Pending fences and
 failed lifecycle operations remain inspectable in Controller storage/events.
 
@@ -93,4 +93,4 @@ Required service tests: scoped/global fencing, duplicate delivery, atomic cursor
 rollback, late Create, restored/new authorization, configuration publication and stale-default rejection,
 strict Disable failure, busy lifecycle convergence, source outage with local
 pending work, restart/retry, and no automatic Enable. Full Gateway/Identity/ACP/
-Runtime Docker and Jaeger acceptance is a separate integration batch.
+Runtime Docker and Jaeger verification belongs to the root E2E suites.

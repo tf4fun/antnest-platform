@@ -1,12 +1,16 @@
 # Antnest Runtime Observability
 
+This document describes the logs, traces and metrics that Runtime emits, the
+span model, trace propagation, OTLP configuration, and the stable diagnostic
+codes for shutdown and process lifecycle failures.
+
 ## Outputs
 
 After privileged bootstrap, Runtime emits:
 
 1. newline-delimited JSON logs on stderr;
 2. local OpenTelemetry trace context for log correlation;
-3. optional trace export through OTLP HTTP/protobuf.
+3. optional trace and metric export through OTLP HTTP/protobuf.
 
 Telemetry is diagnostic, never an audit ledger. Export failure does not change
 status, MCP tool results, or network policy.
@@ -58,7 +62,7 @@ standard resource attributes for local operations.
 | `runtime.process` | One Runtime process lifetime, from telemetry initialization through service shutdown |
 | `runtime.network` | One UDP-tunnel network session from start through shutdown or fatal error |
 | `HTTP GET /status`, `HTTP POST /mcp`, etc. | One normalized HTTP SERVER request, including upstream-context health checks |
-| `runtime.mcp.tool` | One `bash`, `read`, `write`, or `edit` call |
+| `runtime.mcp.tool` | One `bash`, `read`, `write`, or `edit` call, or one managed tool call (labelled `managed`) |
 | `runtime.executor` | One non-privileged tool subprocess from spawn through complete reaping |
 | `runtime.mcp.stdio` | One managed stdio tool CLIENT call, including its protocol result |
 
@@ -73,7 +77,7 @@ outcome and stable JSON-RPC error code. A tool execution span begins only after
 the SDK has decoded its typed parameters. Handler-returned MCP/JSON-RPC errors
 encoded in a successful HTTP response remain protocol errors without inventing
 an HTTP 500. Rejections made inside the SDK before handler dispatch do not create
-a tool execution or handler span; they currently retain HTTP transport evidence
+a tool execution or handler span; they currently retain HTTP transport diagnostics
 only. The SDK, not the decorator, owns protocol dispatch.
 
 `antnest://runtime/info` adds an `info` Executor span beneath `resources/read`;
@@ -102,49 +106,23 @@ A drop without observed MCP success retains its disconnect error diagnostic.
 Body errors and non-success HTTP responses retain error diagnostics; HTTP 5xx
 remains an error even when its body is dropped. MCP protocol failures retain
 their original error type and failed HTTP SERVER span, rather than being
-overwritten by a later `client_disconnected`. No body parsing, response buffering,
-retry, execution policy or strict Trace gate change is involved.
+overwritten by a later `client_disconnected`. The classification does not parse
+or buffer the response body and does not change retry or execution policy.
 
-The regression in `mcp_observability_tests.rs` exercises successful EOF/early
-close, unfinished early close, body failure, HTTP 400/500 and protocol failure.
-Its Linux HTTP component test uses the real SDK handler and middleware, holds
-the response open after its first SSE frame, receives the successful result,
-and closes the client before EOF. This deterministically checks the cancellation
-event and successful protocol observation without an error event or error status.
-The isolated Docker suite additionally uses ACP's pinned official JavaScript SDK
-against a real Runtime and exports success/failure traces to an isolated Jaeger.
-This service-owned evidence does not replace full Gateway/ACP/browser acceptance.
+This classification covers the successful-handler, response-close case only.
+It does not reclassify every disconnect.
 
-The historical trace `970c510b1b22df1e4da962c4c32c0d30` returned HTTP 404 from
-the development Jaeger on 2026-09-16. The earlier recorded diagnostic is retained;
-it cannot be retrospectively reclassified from the expired trace. The current
-fix addresses the reproducible successful-handler/response-close case, not every
-disconnect and not the separately deferred clock-skew warnings.
+#### Tests
 
-Verification on 2026-09-16 for this service-owned follow-up:
-
-- The seven-case regression first failed on the existing successful-disconnect
-  error classification, then passed after the fix.
-- Linux formatting, Clippy with warnings denied, 143 unit/contract/component
-  tests, one CLI test, one official SDK fixture test and release build passed.
-- All 10 isolated Docker E2E scenarios passed. The JavaScript SDK check observed
-  nine successful MCP operations with no error spans/events; the deliberate
-  missing-file call retained both failed operation and HTTP spans. Those live
-  successful responses all reached EOF; the controlled HTTP component test above
-  supplies the before-EOF close evidence, not the live SDK run.
-- The final build and E2E image Runtime binaries have identical SHA-256
-  `149fc758262cf0c811bac604ca33df67c8f883c995d50f421b55918445675834`.
-  Test containers/networks were removed. Existing development containers were
-  not replaced, and the full browser profile was not rerun.
-
-Ignored local logs are `artifacts/verification/runtime-http-close-build.log` and
-`artifacts/verification/runtime-http-close-e2e.log`; they are not guaranteed in a fresh clone.
-The tests are tracked. The subsequent
-[2026-09-16 deployment and integration](../../../docs/runtime-http-close-integration.md)
-replaced the development Runtime and verified real conversations, retained
-workspace and a deliberate tool failure. Chat behavior and topology passed;
-strict clock-warning failures remain unchanged. The earlier non-deployment
-statement above describes the service-gate batch only.
+The unit tests in `src/mcp_observability_tests.rs` cover successful EOF and
+early close, unfinished early close, body failure, HTTP 400 and 500, and
+protocol failure. The HTTP component test in
+`tests/integration/antnest-runtime/mcp_http_observability.rs` uses the real SDK
+handler and middleware. It holds the response open after its first SSE frame,
+receives the successful result, and closes the client before EOF. This
+deterministically checks the cancellation event and the successful protocol
+observation without an error event or error status. These service-level tests
+do not replace full Gateway, ACP and browser end-to-end tests.
 
 Tool and Executor spans record tool name, outcome, stable error code,
 duration, child PID, numeric exit status, deadline, Agent ID, and generation.
@@ -181,10 +159,9 @@ not traced individually.
 ## Boundary Diagnostic Contract
 
 This service implements the service-owned portion of
-[the platform contract](../../../docs/observability-contract.md). Linux unit,
-HTTP component, CLI, Clippy and build results are recorded in the
-[platform rollout](../../../docs/observability-rollout.md). A deployed Agent's
-complete Jaeger chain remains a separate business-scenario acceptance step.
+[the platform observability contract](../../../docs/observability-contract.md).
+Verifying a deployed Agent's complete Jaeger chain is a separate end-to-end
+step, not part of the Runtime service tests.
 
 The single deployment switch `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is
 read at startup, before environment sanitization. Set it to `true` to capture
@@ -203,14 +180,14 @@ Turning capture off does not serialize values or emit omission events.
 
 MCP `isError` and JSON-RPC failures mark the operation and parent HTTP span as
 failed without changing the real HTTP status. The SDK owns protocol dispatch;
-rejections before handler dispatch retain HTTP evidence only. No retry, execution
+rejections before handler dispatch retain HTTP diagnostics only. No retry, execution
 policy, wire envelope or lifecycle change is introduced by telemetry.
 
 Managed CLIENT spans inject W3C context through the official SDK request metadata.
 Child-side tracing remains the managed program's responsibility. Readiness checks
 initialized local state, never downstream platform services. Packet forwarding is
-outside distributed tracing. Deployment Jaeger checks remain a separate acceptance
-step from local tests.
+outside distributed tracing. Deployment Jaeger checks are separate from local
+tests.
 
 ## OTLP Configuration
 

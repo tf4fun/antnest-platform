@@ -1,7 +1,7 @@
 # Antnest Product Design Language
 
-> Status: canonical visual contract
-> Updated: 2026-09-03
+This document is the canonical visual and interaction contract for the Antnest
+browser products.
 
 Antnest has two browser products with different jobs but one visual identity:
 
@@ -9,9 +9,7 @@ Antnest has two browser products with different jobs but one visual identity:
 - **Agent UI** is a calm conversation workspace for end users.
 
 The products may use different component implementations, but they must share
-the tokens, interaction tone, and structural rules in this document. The
-reference language was refined from the local AttyD workspace rather than
-copied as a page template.
+the tokens, interaction tone, and structural rules in this document.
 
 ## Product Character
 

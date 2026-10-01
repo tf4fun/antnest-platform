@@ -1,9 +1,8 @@
 # Execution Audit And Configuration Synchronization
 
-This B4 batch connects management reads to their owning services. Backend reads
-and the independent browser audit view are implemented and service-tested.
-Resource availability controls, synchronization presentation and cross-service
-acceptance remain subsequent batches.
+This document describes how Admin Console reads execution audit records directly
+from Agent ACP Service and configuration synchronization state from Agent
+Controller, and how the browser audit view presents them.
 
 ## Read Routes
 
@@ -84,28 +83,26 @@ Refreshing execution detail does not remount the two streams or reset their
 pagination. Lifecycle events remain a separate Controller view; their DTO no
 longer carries the removed per-Run `admission_id`.
 
-## Verification
+## Testing
 
-Service tests must cover the real BFF and traced upstream adapter, all three ACP
+Service tests cover the real BFF and traced upstream adapter, all three ACP
 routes, exact identity propagation, absence of Controller/Identity fan-out,
 organization-admin access, rejected untrusted/ordinary-user access, query
 shaping, read-only pagination, upstream failures and cancellation. Controller
 synchronization has a separate route and data source.
 
-For repeatable UI acceptance, build with `npm --prefix web run build`, then run
+For the browser UI test, build with `npm --prefix web run build`, then run
 `npm --prefix web run test:browser:audit` from this service directory. The test
 uses the pinned Playwright dev dependency and Chromium (`npm --prefix web exec
 -- playwright install chromium` installs the browser if absent). It starts a
 loopback-only static server on a free port and intercepts only synthetic browser
 API responses. It checks desktop/mobile overflow, collapsed/expanded content,
 opaque-ID routing and refresh independence, then closes its browser and server.
-Screenshots overwrite `artifacts/verification/console-audit-browser/`; the test source is kept
-in `tests/execution-audit-browser.mjs`, not in a disposable cache. This is a
-Console-only UI test, not proof of real Gateway/ACP integration.
+Screenshots are written to `artifacts/verification/console-audit-browser/`. The
+test source is
+[`tests/integration/admin-console/execution-audit-browser.mjs`](../../../tests/integration/admin-console/execution-audit-browser.mjs).
+It is a Console-only UI test; real Gateway login, deleted-Agent audit reads and
+authorization rejections are covered by the platform Docker end-to-end suite.
 
 The owner contracts are [ACP audit](../../agent-acp-service/docs/execution-audit.md)
 and [Controller synchronization](../../../contracts/agent-controller/control-api.md#execution-configuration-synchronization).
-The subsequent [B5 batch](../../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付)
-passed actual Gateway login, deleted-Agent/ACP restart audit reads and authorization
-rejections. Trace structure passed; strict clock-warning failures remain recorded.
-These are separate deployed results, not claims made by the synthetic browser test.

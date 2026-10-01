@@ -1,39 +1,42 @@
-# Identity and access acceptance migration
+# Identity and access contract
 
-Migrate in independent deployment batches. Production service behavior is not
-changed by this fixture migration, and passing one batch does not accept the
-other owners' workflows.
+This document defines what the [identity and access profiles](README.md) must
+prove. The profiles are independent fixtures; they do not change production
+service behavior, and passing one profile says nothing about the others.
 
-1. Identity HTTP/SCIM/OIDC: retain local sessions, CSRF, membership/global-user
+## Profiles
+
+1. **Identity HTTP, SCIM and OIDC** (`make e2e-identity-core`,
+   `make e2e-identity-access`): local sessions, CSRF, Membership and global User
    revocation, SCIM isolation and lifecycle, password-change semantics, real
-   token expiry/outage recovery, verified HTTPS OIDC and correlated secret-free
-   logs. Run in disposable projects with explicit synthetic configuration,
-   loopback ports, isolated allocator ranges and bounded process cleanup.
-2. ACP session consumers: retain v1/v2 logout/expiry/outage behavior, accepted
-   Run continuation, no rejected-message effects and exact history restoration.
-   Replace Model revision and Controller admission assumptions with current
-   Provider/Model, ACP audit and per-message Trace contracts.
-3. Agent access/offboarding integration: retain organization/admin/member/owner
-   isolation, same-user cross-organization evidence, automatic Disable and
-   explicit Enable, Controller restart recovery and SCIM/OIDC offboarding.
-   Verify current ACP authorization and durable effects, Runtime replacement
-   boundaries and exact source-event/Temporal workflow and activity ancestry.
+   token expiry and outage recovery, verified HTTPS OIDC and correlated
+   secret-free logs. Each runs in a disposable project with explicit synthetic
+   configuration, loopback ports, isolated allocator ranges and bounded process
+   cleanup.
+2. **ACP Session consumers** (`make e2e-acp-session`): v1 and v2 logout, expiry
+   and outage behavior, continuation of accepted Runs, no effects from rejected
+   messages and exact history restoration. Assertions use the current Provider
+   and Model setup, the ACP audit and per-message Trace contracts.
+3. **Agent access and offboarding** (`make e2e-agent-access`): organization,
+   administrator, member and owner isolation, same-user cross-organization
+   evidence, automatic Disable and explicit Enable, Controller restart recovery
+   and SCIM and OIDC offboarding. ACP authorization and durable effects, Runtime
+   replacement boundaries and exact source-event, Temporal workflow and activity
+   ancestry are verified.
 
-The first batch owns the HTTP fixture and deployment changes. Record pending
-ACP/Agent consumers until their own fixtures and Docker evidence pass. Shared
-helpers and legacy default/retained branches remain until their final consumer
-migrates.
+## Trace rules
 
-Completed-request Trace collection waits for actual topology, SQL ownership,
-protocol and privacy assertions before archiving. It retains unmodified spans,
-error events and warnings. Strict warning/error results remain failures and
-are reported after all independent business cases run; topology success does
-not imply strict success. Existing strict helper entry points keep their
-behavior. No clock setting, timestamp rewriting or export-interval change is
-part of migration.
+Completed-request Trace collection waits for the topology, SQL ownership,
+protocol and privacy assertions before archiving. It keeps unmodified spans,
+error events and warnings. Strict warning and error results are failures and are
+reported after all independent business cases run; topology success does not
+imply strict success. Clock settings, timestamps and export intervals are never
+changed.
 
-Test fixture and contract changes first, including negative evidence and actual
-HTTP collector tests. Then run the affected local tests and each applicable
-Docker profile serially. Preserve retained development container IDs, image
-IDs and health and prove that every disposable project and verification child
-is removed after success, failure or interruption.
+## Verification rules
+
+Fixture and contract tests come first, including negative evidence and real HTTP
+collector tests. The affected local tests and each applicable Docker profile
+then run serially. Other running containers keep their IDs, images and health,
+and every disposable project and verification child process is removed after
+success, failure or interruption.

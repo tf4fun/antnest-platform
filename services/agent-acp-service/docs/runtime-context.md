@@ -1,4 +1,7 @@
-# Runtime information and managed MCP tools
+# Runtime Information And Managed MCP Tools
+
+This document describes how each Run reads Runtime information, discovers
+platform MCP tools and builds its transient model context.
 
 Every admitted Run prepares one model input from its frozen Runtime binding:
 
@@ -17,7 +20,7 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    tool. Reserved-name conflicts fail preparation. They are dispatched to the
    configured Registry with persisted Run authority, rather than Runtime MCP.
    Multi-file load then uses the signed private temporary endpoint, following
-   [D4A](../../../contracts/agent-acp/skill-temporary-consumer.md); ordinary
+   the [temporary Skill consumer contract](../../../contracts/agent-acp/skill-temporary-consumer.md); ordinary
    read/Bash can use confirmed files. Pending cleanup fences new Run/learning
    work and lifecycle settlement, including after ACP restart.
 4. Prepare a transient system message from the Agent prompt, Runtime environment,
@@ -41,13 +44,13 @@ Explicit rebuild changes the admitted binding and therefore both the information
 read and tool discovery target. Processes are Runtime-owned and may span turns
 and Runs. Closing an ACP-side HTTP client does not stop managed stdio children.
 
-## Boundaries and observability
+## Boundaries And Observability
 
 The [shared information schema](../../../contracts/runtime/runtime-information.schema.json)
 is the wire contract. ACP owns its validated read model and model-input budget,
 not deployment configuration, Skill publication, or process supervision.
-There are no new tables, ACP fields or external endpoints in this feature.
-Existing ACP v1/v2 semantics are unchanged.
+Runtime information adds no tables, ACP fields or external endpoints, and does
+not change ACP v1/v2 semantics.
 
 Builtin tools use the [shared flat input contract](../../../contracts/runtime/builtin-tools.schema.json).
 Runtime information retains typed root/path identities internally; the transient
@@ -68,7 +71,7 @@ or credentials. Tool list/call spans retain existing instrumentation. Runtime
 HTTP handling and its non-root executor inherit this trace. Egress packet
 forwarding intentionally has no OTLP spans.
 
-## Acceptance
+## Verification
 
 Tests inspect actual model messages and declared tools, fresh per-Run reads,
 budget/truncation, malformed resources and execution mismatch, cancellation,

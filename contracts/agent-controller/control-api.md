@@ -1,9 +1,8 @@
 # Agent Controller Lifecycle And Management Contract
 
-> Status: Stage 2B implementation contract<br>
-> Revision: 32<br>
-> Transport: trusted internal JSON over HTTP<br>
-> Owner: Agent Controller
+This contract is owned by Agent Controller and transported as trusted internal
+JSON over HTTP. This document describes control contract revision 36, the
+`revision` value in [`control-contract.json`](control-contract.json).
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
 global Agent status projection, and Agent events. It is internal RPC, not a
@@ -95,7 +94,7 @@ It contains no execution availability, active Session or opaque access subject.
 Controller's former state get/watch endpoints return 404. ACP owns execution
 state and subscriptions; Controller's management event journal remains independent.
 See the [metadata boundary](../../services/agent-controller/docs/workspace-state.md).
-Gateway and Agent UI consume revision 29 together; chat admission remains ACP-owned.
+Chat admission remains ACP-owned.
 
 ## Agent Network Policy
 
@@ -181,8 +180,8 @@ model names; an official name cannot bypass validation.
 
 Current management records and immutable build revisions remain Controller-owned
 and independent of Console releases. ACP owns Run snapshots and execution audit. Removing a preset does not delete or change organization data.
-Provider credential/model lifecycle separation is tracked in
-[the implementation plan](../../docs/provider-credentials-and-models.md).
+Provider credential and model lifecycle separation is described in
+[Provider credentials and models](../../docs/provider-credentials-and-models.md).
 
 ## Provider Connections
 
@@ -204,7 +203,7 @@ implemented `request_protocol`, never the key or encrypted bytes.
 It advances only the connection credential, using version CAS. A stale edit is
 409; an identical committed request replays its original version even after
 later rotations. Connection metadata/endpoint changes and physical deletion
-remain outside this batch. Availability has the independent operation below.
+are not supported. Availability has the independent operation below.
 
 See [service-owned Provider management](../../services/agent-controller/docs/provider-management.md).
 The configuration publisher sends the connection's current credential to ACP.
@@ -285,7 +284,7 @@ configuration stamp for existing execution diagnostics, not a historical address
 Updates replace the current row. Model command receipts freeze the original
 non-secret response; replay does not return or overwrite a newer configuration.
 Agent build and Run snapshots retain consumed parameters without a model-history table.
-The endpoint comes from its connection (immutable in this batch).
+The endpoint comes from its connection, which is immutable.
 `GET /internal/model-profiles` requires `organization_id` and uses stable
 `after_id` plus bounded `limit` pagination. It never returns encrypted
 credential bytes or plaintext secrets.
@@ -317,8 +316,8 @@ append length-prefixed `skill_id`, big-endian uint64 `version`, length-prefixed
 the stream. Runtime Controller must recompute it from the frozen input; the
 [shared fixture](../../tests/integration/skill-registry/skill-set-digest-v1.json)
 fixes a cross-language expected value. The empty set still has an organization-
-specific digest, although legacy empty AgentSpec JSON omits it to retain its
-pre-Stage-4 content identity.
+specific digest, although empty AgentSpec JSON omits it to retain the content identity of
+AgentSpecs created before Skill support.
 
 `runtime.image_ref` preserves the submitted image reference: a name/tag, image
 ID, or digest-pinned reference. Catalog performs syntax and organization/model
@@ -376,11 +375,8 @@ carry its persistent reference; completed or failed lifecycle operations release
 the Controller-owned reference. Pre-admission invalidation gets a new durable
 preparation request; a fenced rebuild rejection restores the proven source and
 ends that operation before releasing its reference.
-Legacy shared-volume migration and its recovery operations are absent from
-the released contract and handlers; those paths return 404. No migration gate
-is installed when provisioning a fresh database. See the
-[release boundary](../../docs/legacy-skill-release-cleanup-20261001.md).
-Empty-set Templates remain usable.
+There are no shared-volume Skill migration or recovery routes; such paths
+return 404. Empty-set Templates remain usable.
 `disable`, `enable`, and `delete` express explicit desired-state transitions.
 Lifecycle methods return the durable operation; callers inspect by request ID
 after any timeout.
@@ -439,8 +435,11 @@ sequence, not this field or query pagination.
 
 `GET /internal/agent-operations/{request_id}` returns one durable Saga or
 proof-loss recovery state.
-`GET /internal/agent-events?after_sequence=N` is authoritative global ordered
-replay. `GET /internal/agents/{agent_id}/events` filters that journal by Agent.
+`GET /internal/agent-events?organization_id=org-1&after_sequence=N` is the
+authoritative ordered replay of the global journal, scoped to one organization.
+`GET /internal/agents/{agent_id}/events?organization_id=org-1&after_sequence=N`
+filters that journal by Agent. Every list and watch route requires exactly one
+nonempty `organization_id` query parameter.
 The corresponding `/watch` routes are best-effort SSE; disconnect and resume
 from the last global sequence. Each event also carries a per-Agent aggregate
 sequence for local ordering and optimistic projection checks.
@@ -498,8 +497,6 @@ and already registered Runtime targets, cannot be published within the
 deployment budget. The resource mutation, command receipt and configuration
 revision are rolled back together. Reduce the proposed configuration or review
 the shared deployment limit; blind retries cannot resolve the rejection.
-The guard and production publisher are connected in B2. Consumer migration and
-cross-service deployment remain pending; local contracts are not E2E evidence.
 
 The machine-readable route catalog is in
 [`control-contract.json`](control-contract.json), and message definitions are

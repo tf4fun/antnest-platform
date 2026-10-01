@@ -1,6 +1,7 @@
-# Current Stage 3 base acceptance
+# Stage 3 Base E2E
 
-This integration fixture owns no production service changes. Its contract is:
+This suite runs the Stage 3 stack end to end through Console, Gateway, ACP and
+Runtime. It asserts:
 
 - Console creates a Provider connection, then stable Models and Templates.
   Credentials rotate on the Provider; Model edits require `expected_version`
@@ -10,8 +11,8 @@ This integration fixture owns no production service changes. Its contract is:
   Template publication rejects malformed image references, but preserves valid
   tags without resolving local image availability. The executing fixture uses
   the configured immutable image; a second unexecuted Template proves valid
-  missing-tag preservation. Runtime image-resolution failures remain part of
-  the later lifecycle fault batch.
+  missing-tag preservation. Runtime image-resolution failures are covered by
+  the lifecycle fault suites.
 - Fresh resource IDs at Gateway/ACP boundaries follow the
   [platform generation contract](../../../contracts/resource-identifiers.md):
   Identity, catalog, Agent, lifecycle events, Runtime revisions and Sessions.
@@ -129,22 +130,14 @@ transport failure only when creation, recovery inspection and lifecycle
 completion are all present. A changed running mount is separately rejected by
 the RC service test.
 
-Legacy shared-volume inventory, choice, migration and exceptional recovery
-gates are retired from the release. Current Skill lifecycle gates continue to
-use frozen Template versions and prepared read-only sets. Historical sources
-and evidence are recoverable from Git commit `5e86f46`; see the
-[release cleanup](../../../docs/legacy-skill-release-cleanup-20261001.md).
+Skill lifecycle checks use frozen Template versions and prepared read-only
+Skill sets.
 
-Identity/OIDC, Managed MCP and fault profiles now dispatch to their separate
-migrated launchers. Their old inline copies are superseded. The explicit
-`ANTNEST_E2E_KEEP_STACK=true` flag is now [retired](../../../docs/retained-seed-retirement.md)
-and rejects before any dependency is invoked. Unset, empty or `false` keeps
-current disposable behavior. The [old inline tail](../../../docs/stage3-tail-retirement.md)
-and its exclusive CLI/input helpers are now removed. The subsequent
-[interruption retirement](../../../docs/interruption-assets-retirement.md) removes
-the historical startup-gate/Trace graph; shared current helpers remain.
-This driver verifies Workspace HTML/bootstrap and protocol behavior, not a new
-browser interaction acceptance. See C4 for the separate browser evidence.
+Identity/OIDC, Managed MCP and fault profiles run through their own launchers.
+`ANTNEST_E2E_KEEP_STACK=true` is rejected before any dependency starts; unset,
+empty or `false` keeps the stack disposable. This driver verifies Workspace
+HTML, bootstrap and protocol behavior; browser interaction is covered by the
+[workspace browser profile](../workspace-closeout/README.md#browser-profile).
 
 Raw lifecycle diagnostics, when collected, stay in the ignored private
 `artifacts/verification/stage3-base/<project>/stage3-traces/` directory. Only aggregate business,

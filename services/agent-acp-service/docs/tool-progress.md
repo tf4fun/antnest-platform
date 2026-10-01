@@ -1,8 +1,10 @@
-# Tool Progress Consumption (F02)
+# Tool Progress Consumption
 
-Scope: Agent ACP Service only. Runtime owns progress production; this service
-owns association, bounded presentation, durable ordering and ACP delivery.
-No new table, public endpoint, private ACP field or client MCP permission.
+This document describes how Agent ACP Service consumes MCP progress
+notifications from Runtime Tools and turns them into bounded, durable ACP Tool
+previews. Runtime owns progress production; this service owns association,
+bounded presentation, durable ordering and ACP delivery. Progress adds no
+table, public endpoint, private ACP field or client MCP permission.
 
 ## Contract And Flow
 
@@ -54,10 +56,11 @@ remains authoritative and follows the existing Tool result size policy.
   outcome and persistence failure retain their existing meanings.
 - PostgreSQL + ACP v1/v2: live delivery before completion, durable replay,
   identity isolation, terminal-state guards and preview-free model context.
-- Separate Gateway + actual Rust Runtime deployment integration passed all 12
-  v1/v2 Bash / managed MCP success, error and cancel paths, with live output,
-  complete reconnect replay and 12 Jaeger chains. See the [reusable profile](../../../tests/e2e/acp-progress/README.md).
-  This evidence supplements, rather than substitutes for, the service tests.
+- Deployment: the [Tool progress profile](../../../tests/e2e/acp-progress/README.md)
+  (`make e2e-tool-progress`) runs v1/v2 Bash and managed MCP success, error and
+  cancel paths through Gateway and the real Rust Runtime, checking live output,
+  complete reconnect replay and Jaeger chains. It supplements, rather than
+  substitutes for, the service tests.
 
 References: [Runtime contract](../../../runtimes/antnest-runtime/docs/tool-progress.md),
 [ACP Tool updates](https://agentclientprotocol.com/protocol/v1/tool-calls),

@@ -1,11 +1,10 @@
 # ACP Execution Configuration RPC
 
-Status: implemented; Controller publication and Gateway/Console consumers are switched.
-This is an internal control API, not an ACP extension. External ACP versions and
-payloads are unchanged. B5 integration passed its business and topology scope;
-strict clock-warning results remain recorded separately. See
-[current acceptance](../../docs/current-status.md) and
-[the execution boundary plan](../../docs/controller-acp-execution-boundary-plan.md).
+This document defines the internal Agent ACP Service RPC routes that Agent
+Controller uses to publish execution configuration and settle Agents, that Edge
+Gateway uses to read workspace execution state, and that Admin Console uses to
+read execution audit history. This is an internal control API, not an ACP
+extension. External ACP versions and payloads are unchanged.
 
 ## Transport And Identity
 
@@ -122,7 +121,7 @@ permanent dispatch authority: tool dispatch rechecks current authorization.
 Connection routing (`provider_key`, `request_protocol`, `base_url`) is immutable
 after creation. Credential rotation changes only authentication. Changing the
 destination means creating a different connection, not mixing new credentials
-with an old Run's fixed endpoint. Provider/model retirement in this batch means
+with an old Run's fixed endpoint. Provider/model retirement means
 disable, not physical deletion; historical records and references survive.
 
 ## Settle Agent
@@ -204,10 +203,9 @@ to Controller-owned Run management.
 The existing workspace state functionality moves from Controller to ACP.
 `get-agent-execution-state` returns the current view; `watch-agent-execution-state`
 streams current-view changes. They are internal read-only routes under
-`/rpc/agent-acp`, not custom ACP protocol methods or admission APIs. The exact
-query/stream envelopes must be frozen and tested in B0 before consumer wiring.
+`/rpc/agent-acp`, not custom ACP protocol methods or admission APIs.
 
-The frozen request is `POST` with an empty JSON object and the trusted identity
+The request is `POST` with an empty JSON object and the trusted identity
 headers above. An Agent cannot be selected or an identity overridden in the
 body. `get-agent-execution-state` returns one JSON state;
 `watch-agent-execution-state` returns `text/event-stream` with `workspace_state`
@@ -263,13 +261,13 @@ current view rather than requiring replay of every intermediate change.
 Contract regression covers a Run on connection A, locating and cancelling it
 from reconnected connection B of the same principal, terminal idle restoration,
 and cross-principal/organization rejection. Preserve the existing UI contract
-where possible; any required consumer adjustment is a bounded Agent UI batch,
-not grounds to retain Controller Run state or skip this behavior.
+where possible; a consumer adjustment in Agent UI is not grounds to retain
+Controller Run state or skip this behavior.
 
 The Controller Agent list and Gateway workspace bootstrap contain authorized
 management metadata, not `AgentAccessSubject` or Controller-derived execution
-availability. Controller revision 29 / Gateway revision 12 include lifecycle,
-activation and Runtime state for the chooser. These are deployment observations,
+availability. They include lifecycle, activation and Runtime state for the
+chooser. These are deployment observations,
 not ACP admission. Before ACP state arrives, execution remains unknown/connecting;
 management state cannot unlock input. Gateway does not fan out per-Agent ACP
 queries for bootstrap. First load and reconnect parse these management facts
@@ -319,7 +317,7 @@ configuration/operation conflicts HTTP 409, and storage/service unavailability
 HTTP 503. ACP external transports map local execution/access errors through
 the official SDK rather than forwarding the internal HTTP envelope.
 
-Secret-exclusion acceptance enables production RPC payload capture and uses
+Secret-exclusion testing enables production RPC payload capture and uses
 synthetic credential markers on success, validation rejection and dependency
 failure. Controller/ACP logs, traces, ACP persisted data and Temporal history
 must contain none of those markers. A non-secret RPC is the positive capture
@@ -336,23 +334,11 @@ catalog. Run acceptance fixes the selected model parameters, Provider binding,
 and Runtime configuration, not its authentication. Session authorization can
 override defaults but not organization, Agent, Session, or model ownership.
 
-## Delivery Status
+## Rollout
 
-ACP configuration ingress and normal local execution are wired in the worktree.
-The Controller producer, lifecycle collaboration, Gateway header migration,
-read-only management consumers and Docker integration are pending. Contract and
-single-service PostgreSQL tests do not establish cross-service readiness.
-Existing Controller Run APIs are removed when their consumers switch; they are
-not supported as a long-term alternative.
-
-The foundation schema accepts paired authentication updates for disabled
-connections; the local client implementation can update existing holders.
-Stopping evidence, its scoped persistent query, prompt protection and the
-Agent-settlement HTTP route are wired in B1. Their shared request/result schemas
-and local tests are not Controller lifecycle or deployment acceptance.
-Workspace state get/watch routes are also wired locally; Gateway and UI state
-consumers still require their own migration batches.
-Administrative audit routes and request/response schemas are locally wired,
-including production startup/restart tests against private PostgreSQL. Actual
-Gateway/Console identity forwarding and retained-history presentation are still
-B3/B4/B5 work, not established by the service-local tests.
+Controller publishes execution configuration through this API, and Gateway and
+Admin Console consume the state and audit routes directly. The former
+Controller Run APIs are removed; they are not supported as an alternative.
+Contract and single-service PostgreSQL tests do not by themselves establish
+cross-service readiness; the root integration and Docker E2E suites cover the
+combined path.

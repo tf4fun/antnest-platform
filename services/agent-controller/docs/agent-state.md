@@ -26,8 +26,9 @@ occupancy and all Session/Run decisions; Controller does not inspect Run state.
 Never-ready configured resources remain eligible for rebuild, disable and delete.
 UI labels and actions are projections, not additional stored state machines.
 
-All mutating management paths and execution configuration publication use this model; a
-domain-only transition helper that production never calls is not acceptance.
+All mutating management paths and execution configuration publication use this
+model; a domain-only transition helper that production never calls does not
+count as an implementation of it.
 
-The shared scenario matrix and service delivery status are maintained in
+The shared scenario matrix is maintained in
 [the platform state design](../../../docs/agent-lifecycle-state-model.md).

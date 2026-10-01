@@ -1,13 +1,17 @@
 # Agent Network Policy Management
 
+This document describes how Agent Controller exposes organization-scoped
+network policy reads and assignment CAS through Runtime Egress, and how those
+calls fail and recover.
+
 ## Ownership
 
 Agent Controller provides organization-scoped management entrypoints; Runtime
 Egress owns policy revisions, assignment versions, Tunnel allocation and packet
 enforcement. Agent Controller uses only its own Agent lookup and Egress HTTP
 RPC. It does not read Egress PostgreSQL tables or copy policies into AgentSpec.
-There is no new table, migration, lifecycle operation, generation, or event
-journal for these commands.
+These commands have no Controller table, migration, lifecycle operation,
+generation, or event journal.
 
 These are trusted internal RPCs. Edge/Console must authenticate administrators
 and derive caller scope before forwarding them. Required organization checks
@@ -17,8 +21,8 @@ remain here even when the external caller has already been authenticated.
 
 The authoritative wire definitions are [control API](../../../contracts/agent-controller/control-api.md),
 [machine contract](../../../contracts/agent-controller/control-contract.json) and
-[JSON Schema](../../../contracts/agent-controller/control-api.schema.json),
-contract revision 16. Production composition requires the network policy service;
+[JSON Schema](../../../contracts/agent-controller/control-api.schema.json).
+Production composition requires the network policy service;
 routes cannot start with a missing implementation.
 
 - `GET /internal/agents/{agent_id}/network-policy?organization_id=...` returns
@@ -99,14 +103,14 @@ Policy mutation logs carry request, organization, Agent, actor, policy revision,
 expected version and bounded outcome. No Provider secrets or packet spans are
 introduced.
 
-Reusable evidence lives in application scope/CAS tests, Egress client wire tests,
+Coverage lives in application scope/CAS tests, Egress client wire tests,
 server machine-contract tests and
 [HTTP component tests](../internal/server/network_policy_flow_test.go) plus
 [trace ancestry tests](../internal/server/network_policy_trace_test.go).
 Tests cover wrong scope, disabled-state preservation, exact revision, repeated
 CAS, response loss, conflict, invalid response, redirect rejection and context
-cancellation. Synthetic Egress component tests are not a claim of deployed
-packet enforcement or Gateway-rooted Jaeger acceptance.
+cancellation. These tests use a synthetic Egress and do not verify deployed
+packet enforcement.
 
 ```sh
 go test -race -p=1 ./services/agent-controller/...
@@ -114,5 +118,5 @@ make test-agent-controller-postgres
 make fmt-check lint
 ```
 
-Console BFF/page integration and deployed lifecycle/network acceptance are
-separate [C3 batches](../../../docs/docker-single-node-closeout.md#3-agent-control-workflow-closure-c3).
+Deployed lifecycle and network operation in Docker is described in
+[Docker single-node operations](../../../docs/docker-single-node-operations.md).

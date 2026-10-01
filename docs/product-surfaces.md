@@ -1,39 +1,29 @@
 # Product Surfaces And Feature Convergence
 
-> Status: current product ownership; acceptance recorded per batch, not a full current-HEAD pass
->
-> Updated: 2026-10-01
+This document describes which browser application owns each product workflow
+and the rules each Console surface follows.
 
-This document separates four situations that otherwise look identical in the
-browser: a feature intentionally moved to another application, a feature whose
-owner service does not exist yet, an implemented domain capability that the
-Console failed to expose, and a product concept whose ownership is still
-undecided. Only the third case is a current Console defect.
+It separates four situations that otherwise look identical in the browser: a
+feature intentionally moved to another application, a feature whose owner
+service does not exist yet, an implemented domain capability that the Console
+failed to expose, and a product concept whose ownership is still undecided.
+Only the third case is a Console defect.
 
-The pre-split monolith is a feature inventory, not the target navigation model.
-The new platform restores useful workflows without recreating its service
-coupling or presenting unavailable controls.
+An earlier monolithic product serves as a feature inventory, not the target
+navigation model. The platform restores useful workflows without recreating its
+service coupling or presenting unavailable controls.
 
-Current delivery and recorded evidence are indexed in [current status](current-status.md).
-The [Docker single-node closeout](docker-single-node-closeout.md) retains the
-2026-09-11 baseline and five explicitly deferred browser checks; later workspace,
-model-selection, fallback and discovery checks have their own scope.
-The [Stage 4 plan](stage-4-services.md) records Skill Registry, Channel Manager
-and Task Scheduler. Skill Registry now has a
+The [Stage 4 services document](stage-4-services.md) describes Skill Registry,
+Channel Manager and Task Scheduler. Skill Registry has a
 [minimal technical design](skill-registry-minimal-design.md) and an implemented
-[Registry service batch](../services/skill-registry/README.md). The
-[Admin Console Skills module](../services/admin-console/docs/skills.md) now covers
-publication, inventory, fixed-version Template selection and Agent preparation
-progress. [D6](skill-discovery-console-delivery-20261001.md) adds current
-own-Agent source search/preview and explicit promotion to a formal Skill;
-publication, Template selection and rebuild remain separate user actions.
-[DI1 full propagation](skill-propagation-integration-delivery-20261001.md) passes
-real automatic-source, temporary-use, Console promotion and frozen Template/create/rebuild/Run
-Docker integration, including source invalidation and Registry outage. The
-Template-to-Runtime workflow also retains its earlier Docker evidence. Channel Manager and
-Task Scheduler are not implemented.
-Cross-service audit-service ownership remains undecided; the required Jaeger
-verification report does not introduce an audit service.
+[service](../services/skill-registry/README.md). The
+[Admin Console Skills module](../services/admin-console/docs/skills.md) covers
+publication, inventory, fixed-version Template selection, Agent preparation
+progress, search and preview of Skills from the administrator's own Agents, and
+explicit promotion to a formal Skill. Publication, Template selection and
+rebuild remain separate user actions. Channel Manager and Task Scheduler are not
+implemented. Cross-service audit ownership remains undecided, and trace
+collection does not introduce an audit service.
 
 ## Product Boundary
 
@@ -77,14 +67,14 @@ service base URLs or paste API tokens.
 
 ### B. Stage 4 owner surfaces
 
-These surfaces have separate delivery status. Registry inventory and publication
-are in Console navigation; Template forms and Agent lifecycle dialogs consume
-the Controller and Runtime preparation workflow.
+Registry inventory and publication are in Console navigation; Template forms
+and Agent lifecycle dialogs consume the Controller and Runtime preparation
+workflow.
 
-| Surface                              | Owning service                      | Current state                                                                                                       | Console action after delivery                                     |
-| ------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Channels and Agent bindings          | Channel Manager (`channel-manager`) | Stage 4 planned; service pending                                                                                    | add Channel management pages backed only by Channel Manager RPC   |
-| Hosted Skills and immutable versions | Skill Registry (`skill-registry`)   | Console BFF and Skills page implemented; scoped Registry＋Console Docker E2E and desktop/mobile browser checks pass | Template selection and Agent rebuild remain Controller operations |
+| Surface                              | Owning service                      | Current state                           | Console rule                                                      |
+| ------------------------------------ | ----------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| Channels and Agent bindings          | Channel Manager (`channel-manager`) | Planned; service not implemented        | add Channel management pages backed only by Channel Manager RPC   |
+| Hosted Skills and immutable versions | Skill Registry (`skill-registry`)   | Console BFF and Skills page implemented | Template selection and Agent rebuild remain Controller operations |
 
 Neither surface may read another service's tables or temporarily store its domain
 records in the Console. Task scheduling belongs to Task Scheduler; its UI entry
@@ -95,22 +85,21 @@ published packages, Agent-selected versions, Runtime-applied artifacts and Run
 usage. Pages present these outcomes separately. Agent selection
 and explicit application use Agent Controller operations; a Registry download
 is not evidence that an Agent has installed or used the Skill.
-The implemented delivery includes upload/version lists, explicit Template version
-selection, and configured system Skills. Preparation progress/retry is separate
-from lifecycle change and Runtime readiness; rebuilding Agents keep their
-current execution available until preparation has succeeded. This preflight
-behavior is implemented and covered by the Registry-outage Docker gate. Cross-catalog search,
-imports and review workflows are outside this first delivery. Runtime presets
-are read-only; Console does not add an in-place editor for installed packages.
+The Console supports upload/version lists, explicit Template version selection,
+and configured system Skills. Preparation progress/retry is separate from
+lifecycle change and Runtime readiness; rebuilding Agents keep their current
+execution available until preparation has succeeded, including during a
+Registry outage. Cross-catalog search, imports and review workflows are not
+implemented. Runtime presets are read-only; Console has no in-place editor for
+installed packages.
 
 The separate [learning design](skill-learning-design.md) makes automatic
 generation/updates of managed personal Skills its primary flow. Agent UI shows
 applied-change notices, result history and source links. A paused-review diagnostic
 is read only when results open. Controller owns the learning policy and pins;
-this release adds no UI policy editor, undo, diff view or retained versions.
+there is no UI policy editor, undo, diff view or retained versions.
 Normal automatic application needs no per-change approval and also works with
-the browser closed. The current functional gates have passed; human experience
-acceptance and visual refinements remain, using the existing style.
+the browser closed.
 The [notification design](skill-learning-notifications-design.md) uses SDK 1.5.0's
 `notice` as the live channel, with namespaced metadata linking persisted learning
 changes. Server owns durable results and publication recovery; Node Bridge owns
@@ -118,8 +107,8 @@ reconciliation and existing workspace SSE projections; the frontend deduplicates
 and restores those views. Bounded history reads support recovery, not a parallel
 long-poll notification channel. These remain display items outside model history
 and Run process groups; the SDK capability remains experimental but is wired
-on both ACP and Node and covered by the current acceptance evidence.
-Manual "Save as Skill" is a later optional entry, with authenticated source
+on both ACP and Node.
+Manual "Save as Skill" is a planned optional entry, with authenticated source
 selection and exact-content confirmation for that manual branch. Model text
 cannot manufacture user actions or change the maintenance policy.
 
@@ -130,12 +119,12 @@ It adds no task-management view, kill API or stop button. Waiting maintenance
 releases its execution slot and rechecks task/descendant exit and candidate
 content before applying. It never automatically kills a dev server.
 Personal-to-system publication still requires manual export and administrator
-upload; it is outside this automatic-learning release.
+upload; automatic learning does not publish to the organization.
 
 ### C. Delivered Console Workflows
 
-These workflows close gaps from the original Stage 3A split. The table describes
-current ownership; the historical browser/test counts below retain their dates.
+These workflows close gaps left when the administrator and end-user
+applications were split. The table describes current ownership.
 
 | Capability                            | Existing authority                                                                              | Current product surface                                                                                                                                                     |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -152,7 +141,7 @@ current ownership; the historical browser/test counts below retain their dates.
 | Enterprise login ingress              | Identity supports login-method discovery, OIDC start/callback, and SCIM protocol resources      | implemented: organization-aware SSO choices on login, server-side callback-to-cookie exchange, and Edge SCIM pass-through                                                   |
 | Agent executable lineage              | Controller retains immutable AgentSpec and Execution revisions                                  | frozen build details and exact Template revision links; model links open current settings without changing the build snapshot                                               |
 | Execution history and synchronization | ACP owns execution audit; Controller owns configuration synchronization receipts                | independent audit page, deleted-Agent history and separate stored publication acknowledgement                                                                               |
-| Runtime image presentation            | Runtime Controller resolves installed images; Agent Controller freezes executable configuration | implemented: default/current image or explicit repository/tag selection, server-derived readable labels, immutable publication, and refreshed container acceptance          |
+| Runtime image presentation            | Runtime Controller resolves installed images; Agent Controller freezes executable configuration | implemented: default/current image or explicit repository/tag selection, server-derived readable labels, and immutable publication                                        |
 
 OIDC and SCIM are not implemented as write-only forms. Identity Service exposes
 explicit administrative reads that select no OIDC secret or SCIM token hash.
@@ -218,10 +207,9 @@ storage, or become a general credential administration page. External identity
 credentials remain owned by the configured identity provider. Rejecting the
 submitted current password is an account-operation error and does not discard
 the otherwise valid Edge browser session.
-Component acceptance covers validation before transport, pending-action gating,
+Component tests cover validation before transport, pending-action gating,
 rejected input retention, explicit retry, confirmed success, and credential
-clearing on dismissal. Synthetic HTTP fixtures provide reusable regression
-coverage; the real browser rotation and restoration check is recorded below.
+clearing on dismissal, using synthetic HTTP fixtures.
 
 Sign-out is also an authoritative remote operation. Console keeps the current
 page while Edge revokes the session and clears its cookies; the pending action
@@ -238,7 +226,7 @@ the failure message. This retry does not reload the document or load protected
 resources before authentication succeeds.
 
 Agent lifecycle management, durable operation tracking, and per-Agent event
-history are already part of Stage 3A. The Fleet defaults to current Agents;
+history are part of the administrator control plane. The Fleet defaults to current Agents;
 deleted records are available only through the explicit `Deleted` audit view,
 where their detail and event history are read-only. Reading a completed
 deletion, including its arrival through live events, leaves the retained detail
@@ -315,31 +303,15 @@ blocking creation. Existing Templates remain readable and revisable. Resolved
 images carry a server-derived human source; a bare immutable ID without that
 metadata is called `Platform runtime` without inventing a tag.
 The owner-side resolution query, Agent Controller publication, and Console tag
-choice are wired together. This increment does not introduce a registry, image
-builder, or implicit pull. Agent Controller resolves a chosen repository/tag
+choice are wired together. There is no image registry, image builder, or
+implicit pull. Agent Controller resolves a chosen repository/tag
 only after replay and reference scope checks, then freezes both the immutable
 image and its human source in the
 Template revision. A command replay returns the original pin even when the tag
 moves or the resolver is unavailable. Editing other Template fields preserves
 the previous pin; selecting a different image is an explicit action. Console
 continues to own only form presentation and safe DTOs, not Docker access.
-On 2026-09-07 the Runtime Controller query passed its service tests, route/DTO
-contract checks, short-span propagation test, and an opt-in read-only check
-against the installed Docker Runtime image. `make fmt-check` and `make lint`
-also passed. The subsequent Catalog HTTP/PostgreSQL integration proves source
-persistence, replay without resolver access, pin-preserving revision, and no
-publication on resolver failure. This integration uses an HTTP resolver fixture;
-the actual Docker image lookup is verified separately. The rebuilt Runtime
-Controller, Agent Controller, and Console also passed the full isolated Stage 3
-Docker E2E with the mock model: unavailable-tag rejection without publication,
-tag resolution and replay, source retention on Agent creation and Template
-revision, lifecycle operations, ACP interaction, and Jaeger assertions. Test
-containers, volumes, and networks were removed afterward. Read-only browser
-checks on the updated retained
-preview verified default/custom creation choices, current-image preservation in
-the revision form, and usable 1440x900 and 390x844 layouts with no console errors.
-That read-only check did not publish a Template revision; the later authorized
-mutation acceptance is recorded below.
+An unavailable tag is rejected without publication.
 Primary detail failures retain their HTTP meaning instead of collapsing into a
 generic retry state. Model, Template, and Agent reads offer retry only for a
 transient failure. A missing or no-longer-retained resource and an explicit
@@ -466,14 +438,12 @@ failure semantics are explicit.
 
 #### Scheduled Tasks
 
-No page or API is added yet. Stage 4 includes Task Scheduler (`task-scheduler`)
-as the planned initiator of scheduled Agent usage. It will own schedules and
-trigger records, while Agent Controller retains configuration/lifecycle and
-ACP Service retains admission/execution.
-Execution identity, Session reuse, overlap, and missed-fire policy remain future
-design decisions. The [Stage 4 plan](stage-4-services.md) records current scope;
-the [single-node closeout](docker-single-node-closeout.md#6-scheduler-planning-only)
-retains the earlier Stage 3 exclusion.
+No page or API exists yet. Task Scheduler (`task-scheduler`) is the planned
+initiator of scheduled Agent usage. It will own schedules and trigger records,
+while Agent Controller retains configuration/lifecycle and ACP Service retains
+admission/execution. Execution identity, Session reuse, overlap, and missed-fire
+policy remain future design decisions. The
+[Stage 4 services document](stage-4-services.md) records the current scope.
 
 #### Cross-service Audit And Events
 
@@ -496,45 +466,44 @@ system audit trail. Console's implemented Execution history page reads only
 ACP-owned execution audit; it is not a generic cross-service audit service.
 A unified System/Audit/Event surface remains deferred.
 
-## Delivery Order
+## Convergence Summary
 
-The convergence work is intentionally ordered by existing authority, not by
-the old sidebar position.
+Console workflows are grouped by existing authority, not by an old sidebar
+position:
 
-1. **Catalog closure (implemented)**: authoritative model presets, Model
-   Profile and Template get/revise BFF contracts, details, edit flows, and
-   contract/browser tests. Console maintains builtin defaults and discovers
-   remote candidates; Controller persists explicitly selected model settings.
-   DeepSeek and OpenRouter connections expose editable limits and capabilities.
-2. **Directory closure (implemented)**: Groups display, local-user creation,
-   membership role/profile updates, organization access, and system-admin User
-   activation controls.
-3. **Enterprise provisioning closure (implemented)**: secret-free OIDC
-   Provider and SCIM token list contracts, Console management, organization
-   SSO discovery/callback, public SCIM ingress, and one-time credential handling.
-4. **Agent workspace integration (implemented)**: Edge Gateway `/workspace/`
-   application, authenticated ACP bridge, authoritative Agent bootstrap, and
-   Console application-switch link.
-5. **Agent Fleet convergence (implemented)**: explicit current/deleted views,
-   read-only retained records, human-readable owner projection, failure
-   evidence, command gating, and authoritative SSE recovery.
-6. **First-run convergence (implemented)**: one stateless setup projection over
-   Model, Template, Directory, and Agent authority, with actionable empty,
-   blocked, unavailable, and retry states.
-7. **Agent lineage convergence (implemented)**: exact executable Template revision,
-   frozen model parameters, historical Template and current-model links, frozen
-   policy, and Runtime input on Agent detail, projected without credentials or
-   internal endpoints.
-8. **Inventory traversal (implemented)**: bounded cursor traversal for Model,
-   Template, current Agent, and deleted Agent inventories, with page-local retry
-   and identity-based de-duplication.
-9. **New owner services**: Channel and Skill pages only after their services
-   and RPC contracts are implemented.
+1. **Catalog**: authoritative model presets, Model Profile and Template
+   get/revise BFF contracts, details and edit flows. Console maintains builtin
+   defaults and discovers remote candidates; Controller persists explicitly
+   selected model settings. DeepSeek and OpenRouter connections expose editable
+   limits and capabilities.
+2. **Directory**: Groups display, local-user creation, membership role/profile
+   updates, organization access, and system-admin User activation controls.
+3. **Enterprise provisioning**: secret-free OIDC Provider and SCIM token list
+   contracts, Console management, organization SSO discovery/callback, public
+   SCIM ingress, and one-time credential handling.
+4. **Agent workspace**: Edge Gateway `/workspace/` application, authenticated
+   ACP bridge, authoritative Agent bootstrap, and Console application-switch
+   link.
+5. **Agent Fleet**: explicit current/deleted views, read-only retained records,
+   human-readable owner projection, failure evidence, command gating, and
+   authoritative SSE recovery.
+6. **First run**: one stateless setup projection over Model, Template,
+   Directory, and Agent authority, with actionable empty, blocked, unavailable,
+   and retry states.
+7. **Agent lineage**: exact executable Template revision, frozen model
+   parameters, historical Template and current-model links, frozen policy, and
+   Runtime input on Agent detail, projected without credentials or internal
+   endpoints.
+8. **Inventory traversal**: bounded cursor traversal for Model, Template,
+   current Agent, and deleted Agent inventories, with page-local retry and
+   identity-based de-duplication.
+9. **New owner services**: Channel pages are added only after Channel Manager
+   and its RPC contract are implemented.
 
 Scheduled Tasks and platform-wide Audit/Event are not hidden work inside these
-increments.
+groups.
 
-## Acceptance Rules
+## Completion Rules
 
 A migrated surface is complete only when:
 
@@ -551,121 +520,7 @@ A migrated surface is complete only when:
    and traces;
 5. contract, service, browser-component, and applicable disposable-stack tests
    prove the workflow;
-6. this matrix and the affected business sequence are updated.
+6. this document and the affected flow description are updated.
 
-## Historical Stage 3A Acceptance Follow-up
-
-The results and counts below describe the original convergence batches. Model
-history and catalog ownership have since changed as specified above; latest
-workspace, execution-audit and model-management evidence is in [current status](current-status.md).
-
-Overview failure recovery and Catalog creation retries (BFF contract 31) have
-service HTTP and browser-component coverage. Inventory traversal now has
-page-level coverage across Model, Template, Current Agent, and Deleted Agent
-views, including terminal responses, explicit transient retry, duplicate-click
-prevention, and Deleted-read failures that must not trigger automatic traffic.
-Directory and Provisioning mutation coverage now includes successful commands
-followed by failed reads, input retention on rejection, row-action freshness,
-system-only OIDC access, and SCIM one-time credential and clipboard handling.
-Catalog revision component tests cover rejected form retention, pending
-publication, authoritative revision feedback, terminal detail failures,
-historical reads without a current-head dependency, and independent recovery
-of the Model revision referenced by a published Template.
-Runtime image tests cover digest-free presentation, creation with the platform
-default or an explicit installed tag, creation without a platform default,
-resolver rejection, and revision pin preservation when the deployment default
-changes or disappears. The rebuilt services passed the full isolated Stage 3
-suite, including deletion and test-resource cleanup. Read-only browser checks
-confirmed digest-free create/revise forms and detail presentation. The later
-authorized browser check also verified Template publication and pin-preserving
-Agent lineage.
-Agent operation component tests now exercise completed-deletion history,
-SSE-driven transition to retained detail, explicit return navigation, active
-versus last-operation labeling, and preservation of distinct failure phases.
-They caught and removed an unconditional deletion-completion redirect that had
-made retained detail unreadable. Agent mutation component tests additionally
-cover creation retry identity, input retention, duplicate/dismissal prevention,
-the four lifecycle commands' admission acknowledgements, independent transient
-and terminal follow-up reads, and read-only retry without reopening stale
-actions. Switching Agent identity also discards an old pending dialog and its
-late rejection. The latest frontend passes 77 unit tests and 116 component
-tests. The fourteen application-session cases cover confirmed logout, blocked
-duplicate submission, HTTP/network rejection, fresh login after expiration,
-drawer/account-dialog cleanup, stale logout responses after a new login, startup
-401 versus terminal 403/404/410, and single-flight HTTP/network failure recovery
-without document reload or early protected-resource reads.
-These use the real application and API wrapper with a deterministic HTTP
-fixture. Seven account-security component cases additionally cover validation,
-pending submission/dismissal gates, HTTP/network rejection, explicit retry,
-credential clearing, and absence of credential persistence. Edge's HTTP tests
-separately verify cookie expiration on revocation and cookie preservation on
-retryable Identity failure.
-Both Edge logout tests, `make fmt-check`, and `make lint` passed. The standard
-Console image includes the session fix and passed its production build; the
-retained preview was updated without replacing other services or Runtime data.
-
-Container acceptance passed on 2026-09-07 after rebuilding the standard images.
-The isolated Stage 3 E2E covers model/template creation replay, organization
-isolation, catalog revisions, Agent create/disable/enable/rebuild/delete, the
-Workspace ACP path, and Jaeger traces using the deterministic model fixture.
-The test verifies browser DTOs without internal organization fields and checks
-ownership through Agent Controller's scoped interface. Cleanup stops lifecycle
-creators before deleting test resources and fails if containers or volumes
-remain; this run left no test resources behind.
-
-Read-only browser acceptance on 2026-09-07 covered Overview at 1440x900 and
-390x844; compact navigation; Model/Template inventory and revision detail;
-Directory; current/deleted Fleet; Agent detail and its rebuild dialog; OIDC and
-SCIM public endpoint presentation; the local-password form; and Runtime tag
-selection. Drawer background was inert, long forms remained scrollable, live
-SSE recovered, and idle Agents displayed one completion status under `Last
-operation`. No browser warnings or errors were observed. The retained preview
-uses only synthetic accounts and model data; disposable test stacks were
-cleaned up.
-
-A further read-only check opened a nonexistent Template revision through the
-real Edge/BFF/Agent Controller path. It displayed `Agent template not found`
-with no Retry button. At 390x844 the document and viewport widths were both
-390px, and the visible return link restored the normal Template inventory.
-This proves the missing-revision browser path, not an unauthorized-user flow.
-The subsequent startup-recovery change passed component tests and the standard
-production build. A fresh read-only browser tab confirmed the rebuilt asset,
-authenticated Template inventory, platform-default/tag selection, and
-digest-free Template detail. The browser log contained an unrelated translation
-extension fetch error; no application-origin error was observed in this check.
-This verifies normal startup, not the failure-recovery branches covered by the
-component tests.
-
-After explicit user approval, real browser acceptance published Template
-revision 3, verified it survived reload, and confirmed that the existing Agent
-still referenced revision 1 with unchanged lifecycle history. Sign-out opened
-login, reload did not restore the revoked session, and password login restored
-the original administrator route. An ordinary member was directed to Workspace
-both after login and after direct Console navigation. A separate synthetic
-Organization administrator could use Directory and SCIM administration but
-could not see system-only OIDC or global user-activation controls. No existing
-administrator permissions or Agent runtimes were changed.
-Direct navigation to the restricted OIDC JSON endpoint was blocked by Chrome,
-so it is not evidence of a server-side 403. HTTP authorization and terminal
-failure rendering retain their service/component evidence; the browser checks
-above prove actual role-dependent navigation and available controls.
-
-Authorized real browser password acceptance also passed using only the
-separate synthetic Organization administrator. An incorrect current password
-left the authenticated session and input form intact. A valid change displayed
-success and removed the password fields; the old password was rejected at
-login and the replacement password succeeded. The original test password was
-then restored and verified by another login. Finally, the preview returned to
-the original system administrator and the temporary acceptance account was
-disabled through Directory, retaining its audit record. No existing
-administrator password or Agent configuration was changed.
-
-The bounded cross-surface audit and browser acceptance are complete for the
-currently decided Console scope. Reusable evidence remains 77 unit tests and
-116 component tests, owner/BFF HTTP and contract tests, and the isolated Stage 3
-Docker E2E described above; format, lint, and type checks passed. Browser
-acceptance complements these tests rather than replacing them.
-Channel pages wait for their owner service; the Stage 4 Skill management page is
-newer than this Stage 3 acceptance baseline and has separate scoped Docker evidence. Task Scheduler is planned
-for Stage 4 and cross-service Audit remains undecided. None is in the Stage 3
-closeout scope.
+Channel pages wait for their owner service. Task Scheduler is planned, and
+cross-service Audit remains undecided.

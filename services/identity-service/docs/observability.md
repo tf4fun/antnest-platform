@@ -1,7 +1,8 @@
 # Identity Observability
 
-This service implements the shared [observability contract](../../../docs/observability-contract.md)
-at HTTP, JSON RPC/SCIM, OIDC adapter, and PostgreSQL driver execution boundaries.
+This document describes how Identity Service implements the shared
+[observability contract](../../../docs/observability-contract.md) at HTTP,
+JSON RPC/SCIM, OIDC adapter, and PostgreSQL driver execution boundaries.
 Business services do not call tracing APIs or an injected telemetry port.
 
 ## Transaction Envelopes
@@ -12,7 +13,11 @@ children; non-transaction SQL keeps its original parent. Batch envelopes remain.
 Prepare and pool acquisition do not create spans: they are not a second SQL
 execution. `antnest.transaction.outcome` distinguishes completion.
 
-The private database pool returns a transaction handle that owns the envelope context. Query/Exec/QueryRow inherit it automatically while preserving the caller's deadlines and cancellation. Commit/Rollback finish it once; a deferred second Rollback cannot change the first outcome. No business method creates or names a span.
+The private database pool returns a transaction handle that owns the envelope
+context. Query/Exec/QueryRow inherit it automatically while preserving the
+caller's deadlines and cancellation. Commit/Rollback finish it once; a deferred
+second Rollback cannot change the first outcome. No business method creates or
+names a span.
 
 ## Capture Policy
 
@@ -41,14 +46,14 @@ do not pre-read or aggregate streams, and preserve flushing and upgrades.
 OIDC semantic validation has an INTERNAL adapter span, not a duplicate CLIENT;
 HTTP 200 does not hide OAuth or signature/claims failures.
 
-RPC and SCIM writers observe errors before mapping their existing wire
-responses. Error summaries retain safe code, phase and up to four cause types;
-arbitrary error strings and database Detail are excluded. PostgreSQL observation
-is separate from these protocol summaries. `repository.ParsePoolConfig` installs
-`github.com/exaring/otelpgx` v0.12.0 with `otelpgx.NewTracer()` before the production
-pool is created. The same connection config covers queries, batches, transaction
-statements and connections acquired from the pool. Migrations and bootstrap use
-that pool; its ownership, shutdown and transaction rollback behavior are unchanged.
+RPC and SCIM writers observe errors before mapping their wire responses. Error
+summaries retain safe code, phase and up to four cause types; arbitrary error
+strings and database Detail are excluded. PostgreSQL observation is separate
+from these protocol summaries. `repository.ParsePoolConfig` installs
+`github.com/exaring/otelpgx` v0.12.0 with `otelpgx.NewTracer()` before the
+production pool is created. The same connection config covers queries, batches,
+transaction statements and connections acquired from the pool. Migrations and
+bootstrap use that pool.
 
 Driver CLIENT titles retain the SDK's default operations (`SELECT`, `INSERT`,
 `BEGIN`, `COMMIT`, `ROLLBACK`). No SQL parser, table-name inference, extra schema
@@ -66,59 +71,58 @@ Driver failures retain the default exception/status information and
 `pgx.sql_state`. Driver error messages and SQL literals can contain server-supplied
 or application-supplied text; they are not the bounded protocol error summaries.
 Restrict access to traces accordingly. No parameter capture option, handwritten
-SQL parser, per-query naming callback, whitelist or truncation is installed. Error normalization
-still preserves its original cause and existing public error code/message.
+SQL parser, per-query naming callback, whitelist or truncation is installed.
+Error normalization preserves the original cause and the public error
+code/message.
 
-`db.client.operation.duration` and `db.client.operation.errors` replace
-`antnest.identity.repository.operations` / `antnest.identity.repository.duration`.
-They measure driver operations, not business results. Business rejection and
-protocol outcome observation remain at the existing HTTP/RPC/SCIM boundaries.
+## Span And Metric Names
 
-## Acceptance And Limits
+- Inbound SERVER spans are named `HTTP <METHOD> <route>`.
+- OIDC CLIENT spans are named `HTTP <METHOD> <hostname>`, without path, query,
+  or full-URL attributes.
+- OIDC INTERNAL spans are `identity.oidc.discover` and
+  `identity.oidc.exchange_verify`. They are semantic adapter operations, not
+  duplicate CLIENT spans.
+- Database CLIENT spans come from instrumentation scope
+  `github.com/exaring/otelpgx` with `db.system.name=postgresql`. Select them by
+  scope, operation, and parent relationship rather than by repository method
+  name or fixed span count. There are no `identity.repository.<operation>`
+  spans.
+- Database SQLSTATE is `pgx.sql_state`; protocol error summaries expose
+  `db.response.status_code`.
+- HTTP `antnest.result` uses `rejected` for 4xx rejections and `cancelled` for
+  cancellation, and `antnest.outcome` is also recorded. An aborted request is
+  not reported as a transmitted HTTP 500.
+- `db.client.operation.duration` and `db.client.operation.errors` measure
+  driver operations, not business results. There are no
+  `antnest.identity.repository.operations` or
+  `antnest.identity.repository.duration` series. Business rejection and
+  protocol outcomes are observed at the HTTP/RPC/SCIM boundaries.
 
-Final formatting, lint, race and PostgreSQL admission results are recorded in
-the [platform rollout](../../../docs/observability-rollout.md). Cross-service
-parent trees and Jaeger scenarios are a separate integration acceptance step.
+## Limits
 
-Pure in-memory decisions without an existing adapter boundary are not separately
-traced. No per-chunk or per-token spans, new retry, schema, audit store or
-diagnostic database is added. Existing revocation trace-parent persistence and
-non-database adapter observations are retained.
+Pure in-memory decisions without an adapter boundary are not separately
+traced. There are no per-chunk or per-token spans, and observability adds no
+retry, schema, audit store or diagnostic database. Revocation feed rows store
+the originating trace parent. Readiness does not perform recursive probes.
 
-## Regression Coverage
+## Test Coverage
 
-Tests cover switch-off without serialization, full nested/new RPC fields,
+Service tests cover switch-off without serialization, full nested RPC fields,
 content beyond 16 KiB, unchanged credential wire responses, HTTP/SCIM/stream
 content exclusion, remote parent IDs, HTTP-200 protocol failures, body lifetime,
 cancellation, SQLSTATE and exporter-disabled propagation.
 
-PostgreSQL regressions use the existing isolated-schema fixture and the production
-pool configuration constructor. `TestPostgresDriverObservationAutomaticExecution`
-covers unparented and non-recording-parent work, a new unwrapped query function,
+PostgreSQL tests use the isolated-schema fixture and the production pool
+configuration constructor. `TestPostgresDriverObservationAutomaticExecution`
+covers unparented and non-recording-parent work, an unwrapped query function,
 QueryRow/Query/Exec, commit/rollback, batch statements, a dedicated connection,
 SQLSTATE errors, exact execution counts, parent IDs and bind/result exclusion.
 `TestIdentityProtocolHappyPath` checks driver children of local login, SCIM User
-creation and OIDC callback SERVER spans while retaining its protocol and replay
+creation and OIDC callback SERVER spans, together with its protocol and replay
 assertions. Lock-admission probes compose with the production driver tracer.
 
-Root assertion changes: existing `HTTP <METHOD> <route>` SERVER names remain;
-`identity.repository.<operation>` spans and their metric series are removed.
-Assertions must select driver CLIENT spans by instrumentation scope
-`github.com/exaring/otelpgx`, `db.system.name=postgresql`, operation and parent
-relationships, rather than repository method names or old fixed span counts.
-Database SQLSTATE assertions use `pgx.sql_state`; protocol summaries continue
-to expose `db.response.status_code`. Root integration scripts and historical
-cross-service diagrams are outside this service-owned change and require
-coordinator review. OIDC CLIENT names use
-`HTTP <METHOD> <hostname>`, without path/query/full-URL attributes. New INTERNAL
-names are `identity.oidc.discover` and `identity.oidc.exchange_verify`; these
-are semantic adapter operations, not duplicate CLIENT spans. Existing HTTP
-`antnest.result` is retained but 4xx rejection now uses `rejected`, cancellation
-uses `cancelled`, and `antnest.outcome` is added. An aborted request no longer
-invents a transmitted HTTP 500. There is no readiness behavior change or new
-recursive probe. Revocation trace-parent storage is unchanged.
-
-Recommended coordinator regression commands, to be executed serially:
+Run the checks serially from the repository root:
 
 ```sh
 make fmt-check
@@ -128,7 +132,5 @@ go test -race -p=1 ./services/identity-service/...
 make test-identity-postgres
 ```
 
-Also run the applicable root architecture/documentation checks and real
-cross-service/Jaeger profiles. Tests, builds, formatting, lint and deployment
-were not run by the delegated service writer. This document is not admission
-evidence.
+Cross-service parent trees and Jaeger scenarios are outside this service's
+test suite.

@@ -1,50 +1,59 @@
-# Workspace State Integration
+# Workspace E2E Suites
 
-Current results and implementation boundaries are indexed in
-[current status](../../../docs/current-status.md). The protocol entry and automated
-C4 browser entry use current contracts, with separate scope and evidence.
-The former manual four-scenario profile now runs as a repeatable browser test.
-The [retirement audit](../../../docs/acceptance-retirement-audit.md) identifies old
-orchestration/admission helpers; the [first cleanup](../../../docs/acceptance-retirement-revalidation.md)
-removes that superseded graph. The shared byte checker and model peers still
-have current consumers.
+These suites exercise the Agent workspace end to end: Gateway and ACP execution
+state, real Runtime tools, cancellation and recovery, and the Agent UI in a real
+browser. Deterministic fixture tests run without Docker; the profiles below
+start disposable Docker stacks.
 
-## Current protocol profile
+Run the fixture tests first:
 
-`make e2e-workspace` runs `current-flow.mjs` through the disposable Foundation
-setup with the installed official ACP SDK. The [migration contract](protocol-migration-contract.md)
-and [revalidation report](../../../docs/workspace-protocol-revalidation.md) define
-the six-field Gateway/ACP state, public execution audits, real bash
-process cancellation, explicit Rebuild recovery, offline completion/replay,
-replacement Runtime context and owner revocation/offboarding.
+```sh
+make test-workspace-fixtures
+```
 
-Run `make test-workspace-fixtures` first. The Docker profile requires the current
-local application images, isolates its subnets and removes its own labeled
-containers, volumes and networks even on failure. Evidence and raw traces are
-private under `artifacts/verification/lifecycle-workspace/<project>/`; only reviewed summaries
-belong in documentation. Exit 1 means business/topology failure; exit 2 retains
-strict errors/timing warnings even if business and topology checks pass.
+## Protocol profile
 
-An in-flight Tool cancellation retains unknown effects and
-`runtime_barrier_required` until explicit Rebuild replaces that Runtime. The
-profile proves physical process exit separately from ACP's immutable unknown
-Run facts. It does not claim automatic reuse, browser layout acceptance or a
-complete C4 milestone. The superseded `flow.mjs` and Controller admission oracle
-are retired; current state/request Trace checks remain.
+`make e2e-workspace` runs `current-flow.mjs` against a disposable Foundation
+stack with the installed official ACP SDK. The
+[protocol contract](protocol-migration-contract.md) defines what it asserts:
 
-## Current C4 Browser Revalidation
+- the six-field Gateway/ACP execution state and public execution audits;
+- real bash process cancellation and explicit Rebuild recovery;
+- offline completion and replay;
+- replacement Runtime context;
+- owner revocation and offboarding.
 
-`c4-run.mjs` is the current-contract automated browser profile. It creates a
-disposable project and synthetic member through Provider/Model/Template APIs,
-uses real Gateway/ACP/Runtime services, and controls only the external model.
-It covers uploads, model-capability rejection, tool approval, cross-Session
-cancel during a held model request, offline completion, close/reopen, Rebuild,
-member revocation, private-data boundaries and desktop/mobile layout.
-Two real browser connections also observe the same Session: its activity time
-must change after a new prompt, both pages must display the received title/time,
-and a fresh list/load after reload must preserve those exact values.
+An in-flight Tool cancellation keeps unknown effects and
+`runtime_barrier_required` until an explicit Rebuild replaces that Runtime. The
+profile checks physical process exit separately from ACP's immutable unknown Run
+facts. It does not cover automatic reuse or browser layout.
 
-After the service-owned tests/build and current Docker images are ready, run:
+The profile requires the current local application images, isolates its
+subnets, and removes its own labeled containers, volumes and networks even on
+failure. Raw traces stay private under
+`artifacts/verification/lifecycle-workspace/<project>/`. Exit code 1 means a
+business or topology failure; exit code 2 means strict errors or timing warnings
+remain even though business and topology checks passed.
+
+## Browser profile
+
+`c4-run.mjs` is the automated browser profile, and
+`make e2e-workspace-browser` (`browser-run.mjs`) runs it. It creates a
+disposable project and synthetic member through the Provider, Model and Template
+APIs, uses real Gateway, ACP and Runtime services, and controls only the
+external model through a deterministic OpenAI-compatible peer. It covers:
+
+- uploads and model-capability rejection;
+- tool approval;
+- cross-Session cancel during a held model request;
+- offline completion, close and reopen;
+- Rebuild and member revocation;
+- private-data boundaries;
+- desktop and mobile layout.
+
+Two real browser connections observe the same Session. Its activity time must
+change after a new prompt, both pages must display the received title and time,
+and a fresh list/load after reload must preserve those values.
 
 ```sh
 node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs
@@ -53,97 +62,74 @@ node tests/e2e/workspace-closeout/c4-run.mjs
 
 `ANTNEST_C4_AGENT_UI_IMAGE`, `ANTNEST_C4_AGENT_ACP_IMAGE` and
 `ANTNEST_C4_EDGE_GATEWAY_IMAGE` optionally select separately built candidate
-images for the three services changed by the Bridge architecture.
-The Runtime image is resolved from `antnest/antnest-runtime:local`. The runner
-uses isolated subnets with separate fixed/dynamic address ranges and no host
-Temporal port, so the retained development stack can remain running. It removes
-its labeled containers, volumes and networks on completion/failure/interruption.
-Reports, traces and screenshots are written to `artifacts/verification/c4-browser-<timestamp>/`.
-Strict trace warnings retain a failing exit code even when browser checks pass.
-The current driver uses same-origin HTTP/SSE and requires Gateway HTTP → Agent
-UI Bridge → ACP HTTP Trace ancestry; it does not rely on ACP WebSocket frames.
-See the [current evidence and limits](../../../docs/c4-browser-revalidation.md).
-The later [ACP/Runtime/UI integration batch](../../../docs/acp-platform-integration.md)
-records the combined candidate after the SDK and Session metadata fixes.
+images. The Runtime image is `antnest/antnest-runtime:local`. The runner uses
+isolated subnets and no host Temporal port, so a development stack can keep
+running, and it removes its labeled resources on completion, failure or
+interruption. Reports, traces and screenshots are written to
+`artifacts/verification/c4-browser-<timestamp>/`. Strict trace warnings keep a
+failing exit code even when browser checks pass.
 
-This cancellation scenario has no in-flight tool effect. Automatic recovery
-after an unconfirmed tool effect remains a separate product-policy question;
-the historical C4 milestone is not silently broadened or retroactively closed.
+The browser uses same-origin HTTP/SSE, and the trace check requires Gateway HTTP
+-> Agent UI Bridge -> ACP HTTP ancestry. The cancellation scenario has no
+in-flight tool effect; automatic recovery after an unconfirmed tool effect is
+out of scope.
 
-This disposable C4 profile uses the real Docker services behind Edge Gateway,
-the official ACP SDK and a deterministic OpenAI-compatible model peer. The model
-is the only synthetic business dependency; it requests real Runtime tools.
-No production/provider credential or retained acceptance project is used.
+## Real-provider development profile
 
-## Former Workspace browser entry
-
-`make e2e-workspace-browser` and `browser-run.mjs` now invoke the current C4
-HTTP/SSE browser profile above. The four-scenario ACP WebSocket driver was
-superseded by the Node Bridge UI: it waited for a composer immediately after
-Agent selection and captured JSON-RPC browser frames that the current UI no
-longer sends. The 2026-09-21 [migration contract](browser-migration-contract.md)
-and [revalidation report](../../../docs/workspace-browser-revalidation.md)
-remain historical evidence for that earlier candidate. The failed old-driver
-run and successful current C4 run on 2026-09-25 are retained under
-`artifacts/verification/final-regression-20260925/`.
-The shared exact workspace-byte validator remains active in C4.
-
-## Real Provider Development Acceptance
-
-The real-browser profile also queries Jaeger after a six-second export wait.
-`chat-trace.mjs` checks each prompt's Gateway SERVER -> Gateway CLIENT -> ACP
-SERVER -> Run -> model/Runtime ancestry, rejects duplicate/missing parents,
-warnings and error spans, and verifies that content capture and credentials are
-absent. Two tool prompts must contain actual Runtime `tools/call` SERVER spans.
-Run `node --test tests/e2e/workspace-closeout/chat-trace.test.mjs` for the reusable
-positive and negative trace fixtures. This profile requires RPC capture disabled;
-the `--jaeger` option defaults to `http://127.0.0.1:16686`.
-
-The [2026-09-16 clock-skew maintenance decision](../../../docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
-defers dedicated timing work for inspected, recorded clock warnings. Keep the
-strict script failure and report business, topology and timing results separately;
-the decision does not mark this browser profile passed. New or unexplained
-warnings, structural defects, credential leaks and business errors retain their
-existing checks. A small duration alone is not an exemption. Revisit the known
-timing issue during an SDK upgrade or if its magnitude or diagnostic impact grows.
-
-`development-browser.mjs` exercises an already-running, disposable development
-instance through the real Console and Agent UI. It does not mock ACP, the model,
-or the Runtime, and deliberately retains the created data for human review.
-
-From the platform repository root:
+`development-browser.mjs` drives an already-running disposable development
+instance through the real Console and Agent UI. It does not mock ACP, the model
+or the Runtime, and it keeps the created data for human review.
 
 ```sh
 node tests/e2e/workspace-closeout/development-browser.mjs --confirm-development
 ```
 
-Prerequisites: the Stage 3 stack at `http://127.0.0.1:8090`, a locally available
-`antnest/antnest-runtime:local` image, bootstrap credentials in `.env`, and
-`DEEPSEEK_API_KEY` in `../.secret`. Install the Agent UI web dependencies and
-Playwright Chromium first. The script accepts `--gateway`, `--env-file` and
-`--secret-file`; the target must be localhost. Real model calls incur usage.
+Prerequisites:
 
-The default flow requires empty provider, model, template and Agent inventories.
-It logs in, connects the built-in DeepSeek Flash model, creates a template and
-Agent, waits for actual Runtime availability, follows Console's Open chat link,
-sends a greeting, writes/reads `/workspace/acceptance-note.txt`, reloads the
-conversation, and calls the read tool again. It also checks collapsed tool
-activity, mobile overflow and the explicit Agent chooser.
+- the Stage 3 stack at `http://127.0.0.1:8090`;
+- a local `antnest/antnest-runtime:local` image;
+- bootstrap credentials in `.env`;
+- `DEEPSEEK_API_KEY` in `../.secret`;
+- the Agent UI web dependencies and Playwright Chromium.
 
-To retry only chat acceptance without duplicating resources:
+The script accepts `--gateway`, `--env-file` and `--secret-file`; the target
+must be localhost. Real model calls incur usage.
+
+The default flow requires empty provider, model, template and Agent
+inventories. It logs in, connects the built-in DeepSeek model, creates a
+template and Agent, waits for Runtime availability, follows Console's Open chat
+link, sends a greeting, writes and reads `/workspace/acceptance-note.txt`,
+reloads the conversation, and calls the read tool again. It also checks
+collapsed tool activity, mobile overflow and the explicit Agent chooser.
+
+To repeat only the chat flow on an existing Agent:
 
 ```sh
 node tests/e2e/workspace-closeout/development-browser.mjs --confirm-development --agent agent_REPLACE_ME
 ```
 
-This mode creates a new Session on the existing Agent. It overwrites only the
-synthetic `/workspace/acceptance-note.txt` file. It does not prove blank-instance
-initialization again. Never run it against business data.
+This creates a new Session and overwrites only the synthetic
+`/workspace/acceptance-note.txt` file. Never run it against business data.
+Metrics and credential-free screenshots are written under
+`artifacts/verification/development-acceptance/`. The stack and its data remain;
+remove them through the Agent lifecycle API.
 
-Final metrics and credential-free chat screenshots replace the previous files
-under `artifacts/verification/development-acceptance/`. Scripts themselves live here, not in the
-cache. Browser processes close on success or failure. The stack and acceptance
-data remain; use the Agent lifecycle API for their eventual removal.
+### Trace check
 
-The deterministic fixture suites and `browser-run.mjs` have separate scopes.
-Passing those fixtures alone is not evidence of a real external model response.
+The development profile queries Jaeger after a six-second export wait.
+`chat-trace.mjs` checks each prompt's Gateway SERVER -> Gateway CLIENT -> ACP
+SERVER -> Run -> model/Runtime ancestry. It rejects duplicate or missing
+parents, warnings and error spans, and verifies that content capture and
+credentials are absent. Tool prompts must contain actual Runtime `tools/call`
+SERVER spans. The profile requires RPC content capture to be disabled; the
+`--jaeger` option defaults to `http://127.0.0.1:16686`.
+
+```sh
+node --test tests/e2e/workspace-closeout/chat-trace.test.mjs
+```
+
+Known clock-skew warnings between services still fail the strict check;
+business, topology and timing results are reported separately.
+
+Passing the deterministic fixture suites alone does not show that a real
+external model responds correctly.

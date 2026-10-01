@@ -1,5 +1,8 @@
 # Network Policy Management
 
+This document describes the Agent public-network policy section in Admin
+Console: its service boundary, browser state model and recovery rules.
+
 ## Service Boundary
 
 Console is a thin management client of Agent Controller control contract 16.
@@ -7,9 +10,9 @@ Only system or organization administrators may use these routes. Edge owns
 external authentication and CSRF enforcement; the BFF derives organization and
 actor from trusted headers, never from browser JSON or query parameters.
 Controller enforces Agent ownership; Egress alone persists/enforces policies.
-No service database, lifecycle mutation or Runtime generation is added here.
+Console adds no service database, lifecycle mutation or Runtime generation.
 
-The [BFF contract](../../../contracts/admin-console/README.md) revision 36 adds
+The [BFF contract](../../../contracts/admin-console/README.md) provides
 GET/PUT `/api/admin/agents/{agent_id}/network-policy`. The browser selects public
 IPv4 access on/off; deployment/control addresses remain protected by Egress.
 Only allow/deny built-in revision 1 is selected by this UI. Reads use the
@@ -79,8 +82,10 @@ sequenceDiagram
     UI->>UI: Clear on conclusive result; retain uncertain intent for retry
 ```
 
-Service verification covers BFF principal/scope, projection, request identity,
-error classification; browser component tests cover switch state, CAS conflict,
+## Testing
+
+Go service tests cover BFF principal/scope, projection, request identity and
+error classification. Browser component tests cover switch state, CAS conflict,
 response loss/reload, independent failures and late responses. Gateway-rooted
-Jaeger and real TUN evidence belong to the subsequent C3 deployed integration,
-not to this Console-only delivery batch.
+traces and real packet enforcement are verified by the platform Docker
+end-to-end suite, not by these Console tests.

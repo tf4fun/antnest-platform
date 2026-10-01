@@ -1,36 +1,54 @@
-# ACP persistence recovery
+# ACP persistence recovery E2E
 
-The [contract](contract.md) maps current ACP-owned Run persistence and recovery.
-P1 exercises committed PostgreSQL response loss at intent, acceptance and
-completion for both installed official SDK versions. P2 is a separate process
-interruption migration; P1 does not replace unknown-effect recovery coverage.
+This scenario verifies that the ACP service recovers correctly when a committed
+PostgreSQL response is lost at Run intent, input acceptance or Run completion.
+It runs for both installed official ACP SDK versions. The [contract](contract.md)
+defines the recovery obligations. Process interruption and unknown Tool effects
+are covered separately by [ACP restart](../acp-restart/README.md).
 
-`make test-acp-persistence-fixtures` runs serial unit/contract/HTTP checks.
-Set `TEST_POSTGRES_URL` to a **disposable test database** to include the real
-PostgreSQL proxy component tests; they recreate their fixture tables. An omitted
-URL produces explicit skips, which do not count as database component evidence.
+## Running
 
-`make e2e-acp-persistence` creates an independent Stage 3 project, private database
-wire proxy and deterministic Model. It uses the public Provider/Model/Template
-and execution-audit APIs. The client has neither database credentials nor a
-Docker socket. Only the host observes ACP's natural exit 1 and starts that same
-owned container. This profile cannot target a retained stack.
+```sh
+npm --prefix services/agent-acp-service ci
+make test-acp-persistence-fixtures
+make e2e-acp-persistence
+```
+
+`make test-acp-persistence-fixtures` runs serial unit, contract and HTTP checks.
+Set `TEST_POSTGRES_URL` to a disposable test database to include the real
+PostgreSQL proxy component tests; they recreate their fixture tables. Without
+the URL those tests are reported as skipped, not passed.
+
+`make e2e-acp-persistence` requires Docker and the local Stage 3 images
+(`make docker-build-stage3`). It creates an independent Stage 3 project, a
+private PostgreSQL wire proxy and a deterministic Model. Set
+`ANTNEST_E2E_CONTROLLER_IMAGE` to test a Controller image other than
+`antnest/agent-controller:local`. The profile cannot target an existing stack.
+
+## Scenario
+
+The client uses the public Provider, Model, Template and execution-audit APIs and
+has neither database credentials nor a Docker socket. Only the host observes
+ACP's natural exit code 1 and restarts the same owned container.
 
 The proxy confirms PostgreSQL's successful command tag and idle ReadyForQuery
 before holding the result; it never issues or retries SQL. Public audits prove
-the write is already durable while ACP is blocked. After loss and restart,
-two independent reconnects must preserve ordered message/Tool/usage history.
-Subsequent real Bash work verifies recovery and physical effects exactly once.
+the write is already durable while ACP is blocked. After the loss and restart,
+two independent reconnects must preserve ordered message, Tool and usage
+history. Subsequent real Bash work verifies recovery and that physical effects
+happen exactly once.
+
 The 60-second database timeout is fixture-only and allows inspection before the
-explicit drop; a proxy hold expiration is a different, failing fault outcome.
+explicit drop. A proxy hold expiring is a different, failing fault outcome.
 
-Set `ANTNEST_E2E_CONTROLLER_IMAGE` to an immutable candidate image when validating
-the separate Controller publication Trace change. Normal service image tags are
-otherwise unchanged. Raw audits, fault receipts, process observations and traces
-are private artifacts under `artifacts/verification/acp-persistence/<project>/`.
+## Results and evidence
 
-Strict Trace warnings, observed error spans and missing evidence remain failed
-and return nonzero even when business checks pass. Abrupt shutdown may lose
-unexported spans; the fixture reports those gaps. Root cleanup removes only the
-test project's Compose and Runtime resources. Historical shared helpers remain
-until their final consumers have current evidence.
+Strict Trace warnings, observed error spans and missing evidence are failures
+and return nonzero even when business checks pass. Abrupt shutdown can lose
+unexported spans; the fixture reports those gaps instead of inventing them. Raw
+audits, fault receipts, process observations and Traces are private artifacts
+under `artifacts/verification/acp-persistence/<project>/`.
+
+## Cleanup
+
+Root cleanup removes only the test project's Compose and Runtime resources.

@@ -1,9 +1,12 @@
-# Runtime temporary Skill delivery (D4)
+# Runtime temporary Skill delivery
 
 This contract extends the [discovery boundary](../skill-registry/discovery-api.md)
-for real package files. Runtime owns the producer; ACP's foreground install,
-durable cleanup and recovery consumer is a subsequent service batch. The D3
-text-only tools do not yet invoke this interface.
+with real package files for the current foreground Run. Runtime owns the
+producer endpoints. ACP is the only consumer; its foreground install, durable
+cleanup and recovery behavior is defined in the
+[temporary consumer contract](../agent-acp/skill-temporary-consumer.md). The
+text-only `find`/`load` tool results do not invoke this interface by
+themselves.
 
 ## Private authority and transport
 
@@ -96,8 +99,7 @@ Ordinary tools do not depend on this bounded private admission cache.
 
 Normal Run completion/cancellation requires ACP to release before another Run or
 learning maintenance is admitted. ACP restart must reconcile all pending scopes
-from its durable Run/cleanup state, including a lost install response. This is a
-required follow-up consumer gate. Runtime startup clears inherited temporary
+from its durable Run/cleanup state, including a lost install response. Runtime startup clears inherited temporary
 trees before readiness, and normal Runtime shutdown cleans after owned execution
 and managed processes have stopped. A crash may leave bytes until the next
 startup; old execution-bound tickets cannot restore them in the new process.
@@ -105,22 +107,17 @@ startup; old execution-bound tickets cannot restore them in the new process.
 Successful install/release has effect_state=settled and runtime_call_stopped=true.
 Pre-dispatch rejection has effect_state=none. After dispatch, uncertain file effect
 is unknown; responses never claim none merely because transport was cancelled.
-ACP must not reuse the D3 read-only recovery shortcut for this write boundary.
+ACP must not reuse the read-only recovery shortcut of the text discovery tools
+for this write boundary.
 Executor install is bounded to 60 seconds and release to 30 seconds; shutdown cleanup uses
 a bounded private executor. Failure to prove cleanup does not produce an installed
 result or a successful release receipt.
 
-## Evidence and pending consumers
+## Testing and tracing
 
-Runtime admission requires unit and strict shared-wire tests; Linux executor
+Runtime coverage includes unit and strict shared-wire tests; Linux executor
 tests for real files, exact retry/conflict/quota and safe cleanup; and disposable
 Docker named-volume/HTTP tests for signed current/next keys, actual read and Bash
 use, background work via cwd/script, completed/cancelled cleanup and restart with
-old-ticket rejection. Trace records bounded Run/source digests and outcomes,
-never package bodies. A deterministic source fixture is allowed in this owning
-batch, not evidence of the complete propagation workflow.
-
-ACP's later batch must implement file delivery results, effect-aware attempts,
-durable completion/cancellation/restart cleanup and admission ordering. DI1 then
-proves actual dual-Agent temporary file use, authorized promotion and fixed
-Template/rebuild propagation after the owning consumers pass.
+old-ticket rejection. Traces record bounded Run/source digests and outcomes,
+never package bodies.

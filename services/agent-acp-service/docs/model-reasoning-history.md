@@ -1,5 +1,8 @@
 # Model Reasoning History
 
+This document describes how provider reasoning content is retained across Tool
+turns and stored conversation context.
+
 The OpenAI-compatible adapter preserves provider-returned `reasoning_content`
 separately from visible assistant text. DeepSeek thinking mode requires it in
 subsequent requests carrying tools, including after a rejected tool call and
@@ -19,12 +22,10 @@ after loading a previous conversation.
   boundary and become another response's reasoning.
 - Context budgets include retained reasoning. Compaction removes complete
   messages/tool exchanges; the summary does not invent replacement reasoning.
-- ACP thought notifications and visible replies remain separate. This change
-  does not alter Controller, Runtime, the ACP wire contract or database schema.
+- ACP thought notifications and visible replies remain separate. Reasoning
+  retention does not alter Controller, Runtime, the ACP wire contract or database schema.
 
 Regression coverage lives in the model adapter, turn runner, context builder,
-PostgreSQL context projection and durable-streaming integration tests. The
-development browser acceptance additionally exercises a real DeepSeek request,
-Runtime file tools and conversation reload.
+PostgreSQL context projection and durable-streaming integration tests.
 
 Reference: [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/).

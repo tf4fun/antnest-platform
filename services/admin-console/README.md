@@ -1,334 +1,156 @@
 # Admin Console
 
-Skills now includes **Discover Agent Skills**: search the caller's own dynamic
-sources, review current package text/files and explicitly promote an immutable
-formal version. Stable retries and source/head conflicts follow Registry's
-existing publication rules. See [D6 delivery](../../docs/skill-discovery-console-delivery-20261001.md)
-for unit, HTTP, build and desktop/mobile Docker gates. The separate
-[DI1 integration](../../docs/skill-propagation-integration-delivery-20261001.md)
-passes actual automatic sources, normal login/promotion and frozen Template/create/rebuild/Run.
+Admin Console is the administrator React application and thin BFF
+(backend-for-frontend) of Antnest Platform. It exists so administrators can
+manage Identity, Provider, Model, Template, Skill and Agent lifecycle facts
+through one interface without the Console becoming a second source of truth.
+The BFF is written in Go and embeds the compiled React (Vite, Tailwind, shadcn)
+application.
 
-Skill publication uses an accessible ZIP picker with package name/size feedback,
-an explicit Cancel action, and a disabled publish action until a package is
-selected. Cancelling clears the selection; retrying a failed upload retains the
-same File object and its existing idempotency behavior.
+Every write is one command to one owning service, and every read is projected
+through an explicit browser DTO allowlist. Organization scope and actor always
+come from Edge Gateway's trusted principal, never from browser input.
 
-Provider connections, credential rotation and model metadata now have separate
-management workflows. Builtin defaults remain Console-owned, persisted choices
-Controller-owned. See [Provider management](docs/provider-management.md) for
-routes, boundaries and verification. Custom providers and subscription login
-are not yet exposed.
+## Responsibilities
 
-Template creation and revision include optional **MCP servers**: stdio command,
-ordered arguments and environment variables. Template details retain the complete
-configuration; Agent details show the deployed server IDs and commands. Publish a
-revision, then explicitly rebuild Agents to apply it. See
-[Managed MCP configuration](docs/managed-mcp.md) for ownership, privacy and tests.
+- React/shadcn administrator UI and page-local state.
+- Page-oriented request shaping and response aggregation (Overview,
+  inventories, Agent detail).
+- Explicit browser DTO allowlists that keep control-plane fields internal.
+- Organization scoping from Edge Gateway's trusted principal.
+- Builtin Provider and model catalog defaults (`internal/server/builtin_catalog.go`).
+- Provider model discovery against administrator-supplied Provider base URLs.
+- Skill inventory, upload, discovery and promotion through Skill Registry.
+- Static application delivery and lifecycle event forwarding (SSE).
 
-Admin Console is the administrator React application and thin BFF for Antnest
-Platform. It presents Identity and Agent lifecycle facts without becoming a
-second source of truth.
+## Non-responsibilities
 
-The Stage 4 [Skills module](docs/skills.md) lists and publishes immutable
-organization Skill versions through the private Registry. Template selection
-pins exact versions in Controller. The Agent creation dialog now reads scoped
-Skill preparation progress through the BFF and preserves its original command
-key for explicit retry. Rebuild and Enable now use the same progress read and
-freeze the original command tuple before lifecycle admission. Runtime
-installation belongs to RC; full-chain
-acceptance remains separate.
-
-## Status
-
-The [2026-09-26 dependency refresh](../../docs/dependency-refresh-20260926.md)
-updates React to 19.3.0, Vite to 8.3.1 and Tailwind to 4.3.3 using its dedicated
-Vite plugin and CSS theme tokens. Base styles stay in the base cascade layer;
-shadow, radius, blur and outline utility names are migrated to preserve the
-existing presentation and keyboard focus behavior. Obsolete PostCSS and
-autoprefixer configuration is removed. Local and browser upgrade gates are
-tracked separately from the earlier acceptance history below.
-
-The execution-boundary B4 batch adds direct ACP audit reads, an independent
-Execution history page and a separate Controller synchronization read. See
-[Execution audit](docs/execution-audit.md). Original input, execution snapshots,
-Tool events and permission records remain accessible for deleted Agents without
-a Controller detail lookup. The history page has independent pagination and
-refresh for execution and permission records, plus desktop/mobile browser tests.
-Provider, Model and current Template details now expose availability controls and
-Controller reference conflicts. Configuration pages separately show delivery
-pending, acknowledged or unknown; an acknowledgement is not Agent readiness.
-See [Catalog availability](docs/catalog-availability.md). Combined B5 acceptance
-now covers real Gateway login and ACP audit authorization, including reads after
-Agent deletion and ACP restart. [Current status](../../docs/current-status.md)
-records the separate business/topology result and strict clock-warning failure.
-
-Implemented for Stage 3A, including Directory administration, enterprise
-OIDC/SCIM provisioning, release-managed model provider presets, and
-organization-scoped current Model Profile management and immutable Template revisions.
-Builtin model capabilities come from Console; Controller persists the selected
-configuration. DeepSeek and OpenRouter connections are supported. Unlisted models
-can be added explicitly; [model discovery](../../docs/model-discovery.md) merges
-remote, builtin and saved candidates without changing existing records. Models
-under an existing connection expose explicit limit and Image/Audio/PDF fields. Native
-capabilities are preserved across BFF projections, creation and current-model
-editing; builtin presets prefill editable drafts, while saved values take precedence. See [Native model inputs](docs/multimodal-models.md)
-for the F09 service boundary. Agent UI and protocol deployment results are in
-[ACP conformance](../agent-acp-service/docs/protocol-conformance.md); full C4
-interactive acceptance remains separate.
-Model pricing now follows the Controller's optional USD-per-million contract:
-catalog estimates by default, editable rates, immutable historical snapshots,
-and explicit unknown versus zero. Console owns builtin default metadata only. Organization configuration and
-credentials remain in Controller's database. See [Model pricing](docs/model-pricing.md) for this service's evidence
-and [ACP conformance](../agent-acp-service/docs/protocol-conformance.md) for the
-completed F10 consumer/deployed integration batch.
-The canonical lifecycle workflow is
-[`../../docs/stage-3-admin-control-plane.md`](../../docs/stage-3-admin-control-plane.md).
-Agent details include an independent public-network policy switch. It saves a
-single version-checked assignment through Controller without rebuilding an Agent
-or opening a paused attachment. Uncertain updates survive page close and retain
-their original retry identity; stale-account requests are rejected before
-dispatch. See [Network policy management](docs/network-policy.md).
-Agent Fleet presents current records by default, retains deleted projections
-behind an explicit audit view, gates lifecycle commands from authoritative
-state, and re-synchronizes Agent, event, and durable operation state after an
-event-stream interruption.
-An unfinished deletion remains in the current administrator fleet. A failed
-cleanup can be explicitly retried, but cannot be enabled or rebuilt. Only a
-completed deletion enters the retained view. Unknown HTTP results retain their
-request key; observing the resulting terminal operation establishes a new intent
-boundary for the next explicit command.
-Deleted Agent details stay open for audit, including after a live deletion
-completes. Replaying a completed operation never redirects the page. The active
-request distinguishes `Current operation` from `Last operation`; a terminal
-phase that duplicates the state is omitted without hiding failure diagnostics.
-Lifecycle admission is acknowledged independently of the following Agent read.
-A refresh failure preserves that receipt, closes stale-state actions, and retries
-only the read. Rebuild and delete rejections stay inside their originating dialog;
-pending dialogs cannot be dismissed. Agent identity scopes this local form state,
-so a different Agent cannot inherit an earlier command's pending form or error.
-Agent detail shows the immutable Template revision and model parameters saved
-in its build snapshot while keeping Provider credentials,
-Runtime execution identity, and MCP routing outside the browser projection.
-Its primary Agent read is independent from lifecycle-event history. An event
-read or SSE recovery failure degrades only that evidence section, retains
-already loaded events, and exposes a local retry only for transient failures
-without hiding Agent state or valid lifecycle actions. Terminal `403`, `404`,
-and `410` responses remain visible and stop automatic replay.
-Active operation progress follows the same boundary. A failed operation lookup
-is visible without replacing Agent detail; only a transient lookup is
-retryable. The active request on the Agent projection continues to gate
-conflicting commands, and stale operation responses cannot be presented under
-a newer request. Later Agent refresh and owner-resolution failures preserve
-their loaded projections and use the same structured retry policy.
-SSE recovery does not join event replay and Agent refresh into a false client
-transaction. Each successful read updates its own projection immediately and
-each failure stays local. After successful replay, recovery awaits one Agent
-refresh before reopening the stream; a refresh failure is recorded locally and
-does not prevent reopening. This read-after-replay closes the missed terminal
-state window. Failed replay retries do not repeatedly call the Agent endpoint. Concurrent
-Agent responses converge by aggregate sequence instead of arrival order.
-Template revision links open read-only historical detail. Model links open the
-current settings; the Agent's build snapshot remains visible on Agent detail and
-is not replaced by those settings. Templates resolve their stable model identity
-separately; if that lookup fails, the Template remains readable and the Model
-label has its own retry. There is no independent model history page.
-Fleet summaries present human names, ownership, lifecycle, and time rather than
-opaque Runtime revisions. A desired state appears only while lifecycle has not
-converged; exact Agent/revision identifiers and lifecycle trace correlation stay
-available in default-collapsed technical details for support work.
-The distinction between split applications, pending owner services, current
-Console defects, and undecided product concepts is tracked in
-[`../../docs/product-surfaces.md`](../../docs/product-surfaces.md).
-The Console links administrators to the separately deployed Agent workspace;
-authenticated non-administrators are redirected there instead of being shown
-administrator navigation.
-
-The first-run guidance shown by Overview is deliberately stateless. It derives
-Model, Template, Directory, and Agent readiness from the BFF overview;
-owner-service failures are never presented as empty resources, and core list
-pages expose an in-place retry or the precise missing-prerequisite action.
-Overview names each degraded resource without exposing upstream diagnostics.
-Its Active members metric counts only entries whose User and Organization
-Membership are both active, while Directory continues to show disabled records
-for administration.
-Agent creation uses that active subset, but Fleet presentation resolves owners
-from the complete Directory projection. Existing and deleted Agents therefore
-retain a searchable human owner label after an account or Membership is
-disabled.
-Model Profile, Template, and Agent inventories traverse bounded owner-service
-cursors. The BFF accepts only documented single-value pagination inputs,
-injects organization scope, and translates the explicit deleted Agent view into
-an authority-side lifecycle filter. Page failures preserve already loaded rows.
-Model and Template dependency selectors reuse the same bounded cursor contract
-across Template create/revise and Agent create/rebuild. Disabled records are
-filtered from choices without discarding the continuation cursor, and a failed
-later page can be retried without closing the form or losing loaded choices.
-The four-owner overview aggregate is used only by the Overview page. Template
-and Agent inventories issue independent primary and dependency reads, preserving
-their loaded rows when Model, Runtime-default, or Directory creation options are
-unavailable. `GET /api/admin/template-defaults` exposes only the configured
-Runtime image reference and performs no owner-service read.
-The Template form offers the platform default or an explicit repository/tag,
-without a digest input. If no default is configured, the tag input is required.
-Revision forms default to keeping the current pinned image and do not read a
-potentially changed deployment default. An explicit tag choice is sent to Agent
-Controller, which resolves and freezes it through Runtime Controller. This BFF
-does not inspect Docker, pull images, or assert an image-to-tag mapping.
-Template and Agent details show the server-derived `image_source` when present,
-otherwise a repository/tag or `Platform runtime` for an unnamed image ID.
-Reusable tests cover digest-free labels, explicit tag selection, missing-default
-creation, source projection, rejection feedback, and preserving pinned images
-when deployment defaults change or vanish. Rejected tag choices remain editable
-inside the dialog; no unpublished revision is shown as successful.
-Model Profile inventory and detail also load independently from the built-in
-Model Catalog. A Catalog failure keeps stored Profile facts readable under
-their persisted display name while disabling only connect/revise actions until
-the section-local retry succeeds.
-OIDC Provider and SCIM credential inventories load independently, so one failed
-Identity read cannot erase the other management surface. Directory and
-Provisioning mutations report failures inside the active form or confirmation
-and retain entered values for retry. One-time SCIM credentials remain only in
-page memory, including when clipboard access fails.
-Organization scope remains server-side. Group and OIDC database IDs are omitted
-from browser DTOs; a SCIM token ID is retained only for its revoke action and is
-not rendered as user-facing credential identity.
-Provisioning also exposes the exact same-origin Edge OIDC callback and SCIM
-base URL in their relevant setup flows. These public protocol addresses are
-derived from the browser origin, never from internal service discovery or a
-user-editable base URL.
-The account area resolves a safe current-account projection from Identity and
-shows the administrator's display name, email, and Organization name/slug
-instead of opaque internal IDs. The BFF uses principal IDs only for the upstream
-binding and strips them from this browser DTO. The shell and Directory surface
-reuse those presentation fields rather than rendering organization IDs. It
-exposes local Antnest password rotation only when Identity confirms that the
-User has a local credential. A profile-read failure is locally retryable, uses
-neutral shell labels, and fails closed without blocking the rest of the
-Console. The BFF derives the target User from the trusted principal, and the
-browser neither stores the credential fields nor exposes this command as
-another-user administration.
-An incorrect current password is a `401 invalid_current_password` form error;
-an expired/revoked session is still a login failure on that same endpoint.
-Unknown or unreadable protected-API 401 responses also end the current page
-session. Pending requests cannot emit expiry notifications into a later
-in-page session. This does not replace Edge's cookie/revocation authority.
-Sign-out waits for Edge to confirm revocation and cookie removal before showing
-the login page. While pending, the action is disabled; a rejection stays visible
-beside the account controls instead of falsely presenting a completed sign-out.
-Confirmed logout and authoritative session expiration close the drawer and
-account dialog. A late response to an earlier logout cannot affect a subsequent
-login. `web/src/App.test.tsx` covers this through the real application and API
-wrapper; Edge owns and separately tests cookie and revocation semantics.
-Startup also preserves HTTP failure semantics: only a missing/expired session
-opens login. Terminal access or missing-endpoint errors have no retry action;
-transient failures retry the session query in place, without document reload or
-early protected-resource reads. The pending retry cannot be submitted twice.
-
-## Owns
-
-- React/shadcn administrator UI and page-local state;
-- page-oriented request shaping and response aggregation;
-- explicit browser DTO allowlists that keep control-plane fields internal;
-- organization scoping from Edge Gateway's trusted principal;
-- static application delivery and lifecycle event forwarding.
-
-The overview executes its independent reads concurrently under one deadline.
-Agent inventory is required; directory and catalog sections degrade with named
-status envelopes instead of erasing unrelated data. Its Catalog and Agent
-sections remain bounded owner-service pages and preserve continuation cursors;
-the application labels counts as lower bounds and scopes lifecycle breakdowns
-to loaded records whenever another page exists.
-Failures preserve safe HTTP status, including terminal `403`/`404`/`410`, in
-both the required-read response and optional section errors. The page offers
-refresh only for transient failures, preserves its loaded snapshot while
-refreshing, and disables duplicate refresh requests. Leaving the page cancels
-the pending read.
-
-`npm --prefix services/admin-console/web test` runs pure-function tests followed
-by Vitest/Testing Library component tests with one worker. Dashboard component
-tests exercise the real API parser and rendered controls using HTTP-shaped
-fetch responses, including snapshot retention, transient recovery, terminal
-failure, and unmount cancellation. They require no external provider or Docker.
-Inventory component tests cover Model, Template, Current Agent, and Deleted
-Agent traversal using the real API parser: terminal failures retain loaded
-rows without retry, transient retries keep their cursor, and pending requests
-cannot be duplicated. Deleted-read failures persist across tab switches rather
-than triggering an automatic fetch loop. Catalog creation tests also cover
-ambiguous responses, stable retry identities, and dismissible success feedback.
-Directory and Provisioning component tests cover mutation rejection without
-input loss, successful writes followed by unavailable/forbidden reads, stale
-row-action prevention, system-only OIDC entry, and SCIM credential disposal and
-clipboard recovery. They distinguish the command result from refresh status.
-Catalog revision component tests verify rejected-input retention, pending
-publication and server-returned revision feedback, read-only historical routes,
-terminal detail failures, and referenced Model recovery without resubmitting a
-Template publication.
-Agent mutation component tests cover creation retries, lifecycle admission
-acknowledgements, rejected dialogs, follow-up Agent read failures, and read-only
-recovery that keeps stale actions closed. They also verify that another Agent
-cannot inherit the previous detail's pending dialog or late rejection. Retained
-deletion and live-event completion have separate component coverage; opening
-completed history is not a navigation command.
-`web/src/components/account-security.test.tsx` covers password form validation,
-pending submission and dismissal, HTTP/network rejection, explicit retry,
-successful completion, and credential clearing without persistent browser
-storage. These tests exercise the real API wrapper with synthetic responses;
-they do not rotate an account's actual password.
-The Stage 3 Docker E2E also repeats Model and Template creation with the same
-idempotency key and verifies that their inventories contain no duplicate. Agent
-organization isolation is checked through the owner's scoped interface while
-browser responses remain free of internal organization fields. Test cleanup
-stops asynchronous creators before removing their scoped resources and rejects
-leftover containers or volumes.
-
-## Does Not Own
-
-- browser login, external authorization, or session cookies;
-- Identity, ModelProfile, Template, Agent, operation, event, or Runtime records;
-- Provider secret retrieval;
-- any PostgreSQL schema.
-
-## Dependencies
-
-- Edge Gateway as the only external caller;
-- Identity Service for organization-scoped directory reads, local-user and
-  Membership commands, system-administrator User lifecycle commands, OIDC
-  Provider administration, SCIM credential rotation, current-account profile
-  and local-credential capability reads, and self-service local password
-  changes;
-- Agent Controller for catalog, Agent lifecycle, projections, and events;
-- ACP for organization-scoped execution audit, independently of live Agent projections;
-- OTLP collector when observability is enabled.
+- Browser login, external authorization or session cookies (Edge Gateway).
+- Identity, Provider connection, Model Profile, Template, Agent, operation,
+  event or Runtime records (Identity Service and Agent Controller).
+- Execution audit records (Agent ACP Service) and Skill packages (Skill Registry).
+- Provider secret storage or retrieval outside a scoped Controller read.
+- Durable retries or cross-service workflows.
+- Any PostgreSQL schema. The service has no database, migration, backup or
+  persistent volume.
 
 ## Interfaces
 
-See [`../../contracts/admin-console/admin-contract.json`](../../contracts/admin-console/admin-contract.json).
+| Direction | Interface | Purpose |
+| --- | --- | --- |
+| Inbound | `/api/admin/*` via Edge Gateway | Administrator BFF; see the [admin contract](../../contracts/admin-console/admin-contract.json) |
+| Inbound | `/api/admin/skill-sources/*` | Skill discovery and promotion; see the [skill discovery contract](../../contracts/admin-console/skill-discovery.md) |
+| Inbound | `/` and static assets | Embedded React application |
+| Inbound | `GET /status` | Local readiness only |
+| Outbound | Identity Service RPC | Directory, OIDC, SCIM credentials, account profile and password |
+| Outbound | Agent Controller RPC | Catalog, Templates, Agents, lifecycle, events, network policy, synchronization |
+| Outbound | Agent ACP Service RPC | Organization-scoped execution audit |
+| Outbound | Skill Registry HTTP (optional) | Skill packages, versions and artifacts |
+| Outbound | Provider `GET {base_url}/models` | Model discovery against administrator-supplied URLs |
 
-## Local Verification
+Edge Gateway is the only supported external caller; do not publish Admin
+Console directly.
+
+## Configuration
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | `:8080` | HTTP listen address; the container health check uses its port |
+| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | Identity Service base URL (absolute HTTP(S), no query or fragment) |
+| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | Agent Controller base URL |
+| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | Agent ACP Service base URL for execution audit |
+| `ANTNEST_SKILL_REGISTRY_URL` | no | empty | Skill Registry base URL; without it Skill routes return `503 dependency_unavailable` |
+| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | with Registry URL | - | Registry service token, at least 32 bytes with no surrounding whitespace; must be configured together with the URL |
+| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | empty | Default Runtime image reference offered when creating a Template |
+| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | `15s` | Timeout for non-streaming dependency calls, including Provider discovery |
+| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | `15s` | Graceful HTTP drain budget |
+| `ANTNEST_ENVIRONMENT` | no | empty | Deployment environment resource attribute for telemetry |
+| `OTEL_*` | no | - | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+
+Edge Gateway forwards admin requests with a 10-second
+`ANTNEST_EDGE_REQUEST_TIMEOUT`, shorter than the 15-second Console dependency
+timeout. OIDC and SCIM setup addresses are derived from the browser's Edge
+origin, so there is no Console variable for them. See
+[Operations](docs/operations.md) for details.
+
+## Dependencies
+
+- Edge Gateway: the only external caller; supplies the trusted principal.
+- Identity Service: required for Directory, Provisioning and account pages.
+- Agent Controller: required for catalog, Template and Agent pages. Agent
+  inventory is the only required Overview section; other sections degrade.
+- Agent ACP Service: required for execution audit, which does not depend on
+  Controller availability.
+- Skill Registry: optional; only Skill pages depend on it.
+- Outbound network access to Provider endpoints for model discovery. The base
+  URL is administrator-supplied and not restricted to an allowlist of hosts.
+- OTLP collector: optional, when trace export is configured.
+
+`GET /status` never probes a dependency; failures are reported by the affected
+business request.
+
+## Build and test
+
+Commands run from the repository root unless stated.
 
 ```sh
-go test ./...
-npm --prefix web test
-npm --prefix web run typecheck
-npm --prefix web run build
-golangci-lint run ./...
+# Go unit and component tests (from services/admin-console)
+GOWORK=off go test ./...
+
+# Web unit and component tests, type checking and production build
+npm --prefix services/admin-console/web test
+npm --prefix services/admin-console/web run typecheck
+npm --prefix services/admin-console/web run build
+
+# Browser tests (Playwright + Chromium, synthetic API responses; run after build)
+npm --prefix services/admin-console/web run test:browser:catalog
+npm --prefix services/admin-console/web run test:browser:audit
+npm --prefix services/admin-console/web run test:browser:skills
+npm --prefix services/admin-console/web run test:browser:template-skills
+
+# HTTP startup and shutdown integration tests
+node tests/integration/go/run.mjs admin-console
+
+# Docker image (build context is the repository root)
+docker build -f services/admin-console/Dockerfile -t antnest/admin-console:local .
+
+# Docker signal regression
+node tests/e2e/admin-console/shutdown-docker.mjs
 ```
 
-Go unit and component tests remain in the service packages. HTTP startup and
-shutdown integration tests live in
-[`tests/integration/go/admin-console`](../../tests/integration/go/admin-console).
-Run them from the repository root through the Go overlay runner:
+Install Chromium for Playwright with
+`npm --prefix services/admin-console/web exec -- playwright install chromium`
+if it is absent. `npm test` runs pure-function tests (`node --test`) followed by
+Vitest/Testing Library component tests that use the real API parser with
+HTTP-shaped synthetic responses; they need no Provider or Docker.
 
-```sh
-node tests/integration/go/run.mjs admin-console --package cmd/admin-console -- -run '^TestRun' -count=1
-```
+Go integration sources live in
+[`tests/integration/go/admin-console`](../../tests/integration/go/admin-console);
+browser test sources in
+[`tests/integration/admin-console`](../../tests/integration/admin-console);
+Docker tests in [`tests/e2e/admin-console`](../../tests/e2e/admin-console).
+`tests/e2e/admin-console/model-discovery-browser.mjs` is an opt-in test against
+a real Provider; see [Provider management](docs/provider-management.md).
 
-Browser integration fixtures live in
-[`tests/integration/admin-console`](../../tests/integration/admin-console).
-After the web build, run `npm --prefix web run test:browser:catalog` and
-`npm --prefix web run test:browser:audit` from this service directory.
-Docker shutdown and opt-in development model discovery acceptance live in
-[`tests/e2e/admin-console`](../../tests/e2e/admin-console); run their Node
-entry points from the repository root.
+Root targets: `make test-go-unit`, `make test-go` and `make test-integration-go`
+run the Go tests; `make test-node` runs the web tests; `make node-lint` type-checks
+the web application; `make test-integration-node` runs the browser tests;
+`make e2e-stage3` exercises the Console through the full Docker stack.
 
-See [architecture](docs/architecture.md) and [operations](docs/operations.md).
+## Documentation
+
+- [Architecture](docs/architecture.md) - modules, projection boundary, page behavior and failure semantics.
+- [Operations](docs/operations.md) - configuration, outbound network access, shutdown and recovery.
+- [Observability](docs/observability.md) - tracing scope, content policy and limits.
+- [Provider management](docs/provider-management.md) - connections, credential rotation, discovery and BFF routes.
+- [Model pricing](docs/model-pricing.md) - pricing contract, editing rules and builtin estimates.
+- [Native model inputs](docs/multimodal-models.md) - Image, Audio and PDF capability flags.
+- [Catalog availability](docs/catalog-availability.md) - enable/disable commands and configuration delivery status.
+- [Managed MCP](docs/managed-mcp.md) - Template-managed stdio MCP servers.
+- [Skills](docs/skills.md) - Skill Registry inventory, publication, discovery and promotion.
+- [Agent state](docs/agent-state.md) - lifecycle, activation and Runtime condition presentation.
+- [Network policy](docs/network-policy.md) - Agent public-network policy and recovery.
+- [Execution audit](docs/execution-audit.md) - ACP audit reads and synchronization status.
+- [Agent workspace navigation](docs/agent-workspace-navigation.md) - links into Agent UI.
+- [Admin contract](../../contracts/admin-console/README.md) and [skill discovery contract](../../contracts/admin-console/skill-discovery.md).
+- [Stage 3 admin control plane](../../docs/stage-3-admin-control-plane.md), [model discovery](../../docs/model-discovery.md), [Provider credentials and models](../../docs/provider-credentials-and-models.md), [product surfaces](../../docs/product-surfaces.md).
