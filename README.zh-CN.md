@@ -1,53 +1,89 @@
+<div align="center">
+
 # Antnest Platform
+
+**自托管的 AI Agent 运行平台：每个 Agent 都运行在隔离、受策略控制的沙箱中。**
+
+为每个 Agent 提供独立的容器、网络身份和持久生命周期，
+同时让组织始终掌控它能访问什么。
 
 [![CI](https://github.com/tf4fun/antnest-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/tf4fun/antnest-platform/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![ACP](https://img.shields.io/badge/protocol-ACP-6f42c1)](https://agentclientprotocol.com/)
+[![MCP](https://img.shields.io/badge/tools-MCP-0a7ea4)](https://modelcontextprotocol.io/)
+![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
 [English](README.md) | 简体中文
 
-Antnest Platform 是一个面向组织运行 AI Agent 的平台。每个 Agent 拥有独立的
-Runtime 容器、带出口策略的稳定网络身份，以及由控制面管理的持久生命周期。
-用户在浏览器工作区中通过 [Agent Client Protocol（ACP）](https://agentclientprotocol.com/)
-与 Agent 对话；管理员在管理控制台中管理身份、模型提供商、模板、Skill 和 Agent。
+</div>
 
-平台以 Docker 为优先部署目标，由一组小而独立的服务组成。每个服务只拥有自己的数据，
-服务之间只通过与语言无关的契约通信。
+Antnest Platform 是一个面向组织运行 AI Agent 的平台。用户在浏览器工作区中通过
+[Agent Client Protocol（ACP）](https://agentclientprotocol.com/) 与 Agent 对话；
+每个 Agent 在自己的 Runtime 容器里通过 [MCP](https://modelcontextprotocol.io/)
+工具工作，它的全部网络流量都要经过由你控制的出口策略。管理员在同一个管理控制台中
+管理身份、模型提供商、模板、Skill 和 Agent。
+
+## 为什么选择 Antnest
+
+- **真正的隔离，而不是提示词层面的约束**：每个 Agent 一个容器，命令以非特权用户运行，
+  每条出站连接都在数据包层面按版本化的 Agent 策略放行或拒绝。
+- **端到端的开放协议**：客户端使用标准 ACP，工具使用标准 MCP，无需对接私有的 Agent API。
+- **为组织而建**：组织、用户与用户组、本地登录、OIDC 单点登录和 SCIM 2.0 同步；
+  成员离职时，其 Agent 会被自动下线。
+- **越用越聪明的 Agent**：Skill Registry 分发不可变、带版本的 Skill；在管理员策略下，
+  Agent 还能从自己的工作中学习新的 Skill。
+- **持久且可观测**：生命周期操作以 Temporal 工作流运行，进程重启也不会丢失；
+  OpenTelemetry 追踪覆盖每个 HTTP、RPC、数据库和工作流边界。
+- **小服务、清晰契约**：十个可独立部署的服务，分别用 Go、Rust 和 TypeScript 编写；
+  每个服务只拥有自己的数据，彼此只通过与语言无关的[契约](contracts/README.md)通信。
+
+## 工作方式
+
+1. 管理员连接模型提供商，定义模板（模型及备用模型、系统提示词、Runtime 镜像、Skill），
+   再基于模板创建 Agent。
+2. Agent Controller 运行创建工作流：Runtime Controller 启动该 Agent 的 Runtime 容器，
+   Runtime Egress 为其分配网络地址和策略。
+3. 用户在浏览器工作区中打开 Agent 并发送提示。Agent ACP Service 调用模型，并通过 MCP
+   在该 Agent 的 Runtime 上执行工具；策略要求时会先征得用户许可。
+4. 结果通过 ACP 流式返回。Session、Run、成本和执行审计记录都会被持久保存。
 
 ## 功能
 
-- **隔离的 Agent Runtime**：每个 Agent 一个容器，通过 MCP 暴露工作区，内置
-  `read`、`write`、`edit`、`bash` 工具以及平台托管的 stdio MCP 服务器。
-  Agent 命令以非特权用户运行。
-- **按 Agent 的网络策略**：Runtime 流量经隧道进入 Runtime Egress，后者为每个
-  Agent 分配稳定地址，并按版本化策略放行或拒绝每条连接。
-- **ACP v1 / v2 执行**：Agent ACP Service 负责 Session、Run、模型与工具执行、
-  权限确认、计划、多模态输入、成本统计和执行审计。
-- **持久生命周期**：Agent Controller 通过 Temporal 工作流完成创建、重建、启用、
-  停用和删除，并发布执行配置。
-- **企业身份**：组织、用户、用户组、本地登录、OIDC 与 SCIM 2.0 同步；身份被撤销时
-  自动下线其 Agent。
-- **Skill**：Skill Registry 托管不可变的 Skill 包；模板固定引用精确版本，Runtime
-  以只读方式接收。Agent 也可以在管理员策略下自动学习和传播 Skill。
-- **可观测性**：OpenTelemetry 覆盖 HTTP、RPC、数据库和工作流边界，可在 Jaeger 中查看。
+- **隔离的 Agent Runtime**：Runtime 暴露一个工作区，内置 `read`、`write`、`edit`、
+  `bash` 工具以及平台托管的 stdio MCP 服务器。
+- **按 Agent 的网络策略**：Runtime 流量经隧道进入 Runtime Egress，后者为每个 Agent
+  分配稳定地址并执行其策略。
+- **ACP v1 / v2 执行**：Session、Run、权限确认、计划、多模态输入、成本统计和执行审计。
+- **持久生命周期**：通过 Temporal 工作流创建、重建、启用、停用和删除 Agent，并向 ACP
+  发布执行配置。
+- **模型提供商**：支持 DeepSeek 和 OpenRouter，凭据加密存储，支持模型发现和提供商回退。
+- **Skill**：模板固定引用精确的 Skill 版本，Runtime 以只读方式接收。自动 Skill 学习会在
+  Agent 空闲时激活已检查的变更，并通知用户。
+- **可观测性**：每个服务都有追踪和指标，可在 Jaeger 中查看。
 
 ## 架构
 
-```text
-                      浏览器（Admin Console / Agent UI）
-                                     |
-                               Edge Gateway（唯一公网入口）
-              +----------------------+---------------------+
-              |                      |                     |
-        Admin Console BFF        Agent UI bridge     Identity Service
-              |                      |
-              +-----------+----------+
-                          |
-      Agent Controller ---+--- Agent ACP Service ---> 模型提供商
-        |       |                    |
-        |       +--> Skill Registry  +--> Antnest Runtime（每个 Agent 一个，MCP）
-        |                                      |
-        +--> Runtime Controller --> Docker     +--> Runtime Egress --> 外部网络
-        +--> Runtime Egress（策略）
+```mermaid
+flowchart LR
+  browser["浏览器<br/>Admin Console / Agent UI"] --> gateway["Edge Gateway<br/>（唯一公网入口）"]
+  gateway --> identity["Identity Service"]
+  gateway --> console["Admin Console BFF"]
+  gateway --> bridge["Agent UI bridge"]
+  console --> controller["Agent Controller"]
+  console -.-> acp
+  bridge --> acp["Agent ACP Service"]
+  bridge -.-> controller
+  controller --> acp
+  controller --> registry["Skill Registry"]
+  controller --> runtimeController["Runtime Controller"]
+  controller --> egress["Runtime Egress"]
+  runtimeController --> docker["Docker"]
+  acp --> models["模型提供商"]
+  acp --> runtime["Antnest Runtime<br/>（每个 Agent 一个）"]
+  runtime --> egress
+  egress --> internet["外部网络"]
 ```
 
 | 组件 | 语言 | 职责 |
@@ -68,6 +104,11 @@ Runtime Controller 的 Kubernetes 适配器，见 [docs/stage-4-services.md](doc
 
 服务归属、身份标识和依赖方向见 [docs/service-layout.md](docs/service-layout.md)，
 接口契约见 [contracts/](contracts/README.md)。
+
+## 项目状态
+
+Antnest 仍在积极开发中，尚未发布正式版本，接口和存储结构仍可能变化。已知问题和后续计划
+记录在 [GitHub issues](https://github.com/tf4fun/antnest-platform/issues) 中，欢迎反馈和贡献。
 
 ## 快速开始
 

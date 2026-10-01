@@ -1,60 +1,103 @@
+<div align="center">
+
 # Antnest Platform
+
+**Self-hosted platform for running AI Agents in isolated, policy-controlled sandboxes.**
+
+Give every Agent its own container, network identity and durable lifecycle,
+and keep your organization in control of what it can reach.
 
 [![CI](https://github.com/tf4fun/antnest-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/tf4fun/antnest-platform/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![ACP](https://img.shields.io/badge/protocol-ACP-6f42c1)](https://agentclientprotocol.com/)
+[![MCP](https://img.shields.io/badge/tools-MCP-0a7ea4)](https://modelcontextprotocol.io/)
+![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
 English | [简体中文](README.zh-CN.md)
 
-Antnest Platform runs AI Agents for an organization. Every Agent gets its own
-isolated Runtime container, a stable network identity with enforced egress
-policy, and a durable lifecycle managed by a control plane. Users talk to Agents
-through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) from
-a browser workspace; administrators manage identities, model providers,
-templates, Skills and Agents from an admin console.
+</div>
 
-The platform is Docker-first and is built as a set of small, independently
-deployable services. Each service owns its data and communicates only through
-language-neutral contracts.
+Antnest Platform runs AI Agents for an organization. Users talk to Agents from a
+browser workspace over the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/).
+Each Agent works inside its own Runtime container through
+[MCP](https://modelcontextprotocol.io/) tools, and all of its network traffic
+passes an egress policy you control. Administrators manage identities, model
+providers, Templates, Skills and Agents from one admin console.
+
+## Why Antnest
+
+- **Real isolation, not prompt-level guardrails.** One container per Agent,
+  commands run as an unprivileged user, and every outbound flow is allowed or
+  rejected at the packet level by versioned, per-Agent policy.
+- **Open protocols end to end.** Clients speak standard ACP, tools are standard
+  MCP. There is no proprietary Agent API to integrate against.
+- **Built for organizations.** Organizations, users and groups, local login,
+  OIDC single sign-on and SCIM 2.0 provisioning. When a person leaves, their
+  Agents are taken offline automatically.
+- **Agents that get better over time.** A Skill Registry distributes immutable,
+  versioned Skills, and Agents can learn new Skills from their own work under
+  administrator policy.
+- **Durable and observable.** Lifecycle operations run as Temporal workflows
+  that survive restarts, and OpenTelemetry traces cover every HTTP, RPC,
+  database and workflow boundary.
+- **Small services, clear contracts.** Ten independently deployable services in
+  Go, Rust and TypeScript. Each owns its data and talks to the others only
+  through language-neutral [contracts](contracts/README.md).
+
+## How it works
+
+1. An administrator connects a model provider, defines a Template (model and
+   fallbacks, system prompt, Runtime image, Skills) and creates an Agent from it.
+2. Agent Controller runs the creation workflow. Runtime Controller starts the
+   Agent's Runtime container, and Runtime Egress assigns its network address and
+   policy.
+3. A user opens the Agent in the browser workspace and sends a prompt. Agent ACP
+   Service runs the model and calls tools on the Agent's Runtime over MCP,
+   asking the user for permission when policy requires it.
+4. Results stream back over ACP. Sessions, Runs, costs and an execution audit
+   trail are stored durably.
 
 ## Features
 
-- **Isolated Agent Runtimes.** One container per Agent exposes a workspace through
-  MCP with built-in `read`, `write`, `edit` and `bash` tools plus
-  platform-managed stdio MCP servers. Agent commands run as an unprivileged user.
+- **Isolated Agent Runtimes.** The Runtime exposes a workspace with built-in
+  `read`, `write`, `edit` and `bash` tools plus platform-managed stdio MCP
+  servers.
 - **Per-Agent network policy.** Runtime traffic is tunneled to Runtime Egress,
-  which assigns each Agent a stable address and allows or rejects every flow
-  according to versioned policy.
-- **ACP v1 and v2 execution.** Agent ACP Service owns Sessions, Runs, model and
-  tool execution, permissions, plans, multimodal input, cost tracking and
-  execution audit.
-- **Durable lifecycle.** Agent Controller drives create, rebuild, enable, disable
-  and delete through Temporal workflows and publishes execution configuration.
-- **Enterprise identity.** Organizations, users, groups, local login, OIDC and
-  SCIM 2.0 provisioning, with Agent offboarding when a principal is revoked.
-- **Skills.** A Skill Registry hosts immutable Skill packages; Templates pin exact
-  versions and Runtimes receive them read-only. Agents can also learn and
-  propagate Skills automatically under administrator policy.
-- **Observability.** OpenTelemetry traces and metrics across HTTP, RPC, database
-  and workflow boundaries, viewable in Jaeger.
+  which gives each Agent a stable address and enforces its policy.
+- **ACP v1 and v2 execution.** Sessions, Runs, permissions, plans, multimodal
+  input, cost tracking and execution audit.
+- **Durable lifecycle.** Create, rebuild, enable, disable and delete Agents
+  through Temporal workflows, with execution configuration published to ACP.
+- **Model providers.** DeepSeek and OpenRouter with encrypted credentials, model
+  discovery and provider fallback.
+- **Skills.** Templates pin exact Skill versions, and Runtimes receive them
+  read-only. Automatic Skill learning activates checked changes when the Agent
+  is idle and notifies the user.
+- **Observability.** Traces and metrics for every service, viewable in Jaeger.
 
 ## Architecture
 
-```text
-                      Browser (Admin Console / Agent UI)
-                                     |
-                               Edge Gateway  (sole public entry)
-              +----------------------+---------------------+
-              |                      |                     |
-        Admin Console BFF        Agent UI bridge     Identity Service
-              |                      |
-              +-----------+----------+
-                          |
-      Agent Controller ---+--- Agent ACP Service ---> Model providers
-        |       |                    |
-        |       +--> Skill Registry  +--> Antnest Runtime (MCP, per Agent)
-        |                                      |
-        +--> Runtime Controller --> Docker     +--> Runtime Egress --> network
-        +--> Runtime Egress (policy)
+```mermaid
+flowchart LR
+  browser["Browser<br/>Admin Console / Agent UI"] --> gateway["Edge Gateway<br/>(only public entry)"]
+  gateway --> identity["Identity Service"]
+  gateway --> console["Admin Console BFF"]
+  gateway --> bridge["Agent UI bridge"]
+  console --> controller["Agent Controller"]
+  console -.-> acp
+  bridge --> acp["Agent ACP Service"]
+  bridge -.-> controller
+  controller --> acp
+  controller --> registry["Skill Registry"]
+  controller --> runtimeController["Runtime Controller"]
+  controller --> egress["Runtime Egress"]
+  runtimeController --> docker["Docker"]
+  acp --> models["Model providers"]
+  acp --> runtime["Antnest Runtime<br/>(one per Agent)"]
+  runtime --> egress
+  egress --> internet["Internet"]
 ```
 
 | Component | Language | Role |
@@ -77,6 +120,13 @@ Planned components: Channel Manager (external chat channels), Task Scheduler
 Ownership rules, identities and dependency directions are described in
 [docs/service-layout.md](docs/service-layout.md). Wire contracts live in
 [contracts/](contracts/README.md).
+
+## Project status
+
+Antnest is under active development and has no tagged release yet. Interfaces
+and storage schemas can still change between commits. Known gaps and planned
+work are tracked in [GitHub issues](https://github.com/tf4fun/antnest-platform/issues).
+Feedback and contributions are very welcome.
 
 ## Quick start
 
