@@ -7,6 +7,7 @@ on:
     paths:
       - services/agent-ui/**
       - tests/integration/agent-ui/**
+      - services/agent-acp-service/package-lock.json
       - contracts/**
       - .nvmrc
       - .github/workflows/agent-ui.yml
@@ -15,6 +16,7 @@ on:
     paths:
       - services/agent-ui/**
       - tests/integration/agent-ui/**
+      - services/agent-acp-service/package-lock.json
       - contracts/**
       - .nvmrc
       - .github/workflows/agent-ui.yml
@@ -43,9 +45,15 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: services/agent-ui/web/package-lock.json
+          cache-dependency-path: |
+            services/agent-ui/web/package-lock.json
+            services/agent-acp-service/package-lock.json
 
       - run: npm ci
+
+      # Contract tests validate with the ACP service's locked Ajv and ACP SDK schema.
+      - name: Install ACP contract tooling
+        run: npm --prefix ../../agent-acp-service ci
 
       - run: npm run typecheck
 

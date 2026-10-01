@@ -134,7 +134,9 @@ async fn managed_server_idle_process_is_not_a_writer_but_its_child_is() {
     }
     assert_eq!(registry.live_managed_work().unwrap(), vec!["server-a"]);
     let stopped = registry.spawn_managed(
-        tokio::process::Command::new("/bin/sleep").arg("60").process_group(0),
+        tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0),
         "server-b",
     );
     let mut idle = stopped.expect("idle managed child");

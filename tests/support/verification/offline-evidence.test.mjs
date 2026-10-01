@@ -26,6 +26,14 @@ function fixture(t) {
   mkdirSync(output);
   return { directory, output, config: join(directory, "config.json") };
 }
+// The repository .cache is gitignored and absent in fresh checkouts.
+function cacheTarget(t) {
+  const directory = mkdtempSync(join(tmpdir(), "antnest-cache-target-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const cache = join(directory, ".cache");
+  mkdirSync(cache);
+  return cache;
+}
 function node(args, env = {}) {
   return spawnSync(process.execPath, args, {
     cwd: root,
@@ -90,10 +98,7 @@ test("HTTP observer preserves selection, query removal, causes and private outpu
 
 test("HTTP observer rejects a cached output-file alias before subscribing", (t) => {
   const f = fixture(t);
-  symlinkSync(
-    join(root, ".cache"),
-    join(f.output, "http-errors.private.jsonl"),
-  );
+  symlinkSync(cacheTarget(t), join(f.output, "http-errors.private.jsonl"));
   json(f.config, {
     output: f.output,
     originPrefix: "http://127.0.0.1:",
@@ -185,7 +190,7 @@ test("failure capture rejects an individual output alias before its request", (t
   const inputLog = join(f.directory, "input.log");
   json(inputLog, { status_code: 500, trace_id: traceID });
   symlinkSync(
-    join(root, ".cache"),
+    cacheTarget(t),
     join(f.output, `identity-failure-${traceID}.private.json`),
   );
   json(f.config, {
@@ -279,7 +284,7 @@ test("lifecycle audit rejects empty profiles and cached report aliases", (t) => 
     assert.notEqual(audit(f).status, 0);
   }
   json(f.config, f.configuration);
-  symlinkSync(join(root, ".cache"), join(f.output, "trace-audit.json"));
+  symlinkSync(cacheTarget(t), join(f.output, "trace-audit.json"));
   const result = audit(f);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /cache alias/);
@@ -334,7 +339,7 @@ test("interrupted audit preserves revision, receipts, recovery identity and erro
 
 test("crash replay rejects symlinked evidence files inside its durable input directory", (t) => {
   const f = fixture(t);
-  symlinkSync(join(root, ".cache"), join(f.directory, "business.json"));
+  symlinkSync(cacheTarget(t), join(f.directory, "business.json"));
   const result = node([
     entry("verification/recheck-crash-traces.mjs"),
     "--input",
@@ -361,7 +366,7 @@ test("crash replay also checks derived proof and raw-trace file aliases", (t) =>
       json(join(f.directory, "before-create.recovered.private.json"), {
         checkpoint: { ac: { request_id: "request" } },
       });
-    symlinkSync(join(root, ".cache"), join(f.directory, leaf));
+    symlinkSync(cacheTarget(t), join(f.directory, leaf));
     const result = node([
       entry("verification/recheck-crash-traces.mjs"),
       "--input",
