@@ -27,7 +27,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: services/agent-acp-service/package-lock.json
+          cache-dependency-path: |
+            services/agent-acp-service/package-lock.json
+            services/agent-ui/web/package-lock.json
+            services/admin-console/web/package-lock.json
 
       - uses: actions/setup-python@v5
         with:
@@ -42,6 +45,15 @@ jobs:
       # locked Prettier and ESLint installation.
       - name: Install shared Node tooling
         run: npm --prefix services/agent-acp-service ci
+
+      # Browser E2E entry points import Playwright from the web packages; the
+      # storage-policy tests load them without launching a browser.
+      - name: Install web packages
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          npm --prefix services/agent-ui/web ci
+          npm --prefix services/admin-console/web ci
 
       - name: Markdown links
         run: make check-links
