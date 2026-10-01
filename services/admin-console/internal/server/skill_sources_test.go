@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 const sourceAgent = "agent_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	instrumentationName = "soft/antnest-platform/identity-service"
+	instrumentationName = "github.com/tf4fun/antnest-platform/identity-service"
 	defaultServiceName  = "identity-service"
 )
 

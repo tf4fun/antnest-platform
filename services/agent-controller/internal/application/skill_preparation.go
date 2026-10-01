@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 // SkillPreparationStatus exposes only the progress needed to retry the same

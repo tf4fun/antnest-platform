@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 var ErrInvalidExecutionConfiguration = errors.New("invalid execution configuration")

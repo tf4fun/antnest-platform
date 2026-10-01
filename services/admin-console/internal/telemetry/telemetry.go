@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "soft/antnest-platform/admin-console"
+const instrumentationName = "github.com/tf4fun/antnest-platform/admin-console"
 
 type Config struct {
 	ServiceVersion string

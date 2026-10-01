@@ -14,12 +14,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"soft/antnest-platform/services/identity-service/internal/credentials"
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/localauth"
-	"soft/antnest-platform/services/identity-service/internal/oidcflow"
-	"soft/antnest-platform/services/identity-service/internal/scim"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
 func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {

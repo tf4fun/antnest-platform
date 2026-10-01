@@ -13,15 +13,15 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 var (
-	monitorMeter       = otel.Meter("soft/antnest-platform/runtime-controller/platform-monitor")
-	monitorTracer      = otel.Tracer("soft/antnest-platform/runtime-controller/platform-monitor")
+	monitorMeter       = otel.Meter("github.com/tf4fun/antnest-platform/runtime-controller/platform-monitor")
+	monitorTracer      = otel.Tracer("github.com/tf4fun/antnest-platform/runtime-controller/platform-monitor")
 	watchReconnects    = mustCounter(monitorMeter.Int64Counter("runtime.platform.watch.reconnects"))
 	reconciliations    = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliations"))
 	reconciliationGaps = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliation.gaps"))

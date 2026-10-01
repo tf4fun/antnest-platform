@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type ExecutionOrganizationSource interface {
@@ -54,7 +54,7 @@ func NewExecutionPublicationWorker(source ExecutionOrganizationSource, publisher
 		logger = slog.Default()
 	}
 	return &ExecutionPublicationWorker{source: source, publisher: publisher, schedule: schedule,
-		logger: logger, tracer: otel.Tracer("soft/antnest-platform/agent-controller/execution-publication"),
+		logger: logger, tracer: otel.Tracer("github.com/tf4fun/antnest-platform/agent-controller/execution-publication"),
 		wake: make(chan struct{}, 1), pending: make(map[string]trace.SpanContext)}, nil
 }
 

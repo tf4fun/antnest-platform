@@ -10,13 +10,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2"
 
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/oidcflow"
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 func startOperation(ctx context.Context, operation string) (context.Context, func(error)) {
-	ctx, span := otel.Tracer("soft/antnest-platform/identity-service/oidcclient").Start(ctx, operation, trace.WithSpanKind(trace.SpanKindInternal))
+	ctx, span := otel.Tracer("github.com/tf4fun/antnest-platform/identity-service/oidcclient").Start(ctx, operation, trace.WithSpanKind(trace.SpanKindInternal))
 	span.SetAttributes(attribute.String("antnest.operation.phase", operation), attribute.String("antnest.identity.authentication_method", "oidc"))
 	return ctx, func(err error) {
 		if err == nil {

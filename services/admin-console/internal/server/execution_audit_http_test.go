@@ -18,9 +18,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
-	"soft/antnest-platform/services/admin-console/internal/telemetry"
-	"soft/antnest-platform/services/admin-console/internal/upstream"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
 
 type auditHTTPCall struct {

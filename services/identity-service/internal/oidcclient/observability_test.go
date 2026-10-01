@@ -14,8 +14,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/identity-service/internal/oidcflow"
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 func TestOIDCAdapterObservesProtocolErrorInHTTP200WithoutProviderSecrets(t *testing.T) {

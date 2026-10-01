@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 // Defaults are copied into an administrator's draft, never applied to stored configuration.

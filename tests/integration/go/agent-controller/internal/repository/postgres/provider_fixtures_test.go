@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func seedProviderForModel(t *testing.T, repository *Repository, model ports.ModelProfileRecord) {

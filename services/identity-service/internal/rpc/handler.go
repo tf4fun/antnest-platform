@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"strings"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/localauth"
-	"soft/antnest-platform/services/identity-service/internal/oidcflow"
-	"soft/antnest-platform/services/identity-service/internal/scim"
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 const maxRequestBytes = 1 << 20

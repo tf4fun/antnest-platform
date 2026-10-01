@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"soft/antnest-platform/services/admin-console/internal/principal"
 )
 
 func TestClientTargetsOnlyConfiguredServiceAndPropagatesTrace(t *testing.T) {

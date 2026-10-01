@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/skill-registry/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
 func TestRegistryRealHTTPSourceSearchAndLoadKeepCompleteNativeParents(t *testing.T) {

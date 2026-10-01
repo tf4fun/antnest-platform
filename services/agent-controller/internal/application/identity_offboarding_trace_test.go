@@ -10,7 +10,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestIdentityRevocationWorkerUsesItsComposedTracer(t *testing.T) {

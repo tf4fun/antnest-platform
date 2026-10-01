@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 const dockerAPIVersion = "v1.47"

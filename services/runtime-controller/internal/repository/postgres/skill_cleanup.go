@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 var _ repository.SkillCleanupStore = (*Repository)(nil)

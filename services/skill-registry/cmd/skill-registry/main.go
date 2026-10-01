@@ -15,8 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"soft/antnest-platform/services/skill-registry/internal/registry"
-	"soft/antnest-platform/services/skill-registry/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/registry"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
 type config struct {

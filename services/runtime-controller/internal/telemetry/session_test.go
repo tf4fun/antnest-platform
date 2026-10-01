@@ -12,8 +12,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestPlatformWatchDoesNotCreateLongLivedSpan(t *testing.T) {

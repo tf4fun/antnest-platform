@@ -3,7 +3,7 @@ package docker
 import (
 	"fmt"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 type runtimeCondition struct {

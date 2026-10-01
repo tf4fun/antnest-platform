@@ -10,7 +10,7 @@ import (
 	"net"
 	"net/http"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 const maximumResponseBytes = 1 << 20

@@ -4,11 +4,11 @@ import (
 	"context"
 	"log/slog"
 
-	"soft/antnest-platform/services/agent-controller/internal/acpclient"
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/config"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/acpclient"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/config"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 )
 
 func configureExecutionPublication(repository *postgres.Repository, cfg config.Config, opener ports.CredentialOpener, logger *slog.Logger) (*application.ExecutionPublisher, *application.ExecutionPublicationWorker, error) {

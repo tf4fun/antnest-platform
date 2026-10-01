@@ -3,7 +3,7 @@ package docker
 import (
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 func TestRuntimeConditionSeparatesContainerPhaseFromHealth(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func (repository *Repository) ConfirmLifecycleDrain(ctx context.Context, input ports.ConfirmLifecycleDrain) (ports.LifecycleOperationRecord, error) {

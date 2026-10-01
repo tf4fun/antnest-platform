@@ -13,7 +13,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 func TestSCIMRecordsMetadataWithoutContent(t *testing.T) {

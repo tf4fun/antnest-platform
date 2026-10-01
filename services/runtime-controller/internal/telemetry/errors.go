@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
 )
 
 // RecordFailure accepts a registered safe message, never an exception string.

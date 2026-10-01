@@ -13,9 +13,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/localauth"
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 type observedLoginService struct{ *rpcServicesStub }

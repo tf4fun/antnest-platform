@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func observeDTO(response http.ResponseWriter, direction string, value any) {

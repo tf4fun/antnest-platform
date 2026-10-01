@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	dockerplatform "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
+	dockerplatform "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 )
 
 func crashStorageCommand(t *testing.T, target string, overrides map[string]string) (string, string) {

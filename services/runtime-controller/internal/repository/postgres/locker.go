@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const lockRetryInterval = 50 * time.Millisecond

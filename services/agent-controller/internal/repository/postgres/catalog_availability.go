@@ -7,8 +7,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func catalogAvailabilityTable(kind ports.CatalogResourceKind) (string, error) {

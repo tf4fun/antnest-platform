@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type skillAdmissionACPStub struct{ published chan ports.ExecutionSnapshot }

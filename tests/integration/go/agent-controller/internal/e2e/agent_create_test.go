@@ -29,16 +29,16 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/credentials"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/egressclient"
-	"soft/antnest-platform/services/agent-controller/internal/orchestration"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
-	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
-	"soft/antnest-platform/services/agent-controller/internal/server"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/orchestration"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {

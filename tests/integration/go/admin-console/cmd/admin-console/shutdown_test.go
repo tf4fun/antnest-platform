@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 func TestRunStopsActiveWatchCleanly(t *testing.T) {

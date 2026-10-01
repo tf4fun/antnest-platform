@@ -25,11 +25,11 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
 )
 
 const (
-	instrumentationName = "soft/antnest-platform/runtime-controller"
+	instrumentationName = "github.com/tf4fun/antnest-platform/runtime-controller"
 	defaultServiceName  = "runtime-controller"
 	shutdownTimeout     = 5 * time.Second
 )

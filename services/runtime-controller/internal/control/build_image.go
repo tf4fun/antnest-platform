@@ -6,8 +6,8 @@ import (
 
 	"github.com/opencontainers/go-digest"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 func (s *Service) prepareBuildImage(ctx context.Context, operation *deployment.Operation, configuration deployment.Configuration) error {

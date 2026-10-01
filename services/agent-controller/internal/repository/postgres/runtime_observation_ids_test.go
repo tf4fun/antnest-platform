@@ -1,8 +1,8 @@
 package postgres
 
 import (
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"regexp"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 	"testing"
 )
 

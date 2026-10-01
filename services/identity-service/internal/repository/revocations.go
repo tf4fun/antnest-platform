@@ -6,8 +6,8 @@ import (
 
 	"go.opentelemetry.io/otel/propagation"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
 func (a *DirectoryAdapter) ResolveOwnerAuthorization(ctx context.Context, userID, organizationID string) (domain.OwnerAuthorization, error) {

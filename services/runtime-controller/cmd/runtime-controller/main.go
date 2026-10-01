@@ -16,17 +16,17 @@ import (
 	"syscall"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/config"
-	"soft/antnest-platform/services/runtime-controller/internal/control"
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
-	"soft/antnest-platform/services/runtime-controller/internal/observation"
-	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
-	platformmonitor "soft/antnest-platform/services/runtime-controller/internal/platform/monitor"
-	"soft/antnest-platform/services/runtime-controller/internal/registryclient"
-	postgresrepository "soft/antnest-platform/services/runtime-controller/internal/repository/postgres"
-	"soft/antnest-platform/services/runtime-controller/internal/rpc"
-	"soft/antnest-platform/services/runtime-controller/internal/runtimeclient"
-	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
+	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
+	platformmonitor "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/monitor"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/registryclient"
+	postgresrepository "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository/postgres"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/rpc"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/runtimeclient"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 func main() {

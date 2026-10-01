@@ -3,8 +3,8 @@ package rpc
 import (
 	"net/http"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
 func (h *Handler) resolveOwnerAuthorization(response http.ResponseWriter, request *http.Request) {

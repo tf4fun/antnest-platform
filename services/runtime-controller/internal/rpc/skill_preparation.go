@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 func (h *Handler) prepareSkillSet(response http.ResponseWriter, request *http.Request) {

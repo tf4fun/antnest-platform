@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestRepositoryUpdateRecoveryKeepsTargetAndAtomicCompletion(t *testing.T) {

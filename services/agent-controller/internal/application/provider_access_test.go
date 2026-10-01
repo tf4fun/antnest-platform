@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestProviderAccessReadsCurrentCredentialWithoutWriting(t *testing.T) {

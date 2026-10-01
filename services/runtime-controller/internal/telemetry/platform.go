@@ -12,9 +12,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 var (

@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 const (

@@ -1,4 +1,4 @@
-module soft/antnest-platform/services/runtime-controller
+module github.com/tf4fun/antnest-platform/services/runtime-controller
 
 go 1.27.0
 

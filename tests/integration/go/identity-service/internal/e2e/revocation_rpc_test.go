@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/rpc"
-	"soft/antnest-platform/services/identity-service/internal/scim"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/rpc"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
 func assertSCIMRevocationDelivery(t *testing.T, identity *httptest.Server, credential string, user scim.UserResource) {

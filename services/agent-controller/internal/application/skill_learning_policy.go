@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 var learningRequestID = regexp.MustCompile(`^[!-~]{1,128}$`)

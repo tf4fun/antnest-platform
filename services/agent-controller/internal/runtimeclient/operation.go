@@ -8,7 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 // Only operation-bearing errors are reconciled; conflicts must never adopt a

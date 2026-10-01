@@ -13,7 +13,7 @@ import (
 	temporallog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 )
 
 // The returned close function must run after worker Stop and before telemetry

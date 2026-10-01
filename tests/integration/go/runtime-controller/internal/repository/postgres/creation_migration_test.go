@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 func TestRepositoryUpgradeSeparatesReadinessWithoutLosingHistory(t *testing.T) {

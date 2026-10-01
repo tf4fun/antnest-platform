@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 type cleanupEngineStub struct{ *fakeEngine }

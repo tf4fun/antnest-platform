@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
 func agentAuthorizationCommand(agent ports.AgentRecord) ports.SetAgentAuthorization {

@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 func TestControlAndExecutionPricingSchemasAgree(t *testing.T) {

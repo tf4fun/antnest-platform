@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/credentials"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestProviderModelAndCredentialLifecyclesAreIndependent(t *testing.T) {

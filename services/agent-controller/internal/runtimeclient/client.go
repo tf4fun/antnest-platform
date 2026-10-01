@@ -15,9 +15,9 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumResponseBytes = 1 << 20

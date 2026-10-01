@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 func TestIdentityErrorsDoNotCopyUntrustedDetailsIntoTrace(t *testing.T) {

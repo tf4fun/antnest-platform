@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
-	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 var _ platform.Port = (*Driver)(nil)

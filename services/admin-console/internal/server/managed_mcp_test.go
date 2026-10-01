@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 const managedMCPFixture = `[{"id":"documents","command":"node","args":["server.js","two words",""],"env":{"TOKEN":"synthetic-env-value","EMPTY":""},"internal_endpoint":"must-not-project"}]`

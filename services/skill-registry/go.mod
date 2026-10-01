@@ -1,4 +1,4 @@
-module soft/antnest-platform/services/skill-registry
+module github.com/tf4fun/antnest-platform/services/skill-registry
 
 go 1.27.0
 

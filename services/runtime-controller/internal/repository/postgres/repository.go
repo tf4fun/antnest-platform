@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 var _ repository.Port = (*Repository)(nil)

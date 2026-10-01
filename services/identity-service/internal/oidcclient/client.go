@@ -12,7 +12,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"soft/antnest-platform/services/identity-service/internal/oidcflow"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
 )
 
 const responseLimit = 1 << 20

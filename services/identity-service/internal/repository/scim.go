@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/scim"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
 type SCIMAdapter struct{ store *Store }

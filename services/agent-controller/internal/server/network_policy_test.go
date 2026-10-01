@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type networkPolicyServiceStub struct {

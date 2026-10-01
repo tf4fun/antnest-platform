@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 type skillInspectorStub struct {

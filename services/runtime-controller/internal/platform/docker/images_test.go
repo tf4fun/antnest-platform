@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestResolveImageInspectsTaggedReferenceWithoutPulling(t *testing.T) {

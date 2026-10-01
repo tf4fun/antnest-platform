@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestImageResolutionPreservesTraceAndUsesBoundedAttributes(t *testing.T) {

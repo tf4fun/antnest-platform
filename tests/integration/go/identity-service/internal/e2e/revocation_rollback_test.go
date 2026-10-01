@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/scim"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
 func TestPrincipalRevocationsMembershipMutationsAreAtomic(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"soft/antnest-platform/services/admin-console/internal/principal"
-	"soft/antnest-platform/services/admin-console/internal/upstream"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
 
 const auditSummaryFixture = `{"run_id":"run-1","session_id":"session-1","agent_id":"deleted-agent","principal_id":"owner-1","state":"completed","created_at":"2026-09-14T10:00:00.123456Z","updated_at":"2026-09-14T10:01:00Z"}`

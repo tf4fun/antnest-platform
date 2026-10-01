@@ -1,6 +1,6 @@
 package postgres
 
-import "soft/antnest-platform/services/agent-controller/internal/ports"
+import "github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 
 type runtimeInvalidation struct {
 	code      string

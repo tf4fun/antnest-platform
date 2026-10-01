@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	dockerplatform "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
-	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
-	"soft/antnest-platform/services/runtime-controller/internal/repository/postgres"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
+	dockerplatform "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository/postgres"
 )
 
 const crashExit = 86

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type ExecutionSynchronizationView struct {

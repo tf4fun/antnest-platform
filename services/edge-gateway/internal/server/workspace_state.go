@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 var (

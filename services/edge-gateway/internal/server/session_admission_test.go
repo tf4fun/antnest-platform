@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 func TestSessionAdmissionDistinguishesInvalidFromUnavailable(t *testing.T) {

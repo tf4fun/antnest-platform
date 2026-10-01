@@ -11,7 +11,7 @@ import (
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func (c *Client) InspectImage(ctx context.Context, image string) (string, error) {

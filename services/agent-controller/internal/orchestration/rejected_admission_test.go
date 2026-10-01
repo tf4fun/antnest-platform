@@ -11,7 +11,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/mocks"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestRejectedAdmissionPreservesCommandIdentity(t *testing.T) {

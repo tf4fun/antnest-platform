@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"soft/antnest-platform/services/admin-console/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 )
 
 // RegistryClient is the Console's internal-only connection to Skill Registry.

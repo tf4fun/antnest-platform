@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func TestNetworkPolicyFlowTraceIncludesResponseValidation(t *testing.T) {

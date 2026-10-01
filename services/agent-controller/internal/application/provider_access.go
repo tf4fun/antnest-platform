@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type ProviderAccess struct {

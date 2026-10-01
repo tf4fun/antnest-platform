@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 type fakeSkillPreparationStore struct {

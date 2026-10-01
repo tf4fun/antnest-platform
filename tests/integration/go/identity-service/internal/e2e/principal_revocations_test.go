@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/scim"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
 func revocationFixture(t *testing.T) localAdmissionFixture {

@@ -1,7 +1,7 @@
 package ports
 
 import (
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 type PendingRuntimeBinding struct {

@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestPublicationWorkerRecordsBoundedAttemptsWithComposedTracer(t *testing.T) {

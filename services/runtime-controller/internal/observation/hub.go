@@ -9,13 +9,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 var (
-	observationMeter   = otel.Meter("soft/antnest-platform/runtime-controller/observation")
+	observationMeter   = otel.Meter("github.com/tf4fun/antnest-platform/runtime-controller/observation")
 	storedObservations = mustCounter(observationMeter.Int64Counter("runtime.observations"))
 )
 

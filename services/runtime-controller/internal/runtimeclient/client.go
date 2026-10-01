@@ -15,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 const maxStatusBytes = 16 << 10
@@ -24,8 +24,8 @@ const maxStatusBytes = 16 << 10
 var ErrNotReady = errors.New("runtime is not ready")
 
 var (
-	statusTracer   = otel.Tracer("soft/antnest-platform/runtime-controller/runtimeclient")
-	statusMeter    = otel.Meter("soft/antnest-platform/runtime-controller/runtimeclient")
+	statusTracer   = otel.Tracer("github.com/tf4fun/antnest-platform/runtime-controller/runtimeclient")
+	statusMeter    = otel.Meter("github.com/tf4fun/antnest-platform/runtime-controller/runtimeclient")
 	statusChecks   = mustCounter(statusMeter.Int64Counter("runtime.status.verifications"))
 	statusDuration = mustHistogram(statusMeter.Float64Histogram(
 		"runtime.status.verification.duration", metric.WithUnit("s"),

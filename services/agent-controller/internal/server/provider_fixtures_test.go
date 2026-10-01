@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 )
 
 func (service *catalogServiceStub) ResolveProviderAccess(context.Context, string, string) (application.ProviderAccess, error) {

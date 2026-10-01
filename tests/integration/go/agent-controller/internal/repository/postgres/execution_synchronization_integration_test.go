@@ -15,10 +15,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/server"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func synchronizationBoundary(t *testing.T, repository *Repository) http.Handler {

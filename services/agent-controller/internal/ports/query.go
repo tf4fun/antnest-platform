@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 // AgentQuery contains only projection predicates understood by the storage adapter.

@@ -1,8 +1,8 @@
 package rpc
 
 import (
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 	"net/http"
-	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 func observeRequest(request *http.Request, value any) {

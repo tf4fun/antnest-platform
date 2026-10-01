@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type publicationOrganizationsStub struct {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {

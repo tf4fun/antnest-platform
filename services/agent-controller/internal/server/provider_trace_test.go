@@ -12,8 +12,8 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {

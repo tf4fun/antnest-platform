@@ -13,9 +13,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/stretchr/testify/require"
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func assertAgentConfigurationHTTP(t *testing.T, handler http.Handler, agent map[string]any, publisher *application.ExecutionPublisher, snapshot func() peerExecutionSnapshot, recorder *tracetest.SpanRecorder) {

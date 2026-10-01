@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 type skillResolverStub struct {

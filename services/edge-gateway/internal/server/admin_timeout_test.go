@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/session"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 )
 
 func TestAdminProxyBoundsForwardingWithoutRetryingWrites(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 const maximumSourceSequence int64 = 9007199254740991

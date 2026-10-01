@@ -2,9 +2,9 @@ package identityclient
 
 import (
 	"context"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type ownerRequest struct {

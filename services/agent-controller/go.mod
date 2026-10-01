@@ -1,4 +1,4 @@
-module soft/antnest-platform/services/agent-controller
+module github.com/tf4fun/antnest-platform/services/agent-controller
 
 go 1.27.0
 

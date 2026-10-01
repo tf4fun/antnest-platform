@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
-	"soft/antnest-platform/services/edge-gateway/internal/session"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 )
 
 func TestWorkspaceHTTPForwardsOfficialTransportWithoutCredentials(t *testing.T) {

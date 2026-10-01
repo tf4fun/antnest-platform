@@ -1,4 +1,4 @@
-module soft/antnest-platform/services/admin-console
+module github.com/tf4fun/antnest-platform/services/admin-console
 
 go 1.27.0
 

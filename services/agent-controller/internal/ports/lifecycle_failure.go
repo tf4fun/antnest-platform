@@ -1,6 +1,6 @@
 package ports
 
-import "soft/antnest-platform/services/agent-controller/internal/domain"
+import "github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 
 type QuarantineLifecycleOperation struct {
 	RequestID     string

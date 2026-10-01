@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 func usdPricing(input, output, cacheRead float64) *domain.ModelPricing {

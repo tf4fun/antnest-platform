@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	instrumentationName = "soft/antnest-platform/agent-controller"
+	instrumentationName = "github.com/tf4fun/antnest-platform/agent-controller"
 	defaultServiceName  = "agent-controller"
 )
 

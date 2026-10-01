@@ -12,15 +12,15 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
-	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
-	"soft/antnest-platform/services/edge-gateway/internal/session"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 )
 
 func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {

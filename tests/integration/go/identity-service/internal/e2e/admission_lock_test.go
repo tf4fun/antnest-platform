@@ -13,10 +13,10 @@ import (
 	"github.com/jackc/pgx/v5/multitracer"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/localauth"
-	"soft/antnest-platform/services/identity-service/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/repository"
 )
 
 func TestLocalLoginOverlapsAdministratorDeactivation(t *testing.T) {

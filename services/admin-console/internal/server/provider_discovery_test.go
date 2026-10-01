@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
-	"soft/antnest-platform/services/admin-console/internal/providerdiscovery"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/providerdiscovery"
 )
 
 type modelListerStub struct {

@@ -17,11 +17,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
-	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
-	"soft/antnest-platform/services/edge-gateway/internal/session"
-	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 const (

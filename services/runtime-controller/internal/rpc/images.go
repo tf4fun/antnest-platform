@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 type imageResolutionResponse struct {

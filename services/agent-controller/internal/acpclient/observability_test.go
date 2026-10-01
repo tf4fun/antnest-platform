@@ -20,7 +20,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"soft/antnest-platform/services/agent-controller/internal/acpclient"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/acpclient"
 )
 
 func recordSpans(t *testing.T) (*sdktrace.TracerProvider, *tracetest.SpanRecorder) {

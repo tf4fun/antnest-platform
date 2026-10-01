@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 )
 
 func TestOwnerAuthorizationRetainsScopedRevocationsAfterRestoration(t *testing.T) {

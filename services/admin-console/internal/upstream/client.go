@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"strings"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
-	"soft/antnest-platform/services/admin-console/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 )
 
 type Target string

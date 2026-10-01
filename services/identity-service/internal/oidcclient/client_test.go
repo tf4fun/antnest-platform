@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/identity-service/internal/oidcflow"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
 )
 
 func TestClientDiscoversBuildsPKCEAndVerifiesSignedIdentity(t *testing.T) {

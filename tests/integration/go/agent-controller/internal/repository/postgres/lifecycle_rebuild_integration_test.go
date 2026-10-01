@@ -9,8 +9,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {

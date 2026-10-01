@@ -19,13 +19,13 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/observation"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
-	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 const maxRequestBytes = 1 << 20
@@ -33,8 +33,8 @@ const maxRequestBytes = 1 << 20
 var ErrServerShutdown = errors.New("runtime controller server is shutting down")
 
 var (
-	rpcMeter          = otel.Meter("soft/antnest-platform/runtime-controller/rpc")
-	rpcTracer         = otel.Tracer("soft/antnest-platform/runtime-controller/rpc")
+	rpcMeter          = otel.Meter("github.com/tf4fun/antnest-platform/runtime-controller/rpc")
+	rpcTracer         = otel.Tracer("github.com/tf4fun/antnest-platform/runtime-controller/rpc")
 	lifecycleCalls    = mustCounter(rpcMeter.Int64Counter("runtime.lifecycle.operations"))
 	lifecycleDuration = mustHistogram(rpcMeter.Float64Histogram(
 		"runtime.lifecycle.operation.duration", metric.WithUnit("s"),

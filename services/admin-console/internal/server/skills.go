@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 const maximumSkillUpload = 8 << 20

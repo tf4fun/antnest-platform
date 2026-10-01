@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 var ErrObservationStreamDisconnected = errors.New("platform observation stream disconnected")

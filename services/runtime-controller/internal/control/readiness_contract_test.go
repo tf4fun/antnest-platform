@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestStatusOnlyChecksLocalInitializationAndOwnStorage(t *testing.T) {

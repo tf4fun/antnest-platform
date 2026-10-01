@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
-	"soft/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 func (h *Handler) registerObservation(response http.ResponseWriter, request *http.Request) {

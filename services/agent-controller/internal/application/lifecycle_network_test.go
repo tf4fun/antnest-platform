@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestNetworkMutationRejectsExpiredPhaseAfterAttachmentRead(t *testing.T) {

@@ -20,9 +20,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
-	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 func TestWorkspaceStateHTTPDisconnectCancelsACPReceive(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"soft/antnest-platform/services/identity-service/internal/domain"
-	"soft/antnest-platform/services/identity-service/internal/localauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 )
 
 type LocalAuthAdapter struct{ store *Store }

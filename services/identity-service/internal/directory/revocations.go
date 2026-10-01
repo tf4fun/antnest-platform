@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"soft/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
 type RevocationQuery struct {

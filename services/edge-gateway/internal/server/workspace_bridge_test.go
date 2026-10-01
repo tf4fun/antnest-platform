@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 	"log/slog"
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
-	"soft/antnest-platform/services/edge-gateway/internal/session"
 )
 
 type bridgeLeaseIdentity struct {

@@ -3,7 +3,7 @@ package postgres
 import (
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func validRuntimeRemovalProof(operation ports.LifecycleOperationRecord, proof *ports.RuntimeAbsenceProof, now time.Time) bool {

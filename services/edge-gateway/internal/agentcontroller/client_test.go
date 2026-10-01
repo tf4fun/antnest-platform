@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 func TestClientPropagatesTraceContext(t *testing.T) {

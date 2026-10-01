@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "soft/antnest-platform/edge-gateway"
+const instrumentationName = "github.com/tf4fun/antnest-platform/edge-gateway"
 
 type Config struct {
 	ServiceVersion string

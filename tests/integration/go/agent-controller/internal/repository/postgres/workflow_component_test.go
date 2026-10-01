@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/orchestration"
 	"go.temporal.io/sdk/testsuite"
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/orchestration"
 )
 
 func executeLifecycleWorkflowForTest(t *testing.T, repository *Repository, service *application.LifecycleService, requestID string, expected domain.OperationState) {

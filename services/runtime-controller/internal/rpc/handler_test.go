@@ -15,10 +15,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/observation"
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 const testRuntimeRevision = deployment.RuntimeRevision("rtv_0123456789abcdef0123456789abcdef")

@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/orchestration"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/orchestration"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestTemporalResumesAfterBusinessCommitBeforeActivityAcknowledgement(t *testing.T) {

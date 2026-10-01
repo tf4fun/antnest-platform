@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 func TestRuntimeInspectionExposesCurrentCondition(t *testing.T) {

@@ -3,7 +3,7 @@ package application
 import (
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 // Lifecycle-focused tests keep an explicit ready Skill preparation dependency,

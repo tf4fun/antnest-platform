@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func WithExecutionCapacityGuard(guard ports.ExecutionCapacityGuard) Option {

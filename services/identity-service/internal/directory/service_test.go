@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/identity-service/internal/credentials"
-	"soft/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
 func TestCreateOrganizationRequiresSystemAdministrator(t *testing.T) {

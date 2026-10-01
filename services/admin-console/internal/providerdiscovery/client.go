@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/admin-console/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 )
 
 const maximumResponseBytes = 8 << 20

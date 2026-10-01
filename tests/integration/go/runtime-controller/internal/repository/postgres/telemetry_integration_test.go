@@ -16,9 +16,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/observation"
-	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const telemetryEchoSQL = "SELECT $1::text AS telemetry_echo"

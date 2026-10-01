@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func reviseProfilePricing(t *testing.T, repository *Repository, current ports.ModelProfileRecord, input, output float64) ports.ModelProfileRecord {

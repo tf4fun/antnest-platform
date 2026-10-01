@@ -7,12 +7,12 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 const identityRevocationPageSize = 100
@@ -40,7 +40,7 @@ func NewIdentityRevocationWorker(source ports.IdentityRevocationSource, store po
 		logger = slog.Default()
 	}
 	return &IdentityRevocationWorker{source: source, store: store, scheduler: scheduler, pollInterval: interval, logger: logger,
-		tracer: otel.Tracer("soft/antnest-platform/agent-controller/identity-offboarding")}, nil
+		tracer: otel.Tracer("github.com/tf4fun/antnest-platform/agent-controller/identity-offboarding")}, nil
 }
 
 func (worker *IdentityRevocationWorker) Run(ctx context.Context) {

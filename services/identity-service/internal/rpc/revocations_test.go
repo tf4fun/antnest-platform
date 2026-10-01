@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/identity-service/internal/directory"
-	"soft/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
 func TestPrincipalRevocationsRPCRequiresExplicitCursorAndLimit(t *testing.T) {

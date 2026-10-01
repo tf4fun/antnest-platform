@@ -1,6 +1,6 @@
 package ports
 
-import "soft/antnest-platform/services/agent-controller/internal/domain"
+import "github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 
 // A configured resource can be managed before any execution has become healthy.
 func (record AgentRecord) HasConfiguredRuntime() bool {

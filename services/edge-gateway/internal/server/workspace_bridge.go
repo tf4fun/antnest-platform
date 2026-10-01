@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 const workspaceBridgeRequestTimeout = 65 * time.Second

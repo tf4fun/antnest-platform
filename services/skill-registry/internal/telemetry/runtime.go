@@ -16,7 +16,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-const instrumentationName = "soft/antnest-platform/skill-registry"
+const instrumentationName = "github.com/tf4fun/antnest-platform/skill-registry"
 
 type Runtime struct{ provider *sdktrace.TracerProvider }
 

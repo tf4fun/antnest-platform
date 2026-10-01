@@ -11,12 +11,12 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 const runtimeObservationPageSize = 500
 
-var runtimeObservationTracer = otel.Tracer("soft/antnest-platform/agent-controller/runtime-observation")
+var runtimeObservationTracer = otel.Tracer("github.com/tf4fun/antnest-platform/agent-controller/runtime-observation")
 
 type RuntimeObservationWorker struct {
 	source       ports.RuntimeObservationSource

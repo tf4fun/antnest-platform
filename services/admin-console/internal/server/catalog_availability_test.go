@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"soft/antnest-platform/services/admin-console/internal/principal"
-	"soft/antnest-platform/services/admin-console/internal/upstream"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
 
 func TestCatalogAvailabilityUsesOneScopedControllerCommand(t *testing.T) {

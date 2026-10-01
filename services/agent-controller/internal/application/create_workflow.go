@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 func (service *LifecycleService) ReplayCreateAgent(ctx context.Context, input CreateAgentInput) (CreateAgentResult, bool, error) {

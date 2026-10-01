@@ -14,15 +14,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/acpclient"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
-	"soft/antnest-platform/services/agent-controller/internal/acpclient"
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/credentials"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestExecutionWorkerCommitToHTTPWithoutBlockingCatalogWrites(t *testing.T) {

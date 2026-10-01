@@ -1,4 +1,4 @@
-module soft/antnest-platform/services/edge-gateway
+module github.com/tf4fun/antnest-platform/services/edge-gateway
 
 go 1.27.0
 

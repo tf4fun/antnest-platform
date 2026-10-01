@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, opener ports.CredentialOpener) (ports.ExecutionSnapshot, error) {

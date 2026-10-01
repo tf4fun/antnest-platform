@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"soft/antnest-platform/services/admin-console/internal/config"
-	"soft/antnest-platform/services/admin-console/internal/server"
-	"soft/antnest-platform/services/admin-console/internal/telemetry"
-	"soft/antnest-platform/services/admin-console/internal/upstream"
-	"soft/antnest-platform/services/admin-console/web"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/config"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/server"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
+	"github.com/tf4fun/antnest-platform/services/admin-console/web"
 )
 
 var version = "dev"

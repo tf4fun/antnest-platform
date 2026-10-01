@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 )
 
 type ProviderService interface {

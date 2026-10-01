@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 func testInspectAbsenceTraceMatchesReadOnlyResult(t *testing.T, recorder *tracetest.SpanRecorder) {

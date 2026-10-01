@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/observation"
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 type preparationStub struct {

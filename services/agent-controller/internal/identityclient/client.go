@@ -18,8 +18,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumResponseBytes = 1 << 20
@@ -27,7 +27,7 @@ const maximumResponseBytes = 1 << 20
 var identityIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 
 var (
-	meter    = otel.Meter("soft/antnest-platform/agent-controller/identityclient")
+	meter    = otel.Meter("github.com/tf4fun/antnest-platform/agent-controller/identityclient")
 	requests = mustCounter(meter.Int64Counter(
 		"antnest.agent_controller.dependency.requests",
 	))

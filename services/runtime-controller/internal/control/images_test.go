@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestResolveImageDoesNotUseLifecycleState(t *testing.T) {

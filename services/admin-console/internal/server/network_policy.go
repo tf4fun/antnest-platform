@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"regexp"
 
-	"soft/antnest-platform/services/admin-console/internal/principal"
-	"soft/antnest-platform/services/admin-console/internal/upstream"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
 
 const maximumBrowserVersion uint64 = 1<<53 - 1

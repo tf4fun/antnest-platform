@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"net/url"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 // Events detect loss; current inspections publish readiness. A ready event can

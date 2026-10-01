@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"soft/antnest-platform/services/runtime-controller/internal/skillset"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
 func TestRuntimeConfigurationRequiresExactPreparedSkillIdentity(t *testing.T) {

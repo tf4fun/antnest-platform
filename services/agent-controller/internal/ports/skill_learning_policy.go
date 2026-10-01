@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 // SkillLearningPolicyScope is checked against the current Agent owner and

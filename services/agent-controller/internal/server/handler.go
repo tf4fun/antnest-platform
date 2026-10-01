@@ -19,16 +19,16 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/agent-controller/internal/application"
-	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumRequestBytes = 2 << 20
 
 var (
-	serverMeter         = otel.Meter("soft/antnest-platform/agent-controller/server")
+	serverMeter         = otel.Meter("github.com/tf4fun/antnest-platform/agent-controller/server")
 	lifecycleOperations = mustLifecycleCounter(
 		serverMeter.Int64Counter(
 			"antnest.agent_controller.lifecycle.operations",

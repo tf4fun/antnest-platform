@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 
-	"soft/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 // HTTP/SSE is an opaque ACP transport. Session IDs, queues and connection

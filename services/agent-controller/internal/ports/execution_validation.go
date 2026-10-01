@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 var executionIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_./:-]{1,200}$`)
