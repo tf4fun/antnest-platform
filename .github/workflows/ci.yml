@@ -46,14 +46,17 @@ jobs:
       - name: Install shared Node tooling
         run: npm --prefix services/agent-acp-service ci
 
-      # Browser E2E entry points import Playwright from the web packages; the
-      # storage-policy tests load them without launching a browser.
+      # Browser E2E entry points import Playwright from the web packages, and
+      # the workspace recorder fixture drives a headless Chromium.
       - name: Install web packages
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: |
           npm --prefix services/agent-ui/web ci
           npm --prefix services/admin-console/web ci
+
+      - name: Install headless Chromium
+        run: services/agent-ui/web/node_modules/.bin/playwright install --with-deps --only-shell chromium
 
       - name: Markdown links
         run: make check-links
