@@ -30,6 +30,10 @@ export class PostgresExecutionRepository
          WHERE session.organization_id = $1 AND session.agent_id = $2
            AND ($3::text IS NULL OR run.execution_snapshot->'runtime'->>'revision' = $3)
            AND attempt.source = 'runtime' AND NOT attempt.runtime_call_stopped
+       ) OR EXISTS (
+         SELECT 1 FROM temporary_skill_scopes temporary JOIN runs run ON run.id=temporary.run_id
+         WHERE temporary.organization_id=$1 AND temporary.agent_id=$2 AND temporary.released_at IS NULL
+           AND ($3::text IS NULL OR run.execution_snapshot->'runtime'->>'revision'=$3)
        ) AS protected`,
       [scope.organizationId, scope.agentId, scope.runtimeRevision],
       signal,

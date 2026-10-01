@@ -42,7 +42,9 @@ export function connectACP(version, agent, cookie, options = {}) {
               ...options.headers,
               Cookie: cookie,
               Origin: gateway,
-              traceparent: `00-${traceID}-${parent}-01`,
+              ...(options.injectTraceParent === false
+                ? {}
+                : { traceparent: `00-${traceID}-${parent}-01` }),
             },
           },
         ),
@@ -76,7 +78,10 @@ export function connectACP(version, agent, cookie, options = {}) {
       request(
         acp.methods.agent.initialize,
         version === 1
-          ? { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} }
+          ? {
+              protocolVersion: acp.PROTOCOL_VERSION,
+              clientCapabilities: options.clientCapabilities ?? {},
+            }
           : {
               protocolVersion: acp.PROTOCOL_VERSION,
               info: { name: "identity-closeout", version: "1" },

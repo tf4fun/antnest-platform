@@ -1,0 +1,444 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json",
+  "title": "Skill discovery dynamic source mappings and promotion v1",
+  "$defs": {
+    "organization_id": {
+      "type": "string",
+      "pattern": "^org_[0-9a-f]{32}$"
+    },
+    "user_id": {
+      "type": "string",
+      "pattern": "^user_[0-9a-f]{32}$"
+    },
+    "agent_id": {
+      "type": "string",
+      "pattern": "^agent_[0-9a-f]{32}$"
+    },
+    "skill_id": {
+      "type": "string",
+      "pattern": "^skill_[0-9a-f]{32}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!-~]+$"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "\\S"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "version": {
+      "$ref": "https://antnest.local/contracts/skill-registry/registry-api.schema.json#/$defs/version"
+    },
+    "source_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "name"],
+      "properties": {
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        }
+      }
+    },
+    "agent_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "agent_id", "name", "sequence"],
+      "properties": {
+        "kind": {
+          "const": "agent"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        }
+      }
+    },
+    "registry_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "skill_id", "version"],
+      "properties": {
+        "kind": {
+          "const": "registry"
+        },
+        "skill_id": {
+          "$ref": "#/$defs/skill_id"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "skill_ref": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/agent_ref"
+        },
+        {
+          "$ref": "#/$defs/registry_ref"
+        }
+      ]
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "agent_id",
+        "owner_id",
+        "name",
+        "description",
+        "sequence",
+        "content_digest",
+        "active"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "owner_id": {
+          "$ref": "#/$defs/user_id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "description": {
+          "$ref": "#/$defs/description"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "content_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "projection_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "sequence"],
+      "properties": {
+        "outcome": {
+          "enum": ["applied", "replayed", "superseded"]
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        }
+      }
+    },
+    "search_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id", "actor_id", "query"],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "actor_id": {
+          "$ref": "#/$defs/user_id"
+        },
+        "requesting_agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "query": {
+          "$ref": "#/$defs/query"
+        },
+        "limit": {
+          "$ref": "#/$defs/limit"
+        }
+      }
+    },
+    "discovery_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skill_ref", "name", "description", "content_digest"],
+      "properties": {
+        "skill_ref": {
+          "$ref": "#/$defs/skill_ref"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "description": {
+          "$ref": "#/$defs/description"
+        },
+        "content_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "search_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/discovery_item"
+          }
+        }
+      }
+    },
+    "load_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "actor_id",
+        "skill_ref",
+        "expected_digest"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "actor_id": {
+          "$ref": "#/$defs/user_id"
+        },
+        "skill_ref": {
+          "$ref": "#/$defs/skill_ref"
+        },
+        "expected_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "source_artifact_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "actor_id",
+        "skill_ref",
+        "expected_digest"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "actor_id": {
+          "$ref": "#/$defs/user_id"
+        },
+        "skill_ref": {
+          "$ref": "#/$defs/agent_ref"
+        },
+        "expected_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "promote_request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request_id",
+            "organization_id",
+            "actor_id",
+            "skill_ref",
+            "expected_digest"
+          ],
+          "properties": {
+            "request_id": {
+              "$ref": "#/$defs/request_id"
+            },
+            "organization_id": {
+              "$ref": "#/$defs/organization_id"
+            },
+            "actor_id": {
+              "$ref": "#/$defs/user_id"
+            },
+            "skill_ref": {
+              "$ref": "#/$defs/agent_ref"
+            },
+            "expected_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request_id",
+            "organization_id",
+            "actor_id",
+            "skill_ref",
+            "expected_digest",
+            "skill_id",
+            "expected_version"
+          ],
+          "properties": {
+            "request_id": {
+              "$ref": "#/$defs/request_id"
+            },
+            "organization_id": {
+              "$ref": "#/$defs/organization_id"
+            },
+            "actor_id": {
+              "$ref": "#/$defs/user_id"
+            },
+            "skill_ref": {
+              "$ref": "#/$defs/agent_ref"
+            },
+            "expected_digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "skill_id": {
+              "$ref": "#/$defs/skill_id"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "inspect_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id", "actor_id", "sources"],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "actor_id": {
+          "$ref": "#/$defs/user_id"
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/source_key"
+          }
+        }
+      }
+    },
+    "inspect_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/projection"
+          }
+        }
+      }
+    },
+    "find_skill_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query"],
+      "properties": {
+        "query": {
+          "$ref": "#/$defs/query"
+        },
+        "limit": {
+          "$ref": "#/$defs/limit"
+        }
+      }
+    },
+    "load_skill_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skill_ref", "expected_digest"],
+      "properties": {
+        "skill_ref": {
+          "$ref": "#/$defs/skill_ref"
+        },
+        "expected_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_request",
+                "invalid_package",
+                "unauthorized",
+                "not_found",
+                "name_conflict",
+                "request_conflict",
+                "revision_conflict",
+                "limit_exceeded",
+                "busy",
+                "temporarily_unavailable",
+                "content_changed",
+                "source_unavailable",
+                "source_invalid"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

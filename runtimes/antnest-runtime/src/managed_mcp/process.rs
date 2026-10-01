@@ -36,7 +36,7 @@ impl ManagedProcess {
             .process_group(0)
             .kill_on_drop(true);
         let mut owned = registry
-            .spawn(&mut command)
+            .spawn_managed(&mut command, spec.id())
             .map_err(|_| "managed MCP process could not be spawned")?;
         let group = owned
             .child

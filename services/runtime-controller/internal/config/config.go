@@ -1,11 +1,15 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
 type Config struct {
@@ -27,6 +31,7 @@ type Config struct {
 	ObservationRetention  time.Duration
 	SSEHeartbeat          time.Duration
 	RuntimeOTEL           map[string]string
+	MaintenanceVerifiers  deployment.MaintenanceVerifiers
 }
 
 func Load(lookup func(string) string) (Config, error) {
@@ -59,6 +64,10 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	maintenanceVerifiers, err := parseMaintenanceVerifiers(lookup("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"))
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
 		ListenAddress:     valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", ":8080"),
 		DatabaseURL:       strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
@@ -81,6 +90,7 @@ func Load(lookup func(string) string) (Config, error) {
 		ObservationRetention:  retention,
 		SSEHeartbeat:          heartbeat,
 		RuntimeOTEL:           runtimeTelemetryEnvironment(lookup),
+		MaintenanceVerifiers:  maintenanceVerifiers,
 	}
 	if capture := config.RuntimeOTEL["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"]; capture != "true" && capture != "false" {
 		return Config{}, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")
@@ -113,6 +123,28 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_RPC_TIMEOUT must exceed ANTNEST_RUNTIME_MUTATION_TIMEOUT")
 	}
 	return config, nil
+}
+
+func parseMaintenanceVerifiers(raw string) (deployment.MaintenanceVerifiers, error) {
+	if strings.TrimSpace(raw) == "" {
+		return deployment.MaintenanceVerifiers{}.Normalize()
+	}
+	if !strings.HasPrefix(strings.TrimSpace(raw), "{") {
+		return deployment.MaintenanceVerifiers{}, fmt.Errorf("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS must be a JSON object")
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var parsed deployment.MaintenanceVerifiers
+	if err := decoder.Decode(&parsed); err != nil {
+		return deployment.MaintenanceVerifiers{}, fmt.Errorf("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: %w", err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return deployment.MaintenanceVerifiers{}, fmt.Errorf("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS must be one JSON object")
+	}
+	if parsed.Keys == nil {
+		return deployment.MaintenanceVerifiers{}, fmt.Errorf("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS requires a keys array")
+	}
+	return parsed.Normalize()
 }
 
 func runtimeTelemetryEnvironment(lookup func(string) string) map[string]string {

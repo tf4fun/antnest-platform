@@ -2,6 +2,7 @@
 #   docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
 FROM rust:1.98.1-bookworm AS build
 ARG CARGO_BUILD_JOBS=2
+ARG ANTNEST_RUNTIME_FEATURES=""
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libnftables-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
@@ -10,17 +11,18 @@ COPY runtimes/antnest-runtime/rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show active-toolchain
 COPY runtimes/antnest-runtime ./runtimes/antnest-runtime
 COPY tests/integration/antnest-runtime ./tests/integration/antnest-runtime
+COPY tests/integration/skill-registry/package-rules-v1.json ./tests/integration/skill-registry/package-rules-v1.json
 COPY contracts/runtime ./contracts/runtime
 WORKDIR /src/runtimes/antnest-runtime
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/runtimes/antnest-runtime/target \
     cargo fmt --check \
-    && cargo clippy --locked --all-targets -- -D warnings \
-    && cargo test --locked \
+    && cargo clippy --locked --all-targets --features "$ANTNEST_RUNTIME_FEATURES" -- -D warnings \
+    && cargo test --locked --features "$ANTNEST_RUNTIME_FEATURES" \
     && cargo test --locked --example managed-mcp-fixture \
     && cargo build --locked --example managed-mcp-fixture \
     && cp target/debug/examples/managed-mcp-fixture /tmp/managed-mcp-fixture \
-    && cargo build --locked --release \
+    && cargo build --locked --release --features "$ANTNEST_RUNTIME_FEATURES" \
     && cp target/release/antnest-runtime /tmp/antnest-runtime
 
 FROM node:24.21.0-bookworm-slim AS node

@@ -42,17 +42,20 @@ function fileTarget(
   value: unknown,
   workspace?: string,
 ): { label: string; absolute?: string } | undefined {
-  if (typeof value !== "object" || value === null || !("root" in value) || !("path" in value))
-    return undefined;
-  if (value.root !== "workspace" && value.root !== "system_skills") return undefined;
-  if (typeof value.path !== "string") return undefined;
-  const path = value.path;
-  if (path !== path.trim()) return undefined;
-  if (posix.isAbsolute(path) || path.includes("\0") || path.split("/").includes(".."))
-    return undefined;
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) return undefined;
+  if (value.includes("\0") || value.split("/").includes("..")) return undefined;
+  if (value.startsWith("/skills/")) return { label: posix.normalize(value) };
+  const path = value.startsWith("/workspace/")
+    ? value.slice("/workspace/".length)
+    : value.startsWith("~/")
+      ? value.slice(2)
+      : value === "/workspace" || value === "~"
+        ? "."
+        : value;
+  if (posix.isAbsolute(path)) return undefined;
   const relative = posix.normalize(path || ".");
-  if (value.root !== "workspace" || workspace === undefined || !posix.isAbsolute(workspace)) {
-    return { label: `${value.root}/${relative}` };
+  if (workspace === undefined || !posix.isAbsolute(workspace)) {
+    return { label: `/workspace/${relative}` };
   }
   const absolute = posix.join(workspace, relative);
   return { label: absolute, absolute };

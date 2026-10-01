@@ -276,6 +276,16 @@ silently resolve a new image during recovery.
 Resolution has the ordinary RPC deadline and a short platform child span, with
 bounded operation labels rather than image names or IDs in metric dimensions.
 
+For Skill Learning, RC also normalizes its global Ed25519 verifier bootstrap and
+freezes the complete public-key set in the operation row at acceptance. The set
+is injected into RuntimeSpec before the physical deployment digest is computed.
+Retries and recovery load the accepted snapshot, even if RC's current bootstrap
+has changed; a missing or invalid snapshot cannot be replaced with current keys.
+The caller does not own this configuration, and the signing private key never
+enters RuntimeSpec. Empty keys leave Runtime maintenance closed. Rotation of
+running instances requires explicit lifecycle rebuild and separate ACP signer
+coordination, as described in the [learning design](../../../docs/skill-learning-design.md).
+
 ## Observation Pipeline
 
 Runtime Controller uses both platform List and Watch:

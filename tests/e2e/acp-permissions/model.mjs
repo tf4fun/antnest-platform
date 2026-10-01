@@ -65,7 +65,7 @@ export function decide(payload) {
       call: {
         name: "read",
         arguments: {
-          path: { root: "workspace", path: `${phase.slice(0, 2)}-once.txt` },
+          path: `${phase.slice(0, 2)}-once.txt`,
           limit: 1024,
         },
       },
@@ -76,7 +76,7 @@ export function decide(payload) {
     call: {
       name: "write",
       arguments: {
-        path: { root: "workspace", path: `${phase}.txt` },
+        path: `${phase}.txt`,
         content: `${phase}\n`,
       },
     },

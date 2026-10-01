@@ -57,6 +57,7 @@
       "shutdown_timeout",
       "signal_listener_failed",
       "telemetry_initialization_failed",
+      "temporary_cleanup_failed",
       "unexpected_exit"
     ]
   },
@@ -91,6 +92,7 @@
     "runtime_unavailable",
     "spawn_failed",
     "timeout",
+    "temporary_background_not_supported",
     "wait_failed",
     "write_failed"
   ],

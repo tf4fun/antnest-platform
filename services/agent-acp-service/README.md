@@ -1,5 +1,12 @@
 # Agent ACP Service
 
+Runtime Skills are available as `/skill:system:<name> <task>` and
+`/skill:personal:<name> <task>`. ACP discovers current metadata, advertises it on
+initialize and Session setup, and refreshes after Runs and learning notices.
+Selection is draft completion; invocation loads the selected SKILL.md into
+transient user context under the normal Run budget. See the
+[Skill command contract](../../contracts/agent-acp/skill-commands.md).
+
 Agent ACP Service is Antnest's replaceable Agent compute service. It exposes
 stable ACP v1 and the draft ACP v2 protocol over separate endpoints, owns
 durable conversation and Run execution state, calls the model, and invokes MCP
@@ -19,9 +26,221 @@ and unchanged. This does not alter connection IDs or model Tool-call IDs.
 The 2026-09-26 dependency refresh upgrades ACP SDK to 1.5.0, MCP to 2.1.0
 and the Node OpenTelemetry family to 0.222.0 / 2.11.0. The v2 prompt acceptance
 response now returns the persisted user message ID required by this SDK; the
-same ID is used in the live user-message event. V1 notices remain unadvertised
-and experimental. Upgrade gates and consumer rollout are tracked in the
+same ID is used in the live user-message event. The learning batch now advertises
+and uses experimental v1 SDK notices with negotiated platform metadata.
+Upgrade gates and consumer rollout are tracked in the
 [dependency refresh](../../docs/dependency-refresh-20260926.md).
+
+The Skill learning L3 batch has durable completed-Run scan, bounded enqueue and
+atomic task-claim primitives. Its cursor stops at an earlier nonterminal Run;
+a full queue leaves the source eligible. Frozen policy and source decision
+commit with the cursor advance. Claiming enforces one running review globally,
+15 seconds of Agent idle time and a 10-minute per-Agent cooldown. On startup,
+the exclusive worker owner pauses abandoned claims without erasing budget or
+claim identity; same-Agent work remains blocked until the unknown effect is
+observed. Local adapters now cover Runtime effect observation, review,
+maintenance requests and an atomic applied-change/managed-identity ledger. They
+are assembled into a conditional worker that starts after recovery and stops before
+worker-lock release when both Controller URL and maintenance signing key are configured. Draft candidates are
+reproduced from settled review decisions and recorded evidence before storage.
+The local apply coordinator orders prepare, check, fresh policy/Runtime
+admission, conditional commit and durable change recording. A checked candidate
+reads Skill inventory from the current execution binding with an execution-ID
+fence and cancellation signal, rather than the source Run's Runtime snapshot. It
+can retry after a settled `blocked` result with a new durable request ID;
+unknown effects are observed before any further dispatch. An owner-scoped,
+bounded change-list route now reads committed changes with sealed, signed
+directional cursors; deleted source Sessions are redacted. A bounded SDK notice
+publisher reads committed changes, wakes after commit and sends through associated
+ACP v1 Sessions. The first delivery has no undo or detail/diff route. The isolated
+full stack validates automatic creation/update, foreground priority, unknown-effect
+recovery, notices and later real Run use. Ordinary deployments must configure
+the Controller URL, signer and matching Runtime verifier before learning starts. See the
+[L0 contract](../../contracts/skill-learning/learning-api.md).
+Foreground Run admission has a maintenance preemption gate. The assembled
+learning worker uses it when configured; applicable functional gates now pass,
+including both real Docker browser flows. Human experience acceptance remains separate.
+The local task guard now closes its gate lease only after reading the durable
+maintenance ledger. Unresolved Runtime intents or a failed ledger read leave
+foreground admission fenced for recovery. A separate recovery lease can enter
+an unsafe Agent to observe old effects and clear the fence only after durable
+settlement.
+Task outcomes can now pause a running claim with an actionable reason, marking
+unreturned model reservations unknown in the same transaction. Resume keeps the
+same claim and spent budget, and requires unchanged policy, an idle Agent and
+settled model/Runtime effects. A Runtime `cancel` closes its generation and
+therefore blocks same-claim resume. A local transaction can now hand an
+unapplied candidate to a new claim/generation after cancellation, settlement,
+idle/cooldown and policy checks; it clears the old Runtime check basis while
+preserving candidate bytes and spent model budget. The assembled worker orders
+these transitions before new scans and claims when configured.
+The worker can enumerate paused claims in bounded keyset pages with the current
+candidate ID/state and a durable cancelled-generation fact. This recovery
+inventory now has a local coordinator that observes an earlier commit before
+resuming or handing off a claim under one foreground lease. A failed task does
+not stop recovery of later Agents. It is connected to the assembled worker,
+which now runs conditionally.
+The local task processor joins review, automatic apply and durable outcomes:
+applied changes complete through the change ledger, blocked or unknown effects
+pause, and settled conflicts/rejections fail the immutable candidate and task
+in one transaction. The configured worker invokes this processor.
+
+The same L3 persistence adapter can count up to three distinct model rounds
+whose proposed Tool IDs have real attempts in that completed Run. Rejected
+preflight proposals and duplicate response IDs do not inflate this review cue.
+The L3 scan coordinator now combines the Controller policy cut, persisted
+terminal-Run page, real Tool-round threshold and correction phrases from the
+Run's own stored user message only after the preceding completed Run in that
+Session successfully read a Skill. Failed Runs are skipped, while full queues and
+source-read failures leave the durable cursor in place. A correction is only a
+review cue; it cannot authorize a Skill change. The configured worker schedules
+the coordinator and connects the review executor.
+The Controller policy read adapter validates the owner-scoped response and
+preserves the server-owned activation cut at microsecond precision. It fails
+closed on access loss, malformed or oversized responses and transient failures.
+The adapter is connected to the assembled scan coordinator. Its optional,
+validated endpoint is configured with
+`ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL`; setting it alone does not enable
+learning.
+For development diagnosis, set `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID` to
+one Agent ID in the ACP deployment. Its newly scanned completed Runs enter
+learning without the experience cue or ten-minute cooldown; after the usual
+idle grace, the same review worker uses immutable prompt version 2 to require a
+minimal proposal instead of `skip`. All authorization, policy, budgets,
+foreground priority and candidate/installation checks still apply. Unexpected
+model skips are diagnosed as `debug_skip` and receive at most one repair call.
+The mode is frozen on the task, including paused recovery, and visible as
+`antnest.learning.debug` and `antnest.learning.review_prompt_version` in Trace.
+Remove the setting to return new tasks to ordinary version 1 selection. This
+does not rerun old source decisions or reset paid model calls. The switch is
+unset by default and adds no model tool or UI task-management surface.
+The L3 source reader now returns owner-scoped, bounded user text and Tool
+observations from completed Runs. It labels observed attempt state separately
+from untrusted Tool output, and PostgreSQL truncates the text before returning
+it to Node. Claimed tasks can persist one immutable, idempotent snapshot of
+the selected evidence; changed selected content conflicts on replay. These
+records are review input, not an application decision. The candidate citation
+guard reloads the recorded snapshot, checks its digest and requires each
+proposed rule to cite an in-task user or observed-execution item; Tool output
+alone cannot support automatic application. Citation and candidate-package
+admission have service and Docker evidence; they do not prove that every
+model-synthesized rule is semantically correct for all future tasks.
+The immutable v1 review prompt and strict output parser now produce only a
+bounded skip or single-Skill proposal with per-rule citations. Evidence is
+serialized as labeled data, and untrusted Tool output is never promoted to a
+user instruction. This parser does not itself prove semantic support or apply a
+candidate; the configured review/apply worker supplies the remaining stages.
+A local candidate builder renders a one-file `SKILL.md` from cited rules only;
+the model's free-form instructions are not packaged. It produces deterministic
+ZIP and Registry manifest digests and has passed persisted candidate admission,
+Runtime installation and Registry package acceptance in the isolated full stack.
+L3 task persistence now uses the L0 `pending` state and freezes
+`package_rules_version=1`. A separate model-call ledger reserves each request
+before dispatch, returns `dispatch=false` for replay, and records actual usage
+idempotently. A final parsed review decision can be persisted atomically with
+usage and read on replay. The local review runner reads the claimed completed
+Run's scope-checked snapshot, acquires a current Provider client, uses no tools,
+allows one bounded format repair and stops on unknown usage. Current model-profile
+authority now rejects disabled or drifted Agent/model/Provider configuration
+before reservation and after dispatch. The configured worker schedules it;
+cross-service review and application functional acceptance now passes. Evidence
+and limits are recorded in the [learning audit](../../docs/skill-learning-acceptance-audit-20260930.md).
+Learning diagnostics now group review, model calls, result validation and application
+under `skill_learning.task`. Task spans identify the Agent, claimed task, generation
+and `antnest.learning.source_run.id`; background learning remains distinct from the
+completed foreground Run. Model calls use `model.purpose=skill_learning`. Rejected
+results record bounded failure categories and schema paths/codes, plus response size,
+stop reason and usage, without logging prompts, Skill contents or credentials.
+Review spans include evidence coverage/truncation. Runtime Skill maintenance HTTP
+uses the existing traced fetch boundary to propagate the task context.
+Intentional model skips and foreground preemption are not marked as task failures.
+These diagnostics cannot recover outputs discarded before they were introduced.
+Unexpected review/application errors persist `paused / runtime_unavailable`
+before propagating to the caller's diagnostics, including when dispatch comes
+from paused recovery. A failed resumed task therefore releases the durable
+global review slot; its existing model receipts and cost reservations remain intact.
+The [live investigation](../../docs/skill-learning-debug-20260930.md) records the
+normal-service reproduction, retry defects and downstream Trace coverage limits.
+The minimal blocked-learning reader and PostgreSQL projection are implemented
+behind Agent access checks. Only current paused blockers are selected, and
+source identities are filtered through current Session ownership. Two reader
+unit tests and the 35-test maintenance ledger/component suite pass. The GET
+`/rpc/agent-acp/workspace/agents/{agentId}/learning-status` route is wired;
+five HTTP tests, type checking and lint pass. It requires trusted identity,
+rejects query parameters and returns unavailable reads as errors rather than
+an empty status. Agent UI consumption and real Gateway/UI/ACP HTTP and browser
+acceptance now pass; diagnostics are read only when the learning-results panel opens.
+Tool-free learning inference now stops waiting when its cancellation signal
+fires, including when an adapter ignores cancellation. Late responses/errors
+cannot persist proposals; missing final usage keeps the reservation unknown.
+Model usage uncertainty does not hold the Runtime slot. The 1008-test unit
+suite, type checking/lint and isolated Docker foreground-preemption flow pass.
+Runtime file effects still require bounded cancellation and observation.
+
+An optional protected Ed25519 signing identity is validated at ACP startup
+through `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID` and
+`ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY` (canonical base64 PKCS8 DER); both
+must be set together. The corresponding public key must be in the target
+Runtime's frozen verifier set before maintenance is enabled.
+The local Runtime maintenance client signs the exact request body and validates
+bounded receipts for `prepare`, `check`, `commit`, `observe`, `cancel`
+and `release`. Network loss and server errors remain unknown effects; the
+client does not blindly retry file effects. Its transport requires a durable
+intent reservation before each HTTP dispatch. Only an unknown read-only
+`observe` can be queried again with the same exact request identity. An unknown
+`release` may also replay its exact identity using Runtime's durable cleanup
+receipt; commit is never redispatched. After replacement worker ownership is
+acquired, abandoned pending releases become unknown for this replay.
+The worker performs at most one settled-candidate cleanup per pass under the
+existing foreground maintenance guard. It retains bytes needed by unresolved
+effects and defers cleanup when the Runtime is closed to Runs.
+Validated success receipts settle the matching intent; deterministic 4xx
+rejections settle as rejections, while transport loss, retryable responses and
+invalid receipts remain unknown. These outcomes survive process restart.
+The client is connected to the configured worker. Its recovery path selects a
+single unresolved commit,
+reuses any settled observation, and otherwise issues one deterministic
+observation request against the original execution or an accepted replacement
+Runtime that retains the workspace. An uncertain observation remains pending
+until the next worker pass rechecks it; unavailable bindings remain fenced and
+no original mutation is resent.
+A PostgreSQL maintenance-intent ledger now records request identity, execution
+binding, exact body digest and bounded facts before a first dispatch. Replay
+of the same effect intent returns a non-dispatch receipt; changed inputs
+conflict. An unknown `observe` intent alone may dispatch the identical
+read-only request again and settles only on `applied` or `conflict`.
+Unknown intents remain queryable after worker restart and can be settled with
+a matching Runtime receipt even after the task pauses. The configured worker
+uses this ledger for dispatch and effect recovery. Lost commit effects
+can also be settled from a separately recorded matching `observe` result;
+the ledger preserves that observation as provenance instead of fabricating an
+original Runtime receipt. An `unknown` observation leaves the effect open.
+One candidate per task can now be stored with its complete ZIP bytes, exact
+artifact/content digests, managed path, base digest and recorded evidence IDs.
+The store validates canonical bytes on write and read, and rejects a different
+candidate on replay. It is not yet the authorization or semantic-approval gate
+for applying that package.
+The automatic apply admission now rejects stale/off policy, pinned or
+unregistered updates, system-name collisions, incomplete Runtime inventories
+and changed execution bindings. A checked candidate can durably freeze its
+policy apply basis only after a matching settled Runtime `check` receipt; an
+absent or mismatched receipt leaves it in `draft`. The managed-identity table
+is reserved but no applied change or notice is committed from this path yet.
+Startup marks unfinished model calls unknown alongside abandoned
+task claims; it does not reset the claim or budget. Per-Agent daily budget
+admission now counts every claim generation and model-call reservation in the
+UTC calendar day, across tasks; settled actual usage replaces the reservation.
+The model-call admission component reads the current Controller policy before
+each new reservation and rejects disabled or changed policy. It is not yet
+wired into the running worker. Claim admission now previews an eligible pending
+task, reads the current owner policy, and validates it again inside the claim
+transaction before increasing the generation. Disabled or changed policies
+cancel the pending task without consuming a review attempt; Controller read
+failures leave it pending. Worker scheduling, provider execution and recovery
+of unknown calls remain pending.
+Scan cuts and cursor timestamps travel to/from PostgreSQL as timestamp text;
+converting them through JavaScript `Date` would discard microseconds and could
+replay a decided Run or include a Run just before reactivation.
 
 The [execution-boundary refactor](docs/execution-configuration.md) was closed by
 the user's scoped acceptance decision on 2026-09-15.
@@ -134,14 +353,127 @@ this directory is the only implementation authority for Agent ACP Service.
 - Tool attempts and retained Session MCP revision records.
 - Pending Tool permissions and Session-only approval rules; Fork does not inherit them.
 - Per-Run calls to the mandatory platform Runtime MCP endpoint.
+- Applied personal learning sources, their metadata projection journal, and protected current-source reads.
 
 ## Does Not Own
 
 - Agent identity, Agent configuration, Template, Provider catalog, or rebuilds.
 - Runtime creation, Docker/Kubernetes resources, network policy, or Tunnel IP.
 - Users, organizations, OIDC, SCIM, Channel bindings, or public authorization.
-- System Skill package bytes or Skill Registry workflows.
+- Formal system Skill custody, Registry publication/version lifecycle, or Template references.
 - Another service's database, volume, or bootstrap secret.
+
+## Dynamic Skill sources (D2)
+
+The [discovery/source contract](../../contracts/skill-registry/discovery-api.md)
+restricts initial projection to confirmed applied, automatically generated,
+ACP-managed personal packages. Each apply settles its metadata head in the same
+transaction as the learning change and managed identity. Registry receives only
+organization, source Agent/owner, name, description, sequence, digest and active
+state. Content stays in its existing Agent-owned store and Runtime workspace.
+
+Enable the producer/source pair with all of:
+
+- `ANTNEST_ACP_SKILL_REGISTRY_URL`: a fixed HTTP(S) Registry origin.
+- `ANTNEST_ACP_SKILL_REGISTRY_TOKEN`: the Registry private API bearer.
+- `ANTNEST_ACP_SKILL_SOURCE_TOKEN`: a distinct source-reader bearer, at least 32 printable bytes.
+- The existing Runtime maintenance signing configuration, for read-only observations.
+
+All discovery settings are absent by default. The Registry's paired source URL
+and source token must point to this ACP deployment. The shared development stack
+keeps discovery opt-in. These settings also enable the D3 platform tools below.
+
+The standard Compose stack derives the three discovery settings above and the
+Registry's paired source settings from one `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`.
+See [normal deployment](../../docs/skill-deployment.md) for signing/public-verifier
+configuration and explicit rebuild requirements for existing Runtimes.
+
+One background worker delivers durable metadata heads. It retries with persisted
+bounded backoff, periodically reconciles acknowledgements, and supplements missing
+heads from confirmed managed sources; it never replays a learning model call.
+Current access revocation or inactive managed state produces a higher-sequence
+tombstone. Configuration not yet initialized defers delivery instead of deleting
+the source. Registry outage does not fail a completed learning operation or Run.
+
+Only `POST /internal/skill-sources/inspect` and
+`POST /internal/skill-sources/artifact` accept the source bearer. Strict request
+schemas, 8/4 KiB body limits, current owner access, exact source sequence and
+digest checks apply. Both require an available, accepting source Agent Runtime;
+busy/offline/unknown observation returns `source_unavailable`, never retained
+candidate bytes as an offline substitute. Another owner cannot read a personal
+source even if Agent permissions are expanded in future.
+
+The existing signed Runtime `observe` operation verifies the complete directory
+manifest, including extra files and modes. An artifact is returned only if this
+current manifest equals the managed applied candidate's canonical package digest.
+Changed/missing content invalidates the mapping. Unknown observations defer.
+Source reads use the existing idle maintenance gate. A dispatched observation is
+bounded to five seconds; foreground preemption discards delivery and awaits this
+read's completion before admission. These reads never write a candidate, create a
+Run or invoke a model. Access, Runtime binding and source identity are rechecked
+after observation. HTTP and `skill.source.observe` spans retain bounded identities
+and digests, with no package body or credential content.
+
+The [D2 delivery report](../../docs/skill-discovery-acp-delivery-20261001.md)
+records the producer/source evidence.
+
+[DI2](../../docs/skill-source-lifecycle-delivery-20261001.md) additionally proves
+normal source Disable/Enable/Delete through Controller. Disable returns 503
+without changing the managed content identity; Enable verifies the preserved
+workspace on a new Runtime; Delete rejects old refs with 404 and delivers the
+ordered metadata tombstone. Promoted versions and installed presets remain
+independent. This is root integration evidence; no service API was added.
+
+## Dynamic Skill model tools (D3)
+
+When discovery is configured, ACP adds `find_skill` and `load_skill` as platform
+tools with `source=agent` and `sourceId=skill_registry`, outside Runtime MCP.
+Runtime catalog collisions with these reserved model names fail explicitly.
+Ordinary Session modes, allow/deny rules and ACP approval apply. The tools grant
+no publication, Template mutation or persistent installation authority.
+
+The [tool contract](../../contracts/agent-acp/skill-discovery-tools.md) binds each
+call to the durable active Run, Session owner, organization, current Agent access
+and exact Runtime execution. The model cannot supply those authorities. Access
+is checked again after I/O. Persisted attempts enforce eight searches and four
+loads per Run, including dispatched failures and interruption/recovery.
+
+Foreground `find_skill` sends trusted `requesting_agent_id` from that persisted
+Run authority. Registry excludes the caller's own personal mappings before its
+candidate limit and source inspection, so an active Run cannot fail by trying to
+acquire its own idle maintenance slot. Formal versions and other authorized
+Agent sources remain eligible. The model cannot provide this field; local
+Skills keep ordinary Runtime reads. Load and Console preview do not carry this
+search context. The [D3A delivery](../../docs/skill-discovery-caller-acp-delivery-20261001.md)
+records the consumer gates; the independent
+[DI3 integration](../../docs/skill-discovery-caller-integration-delivery-20261001.md)
+now passes real active-Run formal/peer loads, native source Trace parents and retained local Skills.
+
+`find_skill` returns bounded current metadata. `load_skill` validates exact ZIP
+headers and bytes, complete canonical file/execute-mode digest, size/entry limits,
+safe paths and CRC before exposing UTF-8 `SKILL.md` text. Packages are not retained
+as an ACP discovery cache. The [D4A consumer](../../contracts/agent-acp/skill-temporary-consumer.md)
+installs multi-file packages as real current-Run files and returns a path only
+after a strict signed receipt. Text-only packages keep `temporary_files=null`
+and retain no ZIP bytes. Existing conversation/tool-result retention applies to text.
+
+Search/text reads have `toolEffectState=none`. `load_skill` has
+`readOnlyHint=false` and requires ordinary authorization; file writes preserve
+their settled/unknown effects. ACP persists a Run-bound scope before install,
+attempts release before terminal state, and guards foreground, learning and
+lifecycle settlement while cleanup is pending. A serial recovery worker checks
+ended scopes, including after discovery is disabled or ACP restarts. Registry errors stay distinct from an
+empty search and are sanitized. `skill.discovery.search/load` Trace spans bind
+Run and source/digest identities without queries, package bodies or credentials.
+
+The [D3 delivery report](../../docs/skill-discovery-tools-delivery-20261001.md)
+records unit/contract, real HTTP/PostgreSQL and actual dual-Agent model/Trace
+evidence. The [D4A delivery](../../docs/skill-discovery-temporary-consumer-delivery-20261001.md)
+passes its own unit/contract/HTTP/PostgreSQL and deployed file-use/cleanup gates.
+User promotion UI is admitted in [Console D6](../../docs/skill-discovery-console-delivery-20261001.md).
+The separate [DI1 integration](../../docs/skill-propagation-integration-delivery-20261001.md)
+passes actual automatic sources, current-Run use, normal Console promotion and
+frozen Template/create/rebuild/Run, including Registry outage and source invalidation.
 
 ## Interfaces
 
@@ -227,6 +559,10 @@ application is distinct from Runtime readiness or Agent settlement.
 `POST /rpc/agent-acp/settle-agent` checks the closed lifecycle operation, waits
 outside configuration publication and reports local quiescence plus durable
 stopping evidence. New prompts cannot reuse a protected Runtime revision.
+Skill-maintenance barriers are tied to the Runtime execution that produced the
+unknown effect. A confirmed replacement with a different execution ID can
+accept foreground Runs while the old ledger entry remains unresolved; a
+configuration update retaining the same Runtime cannot clear its barrier.
 Controller lifecycle calls and confirmed replacement remain B2/B5 integration.
 
 ## Connection Identity

@@ -7,6 +7,7 @@ import { TracedAcpHttpServer } from "../../telemetry/acp-http.js";
 
 import type { ConnectionBinding } from "../../domain/types.js";
 import type { AcpApplicationPort } from "../../ports/acp-application.js";
+import type { SkillCommandsPort } from "../../ports/skill-commands.js";
 import type { ExecutionIdentity } from "../../domain/execution-configuration.js";
 import { trustedIdentity } from "../trusted-identity.js";
 import { promptCapabilities } from "./capabilities.js";
@@ -14,11 +15,14 @@ import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 import type { SessionOutputStreams } from "./session-output.js";
 import { createAcpV1Agent } from "./v1/agent.js";
 import type { PermissionConnectionsPort } from "../../ports/tool-permissions.js";
+import type { LearningNoticePublisher } from "../../application/learning-notice-publisher.js";
 import { activeHttpSpan } from "../../telemetry/http.js";
 import { recordBoundaryError } from "../../telemetry/diagnostics.js";
 
 type Options = {
   permissions?: PermissionConnectionsPort;
+  notices?: Pick<LearningNoticePublisher, "subscribe">;
+  skillCommands?: SkillCommandsPort;
   application: AcpApplicationPort;
   outputs: SessionOutputStreams;
   ready: () => Promise<boolean>;
@@ -110,6 +114,10 @@ export class AcpHttpTransport {
       application: this.options.application,
       outputs: this.options.outputs,
       ...(this.options.permissions === undefined ? {} : { permissions: this.options.permissions }),
+      ...(this.options.notices === undefined ? {} : { notices: this.options.notices }),
+      ...(this.options.skillCommands === undefined
+        ? {}
+        : { skillCommands: this.options.skillCommands }),
       promptCapabilities,
       maxPayloadBytes: this.options.maxWebSocketPayloadBytes,
       idleTimeoutMs: this.options.idleTimeoutMs ?? 300_000,
@@ -143,6 +151,8 @@ export class AcpHttpTransport {
 
 type ConnectionOptions = {
   permissions?: PermissionConnectionsPort;
+  notices?: Pick<LearningNoticePublisher, "subscribe">;
+  skillCommands?: SkillCommandsPort;
   application: AcpApplicationPort;
   outputs: SessionOutputStreams;
   promptCapabilities: typeof promptCapabilities;

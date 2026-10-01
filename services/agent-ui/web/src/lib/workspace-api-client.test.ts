@@ -2,6 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BridgeHttpClient, WorkspaceApiError } from "./workspace-api-client.ts";
 
+test("learning diagnostics request one explicit View read and reject unknown or foreign data", async () => {
+  const view = { agentId: "agent-1", bridgeEpoch: "epoch-1", availability: "ready",
+    promptCapabilities: {}, activeSessionId: null, selectedSessionId: null,
+    selectedView: null, operations: [], permissions: [], streamCursor: "cursor-1" };
+  let status: unknown = { agentId: "agent-1", blocked: { reason: "writer_present" } };
+  const paths: string[] = [];
+  const client = new BridgeHttpClient({ csrf: () => undefined, fetch: async (url) => {
+    paths.push(String(url)); return Response.json({ ...view, learningStatus: status });
+  } });
+  assert.deepEqual(await client.learningStatus("agent-1"), status);
+  assert.deepEqual(paths, ["/api/app/workspace/v1/agents/agent-1/view?learningStatus=1"]);
+  for (const invalid of [null, { agentId: "agent-2", blocked: null },
+    { agentId: "agent-1", blocked: { reason: "writer_present", command: "secret" } }]) {
+    status = invalid;
+    await assert.rejects(client.learningStatus("agent-1"), (error: unknown) =>
+      error instanceof WorkspaceApiError && error.code === "learning_status_unavailable");
+  }
+  status = { agentId: "agent-1", blocked: null };
+  assert.deepEqual(await client.learningStatus("agent-1"), status);
+  assert.equal(paths.length, 5);
+});
+
 test("prompt sends one stable intent with its immutable append condition", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const client = new BridgeHttpClient({

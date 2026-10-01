@@ -33,8 +33,8 @@ export function decide(payload) {
     ? {
         name: "read",
         arguments: {
-          path: { root: "workspace", path: "acp-effects.log" },
-          offset: 0,
+          path: "acp-effects.log",
+          offset: 1,
           limit: 4096,
         },
       }
@@ -42,7 +42,7 @@ export function decide(payload) {
         name: "bash",
         arguments: {
           command: `printf '%s\\n' '${phase}' >> /workspace/acp-effects.log; cat /workspace/acp-effects.log`,
-          working_dir: { root: "workspace", path: "." },
+          working_dir: ".",
           timeout_ms: 10000,
         },
       };
@@ -73,15 +73,15 @@ function uncertainEffect(payload, phase, results) {
         name: "bash",
         arguments: {
           command: `printf '%s\\n' '${phase}' >> /workspace/${path}.log\nprintf '%s\\n' "$$" > /workspace/${path}.pid\nwhile [ ! -e /workspace/${path}.release ]; do sleep 1; done\nprintf 'unexpected completion\\n'`,
-          working_dir: { root: "workspace", path: "." },
+          working_dir: ".",
           timeout_ms: 120000,
         },
       }
     : {
         name: "read",
         arguments: {
-          path: { root: "workspace", path: `${path}.log` },
-          offset: 0,
+          path: `${path}.log`,
+          offset: 1,
           limit: 4096,
         },
       };

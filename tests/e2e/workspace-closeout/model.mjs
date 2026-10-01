@@ -37,8 +37,8 @@ export function decide(payload) {
       ? {
           name: "read",
           arguments: {
-            path: { root: "workspace", path: ".c4-offline-effects" },
-            offset: 0,
+            path: ".c4-offline-effects",
+            offset: 1,
             limit: 4096,
           },
         }
@@ -46,7 +46,7 @@ export function decide(payload) {
           name: "bash",
           arguments: {
             command: `printf 'started\\n' >> /workspace/.${phase}-effects\nprintf '%s' "$$" > /workspace/.${phase}-started\nwhile [ ! -e /workspace/.${phase}-release ]; do sleep 0.1; done\nprintf 'finished\\n' >> /workspace/.${phase}-effects\nprintf '${phase}-complete\\n'`,
-            working_dir: { root: "workspace", path: "." },
+            working_dir: ".",
             timeout_ms: 120000,
           },
         };

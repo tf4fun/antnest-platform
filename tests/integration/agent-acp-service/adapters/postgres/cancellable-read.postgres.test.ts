@@ -260,6 +260,7 @@ describe.skipIf(url === undefined)("cancellable PostgreSQL reads", () => {
     const service = new AgentSettlement({
       directory: local.directory,
       supervisor,
+      learning: { closeForLifecycle: () => Promise.resolve(true) },
       protection: new PostgresExecutionRepository(kernel),
       now: () => new Date(),
     });

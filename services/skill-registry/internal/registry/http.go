@@ -11,20 +11,27 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"soft/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
 type Handler struct {
 	service   *Service
+	discovery *Discovery
 	token     string
 	ready     func(context.Context) error
 	uploading chan struct{}
 	download  chan struct{}
 	mux       *http.ServeMux
+	http      http.Handler
 }
 
-func NewHandler(service *Service, token string, ready func(context.Context) error) *Handler {
+func NewHandler(service *Service, token string, ready func(context.Context) error, discovery ...*Discovery) *Handler {
 	h := &Handler{service: service, token: token, ready: ready,
 		uploading: make(chan struct{}, 2), download: make(chan struct{}, 4), mux: http.NewServeMux()}
+	if len(discovery) != 0 {
+		h.discovery = discovery[0]
+	}
 	h.mux.HandleFunc("GET /status", h.status)
 	h.mux.HandleFunc("POST /internal/skills", h.auth(h.create))
 	h.mux.HandleFunc("POST /internal/skills/{skill_id}/versions", h.auth(h.appendVersion))
@@ -32,10 +39,15 @@ func NewHandler(service *Service, token string, ready func(context.Context) erro
 	h.mux.HandleFunc("GET /internal/skills/{skill_id}/versions", h.auth(h.versions))
 	h.mux.HandleFunc("POST /internal/skill-versions/resolve", h.auth(h.resolve))
 	h.mux.HandleFunc("GET /internal/skills/{skill_id}/versions/{version}/artifact", h.auth(h.artifact))
+	h.mux.HandleFunc("PUT /internal/skill-projections", h.auth(h.updateProjection))
+	h.mux.HandleFunc("POST /internal/skill-discovery/search", h.auth(h.searchSkills))
+	h.mux.HandleFunc("POST /internal/skill-discovery/load", h.auth(h.loadSkill))
+	h.mux.HandleFunc("POST /internal/skill-projections/promote", h.auth(h.promoteSkill))
+	h.http = telemetry.HTTPHandler(h.mux)
 	return h
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.http.ServeHTTP(w, r) }
 
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -300,12 +312,14 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusUnauthorized
 	case "not_found":
 		status = http.StatusNotFound
-	case "name_conflict", "request_conflict", "revision_conflict":
+	case "name_conflict", "request_conflict", "revision_conflict", "content_changed":
 		status = http.StatusConflict
 	case "limit_exceeded":
 		status = http.StatusRequestEntityTooLarge
 	case "busy":
 		status = http.StatusTooManyRequests
+	case "source_invalid":
+		status = http.StatusBadGateway
 	}
 	message := "Registry temporarily unavailable"
 	var typed *Error

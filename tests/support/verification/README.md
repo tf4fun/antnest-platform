@@ -76,7 +76,6 @@ Request transport classification is extracted before discarding the raw cause;
 the sanitized Gateway error still has no `cause` property. These diagnostics
 do not retry rejected requests, increase timeouts, or waive cleanup failures.
 
-
 ## Shared execution and evidence tools
 
 `.cache/` is restricted to reproducible dependency/compiler caches. Project
@@ -94,24 +93,32 @@ and generated Cargo sources remain allowed within those layouts. Shell entry
 preflight checks `TMPDIR` and the existing output tree, while recovery backup
 and restore validate individual input/output leaves before Docker effects.
 
-| Tool | Scope |
-| --- | --- |
-| [run-command.mjs](../run-command.mjs) | Runs one argument-vector command, owns its process group, writes private log/result files and preserves failure or incomplete status. Existing evidence names are rejected. |
-| [run-suite.mjs](../run-suite.mjs) | Runs an explicit command manifest serially, with optional pinned-image and environment-baseline checks. It keeps nonzero exits visible even when the manifest permits continuation. |
-| [dependencies.mjs](../dependencies.mjs) | Creates an owned disposable PostgreSQL or PostgreSQL/Temporal dependency project, supplies test database addresses to one command and removes its resources afterward. It does not target the retained development databases. |
-| [environment.mjs](environment.mjs) | Takes read-only Docker inventory/container/image snapshots and compares them with an explicit baseline. It does not start, stop or remove containers. |
-| [cleanup.py](cleanup.py) | Preserves the 29 historical cleanup profiles, including their distinct project/name/label selectors, process rules, retained-state schemas, image pins and Trace assertions. Read-only Docker and process inspection. |
-| [summarize-log.py](summarize-log.py) | Extracts selected JSON result objects, saves the source log hash and prints compact counts. It does not turn a nonzero run into a pass. |
-| [audit-traces.py](audit-traces.py) | Inspects already-saved traces for parent warnings, absent parent references and error operations. It is an offline diagnostic, not another business gate. |
-| [check-links.py](check-links.py) | Checks local Markdown link targets for an explicit document list; remote links and fragments are outside its check. |
-| [recheck-crash-traces.mjs](recheck-crash-traces.mjs) | Reapplies the current crash Trace oracle to an explicit saved scenario directory. It does not launch a new crash scenario. |
-| [audit-lifecycle-evidence.mjs](audit-lifecycle-evidence.mjs) | Checks explicit foundation/interrupted saved profiles, preserving topology and interrupted recovery/receipt assertions. Strict failures remain reported. |
-| [summarize-evidence.py](summarize-evidence.py) | Preserves business Trace groups and statistics across all raw files, including rejected/error outcomes, error log events and trace-level warnings. Pure diagnostics. |
-| [summarize-cost.py](summarize-cost.py) | Selects the first single-line report matching an explicit status; keeps request/pricing statistics and model-finish failures separate. Pure diagnostics. |
+| Tool                                                         | Scope                                                                                                                                                                                                                         |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [run-command.mjs](../run-command.mjs)                        | Runs one argument-vector command, owns its process group, writes private log/result files and preserves failure or incomplete status. Existing evidence names are rejected.                                                   |
+| [run-suite.mjs](../run-suite.mjs)                            | Runs an explicit command manifest serially, with optional pinned-image and environment-baseline checks. It keeps nonzero exits visible even when the manifest permits continuation.                                           |
+| [dependencies.mjs](../dependencies.mjs)                      | Creates an owned disposable PostgreSQL or PostgreSQL/Temporal dependency project, supplies test database addresses to one command and removes its resources afterward. It does not target the retained development databases. |
+| [environment.mjs](environment.mjs)                           | Takes read-only Docker inventory/container/image snapshots and compares them with an explicit baseline. It does not start, stop or remove containers.                                                                         |
+| [cleanup.py](cleanup.py)                                     | Preserves the 29 historical cleanup profiles, including their distinct project/name/label selectors, process rules, retained-state schemas, image pins and Trace assertions. Read-only Docker and process inspection.         |
+| [summarize-log.py](summarize-log.py)                         | Extracts selected JSON result objects, saves the source log hash and prints compact counts. It does not turn a nonzero run into a pass.                                                                                       |
+| [audit-traces.py](audit-traces.py)                           | Inspects already-saved traces for parent warnings, absent parent references and error operations. It is an offline diagnostic, not another business gate.                                                                     |
+| [check-links.py](check-links.py)                             | Checks local Markdown link targets for an explicit document list; remote links and fragments are outside its check.                                                                                                           |
+| [recheck-crash-traces.mjs](recheck-crash-traces.mjs)         | Reapplies the current crash Trace oracle to an explicit saved scenario directory. It does not launch a new crash scenario.                                                                                                    |
+| [audit-lifecycle-evidence.mjs](audit-lifecycle-evidence.mjs) | Checks explicit foundation/interrupted saved profiles, preserving topology and interrupted recovery/receipt assertions. Strict failures remain reported.                                                                      |
+| [summarize-evidence.py](summarize-evidence.py)               | Preserves business Trace groups and statistics across all raw files, including rejected/error outcomes, error log events and trace-level warnings. Pure diagnostics.                                                          |
+| [summarize-cost.py](summarize-cost.py)                       | Selects the first single-line report matching an explicit status; keeps request/pricing statistics and model-finish failures separate. Pure diagnostics.                                                                      |
 
 Run from the repository root with Node on `PATH`; no user-specific Node install
 path is embedded. Python tools require Python 3. Keep commands serial and use a
 new evidence directory/name for each execution.
+
+`run-command.mjs` closes child stdin to keep unattended checks from blocking.
+Do not pipe a here-document into the runner or select an interpreter's stdin
+script mode (`node -`, `python3 -`); the runner rejects these modes before it
+creates evidence. Put lasting checks in root `tests/integration/`, `tests/e2e/`
+or `tests/support/` and pass their source path. Small one-off audits may use an
+explicit, shell-quoted `node -e` or `python3 -c` argument. A zero exit code from
+an empty interpreter is not verification evidence.
 
 When supplying an application's `--env-file`, put Node's `--` before the entry
 path, for example `node -- tests/support/verification/go-service.mjs ...`.

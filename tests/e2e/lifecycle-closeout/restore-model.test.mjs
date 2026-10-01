@@ -51,10 +51,7 @@ test("restore fixture cannot accept replayed writes, missing tools or changed fi
 test("Stage 4 restore asks the Runtime to read the pinned system Skill", () => {
   const call = decide(payload("c5-after-restore"), true).call;
   assert.equal(call.name, "read");
-  assert.deepEqual(call.arguments.path, {
-    root: "system_skills",
-    path: "code-review/SKILL.md",
-  });
+  assert.deepEqual(call.arguments.path, "/skills/code-review/SKILL.md");
   const response = payload("c5-after-restore");
   response.messages.push({
     role: "tool",
@@ -72,10 +69,7 @@ test("second restored Agent reads its own pinned system Skill", () => {
   const request = payload("c5-after-restore-peer");
   const call = decide(request, true).call;
   assert.equal(call.name, "read");
-  assert.deepEqual(call.arguments.path, {
-    root: "system_skills",
-    path: "code-review/SKILL.md",
-  });
+  assert.deepEqual(call.arguments.path, "/skills/code-review/SKILL.md");
   request.messages.push({
     role: "tool",
     content: JSON.stringify({
@@ -90,10 +84,7 @@ test("post-migration restart Run reads the pinned system Skill again", () => {
   const request = payload("c5-after-migration-restart");
   const call = decide(request, true).call;
   assert.equal(call.name, "read");
-  assert.deepEqual(call.arguments.path, {
-    root: "system_skills",
-    path: "code-review/SKILL.md",
-  });
+  assert.deepEqual(call.arguments.path, "/skills/code-review/SKILL.md");
   request.messages.push({
     role: "tool",
     content: JSON.stringify({
@@ -109,10 +100,10 @@ test("post-migration restart Run reads the pinned system Skill again", () => {
 
 test("post-migration versioned Rebuild reads v2 and rejects the former body", () => {
   const request = payload("c5-after-migration-v2");
-  assert.deepEqual(decide(request, true).call.arguments.path, {
-    root: "system_skills",
-    path: "code-review/SKILL.md",
-  });
+  assert.deepEqual(
+    decide(request, true).call.arguments.path,
+    "/skills/code-review/SKILL.md",
+  );
   request.messages.push({
     role: "tool",
     content: JSON.stringify({
@@ -149,10 +140,10 @@ test("post-migration volume recovery keeps the exact v2 Skill", () => {
 
 test("unaffected restored Agent can still read its Skill after peer volume loss", () => {
   const request = payload("c5-after-peer-volume-loss");
-  assert.deepEqual(decide(request, true).call.arguments.path, {
-    root: "system_skills",
-    path: "code-review/SKILL.md",
-  });
+  assert.deepEqual(
+    decide(request, true).call.arguments.path,
+    "/skills/code-review/SKILL.md",
+  );
   request.messages.push({
     role: "tool",
     content: JSON.stringify({

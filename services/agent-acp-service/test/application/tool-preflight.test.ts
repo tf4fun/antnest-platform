@@ -23,6 +23,22 @@ const tools: ModelToolDefinition[] = [
 ];
 
 describe("ToolPreflight", () => {
+  it("names unexpected fields so a model can correct its arguments", () => {
+    const result = new ToolPreflight().inspect(
+      [
+        {
+          id: "call",
+          name: "write",
+          arguments: { root: "workspace", path: { root: "workspace", path: "x" }, text: "ok" },
+        },
+      ],
+      tools,
+    );
+    expect(result).toMatchObject({ kind: "rejected" });
+    if (result.kind !== "rejected") throw new Error("expected argument rejection");
+    expect(result.calls[0]?.message).toContain("/root is not allowed");
+    expect(result.calls[0]?.message).toContain("/path must be string");
+  });
   it("validates every call before returning an executable batch", () => {
     const result = new ToolPreflight().inspect(
       [{ id: "call-1", name: "write", arguments: { path: "a.txt", text: "ok" } }],
@@ -68,7 +84,7 @@ describe("ToolPreflight", () => {
     }
     expect(result.calls).toHaveLength(2);
     expect(result.calls[0]?.message).toContain("another call");
-    expect(result.calls[1]?.message).toContain("required property");
+    expect(result.calls[1]?.message).toContain("/text is required");
   });
 
   it("rejects duplicate call IDs because results would be ambiguous", () => {

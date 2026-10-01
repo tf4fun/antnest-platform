@@ -39,6 +39,7 @@ fn file_observation_private_codec_preserves_facts_and_bounds_json_expansion() {
         let read = ReadResult {
             content: "new".into(),
             truncated: false,
+            next_offset: None,
             file,
         };
         assert_eq!(
@@ -165,19 +166,20 @@ mod linux {
         );
         let read = engine
             .read(
-                ReadRequest::new(path("nested/file.txt"), 5, 5).unwrap(),
+                ReadRequest::new(path("nested/file.txt"), 2, 1).unwrap(),
                 CancellationToken::new(),
             )
             .await
             .unwrap();
-        assert_eq!(read.content, "after");
+        assert_eq!(read.content, "after\n");
+        assert_eq!(read.next_offset, Some(3));
         assert!(read.file.unwrap().change.is_none());
         fs::write(skills.path().join("SKILL.md"), "guide").unwrap();
         let read = engine
             .read(
                 ReadRequest::new(
                     RootPath::new(RootName::SystemSkills, "SKILL.md".into()).unwrap(),
-                    0,
+                    1,
                     100,
                 )
                 .unwrap(),

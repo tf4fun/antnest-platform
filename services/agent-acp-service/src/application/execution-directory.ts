@@ -70,6 +70,19 @@ export class ExecutionDirectory {
     return this.changes.subscribe(organizationId, changed);
   }
 
+  /** Private reconciliation uses an already persisted Agent scope, including closed Agents. */
+  public runtimeForCleanup(scope: {
+    organizationId: string;
+    agentId: string;
+  }): { executionId: string; mcpEndpoint: string } | null {
+    const runtime = this.configurations
+      .get(scope.organizationId)
+      ?.agents.find((agent) => agent.agent_id === scope.agentId)?.runtime;
+    return runtime
+      ? { executionId: runtime.runtime_execution_id, mcpEndpoint: runtime.mcp_endpoint }
+      : null;
+  }
+
   public closedAgent(operation: ClosedAgentOperation): {
     agent: AgentConfiguration;
     revision: number;

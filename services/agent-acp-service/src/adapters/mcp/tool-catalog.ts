@@ -1,6 +1,7 @@
 import { requireNoClientMcpServers, runtimeToolCatalog } from "../../domain/mcp.js";
 import { parseFileObservation } from "./file-observation.js";
 import { runtimeCallStopped } from "./runtime-stop-evidence.js";
+import type { RuntimePath } from "../../domain/runtime-information.js";
 import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
 import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
 import type {
@@ -75,19 +76,100 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
   public constructor(private readonly dependencies: McpToolCatalogDependencies) {}
 
   public async read(snapshot: ToolCallInput["snapshot"], signal: AbortSignal) {
+    return this.readBinding(snapshot.runtime, signal);
+  }
+
+  /** Reads the current Runtime binding for maintenance admission, not a historical Run snapshot. */
+  public async readBinding(
+    binding: { executionId: string; mcpEndpoint: string },
+    signal: AbortSignal,
+  ) {
     return this.withConnection(
       this.dependencies.runtimeDialer,
       {
-        endpoint: new URL(snapshot.runtime.mcpEndpoint),
-        headers: runtimeHeaders(snapshot.runtime.executionId),
+        endpoint: new URL(binding.mcpEndpoint),
+        headers: runtimeHeaders(binding.executionId),
         signal,
       },
       (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
       async (connection) =>
         parseRuntimeInformation(
           await connection.readResource(RUNTIME_INFORMATION_URI, signal),
-          snapshot.runtime.executionId,
+          binding.executionId,
         ),
+    );
+  }
+
+  /** Reads only an explicitly named personal Skill; no model tool catalog is exposed. */
+  public async readPersonalSkill(
+    binding: { executionId: string; mcpEndpoint: string },
+    packagePath: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (!/^\.antnest\/skills\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(packagePath))
+      throw new Error("Learning Skill path is invalid");
+    return this.readSkillFile(binding, `${packagePath}/SKILL.md`, signal);
+  }
+
+  public async readSkill(
+    binding: { executionId: string; mcpEndpoint: string },
+    path: RuntimePath,
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (
+      !path.path.endsWith("/SKILL.md") ||
+      path.path.split("/").some((part) => part === "" || part === "." || part === "..") ||
+      /[\\\p{Cc}]/u.test(path.path)
+    )
+      throw new Error("Skill path is invalid");
+    return this.readSkillFile(
+      binding,
+      `${path.root === "system_skills" ? "/skills" : "/workspace"}/${path.path}`,
+      signal,
+    );
+  }
+
+  private async readSkillFile(
+    binding: { executionId: string; mcpEndpoint: string },
+    path: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    return this.withConnection(
+      this.dependencies.runtimeDialer,
+      {
+        endpoint: new URL(binding.mcpEndpoint),
+        headers: runtimeHeaders(binding.executionId),
+        signal,
+      },
+      (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
+      async (connection) => {
+        const reply = await connection.callTool(
+          {
+            name: "read",
+            arguments: {
+              path,
+              offset: 1,
+              limit: 16_385,
+            },
+          },
+          signal,
+        );
+        const value = reply.structuredContent;
+        if (
+          reply.isError ||
+          typeof value !== "object" ||
+          value === null ||
+          !("content" in value) ||
+          typeof value.content !== "string" ||
+          !("truncated" in value) ||
+          value.truncated !== false ||
+          !("effect_state" in value) ||
+          value.effect_state !== "settled" ||
+          Buffer.byteLength(value.content, "utf8") > 16_384
+        )
+          throw new Error("Skill read is incomplete (maximum 16 KiB)");
+        return value.content;
+      },
     );
   }
 

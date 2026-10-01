@@ -1,5 +1,7 @@
 import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
+import { skillCommands, skillInvocation } from "../domain/skill-commands.js";
+import type { RuntimePath } from "../domain/runtime-information.js";
 import { withPlanTool } from "../domain/plan.js";
 import type {
   ContentBlock,
@@ -22,6 +24,11 @@ export type ContextBuilderDependencies = {
   repository: ContextRepository;
   runtimeInformation: RuntimeInformationPort;
   tools: Pick<ToolCatalogPort, "list">;
+  readSkill?: (
+    binding: RunExecutionSnapshot["runtime"],
+    path: RuntimePath,
+    signal: AbortSignal,
+  ) => Promise<string>;
   id: ResourceIdGenerator;
   now: () => Date;
 };
@@ -56,6 +63,40 @@ export class ContextBuilder {
     const source = await withWorkerOwnership(ownershipSignal, () =>
       this.dependencies.repository.load(sessionId),
     );
+    const newestUser = source.messages.findLast((message) => message.kind === "user_message");
+    const invocation =
+      newestUser?.kind === "user_message" ? skillInvocation(newestUser.content) : undefined;
+    let expanded: ContentBlock[] | undefined;
+    if (invocation !== undefined && newestUser?.kind === "user_message") {
+      const commandName = `skill:${invocation.source}:${invocation.name}`;
+      const skill = information.skills.find(
+        (item) => item.source === invocation.source && item.name === invocation.name,
+      );
+      if (
+        skill === undefined ||
+        !skillCommands(information.skills).some((item) => item.name === commandName)
+      )
+        throw new DomainError(
+          "skill_unavailable",
+          "The selected Skill is no longer available; refresh the command menu",
+        );
+      if (this.dependencies.readSkill === undefined)
+        throw new DomainError("skill_unavailable", "Skill content reading is unavailable");
+      const body = await this.dependencies.readSkill(snapshot.runtime, skill.path, ownershipSignal);
+      assertWorkerOwnership(ownershipSignal);
+      expanded = newestUser.content.map((block, index) =>
+        index === invocation.textIndex
+          ? {
+              type: "text",
+              text: `Use the user-selected Skill ${JSON.stringify({ source: skill.source, name: skill.name, path: skill.path })} for this task. Skill guidance remains subject to the system instructions and existing tool authorization.\n\n<selected_skill>\n${body}\n</selected_skill>\n\nUser task:\n${invocation.task}`,
+            }
+          : block,
+      );
+    }
+    const modelMessages = (message: StoredContextMessage) =>
+      message === newestUser && expanded !== undefined
+        ? [{ role: "user" as const, content: expanded }]
+        : toModelMessages(message);
     const system = systemMessage(snapshot);
     system.content.push({
       type: "text",
@@ -73,7 +114,7 @@ export class ContextBuilder {
         ],
       });
     const checkpoint = checkpointMessage(source.checkpoint);
-    const history = source.messages.flatMap(toModelMessages);
+    const history = source.messages.flatMap(modelMessages);
     const complete = [...prefix, ...(checkpoint === null ? [] : [checkpoint]), ...history];
     if (estimateMessages(complete) <= budget) {
       assertWorkerOwnership(ownershipSignal);
@@ -82,7 +123,7 @@ export class ContextBuilder {
 
     const systemCost = estimateMessages(prefix);
     const tailBudget = Math.max(1, Math.floor((budget - systemCost) * 0.55));
-    const { dropped, kept } = keepNewest(source.messages, tailBudget);
+    const { dropped, kept } = keepNewest(source.messages, tailBudget, modelMessages);
     if (kept.length === 0) {
       throw new DomainError(
         "context_budget_exhausted",
@@ -117,7 +158,7 @@ export class ContextBuilder {
     const compacted = [
       ...prefix,
       ...(summary.length === 0 ? [] : [summaryMessage(summary)]),
-      ...kept.flatMap(toModelMessages),
+      ...kept.flatMap(modelMessages),
     ];
     if (estimateMessages(compacted) > budget) {
       throw new DomainError(
@@ -184,6 +225,7 @@ function toModelMessages(message: StoredContextMessage): ModelMessage[] {
 function keepNewest(
   messages: StoredContextMessage[],
   budget: number,
+  modelMessages: (message: StoredContextMessage) => ModelMessage[] = toModelMessages,
 ): { dropped: StoredContextMessage[]; kept: StoredContextMessage[] } {
   let used = 0;
   let boundary = messages.length;
@@ -192,7 +234,7 @@ function keepNewest(
     if (message === undefined) {
       continue;
     }
-    const cost = estimateMessages(toModelMessages(message));
+    const cost = estimateMessages(modelMessages(message));
     if (used > 0 && used + cost > budget) {
       break;
     }

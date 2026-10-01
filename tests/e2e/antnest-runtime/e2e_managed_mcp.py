@@ -150,7 +150,7 @@ class ManagedMcpE2E(unittest.TestCase):
         return self.rpc("tools/call", {"name": name, "arguments": arguments or {}})
 
     def bash(self, command, timeout=3000):
-        return self.tool("bash", {"command": command, "working_dir": {"root": "workspace", "path": "."}, "env": [], "timeout_ms": timeout})
+        return self.tool("bash", {"command": command, "working_dir": ".", "env": [], "timeout_ms": timeout})
 
     def test_official_js_client_close_keeps_success_and_failure_trace_evidence(self):
         collector = self.name + "-jaeger"
@@ -213,7 +213,7 @@ class ManagedMcpE2E(unittest.TestCase):
         self.start()
         self.ready()
         tools = self.rpc("tools/list")["tools"]
-        self.assertEqual(len(tools), 14)
+        self.assertEqual(len(tools), 16)
         first = self.tool("mcp__a__echo", {"value": "one"})["structuredContent"]
         second = self.tool("mcp__a__echo", {"value": "two"})["structuredContent"]
         other = self.tool("mcp__b__echo", {"value": "other"})["structuredContent"]
@@ -226,7 +226,7 @@ class ManagedMcpE2E(unittest.TestCase):
         self.assertTrue(self.tool("mcp__a__fail")["isError"])
         started = self.bash("python -m http.server 18080 --bind 127.0.0.1 >background.log 2>&1 </dev/null & echo $! > background.pid; printf started")
         self.assertFalse(started.get("isError", False), started)
-        self.tool("write", {"path": {"root": "workspace", "path": "AGENTS.md"}, "content": "Use the persistent workspace."})
+        self.tool("write", {"path": "AGENTS.md", "content": "Use the persistent workspace."})
         info = self.rpc("resources/read", {"uri": "antnest://runtime/info"})
         content = json.loads(info["contents"][0]["text"])
         self.assertEqual(content["instructions"]["content"], "Use the persistent workspace.")
@@ -300,12 +300,12 @@ class ManagedMcpE2E(unittest.TestCase):
         self.start([])
         self.ready()
         command = "printf bash-progress-canary; while [ ! -e bash-release ]; do sleep 0.05; done; printf tail; printf diagnostic >&2"
-        updates, result = self.progress_call("bash", {"command": command, "working_dir": {"root": "workspace", "path": "."}, "env": [], "timeout_ms": 5000}, self.workspace / "bash-release")
+        updates, result = self.progress_call("bash", {"command": command, "working_dir": ".", "env": [], "timeout_ms": 5000}, self.workspace / "bash-release")
         self.assertTrue(any("bash-progress-canary" in update.get("message", "") for update in updates))
         self.assertTrue(all("total" not in update for update in updates))
         self.assertEqual(result["structuredContent"]["stdout"], "bash-progress-canarytail")
         self.assertEqual(result["structuredContent"]["stderr"], "diagnostic")
-        connection = self.request("tools/call", {"name": "bash", "arguments": {"command": "printf quiet", "working_dir": {"root": "workspace", "path": "."}, "env": [], "timeout_ms": 1000}})
+        connection = self.request("tools/call", {"name": "bash", "arguments": {"command": "printf quiet", "working_dir": ".", "env": [], "timeout_ms": 1000}})
         try:
             body = connection.getresponse().read().decode()
             self.assertNotIn("notifications/progress", body)

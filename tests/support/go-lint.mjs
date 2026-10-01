@@ -59,8 +59,9 @@ if (
     "agent-controller",
     "admin-console",
     "edge-gateway",
+    "skill-registry",
   ];
-  const services = [...overlayServices, "skill-registry"];
+  const services = overlayServices;
   const output = resolve(root, "artifacts/verification/go-lint");
   const result = await withGoTestSources(
     { root, services: overlayServices, output },

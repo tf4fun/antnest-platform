@@ -6,6 +6,10 @@
   "additionalProperties": false,
   "required": ["agent_id", "generation", "listen", "network", "filesystem"],
   "properties": {
+    "skill_maintenance_verifiers": {
+      "$ref": "#/$defs/skillMaintenanceVerifiers",
+      "description": "Immutable learning verifier bootstrap. RC freezes the bounded public-key set with each accepted lifecycle operation and includes it in the deployment digest. Runtime validates the set and uses it for its private maintenance route. Empty keys disable maintenance."
+    },
     "mcp_servers": {
       "type": "array", "default": [], "maxItems": 8,
       "description": "Required non-root stdio MCP processes, initialized before readiness. IDs must be unique; each configuration is limited to 32 KiB and the encoded array to 64 KiB. Changing this list requires a Runtime rebuild.",
@@ -93,6 +97,24 @@
         "port": {"type": "integer", "minimum": 1, "maximum": 65535}
       },
       "description": "Internal Runtime HTTP listener expressed without language-specific socket parsing."
+    },
+    "skillMaintenanceVerifiers": {
+      "type": "object", "additionalProperties": false,
+      "required": ["keys"],
+      "properties": {
+        "keys": { "type": "array", "maxItems": 2, "uniqueItems": true,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kid", "algorithm", "public_key_base64url"],
+            "properties": {
+              "kid": { "type": "string", "minLength": 1, "maxLength": 64,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+              "algorithm": { "const": "Ed25519" },
+              "public_key_base64url": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+            }
+          }
+        }
+      }
     },
     "ipv4Endpoint": {
       "type": "object",

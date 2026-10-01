@@ -2,7 +2,7 @@
 
 > Status: current product ownership; acceptance recorded per batch, not a full current-HEAD pass
 >
-> Updated: 2026-09-27
+> Updated: 2026-10-01
 
 This document separates four situations that otherwise look identical in the
 browser: a feature intentionally moved to another application, a feature whose
@@ -24,7 +24,13 @@ and Task Scheduler. Skill Registry now has a
 [Registry service batch](../services/skill-registry/README.md). The
 [Admin Console Skills module](../services/admin-console/docs/skills.md) now covers
 publication, inventory, fixed-version Template selection and Agent preparation
-progress. The Template-to-Runtime workflow has Docker integration evidence. Channel Manager and
+progress. [D6](skill-discovery-console-delivery-20261001.md) adds current
+own-Agent source search/preview and explicit promotion to a formal Skill;
+publication, Template selection and rebuild remain separate user actions.
+[DI1 full propagation](skill-propagation-integration-delivery-20261001.md) passes
+real automatic-source, temporary-use, Console promotion and frozen Template/create/rebuild/Run
+Docker integration, including source invalidation and Registry outage. The
+Template-to-Runtime workflow also retains its earlier Docker evidence. Channel Manager and
 Task Scheduler are not implemented.
 Cross-service audit-service ownership remains undecided; the required Jaeger
 verification report does not introduce an audit service.
@@ -33,10 +39,10 @@ verification report does not introduce an audit service.
 
 Antnest has two browser applications:
 
-| Application | Audience | Owns the experience | Stable entry |
-| --- | --- | --- | --- |
-| Admin Console | administrators | organization, catalog, Agent fleet, access, provisioning, and later Channel/Skill governance | `/` |
-| Agent UI | Agent users | accessible Agents, ACP Sessions, conversation, attachments, and Tool activity | `/workspace/` |
+| Application   | Audience       | Owns the experience                                                                          | Stable entry  |
+| ------------- | -------------- | -------------------------------------------------------------------------------------------- | ------------- |
+| Admin Console | administrators | organization, catalog, Agent fleet, access, provisioning, and later Channel/Skill governance | `/`           |
+| Agent UI      | Agent users    | accessible Agents, ACP Sessions, conversation, attachments, and Tool activity                | `/workspace/` |
 
 Admin Console remains a thin BFF. Adding a page does not transfer ownership of
 the underlying record into the Console. Agent UI is not an administrator page
@@ -58,12 +64,12 @@ selected destination receives main-content focus and starts at the top.
 
 These workflows left Admin Console intentionally:
 
-| Previous surface | Target | Current state | Integration rule |
-| --- | --- | --- | --- |
-| Chat | Agent UI | Session-first workspace through the production Edge-to-ACP bridge | Console may deep-link to `/workspace/?agent=<id>` |
-| User-facing Agent selection | Agent UI | explicit chooser and principal-scoped bootstrap with management metadata | ACP owns execution availability and resource authorization; no opaque access subject |
-| Session and conversation activity | Agent UI | implemented through ACP list/load/new/prompt/cancel | ACP remains the state authority |
-| User-facing Run and Tool progress | Agent UI | implemented from ACP message and Tool updates | no second Console-owned Run model |
+| Previous surface                  | Target   | Current state                                                            | Integration rule                                                                     |
+| --------------------------------- | -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Chat                              | Agent UI | Session-first workspace through the production Edge-to-ACP bridge        | Console may deep-link to `/workspace/?agent=<id>`                                    |
+| User-facing Agent selection       | Agent UI | explicit chooser and principal-scoped bootstrap with management metadata | ACP owns execution availability and resource authorization; no opaque access subject |
+| Session and conversation activity | Agent UI | implemented through ACP list/load/new/prompt/cancel                      | ACP remains the state authority                                                      |
+| User-facing Run and Tool progress | Agent UI | implemented from ACP message and Tool updates                            | no second Console-owned Run model                                                    |
 
 The old connection-settings page is removed rather than migrated. Browser
 clients use same-origin Edge Gateway routes and must not configure internal
@@ -75,10 +81,10 @@ These surfaces have separate delivery status. Registry inventory and publication
 are in Console navigation; Template forms and Agent lifecycle dialogs consume
 the Controller and Runtime preparation workflow.
 
-| Surface | Owning service | Current state | Console action after delivery |
-| --- | --- | --- | --- |
-| Channels and Agent bindings | Channel Manager (`channel-manager`) | Stage 4 planned; service pending | add Channel management pages backed only by Channel Manager RPC |
-| Hosted Skills and immutable versions | Skill Registry (`skill-registry`) | Console BFF and Skills page implemented; scoped Registry＋Console Docker E2E and desktop/mobile browser checks pass | Template selection and Agent rebuild remain Controller operations |
+| Surface                              | Owning service                      | Current state                                                                                                       | Console action after delivery                                     |
+| ------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Channels and Agent bindings          | Channel Manager (`channel-manager`) | Stage 4 planned; service pending                                                                                    | add Channel management pages backed only by Channel Manager RPC   |
+| Hosted Skills and immutable versions | Skill Registry (`skill-registry`)   | Console BFF and Skills page implemented; scoped Registry＋Console Docker E2E and desktop/mobile browser checks pass | Template selection and Agent rebuild remain Controller operations |
 
 Neither surface may read another service's tables or temporarily store its domain
 records in the Console. Task scheduling belongs to Task Scheduler; its UI entry
@@ -97,43 +103,56 @@ behavior is implemented and covered by the Registry-outage Docker gate. Cross-ca
 imports and review workflows are outside this first delivery. Runtime presets
 are read-only; Console does not add an in-place editor for installed packages.
 
-The separate [learning proposal](skill-learning-design.md) requires an Agent UI
-native "Save as Skill" action selecting authorized messages/Run evidence. ACP
-records the authenticated user action; model text cannot invoke it or manufacture
-user intent. A second step presents candidate diffs and evidence limitations
-for confirmation of exact content before application. Waiting candidates show
-specific foreground/background-task/content-conflict blockers with retry,
-cancel and user-directed remediation. The first delivery shows task identity and
-accessible source Tool records, and directs the user to request termination in a
-normal foreground Run through existing tools; it adds no kill API or stop button.
-Waiting maintenance releases its execution slot so that Run can proceed, then
-rechecks task/descendant exit and candidate content. A long-running dev server
-must not leave an unexplained spinner or be killed automatically. Background reflection only proposes
-changes in its first delivery. This interface is pending and is not a Registry
-personal-to-system publishing workflow; that path initially requires manual
-export and administrator upload.
+The separate [learning design](skill-learning-design.md) makes automatic
+generation/updates of managed personal Skills its primary flow. Agent UI shows
+applied-change notices, result history and source links. A paused-review diagnostic
+is read only when results open. Controller owns the learning policy and pins;
+this release adds no UI policy editor, undo, diff view or retained versions.
+Normal automatic application needs no per-change approval and also works with
+the browser closed. The current functional gates have passed; human experience
+acceptance and visual refinements remain, using the existing style.
+The [notification design](skill-learning-notifications-design.md) uses SDK 1.5.0's
+`notice` as the live channel, with namespaced metadata linking persisted learning
+changes. Server owns durable results and publication recovery; Node Bridge owns
+reconciliation and existing workspace SSE projections; the frontend deduplicates
+and restores those views. Bounded history reads support recovery, not a parallel
+long-poll notification channel. These remain display items outside model history
+and Run process groups; the SDK capability remains experimental but is wired
+on both ACP and Node and covered by the current acceptance evidence.
+Manual "Save as Skill" is a later optional entry, with authenticated source
+selection and exact-content confirmation for that manual branch. Model text
+cannot manufacture user actions or change the maintenance policy.
+
+Ordinary learning deferral has no permanent banner or diagnostic polling.
+The on-demand results panel shows a bounded reason; for background writes it
+suggests optionally asking the Agent to stop its task through a normal Run.
+It adds no task-management view, kill API or stop button. Waiting maintenance
+releases its execution slot and rechecks task/descendant exit and candidate
+content before applying. It never automatically kills a dev server.
+Personal-to-system publication still requires manual export and administrator
+upload; it is outside this automatic-learning release.
 
 ### C. Delivered Console Workflows
 
 These workflows close gaps from the original Stage 3A split. The table describes
 current ownership; the historical browser/test counts below retain their dates.
 
-| Capability | Existing authority | Current product surface |
-| --- | --- | --- |
-| Model discovery and defaults | Console owns builtin defaults and remote discovery; Controller owns saved organization models | merged candidates, explicit selection, editable limits/capabilities/pricing, existing values preserved |
-| Current Model Profiles | Controller stores current configuration; no separate model-history API | current detail/edit, model enable/disable with reference protection; credentials managed on connections |
-| Provider availability and fallback | Controller owns connection/configuration; ACP owns effective selection and client revocation | referenced Provider disable, ordered Template backup models, live ACP configuration and fallback notices |
-| Template revisions | Controller owns immutable revisions referencing stable model identities | revision detail/publication, default and ordered backup model selection, separate current-template enablement |
-| Organization Groups | Identity `list_directory` already returns Groups | implemented: searchable read-only Groups view with source and status |
-| Local user administration | Identity supports create user, update membership, and activate/deactivate user | implemented: BFF commands, local create/edit, organization access, and system-admin global activation workflows |
-| Current administrator account | Identity owns organization-scoped profile, Organization presentation, and credential facts | implemented: trusted-principal-only account summary, human-readable account and Organization context, section-local retry, and BFF removal of internal identity IDs |
-| Local account security | Identity supports a current-user password change command | implemented: Identity-authoritative local-credential capability, trusted-principal-only BFF command, and an account dialog with write-only, non-persistent credential input |
-| OIDC administration | Identity supports safe listing, upsert, and enable/disable | implemented: system-admin Provider list/create/edit/enable/disable, secret-free BFF projections, and immutable issuer guidance |
-| SCIM credentials | Identity supports safe listing, issue, and revoke | implemented: organization-admin token list, one-time no-store credential issuance, and revocation UI |
-| Enterprise login ingress | Identity supports login-method discovery, OIDC start/callback, and SCIM protocol resources | implemented: organization-aware SSO choices on login, server-side callback-to-cookie exchange, and Edge SCIM pass-through |
-| Agent executable lineage | Controller retains immutable AgentSpec and Execution revisions | frozen build details and exact Template revision links; model links open current settings without changing the build snapshot |
-| Execution history and synchronization | ACP owns execution audit; Controller owns configuration synchronization receipts | independent audit page, deleted-Agent history and separate stored publication acknowledgement |
-| Runtime image presentation | Runtime Controller resolves installed images; Agent Controller freezes executable configuration | implemented: default/current image or explicit repository/tag selection, server-derived readable labels, immutable publication, and refreshed container acceptance |
+| Capability                            | Existing authority                                                                              | Current product surface                                                                                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model discovery and defaults          | Console owns builtin defaults and remote discovery; Controller owns saved organization models   | merged candidates, explicit selection, editable limits/capabilities/pricing, existing values preserved                                                                      |
+| Current Model Profiles                | Controller stores current configuration; no separate model-history API                          | current detail/edit, model enable/disable with reference protection; credentials managed on connections                                                                     |
+| Provider availability and fallback    | Controller owns connection/configuration; ACP owns effective selection and client revocation    | referenced Provider disable, ordered Template backup models, live ACP configuration and fallback notices                                                                    |
+| Template revisions                    | Controller owns immutable revisions referencing stable model identities                         | revision detail/publication, default and ordered backup model selection, separate current-template enablement                                                               |
+| Organization Groups                   | Identity `list_directory` already returns Groups                                                | implemented: searchable read-only Groups view with source and status                                                                                                        |
+| Local user administration             | Identity supports create user, update membership, and activate/deactivate user                  | implemented: BFF commands, local create/edit, organization access, and system-admin global activation workflows                                                             |
+| Current administrator account         | Identity owns organization-scoped profile, Organization presentation, and credential facts      | implemented: trusted-principal-only account summary, human-readable account and Organization context, section-local retry, and BFF removal of internal identity IDs         |
+| Local account security                | Identity supports a current-user password change command                                        | implemented: Identity-authoritative local-credential capability, trusted-principal-only BFF command, and an account dialog with write-only, non-persistent credential input |
+| OIDC administration                   | Identity supports safe listing, upsert, and enable/disable                                      | implemented: system-admin Provider list/create/edit/enable/disable, secret-free BFF projections, and immutable issuer guidance                                              |
+| SCIM credentials                      | Identity supports safe listing, issue, and revoke                                               | implemented: organization-admin token list, one-time no-store credential issuance, and revocation UI                                                                        |
+| Enterprise login ingress              | Identity supports login-method discovery, OIDC start/callback, and SCIM protocol resources      | implemented: organization-aware SSO choices on login, server-side callback-to-cookie exchange, and Edge SCIM pass-through                                                   |
+| Agent executable lineage              | Controller retains immutable AgentSpec and Execution revisions                                  | frozen build details and exact Template revision links; model links open current settings without changing the build snapshot                                               |
+| Execution history and synchronization | ACP owns execution audit; Controller owns configuration synchronization receipts                | independent audit page, deleted-Agent history and separate stored publication acknowledgement                                                                               |
+| Runtime image presentation            | Runtime Controller resolves installed images; Agent Controller freezes executable configuration | implemented: default/current image or explicit repository/tag selection, server-derived readable labels, immutable publication, and refreshed container acceptance          |
 
 OIDC and SCIM are not implemented as write-only forms. Identity Service exposes
 explicit administrative reads that select no OIDC secret or SCIM token hash.

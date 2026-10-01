@@ -8,6 +8,10 @@ export type AgentAcpConfig = {
   databaseTimeoutMs: number;
   stateDeliveryTimeoutMs: number;
   clientMcpKey: Buffer;
+  skillMaintenanceSigning?: { kid: string; privateKey: KeyObject };
+  skillLearningControllerUrl?: string;
+  skillLearningDebugAgentId?: string;
+  skillDiscovery?: { registryUrl: string; registryToken: string; sourceToken: string };
   runTimeoutMs: number;
   maxWebSocketPayloadBytes: number;
   maxConfigurationBytes: number;
@@ -45,6 +49,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
       "ANTNEST_ACP_STATE_DELIVERY_TIMEOUT",
     ),
     clientMcpKey: parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY")),
+    ...parseSkillMaintenanceSigning(environment),
+    ...parseSkillLearningControllerUrl(environment),
+    ...parseSkillLearningDebugAgentId(environment),
+    ...parseSkillDiscovery(environment),
     runTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_RUN_TIMEOUT ?? "30m",
       "ANTNEST_ACP_RUN_TIMEOUT",
@@ -67,6 +75,87 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     ),
     telemetry: telemetryConfig(environment),
   };
+}
+
+function parseSkillDiscovery(
+  environment: NodeJS.ProcessEnv,
+): Pick<AgentAcpConfig, "skillDiscovery"> {
+  const registryUrl = optional(environment.ANTNEST_ACP_SKILL_REGISTRY_URL);
+  const registryToken = optional(environment.ANTNEST_ACP_SKILL_REGISTRY_TOKEN);
+  const sourceToken = optional(environment.ANTNEST_ACP_SKILL_SOURCE_TOKEN);
+  if (registryUrl === undefined && registryToken === undefined && sourceToken === undefined)
+    return {};
+  if (registryUrl === undefined || registryToken === undefined || sourceToken === undefined)
+    throw new ConfigError(
+      "Skill discovery Registry URL, Registry token and source reader token must be configured together",
+    );
+  if (
+    ![registryToken, sourceToken].every((v) => /^[!-~]{32,4096}$/u.test(v)) ||
+    registryToken === sourceToken
+  )
+    throw new ConfigError(
+      "Skill discovery requires distinct printable bearer tokens of at least 32 bytes",
+    );
+  if (optional(environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY) === undefined)
+    throw new ConfigError("Skill discovery requires Runtime observation signing configuration");
+  const url = normalizedHttpUrl(registryUrl, "ANTNEST_ACP_SKILL_REGISTRY_URL");
+  if (url.pathname !== "/") throw new ConfigError("Skill discovery Registry URL must be an origin");
+  return { skillDiscovery: { registryUrl: url.toString(), registryToken, sourceToken } };
+}
+
+function parseSkillLearningDebugAgentId(
+  environment: NodeJS.ProcessEnv,
+): Pick<AgentAcpConfig, "skillLearningDebugAgentId"> {
+  const value = optional(environment.ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID);
+  if (value === undefined) return {};
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/u.test(value))
+    throw new ConfigError("Invalid Skill learning debug Agent ID");
+  return { skillLearningDebugAgentId: value };
+}
+
+function parseSkillLearningControllerUrl(
+  environment: NodeJS.ProcessEnv,
+): Pick<AgentAcpConfig, "skillLearningControllerUrl"> {
+  const value = optional(environment.ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL);
+  return value === undefined
+    ? {}
+    : {
+        skillLearningControllerUrl: normalizedHttpUrl(
+          value,
+          "ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL",
+        ).toString(),
+      };
+}
+
+function parseSkillMaintenanceSigning(
+  environment: NodeJS.ProcessEnv,
+): Pick<AgentAcpConfig, "skillMaintenanceSigning"> {
+  const kid = optional(environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID);
+  const encoded = optional(environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY);
+  if (kid === undefined && encoded === undefined) return {};
+  if (kid === undefined || encoded === undefined)
+    throw new ConfigError(
+      "Skill maintenance signing kid and private key must be configured together",
+    );
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(kid))
+    throw new ConfigError("Invalid Skill maintenance signing kid");
+  if (
+    encoded.length > 4096 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)
+  )
+    throw new ConfigError("Skill maintenance private key must be canonical base64 PKCS8 DER");
+  const der = Buffer.from(encoded, "base64");
+  if (der.length === 0 || der.toString("base64") !== encoded)
+    throw new ConfigError("Skill maintenance private key must be canonical base64 PKCS8 DER");
+  let privateKey: KeyObject;
+  try {
+    privateKey = createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+  } catch {
+    throw new ConfigError("Skill maintenance private key must be Ed25519 PKCS8 DER");
+  }
+  if (privateKey.asymmetricKeyType !== "ed25519")
+    throw new ConfigError("Skill maintenance private key must be Ed25519 PKCS8 DER");
+  return { skillMaintenanceSigning: { kid, privateKey } };
 }
 
 function telemetryConfig(environment: NodeJS.ProcessEnv): AgentAcpConfig["telemetry"] {
@@ -219,3 +308,4 @@ function requireCapture(value: string | undefined): string {
   }
   return value;
 }
+import { createPrivateKey, type KeyObject } from "node:crypto";

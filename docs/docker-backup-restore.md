@@ -294,16 +294,32 @@ and preservation records have been verified. Controlled migration has passed
 isolated Docker acceptance. Its independent protected off-host export was not
 accepted and is no longer a current delivery requirement.
 
-## Skill Learning Key Recovery Addendum (Planned)
+## Skill Learning Key Recovery Addendum
 
 The separate [learning design](skill-learning-design.md) requires L1R/L3/LI1 to
-cover bootstrap key recovery. RC backups must retain the complete public-key set
-frozen with each accepted operation and its deployment identity. ACP signing
+cover bootstrap key recovery. L1R now persists each accepted operation's complete
+public-key set in the RC PostgreSQL backup alongside its deployment identity.
+Back up the RC bootstrap environment configuration separately and compare it with
+the active Runtime and unfinished operation snapshots before resuming maintenance.
+ACP signing
 keys stay in its protected secret backup, outside RuntimeSpec, logs and Git.
 Restore must reconcile these records with current revocation/incident records
 before opening maintenance. New global RC key configuration cannot rewrite an
 unfinished operation's snapshot; a compromised key in an old backup cannot be
 made trusted again by replay. Keep affected execution isolated, settle old
 effects through the lifecycle recovery process, and explicitly rebuild with a
-safe key set. These are future requirements, not existing key-rotation or backup
-acceptance evidence.
+safe key set. The frozen-snapshot database behavior has passed an isolated
+PostgreSQL test. Cross-service normal rotation also has Docker evidence. The
+L3/LI1 manual incident drill now passes `make e2e-skill-learning-key-compromise`:
+it clears ACP signing, proves the original Runtime still trusts the leaked key,
+disables the Agent and verifies that Runtime's actual endpoint stops. It restores
+a protected RC dump to a separate database held outside lifecycle replay,
+compares accepted verifier sets/deployment identities, and identifies the stale
+key. A new Enable against the safe configuration installs a Runtime that rejects
+the old key and preserves learned Skill use. Evidence:
+`artifacts/verification/skill-learning/antnest-lifecycle-706dabfe.json`, with an
+archive checksum, 0700 directory and 0600 file. No test containers remain.
+This drill has no unfinished lifecycle operation in its backup. It verifies
+one operator-controlled quarantine/recovery path, not automated revocation or
+arbitrary full-platform restore; unfinished revoked targets still require the
+documented isolation and factual settlement before resuming.

@@ -7,6 +7,11 @@ const archives = [
   "UEsDBBQAAAAAAMesO127SMX3VwAAAFcAAAAIAAAAU0tJTEwubWQtLS0KbmFtZTogY29kZS1yZXZpZXcKZGVzY3JpcHRpb246IFJldmlldyBjb2RlCi0tLQpTdGFnZSA0IGltbXV0YWJsZSBwcmVzZXQgdmVyc2lvbiAyLgpQSwECFAMUAAAAAADHrDtdu0jF91cAAABXAAAACAAAAAAAAAAAAAAAgAEAAAAAU0tJTEwubWRQSwUGAAAAAAEAAQA2AAAAfQAAAAAA",
 ];
 
+export function skillArtifact(version) {
+  assert([1, 2].includes(version));
+  return Buffer.from(archives[version - 1], "base64");
+}
+
 export async function publishSkill(admin, version, skillId) {
   assert([1, 2].includes(version));
   const form = new FormData();
@@ -16,7 +21,7 @@ export async function publishSkill(admin, version, skillId) {
   }
   form.append(
     "artifact",
-    new Blob([Buffer.from(archives[version - 1], "base64")], {
+    new Blob([skillArtifact(version)], {
       type: "application/zip",
     }),
     `code-review-v${version}.zip`,

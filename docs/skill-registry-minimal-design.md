@@ -2,6 +2,23 @@
 
 > 更新日期：2026-09-28；已按评审修订设计决策，并同步当前验收状态。
 >
+> 后续范围补充（2026-10-01）：用户确定“Agent Skill 自动投影 → Registry 检索与
+> 临时使用 → 用户提升为系统 Skill → Template/rebuild 预设交付”，详见
+> [动态发现与传播设计](evolver-technical-analysis.md#112-用户确定的四步产品流程)。
+> 投影仅登记动态来源映射，内容与生命周期归来源 Agent；提升时才由 Registry
+> 托管完整包及正式版本生命周期。
+> 本文记录已交付的首版基线；后续 Registry/source 合同与 Registry D1 已通过
+> 门禁，详见[交付记录](skill-discovery-registry-delivery-20261001.md)。ACP D2 自动
+> 投影与当前来源读取也已通过门禁，详见[ACP 交付记录](skill-discovery-acp-delivery-20261001.md)；
+> [D3 模型搜索/正文加载](skill-discovery-tools-delivery-20261001.md)也已通过门禁；
+> [Runtime D4](skill-discovery-runtime-delivery-20261001.md) 的临时文件接口及所属
+> 门禁也已通过；[ACP D4A](skill-discovery-temporary-consumer-delivery-20261001.md)
+> 已通过真实文件使用、持久回收与重启恢复门禁；[Console D6](skill-discovery-console-delivery-20261001.md)
+> 的来源预览/用户提升和 [DI1](skill-propagation-integration-delivery-20261001.md)
+> 完整四步集成也已通过。[DI2](skill-source-lifecycle-delivery-20261001.md)与
+> [DI3](skill-discovery-caller-integration-delivery-20261001.md)进一步核对正常
+> 来源生命周期、活动调用方检索和实际来源 Trace 父链。
+>
 > 当前交付范围：开发环境没有待迁移的业务数据，首版按全新部署验收。
 > 第 9.1 节的旧共享卷迁移设计及相关实现/测试保留为历史记录，不构成
 > Skill Registry 当前验收门槛；不再为异机受保护导出或旧来源异常恢复投入开发。
@@ -76,37 +93,40 @@
 
 本轮将以下选择确定为 B0 的输入，不再留给服务实现者自行决定：
 
-| 问题 | 设计决定 |
-| --- | --- |
-| 旧正文交付通道 | `skill_instructions` 废弃且永久为空；保留字段不表示未来允许填充 |
-| 包与 Runtime 格式一致性 | 检查 YAML 节点真实类型和分隔格式；共享样例在实际 Go/Rust 解析路径运行 |
-| 仓库故障与生命周期 | 独立、持久、幂等地准备集合；创建在 Initialize 前，重建在 Drain/Fence 前 |
-| 超时和复用 | 准备不使用 Runtime mutation 时限；逐包保存核验进度；按 Agent 与集合摘要复用卷 |
-| 历史资产与恢复 | 先盘点备份、显式迁移；恢复时核验真实卷，禁止把缺失或旧共享内容当作空集合 |
+| 问题                    | 设计决定                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| 旧正文交付通道          | `skill_instructions` 废弃且永久为空；保留字段不表示未来允许填充               |
+| 包与 Runtime 格式一致性 | 检查 YAML 节点真实类型和分隔格式；共享样例在实际 Go/Rust 解析路径运行         |
+| 仓库故障与生命周期      | 独立、持久、幂等地准备集合；创建在 Initialize 前，重建在 Drain/Fence 前       |
+| 超时和复用              | 准备不使用 Runtime mutation 时限；逐包保存核验进度；按 Agent 与集合摘要复用卷 |
+| 历史资产与恢复          | 先盘点备份、显式迁移；恢复时核验真实卷，禁止把缺失或旧共享内容当作空集合      |
 
 首版不建设外部同步、搜索推荐、社区、审核评测、依赖安装、发布标签、热更新或
-Skill 执行引擎。没有个人 Skill 一键发布/转换的产品流程；将来需要时，先手动
-导出，再由管理员上传。学习方案独立设计，不成为此链路的依赖。
+Skill 执行引擎。已交付首版没有个人 Skill 发布/转换的产品流程，当前可手动
+导出后由管理员上传。后续将按上述四步设计增加自动投影、检索/临时使用与
+用户提升：映射按需回源，提升后正式托管；正式版本仍沿用本方案的模板冻结
+和显式重建规则。个人学习可独立
+完成，不以 Registry 在线或投影成功为生效前提。
 
 ## 2. 当前基础与服务所有权
 
-| 已核对的当前实现 | 首版边界 |
-| --- | --- |
+| 已核对的当前实现                                                                                                                                                                        | 首版边界                                                            |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Template 修订不可变；`skill_refs` 解析精确版本并冻结。[Controller 合同](../contracts/agent-controller/control-api.md) / [schema](../contracts/agent-controller/control-api.schema.json) | AgentSpec 复制冻结引用，发布新 Skill 或模板修订不自动更改现有 Agent |
-| RC 有独立集合准备、幂等请求、修订 CAS 和中断恢复。[生命周期合同](../services/runtime-controller/api/control-api.md) | Prepare 先于 Environment 生命周期变更；生命周期只消费 ready 集合 |
-| Docker 按 Agent/集合身份挂载已准备的只读卷。[适配器](../services/runtime-controller/internal/platform/docker/driver.go) | 首版全新部署使用独立卷；同集合复用、缺失再物化及删除清理已有证据 |
-| Runtime 扫描系统/个人目录，文件工具拒绝系统根写入。[读取](../runtimes/antnest-runtime/src/information.rs) / [文件根](../runtimes/antnest-runtime/src/roots.rs) | 复用发现路径；实际交付格式和只读效果已验证 |
-| ACP 每 Run 刷新目录摘要、按需读正文，旧正文拼接已移除。[上下文](../services/agent-acp-service/src/application/context-builder.ts) | 拒绝非空旧字段，保证唯一交付路径 |
+| RC 有独立集合准备、幂等请求、修订 CAS 和中断恢复。[生命周期合同](../services/runtime-controller/api/control-api.md)                                                                     | Prepare 先于 Environment 生命周期变更；生命周期只消费 ready 集合    |
+| Docker 按 Agent/集合身份挂载已准备的只读卷。[适配器](../services/runtime-controller/internal/platform/docker/driver.go)                                                                 | 首版全新部署使用独立卷；同集合复用、缺失再物化及删除清理已有证据    |
+| Runtime 扫描系统/个人目录，文件工具拒绝系统根写入。[读取](../runtimes/antnest-runtime/src/information.rs) / [文件根](../runtimes/antnest-runtime/src/roots.rs)                          | 复用发现路径；实际交付格式和只读效果已验证                          |
+| ACP 每 Run 刷新目录摘要、按需读正文，旧正文拼接已移除。[上下文](../services/agent-acp-service/src/application/context-builder.ts)                                                       | 拒绝非空旧字段，保证唯一交付路径                                    |
 
-| 所有者 | 首版职责 |
-| --- | --- |
-| Skill Registry | 组织内包校验、版本、元数据解析和下载；拥有自己的数据库 |
-| Agent Controller | Template/AgentSpec 固定引用、创建/重建策略、准备前置编排；不保存包字节 |
-| Runtime Controller | 下载、校验、准备进度、卷复用、只读挂载、恢复及回收；不决定升级版本 |
-| Antnest Runtime | 发现系统/个人 Skill，继续按需读取和既有工具执行 |
-| Agent ACP Service | 只使用 Runtime 摘要/读取路径，封闭旧正文通道 |
-| Admin Console | 上传/版本、模板选择、准备/生命周期进度；薄 BFF，无业务数据库 |
-| Identity / Edge Gateway | 复用组织、管理员准入和浏览器入口；不新增账号或角色体系 |
+| 所有者                  | 首版职责                                                               |
+| ----------------------- | ---------------------------------------------------------------------- |
+| Skill Registry          | 组织内包校验、版本、元数据解析和下载；拥有自己的数据库                 |
+| Agent Controller        | Template/AgentSpec 固定引用、创建/重建策略、准备前置编排；不保存包字节 |
+| Runtime Controller      | 下载、校验、准备进度、卷复用、只读挂载、恢复及回收；不决定升级版本     |
+| Antnest Runtime         | 发现系统/个人 Skill，继续按需读取和既有工具执行                        |
+| Agent ACP Service       | 只使用 Runtime 摘要/读取路径，封闭旧正文通道                           |
+| Admin Console           | 上传/版本、模板选择、准备/生命周期进度；薄 BFF，无业务数据库           |
+| Identity / Edge Gateway | 复用组织、管理员准入和浏览器入口；不新增账号或角色体系                 |
 
 ```mermaid
 flowchart LR
@@ -134,17 +154,17 @@ Channel Manager 和 Task Scheduler 不参与。
 ZIP 根目录直接包含 `SKILL.md`，可带 `scripts/`、`references/`、`assets/` 等普通
 文件，不接受外层包装目录。
 
-| 项目 | 首版默认上限 |
-| --- | --- |
-| ZIP 压缩大小 | 8 MiB；multipart 元数据和额外字段另设 HTTP 上限 |
-| 解包后大小 | 每包 32 MiB，模板完整集合合计 128 MiB |
-| 文件/条目 | 每包 256 个 ZIP 条目，含目录；单文件 8 MiB |
-| `SKILL.md` | **完整文件** 16 KiB，UTF-8；不是仅限制 frontmatter |
-| `name` | 1–64 字节，小写 ASCII 字母、数字、单连字符，首尾为字母或数字；组织内唯一且不可改名 |
-| `description` | 去除首尾空白后 1–512 UTF-8 字节，不含 NUL |
-| 相对路径 | UTF-8，512 字节，最多 16 层，统一 `/` |
-| 系统 Skill 数量 | 0–32，与 Runtime 每来源上限对齐 |
-| 并发 | Registry 上传 2、下载 4；RC 同时准备集合 2，集合内逐包处理；均可配置且有界 |
+| 项目            | 首版默认上限                                                                       |
+| --------------- | ---------------------------------------------------------------------------------- |
+| ZIP 压缩大小    | 8 MiB；multipart 元数据和额外字段另设 HTTP 上限                                    |
+| 解包后大小      | 每包 32 MiB，模板完整集合合计 128 MiB                                              |
+| 文件/条目       | 每包 256 个 ZIP 条目，含目录；单文件 8 MiB                                         |
+| `SKILL.md`      | **完整文件** 16 KiB，UTF-8；不是仅限制 frontmatter                                 |
+| `name`          | 1–64 字节，小写 ASCII 字母、数字、单连字符，首尾为字母或数字；组织内唯一且不可改名 |
+| `description`   | 去除首尾空白后 1–512 UTF-8 字节，不含 NUL                                          |
+| 相对路径        | UTF-8，512 字节，最多 16 层，统一 `/`                                              |
+| 系统 Skill 数量 | 0–32，与 Runtime 每来源上限对齐                                                    |
+| 并发            | Registry 上传 2、下载 4；RC 同时准备集合 2，集合内逐包处理；均可配置且有界         |
 
 拒绝绝对路径、`.`/`..` 路径段、反斜杠、NUL、重复或冲突路径、加密 ZIP、符号
 链接、硬链接、设备等非普通文件/目录；拒绝错误 CRC、伪造大小和实际解压超限。
@@ -178,18 +198,18 @@ Runtime 使用 `yaml-rust2 0.13`，通过 `as_str()` 读取 `name/description`�
 只表示类型阶段通过，之后仍检查 name 正则或 description 长度/非空等约束。
 数字规则采用词法判断，不因整数溢出或某库没有识别该数值就允许裸值。
 
-| 标量内容示例 | 未加引号的 plain scalar | 单/双引号字符串 | 说明 |
-| --- | --- | --- | --- |
-| `true` / `True` / `TRUE`，`false` / `False` / `FALSE` | 拒绝 | 允许字符串 | 大写内容仍不符合 name 的小写规则 |
-| `null` / `Null` / `NULL` / `~`，空值 | 拒绝 | 允许字符串 | 引用后的空字符串仍被非空校验拒绝 |
-| `123` / `-42` / `+42` / `0x1f` / `0o17` / `1e3` / `1.5` | 拒绝 | 允许字符串 | 数值类型；例如名称 `"123"` 合法，裸 `123` 不合法 |
-| `0b101` / `-0b101` / `1_000` / `1_000.5` | 拒绝 | 允许字符串 | 平台额外排除二进制、数值中的 `_`；引用的下划线名称仍不合法 |
-| `0x-1` / `0x+1f` / `0o-7` / `++42` / `+-42` | 拒绝 | 允许字符串 | Runtime 实际识别为整数；`"0x-1"`、`"0o-7"` 可通过名称规则，裸值不可 |
-| `0X-1` / `0O+7` / `0Btext` / `0xnote` / `--42` / `-+42` / `+1step` | 拒绝 | 允许字符串 | 保守词法范围，即使库均按字符串解析也拒绝裸值 |
-| `2024-01-01` / `2024-01-01T12:30:00Z` | 拒绝 | 允许字符串 | 日期/时间歧义；名称 `"2024-01-01"` 可接受 |
-| `.inf` / `+.Inf` / `-.INF` / `.nan` / `.NaN` / `.NAN` | 拒绝 | 允许字符串 | 带点的特殊浮点形式 |
-| `inf` / `nan` | 允许字符串 | 允许字符串 | 不将无点单词当作浮点数 |
-| `yes` / `no` / `on` / `off`，`code-review`，中文描述 | 允许字符串 | 允许字符串 | 不引入 YAML 1.1 bool 强转；中文仍只适用于描述 |
+| 标量内容示例                                                       | 未加引号的 plain scalar | 单/双引号字符串 | 说明                                                                |
+| ------------------------------------------------------------------ | ----------------------- | --------------- | ------------------------------------------------------------------- |
+| `true` / `True` / `TRUE`，`false` / `False` / `FALSE`              | 拒绝                    | 允许字符串      | 大写内容仍不符合 name 的小写规则                                    |
+| `null` / `Null` / `NULL` / `~`，空值                               | 拒绝                    | 允许字符串      | 引用后的空字符串仍被非空校验拒绝                                    |
+| `123` / `-42` / `+42` / `0x1f` / `0o17` / `1e3` / `1.5`            | 拒绝                    | 允许字符串      | 数值类型；例如名称 `"123"` 合法，裸 `123` 不合法                    |
+| `0b101` / `-0b101` / `1_000` / `1_000.5`                           | 拒绝                    | 允许字符串      | 平台额外排除二进制、数值中的 `_`；引用的下划线名称仍不合法          |
+| `0x-1` / `0x+1f` / `0o-7` / `++42` / `+-42`                        | 拒绝                    | 允许字符串      | Runtime 实际识别为整数；`"0x-1"`、`"0o-7"` 可通过名称规则，裸值不可 |
+| `0X-1` / `0O+7` / `0Btext` / `0xnote` / `--42` / `-+42` / `+1step` | 拒绝                    | 允许字符串      | 保守词法范围，即使库均按字符串解析也拒绝裸值                        |
+| `2024-01-01` / `2024-01-01T12:30:00Z`                              | 拒绝                    | 允许字符串      | 日期/时间歧义；名称 `"2024-01-01"` 可接受                           |
+| `.inf` / `+.Inf` / `-.INF` / `.nan` / `.NaN` / `.NAN`              | 拒绝                    | 允许字符串      | 带点的特殊浮点形式                                                  |
+| `inf` / `nan`                                                      | 允许字符串              | 允许字符串      | 不将无点单词当作浮点数                                              |
+| `yes` / `no` / `on` / `off`，`code-review`，中文描述               | 允许字符串              | 允许字符串      | 不引入 YAML 1.1 bool 强转；中文仍只适用于描述                       |
 
 日期歧义规则在平台层排除以 `YYYY-M-D` 形状组成的裸日期，及其后接 `T`/`t` 或
 空格加时间的形式（支持单/双位月日）；不靠当前库是否成功校验日期来放行。
@@ -219,15 +239,15 @@ Runtime 不提供同样的 merge 语义。上述差异只能解释为何需要�
 正整数）标识，校验记录保存该版本；它不是 Skill 发布版本，也不是第 5.1 节的
 集合 `layout_version`。它是一套测试输入，不要求跨语言共用运行时代码。
 
-| 样例组 | 必须检查的结果 |
-| --- | --- |
-| 两字段的上述判定表及大小写、引号/块字符串、日期/数值边界 | 平台校验结果按表固定；记录底层 AST 类型差异，不以 Go string 强转掩盖 |
+| 样例组                                                               | 必须检查的结果                                                                |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 两字段的上述判定表及大小写、引号/块字符串、日期/数值边界             | 平台校验结果按表固定；记录底层 AST 类型差异，不以 Go string 强转掩盖          |
 | `0x-1`、`0x+1f`、`0o-7`、`++42`、`+-42` 及大小写/符号/非数字后缀变体 | 裸值拒绝，引用值先按字符串再检查字段约束；名称合法的 `0x-1`/`0o-7` 也必须覆盖 |
-| BOM、前置空行、首/末分隔行带空格、缺末分隔行 | 拒绝，不能上传成功后变成 Runtime `invalid_skill` |
-| 多 YAML 文档、`...`、重复键、别名、标签、非 mapping | 拒绝；正文中合法 Markdown 分隔线可保留 |
-| `<<: {name: x}`、merge sequence、嵌套 `<<`、加引号的 `"<<"` 键 | AST 阶段拒绝，不执行合并；覆盖无锚点、与直接字段并存及两种字段的情况 |
-| LF/CRLF、中文描述、合法额外元数据、边界长度 | 所有消费者一致；包含 Runtime 实际发现结果 |
-| 整个 `SKILL.md` 超过 16 KiB、目录与管理身份不一致 | Registry/RC/学习候选拒绝，即使 Runtime 单独能读其头部 |
+| BOM、前置空行、首/末分隔行带空格、缺末分隔行                         | 拒绝，不能上传成功后变成 Runtime `invalid_skill`                              |
+| 多 YAML 文档、`...`、重复键、别名、标签、非 mapping                  | 拒绝；正文中合法 Markdown 分隔线可保留                                        |
+| `<<: {name: x}`、merge sequence、嵌套 `<<`、加引号的 `"<<"` 键       | AST 阶段拒绝，不执行合并；覆盖无锚点、与直接字段并存及两种字段的情况          |
+| LF/CRLF、中文描述、合法额外元数据、边界长度                          | 所有消费者一致；包含 Runtime 实际发现结果                                     |
+| 整个 `SKILL.md` 超过 16 KiB、目录与管理身份不一致                    | Registry/RC/学习候选拒绝，即使 Runtime 单独能读其头部                         |
 
 B0 给出样例和期望；B1/B3 必须运行**实际 Go 校验实现**，并与实际 Rust 解析结果
 交叉验证，不能只断言 Go struct 中最终有字符串。被平台接受的包必须被 Runtime
@@ -237,15 +257,16 @@ Runtime 升级 YAML 库后也必须重跑该组证据。现有
 [`package-rules-v1.json`](../tests/integration/skill-registry/package-rules-v1.json)
 已由 Registry、RC 的 Go 校验测试及 Runtime 实际 Rust 解析测试共同执行；
 样例分别记录平台准入和 Runtime 原始解析结果，平台接受的 name/description
-必须与 Runtime 发现值一致。学习 L1 的候选校验仍待后续实现。
+必须与 Runtime 发现值一致。[学习 L1](skill-learning-design.md)的候选流程使用
+Runtime 平台包校验器，继续遵守这组格式与名称约束。
 
 ### 3.3 不可变版本和内容身份
 
-| Registry 私有记录 | 最小字段 |
-| --- | --- |
-| `skills` | `skill_id`、组织、不可变名称、当前版本、创建人/时间 |
-| `skill_versions` | Skill、正整数版本、描述、ZIP、`artifact_digest`、`content_digest`、大小、文件清单、发布人/时间 |
-| `command_receipts` | 组织、`request_id`、规范化请求摘要、冻结结果 |
+| Registry 私有记录  | 最小字段                                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `skills`           | `skill_id`、组织、不可变名称、当前版本、创建人/时间                                            |
+| `skill_versions`   | Skill、正整数版本、描述、ZIP、`artifact_digest`、`content_digest`、大小、文件清单、发布人/时间 |
+| `command_receipts` | 组织、`request_id`、规范化请求摘要、冻结结果                                                   |
 
 `skill_id` 为 `skill_<32 位小写十六进制>`，已登记到
 [资源 ID 合同](../contracts/resource-identifiers.md)。版本从 1 递增；首版不引入
@@ -263,16 +284,16 @@ SemVer、版本资源 ID、范围表达式或 `latest`。`artifact_digest` 为�
 
 下列 Registry 自有路由已登记到
 [B0 合同](../contracts/skill-registry/registry-api.md)和 JSON schema，并由
-B1 本地服务实现；其它跨服务生命周期与消费者合同仍待后续批次：
+B1 服务实现；跨服务生命周期与消费者的交付结果见本文开头的批次记录：
 
-| 接口 | 用途 |
-| --- | --- |
-| `POST /internal/skills` | multipart 元数据含请求、组织、操作者；一个 ZIP，创建 Skill/v1 |
-| `POST /internal/skills/{skill_id}/versions` | 同上加 `expected_version`，追加不可变版本 |
-| `GET /internal/skills` | 组织目录、当前版本元数据；`after_id/limit` 分页 |
-| `GET /internal/skills/{skill_id}/versions` | 组织内版本列表、稳定游标；不含包正文 |
-| `POST /internal/skill-versions/resolve` | 组织及最多 32 个精确引用；整体校验并返回冻结元数据 |
-| `GET /internal/skills/{skill_id}/versions/{version}/artifact` | 组织范围固定 ZIP、准确长度和摘要；不重定向外站 |
+| 接口                                                          | 用途                                                          |
+| ------------------------------------------------------------- | ------------------------------------------------------------- |
+| `POST /internal/skills`                                       | multipart 元数据含请求、组织、操作者；一个 ZIP，创建 Skill/v1 |
+| `POST /internal/skills/{skill_id}/versions`                   | 同上加 `expected_version`，追加不可变版本                     |
+| `GET /internal/skills`                                        | 组织目录、当前版本元数据；`after_id/limit` 分页               |
+| `GET /internal/skills/{skill_id}/versions`                    | 组织内版本列表、稳定游标；不含包正文                          |
+| `POST /internal/skill-versions/resolve`                       | 组织及最多 32 个精确引用；整体校验并返回冻结元数据            |
+| `GET /internal/skills/{skill_id}/versions/{version}/artifact` | 组织范围固定 ZIP、准确长度和摘要；不重定向外站                |
 
 列表默认 50、最多 100。`resolve` 返回名称、描述、两个摘要及大小，不返回包字节。
 错误区分不存在、版本不存在、名称冲突、坏包、超限、请求冲突、修订冲突及暂时
@@ -319,9 +340,9 @@ Registry `resolve`，拒绝跨组织、重复 Skill、多版本、同名目录�
 ### 5.2 `skill_instructions` 永久为空
 
 当前 [execution snapshot schema](../contracts/agent-acp/execution-snapshot.schema.json)
-仍允许带 `instructions` 的元素，[ACP](../services/agent-acp-service/src/application/context-builder.ts)
-仍会拼进系统提示，[Controller](../services/agent-controller/internal/application/execution_projection.go)
-目前输出空列表。**Registry 集成不能激活这个旧通道。**
+已将该数组约束为永久空列表；[ACP](../services/agent-acp-service/src/application/context-builder.ts)
+拒绝非空输入且不再将正文拼进系统提示，[Controller](../services/agent-controller/internal/application/execution_projection.go)
+继续输出空列表。**Registry 集成不能激活这个旧通道。**
 
 B0 将字段标为废弃并约束为 `[]`，消费者清单包括 **ACP 和 Admin Console**：
 
@@ -329,7 +350,7 @@ B0 将字段标为废弃并约束为 `[]`，消费者清单包括 **ACP 和 Admi
 - B5 使 ACP 拒绝非空输入并移除正文拼接逻辑。
 - B4 删除 Console 执行审计响应的 `skillInstructions` 字段及其正文投影。当前
   [投影实现](../services/admin-console/internal/server/execution_snapshot_projection.go)
-  会复制 `instructions`，不能因正常数据为空就保留这条旁路。历史/异常非空
+  已使用不含正文通道的白名单结构，不能因正常数据为空就保留这条旁路。历史/异常非空
   输入也不得向浏览器透传；如需展示 Skill 身份，另从冻结引用提供白名单元数据。
 
 Controller → ACP wire 字段暂留仅为明确原形状，不保留非空兼容分支，不允许
@@ -338,7 +359,7 @@ Controller → ACP wire 字段暂留仅为明确原形状，不保留非空兼�
 
 唯一正文路径为 Registry → RC 卷交付 → Runtime 按需读取。模板和快照只传固定
 身份，系统提示只包含 Runtime 提供的有界摘要；不得每 Run 注入最多 32 × 16 KiB
-正文。本轮只确定文档要求；schema 和 ACP 分支尚未改动。
+正文。上述旧通道约束已在首版合同、ACP 和 Console 中实现并验收。
 
 ### 5.3 生命周期配置引用 ready 集合
 
@@ -576,14 +597,14 @@ Initialize；也不提前分配并激活无必要的 Egress 资源。
 调用”，不表示以后不能重新准备。Controller 必须有阶段化处理，不能笼统跳回
 Prepare，也不能套入会让源长期停在隔离状态的通用重试分支：
 
-| 发现时点 | 必须执行的路径 |
-| --- | --- |
-| 创建 Initialize 之前，或重建 BeginAgentRebuild/Drain 之前 | 失效引用标记为不可消费，回到准备；源仍可运行，创建不产生 failed Environment |
-| 重建已开始 Drain/Fence，但 RC Update 尚未受理 | 先确认 RC 原请求未受理、源绑定/compute 仍完整且未撤权，恢复源网络；结束本次重建为失败，清除活动操作并同步恢复源执行准入；之后才释放引用 |
-| Enable NetworkEnsure 之前 | 保持 disabled，本地复核/重新准备后再发起网络步骤 |
-| Enable NetworkEnsure 之后、RC Enable 尚未受理 | 结束本次 Enable 并结算/补偿本次网络副作用，保留 disabled 及关闭的准入/网络；不在半启用状态重试准备 |
-| 容器创建后、启动前的卷门禁失败（包括原请求恢复） | 不启动目标；清理可确认归属的候选副作用，按既有 failed/unknown 结算或观察。旧源已删除时不得宣称可恢复旧源网络/准入 |
-| RC 生命周期已经受理、源有变更或结果未知 | 观察并恢复原请求；不能使用准入错误假定零副作用，也不能自动开放源网络 |
+| 发现时点                                                  | 必须执行的路径                                                                                                                          |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 创建 Initialize 之前，或重建 BeginAgentRebuild/Drain 之前 | 失效引用标记为不可消费，回到准备；源仍可运行，创建不产生 failed Environment                                                             |
+| 重建已开始 Drain/Fence，但 RC Update 尚未受理             | 先确认 RC 原请求未受理、源绑定/compute 仍完整且未撤权，恢复源网络；结束本次重建为失败，清除活动操作并同步恢复源执行准入；之后才释放引用 |
+| Enable NetworkEnsure 之前                                 | 保持 disabled，本地复核/重新准备后再发起网络步骤                                                                                        |
+| Enable NetworkEnsure 之后、RC Enable 尚未受理             | 结束本次 Enable 并结算/补偿本次网络副作用，保留 disabled 及关闭的准入/网络；不在半启用状态重试准备                                      |
+| 容器创建后、启动前的卷门禁失败（包括原请求恢复）          | 不启动目标；清理可确认归属的候选副作用，按既有 failed/unknown 结算或观察。旧源已删除时不得宣称可恢复旧源网络/准入                       |
+| RC 生命周期已经受理、源有变更或结果未知                   | 观察并恢复原请求；不能使用准入错误假定零副作用，也不能自动开放源网络                                                                    |
 
 重建后置失效使用明确的失败恢复路径，不循环重试失效集合。本次操作的失败结果
 保留；用户重新发起重建用新请求身份，可复用仍有效的准备检查点。恢复网络或
@@ -601,16 +622,16 @@ unknown；即使候选容器清理成功，也不能把整次操作标成 not_st
 
 ### 7.2 其它错误分类
 
-| 故障/状态 | 准备阶段语义 | 对生命周期的影响 |
-| --- | --- | --- |
-| Registry 503、连接超时、暂时 DNS/网络故障 | `retry_wait`，限次退避、同请求恢复，保留已核验包 | 创建等待；重建源继续运行；不制造 failed Environment |
-| 准备队列满或排队等待 | 未受理的可重试准入忙，或已受理 queued | 不算平台失败，不先 Drain |
-| 版本不存在、跨组织、坏包、摘要不符 | `rejected`，具体原因；相同错误不自动循环重试 | 拒绝目标配置，保留源；不得空集合降级 |
-| 磁盘不足、准备预算不满足 | 暂停并指明需运维恢复；保留可核验进度 | 不自动开始生命周期，不无限重试 |
-| 准备资源副作用无法确认 | 该准备物化标记不确定并隔离，查询实际事实后恢复 | 不伪装 ready；不占一个不存在的 Environment 生命周期状态 |
-| 受保护集合在生命周期受理前发生外部漂移 | `prepared_skill_set_invalidated`，当前生命周期不可重试 | 按 §7.1 恢复；Fence 后不等待仓库，正常 Drain 不使引用过期 |
-| 受理后创建/接管目标时卷身份或清单不符 | `skill_mount_verification_failed`，禁止启动/发布就绪 | 确认副作用及清理结果，沿既有 failed/unknown 处理；不伪装未受理 |
-| 真正 Initialize/Update 副作用失败或未知 | 沿现有 failed/unknown 及 per-Agent 操作恢复合同 | 不改变既有失败请求重放规则，不把已删源说成 not_started |
+| 故障/状态                                 | 准备阶段语义                                           | 对生命周期的影响                                               |
+| ----------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------- |
+| Registry 503、连接超时、暂时 DNS/网络故障 | `retry_wait`，限次退避、同请求恢复，保留已核验包       | 创建等待；重建源继续运行；不制造 failed Environment            |
+| 准备队列满或排队等待                      | 未受理的可重试准入忙，或已受理 queued                  | 不算平台失败，不先 Drain                                       |
+| 版本不存在、跨组织、坏包、摘要不符        | `rejected`，具体原因；相同错误不自动循环重试           | 拒绝目标配置，保留源；不得空集合降级                           |
+| 磁盘不足、准备预算不满足                  | 暂停并指明需运维恢复；保留可核验进度                   | 不自动开始生命周期，不无限重试                                 |
+| 准备资源副作用无法确认                    | 该准备物化标记不确定并隔离，查询实际事实后恢复         | 不伪装 ready；不占一个不存在的 Environment 生命周期状态        |
+| 受保护集合在生命周期受理前发生外部漂移    | `prepared_skill_set_invalidated`，当前生命周期不可重试 | 按 §7.1 恢复；Fence 后不等待仓库，正常 Drain 不使引用过期      |
+| 受理后创建/接管目标时卷身份或清单不符     | `skill_mount_verification_failed`，禁止启动/发布就绪   | 确认副作用及清理结果，沿既有 failed/unknown 处理；不伪装未受理 |
+| 真正 Initialize/Update 副作用失败或未知   | 沿现有 failed/unknown 及 per-Agent 操作恢复合同        | 不改变既有失败请求重放规则，不把已删源说成 not_started         |
 
 当前 Initialize 的确定性失败会留下 failed Environment，同请求只返回原失败，
 新 Initialize 不能覆盖，只能走 Delete 恢复。独立准备正是为了不让下载故障进入
@@ -680,12 +701,12 @@ Controller 的[逐 Agent 选择合同](../contracts/skill-registry/legacy-migrat
 清单与卷来自同一恢复集。恢复先核验归属标签、完整文件摘要和 mode，再开放消费；
 RC 数据库 `ready` 标记本身不证明卷存在。
 
-| 恢复或观察事实 | 处理 |
-| --- | --- |
-| ready 记录在，卷丢失/清单不符，无活跃 compute 使用 | 使该物化失效；从备份或精确 Registry 版本在新物化中重建、完整核验，再发新准备回执 |
-| Registry 也不可用 | 保持待准备/不可用并说明缺件；不能挂空卷，也不重建为“最新”版本 |
-| 生命周期观察到运行中目标的挂载或清单身份漂移 | 报告不可用，阻止新 Run，由 Controller 执行显式受控恢复；不把活跃只读卷改为可写修补 |
-| 旧/新物化均存在 | 依据持久归属与引用选择；无引用且确认不是现有 compute 挂载后才清理 |
+| 恢复或观察事实                                     | 处理                                                                               |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| ready 记录在，卷丢失/清单不符，无活跃 compute 使用 | 使该物化失效；从备份或精确 Registry 版本在新物化中重建、完整核验，再发新准备回执   |
+| Registry 也不可用                                  | 保持待准备/不可用并说明缺件；不能挂空卷，也不重建为“最新”版本                      |
+| 生命周期观察到运行中目标的挂载或清单身份漂移       | 报告不可用，阻止新 Run，由 Controller 执行显式受控恢复；不把活跃只读卷改为可写修补 |
+| 旧/新物化均存在                                    | 依据持久归属与引用选择；无引用且确认不是现有 compute 挂载后才清理                  |
 
 首版按常规生命周期保证：准备时完整读回、启动前挂载门禁、Runtime 只读挂载、
 恢复时重新核验。运行中不周期扫描全部 Skill 文件；宿主机或其它高权限容器对
@@ -725,17 +746,17 @@ Registry 自有合同和服务代码已交付；I1 的基础业务链、八库�
 同一批只改一个所属服务实现及其文档和测试。
 生产者通过本地门禁后继续保留消费者待办，不提前报告业务完成。
 
-| 批次 | 所有者 | 交付及门禁 |
-| --- | --- | --- |
-| B0 | 共享合同 | 库无关 YAML 判定表/样例及 package_rules_version、独立 layout_version、Registry API、固定引用、永久空正文及消费者清单、持久准备引用/失效错误、启动门禁结果和阶段恢复；不夹带多服务实现 |
-| B1 | Skill Registry | Go/PG、上传/版本/解析/下载、幂等和组织隔离；实际 Go YAML 样例、单元/合同/PG 组件及适用 Docker 证据 |
-| B2 | Agent Controller | 固定引用、持久引用持有/释放、Enable 网络前准备、Fence 后失效恢复网络和准入、永久空正文；本地单元/合同/组件，RC 消费待 B3。旧资产迁移准入是历史附加实现，不计入当前验收 |
-| B2a（B2 内部批次） | Agent Controller | Template 创建/修订精确解析 Registry 版本、冻结元数据、历史读取和 AgentSpec 复制；在 B2 生命周期准备与 B3 交付完成前拒绝非空集合的 Agent 创建/重建，避免静默缺装。Controller 本地单元、合同、隔离 PG 组件通过；不宣称 B2 或业务链完成 |
-| B3 | Runtime Controller | 独立准备、逐包恢复、可复用卷、Docker archive/NoCopy、持久引用与 BeginTransition 原子登记、失效预检查/回收、创建后及恢复接管的启动前卷门禁/有界清理；真实 Docker/Desktop、竞态、超时和恢复证据 |
-| B4a | Admin Console | Registry 管理模块：可信身份 BFF、上传/版本列表/固定版本下载；删除审计 skillInstructions 正文投影，覆盖历史/异常输入；后端门禁、样式确认、界面回归。开发 Compose 可先接入 Registry，不宣称 Agent 已安装 Skill |
-| B4b | Admin Console | 在 B2/B3 消费合同可用后提供 Template 固定版本选择及 Agent 准备进度/重试；沿用 Console 后端先测、样式确认、界面回归门禁 |
-| B5 | Agent ACP Service | 拒绝非空 `skill_instructions`、移除拼接分支；确认只有 Runtime 摘要/按需正文路径，单元/合同/组件门禁 |
-| I1 | 显式集成 | 统一候选及网络部署、当前 Skill 卷备份恢复、只读与完整业务链路，再做现有服务回归；旧资产迁移另记历史证据 |
+| 批次               | 所有者             | 交付及门禁                                                                                                                                                                                                                           |
+| ------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| B0                 | 共享合同           | 库无关 YAML 判定表/样例及 package_rules_version、独立 layout_version、Registry API、固定引用、永久空正文及消费者清单、持久准备引用/失效错误、启动门禁结果和阶段恢复；不夹带多服务实现                                                |
+| B1                 | Skill Registry     | Go/PG、上传/版本/解析/下载、幂等和组织隔离；实际 Go YAML 样例、单元/合同/PG 组件及适用 Docker 证据                                                                                                                                   |
+| B2                 | Agent Controller   | 固定引用、持久引用持有/释放、Enable 网络前准备、Fence 后失效恢复网络和准入、永久空正文；本地单元/合同/组件，RC 消费待 B3。旧资产迁移准入是历史附加实现，不计入当前验收                                                               |
+| B2a（B2 内部批次） | Agent Controller   | Template 创建/修订精确解析 Registry 版本、冻结元数据、历史读取和 AgentSpec 复制；在 B2 生命周期准备与 B3 交付完成前拒绝非空集合的 Agent 创建/重建，避免静默缺装。Controller 本地单元、合同、隔离 PG 组件通过；不宣称 B2 或业务链完成 |
+| B3                 | Runtime Controller | 独立准备、逐包恢复、可复用卷、Docker archive/NoCopy、持久引用与 BeginTransition 原子登记、失效预检查/回收、创建后及恢复接管的启动前卷门禁/有界清理；真实 Docker/Desktop、竞态、超时和恢复证据                                        |
+| B4a                | Admin Console      | Registry 管理模块：可信身份 BFF、上传/版本列表/固定版本下载；删除审计 skillInstructions 正文投影，覆盖历史/异常输入；后端门禁、样式确认、界面回归。开发 Compose 可先接入 Registry，不宣称 Agent 已安装 Skill                         |
+| B4b                | Admin Console      | 在 B2/B3 消费合同可用后提供 Template 固定版本选择及 Agent 准备进度/重试；沿用 Console 后端先测、样式确认、界面回归门禁                                                                                                               |
+| B5                 | Agent ACP Service  | 拒绝非空 `skill_instructions`、移除拼接分支；确认只有 Runtime 摘要/按需正文路径，单元/合同/组件门禁                                                                                                                                  |
+| I1                 | 显式集成           | 统一候选及网络部署、当前 Skill 卷备份恢复、只读与完整业务链路，再做现有服务回归；旧资产迁移另记历史证据                                                                                                                              |
 
 Runtime 首版预计只复用发现/读取，必须跑跨语言和真实交付门禁；如暴露代码缺口，
 单独登记 Runtime 批次，不夹进 RC。Gateway/Egress 若需要代码增量也各立批次；
@@ -743,20 +764,20 @@ Runtime 首版预计只复用发现/读取，必须跑跨语言和真实交付�
 
 ## 11. 完成条件
 
-| 边界 | 必须具备的证据 |
-| --- | --- |
-| 托管与格式 | v1/v2、下载摘要、幂等/CAS、组织隔离、ZIP 越界/超限，Go/Rust 共享 YAML 样例实际运行 |
-| 模板与正文 | 固定/空集合、重复/超量拒绝，旧 Agent 不随新版本改变；非空旧正文拒绝，系统提示无批量正文注入 |
-| 创建/重建 | Prepare 先于 Initialize/Drain/Fence；503 恢复后同意图成功；重建准备失败期间源仍可 Run |
-| 就绪保护/后置拒绝 | 引用跨 5 分钟 Drain、Fence、Controller/RC 重启仍有效；Fence 后、RC 受理前外部删卷时恢复源网络及 ACP 准入，Registry 停机不阻塞这条恢复路径 |
-| 创建与删卷竞态 | 在 Fence 后及首次创建中注入 InspectVolume 通过后、ContainerCreate 前删卷；Docker 自动建同名无标签空卷时目标不得启动/就绪。覆盖已受理重放、接管和应答丢失；核验候选清理、不误删外部卷，源已删/结果未知保持 unknown，不错误开放准入 |
-| Enable | 完整保留卷离线核验先于 NetworkEnsure；失效先准备；网络步骤后被拒则补偿并保持 disabled，无半启用等待 |
-| 预算与恢复 | 超过 2 分钟、排队、跨轮/重启保留核验进度；坏包不无限重试，准备容器写卷组合真实可用 |
-| 复用与只读 | Disable/Enable 和同集合重建在 Registry 离线时复用；工具及 Bash 写/删/rename/chmod/链接写均失败 |
-| 生命周期与回收 | 集合完整替换，个人资产保留；Delete 与并行准备无泄漏，引用/清理竞争安全，响应丢失恢复原目标 |
-| 备份/恢复 | 逐 Agent 系统卷离线恢复；ready 但卷缺失及生命周期观察到的挂载/清单身份漂移按分类处置。旧共享卷迁移不纳入全新部署验收 |
-| 部署/产品 | Runtime 直连及经 Egress 访问 Registry 均拒绝；Console 状态准确，真实 ACP Run 可发现并按需使用 |
-| 审计投影 | Console 的正常、历史及异常非空快照均不输出 skillInstructions 正文；只从固定引用显示白名单身份 |
+| 边界              | 必须具备的证据                                                                                                                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 托管与格式        | v1/v2、下载摘要、幂等/CAS、组织隔离、ZIP 越界/超限，Go/Rust 共享 YAML 样例实际运行                                                                                                                                                |
+| 模板与正文        | 固定/空集合、重复/超量拒绝，旧 Agent 不随新版本改变；非空旧正文拒绝，系统提示无批量正文注入                                                                                                                                       |
+| 创建/重建         | Prepare 先于 Initialize/Drain/Fence；503 恢复后同意图成功；重建准备失败期间源仍可 Run                                                                                                                                             |
+| 就绪保护/后置拒绝 | 引用跨 5 分钟 Drain、Fence、Controller/RC 重启仍有效；Fence 后、RC 受理前外部删卷时恢复源网络及 ACP 准入，Registry 停机不阻塞这条恢复路径                                                                                         |
+| 创建与删卷竞态    | 在 Fence 后及首次创建中注入 InspectVolume 通过后、ContainerCreate 前删卷；Docker 自动建同名无标签空卷时目标不得启动/就绪。覆盖已受理重放、接管和应答丢失；核验候选清理、不误删外部卷，源已删/结果未知保持 unknown，不错误开放准入 |
+| Enable            | 完整保留卷离线核验先于 NetworkEnsure；失效先准备；网络步骤后被拒则补偿并保持 disabled，无半启用等待                                                                                                                               |
+| 预算与恢复        | 超过 2 分钟、排队、跨轮/重启保留核验进度；坏包不无限重试，准备容器写卷组合真实可用                                                                                                                                                |
+| 复用与只读        | Disable/Enable 和同集合重建在 Registry 离线时复用；工具及 Bash 写/删/rename/chmod/链接写均失败                                                                                                                                    |
+| 生命周期与回收    | 集合完整替换，个人资产保留；Delete 与并行准备无泄漏，引用/清理竞争安全，响应丢失恢复原目标                                                                                                                                        |
+| 备份/恢复         | 逐 Agent 系统卷离线恢复；ready 但卷缺失及生命周期观察到的挂载/清单身份漂移按分类处置。旧共享卷迁移不纳入全新部署验收                                                                                                              |
+| 部署/产品         | Runtime 直连及经 Egress 访问 Registry 均拒绝；Console 状态准确，真实 ACP Run 可发现并按需使用                                                                                                                                     |
+| 审计投影          | Console 的正常、历史及异常非空快照均不输出 skillInstructions 正文；只从固定引用显示白名单身份                                                                                                                                     |
 
 单元测试位于所属服务；共享合同/集成、E2E 源码分别归根 `tests/integration/`、
 `tests/e2e/`，工具归 `tests/support/`，私有持久证据归 `artifacts/verification/`。

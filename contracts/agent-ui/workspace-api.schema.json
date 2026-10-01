@@ -3,6 +3,7 @@
   "$id": "https://antnest.dev/contracts/agent-ui/workspace-api.schema.json",
   "title": "Agent UI workspace v1 wire values",
   "$defs": {
+    "learningStatus": {"type": "object", "additionalProperties": false, "required": ["agentId", "blocked"], "properties": {"agentId": {"$ref": "#/$defs/id"}, "blocked": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["reason"], "properties": {"reason": {"enum": ["writer_present", "unknown_effect", "model_unavailable", "runtime_unavailable", "review_inconclusive"]}, "skillName": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"}, "sourceSessionId": {"$ref": "#/$defs/id"}, "sourceRunId": {"$ref": "#/$defs/id"}}}]}}},
     "id": { "type": "string", "minLength": 1, "maxLength": 200 },
     "revision": {
       "type": "integer",
@@ -255,7 +256,7 @@
               },
               "path": {
                 "type": "string",
-                "pattern": "^/(?:availability|activeSessionId|promptCapabilities|operations|permissions|controlCommands|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage|availableCommands))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
+                "pattern": "^/(?:availability|activeSessionId|promptCapabilities|operations|permissions|controlCommands|skillCommands|systemNotices|learningStatus|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage|availableCommands))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
                 "maxLength": 2048
               },
               "value": {}
@@ -426,6 +427,22 @@
         }
       ]
     },
+    "systemNotice": {
+      "type": "object", "additionalProperties": false,
+      "required": ["changeId", "sequence", "agentId", "kind", "occurredAt", "skillName", "changeSummary"],
+      "properties": {
+        "changeId": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "string", "pattern": "^[1-9][0-9]{0,18}$" },
+        "agentId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$" },
+        "kind": { "enum": ["skill_created", "skill_updated"] },
+        "occurredAt": { "type": "string", "minLength": 20, "maxLength": 40 },
+        "skillName": { "type": "string", "minLength": 1, "maxLength": 64,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "changeSummary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "sourceSessionId": { "$ref": "#/$defs/id" },
+        "sourceRunId": { "$ref": "#/$defs/id" }
+      }
+    },
     "agentView": {
       "type": "object",
       "properties": {
@@ -433,6 +450,7 @@
         "bridgeEpoch": { "$ref": "#/$defs/id" },
         "availability": { "enum": ["ready", "busy", "offline"] },
         "controlCommands": { "$ref": "#/$defs/commandCatalogue" },
+        "skillCommands": { "$ref": "#/$defs/commandCatalogue" },
         "promptCapabilities": {
           "type": "object",
           "properties": {
@@ -445,6 +463,9 @@
         "activeSessionId": {
           "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
         },
+        "learningStatus": { "anyOf": [{ "$ref": "#/$defs/learningStatus" }, { "type": "null" }] },
+        "systemNotices": { "type": "array", "maxItems": 20,
+          "items": { "$ref": "#/$defs/systemNotice" } },
         "selectedSessionId": {
           "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
         },

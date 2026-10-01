@@ -14,7 +14,9 @@ describe("Runtime context preparation", () => {
       path: { root: "system_skills" as const, path: `skill-${index}/SKILL.md` },
     }));
     const text = runtimeContext(info, 16384);
-    expect(text).toContain('"root":"workspace","path":"AGENTS.md"');
+    expect(text).toContain('"/workspace/AGENTS.md"');
+    expect(text).toContain('"path":"/skills/skill-0/SKILL.md"');
+    expect(text).not.toContain('"root":');
     expect(text).toContain("Use the company style guide");
     expect(text).toContain("Runtime information truncated");
     expect(text.length).toBeLessThanOrEqual(16384);

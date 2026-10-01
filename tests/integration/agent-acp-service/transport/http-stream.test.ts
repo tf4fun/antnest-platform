@@ -14,6 +14,8 @@ import { AcpHttpTransport } from "../../../../services/agent-acp-service/src/tra
 import { SessionOutputStreams } from "../../../../services/agent-acp-service/src/transport/acp/session-output.js";
 import type { AcpApplicationPort } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
+import type { AgentAcpHttpServerOptions } from "../../../../services/agent-acp-service/src/transport/http-server.js";
+import type { LearningChangeItem } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
 
 function headers(principalId = "owner") {
   return identityHeaders({ ...binding(), principalId });
@@ -73,11 +75,18 @@ describe("ACP v1 Streamable HTTP", () => {
     await cleanup();
   });
 
-  async function start(ready = true, limit = 4096) {
+  async function start(
+    ready = true,
+    limit = 4096,
+    notices?: AgentAcpHttpServerOptions["notices"],
+    skillCommands?: AgentAcpHttpServerOptions["skillCommands"],
+  ) {
     server = new AgentAcpHttpServer({
       application,
       ready: () => Promise.resolve(ready),
       maxWebSocketPayloadBytes: limit,
+      ...(notices === undefined ? {} : { notices }),
+      ...(skillCommands === undefined ? {} : { skillCommands }),
     });
     await server.listen("127.0.0.1", 0);
     const address = server.address();
@@ -85,6 +94,121 @@ describe("ACP v1 Streamable HTTP", () => {
       throw new Error("Missing address");
     url = `http://127.0.0.1:${address.port}/v1/acp`;
   }
+
+  it("passes Runtime Skill discovery into the real HTTP connection before Session creation", async () => {
+    const commands = [
+      {
+        name: "skill:system:review",
+        description: "Review",
+        input: { hint: "Task" },
+      },
+    ];
+    const read = vi.fn(() =>
+      Promise.resolve({ executionId: "execution-1", commands }),
+    );
+    await start(true, 4096, undefined, { read });
+    const updates: acp.SessionUpdate[] = [];
+    const connection = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        updates.push(params.update);
+      })
+      .connect(createHttpStream(url, { headers: headers() }));
+    connections.push(connection);
+    const result = await connection.agent.request(
+      acp.methods.agent.initialize,
+      initialize.params,
+    );
+    expect(result).toMatchObject({
+      _meta: { "antnest.dev/skill-commands": { version: 1, commands } },
+    });
+    expect(application.createSession).not.toHaveBeenCalled();
+    await connection.agent.request(acp.methods.agent.session.new, {
+      cwd: "/workspace",
+      mcpServers: [],
+    });
+    await vi.waitFor(() =>
+      expect(updates).toContainEqual({
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: "help", description: "Show available commands (also /帮助)" },
+          ...commands,
+        ],
+      }),
+    );
+    expect(read).toHaveBeenCalledWith(
+      expect.objectContaining({ principalId: "owner", agentId: "agent-1" }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("delivers a committed Skill learning notice through official HTTP SDK notifications", async () => {
+    let send:
+      | ((sessionId: string, item: LearningChangeItem) => Promise<void>)
+      | undefined;
+    const attach = vi.fn(() => Promise.resolve());
+    await start(true, 4096, {
+      subscribe: (_binding, sender) => {
+        send = sender;
+        return { attach, detach: () => undefined, disconnect: () => undefined };
+      },
+    });
+    const delivered: acp.SessionNotification[] = [];
+    const connection = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        delivered.push(params);
+      })
+      .connect(createHttpStream(url, { headers: headers() }));
+    connections.push(connection);
+    const initialized = await connection.agent.request(
+      acp.methods.agent.initialize,
+      {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { session: { notices: {} } },
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+            learningNotices: 1,
+          },
+        },
+      },
+    );
+    expect(initialized._meta?.["antnest.dev/bridge"]).toMatchObject({
+      learningNotices: 1,
+    });
+    application.resumeSession.mockResolvedValueOnce({
+      replay: [],
+      sequence: 0,
+      appendVersion: 0,
+    });
+    await connection.agent.request(acp.methods.agent.session.load, {
+      sessionId: "session-1",
+      cwd: "/workspace",
+      mcpServers: [],
+    });
+    expect(attach).toHaveBeenCalledWith("session-1");
+    await send?.("session-1", {
+      changeId: "change-1",
+      sequence: "1",
+      agentId: "agent-1",
+      kind: "skill_created",
+      occurredAt: "2026-09-29T00:00:00.000Z",
+      skillName: "inspect-first",
+      changeSummary: "已新增 Skill「inspect-first」",
+    });
+    await vi.waitFor(() => {
+      expect(
+        delivered.some(
+          (notice) =>
+            notice.update.sessionUpdate === "notice" &&
+            notice.update.title === "已新增 Skill「inspect-first」",
+        ),
+      ).toBe(true);
+    });
+  });
 
   async function request(
     method: string,

@@ -1,3 +1,5 @@
+import type { LearningStatus } from "../protocol/learning-status.ts";
+import { projectSkillCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 import type {
   AgentCapabilities,
   ListSessionsResponse,
@@ -15,6 +17,7 @@ import {
   type ExecutionObservation,
   type AgentExecutionState,
   type IntentReceipt,
+  type LearningChangePage,
 } from "../adapters/acp-http.ts";
 import { parseDeliveryMark } from "./delivery.ts";
 import { ConfigurationConflictError } from "./configuration-token.ts";
@@ -35,6 +38,7 @@ import {
 } from "./stream-journal.ts";
 
 export type AcpBridgePort = {
+  skillCommands?: WorkspaceCommand[];
   closed?: Promise<unknown>;
   capabilities?: Pick<AgentCapabilities, "promptCapabilities" | "sessionCapabilities">;
   list?(cursor?: string): Promise<ListSessionsResponse>;
@@ -46,6 +50,8 @@ export type AcpBridgePort = {
   }>;
   readExecution(sessionId: string): Promise<ExecutionObservation>;
   readAgentExecutionState?(): Promise<AgentExecutionState>;
+  readLearningStatus?(): Promise<LearningStatus>;
+  readLearningChanges?(): Promise<LearningChangePage>;
   watchAgentExecutionState?(
     changed: (state: AgentExecutionState) => void | Promise<void>,
     signal: AbortSignal,
@@ -79,11 +85,65 @@ const defaultMaxAgentJournals = 32;
 const defaultMaxSessionJournals = 32;
 const defaultMaxAgentSubscribers = 16;
 const sessionOverheadBytes = 16 * 1024;
+const maxSystemNotices = 20;
+
+export type LearningSystemNotice = {
+  changeId: string;
+  sequence: string;
+  agentId: string;
+  kind: "skill_created" | "skill_updated";
+  occurredAt: string;
+  skillName: string;
+  changeSummary: string;
+  sourceSessionId?: string;
+  sourceRunId?: string;
+};
+
+function learningSystemNotice(
+  update: SessionNotification["update"],
+  agentId: string,
+): LearningSystemNotice | null {
+  if (update.sessionUpdate !== "notice" || update.severity !== "info") return null;
+  const meta = update._meta?.["antnest.dev/skill-learning"];
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const fields = meta as Record<string, unknown>;
+  if (fields.version !== 1 || fields.agentId !== agentId ||
+    (fields.kind !== "skill_created" && fields.kind !== "skill_updated") ||
+    typeof fields.changeId !== "string" || fields.changeId.length < 1 || fields.changeId.length > 200 ||
+    typeof fields.sequence !== "string" || !/^[1-9][0-9]{0,18}$/.test(fields.sequence) ||
+    typeof fields.occurredAt !== "string" || fields.occurredAt.length < 20 || fields.occurredAt.length > 40 ||
+    typeof fields.skillName !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(fields.skillName) ||
+    fields.skillName.length > 64 ||
+    typeof fields.changeSummary !== "string" || fields.changeSummary.length < 1 || fields.changeSummary.length > 2048 ||
+    update.title !== fields.changeSummary ||
+    typeof update.description !== "string" || update.description.length > 2048 ||
+    (fields.sourceSessionId !== undefined &&
+      (typeof fields.sourceSessionId !== "string" || fields.sourceSessionId.length < 1 || fields.sourceSessionId.length > 200)) ||
+    (fields.sourceRunId !== undefined &&
+      (typeof fields.sourceRunId !== "string" || fields.sourceRunId.length < 1 || fields.sourceRunId.length > 200))) return null;
+  return {
+    changeId: fields.changeId,
+    sequence: fields.sequence,
+    agentId,
+    kind: fields.kind,
+    occurredAt: fields.occurredAt,
+    skillName: fields.skillName,
+    changeSummary: fields.changeSummary,
+    ...(typeof fields.sourceSessionId === "string" ? { sourceSessionId: fields.sourceSessionId } : {}),
+    ...(typeof fields.sourceRunId === "string" ? { sourceRunId: fields.sourceRunId } : {}),
+  };
+}
 
 export class AgentBridgeOwner {
   public readonly operations: OperationCoordinator;
   private readonly inbox: PermissionInbox;
   private readonly sessions = new Map<string, ConditionReplay>();
+  private readonly recentSystemNotices = new Map<string, LearningSystemNotice>();
+  private currentLearningStatus: LearningStatus | null = null;
+  private statusSync: Promise<void> | undefined;
+  private lastStatusSyncAt = -Infinity;
+  private learningSync: Promise<void> | undefined;
+  private lastLearningSyncAt = -Infinity;
   private readonly sessionPins = new Map<string, number>();
   private readonly authorizationWorkflows = new Map<string, Promise<AuthorizedSession>>();
   private readonly pagers = new Map<string, { transcript: CompactTranscript; watermark: number;
@@ -111,6 +171,7 @@ export class AgentBridgeOwner {
   private readonly maxAgentSubscribers: number;
   private readonly replayRetryBackoffMs: number;
   private acp: AcpBridgePort | undefined;
+  private currentSkillCommands: WorkspaceCommand[] = [];
   private retired = false;
   private draining = false;
   private readonly scope: BridgeScope;
@@ -271,6 +332,7 @@ export class AgentBridgeOwner {
         owner.retired ? Promise.resolve({ outcome: { outcome: "cancelled" as const } })
           : owner.inbox.request(params, signal),
     });
+    owner.currentSkillCommands = projectSkillCommands(owner.acp.skillCommands ?? []);
     if (owner.acp.closed !== undefined)
       void owner.acp.closed.then(() => owner.close(), () => owner.close());
     void owner.watchAgentState();
@@ -283,6 +345,72 @@ export class AgentBridgeOwner {
 
   public get permissions(): PendingPermission[] {
     return this.inbox.pending;
+  }
+
+  public get systemNotices(): LearningSystemNotice[] {
+    return [...this.recentSystemNotices.values()].sort((a, b) =>
+      BigInt(a.sequence) < BigInt(b.sequence) ? -1 :
+        BigInt(a.sequence) > BigInt(b.sequence) ? 1 : 0);
+  }
+
+  public get learningStatus(): LearningStatus | null {
+    return this.retired || this.accessRevoked ? null : this.currentLearningStatus;
+  }
+
+  public get skillCommands(): WorkspaceCommand[] {
+    return this.retired || this.accessRevoked ? [] : this.currentSkillCommands;
+  }
+
+  public async syncLearningStatus(): Promise<void> {
+    if (this.retired || this.accessRevoked || this.acp?.readLearningStatus === undefined) return;
+    if (this.statusSync !== undefined) return this.statusSync;
+    if (this.now() - this.lastStatusSyncAt < 5_000) return;
+    this.statusSync = (async () => {
+      const before = JSON.stringify(this.currentLearningStatus);
+      try {
+        const status = await this.connection().readLearningStatus!();
+        if (status.agentId !== this.scope.agentId) throw new Error("Foreign learning status");
+        if (!this.retired && !this.accessRevoked) this.currentLearningStatus = status;
+      } catch (error) {
+        this.currentLearningStatus = null;
+        throw error;
+      } finally {
+        this.lastStatusSyncAt = this.now();
+        if (!this.retired && !this.accessRevoked && before !== JSON.stringify(this.currentLearningStatus) && this.observedAgentState !== undefined)
+          this.agentChanged(this, this.observedAgentState);
+      }
+    })().finally(() => { this.statusSync = undefined; });
+    return this.statusSync;
+  }
+
+  public async syncLearningChanges(): Promise<void> {
+    if (this.retired || this.accessRevoked || this.acp?.readLearningChanges === undefined) return;
+    if (this.learningSync !== undefined) return this.learningSync;
+    if (this.now() - this.lastLearningSyncAt < 5_000) return;
+    this.learningSync = (async () => {
+      const page = await this.connection().readLearningChanges!();
+      if (this.retired || this.accessRevoked) return;
+      let changed = false;
+      for (const item of page.items) {
+        if (item.agentId !== this.scope.agentId ||
+          (item.kind !== "skill_created" && item.kind !== "skill_updated")) continue;
+        changed = this.rememberSystemNotice({
+          changeId: item.changeId,
+          sequence: item.sequence,
+          agentId: item.agentId,
+          kind: item.kind,
+          occurredAt: item.occurredAt,
+          skillName: item.skillName,
+          changeSummary: item.changeSummary,
+          ...(item.sourceSessionId === undefined ? {} : { sourceSessionId: item.sourceSessionId }),
+          ...(item.sourceRunId === undefined ? {} : { sourceRunId: item.sourceRunId }),
+        }) || changed;
+      }
+      this.lastLearningSyncAt = this.now();
+      if (changed && this.observedAgentState !== undefined)
+        this.agentChanged(this, this.observedAgentState);
+    })().finally(() => { this.learningSync = undefined; });
+    return this.learningSync;
   }
 
   public get promptCapabilities(): {
@@ -338,7 +466,7 @@ export class AgentBridgeOwner {
   }
 
   public get estimatedCachedHistoryBytes(): number {
-    let bytes = 0;
+    let bytes = this.currentSkillCommands.length ? Buffer.byteLength(JSON.stringify(this.currentSkillCommands)) : 0;
     for (const replay of this.sessions.values())
       bytes += sessionOverheadBytes + replay.estimatedRetainedBytes;
     return bytes;
@@ -984,6 +1112,7 @@ export class AgentBridgeOwner {
     if (this.retired) return;
     this.beginDrain();
     this.retired = true;
+    this.currentSkillCommands = [];
     this.watchAbort.abort();
     this.inbox.clear();
     this.acp?.close();
@@ -1002,6 +1131,7 @@ export class AgentBridgeOwner {
     this.viewRevisions.clear();
     this.receiptDigests.clear();
     this.executionObservations.clear();
+    this.recentSystemNotices.clear();
     this.closed(this);
   }
 
@@ -1066,6 +1196,19 @@ export class AgentBridgeOwner {
 
   private onUpdate(params: SessionNotification): void {
     if (this.retired) return;
+    if (params.update.sessionUpdate === "available_commands_update") {
+      const skills = projectSkillCommands(params.update.availableCommands);
+      if (JSON.stringify(skills) !== JSON.stringify(this.currentSkillCommands)) {
+        this.currentSkillCommands = skills;
+        if (this.observedAgentState !== undefined) this.agentChanged(this, this.observedAgentState);
+      }
+    }
+    const notice = learningSystemNotice(params.update, this.scope.agentId);
+    if (notice !== null) {
+      if (this.rememberSystemNotice(notice) && this.observedAgentState !== undefined)
+        this.agentChanged(this, this.observedAgentState);
+      return;
+    }
     const replay = this.sessions.get(params.sessionId);
     if (replay === undefined) return;
     const mark = parseDeliveryMark(params._meta?.["antnest.dev/delivery"]);
@@ -1104,6 +1247,19 @@ export class AgentBridgeOwner {
       this.notifyChanged(params.sessionId);
       throw error;
     }
+  }
+
+  private rememberSystemNotice(notice: LearningSystemNotice): boolean {
+    if (this.recentSystemNotices.has(notice.changeId)) return false;
+    this.recentSystemNotices.set(notice.changeId, notice);
+    if (this.recentSystemNotices.size > maxSystemNotices) {
+      let oldest: LearningSystemNotice | undefined;
+      for (const item of this.recentSystemNotices.values())
+        if (oldest === undefined || BigInt(item.sequence) < BigInt(oldest.sequence)) oldest = item;
+      if (oldest !== undefined) this.recentSystemNotices.delete(oldest.changeId);
+      if (oldest?.changeId === notice.changeId) return false;
+    }
+    return true;
   }
 
   private onPermissionsChanged(items: PendingPermission[]): void {

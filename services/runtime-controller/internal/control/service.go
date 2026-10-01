@@ -63,6 +63,16 @@ type Service struct {
 	skillInspector       SkillVolumeInspector
 	activeReferenceStore repositoryport.PreparedSkillReferenceStore
 	activeMountVerifier  ActiveSkillMountVerifier
+	maintenanceVerifiers deployment.MaintenanceVerifiers
+}
+
+func (s *Service) SetMaintenanceVerifiers(input deployment.MaintenanceVerifiers) error {
+	canonical, err := input.Normalize()
+	if err != nil {
+		return err
+	}
+	s.maintenanceVerifiers = canonical
+	return nil
 }
 
 func (s *Service) SetSkillVolumeInspector(inspector SkillVolumeInspector) {
@@ -346,6 +356,8 @@ func (s *Service) prepareOperation(
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if input.Configuration != nil {
+		verifiers := s.maintenanceVerifiers.Clone()
+		candidate.MaintenanceVerifiers = &verifiers
 		if err := s.prepareBuildImage(ctx, &candidate, *input.Configuration); err != nil {
 			return deployment.Operation{}, false, err
 		}

@@ -1,8 +1,11 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 47,
+  "version": 48,
   "base_path": "/api/admin",
   "routes": {
+    "search_skill_sources": {"method": "POST", "path": "/skill-sources/search", "schema": "skill-discovery.schema.json#/$defs/search_request"},
+    "preview_skill_source": {"method": "POST", "path": "/skill-sources/preview", "schema": "skill-discovery.schema.json#/$defs/selection"},
+    "promote_skill_source": {"method": "POST", "path": "/skill-sources/promote", "schema": "skill-discovery.schema.json#/$defs/promote_request", "requires": ["Idempotency-Key"]},
     "list_skills": {"method": "GET", "path": "/skills", "query": {"optional": ["after_id", "limit"], "cursor_response": "next_after_id"}},
     "publish_skill": {"method": "POST", "path": "/skills", "content_type": "multipart/form-data", "parts": ["artifact"], "requires": ["Idempotency-Key"]},
     "list_skill_versions": {"method": "GET", "path": "/skills/{skill_id}/versions", "query": {"optional": ["after_version", "limit"], "cursor_response": "next_after_version"}},
@@ -297,6 +300,9 @@
       "list_execution_events"
     ],
     "skill_registry": [
+      "search_skill_sources",
+      "preview_skill_source",
+      "promote_skill_source",
       "list_skills",
       "publish_skill",
       "list_skill_versions",

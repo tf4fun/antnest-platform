@@ -123,6 +123,16 @@ function formatErrors(errors: ErrorObject[] | null | undefined): string {
   }
   return errors
     .slice(0, 3)
-    .map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`)
+    .map((error) => {
+      if (error.keyword === "additionalProperties")
+        return `${error.instancePath}/${pointerField(String(error.params.additionalProperty))} is not allowed`;
+      if (error.keyword === "required")
+        return `${error.instancePath}/${pointerField(String(error.params.missingProperty))} is required`;
+      return `${error.instancePath || "/"} ${error.message ?? "is invalid"}`;
+    })
     .join("; ");
+}
+
+function pointerField(value: string): string {
+  return value.slice(0, 120).replaceAll("~", "~0").replaceAll("/", "~1");
 }

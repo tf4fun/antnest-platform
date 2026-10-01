@@ -191,7 +191,7 @@ async fn real_http_health_and_mcp_keep_exact_client_parent_and_rpc_values() {
         .header("mcp-name", "read")
         .header(EXPECTED_EXECUTION_HEADER, "execution-7")
         .json(&json!({"jsonrpc":"2.0", "id": 9, "method":"tools/call", "params": {
-            "name":"read", "arguments":{"path":{"root":"workspace", "path":"missing-file"}, "offset":0, "limit":23},
+            "name":"read", "arguments":{"path": "missing-file", "offset": 1, "limit":23},
             "_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28", "io.modelcontextprotocol/clientCapabilities":{}, "io.modelcontextprotocol/clientInfo":{"name":"test", "version":"1"}}
         }})).send().await.unwrap();
     let status = response.status();
@@ -237,10 +237,7 @@ async fn real_http_health_and_mcp_keep_exact_client_parent_and_rpc_values() {
         .find(|attribute| attribute.key.as_str() == "antnest.payload.json")
         .unwrap();
     let payload: serde_json::Value = serde_json::from_str(&payload.value.as_str()).unwrap();
-    assert_eq!(
-        payload["params"]["arguments"]["path"]["path"],
-        "missing-file"
-    );
+    assert_eq!(payload["params"]["arguments"]["path"], "missing-file");
     assert_eq!(payload["params"]["arguments"]["limit"], 23);
     let response = operation
         .events

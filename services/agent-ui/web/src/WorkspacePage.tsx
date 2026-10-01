@@ -17,6 +17,7 @@ import { SessionSettings } from "./components/SessionSettings";
 import { SessionUsage } from "./components/SessionUsage";
 import { AgentChooser } from "./components/AgentChooser";
 import { AgentPresence } from "./components/AgentPresence";
+import { LearningNotices } from "./components/LearningNotices";
 import { attachmentAccept } from "./lib/attachments";
 import type { useBridgeWorkspace } from "./lib/use-bridge-workspace";
 
@@ -58,6 +59,8 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
     stateReady,
     activeConversation,
     connected,
+    learningNotices,
+    loadLearningStatus,
     conversationReady,
     creationUncertain,
     preview,
@@ -280,9 +283,13 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
               <h1>{activeAgent.name}</h1>
               <small>{activeConversation?.title ?? "New conversation"}</small>
             </div>
-            <AgentPresence status={activeAgent.status} announce />
           </div>
-          <div className="topbar-actions">
+          <div className="topbar-actions" role="group" aria-label="Agent actions">
+            <div className="topbar-status"><AgentPresence status={activeAgent.status} announce /></div>
+            <LearningNotices agentId={activeAgent.id} ready={connected}
+              notices={learningNotices}
+              loadStatus={preview ? undefined : loadLearningStatus}
+              onSelectSource={(sessionId) => navigate({ agentId: activeAgent.id, sessionId })} />
             {!preview ? (
               <button
                 className="icon-button"

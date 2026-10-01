@@ -113,6 +113,15 @@ describe.skipIf(databaseUrl === undefined)(
         "0007_runtime_stopping_evidence.sql",
         "0008_refused_context.sql",
         "0009_workspace_bridge_intents.sql",
+        "0010_skill_learning_scan.sql",
+        "0011_skill_learning_maintenance_intents.sql",
+        "0012_skill_learning_candidates.sql",
+        "0013_skill_learning_apply_basis.sql",
+        "0014_skill_learning_changes.sql",
+        "0015_skill_learning_debug_prompt.sql",
+        "0016_skill_source_projections.sql",
+        "0017_skill_discovery_tool_attempts.sql",
+        "0018_temporary_skill_scopes.sql",
       ]);
       const appendVersions = await pool.query<{
         id: string;

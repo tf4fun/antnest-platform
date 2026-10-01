@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BridgeAgentController, type BridgeControllerSnapshot } from "./bridge-agent-controller.ts";
 import { BridgeSessionCatalog } from "./bridge-catalog.ts";
 import { workspaceFromBridgeBootstrap } from "./bootstrap.ts";
@@ -142,6 +142,12 @@ export function useBridgeWorkspace(options: {
       item.runId === latestFailedTurn.id.slice(0, -":prompt".length)) : undefined;
   const observedFailure = activeOperation ? undefined : runFailureMessage(failedRun?.errorClass);
   const connected = bridge.connection === "ready" && bridge.view?.agentId === workspace?.activeAgentId;
+  const learningNotices = connected ? bridge.view?.systemNotices ?? [] : [];
+  const loadLearningStatus = useCallback((signal: AbortSignal) => {
+    const agentId = workspace?.activeAgentId;
+    if (!agentId) return Promise.reject(new Error("No active Agent"));
+    return api.learningStatus(agentId, signal);
+  }, [api, workspace?.activeAgentId]);
   const conversationReady = connected && bridge.view !== null && Boolean(selected) &&
     bridge.view?.selectedSessionId === selected &&
     bridge.view.selectedView?.historyState === "ready";
@@ -166,7 +172,9 @@ export function useBridgeWorkspace(options: {
     presentation.attachments.length === 0 &&
     !(control?.name === "fork" && uncertainCreationAgentId === workspace?.activeAgentId);
   const commands = allowControlInput ? [...(bridge.view?.controlCommands ?? []),
+    ...(bridge.view?.skillCommands ?? []),
     ...(conversationReady ? activeConversation?.availableCommands ?? [] : []).filter((item) => !isReservedControlName(item.name))]
+      .filter((item, index, all) => all.findIndex((other) => other.name === item.name) === index)
     : conversationReady ? activeConversation?.availableCommands ?? [] : [];
   const commandFeedback = connected && commandResponse?.key === responseKey(selected ?? null) ? commandResponse.result : null;
 
@@ -577,7 +585,7 @@ export function useBridgeWorkspace(options: {
           setHistoryError(message(cause, "Conversation history could not be loaded."))); } },
     catalog: { loading: catalogState.loading, hasMore: catalogState.hasMore,
       error: catalogState.error || undefined, loadMore: () => { void loadMoreCatalog(); } },
-    activeAgent, stateReady, activeConversation, connected, conversationReady,
+    activeAgent, stateReady, activeConversation, connected, conversationReady, learningNotices, loadLearningStatus,
     creationUncertain: uncertainCreationAgentId === workspace?.activeAgentId,
     preview: false, promptCapabilities: bridge.view?.promptCapabilities,
     refreshWorkspace, logout, navigate,

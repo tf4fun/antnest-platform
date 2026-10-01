@@ -38,9 +38,11 @@ docker version
 docker compose version
 ```
 
-One PostgreSQL container hosts five independently owned service databases and roles:
+With Stage 3 enabled, one PostgreSQL container hosts six independently owned
+application databases and roles:
 `antnest_egress`, `antnest_runtime_controller`, `antnest_agent_acp`,
-`antnest_identity`, and `antnest_agent_controller`. Their schemas are not shared.
+`antnest_identity`, `antnest_agent_controller`, and `antnest_skill_registry`.
+Their schemas are not shared.
 Each service runs its own migrations; the database initializer only creates
 roles/databases and removes public connection privileges.
 Stage 2/3 additionally uses `antnest_temporal` and `antnest_temporal_visibility`,
@@ -58,11 +60,11 @@ output containing resolved environments.
 
 Three separate 32-byte base64 keys must remain stable with the associated data:
 
-| Variable | Owner and protected data |
-| --- | --- |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Identity's OIDC secrets |
-| `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` | Model credentials |
-| `ANTNEST_ACP_CLIENT_MCP_KEY` | ACP's persisted Session MCP revision envelope, including the current empty client-MCP profile |
+| Variable                                  | Owner and protected data                                                                      |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY`         | Identity's OIDC secrets                                                                       |
+| `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` | Model credentials                                                                             |
+| `ANTNEST_ACP_CLIENT_MCP_KEY`              | ACP's persisted Session MCP revision envelope, including the current empty client-MCP profile |
 
 Generate each independently, for example with `openssl rand -base64 32`. Back up
 the resulting values securely, not in this repository. Changing a key is not a
@@ -93,9 +95,15 @@ Also update `ANTNEST_EDGE_PUBLIC_BASE_URL` to the selected Gateway port/domain
 IP and collector port. These example values are literal URLs, not dynamically
 derived from the port/subnet variables.
 
+Optional automatic Skill maintenance and dynamic source discovery use the
+[normal Skill deployment guide](skill-deployment.md). Standard Compose forwards
+the ACP private signer, RC public verifier set and a separate shared source
+bearer; test configuration overrides are unnecessary. Existing Runtimes acquire
+new verifier configuration only through explicit rebuild.
+
 ## 3. Build And Start
 
-Build all ten project images from the current source, serially:
+Build all eleven project images from the current source, serially:
 
 ```sh
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
@@ -131,18 +139,18 @@ docker compose -f compose.yaml -f compose.stage3.yaml \
 Always include `compose.stage3.yaml`. It removes the debug host ports of the
 internal application services. Expected host bindings with the example config:
 
-| Entry | Default address | Purpose |
-| --- | --- | --- |
-| Edge Gateway | `127.0.0.1:8090` | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
-| PostgreSQL | `127.0.0.1:55432` | Local development/backup access, not a product API |
-| Temporal | `127.0.0.1:7233` | Local SDK/workflow diagnostics, not a product API |
-| Jaeger | `127.0.0.1:16686` | Local trace inspection; not an authenticated public dashboard |
+| Entry        | Default address   | Purpose                                                             |
+| ------------ | ----------------- | ------------------------------------------------------------------- |
+| Edge Gateway | `127.0.0.1:8090`  | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
+| PostgreSQL   | `127.0.0.1:55432` | Local development/backup access, not a product API                  |
+| Temporal     | `127.0.0.1:7233`  | Local SDK/workflow diagnostics, not a product API                   |
+| Jaeger       | `127.0.0.1:16686` | Local trace inspection; not an authenticated public dashboard       |
 
 No Runtime, ACP, Identity, Controller or BFF host port should be published.
 The loopback defaults and insecure-cookie setting are for local HTTP only.
 Do not merely bind them to `0.0.0.0` for public deployment.
 
-The Stage 3 observability deployment has eleven resident containers.
+The Stage 3 observability deployment has twelve resident containers.
 `temporal-databases`, `temporal-schema`, and `temporal-namespace` are additional
 one-shot initialization jobs, not resident workers: they provision databases,
 apply engine schemas, and register the `antnest` namespace, respectively.
@@ -164,7 +172,9 @@ overlays. Confirm initialization already completed; this is not first deployment
 2. Add a Model Profile with an available model and credential. Add an active
    organization member when testing the end-user role.
 3. Create a Template using that model revision and the built Runtime image tag.
-   System Skill Registry is deferred; no default Template or provider is assumed.
+   Optionally select published immutable Registry Skill versions. Later model or
+   preset changes require a new Template revision and explicit Agent rebuild.
+   No default Template or provider is assumed.
 4. Create an Agent for the member. Admission returns a durable operation; wait
    for its completed state and Agent `available`, not just HTTP 202.
 5. Sign in as that member at `/workspace/`, open the Agent, create a conversation

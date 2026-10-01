@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_PASSWORD: discovery-fixture-admin
+    ports: ["127.0.0.1::5432"]
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./discovery-init.sql:/docker-entrypoint-initdb.d/registry.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U postgres]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  source:
+    image: node:24.21.0-bookworm-slim
+    command: [node, /fixtures/discovery-source.mjs]
+    environment:
+      SOURCE_TOKEN: discovery-source-read-token-at-least-32-bytes
+    volumes:
+      - .:/fixtures:ro
+    ports: ["127.0.0.1::8080"]
+    healthcheck:
+      test: [CMD, node, /fixtures/discovery-source.mjs, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  registry:
+    image: ${ANTNEST_DISCOVERY_TEST_IMAGE}
+    depends_on:
+      postgres: {condition: service_healthy}
+      source: {condition: service_healthy}
+    environment:
+      ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://registry_service:discovery-fixture-registry@postgres:5432/registry
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: discovery-registry-control-token-at-least-32-bytes
+      ANTNEST_SKILL_REGISTRY_SOURCE_URL: http://source:8080
+      ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: discovery-source-read-token-at-least-32-bytes
+    ports: ["127.0.0.1::8080"]
+    healthcheck:
+      test: [CMD, /usr/local/bin/skill-registry, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+volumes:
+  database:

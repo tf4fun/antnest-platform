@@ -26,6 +26,9 @@ func (s *Service) prepareBuildImage(ctx context.Context, operation *deployment.O
 }
 
 func deploymentForOperation(configuration deployment.Configuration, operation deployment.Operation) (deployment.Deployment, error) {
+	if operation.MaintenanceVerifiers == nil {
+		return deployment.Deployment{}, fmt.Errorf("%w: accepted maintenance verifier snapshot is missing", ErrRequestConflict)
+	}
 	identity, err := digest.Parse(operation.ImageID)
 	if err != nil || identity.Algorithm() != digest.SHA256 || operation.ImageReference != configuration.ImageRef {
 		return deployment.Deployment{}, fmt.Errorf("%w: build image identity is missing or inconsistent", ErrRequestConflict)
@@ -36,6 +39,8 @@ func deploymentForOperation(configuration deployment.Configuration, operation de
 	}
 	physical.ImageReference = operation.ImageReference
 	physical.ImageRef = operation.ImageID
+	verifiers := operation.MaintenanceVerifiers.Clone()
+	physical.RuntimeSpec.SkillMaintenanceVerifiers = &verifiers
 	if physical.PreparedSkills != nil && operation.PreparedSetID > 0 {
 		physical.PreparedMaterialization = &skillset.PreparedMaterialization{
 			SetID: operation.PreparedSetID,

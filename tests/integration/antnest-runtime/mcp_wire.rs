@@ -118,7 +118,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
             &client,
             "write",
             json!({
-                "path": {"root": "workspace", "path": "AGENTS.md"}, "content": content
+                "path": "AGENTS.md", "content": content
             }),
         )
         .await;
@@ -162,7 +162,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         &client,
         "write",
         json!({
-            "path": {"root": "workspace", "path": "notes.txt"},
+            "path": "notes.txt",
             "content": "before"
         }),
     )
@@ -180,7 +180,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         &client,
         "edit",
         json!({
-            "path": {"root": "workspace", "path": "notes.txt"},
+            "path": "notes.txt",
             "old_string": "before",
             "new_string": "after"
         }),
@@ -195,16 +195,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         edited.structured_content.unwrap(),
         json!({"bytes_written": 5, "effect_state": "settled", "effect_source": null})
     );
-    let read = call(
-        &client,
-        "read",
-        json!({
-            "path": {"root": "workspace", "path": "notes.txt"},
-            "offset": 0,
-            "limit": 1024
-        }),
-    )
-    .await;
+    let read = call(&client, "read", json!({"path": "notes.txt"})).await;
     let metadata = serde_json::to_value(&read.meta).unwrap();
     assert!(
         metadata["io.antnest.runtime/file"]["path"]
@@ -215,7 +206,37 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
     assert!(metadata["io.antnest.runtime/file"]["diff"].is_null());
     let structured = read.structured_content.unwrap();
     assert_eq!(structured["content"], "after");
+    assert_eq!(structured["next_offset"], serde_json::Value::Null);
     assert!(structured.get("file").is_none());
+
+    call(
+        &client,
+        "write",
+        json!({"path": "nested/中文.md", "content": "标题\n第一步\n第二步\n"}),
+    )
+    .await;
+    let page = call(
+        &client,
+        "read",
+        json!({"path": "/workspace/nested/中文.md", "limit": 2}),
+    )
+    .await
+    .structured_content
+    .unwrap();
+    assert_eq!(page["content"], "标题\n第一步\n");
+    assert_eq!(page["truncated"], true);
+    assert_eq!(page["next_offset"], 3);
+    let page = call(
+        &client,
+        "read",
+        json!({"path": "~/nested/中文.md", "offset": page["next_offset"]}),
+    )
+    .await
+    .structured_content
+    .unwrap();
+    assert_eq!(page["content"], "第二步\n");
+    assert_eq!(page["truncated"], false);
+    assert_eq!(page["next_offset"], serde_json::Value::Null);
     assert_eq!(structured["effect_state"], "settled");
     assert!(structured["effect_source"].is_null());
 
@@ -223,10 +244,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         &client,
         "bash",
         json!({
-            "command": "cat notes.txt",
-            "working_dir": {"root": "workspace", "path": "."},
-            "env": [],
-            "timeout_ms": 1000
+            "command": "cat notes.txt"
         }),
     )
     .await;
@@ -242,6 +260,160 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         .await
         .expect("join Runtime HTTP")
         .expect("serve Runtime HTTP");
+}
+
+#[tokio::test]
+async fn private_skill_maintenance_http_stays_closed_without_trusted_credentials() {
+    use tower::ServiceExt as _;
+
+    use crate::mcp::skill_maintenance_router;
+    use crate::spec::SkillMaintenanceVerifier;
+
+    for (keys, expected) in [
+        (vec![], reqwest::StatusCode::FORBIDDEN),
+        (
+            vec![SkillMaintenanceVerifier::new("key-1".into(), [0; 32])],
+            reqwest::StatusCode::UNAUTHORIZED,
+        ),
+    ] {
+        let status = RuntimeStatus::with_execution_id(
+            RuntimeIdentity::new("agent-1", 2).unwrap(),
+            "execution-1",
+        );
+        let router = skill_maintenance_router(status, keys);
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/internal/skill-maintenance/commit")
+            .header("X-Antnest-Expected-Execution-ID", "execution-1")
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status().as_u16(), expected.as_u16());
+    }
+}
+
+#[tokio::test]
+async fn private_skill_maintenance_http_rejects_signed_but_invalid_control_body() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tower::ServiceExt as _;
+
+    use crate::mcp::skill_maintenance_router;
+    use crate::skill_maintenance_auth_tests::{fixture, signed};
+
+    let (pair, _, keys) = fixture();
+    let status = RuntimeStatus::with_execution_id(
+        RuntimeIdentity::new("agent-1", 2).unwrap(),
+        "execution-1",
+    );
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let body = b"{}";
+    let token = signed(&pair, body, |payload| {
+        payload["issued_at"] = json!(now);
+        payload["expires_at"] = json!(now + 60);
+    });
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/internal/skill-maintenance/commit")
+        .header("X-Antnest-Expected-Execution-ID", "execution-1")
+        .header(axum::http::header::AUTHORIZATION, token)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body.as_slice()))
+        .unwrap();
+    let response = skill_maintenance_router(status, keys)
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+    let (pair, _, keys) = fixture();
+    let repeated = axum::http::Request::builder()
+        .method("POST")
+        .uri("/internal/skill-maintenance/commit")
+        .header("X-Antnest-Expected-Execution-ID", "execution-1")
+        .header(
+            axum::http::header::AUTHORIZATION,
+            signed(&pair, body, |payload| {
+                payload["issued_at"] = json!(now);
+                payload["expires_at"] = json!(now + 60);
+            }),
+        )
+        .header(axum::http::header::AUTHORIZATION, "Bearer duplicate")
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body.as_slice()))
+        .unwrap();
+    let status = RuntimeStatus::with_execution_id(
+        RuntimeIdentity::new("agent-1", 2).unwrap(),
+        "execution-1",
+    );
+    let response = skill_maintenance_router(status, keys)
+        .oneshot(repeated)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn private_skill_prepare_validates_the_signed_multipart_package_before_admission() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tower::ServiceExt as _;
+
+    use crate::mcp::skill_maintenance_router;
+    use crate::skill_maintenance_auth_tests::{fixture, signed};
+    use crate::skill_maintenance_request_tests::{prepared_body, prepared_zip};
+
+    let (pair, _, keys) = fixture();
+    let status = RuntimeStatus::with_execution_id(
+        RuntimeIdentity::new("agent-1", 1).unwrap(),
+        "execution-1",
+    );
+    let artifact = prepared_zip();
+    let package = crate::skill_package_zip::validate_skill_zip(&artifact).unwrap();
+    let metadata = json!({
+        "action":"prepare", "request_id":"request-1", "job_id":"job-1", "generation":1,
+        "candidate_id":"candidate-1", "package_path":".antnest/skills/retry-timeouts",
+        "expected_base_digest":null, "target_digest":package.content_digest,
+        "artifact_digest":package.artifact_digest, "package_rules_version":1
+    });
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let send = |body: Vec<u8>| {
+        let token = signed(&pair, &body, |payload| {
+            payload["action"] = json!("prepare");
+            payload["issued_at"] = json!(now);
+            payload["expires_at"] = json!(now + 60);
+        });
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/internal/skill-maintenance/prepare")
+            .header("X-Antnest-Expected-Execution-ID", "execution-1")
+            .header(axum::http::header::AUTHORIZATION, token)
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "multipart/form-data; boundary=skill-boundary",
+            )
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    };
+    let valid = prepared_body(&metadata, &artifact);
+    let response = skill_maintenance_router(status.clone(), keys.clone())
+        .oneshot(send(valid))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let invalid = prepared_body(&metadata, b"not a ZIP");
+    let response = skill_maintenance_router(status, keys)
+        .oneshot(send(invalid))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
 }
 
 #[cfg(target_os = "linux")]

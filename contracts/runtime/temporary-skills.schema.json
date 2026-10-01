@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:antnest:runtime:temporary-skills:v1",
+  "title": "Runtime private temporary Skill delivery",
+  "oneOf": [
+    { "$ref": "#/$defs/install_metadata" },
+    { "$ref": "#/$defs/release_request" },
+    { "$ref": "#/$defs/install_reply" },
+    { "$ref": "#/$defs/release_reply" },
+    { "$ref": "#/$defs/error_reply" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "execution_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "temporary_path": {
+      "type": "string",
+      "pattern": "^/workspace/\\.antnest/skill-temporary/v1/[0-9a-f]{64}/[0-9a-f]{64}/package$"
+    },
+    "install_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "request_id",
+        "job_id",
+        "generation",
+        "content_digest",
+        "artifact_digest",
+        "package_rules_version"
+      ],
+      "properties": {
+        "action": { "const": "temporary_install" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "const": 1 },
+        "content_digest": { "$ref": "#/$defs/digest" },
+        "artifact_digest": { "$ref": "#/$defs/digest" },
+        "package_rules_version": { "const": 1 }
+      }
+    },
+    "release_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "request_id", "job_id", "generation"],
+      "properties": {
+        "action": { "const": "temporary_release" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "const": 1 }
+      }
+    },
+    "install_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "request_id",
+        "job_id",
+        "execution_id",
+        "outcome",
+        "temporary_path",
+        "content_digest",
+        "artifact_digest",
+        "unpacked_size",
+        "effect_state",
+        "runtime_call_stopped"
+      ],
+      "properties": {
+        "action": { "const": "temporary_install" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "execution_id": { "$ref": "#/$defs/execution_id" },
+        "outcome": { "const": "installed" },
+        "temporary_path": { "$ref": "#/$defs/temporary_path" },
+        "content_digest": { "$ref": "#/$defs/digest" },
+        "artifact_digest": { "$ref": "#/$defs/digest" },
+        "unpacked_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 33554432
+        },
+        "effect_state": { "const": "settled" },
+        "runtime_call_stopped": { "const": true }
+      }
+    },
+    "release_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "request_id",
+        "job_id",
+        "execution_id",
+        "outcome",
+        "effect_state",
+        "runtime_call_stopped"
+      ],
+      "properties": {
+        "action": { "const": "temporary_release" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "execution_id": { "$ref": "#/$defs/execution_id" },
+        "outcome": { "const": "released" },
+        "effect_state": { "const": "settled" },
+        "runtime_call_stopped": { "const": true }
+      }
+    },
+    "error_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message",
+            "retryable",
+            "effect_state",
+            "runtime_call_stopped"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "unknown_action",
+                "temporary_disabled",
+                "temporary_unauthorized",
+                "invalid_request",
+                "request_conflict",
+                "limit_exceeded",
+                "body_too_large",
+                "body_timed_out",
+                "run_closed",
+                "temporary_scope_busy",
+                "runtime_busy",
+                "outcome_unknown",
+                "temporary_unavailable",
+                "clock_unavailable"
+              ]
+            },
+            "message": { "const": "Temporary Skill request did not complete" },
+            "retryable": { "type": "boolean" },
+            "effect_state": { "enum": ["none", "settled", "unknown"] },
+            "runtime_call_stopped": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

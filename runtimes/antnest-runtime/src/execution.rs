@@ -3,6 +3,8 @@ use std::path::{Component, Path};
 use std::time::Duration;
 
 pub(crate) const MAX_FILE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const DEFAULT_READ_LINES: usize = 2000;
+pub(crate) const MAX_READ_LINES: usize = 20000;
 pub(crate) const MAX_BASH_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,6 +20,35 @@ pub(crate) struct RootPath {
 }
 
 impl RootPath {
+    pub(crate) fn from_tool_path(path: String) -> Result<Self, &'static str> {
+        if path.trim().is_empty() {
+            return Err("a non-empty file path is required");
+        }
+        let (root, relative) = if path == "/workspace" || path == "~" {
+            (RootName::Workspace, ".")
+        } else if path == "/skills" {
+            (RootName::SystemSkills, ".")
+        } else if let Some(relative) = path.strip_prefix("/workspace/") {
+            (RootName::Workspace, relative)
+        } else if let Some(relative) = path.strip_prefix("~/") {
+            (RootName::Workspace, relative)
+        } else if let Some(relative) = path.strip_prefix("/skills/") {
+            (RootName::SystemSkills, relative)
+        } else if path.starts_with('/') {
+            return Err("path must be relative to /workspace or beneath /workspace/ or /skills/");
+        } else {
+            (RootName::Workspace, path.as_str())
+        };
+        Self::new(
+            root,
+            if relative.is_empty() {
+                ".".into()
+            } else {
+                relative.into()
+            },
+        )
+    }
+
     pub(crate) fn new(root: RootName, path: String) -> Result<Self, &'static str> {
         if path.trim().is_empty() || path.as_bytes().contains(&0) {
             return Err("root-relative path is required");
@@ -158,8 +189,8 @@ pub(crate) struct ReadRequest {
 
 impl ReadRequest {
     pub(crate) fn new(path: RootPath, offset: i64, limit: i64) -> Result<Self, &'static str> {
-        if offset < 0 || limit <= 0 || limit as u64 > MAX_FILE_CONTENT_BYTES as u64 {
-            return Err("read offset and limit are invalid");
+        if offset < 1 || limit <= 0 || limit as u64 > MAX_READ_LINES as u64 {
+            return Err("read offset is a 1-based line number; limit must be 1..20000 lines");
         }
         Ok(Self {
             path,
@@ -189,6 +220,7 @@ impl ReadRequest {
 pub(crate) struct ReadResult {
     pub(crate) content: String,
     pub(crate) truncated: bool,
+    pub(crate) next_offset: Option<usize>,
     pub(crate) file: Option<crate::file_observation::FileObservation>,
 }
 

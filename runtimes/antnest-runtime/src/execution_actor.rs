@@ -23,11 +23,27 @@ use crate::execution::{
 };
 use crate::executor_protocol::{
     ExecutorFailure, MAX_EXECUTOR_DIAGNOSTIC_BYTES, MAX_EXECUTOR_MESSAGE_BYTES, Outcome,
-    decode_bash_reply, decode_edit_reply, decode_info_reply, decode_read_reply, decode_write_reply,
-    encode_bash_request, encode_edit_request, encode_read_request, encode_write_request,
+    decode_bash_reply, decode_edit_reply, decode_info_reply, decode_read_reply,
+    decode_skill_cancel_reply, decode_skill_check_reply, decode_skill_commit_reply,
+    decode_skill_observe_reply, decode_skill_prepare_reply, decode_skill_release_reply,
+    decode_temporary_install_reply, decode_temporary_released_reply, decode_write_reply,
+    encode_bash_request, encode_edit_request, encode_read_request, encode_skill_cancel_request,
+    encode_skill_check_request, encode_skill_commit_request, encode_skill_observe_request,
+    encode_skill_prepare_request, encode_skill_release_request, encode_temporary_install_request,
+    encode_temporary_release_request, encode_write_request,
 };
 use crate::information::RuntimeContext;
 use crate::progress::ProgressSink;
+use crate::skill_candidate::{
+    CandidateCancelRequest, CandidateCancelled, CandidateCheckRequest, CandidateChecked,
+    CandidateCommitRequest, CandidateCommitted, CandidateObserveRequest, CandidateObserved,
+    CandidatePrepareRequest, CandidatePrepared, CandidateReleaseRequest, CandidateReleased,
+};
+use crate::skill_maintenance_state::{MaintenanceGenerations, MaintenanceLease};
+use crate::skill_temporary::{
+    TemporaryInstallRequest, TemporaryInstalled, TemporaryReleaseRequest, TemporaryReleased,
+};
+use crate::skill_temporary_state::{TemporaryAdmissionError, TemporaryScopes};
 use crate::spec::RuntimeIdentity;
 use crate::telemetry::RuntimeMetrics;
 use crate::tool_error::{ToolError, ToolErrorCode};
@@ -53,6 +69,8 @@ pub(crate) struct ExecutionActor {
     shutdown: CancellationToken,
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     children: crate::processes::ChildRegistry,
+    maintenance: MaintenanceGenerations,
+    temporary: TemporaryScopes,
 }
 
 impl ExecutionActor {
@@ -74,6 +92,8 @@ impl ExecutionActor {
                 shutdown,
                 fatal,
                 children: crate::processes::ChildRegistry::default(),
+                maintenance: MaintenanceGenerations::default(),
+                temporary: TemporaryScopes::default(),
             },
             failures,
         )
@@ -120,6 +140,7 @@ impl ExecutionActor {
             cancel,
             timeout,
             progress,
+            None,
         )
         .await
     }
@@ -137,6 +158,7 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
+            None,
         )
         .await
     }
@@ -154,6 +176,7 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
+            None,
         )
         .await
     }
@@ -171,6 +194,7 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
+            None,
         )
         .await
     }
@@ -186,12 +210,259 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
+            None,
         )
         .await
     }
 
+    pub(crate) async fn prepare_skill_candidate(
+        &self,
+        request: CandidatePrepareRequest,
+    ) -> Result<CandidatePrepared, ToolError> {
+        let lease =
+            self.maintenance_lease(&request.agent_id, &request.job_id, request.generation)?;
+        let cancel = lease.cancellation();
+        let encoded = encode_skill_prepare_request(&request).map_err(executor_request_error)?;
+        self.execute(
+            ToolCommand::SkillPrepare,
+            encoded,
+            decode_skill_prepare_reply,
+            cancel,
+            Duration::from_secs(60),
+            ProgressSink::default(),
+            Some(lease),
+        )
+        .await
+    }
+
+    pub(crate) async fn check_skill_candidate(
+        &self,
+        request: CandidateCheckRequest,
+    ) -> Result<CandidateChecked, ToolError> {
+        let lease =
+            self.maintenance_lease(&request.agent_id, &request.job_id, request.generation)?;
+        let cancel = lease.cancellation();
+        let encoded = encode_skill_check_request(&request).map_err(executor_request_error)?;
+        self.execute(
+            ToolCommand::SkillCheck,
+            encoded,
+            decode_skill_check_reply,
+            cancel,
+            FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
+            Some(lease),
+        )
+        .await
+    }
+
+    pub(crate) async fn commit_skill_candidate(
+        &self,
+        request: CandidateCommitRequest,
+    ) -> Result<CandidateCommitted, ToolError> {
+        let lease =
+            self.maintenance_lease(&request.agent_id, &request.job_id, request.generation)?;
+        let cancel = lease.cancellation();
+        let encoded = encode_skill_commit_request(&request).map_err(executor_request_error)?;
+        self.execute(
+            ToolCommand::SkillCommit,
+            encoded,
+            decode_skill_commit_reply,
+            cancel,
+            FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
+            Some(lease),
+        )
+        .await
+    }
+
+    pub(crate) async fn observe_skill_candidate(
+        &self,
+        request: CandidateObserveRequest,
+        cancel: CancellationToken,
+    ) -> Result<CandidateObserved, ToolError> {
+        let encoded = encode_skill_observe_request(&request).map_err(executor_request_error)?;
+        self.execute(
+            ToolCommand::SkillObserve,
+            encoded,
+            decode_skill_observe_reply,
+            cancel,
+            FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn release_skill_candidate(
+        &self,
+        request: CandidateReleaseRequest,
+    ) -> Result<CandidateReleased, ToolError> {
+        let encoded = encode_skill_release_request(&request).map_err(executor_request_error)?;
+        self.execute(
+            ToolCommand::SkillRelease,
+            encoded,
+            decode_skill_release_reply,
+            CancellationToken::new(),
+            FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn cancel_skill_generation(
+        &self,
+        request: CandidateCancelRequest,
+    ) -> Result<CandidateCancelled, ToolError> {
+        self.maintenance
+            .close_and_settle(&request.agent_id, &request.job_id, request.generation)
+            .await;
+        let encoded = encode_skill_cancel_request(&request).map_err(executor_request_error)?;
+        let result = self
+            .execute(
+                ToolCommand::SkillCancel,
+                encoded,
+                decode_skill_cancel_reply,
+                CancellationToken::new(),
+                FILE_TOOL_TIMEOUT,
+                ProgressSink::default(),
+                None,
+            )
+            .await;
+        if result.is_ok() {
+            self.maintenance
+                .release_closed(&request.agent_id, &request.job_id, request.generation);
+        }
+        result
+    }
+
+    fn maintenance_lease(
+        &self,
+        agent_id: &str,
+        job_id: &str,
+        generation: u64,
+    ) -> Result<MaintenanceLease, ToolError> {
+        self.maintenance
+            .enter(agent_id, job_id, generation)
+            .map_err(|()| {
+                ToolError::new(
+                    ToolErrorCode::SkillGenerationCancelled,
+                    "Skill maintenance generation is closed",
+                )
+            })
+    }
+
     pub(crate) fn children(&self) -> crate::processes::ChildRegistry {
         self.children.clone()
+    }
+
+    pub(crate) async fn install_temporary_skill(
+        &self,
+        request: TemporaryInstallRequest,
+    ) -> Result<TemporaryInstalled, ToolError> {
+        let encoded = encode_temporary_install_request(&request).map_err(executor_request_error)?;
+        let lease = self.admit()?;
+        self.temporary
+            .begin(
+                &request.job_id,
+                &request.request_id,
+                &request.content_digest,
+                &request.artifact_digest,
+                std::time::Instant::now(),
+            )
+            .map_err(|error| {
+                ToolError::new(
+                    match error {
+                        TemporaryAdmissionError::RunClosed => ToolErrorCode::TemporaryRunClosed,
+                        TemporaryAdmissionError::ScopeBusy => ToolErrorCode::TemporaryScopeBusy,
+                        TemporaryAdmissionError::RequestConflict => ToolErrorCode::InvalidParams,
+                        TemporaryAdmissionError::LimitExceeded => ToolErrorCode::SkillStorageFull,
+                    },
+                    "Temporary Skill scope was not admitted",
+                )
+            })?;
+        self.execute_admitted(
+            ToolCommand::SkillTemporaryInstall,
+            encoded,
+            decode_temporary_install_reply,
+            CancellationToken::new(),
+            Duration::from_secs(60),
+            ProgressSink::default(),
+            None,
+            lease,
+        )
+        .await
+    }
+
+    pub(crate) async fn release_temporary_skill(
+        &self,
+        request: TemporaryReleaseRequest,
+    ) -> Result<TemporaryReleased, ToolError> {
+        let encoded = encode_temporary_release_request(&request).map_err(executor_request_error)?;
+        let lease = self.admit()?;
+        self.temporary
+            .close(&request.job_id, std::time::Instant::now());
+        let run = request.job_id;
+        let result = self
+            .execute_admitted(
+                ToolCommand::SkillTemporaryRelease,
+                encoded,
+                decode_temporary_released_reply,
+                CancellationToken::new(),
+                Duration::from_secs(30),
+                ProgressSink::default(),
+                None,
+                lease,
+            )
+            .await;
+        if result.is_ok() {
+            self.temporary.released(&run);
+        }
+        result
+    }
+
+    pub(crate) async fn clean_temporary_before_ready(
+        &self,
+    ) -> Result<TemporaryReleased, ToolError> {
+        self.execute(
+            ToolCommand::SkillTemporaryClean,
+            b"{}".to_vec(),
+            decode_temporary_released_reply,
+            CancellationToken::new(),
+            Duration::from_secs(30),
+            ProgressSink::default(),
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn clean_temporary_after_drain(&self) -> Result<TemporaryReleased, ToolError> {
+        if self.gate.state.active.load(Ordering::Acquire)
+            || self.gate.state.poisoned.load(Ordering::Acquire)
+            || self.gate.state.accepting.load(Ordering::Acquire)
+        {
+            return Err(ToolError::outcome_unknown(
+                "Temporary cleanup requires closed and proven idle execution",
+            ));
+        }
+        // Public admission stays permanently closed. Only this bounded private
+        // cleanup actor ignores the already-requested service shutdown.
+        let cleanup = Self {
+            gate: SingleFlight::new(),
+            shutdown: CancellationToken::new(),
+            ..self.clone()
+        };
+        cleanup
+            .execute(
+                ToolCommand::SkillTemporaryClean,
+                b"{}".to_vec(),
+                decode_temporary_released_reply,
+                CancellationToken::new(),
+                Duration::from_secs(5),
+                ProgressSink::default(),
+                None,
+            )
+            .await
     }
 
     pub(crate) fn admit(&self) -> Result<ExecutionLease, ToolError> {
@@ -211,6 +482,10 @@ impl ExecutionActor {
         self.gate.close_and_drain().await
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "executor dispatch keeps cancellation and maintenance leases explicit"
+    )]
     async fn execute<O>(
         &self,
         tool: ToolCommand,
@@ -219,17 +494,43 @@ impl ExecutionActor {
         cancel: CancellationToken,
         timeout: Duration,
         progress: ProgressSink,
+        maintenance: Option<MaintenanceLease>,
     ) -> Result<O, ToolError>
     where
         O: Send + 'static,
     {
-        if self.shutdown.is_cancelled() {
-            self.gate.close();
-        }
-        let lease = self
-            .gate
-            .try_acquire()
-            .map_err(|error| ToolError::new(error.code(), error))?;
+        let lease = self.admit()?;
+        self.execute_admitted(
+            tool,
+            request,
+            decode_reply,
+            cancel,
+            timeout,
+            progress,
+            maintenance,
+            lease,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "private scope admission and executor ownership must share the same lease"
+    )]
+    async fn execute_admitted<O>(
+        &self,
+        tool: ToolCommand,
+        request: Vec<u8>,
+        decode_reply: ReplyDecoder<O>,
+        cancel: CancellationToken,
+        timeout: Duration,
+        progress: ProgressSink,
+        maintenance: Option<MaintenanceLease>,
+        lease: ExecutionLease,
+    ) -> Result<O, ToolError>
+    where
+        O: Send + 'static,
+    {
         if self.shutdown.is_cancelled() {
             self.gate.close();
             return Err(ToolError::new(
@@ -243,6 +544,50 @@ impl ExecutionActor {
                 "encoded executor request exceeds the supported limit",
             ));
         }
+        if tool == ToolCommand::SkillCommit {
+            #[cfg(target_os = "linux")]
+            {
+                if std::process::id() != 1 {
+                    return Err(ToolError::new(
+                        ToolErrorCode::SkillWritersUnknown,
+                        "Skill activation requires Runtime PID 1 for background task ownership",
+                    ));
+                }
+                let background = self
+                    .children
+                    .live_background_groups()
+                    .map_err(|error| ToolError::new(ToolErrorCode::SkillWritersUnknown, error))?;
+                if let Some(group) = background.first() {
+                    return Err(ToolError::new(
+                        ToolErrorCode::SkillBackgroundTaskRunning,
+                        "Bash background task is still running",
+                    )
+                    .with_blocked_subject(format!("bash:{group}")));
+                }
+                let managed = self
+                    .children
+                    .live_managed_work()
+                    .map_err(|error| ToolError::new(ToolErrorCode::SkillWritersUnknown, error))?;
+                if let Some(server_id) = managed.first() {
+                    return Err(ToolError::new(
+                        ToolErrorCode::SkillManagedCallInFlight,
+                        "managed MCP child is still running",
+                    )
+                    .with_blocked_subject(format!("managed:{server_id}")));
+                }
+                let unknown = self
+                    .children
+                    .unknown_live_children()
+                    .map_err(|error| ToolError::new(ToolErrorCode::SkillWritersUnknown, error))?;
+                if !unknown.is_empty() {
+                    return Err(ToolError::new(
+                        ToolErrorCode::SkillWritersUnknown,
+                        format!("background task or unknown writer is active: {unknown:?}"),
+                    )
+                    .with_blocked_subject(format!("unknown:{}", unknown[0])));
+                }
+            }
+        }
         let call = ExecutorCall {
             progress,
             tool,
@@ -255,7 +600,9 @@ impl ExecutionActor {
             fatal: self.fatal.clone(),
             gate: self.gate.clone(),
             _lease: lease,
+            _maintenance: maintenance,
             children: self.children.clone(),
+            contain_bash_descendants: tool == ToolCommand::Bash && self.temporary.active(),
         };
         let span = tracing::info_span!(
             "runtime.executor",
@@ -443,7 +790,9 @@ struct ExecutorCall {
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     gate: SingleFlight,
     _lease: ExecutionLease,
+    _maintenance: Option<MaintenanceLease>,
     children: crate::processes::ChildRegistry,
+    contain_bash_descendants: bool,
 }
 
 impl ExecutorCall {
@@ -467,7 +816,12 @@ impl ExecutorCall {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .process_group(0);
-        let mut owned = self.children.spawn(&mut command).map_err(|error| {
+        let spawned = if self.tool == ToolCommand::Bash {
+            self.children.spawn_bash(&mut command)
+        } else {
+            self.children.spawn(&mut command)
+        };
+        let mut owned = spawned.map_err(|error| {
             ToolError::new(ToolErrorCode::SpawnFailed, &error).with_source(error)
         })?;
         let child = &mut owned.child;
@@ -575,6 +929,26 @@ impl ExecutorCall {
             tracing::Span::current().set_attribute("executor.exit.signal", i64::from(signal));
         }
 
+        let had_background = if self.contain_bash_descendants {
+            let group = process_group.ok_or_else(|| {
+                self.temporary_containment_failure("Bash process group is unavailable")
+            })?;
+            let live = match temporary_background_live(&self.children, group) {
+                Ok(live) => live,
+                Err(error) => {
+                    // Observation failure cannot prove absence. Attempt to stop
+                    // this invocation before closing admission.
+                    let _ = stop_temporary_background(&self.children, group).await;
+                    return Err(self.temporary_containment_failure(error));
+                }
+            };
+            if live && let Err(error) = stop_temporary_background(&self.children, group).await {
+                return Err(self.temporary_containment_failure(error));
+            }
+            live
+        } else {
+            false
+        };
         let (output, output_truncated, diagnostics, diagnostics_truncated) =
             tokio::time::timeout(PROCESS_STOP_TIMEOUT, io.finish())
                 .await
@@ -594,6 +968,10 @@ impl ExecutorCall {
             self.unobserved_error(format!("decode executor response: {error}"))
                 .with_source(error)
         })? {
+            Ok(_) if had_background => Err(ToolError::settled(
+                ToolErrorCode::TemporaryBackgroundNotSupported,
+                "Background work was stopped because this Run uses temporary Skill files",
+            )),
             Ok(result) => Ok(result),
             Err(error) => {
                 if matches!(
@@ -607,6 +985,12 @@ impl ExecutorCall {
                 Err(error.into_tool_error())
             }
         }
+    }
+
+    fn temporary_containment_failure(&self, error: impl std::fmt::Display) -> ToolError {
+        self.gate.poison();
+        let _ = self.fatal.send(ExecutionFatal);
+        ToolError::unknown(ToolErrorCode::ChildProcessContainmentUnproven, error)
     }
 
     async fn stop_executor(
@@ -717,6 +1101,64 @@ async fn terminate_executor(child: &mut Child, process_group: Option<Pid>) -> st
         .await
         .map_err(|_| std::io::Error::other("executor did not exit after cancellation"))??;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn temporary_background_live(
+    children: &crate::processes::ChildRegistry,
+    group: Pid,
+) -> std::io::Result<bool> {
+    Ok(children
+        .live_background_groups()?
+        .contains(&(group.as_raw() as u32)))
+}
+#[cfg(not(target_os = "linux"))]
+fn temporary_background_live(
+    _children: &crate::processes::ChildRegistry,
+    _group: Pid,
+) -> std::io::Result<bool> {
+    Err(std::io::Error::other(
+        "temporary Bash containment requires Linux",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+async fn stop_temporary_background(
+    children: &crate::processes::ChildRegistry,
+    group: Pid,
+) -> std::io::Result<()> {
+    for signal in [Signal::SIGTERM, Signal::SIGKILL] {
+        match kill(Pid::from_raw(-group.as_raw()), signal) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => return Err(std::io::Error::from_raw_os_error(error as i32)),
+        }
+        let deadline = tokio::time::Instant::now() + PROCESS_STOP_TIMEOUT;
+        loop {
+            if !children
+                .live_background_groups()?
+                .contains(&(group.as_raw() as u32))
+            {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    Err(std::io::Error::other(
+        "temporary Bash background process did not stop",
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn stop_temporary_background(
+    _children: &crate::processes::ChildRegistry,
+    _group: Pid,
+) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "temporary Bash containment requires Linux",
+    ))
 }
 
 type OutputReader = JoinHandle<std::io::Result<(Vec<u8>, bool)>>;

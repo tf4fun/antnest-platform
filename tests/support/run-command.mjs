@@ -7,11 +7,58 @@ import {
   openSync,
   writeFileSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { durablePath } from "./storage.mjs";
+
+function rejectStdinScript(command) {
+  const executable = basename(command[0]);
+  const node = /^node(?:\.exe)?$/u.test(executable);
+  const python = /^python(?:\d+(?:\.\d+)?)?(?:\.exe)?$/u.test(executable);
+  if (!node && !python) return;
+  const args = command.slice(1);
+  const inline = node
+    ? new Set(["-e", "--eval", "-p", "--print"])
+    : new Set(["-c", "-m"]);
+  const values = node
+    ? new Set([
+        "--input-type",
+        "--require",
+        "-r",
+        "--import",
+        "--loader",
+        "--experimental-loader",
+        "--env-file",
+        "--env-file-if-exists",
+        "--conditions",
+        "-C",
+      ])
+    : new Set(["-W", "-X"]);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (
+      inline.has(arg) ||
+      (node && /^(?:--eval|--print)=/u.test(arg)) ||
+      (python && /^-[cm].+/u.test(arg))
+    )
+      return;
+    if (arg === "--") {
+      assert(
+        args[i + 1] !== "-",
+        "stdin script is not supported; use a script file or -e/-c",
+      );
+      return;
+    }
+    assert(
+      arg !== "-",
+      "stdin script is not supported; use a script file or -e/-c",
+    );
+    if (values.has(arg)) i++;
+    else if (!arg.startsWith("-")) return;
+  }
+}
 
 export async function runCommand({
   command,
@@ -37,6 +84,9 @@ export async function runCommand({
       command.length > 0 &&
       command.every((x) => typeof x === "string"),
   );
+  // Child stdin is deliberately ignored. Reject an interpreter's explicit stdin
+  // script mode before creating evidence, so an empty script cannot pass a gate.
+  rejectStdinScript(command);
   assert(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name), "invalid evidence name");
   assert(Number.isSafeInteger(timeoutMs) && timeoutMs > 0);
   assert(Number.isSafeInteger(graceMs) && graceMs > 0);
@@ -151,9 +201,11 @@ if (
     });
     console.log(JSON.stringify(result));
     process.exitCode = result.exit_code;
-  } catch {
+  } catch (error) {
     console.error(
-      "Verification runner failed; existing evidence was not overwritten.",
+      error.message.includes("stdin script is not supported")
+        ? "Verification runner: stdin script is not supported; use a source file or an explicit -e/-c argument."
+        : "Verification runner failed; existing evidence was not overwritten.",
     );
     process.exitCode = 1;
   }

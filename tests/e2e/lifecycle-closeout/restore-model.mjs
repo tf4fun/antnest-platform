@@ -53,7 +53,7 @@ export function decide(payload, skillRestore = false) {
           arguments: {
             command:
               "printf started > /workspace/.c5-source-started; while [ ! -f /workspace/.c5-source-release ]; do sleep 0.2; done; printf source-released",
-            working_dir: { root: "workspace", path: "." },
+            working_dir: ".",
             timeout_ms: 120000,
           },
         }
@@ -63,7 +63,7 @@ export function decide(payload, skillRestore = false) {
             arguments: {
               command:
                 "printf 'before-backup\\n' >> /workspace/.c5-restore.txt; printf backup-written",
-              working_dir: { root: "workspace", path: "." },
+              working_dir: ".",
               timeout_ms: 5000,
             },
           }
@@ -71,9 +71,9 @@ export function decide(payload, skillRestore = false) {
             name: "read",
             arguments: {
               path: skillRestore
-                ? { root: "system_skills", path: "code-review/SKILL.md" }
-                : { root: "workspace", path: ".c5-restore.txt" },
-              offset: 0,
+                ? "/skills/code-review/SKILL.md"
+                : ".c5-restore.txt",
+              offset: 1,
               limit: 4096,
             },
           };

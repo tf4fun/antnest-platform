@@ -1,6 +1,6 @@
 # 业务流程入口总索引
 
-> 更新日期：2026-09-16
+> 更新日期：2026-10-01
 > 状态：基于当前实现的入口盘点，供后续逐流程展开与 Jaeger 核对。
 > 范围：`antnest-platform` 已开发服务，Docker 单节点。
 
@@ -73,17 +73,17 @@ BF-CAT-02 已按新连接/模型合同重新核对管理链路，见
 连接采用合成测试凭证，不能直接调用 DeepSeek；真实模型调用前必须替换凭证。
 按用户要求暂不修改 ACP，先逐项验证管理流程；ACP 执行兼容性不作为已通过结论。
 
-| 顺序     | 入口                         | 复验状态与历史基线                                           |
-| -------- | ---------------------------- | ---------------------------------------------------------------------- |
-| 1        | BF-OPS-01 部署流程           | [部署场景记录](business-flow-deployment.md)，用户已确认，允许推进登录 |
-| 2        | BF-AUTH-01 管理员本地登录    | [登录场景记录](business-flow-local-admin-login.md)，用户已确认最新链路 |
-| 模板前置 | BF-CAT-02 创建 Provider 连接与模型 | 上一轮通过管理 API 建立连接与模型；[场景记录](business-flow-provider-connection.md)现已更新为本轮真实浏览器证据，未调用外部模型 |
-| 3        | BF-CAT-06 模板创建 | [模板场景](business-flow-template-create.md)：仅保存原始镜像引用；最终 Gateway 复验见该文档 |
-| 4 | BF-AGENT-04 创建 Agent | 当前分层状态复验：164 + 60 Span；[场景文档](business-flow-agent-create.md)，用户已确认 |
-| 5 | BF-AGENT-05 显式重建 Agent | 同配置重建已确认；[新配置变体](business-flow-agent-rebuild.md#6-新模板配置重建复验)新增 20 + 215 + 61 Span，技术核对通过，等待检查 |
-| 6 | BF-AGENT-06 停用 Agent | 当前分层状态复验：[场景文档](business-flow-agent-disable.md)，166 Span，用户已确认 |
-| 7 | BF-AGENT-07 启用 Agent | 当前分层状态复验：[场景文档](business-flow-agent-enable.md)，177 + 61 Span，用户已确认 |
-| 8 | BF-AGENT-08 删除 Agent 与资源回收 | 当前分层状态复验：[场景文档](business-flow-agent-delete.md)，175 Span，用户已确认 |
+| 顺序     | 入口                               | 复验状态与历史基线                                                                                                                 |
+| -------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | BF-OPS-01 部署流程                 | [部署场景记录](business-flow-deployment.md)，用户已确认，允许推进登录                                                              |
+| 2        | BF-AUTH-01 管理员本地登录          | [登录场景记录](business-flow-local-admin-login.md)，用户已确认最新链路                                                             |
+| 模板前置 | BF-CAT-02 创建 Provider 连接与模型 | 上一轮通过管理 API 建立连接与模型；[场景记录](business-flow-provider-connection.md)现已更新为本轮真实浏览器证据，未调用外部模型    |
+| 3        | BF-CAT-06 模板创建                 | [模板场景](business-flow-template-create.md)：仅保存原始镜像引用；最终 Gateway 复验见该文档                                        |
+| 4        | BF-AGENT-04 创建 Agent             | 当前分层状态复验：164 + 60 Span；[场景文档](business-flow-agent-create.md)，用户已确认                                             |
+| 5        | BF-AGENT-05 显式重建 Agent         | 同配置重建已确认；[新配置变体](business-flow-agent-rebuild.md#6-新模板配置重建复验)新增 20 + 215 + 61 Span，技术核对通过，等待检查 |
+| 6        | BF-AGENT-06 停用 Agent             | 当前分层状态复验：[场景文档](business-flow-agent-disable.md)，166 Span，用户已确认                                                 |
+| 7        | BF-AGENT-07 启用 Agent             | 当前分层状态复验：[场景文档](business-flow-agent-enable.md)，177 + 61 Span，用户已确认                                             |
+| 8        | BF-AGENT-08 删除 Agent 与资源回收  | 当前分层状态复验：[场景文档](business-flow-agent-delete.md)，175 Span，用户已确认                                                  |
 
 上一轮 BF-AGENT-04..08 已按同一 Gateway Trace 内的完整父子结构核对，不再以旧的
 26 条分散 Trace 作为通过依据。五条基线 Trace 全部通过 SDK 阶段、具体成功 RPC、
@@ -153,20 +153,20 @@ OIDC 登录本身归入 BF-AUTH-04，不重复列为配置操作。
 更新 Model Profile 当前配置包含模型能力与价格，不保留独立模型历史；连接凭证独立轮换，不随模型更新复制。
 修订模板包含系统提示、Runtime 镜像/资源及平台托管 stdio MCP 配置，这些是模板修订流程的输入变体。
 
-| 编号      | 流程入口                                |
-| --------- | --------------------------------------- |
-| BF-CAT-01 | 查看系统维护的模型目录和模型能力        |
-| BF-CAT-02 | 创建组织 Provider 连接与初始模型          |
-| BF-CAT-03 | 查看 Model Profile 列表及当前详情       |
-| BF-CAT-04 | 更新 Model Profile 当前配置             |
-| BF-CAT-06 | 创建 Agent 模板                         |
-| BF-CAT-07 | 查看模板列表、详情及历史修订            |
-| BF-CAT-08 | 发布模板新修订                          |
-| BF-CAT-09 | 轮换 Provider 连接凭证                   |
-| BF-CAT-10 | 启用或停用 Provider 连接                 |
-| BF-CAT-11 | 启用或停用模型                           |
-| BF-CAT-12 | 启用或停用模板                           |
-| BF-CAT-13 | 发现候选模型并显式选择添加               |
+| 编号      | 流程入口                          |
+| --------- | --------------------------------- |
+| BF-CAT-01 | 查看系统维护的模型目录和模型能力  |
+| BF-CAT-02 | 创建组织 Provider 连接与初始模型  |
+| BF-CAT-03 | 查看 Model Profile 列表及当前详情 |
+| BF-CAT-04 | 更新 Model Profile 当前配置       |
+| BF-CAT-06 | 创建 Agent 模板                   |
+| BF-CAT-07 | 查看模板列表、详情及历史修订      |
+| BF-CAT-08 | 发布模板新修订                    |
+| BF-CAT-09 | 轮换 Provider 连接凭证            |
+| BF-CAT-10 | 启用或停用 Provider 连接          |
+| BF-CAT-11 | 启用或停用模型                    |
+| BF-CAT-12 | 启用或停用模板                    |
+| BF-CAT-13 | 发现候选模型并显式选择添加        |
 
 Provider 停用保留引用，配置发布到 ACP 后撤销客户端；Model 停用仍检查引用。当前未开放物理删除。
 模板支持有序备用模型；模板发布不等于派生 Agent 自动更新，应用新修订使用 BF-AGENT-05。
@@ -254,12 +254,12 @@ BF-EXEC-08 不要求逐包 Jaeger 链路。网络策略 RPC 与工具请求可�
 | BF-SYS-01 | 修改 Agent 默认工具授权行为               | 可信内部 RPC / `agent-controller`，当前无独立 Console 编辑入口           |
 | BF-SYS-02 | 查询或订阅组织范围的 Agent 事件           | 可信内部 RPC / `agent-controller`，区别于单 Agent 的 Console 入口        |
 | BF-SYS-03 | 身份撤销后的 Agent 停用联动               | `agent-controller` 消费 Identity 撤销记录；来源为用户或成员关系停用/删除 |
-| BF-SYS-04 | 续办已持久化但未完成的 Agent 生命周期操作 | `agent-controller` Temporal SDK Worker 接收引擎分派/重试                        |
+| BF-SYS-04 | 续办已持久化但未完成的 Agent 生命周期操作 | `agent-controller` Temporal SDK Worker 接收引擎分派/重试                 |
 | BF-SYS-05 | Runtime 状态变化的观测与 Agent 状态同步   | `runtime-controller` 平台观测，供 `agent-controller` 消费                |
 | BF-SYS-06 | ACP 服务恢复后处理未完成 Run 和待审批记录 | `agent-acp-service` 启动恢复，不代表重放工具副作用                       |
-| BF-SYS-07 | 发布及重同步组织当前执行配置 | `agent-controller` 向 ACP 推送；ACP 冷启动在当前配置同步前不开放执行 |
-| BF-SYS-08 | 生命周期变更前收束 Agent 执行 | Controller 调用 ACP Agent 级收束，不查询或结束逐 Run 记录 |
-| BF-SYS-09 | 查询配置同步回执 | Console 读取 Controller 已存修订与应用确认，不代表实时就绪 |
+| BF-SYS-07 | 发布及重同步组织当前执行配置              | `agent-controller` 向 ACP 推送；ACP 冷启动在当前配置同步前不开放执行     |
+| BF-SYS-08 | 生命周期变更前收束 Agent 执行             | Controller 调用 ACP Agent 级收束，不查询或结束逐 Run 记录                |
+| BF-SYS-09 | 查询配置同步回执                          | Console 读取 Controller 已存修订与应用确认，不代表实时就绪               |
 
 身份恢复不会自动启用 Agent，后续显式启用仍使用 BF-AGENT-07。
 Runtime 初始化/更新/启停/删除、隧道地址分配/回收及配置/收束 RPC，
@@ -279,7 +279,25 @@ Run 准入与终态由 ACP 本地管理，旧 Controller acquire/finish RPC 已�
 | BF-OPS-05 | 从备份恢复实例并重新开放服务                       | 操作者 / 离线恢复及各服务启动入口                      |
 | BF-OPS-06 | 根据业务操作或故障记录定位日志与关联链路           | 管理员或运维人员 / Console 事件信息、服务日志与 Jaeger |
 
-## 11. 盘点依据
+## 11. 阶段四 Skill 传播入口
+
+四步流程的完整 Docker 证据见 [DI1](skill-propagation-integration-delivery-20261001.md)，
+各服务所属门禁保留在对应交付记录。下列步骤各有明确入口，不合并成自动发布或自动重建。
+
+| 编号        | 流程入口                                                    | 发起方式 / 入口服务                                                                  |
+| ----------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| BF-SKILL-01 | 已生效受管个人 Skill 自动投影元数据与来源引用               | 学习确认 / ACP 异步提交 Registry；正文仍归来源 Agent                                 |
+| BF-SKILL-02 | 检索、读取来源并在当前 Run 临时使用                         | Agent 模型 / ACP find_skill、load_skill；文件包由 Runtime 临时交付及回收             |
+| BF-SKILL-03 | 预览自己的来源并显式提升为正式不可变版本                    | 有发布权限的来源所有者 / Console → Gateway/BFF → Registry → ACP 来源读取             |
+| BF-SKILL-04 | 模板固定正式版本，创建或显式重建取得新预设                  | 管理员 / Console → Controller → RC 准备文件集合及只读 Runtime 挂载                   |
+| BF-SKILL-05 | 来源 Agent 停用、启用及删除后保持来源读取边界与正式版本独立 | 管理员 / 既有 Controller 生命周期入口；ACP 当前授权与回源核验、Registry 正式制品读取 |
+
+提升不修改模板或 Agent；更新模板不热更新现有 Runtime；来源后续变化不改变
+已提升的正式版本。前端采用现有 HTTP/SSE 交互，未增加新的 Channel 服务。
+[DI2](skill-source-lifecycle-delivery-20261001.md)另行验证 BF-SKILL-05 的正常
+Disable/Enable/Delete、当前来源读取边界、正式制品和预设的独立使用。
+
+## 12. 盘点依据
 
 以下是本索引的入口核对依据，不是本轮逐流程 Jaeger 通过证明：
 

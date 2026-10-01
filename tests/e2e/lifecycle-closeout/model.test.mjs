@@ -36,7 +36,7 @@ test("held Run advertises a real bounded bash file barrier", () => {
 test("new revision requires an environment notice and a real workspace read", () => {
   const result = decide(payload("c3-after-rebuild"));
   assert.equal(result.call.name, "read");
-  assert.equal(result.call.arguments.path.path, ".c3-run-effects");
+  assert.equal(result.call.arguments.path, ".c3-run-effects");
   assert.equal(
     decide(
       payload(

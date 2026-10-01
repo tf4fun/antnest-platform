@@ -38,6 +38,8 @@ export function startHttpBoundary(request: IncomingMessage): {
 } {
   const route = [
     "/status",
+    "/internal/skill-sources/inspect",
+    "/internal/skill-sources/artifact",
     "/v1/acp",
     "/v2/acp",
     "/rpc/agent-acp/apply-execution-snapshot",

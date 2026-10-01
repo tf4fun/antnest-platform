@@ -91,7 +91,7 @@ export function decide(payload) {
       name: "bash",
       arguments: {
         command: `printf '%s\\n' '${phase}' >> /workspace/stage3-effects.log; cat /workspace/stage3-effects.log${skillMode && ["v1-baseline", "registry-outage", "offline-reuse", "after-rebuild"].includes(phase) ? "; cat /skills/code-review/SKILL.md" : ""}${skillMode && phase === "v1-baseline" ? "; " + registryDenialCommand(process.env.ANTNEST_E2E_REGISTRY_IP) : ""}`,
-        working_dir: { root: "workspace", path: "." },
+        working_dir: ".",
         timeout_ms: 10000,
       },
     },

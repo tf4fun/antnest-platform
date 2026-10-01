@@ -185,6 +185,7 @@ services:
       ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
+      ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: ${ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:-}
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -233,6 +234,13 @@ services:
       ANTNEST_ACP_CLIENT_MCP_KEY: ${ANTNEST_ACP_CLIENT_MCP_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
       ANTNEST_ACP_LISTEN: :8080
       ANTNEST_ACP_RUN_TIMEOUT: ${ANTNEST_ACP_RUN_TIMEOUT:-30m}
+      ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: ${ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID:-}
+      ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:+http://agent-controller:8080}
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID:-}
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:-}
+      ANTNEST_ACP_SKILL_REGISTRY_URL: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:+http://skill-registry:8080}
+      ANTNEST_ACP_SKILL_REGISTRY_TOKEN: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:+${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}}
+      ANTNEST_ACP_SKILL_SOURCE_TOKEN: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:-}
       ANTNEST_ACP_MAX_CONFIGURATION_BYTES: ${ANTNEST_ACP_MAX_CONFIGURATION_BYTES:-16777216}
       ANTNEST_ACP_MAX_PROMPT_BYTES: ${ANTNEST_ACP_MAX_PROMPT_BYTES:-16777216}
       ANTNEST_ACP_SHUTDOWN_TIMEOUT: ${ANTNEST_ACP_SHUTDOWN_TIMEOUT:-15s}
@@ -244,13 +252,7 @@ services:
       - 127.0.0.1:${ANTNEST_ACP_HOST_PORT:-58081}:8080
     healthcheck:
       test:
-        [
-          "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "http://127.0.0.1:8080/status",
-        ]
+        ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/status"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -434,6 +436,15 @@ services:
       ANTNEST_SKILL_REGISTRY_LISTEN: :8080
       ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://antnest_skill_registry:${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:-antnest-skill-registry-dev}@postgres:5432/antnest_skill_registry
       ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
+      ANTNEST_SKILL_REGISTRY_SOURCE_URL: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:+http://agent-acp-service:8080}
+      ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:-}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: ${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:-}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
+      OTEL_SERVICE_NAME: skill-registry
     healthcheck:
       test: [CMD, /usr/local/bin/skill-registry, --healthcheck]
       interval: 30s
@@ -502,7 +513,13 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: agent-ui
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
       interval: 30s
       timeout: 3s
       retries: 3

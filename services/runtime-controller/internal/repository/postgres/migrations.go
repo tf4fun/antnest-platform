@@ -256,6 +256,17 @@ CREATE TABLE runtime_controller.skill_current_references (
 CREATE INDEX skill_current_references_set_idx ON runtime_controller.skill_current_references(set_id);
 `
 
+const maintenanceVerifierSnapshotSQL = `
+ALTER TABLE runtime_controller.operations
+    ADD COLUMN maintenance_verifiers JSONB,
+    ADD CONSTRAINT maintenance_verifiers_shape CHECK (
+        maintenance_verifiers IS NULL OR
+        (jsonb_typeof(maintenance_verifiers) = 'object' AND
+         jsonb_typeof(maintenance_verifiers->'keys') = 'array' AND
+         jsonb_array_length(maintenance_verifiers->'keys') <= 2)
+    );
+`
+
 type migration struct {
 	version  int64
 	name     string
@@ -313,6 +324,11 @@ var schemaMigrations = []migration{
 		version: 10, name: "retain_current_system_skill_reference",
 		checksum: "fafdadcdcd99dbc39aa0e30ec806ed966b65598e8ea6c8658a6feb9a8013a5a2",
 		sql:      skillCurrentReferenceSQL,
+	},
+	{
+		version: 11, name: "freeze_maintenance_verifier_snapshot",
+		checksum: "b0ae23ef2de4674c080a1cdc122e29829ff7abbac81d2f79203d291e3b6d9cc1",
+		sql:      maintenanceVerifierSnapshotSQL,
 	},
 }
 

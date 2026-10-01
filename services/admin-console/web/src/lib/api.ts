@@ -2,7 +2,7 @@ import { csrfFromCookie } from "./forms";
 import type { AvailabilityChange, AvailabilityReceipt, CatalogKind, ExecutionSynchronization } from "./catalog-availability";
 import { decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
 import { invalidatesBrowserSession } from "./session-errors";
-import type { SkillPage, SkillReference, SkillVersion, SkillVersionPage } from "./skills";
+import type { SkillPage, SkillReference, SkillVersion, SkillVersionPage, SkillSourcePage, SkillSourcePreview, SkillSourceSelection, SkillSourcePromotion } from "./skills";
 import { auditQuery, type AuditFilters, type AuditPage, type ExecutionAuditSummary, type ExecutionAuditDetail, type ExecutionAuditEvent, type ExecutionAuditPermission } from "./execution-audit";
 import {
   agentPagePath,
@@ -203,6 +203,9 @@ function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
 }
 
 export const api = {
+  searchSkillSources: (query: string, signal?: AbortSignal) => request<SkillSourcePage>("/api/admin/skill-sources/search", { method: "POST", body: json({ query, limit: 50 }), signal }),
+  previewSkillSource: (selection: SkillSourceSelection, signal?: AbortSignal) => request<SkillSourcePreview>("/api/admin/skill-sources/preview", { method: "POST", body: json(selection), signal }),
+  promoteSkillSource: (selection: SkillSourcePromotion) => idempotentRequest<SkillVersion>(`skill-promotion:${selection.skill_ref.agent_id}:${selection.skill_ref.name}`, "/api/admin/skill-sources/promote", selection),
   skills: (afterID?: string) => request<SkillPage>(`/api/admin/skills${afterID ? `?after_id=${encodeURIComponent(afterID)}` : ""}`),
   skillVersions: (skillID: string, afterVersion?: number) => request<SkillVersionPage>(`/api/admin/skills/${encodeURIComponent(skillID)}/versions${afterVersion ? `?after_version=${afterVersion}` : ""}`),
   publishSkill: (file: File) => skillUpload(undefined, file),

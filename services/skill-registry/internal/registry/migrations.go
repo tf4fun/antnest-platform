@@ -6,23 +6,36 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed migrations/0001_registry.sql
+//go:embed migrations/*.sql
 var migrationFS embed.FS
 
 const migrationLockID int64 = 0x534b494c4c524547
 
 func ApplyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	body, err := migrationFS.ReadFile("migrations/0001_registry.sql")
+	names, err := fs.Glob(migrationFS, "migrations/*.sql")
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(body)
-	checksum := hex.EncodeToString(sum[:])
+	sort.Strings(names)
+	bodies := map[string][]byte{}
+	expected := map[string]string{}
+	for _, path := range names {
+		body, err := migrationFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name := path[len("migrations/"):]
+		sum := sha256.Sum256(body)
+		bodies[name] = body
+		expected[name] = hex.EncodeToString(sum[:])
+	}
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Registry migration: %w", err)
@@ -54,14 +67,18 @@ func ApplyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return fmt.Errorf("iterate Registry migration journal: %w", err)
 	}
-	if err := validateMigrationJournal(applied, checksum); err != nil {
+	if err := validateMigrationJournal(applied, expected); err != nil {
 		return err
 	}
-	if _, exists := applied["0001_registry.sql"]; !exists {
-		if _, err := tx.Exec(ctx, string(body)); err != nil {
+	for _, path := range names {
+		name := path[len("migrations/"):]
+		if _, exists := applied[name]; exists {
+			continue
+		}
+		if _, err := tx.Exec(ctx, string(bodies[name])); err != nil {
 			return fmt.Errorf("apply Registry migration: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`, "0001_registry.sql", checksum); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`, name, expected[name]); err != nil {
 			return fmt.Errorf("journal Registry migration: %w", err)
 		}
 	}
@@ -71,14 +88,28 @@ func ApplyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func validateMigrationJournal(applied map[string]string, expected string) error {
+func validateMigrationJournal(applied, expected map[string]string) error {
 	for name, checksum := range applied {
-		if name != "0001_registry.sql" {
+		want, known := expected[name]
+		if !known {
 			return fmt.Errorf("registry database has unknown migration %s", name)
 		}
-		if checksum != expected {
+		if checksum != want {
 			return fmt.Errorf("registry migration checksum changed")
 		}
+	}
+	names := make([]string, 0, len(expected))
+	for name := range expected {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	missing := false
+	for _, name := range names {
+		_, exists := applied[name]
+		if exists && missing {
+			return fmt.Errorf("registry migration journal has a gap")
+		}
+		missing = missing || !exists
 	}
 	return nil
 }

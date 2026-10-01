@@ -1,6 +1,8 @@
+import { learningStatusSchema, type LearningStatus } from "../protocol/learning-status.ts";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { z } from "zod";
+import { initialSkillCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ConfigurationConflictError } from "../bridge/configuration-token.ts";
 import { withActiveHttpTrace } from "../telemetry.ts";
@@ -10,6 +12,25 @@ const DELIVERY = "antnest.dev/delivery";
 const INTENT = "antnest.dev/intent";
 const TARGET_CANCEL = "antnest.dev/target-cancel";
 const CONFIGURATION = "antnest.dev/configuration";
+
+const learningChangeSchema = z.strictObject({
+  changeId: z.string().min(1).max(200),
+  sequence: z.string().regex(/^[1-9][0-9]{0,18}$/u),
+  agentId: z.string().min(1).max(200),
+  kind: z.enum(["skill_created", "skill_updated"]),
+  occurredAt: z.string().min(20).max(40),
+  skillName: z.string().min(1).max(64),
+  changeSummary: z.string().min(1).max(2048),
+  sourceSessionId: z.string().min(1).max(200).optional(),
+  sourceRunId: z.string().min(1).max(200).optional(),
+});
+const learningChangePageSchema = z.strictObject({
+  items: z.array(learningChangeSchema).max(20),
+  nextCursor: z.string().min(1).max(4096),
+  olderCursor: z.string().min(1).max(4096).nullable(),
+  sealedCursor: z.string().min(1).max(4096),
+});
+export type LearningChangePage = z.infer<typeof learningChangePageSchema>;
 
 type PromptInput = {
   sessionId: string;
@@ -222,6 +243,7 @@ export type AcpBridgeCallbacks = {
 
 export class AcpHttpBridge {
   public readonly capabilities: acp.AgentCapabilities;
+  public readonly skillCommands: WorkspaceCommand[];
   private readonly connection: acp.ClientConnection;
   private readonly baseUrl: URL;
   private readonly scope: BridgeScope;
@@ -235,6 +257,7 @@ export class AcpHttpBridge {
     fetchImpl: typeof fetch,
     capabilities: acp.AgentCapabilities,
     configurationCas: boolean,
+    skillCommands: WorkspaceCommand[],
   ) {
     this.connection = connection;
     this.baseUrl = baseUrl;
@@ -242,6 +265,7 @@ export class AcpHttpBridge {
     this.fetchImpl = fetchImpl;
     this.capabilities = capabilities;
     this.configurationCas = configurationCas;
+    this.skillCommands = skillCommands;
   }
 
   public static async open(input: {
@@ -274,7 +298,7 @@ export class AcpHttpBridge {
         acp.methods.agent.initialize,
         {
           protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: {},
+          clientCapabilities: { session: { notices: {} } },
           clientInfo: { name: "antnest-agent-ui-bridge", version: "0.1.0" },
           _meta: {
             [BRIDGE_CAPABILITY]: {
@@ -282,6 +306,7 @@ export class AcpHttpBridge {
               targetCancel: 1,
               deliveryMark: 1,
               configurationCas: 1,
+              learningNotices: 1,
             },
           },
         },
@@ -301,6 +326,7 @@ export class AcpHttpBridge {
         tracedFetch,
         capabilities,
         configurationCas,
+        initialSkillCommands(initialized._meta),
       );
     } catch (error) {
       connection.close(error);
@@ -437,6 +463,25 @@ export class AcpHttpBridge {
       },
     );
     return parseAgentExecutionState(response, this.scope.agentId);
+  }
+
+  public async readLearningStatus(): Promise<LearningStatus> {
+    const response = await this.internalGet(`/rpc/agent-acp/workspace/agents/${encodeURIComponent(this.scope.agentId)}/learning-status`);
+    await requireSuccessfulObservation(response);
+    const status = learningStatusSchema.parse(await response.json());
+    if (status.agentId !== this.scope.agentId) throw new Error("Foreign learning status");
+    return status;
+  }
+
+  public async readLearningChanges(): Promise<LearningChangePage> {
+    const response = await this.internalGet(
+      `/rpc/agent-acp/workspace/agents/${encodeURIComponent(this.scope.agentId)}/learning-changes?limit=20`,
+    );
+    await requireSuccessfulObservation(response);
+    const page = learningChangePageSchema.parse(await response.json());
+    if (page.items.some((item) => item.agentId !== this.scope.agentId))
+      throw new Error("Learning change page contains a foreign Agent");
+    return page;
   }
 
   public async watchAgentExecutionState(

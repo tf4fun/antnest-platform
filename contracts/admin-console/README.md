@@ -1,5 +1,10 @@
 # Admin Console Contracts
 
+Revision 48 adds administrator-only search, bounded text preview and explicit
+promotion of the caller's own dynamic Agent Skill sources. The BFF derives
+identity, Registry owns publication, and Templates continue to accept only
+fixed formal versions. See [the D6 contract](skill-discovery.md).
+
 Revision 46 adds fixed `{skill_id, version}` references to Template creation
 and revision. Console forwards them without resolving or silently upgrading
 versions; Controller freezes the package metadata and collection digest.

@@ -62,8 +62,8 @@ export async function sentinel(item, action) {
       {
         name: action,
         arguments: {
-          path: { root: "workspace", path: "offboarding-sentinel.txt" },
-          ...(action === "write" ? { content } : { offset: 0, limit: 1024 }),
+          path: "offboarding-sentinel.txt",
+          ...(action === "write" ? { content } : { offset: 1, limit: 1024 }),
         },
       },
       { signal },

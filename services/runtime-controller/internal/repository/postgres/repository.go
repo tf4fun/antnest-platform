@@ -1,11 +1,14 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -149,7 +152,11 @@ func (r *Repository) BeginTransition(
 		candidate.PreparedReferenceID = candidate.PreparedReference.ReferenceID
 	}
 	candidate.Attempt = 1
-	if _, err := tx.ExecContext(ctx, insertOperationSQL, operationArguments(candidate)...); err != nil {
+	arguments, err := operationArguments(candidate)
+	if err != nil {
+		return deployment.Operation{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, insertOperationSQL, arguments...); err != nil {
 		if strings.Contains(err.Error(), "operations_agent_nonterminal_unique") {
 			return deployment.Operation{}, false, repository.ErrConcurrentMutation
 		}
@@ -653,6 +660,7 @@ type scanner interface {
 func scanOperation(row scanner) (deployment.Operation, error) {
 	var operation deployment.Operation
 	var inspection []byte
+	var maintenanceVerifiers []byte
 	var preparedSetID sql.NullInt64
 	err := row.Scan(
 		&operation.RequestID, &operation.RequestDigest, &operation.Kind, &operation.AgentID,
@@ -664,6 +672,7 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		&operation.ImageReference, &operation.ImageID,
 		&preparedSetID, &operation.PreparedVolumeName, &operation.PreparedMaterialization,
 		&operation.PreparedManifestDigest, &operation.PreparedReferenceID,
+		&maintenanceVerifiers,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -680,6 +689,22 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		operation.Inspection = &environment
 	}
 	operation.PreparedSetID = preparedSetID.Int64
+	if len(maintenanceVerifiers) > 0 {
+		decoder := json.NewDecoder(bytes.NewReader(maintenanceVerifiers))
+		decoder.DisallowUnknownFields()
+		var snapshot deployment.MaintenanceVerifiers
+		if err := decoder.Decode(&snapshot); err != nil {
+			return deployment.Operation{}, fmt.Errorf("decode maintenance verifier snapshot: %w", err)
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return deployment.Operation{}, fmt.Errorf("maintenance verifier snapshot contains trailing data")
+		}
+		canonical, err := snapshot.Normalize()
+		if err != nil || !slices.Equal(snapshot.Keys, canonical.Keys) {
+			return deployment.Operation{}, fmt.Errorf("maintenance verifier snapshot is invalid or unsorted")
+		}
+		operation.MaintenanceVerifiers = &canonical
+	}
 	return operation, nil
 }
 
@@ -718,7 +743,21 @@ func scanObservation(row scanner) (deployment.Observation, error) {
 	return observation, nil
 }
 
-func operationArguments(operation deployment.Operation) []any {
+func operationArguments(operation deployment.Operation) ([]any, error) {
+	var verifierSnapshot any
+	if operation.MaintenanceVerifiers != nil {
+		canonical, err := operation.MaintenanceVerifiers.Normalize()
+		if err != nil || !slices.Equal(operation.MaintenanceVerifiers.Keys, canonical.Keys) {
+			return nil, fmt.Errorf("invalid accepted maintenance verifier snapshot")
+		}
+		encoded, err := json.Marshal(canonical)
+		if err != nil {
+			return nil, fmt.Errorf("encode maintenance verifier snapshot: %w", err)
+		}
+		verifierSnapshot = encoded
+	} else if operation.CreatesCompute() {
+		return nil, fmt.Errorf("accepted maintenance verifier snapshot is missing")
+	}
 	return []any{
 		operation.RequestID, operation.RequestDigest, operation.Kind, operation.AgentID,
 		operation.RuntimeRevision, operation.ExpectedRevision,
@@ -729,7 +768,8 @@ func operationArguments(operation deployment.Operation) []any {
 		operation.ImageReference, operation.ImageID,
 		nullablePreparedSetID(operation.PreparedSetID), operation.PreparedVolumeName,
 		operation.PreparedMaterialization, operation.PreparedManifestDigest, operation.PreparedReferenceID,
-	}
+		verifierSnapshot,
+	}, nil
 }
 
 func nullablePreparedSetID(value int64) any {
@@ -745,8 +785,9 @@ INSERT INTO runtime_controller.operations (
     source_state, source_revision, source_generation, source_spec_digest,
     target_generation, target_spec_digest, attempt, state, effect,
     error_code, error_detail, created_at, updated_at, image_reference, image_id,
-    skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`
+    skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id,
+    maintenance_verifiers
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`
 
 const claimOperationAttemptSQL = `
 UPDATE runtime_controller.operations
@@ -764,7 +805,8 @@ const operationColumns = `request_id, request_digest, kind, agent_id, runtime_re
 expected_revision, source_state, source_revision, source_generation, source_spec_digest,
 target_generation, target_spec_digest, attempt, state, effect, inspection,
 error_code, error_detail, created_at, updated_at, image_reference, image_id,
-skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id`
+skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id,
+maintenance_verifiers`
 
 const selectOperationSQL = `SELECT ` + operationColumns + `
 FROM runtime_controller.operations WHERE request_id = $1`

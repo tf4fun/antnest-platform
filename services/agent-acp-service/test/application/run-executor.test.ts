@@ -21,6 +21,44 @@ import type { ToolCatalogPort } from "../../src/ports/tools.js";
 afterEach(() => vi.restoreAllMocks());
 
 describe("RunExecutor", () => {
+  it.each([false, true])(
+    "releases temporary files before terminal state, independently of Run cancellation (%s)",
+    async (cancelled) => {
+      const f = setup();
+      f.input.accepted.command = { name: "help", locale: "en" };
+      if (cancelled) f.cancellation.abort();
+      const order: string[] = [];
+      const releaseRun = vi.fn((_runId: string, signal: AbortSignal) => {
+        expect(signal.aborted).toBe(false);
+        order.push("release");
+        return Promise.resolve();
+      });
+      f.dependencies.temporarySkills = { releaseRun };
+      f.finish.mockImplementation(() => {
+        order.push("finish");
+        return Promise.resolve();
+      });
+      await f.execute();
+      expect(order).toEqual(["release", "finish"]);
+      expect(releaseRun).toHaveBeenCalledWith(f.input.accepted.runId, f.ownership.signal);
+    },
+  );
+  it("keeps failed cleanup unresolved instead of reporting a completed Run", async () => {
+    const f = setup();
+    f.input.accepted.command = { name: "help", locale: "en" };
+    f.dependencies.temporarySkills = {
+      releaseRun: () => Promise.reject(new Error("private upstream text")),
+    };
+    await expect(f.execute()).resolves.toMatchObject({
+      terminalClass: "unresolved",
+      toolEffectState: "unknown",
+      unknownEffectSource: "runtime_mcp",
+      errorClass: "temporary_skill_cleanup_pending",
+    });
+    expect(f.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ terminalClass: "unresolved", toolEffectState: "unknown" }),
+    );
+  });
   it.each(["success", "cancelled", "expired", "persistence-failed", "ownership-lost"] as const)(
     "handles help %s without model, credentials or Runtime setup",
     async (scenario) => {

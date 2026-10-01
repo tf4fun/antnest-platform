@@ -45,6 +45,68 @@ const snapshot: RunExecutionSnapshot = {
 };
 
 describe("TurnRunner", () => {
+  it("dispatches Skill platform reads as tools rather than treating every Agent tool as a plan", async () => {
+    const events = createEvents();
+    const call = vi.fn<ToolCatalogPort["call"]>(() =>
+      Promise.resolve({
+        content: [{ type: "text", text: "skill-result" }],
+        isError: false,
+        toolEffectState: "none",
+        runtimeCallStopped: true,
+      }),
+    );
+    const complete = vi
+      .fn<ModelPort["complete"]>()
+      .mockResolvedValueOnce({
+        kind: "tool_calls",
+        content: [],
+        calls: [{ id: "find", name: "find_skill", arguments: { query: "procedure" } }],
+        usage: {},
+      })
+      .mockResolvedValueOnce({
+        kind: "message",
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: {},
+      });
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call },
+      events: events.port,
+      catalog: [
+        {
+          source: "agent",
+          sourceId: "skill_registry",
+          name: "find_skill",
+          modelName: "find_skill",
+          description: "Find Skill",
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    expect(
+      await runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot,
+        context: [],
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).toMatchObject({ terminalClass: "completed", toolEffectState: "none" });
+    expect(call).toHaveBeenCalledOnce();
+    expect(events.updatePlan).not.toHaveBeenCalled();
+    expect(events.toolStarted).toHaveBeenCalledOnce();
+    expect(events.toolFinished).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[1]?.[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          content: [{ type: "text", text: "skill-result" }],
+        }),
+      ]),
+    );
+  });
   it("keeps model reasoning when retrying a rejected tool call", async () => {
     const thought = [{ type: "text", text: "inspect before executing" }];
     const complete = vi
@@ -1203,6 +1265,7 @@ function run(runner: TurnRunner) {
 }
 
 function createEvents() {
+  const updatePlan = vi.fn<RunEventPort["updatePlan"]>(() => Promise.resolve(true));
   const toolProgress = vi.fn<RunEventPort["toolProgress"]>(() => Promise.resolve());
   const toolStarted = vi.fn<RunEventPort["toolStarted"]>(() => Promise.resolve());
   const toolRejected = vi.fn<RunEventPort["toolRejected"]>(() => Promise.resolve());
@@ -1211,7 +1274,7 @@ function createEvents() {
   const agentThought = vi.fn<RunEventPort["agentThought"]>(() => Promise.resolve());
   const usage = vi.fn<RunEventPort["usage"]>(() => Promise.resolve());
   const port: RunEventPort = {
-    updatePlan: vi.fn(() => Promise.resolve(true)),
+    updatePlan,
     toolProgress,
     toolStarted,
     toolRejected,
@@ -1222,6 +1285,7 @@ function createEvents() {
   };
   return {
     port,
+    updatePlan,
     toolProgress,
     toolStarted,
     toolRejected,

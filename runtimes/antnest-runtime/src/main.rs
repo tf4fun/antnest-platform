@@ -29,6 +29,30 @@ mod progress;
 mod progress_tests;
 mod protocol;
 mod roots;
+mod skill_candidate;
+mod skill_maintenance_auth;
+#[cfg(test)]
+mod skill_maintenance_auth_tests;
+mod skill_maintenance_request;
+#[cfg(test)]
+mod skill_maintenance_request_tests;
+mod skill_maintenance_state;
+mod skill_package_manifest;
+#[cfg(test)]
+mod skill_package_manifest_tests;
+mod skill_package_zip;
+#[cfg(test)]
+mod skill_package_zip_tests;
+mod skill_temporary;
+mod skill_temporary_http;
+#[cfg(test)]
+mod skill_temporary_http_tests;
+mod skill_temporary_request;
+#[cfg(test)]
+mod skill_temporary_request_tests;
+mod skill_temporary_state;
+#[cfg(test)]
+mod skill_temporary_tests;
 mod spec;
 #[cfg(target_os = "linux")]
 mod startup;
@@ -66,6 +90,10 @@ fn main() {
             }
         }
         command::Command::Tool(tool) => {
+            if tool.is_private_maintenance() && !nix::unistd::geteuid().is_root() {
+                eprintln!("private maintenance requires the trusted Runtime parent");
+                std::process::exit(77);
+            }
             if let Err(error) = executor::run(tool) {
                 eprintln!("{error}");
                 std::process::exit(70);
@@ -550,6 +578,17 @@ async fn serve_runtime(
         metrics.clone(),
         service_shutdown.clone(),
     );
+    actor
+        .clean_temporary_before_ready()
+        .await
+        .map_err(|error| {
+            runtime_failure(
+                identity.clone(),
+                "skill.temporary.cleanup",
+                RuntimeErrorCode::TemporaryCleanupFailed,
+                error.message,
+            )
+        })?;
     actor.probe().await.map_err(|error| {
         runtime_failure(
             identity.clone(),
@@ -586,7 +625,13 @@ async fn serve_runtime(
         }
     };
     let status = mcp::RuntimeStatus::new(spec.identity().clone());
-    let http = mcp::RuntimeHttp::new(status, actor.clone(), metrics.clone(), managed.catalog());
+    let http = mcp::RuntimeHttp::new(
+        status,
+        actor.clone(),
+        metrics.clone(),
+        managed.catalog(),
+        spec.maintenance_verifiers().to_vec(),
+    );
     tracing::info!(
         listen = %spec.listen(),
         "antnest.agent.id" = spec.identity().agent_id(),
@@ -627,6 +672,13 @@ async fn serve_runtime(
             component: "managed_mcp",
             error_type: error.code,
             message: error.to_string(),
+        });
+    }
+    if let Err(error) = actor.clean_temporary_after_drain().await {
+        stop_failures.push(ServiceFailure {
+            component: "skill.temporary.cleanup",
+            error_type: RuntimeErrorCode::TemporaryCleanupFailed,
+            message: error.message,
         });
     }
     match exit {

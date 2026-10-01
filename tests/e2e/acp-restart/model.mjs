@@ -65,7 +65,7 @@ export function decide(payload) {
       name: "bash",
       arguments: {
         command,
-        working_dir: { root: "workspace", path: "." },
+        working_dir: ".",
         timeout_ms: kind === "inflight" && stage === "fault" ? 120000 : 10000,
       },
     },

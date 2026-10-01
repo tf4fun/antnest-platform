@@ -39,6 +39,70 @@ function fixture(t) {
       ),
   };
 }
+
+for (const [label, executable, args] of [
+  ["node explicit stdin", process.execPath, ["--input-type=module", "-"]],
+  [
+    "node separated input type",
+    process.execPath,
+    ["--input-type", "module", "-"],
+  ],
+  ["python explicit stdin", "python3", ["-B", "-"]],
+])
+  test(`command runner rejects ignored script input: ${label}`, (t) => {
+    const f = fixture(t);
+    const result = spawnSync(
+      process.execPath,
+      [
+        runner,
+        "--output",
+        f.output,
+        "--name",
+        "probe",
+        "--",
+        executable,
+        ...args,
+      ],
+      {
+        encoding: "utf8",
+        input:
+          'throw new Error("stdin must not become empty successful evidence");',
+        timeout: 10000,
+      },
+    );
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /stdin script.*not supported/u);
+    assert(!existsSync(join(f.output, "probe.log")));
+    assert(!existsSync(join(f.output, "probe.result.json")));
+  });
+
+test("dash arguments after inline code still execute and preserve failures", (t) => {
+  const f = fixture(t);
+  const result = spawnSync(
+    process.execPath,
+    [
+      runner,
+      "--output",
+      f.output,
+      "--name",
+      "probe",
+      "--",
+      process.execPath,
+      "-e",
+      "console.log(process.argv[1]);process.exit(9)",
+      "-",
+    ],
+    { encoding: "utf8", timeout: 10000 },
+  );
+  assert.equal(result.status, 9, result.stderr);
+  assert.equal(readFileSync(join(f.output, "probe.log"), "utf8").trim(), "-");
+  assert.equal(
+    JSON.parse(readFileSync(join(f.output, "probe.result.json"), "utf8"))
+      .exit_code,
+    9,
+  );
+});
+
 test("command runner preserves failures and keeps raw output private", (t) => {
   const f = fixture(t);
   const result = f.run('console.log("private-command-output");process.exit(7)');

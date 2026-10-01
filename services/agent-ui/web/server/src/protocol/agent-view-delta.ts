@@ -1,5 +1,6 @@
 // Browser-safe workspace DTO validation and patching. No Node or ACP runtime imports.
 import { z } from "zod";
+import { learningStatusSchema } from "./learning-status.ts";
 import { availableCommandsSchema } from "./available-commands.ts";
 
 const id = z.string().min(1).max(200);
@@ -51,12 +52,27 @@ const session = z.strictObject({ agentId: id, sessionId: id, title: z.string().m
   .refine((value) => new Set(value.turns.map((item) => item.turnId)).size === value.turns.length &&
     value.operations.every((item) => item.sessionId === value.sessionId) &&
     value.permissions.every((item) => item.sessionId === value.sessionId));
+const systemNotice = z.strictObject({
+  changeId: id,
+  sequence: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  agentId: id,
+  kind: z.enum(["skill_created", "skill_updated"]),
+  occurredAt: z.string().min(20).max(40),
+  skillName: z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  changeSummary: z.string().min(1).max(2048),
+  sourceSessionId: id.optional(),
+  sourceRunId: id.optional(),
+});
 const agent = z.strictObject({ agentId: id, bridgeEpoch: id, availability: z.enum(["ready", "busy", "offline"]),
   controlCommands: availableCommandsSchema.optional(),
+  skillCommands: availableCommandsSchema.optional(),
   promptCapabilities: z.strictObject({ image: z.boolean().optional(), audio: z.boolean().optional(), embeddedContext: z.boolean().optional() }),
   activeSessionId: id.nullable(), selectedSessionId: id.nullable(), selectedView: session.nullable(),
   operations: z.array(operation), permissions: z.array(permission), streamCursor: cursor,
-}).refine((value) => value.selectedSessionId === null ? value.selectedView === null :
+  learningStatus: learningStatusSchema.nullable().optional(),
+  systemNotices: z.array(systemNotice).max(20).optional(),
+}).refine((value) => value.learningStatus == null || value.learningStatus.agentId === value.agentId)
+.refine((value) => value.selectedSessionId === null ? value.selectedView === null :
   value.selectedView?.sessionId === value.selectedSessionId && value.selectedView?.agentId === value.agentId &&
   value.selectedView?.bridgeEpoch === value.bridgeEpoch);
 
@@ -64,7 +80,7 @@ export type AgentView = z.infer<typeof agent>;
 export type Patch = { op: "add" | "replace"; path: string; value: unknown } | { op: "remove"; path: string };
 export type DeltaBody = { type: "delta"; sessionId: string | null; incarnation: string | null;
   fromSessionViewRevision: number | null; sessionViewRevision: number | null; patch: Patch[] };
-const agentFields = new Set(["availability", "activeSessionId", "promptCapabilities", "operations", "permissions", "controlCommands"]);
+const agentFields = new Set(["availability", "activeSessionId", "promptCapabilities", "operations", "permissions", "controlCommands", "skillCommands", "systemNotices", "learningStatus"]);
 const sessionFields = new Set(["title", "updatedAt", "viewRevision", "appendVersion", "outputWatermark", "historyToken",
   "historyState", "turns", "olderTurnsCursor", "operations", "permissions", "configOptions", "configurationToken", "usage", "availableCommands"]);
 const forbidden = new Set(["__proto__", "constructor", "prototype"]);

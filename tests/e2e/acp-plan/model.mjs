@@ -52,7 +52,7 @@ export function stepsFor(phase) {
         {
           name: "write",
           arguments: {
-            path: { root: "workspace", path: `${phase}.txt` },
+            path: `${phase}.txt`,
             content,
           },
           result: JSON.stringify({

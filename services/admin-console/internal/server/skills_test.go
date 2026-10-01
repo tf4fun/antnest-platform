@@ -30,6 +30,7 @@ type skillStub struct {
 	body        string
 	contentType string
 	digest      string
+	headers     http.Header
 }
 
 func (stub *skillStub) Do(_ context.Context, method, path, query, contentType string, body []byte) (*http.Response, error) {
@@ -42,7 +43,11 @@ func (stub *skillStub) Do(_ context.Context, method, path, query, contentType st
 	if media == "" {
 		media = "application/json"
 	}
-	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{media}, "X-Antnest-Artifact-Digest": []string{stub.digest}}, Body: io.NopCloser(strings.NewReader(stub.body))}, nil
+	headers := http.Header{"Content-Type": []string{media}, "X-Antnest-Artifact-Digest": []string{stub.digest}}
+	for key, values := range stub.headers {
+		headers[key] = append([]string(nil), values...)
+	}
+	return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader(stub.body))}, nil
 }
 
 func skillHandler(t *testing.T, stub *skillStub) http.Handler {
@@ -92,6 +97,24 @@ func TestSkillListScopesAndProjectsRegistryResponse(t *testing.T) {
 		if w.Code != 400 || len(stub.calls) != 1 {
 			t.Fatalf("path=%s status=%d calls=%d", path, w.Code, len(stub.calls))
 		}
+	}
+}
+
+func TestSkillRegistryTerminalCursorsBecomeBrowserNull(t *testing.T) {
+	for _, scenario := range []struct{ path, body, cursor string }{
+		{"/api/admin/skills", `{"items":[],"next_after_id":""}`, "next_after_id"},
+		{"/api/admin/skills/skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/versions", `{"items":[{"skill_id":"skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":1,"name":"review","description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1}],"next_after_version":0}`, "next_after_version"},
+	} {
+		t.Run(scenario.cursor, func(t *testing.T) {
+			stub := &skillStub{body: scenario.body}
+			w := httptest.NewRecorder()
+			skillHandler(t, stub).ServeHTTP(w, skillRequest("GET", scenario.path, nil, "", ""))
+			var page map[string]any
+			decodeBytes(t, w.Body.Bytes(), &page)
+			if w.Code != 200 || page[scenario.cursor] != nil {
+				t.Fatalf("status=%d page=%v", w.Code, page)
+			}
+		})
 	}
 }
 

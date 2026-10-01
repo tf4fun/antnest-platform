@@ -16,12 +16,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"soft/antnest-platform/services/skill-registry/internal/registry"
+	"soft/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
 type config struct {
 	listenAddress string
 	databaseURL   string
 	apiToken      string
+	sourceURL     string
+	sourceToken   string
 }
 
 func loadConfig(lookup func(string) string) (config, error) {
@@ -29,6 +32,8 @@ func loadConfig(lookup func(string) string) (config, error) {
 		listenAddress: strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_LISTEN")),
 		databaseURL:   strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_DATABASE_URL")),
 		apiToken:      lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN"),
+		sourceURL:     strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_SOURCE_URL")),
+		sourceToken:   lookup("ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN"),
 	}
 	if value.listenAddress == "" {
 		value.listenAddress = ":8080"
@@ -41,6 +46,11 @@ func loadConfig(lookup func(string) string) (config, error) {
 	}
 	if len(value.apiToken) < 32 || strings.TrimSpace(value.apiToken) != value.apiToken {
 		return config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN must be at least 32 non-whitespace bytes")
+	}
+	if value.sourceURL != "" || value.sourceToken != "" {
+		if _, err := registry.NewHTTPAgentSource(value.sourceURL, value.sourceToken); err != nil {
+			return config{}, fmt.Errorf("invalid Registry source-reader configuration")
+		}
 	}
 	return value, nil
 }
@@ -87,6 +97,15 @@ func run(ctx context.Context, lookup func(string) string) error {
 	if err != nil {
 		return err
 	}
+	observability, err := telemetry.Setup(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := observability.Shutdown(context.Background()); err != nil {
+			slog.Error("Registry telemetry shutdown failed", "error_class", "export_error")
+		}
+	}()
 	poolConfig, err := pgxpool.ParseConfig(cfg.databaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid Registry database configuration")
@@ -107,8 +126,18 @@ func run(ctx context.Context, lookup func(string) string) error {
 	if err != nil {
 		return fmt.Errorf("registry listener failed: %w", err)
 	}
+	store := registry.NewPostgresStore(pool)
+	service := registry.NewService(store)
+	var source registry.AgentSkillSource
+	if cfg.sourceURL != "" {
+		source, err = registry.NewHTTPAgentSource(cfg.sourceURL, cfg.sourceToken)
+		if err != nil {
+			return err
+		}
+	}
+	discovery := registry.NewDiscovery(service, store, source)
 	server := &http.Server{
-		Handler:           registry.NewHandler(registry.NewService(registry.NewPostgresStore(pool)), cfg.apiToken, pool.Ping),
+		Handler:           registry.NewHandler(service, cfg.apiToken, pool.Ping, discovery),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      45 * time.Second,

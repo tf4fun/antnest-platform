@@ -32,6 +32,7 @@ type PublishRecord struct {
 	NewSkillID  string
 	Fingerprint string
 	Package     Package
+	Provenance  *SourceProvenance
 }
 
 type Version struct {

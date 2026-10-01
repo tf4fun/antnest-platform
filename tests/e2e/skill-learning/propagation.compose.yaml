@@ -1,0 +1,7 @@
+services:
+  admin-console:
+    image: ${ANTNEST_E2E_PROPAGATION_CONSOLE_IMAGE:?}
+  runtime-controller:
+    image: ${ANTNEST_E2E_PROPAGATION_RC_IMAGE:?}
+    environment:
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${ANTNEST_E2E_PROPAGATION_RC_IMAGE:?}

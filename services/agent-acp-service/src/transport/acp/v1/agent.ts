@@ -10,6 +10,8 @@ import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { DomainError } from "../../../domain/errors.js";
 import { availableCommands } from "../../../domain/slash-commands.js";
+import type { SkillCommand } from "../../../domain/skill-commands.js";
+import type { SkillCommandsPort } from "../../../ports/skill-commands.js";
 import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
 import type {
@@ -19,6 +21,8 @@ import type {
   SessionEvent,
 } from "../../../ports/acp-application.js";
 import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
+import type { LearningNoticePublisher } from "../../../application/learning-notice-publisher.js";
+import type { LearningChangeItem } from "../../../adapters/postgres/learning-change-read.js";
 
 export type CreateAcpV1AgentInput = {
   binding: ConnectionBinding;
@@ -26,6 +30,8 @@ export type CreateAcpV1AgentInput = {
   application: AcpApplicationPort;
   outputs?: SessionOutputStreams;
   permissions?: PermissionConnectionsPort;
+  notices?: Pick<LearningNoticePublisher, "subscribe">;
+  skillCommands?: SkillCommandsPort;
 };
 
 export function createAcpV1Agent({
@@ -34,11 +40,38 @@ export function createAcpV1Agent({
   application,
   outputs = new SessionOutputStreams(),
   permissions,
+  notices,
+  skillCommands,
 }: CreateAcpV1AgentInput): acp.AgentApp {
   const dispatch = createAcpDispatcher("v1", binding);
   let initialized = false;
   let bridgeDelivery = false;
+  let bridgeLearningNotices = false;
+  let noticeSubscription: ReturnType<LearningNoticePublisher["subscribe"]> | undefined;
   let connection: acp.AgentConnection;
+  let skills: SkillCommand[] = [];
+  let skillExecutionId: string | null = null;
+  const commandCatalog = () => [...availableCommands(), ...skills];
+  const refreshSkills = async (signal?: AbortSignal) => {
+    if (skillCommands === undefined) return;
+    try {
+      const result = await skillCommands.read(
+        binding,
+        AbortSignal.any([signal ?? connection.signal, AbortSignal.timeout(1500)]),
+      );
+      if (result.executionId !== skillExecutionId) skills = [];
+      skillExecutionId = result.executionId;
+      if (result.commands !== null) skills = result.commands;
+    } catch {
+      skills = [];
+      skillExecutionId = null;
+    }
+  };
+  const notifyCommands = (sessionId: string) =>
+    connection.client.notify(acp.methods.client.session.update, {
+      sessionId,
+      update: { sessionUpdate: "available_commands_update", availableCommands: commandCatalog() },
+    });
   const attach = async (
     sessionId: string,
     afterSequence?: number,
@@ -66,11 +99,11 @@ export function createAcpV1Agent({
       send: (event) =>
         !bridgeDelivery && event.kind === "user_message" && event.messageId === skipMessageId
           ? Promise.resolve()
-          : replay(connection.client, sessionId, [event], bridgeDelivery),
+          : replay(connection.client, sessionId, [event], bridgeDelivery, commandCatalog),
       ...(bridgeDelivery
         ? {
             checkpoint: (sequence: number) =>
-              deliveryCheckpoint(connection.client, sessionId, sequence),
+              deliveryCheckpoint(connection.client, sessionId, sequence, commandCatalog()),
           }
         : {}),
       onFailure: (error) => connection.close(error),
@@ -78,6 +111,9 @@ export function createAcpV1Agent({
       waitForDelivery,
     });
     if (!attached) return;
+    if (noticeSubscription !== undefined) {
+      void noticeSubscription.attach(sessionId).catch(() => undefined);
+    }
     permissions?.attach({
       binding,
       sessionId,
@@ -99,13 +135,8 @@ export function createAcpV1Agent({
     const result = v1Configuration(
       await mapError(() => application.getSessionConfiguration({ binding, sessionId })),
     );
-    await connection.client.notify(acp.methods.client.session.update, {
-      sessionId,
-      update: {
-        sessionUpdate: "available_commands_update",
-        availableCommands: availableCommands(),
-      },
-    });
+    await refreshSkills();
+    await notifyCommands(sessionId);
     return result;
   };
   const setConfiguration = async (
@@ -134,10 +165,13 @@ export function createAcpV1Agent({
     .agent({ name: "antnest-agent-acp-service-v1" })
     .onConnect((opened) => {
       connection = opened;
-      void opened.closed.then(() => outputs.disconnect(binding.connectionId));
+      void opened.closed.then(() => {
+        outputs.disconnect(binding.connectionId);
+        noticeSubscription?.disconnect();
+      });
     })
-    .onRequest(acp.methods.agent.initialize, ({ params, requestId }) => {
-      return dispatch("initialize", params, requestId, () => {
+    .onRequest(acp.methods.agent.initialize, ({ params, requestId, signal }) => {
+      return dispatch("initialize", params, requestId, async () => {
         if (initialized) {
           throw acp.RequestError.invalidRequest(
             undefined,
@@ -146,6 +180,28 @@ export function createAcpV1Agent({
         }
         initialized = true;
         bridgeDelivery = bridgeRequested(params._meta);
+        bridgeLearningNotices =
+          bridgeDelivery &&
+          notices !== undefined &&
+          params.clientCapabilities?.session?.notices != null &&
+          bridgeLearningRequested(params._meta);
+        if (params.clientCapabilities?.session?.notices != null && notices !== undefined) {
+          noticeSubscription = notices.subscribe(
+            binding,
+            async (sessionId, item) => {
+              await connection.client.notify(acp.methods.client.session.update, {
+                sessionId,
+                update: learningNotice(item),
+              });
+              if (skillCommands !== undefined) {
+                await refreshSkills();
+                await notifyCommands(sessionId);
+              }
+            },
+            (error) => connection.close(error),
+          );
+        }
+        await refreshSkills(signal);
         return {
           protocolVersion: acp.PROTOCOL_VERSION,
           agentInfo: {
@@ -169,15 +225,23 @@ export function createAcpV1Agent({
               close: {},
             },
           },
-          ...(bridgeDelivery
+          ...(bridgeDelivery || skillCommands !== undefined
             ? {
                 _meta: {
-                  "antnest.dev/bridge": {
-                    intentReceipt: 1,
-                    targetCancel: 1,
-                    deliveryMark: 1,
-                    configurationCas: 1,
-                  },
+                  ...(skillCommands === undefined
+                    ? {}
+                    : { "antnest.dev/skill-commands": { version: 1, commands: skills } }),
+                  ...(bridgeDelivery
+                    ? {
+                        "antnest.dev/bridge": {
+                          intentReceipt: 1,
+                          targetCancel: 1,
+                          deliveryMark: 1,
+                          configurationCas: 1,
+                          ...(bridgeLearningNotices ? { learningNotices: 1 } : {}),
+                        },
+                      }
+                    : {}),
                 },
               }
             : {}),
@@ -203,8 +267,9 @@ export function createAcpV1Agent({
       return dispatch("session/load", params, requestId, async () => {
         requireInitialized(initialized, "session/load");
         const result = await resume(application, binding, params, true, bridgeDelivery);
-        await replay(client, params.sessionId, result.replay, bridgeDelivery);
-        if (bridgeDelivery) await deliveryCheckpoint(client, params.sessionId, result.sequence);
+        await replay(client, params.sessionId, result.replay, bridgeDelivery, commandCatalog);
+        if (bridgeDelivery)
+          await deliveryCheckpoint(client, params.sessionId, result.sequence, commandCatalog());
         await attach(params.sessionId, result.sequence);
         const setup = await sessionSetup(params.sessionId);
         if (!bridgeDelivery) return setup;
@@ -249,6 +314,7 @@ export function createAcpV1Agent({
         requireInitialized(initialized, "session/delete");
         await mapError(() => application.deleteSession({ binding, sessionId: params.sessionId }));
         outputs.detach(sessionOutputKey(binding, params.sessionId));
+        noticeSubscription?.detach(params.sessionId);
         permissions?.detach(params.sessionId);
         return {};
       });
@@ -306,6 +372,7 @@ export function createAcpV1Agent({
         outputs.invalidate(key);
         await outputs.flush(key);
         outputs.detach(key);
+        noticeSubscription?.detach(params.sessionId);
         permissions?.detach(params.sessionId);
         return {};
       });
@@ -351,6 +418,10 @@ export function createAcpV1Agent({
           observing = true;
           outputs.invalidate(key);
           await outputs.flush(key, binding.connectionId);
+          if (skillCommands !== undefined) {
+            await refreshSkills();
+            await notifyCommands(params.sessionId);
+          }
         }
       });
     })
@@ -401,11 +472,12 @@ async function replay(
   sessionId: string,
   events: readonly DeliveredSessionEvent[],
   includeDelivery = false,
+  commands = availableCommands,
 ): Promise<void> {
   for (const event of events) {
     const updates = toAcpUpdates(event);
     if (includeDelivery && event.delivery !== undefined && updates.length === 0)
-      await deliveryCheckpoint(client, sessionId, event.delivery.sequence);
+      await deliveryCheckpoint(client, sessionId, event.delivery.sequence, commands());
     for (const [partIndex, update] of updates.entries()) {
       await client.notify(acp.methods.client.session.update, {
         sessionId,
@@ -440,14 +512,51 @@ function bridgeRequested(meta: Record<string, unknown> | null | undefined): bool
   );
 }
 
+function bridgeLearningRequested(meta: Record<string, unknown> | null | undefined): boolean {
+  const value = meta?.["antnest.dev/bridge"];
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    (value as Record<string, unknown>).learningNotices === 1
+  );
+}
+
+function learningNotice(item: LearningChangeItem) {
+  return {
+    sessionUpdate: "notice" as const,
+    severity: "info" as const,
+    title: item.changeSummary,
+    description: "Skill 学习结果已保存。",
+    _meta: {
+      "antnest.dev/skill-learning": {
+        version: 1,
+        changeId: item.changeId,
+        sequence: item.sequence,
+        agentId: item.agentId,
+        kind: item.kind,
+        occurredAt: item.occurredAt,
+        skillName: item.skillName,
+        changeSummary: item.changeSummary,
+        ...(item.sourceSessionId === undefined ? {} : { sourceSessionId: item.sourceSessionId }),
+        ...(item.sourceRunId === undefined ? {} : { sourceRunId: item.sourceRunId }),
+      },
+    },
+  };
+}
+
 function deliveryCheckpoint(
   client: acp.AgentContext,
   sessionId: string,
   sequence: number,
+  commands: Array<{
+    name: string;
+    description: string;
+    input?: { hint: string };
+  }> = availableCommands(),
 ): Promise<void> {
   return client.notify(acp.methods.client.session.update, {
     sessionId,
-    update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands() },
+    update: { sessionUpdate: "available_commands_update", availableCommands: commands },
     _meta: { "antnest.dev/delivery": { kind: "checkpoint", sequence } },
   });
 }

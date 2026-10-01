@@ -19,11 +19,12 @@ stores facts, not Tool classification rules. No new table or RPC is needed.
 | `rawOutput` | Actual MCP `structuredContent`, as in Goose                                              | Independent of display content; absent for text-only results, transport errors and recovery-generated endings.                 |
 | `content`   | Bounded output/previews plus separate standard diff from complete Runtime file facts     | Previews never become final results. File facts never become model context.                                                    |
 
-Runtime roots are configurable. Do not use the ACP Session's logical cwd or
-hardcode `/workspace` or `/skills`. This batch carries the already-read Runtime
-workspace to initial presentation without another RPC. Initial system Skill
-locations are omitted because Runtime information does not expose that absolute
-root; their named-root target can still appear in the title. Initial paths with
+Runtime roots are configurable. Builtin inputs now use string paths: relative,
+`~/`, and the `/workspace/` tool alias resolve beneath the already-read Runtime
+workspace for initial presentation, without another RPC. The alias is not a
+guessed physical mount or the ACP Session's cwd. Initial System Skill locations
+are omitted because Runtime information does not expose that physical root;
+the `/skills/` tool alias can still appear in the title. Initial paths with
 leading/trailing whitespace also omit locations rather than guessing Runtime
 normalization. A valid final observation supplies the actual absolute path,
 including system Skill locations and meaningful whitespace. Arguments remain

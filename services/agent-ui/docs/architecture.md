@@ -43,6 +43,21 @@ previous readable view.
 5. A Run remains in ACP after the browser closes or Node restarts. Re-entering
    the workspace reloads its view and any pending permission request.
 
+The [Skill learning system notices](../../../docs/skill-learning-notifications-design.md)
+use SDK 1.5.0's `notice` for live delivery from ACP, then reuse this HTTP/SSE
+browser path. ACP persists learning changes before publishing; Node advertises
+notice support, handles it independently of cached Session transcripts,
+deduplicates by namespaced change identity and reconciles bounded records after
+gaps. FE restores the separate system-notice field from Agent View snapshots/
+deltas. These are not model messages, Run process entries or ACP delivery marks.
+There is no notification long-poll, second browser stream or notification service.
+Paused-review diagnostics use the existing Agent View endpoint only when the
+user opens learning results; ordinary View and stream refreshes do not query
+them. Backend, 144 frontend component tests, five browser integration tests and
+two real Docker-stack browser gates pass. Development follows existing styles;
+visual refinements follow during human acceptance, as recorded in the
+[learning audit](../../../docs/skill-learning-acceptance-audit-20260930.md).
+
 The Node connection to ACP uses the official SDK over its internal HTTP
 transport. The standard ACP WebSocket endpoint can still serve other clients;
 it is outside the Agent UI browser path.

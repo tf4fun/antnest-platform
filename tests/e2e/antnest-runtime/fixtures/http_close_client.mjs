@@ -27,11 +27,8 @@ for (const failed of [false, false, false, true]) {
     const result = await client.callTool({
       name: "read",
       arguments: {
-        path: {
-          root: "workspace",
-          path: failed ? "missing-file" : "read-me.txt",
-        },
-        offset: 0,
+        path: failed ? "missing-file" : "read-me.txt",
+        offset: 1,
         limit: 128,
       },
     });

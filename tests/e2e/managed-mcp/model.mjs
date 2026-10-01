@@ -59,7 +59,7 @@ export function complete(payload) {
   }
   const write = (path, content) => ({
     name: "write",
-    arguments: { path: { root: "workspace", path }, content },
+    arguments: { path: path, content },
   });
   const plans = {
     "managed-bootstrap": [

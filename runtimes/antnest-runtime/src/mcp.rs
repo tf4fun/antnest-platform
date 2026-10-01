@@ -3,16 +3,19 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{
     Json, Router,
-    body::{Body, Bytes},
-    extract::{DefaultBodyLimit, Request, State},
-    http::{Method, StatusCode},
+    body::{Body, Bytes, to_bytes},
+    extract::{DefaultBodyLimit, Path, Request, State},
+    http::{
+        Method, StatusCode,
+        header::{AUTHORIZATION, CONTENT_TYPE},
+    },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use rmcp::{
@@ -49,7 +52,11 @@ use crate::protocol::types::{
 };
 #[cfg(test)]
 use crate::roots::NamedRoots;
-use crate::spec::RuntimeIdentity;
+use crate::skill_maintenance_auth::verify_maintenance_ticket;
+use crate::skill_maintenance_request::{
+    ControlRequest, parse_control_request, parse_prepare_request,
+};
+use crate::spec::{RuntimeIdentity, SkillMaintenanceVerifier};
 use crate::telemetry::RuntimeMetrics;
 use crate::tool_error::{ToolEffectState, ToolError, ToolErrorCode};
 #[cfg(test)]
@@ -57,6 +64,7 @@ use crate::tools::ToolEngine;
 
 pub(crate) const STATUS_PATH: &str = "/status";
 pub(crate) const MCP_PATH: &str = "/mcp";
+pub(crate) const MAINTENANCE_ROUTE: &str = "/internal/skill-maintenance/{action}";
 pub(crate) const EXPECTED_EXECUTION_HEADER: &str = "X-Antnest-Expected-Execution-ID";
 #[cfg(test)]
 const TOOL_NAMES: [&str; 4] = ["bash", "edit", "read", "write"];
@@ -100,7 +108,11 @@ impl RuntimeStatus {
         }
     }
 
-    fn identity(&self) -> RuntimeIdentity {
+    pub(crate) fn execution_id(&self) -> &str {
+        &self.execution_id
+    }
+
+    pub(crate) fn identity(&self) -> RuntimeIdentity {
         RuntimeIdentity::new(self.agent_id.clone(), self.generation)
             .expect("RuntimeStatus originates from a valid Runtime identity")
     }
@@ -111,6 +123,7 @@ pub(crate) struct RuntimeHttp {
     tools: ToolBackend,
     metrics: RuntimeMetrics,
     managed: Catalog,
+    maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
 }
 
 impl RuntimeHttp {
@@ -119,12 +132,14 @@ impl RuntimeHttp {
         actor: ExecutionActor,
         metrics: RuntimeMetrics,
         managed: Catalog,
+        maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
     ) -> Self {
         Self {
             status,
             tools: ToolBackend::Process(actor),
             metrics,
             managed,
+            maintenance_verifiers,
         }
     }
 
@@ -135,6 +150,7 @@ impl RuntimeHttp {
             tools: ToolBackend::InProcess(ToolEngine::new(roots)),
             metrics: RuntimeMetrics::default(),
             managed: Catalog::default(),
+            maintenance_verifiers: Vec::new(),
         }
     }
 
@@ -154,6 +170,11 @@ impl RuntimeHttp {
         listener: tokio::net::TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), std::io::Error> {
+        let maintenance_actor = match &self.tools {
+            ToolBackend::Process(actor) => Some(actor.clone()),
+            #[cfg(test)]
+            ToolBackend::InProcess(_) => None,
+        };
         let tools = RuntimeToolServer::new(
             self.tools,
             self.status.clone(),
@@ -172,6 +193,16 @@ impl RuntimeHttp {
                     .with_cancellation_token(shutdown.child_token()),
             );
         let status = self.status.clone();
+        let temporary = crate::skill_temporary_http::temporary_skill_router(
+            self.status.clone(),
+            self.maintenance_verifiers.clone(),
+            maintenance_actor.clone(),
+        );
+        let maintenance = skill_maintenance_router_with_actor(
+            self.status.clone(),
+            self.maintenance_verifiers.clone(),
+            maintenance_actor,
+        );
         let state = HttpState {
             status: self.status,
             metrics: self.metrics,
@@ -184,12 +215,327 @@ impl RuntimeHttp {
                 get(move || status_response(status.clone(), health.clone())),
             )
             .nest_service(MCP_PATH, service)
+            .merge(maintenance)
+            .merge(temporary)
             .layer(DefaultBodyLimit::max(MAX_EXECUTOR_MESSAGE_BYTES))
             .layer(middleware::from_fn_with_state(state, trace_http_request));
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown.cancelled_owned())
             .await
     }
+}
+
+#[derive(Clone)]
+struct MaintenanceState {
+    status: RuntimeStatus,
+    verifiers: Vec<SkillMaintenanceVerifier>,
+    actor: Option<ExecutionActor>,
+}
+
+#[cfg(test)]
+pub(crate) fn skill_maintenance_router(
+    status: RuntimeStatus,
+    verifiers: Vec<SkillMaintenanceVerifier>,
+) -> Router {
+    skill_maintenance_router_with_actor(status, verifiers, None)
+}
+
+fn skill_maintenance_router_with_actor(
+    status: RuntimeStatus,
+    verifiers: Vec<SkillMaintenanceVerifier>,
+    actor: Option<ExecutionActor>,
+) -> Router {
+    Router::new()
+        .route(MAINTENANCE_ROUTE, post(maintenance_request))
+        .with_state(MaintenanceState {
+            status,
+            verifiers,
+            actor,
+        })
+}
+
+#[expect(
+    clippy::needless_return,
+    reason = "each authenticated action exits from its branch"
+)]
+async fn maintenance_request(
+    State(state): State<MaintenanceState>,
+    Path(action): Path<String>,
+    request: Request,
+) -> Response {
+    if !matches!(
+        action.as_str(),
+        "prepare" | "check" | "commit" | "observe" | "cancel" | "release"
+    ) {
+        return maintenance_error(StatusCode::NOT_FOUND, "unknown_action");
+    }
+    if state.verifiers.is_empty() {
+        return maintenance_error(StatusCode::FORBIDDEN, "maintenance_disabled");
+    }
+    let mut authorization_headers = request.headers().get_all(AUTHORIZATION).iter();
+    let authorization = match (authorization_headers.next(), authorization_headers.next()) {
+        (Some(header), None) => header.to_str().unwrap_or("").to_owned(),
+        _ => return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized"),
+    };
+    let content_type = request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|header| header.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    if authorization.is_empty() {
+        return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized");
+    }
+    if let Some(reason) = execution_fence_error(request.headers(), &state.status) {
+        return execution_fence_response(reason);
+    }
+    let limit = if action == "prepare" {
+        8 * 1024 * 1024 + 8 * 1024
+    } else {
+        16 * 1024
+    };
+    let body = match to_bytes(request.into_body(), limit).await {
+        Ok(bytes) => bytes,
+        Err(_) => return maintenance_error(StatusCode::PAYLOAD_TOO_LARGE, "body_too_large"),
+    };
+    let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(_) => return maintenance_error(StatusCode::SERVICE_UNAVAILABLE, "clock_unavailable"),
+    };
+    let ticket = match verify_maintenance_ticket(
+        &authorization,
+        &body,
+        &action,
+        &state.status.identity(),
+        &state.status.execution_id,
+        &state.verifiers,
+        now,
+    ) {
+        Ok(ticket) => ticket,
+        Err(_) => return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized"),
+    };
+    if action == "prepare" {
+        match parse_prepare_request(&content_type, body, &ticket).await {
+            Ok(candidate) => {
+                let Some(actor) = &state.actor else {
+                    return maintenance_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "maintenance_unavailable",
+                    );
+                };
+                let result = actor
+                    .prepare_skill_candidate(candidate.into_executor_request(&ticket))
+                    .await;
+                return match result {
+                    Ok(prepared) => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "prepare",
+                        "execution_id": state.status.execution_id,
+                        "outcome": "prepared",
+                        "observed_digest": prepared.observed_digest,
+                        "storage_key": prepared.candidate_key,
+                    }))
+                    .into_response(),
+                    Err(error) => maintenance_tool_error(error),
+                };
+            }
+            Err("request_conflict") => {
+                return maintenance_error(StatusCode::CONFLICT, "request_conflict");
+            }
+            Err("limit_exceeded") => {
+                return maintenance_error(StatusCode::PAYLOAD_TOO_LARGE, "limit_exceeded");
+            }
+            Err(_) => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
+        }
+    } else {
+        if content_type != "application/json" {
+            return maintenance_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_content_type");
+        }
+        match parse_control_request(&action, &body, &ticket) {
+            Ok(ControlRequest::Check(check)) => {
+                let Some(actor) = &state.actor else {
+                    return maintenance_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "maintenance_unavailable",
+                    );
+                };
+                let result = actor
+                    .check_skill_candidate(check.into_executor_request(&ticket))
+                    .await;
+                return match result {
+                    Ok(checked) => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "check",
+                        "execution_id": state.status.execution_id,
+                        "outcome": "checked",
+                        "observed_digest": checked.observed_digest,
+                    }))
+                    .into_response(),
+                    Err(error) => maintenance_tool_error(error),
+                };
+            }
+            Ok(ControlRequest::Commit(commit)) => {
+                let Some(actor) = &state.actor else {
+                    return maintenance_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "maintenance_unavailable",
+                    );
+                };
+                let result = actor
+                    .commit_skill_candidate(commit.into_executor_request(&ticket))
+                    .await;
+                return match result {
+                    Ok(committed) => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "commit",
+                        "execution_id": state.status.execution_id,
+                        "outcome": "applied",
+                        "observed_digest": committed.observed_digest,
+                    }))
+                    .into_response(),
+                    Err(error) if error.code == ToolErrorCode::SkillWritersUnknown => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "commit",
+                        "execution_id": state.status.execution_id,
+                        "outcome": "blocked",
+                        "observed_digest": null,
+                        "blocked_reason": "writers_unknown",
+                        "blocked_subject_id": error.blocked_subject_id,
+                    }))
+                    .into_response(),
+                    Err(error) if error.code == ToolErrorCode::SkillBackgroundTaskRunning => {
+                        Json(json!({
+                            "request_id": ticket.request_id,
+                            "action": "commit",
+                            "execution_id": state.status.execution_id,
+                            "outcome": "blocked",
+                            "observed_digest": null,
+                            "blocked_reason": "background_task_running",
+                            "blocked_subject_id": error.blocked_subject_id,
+                        }))
+                        .into_response()
+                    }
+                    Err(error) if error.code == ToolErrorCode::SkillManagedCallInFlight => {
+                        Json(json!({
+                            "request_id": ticket.request_id,
+                            "action": "commit",
+                            "execution_id": state.status.execution_id,
+                            "outcome": "blocked",
+                            "observed_digest": null,
+                            "blocked_reason": "managed_call_in_flight",
+                            "blocked_subject_id": error.blocked_subject_id,
+                        }))
+                        .into_response()
+                    }
+                    Err(error) => maintenance_tool_error(error),
+                };
+            }
+            Ok(ControlRequest::Observe(observe)) => {
+                let Some(actor) = &state.actor else {
+                    return maintenance_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "maintenance_unavailable",
+                    );
+                };
+                let result = actor
+                    .observe_skill_candidate(
+                        observe.into_executor_request(&ticket),
+                        CancellationToken::new(),
+                    )
+                    .await;
+                return match result {
+                    Ok(observed) => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "observe",
+                        "execution_id": state.status.execution_id,
+                        "outcome": observed.outcome,
+                        "observed_digest": observed.observed_digest,
+                    }))
+                    .into_response(),
+                    Err(error) => maintenance_tool_error(error),
+                };
+            }
+            Ok(ControlRequest::Cancel(cancel)) => {
+                let Some(actor) = &state.actor else {
+                    return maintenance_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "maintenance_unavailable",
+                    );
+                };
+                let result = actor
+                    .cancel_skill_generation(cancel.into_executor_request(&ticket))
+                    .await;
+                return match result {
+                    Ok(_) => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "cancel",
+                        "execution_id": state.status.execution_id,
+                        "outcome": "cancelled",
+                        "observed_digest": null,
+                    }))
+                    .into_response(),
+                    Err(error) => maintenance_tool_error(error),
+                };
+            }
+            Ok(ControlRequest::Release(release)) => {
+                let Some(actor) = &state.actor else {
+                    return maintenance_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "maintenance_unavailable",
+                    );
+                };
+                let result = actor
+                    .release_skill_candidate(release.into_executor_request(&ticket))
+                    .await;
+                return match result {
+                    Ok(_) => Json(json!({
+                        "request_id": ticket.request_id,
+                        "action": "release",
+                        "execution_id": state.status.execution_id,
+                        "outcome": "released",
+                        "observed_digest": null,
+                    }))
+                    .into_response(),
+                    Err(error) => maintenance_tool_error(error),
+                };
+            }
+            Err("request_conflict") => {
+                return maintenance_error(StatusCode::CONFLICT, "request_conflict");
+            }
+            Err(_) => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
+        }
+    }
+}
+
+fn maintenance_tool_error(error: ToolError) -> Response {
+    let (status, code) = match error.code {
+        ToolErrorCode::InvalidParams | ToolErrorCode::InvalidPath => {
+            (StatusCode::CONFLICT, "request_conflict")
+        }
+        ToolErrorCode::RuntimeBusy => (StatusCode::SERVICE_UNAVAILABLE, "runtime_busy"),
+        ToolErrorCode::OutcomeUnknown => (StatusCode::SERVICE_UNAVAILABLE, "outcome_unknown"),
+        ToolErrorCode::AtomicSkillReplaceUnsupported => {
+            (StatusCode::CONFLICT, "atomic_skill_replace_unsupported")
+        }
+        ToolErrorCode::SkillGenerationCancelled => (StatusCode::CONFLICT, "generation_cancelled"),
+        ToolErrorCode::SkillStorageFull => (StatusCode::CONFLICT, "skill_storage_full"),
+        ToolErrorCode::SkillContentChangedDuringActivation => (
+            StatusCode::CONFLICT,
+            "skill_content_changed_during_activation",
+        ),
+        _ => (StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable"),
+    };
+    maintenance_error(status, code)
+}
+
+fn maintenance_error(status: StatusCode, code: &'static str) -> Response {
+    (
+        status,
+        Json(json!({"error": {"code": code,
+        "message": "Skill maintenance request was not admitted",
+        "retryable": status.is_server_error()}})),
+    )
+        .into_response()
 }
 
 #[derive(Clone)]
@@ -646,6 +992,10 @@ pub(crate) fn route_label(path: &str) -> &'static str {
         STATUS_PATH
     } else if path == MCP_PATH || path.starts_with("/mcp/") {
         MCP_PATH
+    } else if path.starts_with("/internal/skill-maintenance/") {
+        MAINTENANCE_ROUTE
+    } else if path.starts_with("/internal/skill-temporary/") {
+        crate::skill_temporary_http::TEMPORARY_ROUTE
     } else {
         "unmatched"
     }
@@ -819,7 +1169,7 @@ impl RuntimeToolServer {
 
     /// Read UTF-8 text from the workspace or system Skill root.
     #[tool(
-        description = "Read UTF-8 text from a file beneath a named Runtime root",
+        description = "Read a UTF-8 file. Use a string path relative to /workspace or an absolute path under /workspace/ or /skills/. offset is a 1-based line number; limit counts lines, both optional. Follow next_offset when truncated. Prefer read over cat.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<ReadFileResult>>(),
         annotations(
             read_only_hint = true,
@@ -845,7 +1195,7 @@ impl RuntimeToolServer {
 
     /// Replace a workspace file atomically with UTF-8 text.
     #[tool(
-        description = "Atomically replace a workspace file with UTF-8 text",
+        description = "Create or overwrite a workspace file with UTF-8 text; creates parent directories automatically. Use a string path relative to /workspace or under /workspace/. For targeted changes use edit. System Skills under /skills/ are read-only.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<WriteFileResult>>(),
         annotations(
             read_only_hint = false,
@@ -871,7 +1221,7 @@ impl RuntimeToolServer {
 
     /// Replace exactly one matching string in a workspace file.
     #[tool(
-        description = "Replace exactly one matching string in a workspace file",
+        description = "Make a targeted edit in a workspace file using a string path and old_string/new_string. Read the file first. old_string must match exactly once; include enough surrounding text to make it unique. System Skills under /skills/ are read-only.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<EditFileResult>>(),
         annotations(
             read_only_hint = false,
@@ -1015,6 +1365,7 @@ impl ServerHandler for RuntimeToolServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        reject_reserved_maintenance_tool(&request.name)?;
         reject_tool_continuation(&request)?;
         if self.managed.contains(&request.name) {
             return self.call_managed_tool(request, context).await;
@@ -1075,6 +1426,18 @@ impl RuntimeToolServer {
         .instrument(span)
         .await
     }
+}
+
+pub(crate) fn reject_reserved_maintenance_tool(name: &str) -> Result<(), rmcp::ErrorData> {
+    if name.starts_with("antnest_skill_maintenance_")
+        || name.starts_with("antnest_skill_temporary_")
+    {
+        return Err(rmcp::ErrorData::invalid_params(
+            "Reserved maintenance tool name",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 fn reject_tool_continuation(request: &CallToolRequestParams) -> Result<(), rmcp::ErrorData> {

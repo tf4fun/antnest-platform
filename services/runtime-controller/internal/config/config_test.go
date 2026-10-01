@@ -49,6 +49,32 @@ func TestLoadAllowsAnExplicitControllerScope(t *testing.T) {
 	}
 }
 
+func TestLoadMaintenanceVerifierBootstrap(t *testing.T) {
+	values := map[string]string{
+		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+	}
+	loaded, err := Load(func(key string) string { return values[key] })
+	if err != nil || len(loaded.MaintenanceVerifiers.Keys) != 0 {
+		t.Fatalf("maintenance must default closed: %+v %v", loaded.MaintenanceVerifiers, err)
+	}
+	values["ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"] = `{"keys":[{"kid":"next","algorithm":"Ed25519","public_key_base64url":"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},{"kid":"current","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`
+	loaded, err = Load(func(key string) string { return values[key] })
+	if err != nil || len(loaded.MaintenanceVerifiers.Keys) != 2 || loaded.MaintenanceVerifiers.Keys[0].KID != "current" {
+		t.Fatalf("maintenance bootstrap not normalized: %+v %v", loaded.MaintenanceVerifiers, err)
+	}
+	values["ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"] = `{"keys":[{"kid":"bad key","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("invalid maintenance key configuration accepted")
+	}
+	for _, malformed := range []string{`null`, `{}`, `{"keys":null}`, `[]`} {
+		values["ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"] = malformed
+		if _, err := Load(func(key string) string { return values[key] }); err == nil {
+			t.Fatalf("non-object maintenance verifier set accepted: %s", malformed)
+		}
+	}
+}
+
 func TestLoadSkillPreparationRequiresRegistryPair(t *testing.T) {
 	base := map[string]string{"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime", "ANTNEST_RUNTIME_MANAGEMENT_NETWORK": "antnest-runtime-management"}
 	for _, key := range []string{"ANTNEST_SKILL_REGISTRY_URL", "ANTNEST_SKILL_REGISTRY_API_TOKEN"} {

@@ -26,6 +26,7 @@ export type RunExecutorDependencies = {
   recoveryRequired: (error: Error) => void;
   id: ResourceIdGenerator;
   now: () => Date;
+  temporarySkills?: { releaseRun(runId: string, signal: AbortSignal): Promise<void> };
 };
 
 export interface RunExecutionPort {
@@ -37,10 +38,30 @@ export class RunExecutor implements RunExecutionPort {
 
   public async execute(input: RunExecutionInput): Promise<ExecuteRunResult> {
     assertWorkerOwnership(this.dependencies.ownershipSignal);
-    const result = await this.runWithinDeadline({
+    let result = await this.runWithinDeadline({
       ...input,
       signal: AbortSignal.any([input.signal, this.dependencies.ownershipSignal]),
     });
+    assertWorkerOwnership(this.dependencies.ownershipSignal);
+
+    try {
+      await this.dependencies.temporarySkills?.releaseRun(
+        input.accepted.runId,
+        this.dependencies.ownershipSignal,
+      );
+    } catch {
+      assertWorkerOwnership(this.dependencies.ownershipSignal);
+      result = {
+        terminalClass: "unresolved",
+        executorState: "quiescent",
+        toolEffectState: "unknown",
+        unknownEffectSource:
+          result.terminalClass === "unresolved" && result.unknownEffectSource !== "runtime_mcp"
+            ? "unclassified"
+            : "runtime_mcp",
+        errorClass: "temporary_skill_cleanup_pending",
+      };
+    }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
 
     try {

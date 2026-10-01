@@ -1,19 +1,154 @@
 import { getEventListeners } from "node:events";
+import { generateKeyPairSync } from "node:crypto";
 import { Pool } from "pg";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildComponents } from "../src/composition.js";
 import { loadConfig } from "../src/config.js";
 import { PostgresExecutionConfiguration } from "../src/adapters/postgres/execution-configuration.js";
 import { RunExecutor } from "../src/application/run-executor.js";
+import { LearningWorker } from "../src/application/learning-worker.js";
+import { LifecycleLearningStopped } from "../src/application/learning-foreground-gate.js";
 import type { PublicExecutionConfiguration } from "../src/domain/execution-configuration.js";
 import type { ExecuteRunResult, SessionOutputSnapshot } from "../src/ports/acp-application.js";
 import { NOOP_TELEMETRY } from "../src/ports/telemetry.js";
 import { binding, snapshot } from "./support/fixtures.js";
 import { executionConfiguration } from "./fixtures/execution-configuration.js";
+import { PostgresTemporarySkills } from "../src/adapters/postgres/temporary-skills.js";
+import { RuntimeSkillTemporaryClient } from "../src/adapters/runtime-skill-temporary-client.js";
+import { TemporarySkillCleanupWorker } from "../src/application/temporary-skill-cleanup-worker.js";
+
+beforeEach(() => {
+  vi.spyOn(PostgresTemporarySkills.prototype, "forAgent").mockResolvedValue([]);
+});
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("production execution configuration composition", () => {
+  it("keeps temporary cleanup and its foreground admission guard even with discovery disabled", async () => {
+    const pool = new Pool();
+    const scope = {
+      organizationId: binding().organizationId,
+      agentId: binding().agentId,
+      runId: "previous-run",
+      executionId: "old-execution",
+      mcpEndpoint: "http://runtime:8093/mcp",
+    };
+    vi.spyOn(PostgresTemporarySkills.prototype, "forAgent").mockResolvedValue([scope]);
+    const cleanup = vi
+      .spyOn(RuntimeSkillTemporaryClient.prototype, "cleanup")
+      .mockRejectedValue(new Error("not-confirmed"));
+    const components = buildComponents(
+      pool,
+      loadConfig({
+        ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+      }),
+      NOOP_TELEMETRY,
+      vi.fn(),
+      new AbortController().signal,
+    );
+    const accept = vi.fn();
+    try {
+      expect(components.temporarySkillCleanupWorker).toBeInstanceOf(TemporarySkillCleanupWorker);
+      await expect(
+        components.supervisor.submit(
+          { binding: binding(), sessionId: "session-1", outputChanged: vi.fn() },
+          accept,
+        ),
+      ).rejects.toMatchObject({ code: "runtime_barrier_required" });
+      expect(cleanup).toHaveBeenCalledWith(scope, expect.any(AbortSignal));
+      expect(accept).not.toHaveBeenCalled();
+    } finally {
+      await components.supervisor.shutdown();
+      await pool.end();
+    }
+  });
+  it("closes active Skill learning when Controller publishes a lifecycle-closed Agent", async () => {
+    const stored = new Map<string, PublicExecutionConfiguration>();
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "load").mockImplementation((id) =>
+      Promise.resolve(stored.get(id) ?? null),
+    );
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "save").mockImplementation((value) => {
+      stored.set(value.organization_id, value);
+      return Promise.resolve(true);
+    });
+    const pool = new Pool();
+    try {
+      const components = buildComponents(
+        pool,
+        loadConfig({
+          ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+        }),
+        NOOP_TELEMETRY,
+        vi.fn(),
+        new AbortController().signal,
+      );
+      const open = executionConfiguration();
+      await components.directory.apply(open);
+      const scope = { organizationId: open.organization_id, agentId: open.agents[0]!.agent_id };
+      const maintenance = components.learningGate.begin(scope, new AbortController().signal);
+      const closed = structuredClone(open);
+      closed.revision += 1;
+      closed.agents[0]!.accepting_runs = false;
+      closed.agents[0]!.operation_id = "operation-1";
+      await components.directory.apply(closed);
+      expect(maintenance.signal.reason).toBeInstanceOf(LifecycleLearningStopped);
+      maintenance.finish(true);
+      expect(() => components.learningGate.begin(scope, new AbortController().signal)).toThrow();
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("assembles Skill learning only with both a Controller endpoint and signing identity", async () => {
+    const pool = new Pool();
+    const basic = {
+      ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+      ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+    };
+    const signer = {
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "learning-test",
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: generateKeyPairSync("ed25519")
+        .privateKey.export({ type: "pkcs8", format: "der" })
+        .toString("base64"),
+    };
+    const configured = buildComponents(
+      pool,
+      loadConfig({
+        ...basic,
+        ...signer,
+        ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://controller:8080",
+      }),
+      NOOP_TELEMETRY,
+      vi.fn(),
+      new AbortController().signal,
+    );
+    try {
+      expect(
+        buildComponents(
+          pool,
+          loadConfig(basic),
+          NOOP_TELEMETRY,
+          vi.fn(),
+          new AbortController().signal,
+        ).learningWorker,
+      ).toBeUndefined();
+      expect(
+        buildComponents(
+          pool,
+          loadConfig({ ...basic, ...signer }),
+          NOOP_TELEMETRY,
+          vi.fn(),
+          new AbortController().signal,
+        ).learningWorker,
+      ).toBeUndefined();
+      expect(configured.learningWorker).toBeInstanceOf(LearningWorker);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it.each([false, true])(
     "publishes local revocation to every active consumer (publication failure: %s)",
     async (failPublication) => {

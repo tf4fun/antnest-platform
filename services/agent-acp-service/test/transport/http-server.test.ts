@@ -2,6 +2,7 @@ import { sessionConfigurationView } from "../support/fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
+import { DomainError } from "../../src/domain/errors.js";
 
 describe("AgentAcpHttpServer", () => {
   let server: AgentAcpHttpServer | undefined;
@@ -10,6 +11,40 @@ describe("AgentAcpHttpServer", () => {
     await server?.close().catch((error: unknown) => {
       throw new Error("server teardown failed", { cause: error });
     });
+  });
+
+  it("serves learning status with trusted identity and no caller-selected task", async () => {
+    const read = vi.fn(() => Promise.resolve({ agentId: "agent-1", blocked: null }));
+    server = new AgentAcpHttpServer({
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+      learningStatus: { read },
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+    const url = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/agents/agent-1/learning-status`;
+    const headers = {
+      "X-Antnest-Organization-Id": "organization-1",
+      "X-Antnest-Principal-Id": "principal-1",
+      "X-Antnest-Agent-Id": "agent-1",
+    };
+    expect((await fetch(url)).status).toBe(401);
+    expect((await fetch(url.replace("agent-1", "agent-2"), { headers })).status).toBe(404);
+    expect((await fetch(`${url}?taskId=x`, { headers })).status).toBe(400);
+    expect((await fetch(url, { headers, method: "POST" })).status).toBe(405);
+    expect(read).not.toHaveBeenCalled();
+    const result = await fetch(url, { headers });
+    expect(result.status).toBe(200);
+    expect(result.headers.get("cache-control")).toBe("no-store");
+    await expect(result.json()).resolves.toEqual({ agentId: "agent-1", blocked: null });
+    read.mockRejectedValueOnce(new DomainError("access_denied", "denied"));
+    expect((await fetch(url, { headers })).status).toBe(404);
+    read.mockRejectedValueOnce(new Error("storage unavailable"));
+    const failed = await fetch(url, { headers });
+    expect(failed.status).toBe(503);
+    await expect(failed.json()).resolves.toMatchObject({ code: "learning_status_unavailable" });
   });
 
   it("closes idempotently when startup never reached listen", async () => {
@@ -74,6 +109,74 @@ describe("AgentAcpHttpServer", () => {
       "session-1",
       "intent-1",
     );
+  });
+
+  it("serves bounded owner-scoped Skill learning change pages", async () => {
+    const list = vi.fn(() =>
+      Promise.resolve({
+        items: [],
+        nextCursor: "0",
+        olderCursor: null,
+        sealedCursor: "0",
+      }),
+    );
+    server = new AgentAcpHttpServer({
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+      learningChanges: { list },
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+    const url = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/agents/agent-1/learning-changes`;
+    expect((await fetch(`${url}?after=0&limit=2`)).status).toBe(401);
+    const headers = {
+      "X-Antnest-Organization-Id": "organization-1",
+      "X-Antnest-Principal-Id": "principal-1",
+      "X-Antnest-Agent-Id": "agent-1",
+    };
+    expect((await fetch(url.replace("agent-1", "agent-2"), { headers })).status).toBe(404);
+    expect((await fetch(`${url}?after=0&after=0`, { headers })).status).toBe(400);
+    expect((await fetch(`${url}?after=0&before=x`, { headers })).status).toBe(400);
+    expect((await fetch(`${url}?unknown=x`, { headers })).status).toBe(400);
+    const response = await fetch(`${url}?after=0&limit=2`, { headers });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      items: [],
+      nextCursor: "0",
+      olderCursor: null,
+      sealedCursor: "0",
+    });
+    expect(list).toHaveBeenCalledWith(
+      { organizationId: "organization-1", agentId: "agent-1", principalId: "principal-1" },
+      { after: "0" },
+      2,
+    );
+  });
+
+  it("does not expose out-of-scope Skill undo routes", async () => {
+    server = new AgentAcpHttpServer({
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+    const base = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/agents/agent-1`;
+    const body = JSON.stringify({
+      request_id: "undo-1",
+      expected_change_id: "change-1",
+      expected_current_digest: `sha256:${"a".repeat(64)}`,
+    });
+    const post = `${base}/learning-changes/change-1/undo`;
+    expect(
+      (await fetch(post, { method: "POST", headers: { "Content-Type": "application/json" }, body }))
+        .status,
+    ).toBe(404);
+    const readUrl = `${base}/learning-undo-operations/undo-1`;
+    expect((await fetch(readUrl)).status).toBe(404);
   });
 });
 

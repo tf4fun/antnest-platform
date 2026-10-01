@@ -231,9 +231,16 @@ export function createWorkspaceRuntime(input: {
     scope: BridgeScope,
     lease: BridgeLease<AgentBridgeOwner>,
     selectedSessionId: string | null,
+    readLearningStatus = false,
   ): Promise<(streamCursor: string) => unknown> {
     const owner = lease.owner;
     const state = await owner.readAgentExecutionState();
+    if (readLearningStatus) {
+      try { await owner.syncLearningStatus(); }
+      catch { /* Unknown status is not an authoritative no-blocker result. */ }
+    }
+    try { await owner.syncLearningChanges(); }
+    catch { /* A failed bounded history read does not block the workspace. */ }
     const sessions = new Set<string>();
     if (selectedSessionId !== null) sessions.add(selectedSessionId);
     if (state.activeSessionId !== null) sessions.add(state.activeSessionId);
@@ -281,12 +288,13 @@ export function createWorkspaceRuntime(input: {
     const permissions = owner.permissions.filter((item) => sessionIds.has(item.sessionId));
     const promptCapabilities = owner.promptCapabilities;
     const controlCommands = controlCatalogue({ selectedView }, owner.supportsFork);
+    const systemNotices = owner.systemNotices;
     return (streamCursor) => ({ agentId: scope.agentId, bridgeEpoch: lease.epoch,
       availability: state.availability === "ready" && active ? "busy" : state.availability,
-      promptCapabilities, controlCommands,
+      promptCapabilities, controlCommands, skillCommands: owner.skillCommands,
       activeSessionId: state.activeSessionId ?? active?.sessionId ?? null,
       selectedSessionId, selectedView, operations,
-      permissions, streamCursor });
+      permissions, systemNotices, learningStatus: owner.learningStatus, streamCursor });
   }
   function scheduleRefresh(
     scope: BridgeScope,
@@ -418,10 +426,10 @@ export function createWorkspaceRuntime(input: {
     },
   });
   const agentViews = createAgentViewHandler({
-    async read(scope, sessionId) {
+    async read(scope, sessionId, readLearningStatus) {
       const lease = await registry.observe(scope);
       try {
-        const projection = await prepareAgentView(scope, lease, sessionId);
+        const projection = await prepareAgentView(scope, lease, sessionId, readLearningStatus);
         const journal = lease.owner.agentJournal(sessionId);
         rememberAgentProjection(lease.owner, sessionId, projection);
         return journal.snapshot((cursor) =>

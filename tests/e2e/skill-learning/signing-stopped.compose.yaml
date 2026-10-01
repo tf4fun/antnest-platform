@@ -1,0 +1,6 @@
+# Incident drill only: keep ACP foreground service online without a signer/worker.
+services:
+  agent-acp-service:
+    environment:
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: ""
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: ""

@@ -46,7 +46,12 @@ traffic. All inter-service access remains through the documented contracts.
 
 - Keep `read`, `write`, `edit`, and `bash` as the built-in tools. Runtime
   information uses the standard MCP Resource `antnest://runtime/info`.
-- Planned L0 boundary, not implemented: the [Skill learning design](skill-learning-design.md)
+  Their [public input contract](../contracts/runtime/builtin-tools.schema.json)
+  uses string paths, 1-based line reads and optional read/bash defaults.
+  The [tool usability delivery](runtime-tool-usability-20260930.md) records
+  the corresponding Runtime/ACP and Docker gates.
+- L0 contracted, not implemented: the [Skill learning design](skill-learning-design.md)
+  and [shared contract](../contracts/skill-learning/learning-api.md)
   adds a separate authenticated Runtime maintenance endpoint. Candidate/check/
   commit operations never become MCP tools or enter `tools/list`; the four
   model built-ins remain unchanged. Runtime must reject reserved maintenance
@@ -111,7 +116,11 @@ Keep the child's tool description and parameter schema rather than replacing
 them with a generic "call MCP" tool. Tool definitions are callable model inputs,
 not just descriptive text appended to a system prompt.
 
-`tools/list` is the authority for these model-callable definitions. The information Resource
+Runtime `tools/list` is the authority for Runtime built-in and managed tool definitions. ACP
+also owns separately contracted platform tools: `update_plan` and the opt-in
+[Skill find/load tools](../contracts/agent-acp/skill-discovery-tools.md). These use
+`source=agent` and local dispatch; they do not become Runtime MCP definitions.
+The information Resource
 does not maintain a duplicate tool catalog or return child connection addresses.
 The official SDK owns framing, request IDs, response correlation and cancellation
 on the stdio connection; Runtime does not write an ad-hoc JSON protocol to stdin.
@@ -135,14 +144,14 @@ Each batch follows documentation, failing tests, implementation, then local
 admission checks. Change one service implementation at a time; shared contracts
 and that service's fixtures belong to the same batch.
 
-| Batch | Owner | Deliverable | Status |
-| --- | --- | --- | --- |
-| 1 | `antnest-runtime` | Information Resource, stdio process hosting, aggregated tool discovery/dispatch, lifecycle and telemetry tests | Complete; service-local accepted |
-| 2 | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration | Complete; service-local accepted |
-| 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Complete (service-local) |
-| 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Complete; service-local accepted |
-| 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Complete; Docker accepted |
-| 6 | `admin-console` | Template MCP editor, immutable detail, deployed Agent summary and BFF integration | Complete; browser and Docker accepted |
+| Batch | Owner                | Deliverable                                                                                                    | Status                                |
+| ----- | -------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 1     | `antnest-runtime`    | Information Resource, stdio process hosting, aggregated tool discovery/dispatch, lifecycle and telemetry tests | Complete; service-local accepted      |
+| 2     | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration                                          | Complete; service-local accepted      |
+| 3     | `agent-controller`   | Configuration validation/snapshot and create/rebuild execution publication                                     | Complete (service-local)              |
+| 4     | `agent-acp-service`  | Information consumption, managed tool discovery and budgeted context injection                                 | Complete; service-local accepted      |
+| 5     | Integration          | Docker create/chat/rebuild workflow and Gateway-rooted trace verification                                      | Complete; Docker accepted             |
+| 6     | `admin-console`      | Template MCP editor, immutable detail, deployed Agent summary and BFF integration                              | Complete; browser and Docker accepted |
 
 ## Acceptance
 
@@ -213,10 +222,10 @@ Gateway/BFF template workflow.
 
 Jaeger final evidence (temporary backend; trace URLs expire after cleanup):
 
-| Trace ID | Spans | Information reads | Catalog reads | Tool calls | Verified causal path |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `538b080ab922c03168702f4e26b5137f` | 244 | 4 | 4 | 6 | Gateway -> ACP -> Runtime; Controller and Identity dependencies |
-| `d57bc50a1ce4a55638071b777a449941` | 75 | 1 | 1 | 1 | Gateway -> ACP -> replacement Runtime, same Session |
+| Trace ID                           | Spans | Information reads | Catalog reads | Tool calls | Verified causal path                                            |
+| ---------------------------------- | ----: | ----------------: | ------------: | ---------: | --------------------------------------------------------------- |
+| `538b080ab922c03168702f4e26b5137f` |   244 |                 4 |             4 |          6 | Gateway -> ACP -> Runtime; Controller and Identity dependencies |
+| `d57bc50a1ce4a55638071b777a449941` |    75 |                 1 |             1 |          1 | Gateway -> ACP -> replacement Runtime, same Session             |
 
 The assertions follow parent IDs, require strict Runtime descendants below each
 ACP information/catalog/call span, and reject secret/context contents. Every model

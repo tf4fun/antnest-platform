@@ -1,5 +1,21 @@
 # Agent Controller
 
+Skill Learning L2 adds an Agent-owned policy with an independent SHA-256
+revision. Its default is `automatic` for generated personal Skills, with no
+adopted or pinned paths and the bounded v1 budgets. `GET` and `PUT
+/internal/agents/{agent_id}/skill-learning-policy` require current owner scope;
+PUT uses a stable request ID and expected revision. PostgreSQL commits the
+policy and idempotent receipt together. Policy changes do not create Agent
+Spec or Runtime revisions. The read/result policy includes the server-owned
+`activation_cut_at`: lazy default creation uses the persisted Agent creation
+time, and `off` → `automatic` sets a new cut without accepting a caller-selected
+timestamp. An owner can pin a canonical personal Skill path to forbid automatic
+updates, including if the path is created later. The reserved `adopted_paths`
+field must remain empty in this delivery; explicit adoption is deferred.
+ACP's background
+learner remains a separate L3 batch. See the
+[shared contract](../../contracts/skill-learning/learning-api.md).
+
 Stage 4 Skill delivery: the Template catalog freezes exact Registry versions,
 and the Runtime Controller client now supports durable Skill preparation,
 status reads, release, and prepared collection identity in lifecycle

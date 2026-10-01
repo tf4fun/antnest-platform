@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::execution;
 use crate::information::RuntimeContext;
+use crate::skill_candidate::{
+    CandidateCancelRequest, CandidateCancelled, CandidateCheckRequest, CandidateChecked,
+    CandidateCommitRequest, CandidateCommitted, CandidateObserveRequest, CandidateObserved,
+    CandidatePrepareRequest, CandidatePrepared, CandidateReleaseRequest, CandidateReleased,
+};
+use crate::skill_temporary::{
+    TemporaryInstallRequest, TemporaryInstalled, TemporaryReleaseRequest, TemporaryReleased,
+};
 use crate::tool_error::{ToolError, ToolErrorCode};
 
 pub(crate) const MAX_EXECUTOR_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
@@ -62,6 +70,189 @@ pub(crate) fn encode_info_reply(
 pub(crate) fn decode_info_reply(
     input: &[u8],
 ) -> Result<Result<RuntimeContext, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_prepare_request(
+    request: &CandidatePrepareRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_prepare_request(
+    input: &[u8],
+) -> Result<CandidatePrepareRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_prepare_reply(
+    result: Result<CandidatePrepared, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_prepare_reply(
+    input: &[u8],
+) -> Result<Result<CandidatePrepared, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_check_request(
+    request: &CandidateCheckRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_check_request(input: &[u8]) -> Result<CandidateCheckRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_check_reply(
+    result: Result<CandidateChecked, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_check_reply(
+    input: &[u8],
+) -> Result<Result<CandidateChecked, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_commit_request(
+    request: &CandidateCommitRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_commit_request(
+    input: &[u8],
+) -> Result<CandidateCommitRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_commit_reply(
+    result: Result<CandidateCommitted, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_commit_reply(
+    input: &[u8],
+) -> Result<Result<CandidateCommitted, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_observe_request(
+    request: &CandidateObserveRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_observe_request(
+    input: &[u8],
+) -> Result<CandidateObserveRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_observe_reply(
+    result: Result<CandidateObserved, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_observe_reply(
+    input: &[u8],
+) -> Result<Result<CandidateObserved, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_cancel_request(
+    request: &CandidateCancelRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_cancel_request(
+    input: &[u8],
+) -> Result<CandidateCancelRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_cancel_reply(
+    result: Result<CandidateCancelled, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_cancel_reply(
+    input: &[u8],
+) -> Result<Result<CandidateCancelled, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_release_request(
+    request: &CandidateReleaseRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_release_request(
+    input: &[u8],
+) -> Result<CandidateReleaseRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_release_reply(
+    result: Result<CandidateReleased, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_release_reply(
+    input: &[u8],
+) -> Result<Result<CandidateReleased, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_temporary_install_request(
+    request: &TemporaryInstallRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+pub(crate) fn decode_temporary_install_request(
+    input: &[u8],
+) -> Result<TemporaryInstallRequest, ToolError> {
+    decode_request(input)
+}
+pub(crate) fn encode_temporary_install_reply(
+    result: Result<TemporaryInstalled, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+pub(crate) fn decode_temporary_install_reply(
+    input: &[u8],
+) -> Result<Result<TemporaryInstalled, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+pub(crate) fn encode_temporary_release_request(
+    request: &TemporaryReleaseRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+pub(crate) fn decode_temporary_release_request(
+    input: &[u8],
+) -> Result<TemporaryReleaseRequest, ToolError> {
+    decode_request(input)
+}
+pub(crate) fn encode_temporary_released_reply(
+    result: Result<TemporaryReleased, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+pub(crate) fn decode_temporary_released_reply(
+    input: &[u8],
+) -> Result<Result<TemporaryReleased, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, std::convert::identity)
 }
 
@@ -177,6 +368,7 @@ struct WireBashResult {
 struct WireReadResult {
     content: String,
     truncated: bool,
+    next_offset: Option<usize>,
     file: Option<crate::file_observation_wire::WireFileObservation>,
 }
 
@@ -304,6 +496,7 @@ pub(crate) fn encode_read_reply(
         WireReadResult {
             content: result.content,
             truncated: result.truncated,
+            next_offset: result.next_offset,
             file: result
                 .file
                 .and_then(crate::file_observation_wire::WireFileObservation::bounded),
@@ -317,6 +510,7 @@ pub(crate) fn decode_read_reply(
     decode_reply(input, |result: WireReadResult| execution::ReadResult {
         content: result.content,
         truncated: result.truncated,
+        next_offset: result.next_offset,
         file: result.file.map(Into::into),
     })
 }
@@ -448,7 +642,7 @@ mod tests {
             1000,
         )
         .unwrap();
-        let read = ReadRequest::new(path(), 0, 32).unwrap();
+        let read = ReadRequest::new(path(), 1, 32).unwrap();
         let write = WriteRequest::new(path(), "hello".into()).unwrap();
         let edit = EditRequest::new(path(), "hello".into(), "world".into()).unwrap();
 
@@ -500,6 +694,7 @@ mod tests {
         let encoded = encode_read_reply(Ok(ReadResult {
             content: "hello".into(),
             truncated: false,
+            next_offset: None,
             file: None,
         }))
         .unwrap();

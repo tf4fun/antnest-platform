@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSettlement } from "../../src/application/agent-settlement.js";
 import { RunSupervisor } from "../../src/application/run-supervisor.js";
+import { LearningForegroundGate } from "../../src/application/learning-foreground-gate.js";
 import type { RunExecutionPort } from "../../src/application/run-executor.js";
 import type { AcceptedAcpRun, ExecuteRunResult } from "../../src/ports/acp-application.js";
 import type { RuntimeProtectionRepository } from "../../src/ports/execution-repository.js";
@@ -8,6 +9,7 @@ import type { ExecutionConfiguration } from "../../src/domain/execution-configur
 import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
 import { snapshot } from "../support/fixtures.js";
 import { localExecution } from "../support/local-execution.js";
+import type { TemporarySkills } from "../../src/application/temporary-skills.js";
 
 const completed: ExecuteRunResult = {
   terminalClass: "completed",
@@ -30,15 +32,21 @@ async function setup() {
   const completion = Promise.withResolvers<ExecuteRunResult>();
   const execute = vi.fn<RunExecutionPort["execute"]>().mockReturnValue(completion.promise);
   const supervisor = new RunSupervisor({ execute });
+  const learning = new LearningForegroundGate(() => false);
   const protection = {
     hasUnstoppedRuntimeCalls: vi
       .fn<RuntimeProtectionRepository["hasUnstoppedRuntimeCalls"]>()
       .mockResolvedValue(false),
   };
+  const temporarySkills = {
+    releaseAgent: vi.fn<TemporarySkills["releaseAgent"]>().mockResolvedValue(),
+  };
   const service = new AgentSettlement({
     directory: local.directory,
     supervisor,
+    learning,
     protection,
+    temporarySkills,
     now: () => new Date(),
   });
   const closed: ExecutionConfiguration = executionConfiguration();
@@ -58,16 +66,80 @@ async function setup() {
       Promise.resolve(accepted),
     );
   }
-  return { ...local, completion, execute, supervisor, protection, service, closed, start };
+  return {
+    ...local,
+    completion,
+    execute,
+    supervisor,
+    learning,
+    protection,
+    temporarySkills,
+    service,
+    closed,
+    start,
+  };
 }
 
 describe("Agent lifecycle settlement", () => {
+  it("requires confirmed temporary cleanup before the durable lifecycle protection check", async () => {
+    const test = await setup();
+    await test.directory.apply(test.closed);
+    const finished = Promise.withResolvers<void>();
+    test.temporarySkills.releaseAgent.mockReturnValue(finished.promise);
+    const settling = test.service.settle(request());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.temporarySkills.releaseAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: "organization-1", agentId: "agent-1" }),
+      expect.any(AbortSignal),
+    );
+    expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+    finished.resolve();
+    await expect(settling).resolves.toEqual({ outcome: "settled", applied_revision: 2 });
+  });
+  it("does not report settlement when temporary cleanup is uncertain", async () => {
+    const test = await setup();
+    await test.directory.apply(test.closed);
+    test.temporarySkills.releaseAgent.mockRejectedValue(new Error("unconfirmed"));
+    await expect(test.service.settle(request())).resolves.toEqual({
+      outcome: "runtime_barrier_required",
+      applied_revision: 2,
+    });
+    expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-14T00:00:00Z"));
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("waits for cancelled Skill maintenance before reporting lifecycle settlement", async () => {
+    const test = await setup();
+    const scope = { organizationId: "organization-1", agentId: "agent-1" };
+    const maintenance = test.learning.begin(scope, new AbortController().signal);
+    await test.directory.apply(test.closed);
+    const settled = test.service.settle(request());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(maintenance.signal.aborted).toBe(true);
+    expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+    maintenance.finish(true);
+    await expect(settled).resolves.toEqual({ outcome: "settled", applied_revision: 2 });
+  });
+
+  it("does not settle a lifecycle while Skill maintenance has an unknown Runtime effect", async () => {
+    const test = await setup();
+    const scope = { organizationId: "organization-1", agentId: "agent-1" };
+    const maintenance = test.learning.begin(scope, new AbortController().signal);
+    await test.directory.apply(test.closed);
+    const settled = test.service.settle(request());
+    await vi.advanceTimersByTimeAsync(0);
+    maintenance.finish(false);
+    await expect(settled).resolves.toEqual({
+      outcome: "runtime_barrier_required",
+      applied_revision: 2,
+    });
+    expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(

@@ -34,7 +34,8 @@
         "intentReceipt": { "const": 1 },
         "targetCancel": { "const": 1 },
         "deliveryMark": { "const": 1 },
-        "configurationCas": { "const": 1 }
+        "configurationCas": { "const": 1 },
+        "learningNotices": { "const": 1 }
       },
       "required": ["intentReceipt", "targetCancel", "deliveryMark"],
       "additionalProperties": false

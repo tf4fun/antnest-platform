@@ -38,6 +38,21 @@ function setup(repository = new MemoryConfigurationRepository()) {
 }
 
 describe("execution directory", () => {
+  it("exposes only a published Runtime binding for private cleanup, including a closed Agent", async () => {
+    const { directory } = setup();
+    const scope = { organizationId: "organization-1", agentId: "agent-1" };
+    expect(directory.runtimeForCleanup(scope)).toBeNull();
+    const configuration = executionConfiguration();
+    configuration.agents[0]!.accepting_runs = false;
+    configuration.agents[0]!.principal_ids = [];
+    await directory.apply(configuration);
+    expect(directory.runtimeForCleanup(scope)).toEqual({
+      executionId: configuration.agents[0]!.runtime!.runtime_execution_id,
+      mcpEndpoint: configuration.agents[0]!.runtime!.mcp_endpoint,
+    });
+    expect(directory.runtimeForCleanup({ ...scope, organizationId: "other-org" })).toBeNull();
+    expect(directory.runtimeForCleanup({ ...scope, agentId: "other-agent" })).toBeNull();
+  });
   it("rejects nonempty legacy Skill bodies without changing the published configuration", async () => {
     const { directory, repository, onApplied } = setup();
     const current = executionConfiguration();

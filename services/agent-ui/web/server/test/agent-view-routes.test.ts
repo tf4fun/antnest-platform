@@ -13,6 +13,21 @@ const headers = {
   "x-antnest-agent-id": "agent-1",
 };
 
+test("learning diagnostics are read only when explicitly selected and invalid selections never dispatch", async () => {
+  const reads: boolean[] = [];
+  const handler = createAgentViewHandler({
+    async read(_scope, _session, learningStatus) {
+      reads.push(learningStatus === true);
+      return {};
+    },
+  });
+  assert.equal((await handler(new Request(url, { headers })))?.status, 200);
+  assert.equal((await handler(new Request(`${url}?learningStatus=1`, { headers })))?.status, 200);
+  for (const query of ["learningStatus=0", "learningStatus=true", "learningStatus=1&learningStatus=1"])
+    assert.equal((await handler(new Request(`${url}?${query}`, { headers })))?.status, 422);
+  assert.deepEqual(reads, [false, true]);
+});
+
 test("Agent view permits no Session selection and rejects foreign scope or duplicate selection", async () => {
   const selections: Array<string | null> = [];
   const handler = createAgentViewHandler({

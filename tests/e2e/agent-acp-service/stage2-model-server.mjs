@@ -165,7 +165,7 @@ function writeToolCompletion() {
               function: {
                 name: "write",
                 arguments: JSON.stringify({
-                  path: { root: "workspace", path: "stage2-evidence.txt" },
+                  path: "stage2-evidence.txt",
                   content: "stage2-runtime-tool-ok",
                 }),
               },

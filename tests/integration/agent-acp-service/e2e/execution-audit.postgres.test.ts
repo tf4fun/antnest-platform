@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -12,6 +12,7 @@ import { PostgresSessionRepository } from "../../../../services/agent-acp-servic
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
 import { auditDetailSchema } from "../../../../services/agent-acp-service/src/domain/execution-audit.js";
+import { LearningWorker } from "../../../../services/agent-acp-service/src/application/learning-worker.js";
 
 const url = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 describe.skipIf(url === undefined)("production audit HTTP composition", () => {
@@ -149,5 +150,39 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
       }
     }
     expect(ownershipLost).not.toHaveBeenCalled();
+  });
+
+  it("starts the configured learning worker and stops it before releasing service ownership", async () => {
+    await service?.shutdown();
+    const run = vi.spyOn(LearningWorker.prototype, "run").mockImplementation(
+      (signal) =>
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else
+            signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+    const configured = {
+      ...config,
+      skillLearningControllerUrl: "http://controller.test:8080",
+      skillMaintenanceSigning: {
+        kid: "learning-test",
+        privateKey: generateKeyPairSync("ed25519").privateKey,
+      },
+    };
+    try {
+      service = await startAgentAcpService(
+        configured,
+        NOOP_TELEMETRY,
+        ownershipLost,
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+      const signal = run.mock.calls[0]?.[0];
+      expect(signal?.aborted).toBe(false);
+      await service.shutdown();
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      run.mockRestore();
+    }
   });
 });

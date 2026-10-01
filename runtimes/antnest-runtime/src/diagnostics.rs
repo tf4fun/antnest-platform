@@ -163,6 +163,20 @@ fn tool_protocol_error(
 
 pub(crate) fn safe_tool_message(code: ToolErrorCode) -> &'static str {
     match code {
+        ToolErrorCode::AtomicSkillReplaceUnsupported => "Atomic Skill replacement is unavailable",
+        ToolErrorCode::SkillContentChangedDuringActivation => {
+            "Skill content changed during activation"
+        }
+        ToolErrorCode::SkillWritersUnknown => "Skill writer ownership could not be proven",
+        ToolErrorCode::SkillBackgroundTaskRunning => "A Bash background task is still running",
+        ToolErrorCode::SkillManagedCallInFlight => "A managed MCP child is still running",
+        ToolErrorCode::SkillGenerationCancelled => "Skill maintenance generation is closed",
+        ToolErrorCode::SkillStorageFull => "Hidden Skill storage is full",
+        ToolErrorCode::TemporaryRunClosed => "Temporary Skill Run scope is closed",
+        ToolErrorCode::TemporaryScopeBusy => "Another temporary Skill scope is active",
+        ToolErrorCode::TemporaryBackgroundNotSupported => {
+            "Background work was stopped because this Run uses temporary Skill files; run it in the foreground or use a durable preset"
+        }
         ToolErrorCode::SpawnFailed => "Executor process could not be started",
         ToolErrorCode::ReadFailed | ToolErrorCode::EditReadFailed => "File could not be read",
         ToolErrorCode::WriteFailed | ToolErrorCode::EditFailed => "File mutation failed",

@@ -61,7 +61,7 @@ describe.skipIf(databaseUrl === undefined)(
                 id: "read-1",
                 name: "read",
                 arguments: {
-                  path: { root: "workspace", path: "notes.txt" },
+                  path: "notes.txt",
                   offset: 10,
                 },
               },

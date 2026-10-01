@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{
     borrow::Cow,
+    process::Stdio,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -106,6 +107,30 @@ impl Fixture {
         context.ct.cancelled().await;
         std::fs::write("wait-canceled", b"canceled").unwrap();
         CallToolResult::error(vec![ContentBlock::text("fixture canceled")])
+    }
+
+    #[tool(description = "Start a child that remains alive after this tool returns")]
+    async fn spawn_worker(&self) -> CallToolResult {
+        let mut child = match tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => {
+                return CallToolResult::error(vec![ContentBlock::text("worker spawn failed")]);
+            }
+        };
+        let Some(pid) = child.id() else {
+            let _ = child.kill().await;
+            return CallToolResult::error(vec![ContentBlock::text("worker PID missing")]);
+        };
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        CallToolResult::structured(json!({ "pid": pid }))
     }
 
     #[tool(description = "Crash this test MCP process")]

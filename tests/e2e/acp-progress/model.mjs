@@ -52,7 +52,7 @@ export function decide(payload) {
           ? { gate, fail: ending === "failure" }
           : {
               command: `echo $$ > ${gate}-pid; printf '${phase}-partial\\n'; while [ ! -f ${gate}-release ]; do sleep 0.1; done; printf '${phase}-tail\\n' >&2; exit ${ending === "failure" ? 7 : 0}`,
-              working_dir: { root: "workspace", path: "." },
+              working_dir: ".",
               timeout_ms: 120000,
             },
     },

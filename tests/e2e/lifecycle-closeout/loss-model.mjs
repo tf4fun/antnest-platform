@@ -39,15 +39,15 @@ export function decide(payload) {
           name: "bash",
           arguments: {
             command: `printf '${mode}-preserved\\n' >> /workspace/.c5-loss.txt; printf ${mode}-written`,
-            working_dir: { root: "workspace", path: "." },
+            working_dir: ".",
             timeout_ms: 5000,
           },
         }
       : {
           name: "read",
           arguments: {
-            path: { root: "workspace", path: ".c5-loss.txt" },
-            offset: 0,
+            path: ".c5-loss.txt",
+            offset: 1,
             limit: 4096,
           },
         };

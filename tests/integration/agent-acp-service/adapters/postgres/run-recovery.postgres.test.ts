@@ -199,6 +199,55 @@ describe.skipIf(databaseUrl === undefined)(
       },
     );
 
+    it("settles interrupted platform discovery as a failed read without a Runtime barrier", async () => {
+      const { runId } = await intent(true);
+      await events.startToolAttempt({
+        id: randomUUID(),
+        runId,
+        toolCallId: "find-skill-1",
+        tool: {
+          source: "agent",
+          sourceId: "skill_registry",
+          name: "find_skill",
+          modelName: "find_skill",
+          description: "Find Skill",
+        },
+        arguments: { query: "procedure" },
+        requestDigest: "b".repeat(64),
+        createdAt: recoveredAt,
+      });
+      await recover();
+      expect(
+        (
+          await pool.query(
+            "SELECT state, tool_effect_state, unknown_effect_source FROM runs WHERE id = $1",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          state: "failed",
+          tool_effect_state: "none",
+          unknown_effect_source: null,
+        },
+      ]);
+      expect(
+        (
+          await pool.query(
+            "SELECT state, tool_effect_state FROM tool_attempts WHERE run_id = $1",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([{ state: "failed", tool_effect_state: "none" }]);
+      expect(
+        await executions.hasUnstoppedRuntimeCalls({
+          organizationId: binding().organizationId,
+          agentId: binding().agentId,
+          runtimeRevision: snapshot().runtime.revision,
+        }),
+      ).toBe(false);
+    });
+
     it("records an in-flight Runtime call as unknown once and closes its pending permission", async () => {
       const { runId, sessionId } = await intent(true);
       await events.startToolAttempt({

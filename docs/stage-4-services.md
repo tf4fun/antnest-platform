@@ -1,6 +1,6 @@
 # 阶段四：Skill 托管、外部渠道与定时任务
 
-> 更新日期：2026-09-28
+> 更新日期：2026-10-01
 >
 > 状态：Skill Registry、Template 固定引用、RC 交付与 Controller 生命周期消费已落地。隔离的 12 服务 I1 回归已通过发布 v1、创建及真实 ACP Run、发布 v2、重建、禁用/启用和删除清理；Runtime 到 Registry 的服务名和实际 IPv4 出口拒绝也已验证，且确认当前 Registry 网络未启用 IPv6。八库多卷存储恢复及双 Agent 真实 Skill 离线恢复已通过。当前是无旧业务数据的开发部署，Skill Registry 首版按全新部署验收；旧资产迁移和异机导出不属于本轮门槛。
 >
@@ -10,11 +10,11 @@
 
 阶段四规划新增 **3 个服务**：
 
-| 服务标识 | 名称 | 核心职责 | 当前状态 |
-| --- | --- | --- | --- |
-| `skill-registry` | Skill Registry | Skill 托管仓库，管理不可变版本，支持模板引用和 Runtime 只读交付 | 首版全新部署范围已通过本地、组件、浏览器及 Docker 业务/恢复回归；历史旧资产迁移不纳入当前验收 |
-| `channel-manager` | Channel Manager | 外部渠道交互中心，连接外部渠道与平台 Agent 会话 | 规划已记录，未实现 |
-| `task-scheduler` | Task Scheduler | 定时任务调度中心，管理计划并触发 Agent 任务 | 规划已记录，未实现 |
+| 服务标识          | 名称            | 核心职责                                                                                       | 当前状态                                                                                                                    |
+| ----------------- | --------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `skill-registry`  | Skill Registry  | Skill 托管仓库，管理不可变版本，支持模板引用和 Runtime 只读交付；增加 Agent 来源映射与动态发现 | 首版全新部署门禁通过；动态发现 D1、D2、D3、D4、D4A、D6 通过所属门禁，DI1 真实四步传播集成通过；历史旧资产迁移不纳入当前验收 |
+| `channel-manager` | Channel Manager | 外部渠道交互中心，连接外部渠道与平台 Agent 会话                                                | 规划已记录，未实现                                                                                                          |
+| `task-scheduler`  | Task Scheduler  | 定时任务调度中心，管理计划并触发 Agent 任务                                                    | 规划已记录，未实现                                                                                                          |
 
 服务标识沿用仓库的小写连字符风格。需求中的 `skill-registy` 按已有
 Skill Registry 名称统一拼写为 `skill-registry`。此前文档中的 Channel Gateway
@@ -42,10 +42,47 @@ Registry 只拥有包与版本；模板选择归 Agent Controller，隔离副本
 Controller。首版复用 Runtime 发现和按需读取，ACP 另有封闭旧正文通道的批次，
 不做外部导入、搜索推荐、审核评测、社区和热更新。发布新版本不自动改变已有 Agent。
 
-2026-09-27 评审明确：准备先于 Initialize/Drain/Fence，卷按 Agent 和集合摘要
-复用，暂时故障可续作；统一 YAML 样例校验真实类型；旧共享资产先盘点、备份、
-显式迁移。另有 [Skill 学习草案](skill-learning-design.md)，首版为候选、展示确认、
-空闲激活，后台只生成建议；不增加新服务，也不成为 Registry 首版依赖。
+Registry 已按评审实现准备先于 Initialize/Drain/Fence、按 Agent 和集合摘要复用
+及暂时故障续作；统一 YAML 样例校验真实类型。当前没有旧业务数据，旧资产迁移
+不纳入本轮。独立的 [Skill 学习方案](skill-learning-design.md)在 2026-09-29 调整为
+自动生成/更新受管个人 Skill、按策略空闲激活及结果提示，人工保存作为补充。
+[Hermes 研究](hermes-skill-learning-research-20260929.md)记录源码及设计输入。
+学习 L0–L4、LI1 当前首版功能门禁已通过，包括所属服务、组件和真实 Docker
+浏览器回归，证据及范围见 [学习验收核对](skill-learning-acceptance-audit-20260930.md)。
+开发阶段沿用已有样式，可进入人类体验验收后再细调。
+不增加新服务，也不成为 Registry 依赖。
+
+2026-10-01 用户确定后续四步流程：**Agent Skill 自动投影到 Registry →
+检索与当前 Run 临时使用 → 用户提升为正式系统 Skill → Template/rebuild
+提供预设能力**。投影只登记已生效受管个人 Skill 的动态元数据和来源引用，
+临时使用按需回源，源内容与生命周期仍归 Agent。提升时才把完整包交给 Registry
+托管为独立不可变正式版本，模板继续只引用正式版本。详见
+[动态发现与传播设计](evolver-technical-analysis.md#112-用户确定的四步产品流程)。
+Registry/source 共享合同和 Registry D1 已交付并通过所属门禁，详见
+[交付记录](skill-discovery-registry-delivery-20261001.md)。ACP D2 自动生产与当前
+来源读取已通过门禁，详见[ACP 交付记录](skill-discovery-acp-delivery-20261001.md)。
+[D3 模型搜索/加载](skill-discovery-tools-delivery-20261001.md)已通过所属单元、合同、
+HTTP/PostgreSQL 及双 Agent Docker 门禁，并核对 Trace 来源和摘要。
+[Runtime D4](skill-discovery-runtime-delivery-20261001.md) 已冻结私有交付合同，
+[ACP D4A](skill-discovery-temporary-consumer-delivery-20261001.md) 已消费真实文件
+交付并通过普通 read/Bash、持久回收、取消及正常重启门禁。
+[Console D6](skill-discovery-console-delivery-20261001.md) 已完成来源搜索/包预览、
+显式新建/追加提升并通过所属及桌面/手机 Docker 门禁。
+[DI1](skill-propagation-integration-delivery-20261001.md) 已通过真实学习、动态
+来源、临时使用、正常登录提升、模板创建/冻结、两 Agent 显式重建及实际 Run 的
+完整四步集成，包含 Registry 停机与来源失效。仍不以此替代整个仓库的全面回归。
+随后[常规部署接线验收](skill-deployment-delivery-20261001.md)通过 6 项配置/构建检查，
+并使用普通 Compose 的认证与维护配置再次跑通完整业务链路。
+[部署说明](skill-deployment.md)记录独立来源 bearer 和现有 Runtime 的重建要求。
+[DI2 来源生命周期](skill-source-lifecycle-delivery-20261001.md) 已通过真实
+Disable/Enable/Delete：来源读取依次不可用、原身份恢复、删除后拒绝并送达墓碑；
+已提升制品和预设保持独立，8 个实际预设 Run 及 Trace 父链通过。
+
+[DI3 活动调用方](skill-discovery-caller-integration-delivery-20261001.md)进一步
+验证真实 Run 检索正式当前版本及另一 Agent 的来源，排除自身个人映射；普通
+Compose 的 8 项配置测试与完整四步回归通过。[Registry D1T](skill-registry-trace-delivery-20261001.md)
+补足来源 HTTP Trace，307 个调用方 span 的父链完整，正文采集关闭。用户此前
+确认可接受的纯时间告警仍保留，不影响此项验收。
 
 ### Channel Manager：外部渠道交互中心
 
@@ -98,9 +135,10 @@ Audit Service 不因本次规划自动纳入。现有服务可能需要作为消
 
 Skill Registry 采用 Go/PostgreSQL、ZIP 制品、模板固定版本和按 Agent
 只读卷；共享合同 B0 和 Registry、Controller、Runtime Controller、Console、ACP
-所属批次（B1–B5）已有实现与本地门禁，显式集成 I1 的基础业务链已通过，
-恢复与迁移验收继续推进；未来启用 IPv6 时须补实际地址拒绝测试。学习方案
-独立安排 L0 合同、所属服务及
-用户确认/后台候选的两次集成；Channel Manager 和 Task Scheduler 尚未进入
+所属批次（B1–B5）已有实现与本地门禁，显式集成 I1 的业务链及当前恢复验收
+已通过；未来启用 IPv6 时须补实际地址拒绝测试。学习方案的 L0 合同、所属服务
+和自动学习 LI1 的当前功能门禁已通过，人类体验验收尚未进行；人工保存作为
+L5a/L5b 及 LI2 的补充；
+Channel Manager 和 Task Scheduler 尚未进入
 详细技术设计。服务单元测试、根目录集成/E2E 和私有证据继续遵循既有
 [测试归属与存储规则](../tests/README.md)。

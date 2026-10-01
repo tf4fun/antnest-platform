@@ -1,4 +1,6 @@
 import type { ContentBlock } from "@agentclientprotocol/sdk";
+import { validAgentView } from "../../server/src/protocol/agent-view-delta.ts";
+import type { LearningStatus } from "../../server/src/protocol/learning-status.ts";
 import { controlResultSchema, type ControlRequest, type ControlResult } from "../../server/src/protocol/workspace-commands.ts";
 
 const base = "/api/app/workspace/v1";
@@ -81,6 +83,14 @@ export class BridgeHttpClient {
   agentView(agentId: string, sessionId: string | null = null, signal?: AbortSignal): Promise<unknown> {
     const query = sessionId === null ? "" : `?${new URLSearchParams({ sessionId })}`;
     return this.request(`${agentPath(agentId)}/view${query}`, { signal });
+  }
+
+  async learningStatus(agentId: string, signal?: AbortSignal): Promise<LearningStatus> {
+    const view = await this.request(`${agentPath(agentId)}/view?learningStatus=1`, { signal });
+    if (!validAgentView(view) || view.agentId !== agentId || view.learningStatus == null)
+      throw new WorkspaceApiError("Learning status is unavailable", undefined,
+        "learning_status_unavailable", "retry_read");
+    return view.learningStatus;
   }
 
   sessionView(agentId: string, sessionId: string, signal?: AbortSignal): Promise<unknown> {

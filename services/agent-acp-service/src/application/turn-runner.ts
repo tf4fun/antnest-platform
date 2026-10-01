@@ -252,7 +252,7 @@ export class TurnRunner {
             : failure(currentEffect, "tool_permission_failed"),
       };
     }
-    if (tool.source === "agent") {
+    if (tool.source === "agent" && tool.sourceId === "plan" && tool.name === "update_plan") {
       assertAuthority(input.authoritySignal);
       const applied = await this.dependencies.events.updatePlan(
         input.runId,
@@ -267,7 +267,7 @@ export class TurnRunner {
         terminal: applied ? null : cancelled(currentEffect),
       };
     }
-    const unknownEffectSource = unknownSourceForTool(tool.source);
+    const unknownEffectSource = unknownSourceForTool(tool);
     await this.dependencies.events.toolStarted(input.runId, call.id, tool, call.arguments);
     assertAuthority(input.authoritySignal);
     let result: Awaited<ReturnType<ToolCatalogPort["call"]>>;
@@ -508,8 +508,13 @@ function effectAwareError(
   });
 }
 
-function unknownSourceForTool(source: "runtime" | "client"): UnknownEffectSource {
-  return source === "runtime" ? "runtime_mcp" : "client_mcp";
+function unknownSourceForTool(tool: ModelToolDefinition): UnknownEffectSource {
+  return tool.source === "runtime" ||
+    (tool.source === "agent" && tool.sourceId === "skill_registry" && tool.name === "load_skill")
+    ? "runtime_mcp"
+    : tool.source === "client"
+      ? "client_mcp"
+      : "unclassified";
 }
 
 function unknownSourceFromError(error: unknown): UnknownEffectSource {

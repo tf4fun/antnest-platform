@@ -12,6 +12,14 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
 3. Discover platform Runtime MCP tools once for this Run. Managed stdio
    children are already represented by Runtime's `mcp__<server>__<tool>` tools.
    ACP never launches a child or invents a per-child HTTP endpoint.
+   Opt-in [Skill discovery tools](../../../contracts/agent-acp/skill-discovery-tools.md)
+   are appended as explicit ACP platform definitions, alongside the local plan
+   tool. Reserved-name conflicts fail preparation. They are dispatched to the
+   configured Registry with persisted Run authority, rather than Runtime MCP.
+   Multi-file load then uses the signed private temporary endpoint, following
+   [D4A](../../../contracts/agent-acp/skill-temporary-consumer.md); ordinary
+   read/Bash can use confirmed files. Pending cleanup fences new Run/learning
+   work and lifecycle settlement, including after ACP restart.
 4. Prepare a transient system message from the Agent prompt, Runtime environment,
    workspace `AGENTS.md`, and system/personal Skill summaries with read locations.
    Full Skill documents are loaded by the Agent using `read` when needed. These
@@ -23,7 +31,7 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    Retain the workspace guidance locator before budgeting Skill entries, and
    omit metadata only at complete-entry boundaries. Token cost remains the
    existing approximate character estimate, not an exact model tokenizer.
-6. Call the selected tool through the same bound endpoint and original MCP name.
+6. Call selected Runtime tools through the same bound endpoint and original MCP name.
    Structured results remain available to the model. An ordinary MCP error
    result is a returned outcome; a transport timeout/cancellation does not prove
    an outcome and must not trigger blind replay.
@@ -40,6 +48,19 @@ is the wire contract. ACP owns its validated read model and model-input budget,
 not deployment configuration, Skill publication, or process supervision.
 There are no new tables, ACP fields or external endpoints in this feature.
 Existing ACP v1/v2 semantics are unchanged.
+
+Builtin tools use the [shared flat input contract](../../../contracts/runtime/builtin-tools.schema.json).
+Runtime information retains typed root/path identities internally; the transient
+model context renders them as `/workspace/...` or `/skills/...` string locators.
+These are Runtime tool aliases, independent of the configured physical mounts.
+Personal Skill maintenance reads use the same public string path and a 1-based
+line offset, while still checking complete content and the 16 KiB byte bound.
+The completed-Run learning scan recognizes successful public
+`read` calls to `/skills/NAME/SKILL.md` or personal Skill paths under
+`.antnest/skills/NAME/SKILL.md`, including `/workspace/` and `~/` aliases.
+It still requires a completed Runtime attempt in the immediately preceding
+completed Run; ordinary documents and rejected legacy object arguments cannot
+count as prior Skill use.
 
 Runtime information reads have an `mcp.runtime.info` client span beneath the Run
 trace, carrying admission/execution identifiers and outcome, not document content

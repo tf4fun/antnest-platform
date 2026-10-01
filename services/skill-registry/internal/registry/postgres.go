@@ -125,6 +125,16 @@ func (s *PostgresStore) Publish(ctx context.Context, input PublishRecord) (Versi
 	if err != nil {
 		return Version{}, databaseError(err)
 	}
+	if input.Provenance != nil {
+		provenance, err := json.Marshal(input.Provenance)
+		if err != nil {
+			return Version{}, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO skill_version_sources (skill_id, version, provenance)
+			VALUES ($1, $2, $3)`, id, version, provenance); err != nil {
+			return Version{}, databaseError(err)
+		}
+	}
 	_, err = tx.Exec(ctx, `UPDATE command_receipts SET result = $1
         WHERE organization_id = $2 AND request_id = $3`, metadata, input.OrganizationID, input.RequestID)
 	if err != nil {

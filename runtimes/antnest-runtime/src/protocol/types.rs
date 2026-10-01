@@ -3,39 +3,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::execution;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RootName {
-    Workspace,
-    SystemSkills,
+fn workspace_directory() -> String {
+    ".".into()
 }
-
-impl From<RootName> for execution::RootName {
-    fn from(value: RootName) -> Self {
-        match value {
-            RootName::Workspace => Self::Workspace,
-            RootName::SystemSkills => Self::SystemSkills,
-        }
-    }
+fn bash_timeout() -> u64 {
+    120000
 }
-
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RootPath {
-    /// Named root. Runtime write/edit operations accept only `workspace`.
-    pub(crate) root: RootName,
-    /// Non-empty relative path beneath the named root; absolute paths, NUL,
-    /// `..`, and platform prefixes are rejected.
-    #[schemars(length(min = 1))]
-    pub(crate) path: String,
+fn first_line() -> i64 {
+    1
 }
-
-impl TryFrom<RootPath> for execution::RootPath {
-    type Error = &'static str;
-
-    fn try_from(value: RootPath) -> Result<Self, Self::Error> {
-        execution::RootPath::new(value.root.into(), value.path)
-    }
+fn read_lines() -> i64 {
+    execution::DEFAULT_READ_LINES as i64
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -58,13 +36,17 @@ pub(crate) struct BashInput {
     /// Shell command executed with `/bin/bash -lc`.
     #[schemars(length(min = 1))]
     pub(crate) command: String,
-    /// Working directory beneath the workspace root.
-    pub(crate) working_dir: RootPath,
+    /// Working directory: relative to /workspace or beneath /workspace/.
+    /// Defaults to the workspace itself.
+    #[serde(default = "workspace_directory")]
+    #[schemars(length(min = 1))]
+    pub(crate) working_dir: String,
     /// Additional environment variables for this command only. `HOME` and
     /// `PATH` remain Runtime-owned and duplicate names are rejected.
     #[serde(default)]
     pub(crate) env: Vec<EnvironmentVariable>,
     /// Hard execution deadline in milliseconds.
+    #[serde(default = "bash_timeout")]
     #[schemars(range(min = 1, max = 86400000))]
     pub(crate) timeout_ms: u64,
 }
@@ -75,7 +57,7 @@ impl TryFrom<BashInput> for execution::BashRequest {
     fn try_from(value: BashInput) -> Result<Self, Self::Error> {
         execution::BashRequest::new(
             value.command,
-            value.working_dir.try_into()?,
+            execution::RootPath::from_tool_path(value.working_dir)?,
             value.env.into_iter().map(Into::into).collect(),
             value.timeout_ms,
         )
@@ -104,13 +86,16 @@ impl From<execution::BashResult> for BashResult {
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ReadFileInput {
-    pub(crate) path: RootPath,
-    /// Zero-based UTF-8 byte offset.
-    #[serde(default)]
-    #[schemars(range(min = 0))]
+    /// File path: relative to /workspace, ~/path, /workspace/path, or /skills/path.
+    #[schemars(length(min = 1))]
+    pub(crate) path: String,
+    /// First line to read (1-indexed; default 1).
+    #[serde(default = "first_line")]
+    #[schemars(range(min = 1))]
     pub(crate) offset: i64,
-    /// Maximum number of bytes returned.
-    #[schemars(range(min = 1, max = 8388608))]
+    /// Maximum lines to read (default 2000); output is also capped at 50 KiB.
+    #[serde(default = "read_lines")]
+    #[schemars(range(min = 1, max = 20000))]
     pub(crate) limit: i64,
 }
 
@@ -118,7 +103,11 @@ impl TryFrom<ReadFileInput> for execution::ReadRequest {
     type Error = &'static str;
 
     fn try_from(value: ReadFileInput) -> Result<Self, Self::Error> {
-        execution::ReadRequest::new(value.path.try_into()?, value.offset, value.limit)
+        execution::ReadRequest::new(
+            execution::RootPath::from_tool_path(value.path)?,
+            value.offset,
+            value.limit,
+        )
     }
 }
 
@@ -126,6 +115,8 @@ impl TryFrom<ReadFileInput> for execution::ReadRequest {
 pub(crate) struct ReadFileResult {
     pub(crate) content: String,
     pub(crate) truncated: bool,
+    /// Next 1-based line to read, or null at the end of the file.
+    pub(crate) next_offset: Option<usize>,
 }
 
 impl From<execution::ReadResult> for ReadFileResult {
@@ -133,6 +124,7 @@ impl From<execution::ReadResult> for ReadFileResult {
         Self {
             content: value.content,
             truncated: value.truncated,
+            next_offset: value.next_offset,
         }
     }
 }
@@ -140,7 +132,10 @@ impl From<execution::ReadResult> for ReadFileResult {
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WriteFileInput {
-    pub(crate) path: RootPath,
+    /// File path: relative to /workspace, ~/path, or /workspace/path.
+    /// System Skills under /skills/ are read-only.
+    #[schemars(length(min = 1))]
+    pub(crate) path: String,
     /// UTF-8 text replacing the complete file. Maximum encoded size is 8 MiB.
     pub(crate) content: String,
 }
@@ -149,7 +144,10 @@ impl TryFrom<WriteFileInput> for execution::WriteRequest {
     type Error = &'static str;
 
     fn try_from(value: WriteFileInput) -> Result<Self, Self::Error> {
-        execution::WriteRequest::new(value.path.try_into()?, value.content)
+        execution::WriteRequest::new(
+            execution::RootPath::from_tool_path(value.path)?,
+            value.content,
+        )
     }
 }
 
@@ -169,7 +167,10 @@ impl From<execution::WriteResult> for WriteFileResult {
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EditFileInput {
-    pub(crate) path: RootPath,
+    /// File path: relative to /workspace, ~/path, or /workspace/path.
+    /// System Skills under /skills/ are read-only.
+    #[schemars(length(min = 1))]
+    pub(crate) path: String,
     /// Text that must occur exactly once.
     #[schemars(length(min = 1, max = 8388608))]
     pub(crate) old_string: String,
@@ -181,7 +182,11 @@ impl TryFrom<EditFileInput> for execution::EditRequest {
     type Error = &'static str;
 
     fn try_from(value: EditFileInput) -> Result<Self, Self::Error> {
-        execution::EditRequest::new(value.path.try_into()?, value.old_string, value.new_string)
+        execution::EditRequest::new(
+            execution::RootPath::from_tool_path(value.path)?,
+            value.old_string,
+            value.new_string,
+        )
     }
 }
 
@@ -204,18 +209,11 @@ mod tests {
 
     #[test]
     fn transport_inputs_cannot_bypass_execution_invariants() {
-        let path = RootPath {
-            root: RootName::Workspace,
-            path: "../outside".into(),
-        };
-        assert!(execution::RootPath::try_from(path).is_err());
+        assert!(execution::RootPath::from_tool_path("../outside".into()).is_err());
 
         let bash = BashInput {
             command: "true".into(),
-            working_dir: RootPath {
-                root: RootName::Workspace,
-                path: ".".into(),
-            },
+            working_dir: ".".into(),
             env: vec![EnvironmentVariable {
                 name: "HOME".into(),
                 value: "/tmp".into(),

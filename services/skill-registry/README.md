@@ -8,6 +8,32 @@ defines limits, canonical digests, routes and errors. The
 [Stage 4 design](../../docs/skill-registry-minimal-design.md) records separate
 Controller, Runtime Controller, ACP and Console delivery batches.
 
+Registry D1 now also owns a metadata-only dynamic source directory, literal
+name/description search, current-source inspection, verified temporary package
+reads and explicit promotion into immutable formal versions. Projection never
+stores the source ZIP/body or takes over its lifecycle. Only promotion persists
+the complete package, source provenance and command receipt atomically. The
+[discovery contract](../../contracts/skill-registry/discovery-api.md) defines
+this boundary. The [D1 report](../../docs/skill-discovery-registry-delivery-20261001.md)
+records admission and pending consumers. ACP's automatic producer/source routes
+are admitted separately in [D2](../../docs/skill-discovery-acp-delivery-20261001.md).
+ACP's model find/load text tools are admitted in
+[D3](../../docs/skill-discovery-tools-delivery-20261001.md). Runtime/ACP temporary
+file delivery is admitted in [D4A](../../docs/skill-discovery-temporary-consumer-delivery-20261001.md),
+and Console source preview/promotion in [D6](../../docs/skill-discovery-console-delivery-20261001.md).
+[DI1](../../docs/skill-propagation-integration-delivery-20261001.md) passes actual
+automatic learning, source use, login/promotion and frozen Template/create/rebuild/Run.
+
+[D1A](../../docs/skill-discovery-caller-registry-delivery-20261001.md) adds optional
+trusted `requesting_agent_id` search context. Personal projections of that Agent
+are excluded before candidate limits and source inspection; formal versions stay
+eligible. Null/empty/invalid IDs are rejected. This grants no reading authority.
+Console preview omits the context. ACP derivation and real foreground acceptance
+have separate gates: [D3A](../../docs/skill-discovery-caller-acp-delivery-20261001.md)
+passes consumer unit/HTTP/PostgreSQL checks;
+[DI3](../../docs/skill-discovery-caller-integration-delivery-20261001.md) now also
+passes actual active-Run formal/peer loads, local Skill availability and source Trace parents.
+
 Run from this module with `go run ./cmd/skill-registry`. Required settings:
 
 - `ANTNEST_SKILL_REGISTRY_DATABASE_URL`: URL of this service's dedicated
@@ -15,8 +41,32 @@ Run from this module with `go run ./cmd/skill-registry`. Required settings:
 - `ANTNEST_SKILL_REGISTRY_API_TOKEN`: secret of at least 32 bytes, held only by
   trusted internal callers. Do not place it in a URL, image or repository.
 - `ANTNEST_SKILL_REGISTRY_LISTEN`: optional, defaults to `:8080`.
+- `ANTNEST_SKILL_REGISTRY_SOURCE_URL` and `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`:
+  optional paired settings for one private ACP source origin and a distinct
+  read-only source-route bearer secret of at least 32 bytes. Both unset leaves
+  formal reads/search available and Agent source reads explicitly unavailable.
+  URL credentials, query/fragment and path prefixes are rejected. Do not enable
+  this unless it points to ACP's admitted [D2 source implementation](../../docs/skill-discovery-acp-delivery-20261001.md),
+  with matching ACP Registry/source settings; shared development deployment stays opt-in.
 
-Startup pings PostgreSQL and applies the embedded, checksum-checked schema
+In the standard Compose stack, the source URL/token pair and ACP's matching
+settings derive from one `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`. The
+[deployment guide](../../docs/skill-deployment.md) describes opt-in configuration;
+the formal Registry API bearer remains separate.
+
+Registry HTTP tracing follows the [D1T boundary contract](../../contracts/skill-registry/trace-boundaries.md).
+Inbound W3C context becomes a native SERVER span; the source reader injects its
+actual HTTP CLIENT child, retained through response EOF/close/cancellation. HTTP
+tracing never records headers, queries, Skill/projection bodies or package bytes,
+including when the RPC-content switch is enabled. Export uses the pinned Go OTel
+SDK with `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT` (or its traces
+endpoint) and `http/protobuf`. `OTEL_SDK_DISABLED=true` or exporter `none` keeps
+context propagation while disabling export. Shutdown flushes after HTTP shutdown
+with a five-second bound. Ordinary deployment wiring and the independent
+[DI3 integration](../../docs/skill-discovery-caller-integration-delivery-20261001.md)
+now pass, including Registry SERVER/CLIENT parents in the actual calling Run Trace.
+
+Startup pings PostgreSQL and applies the embedded, ordered checksum-checked schema
 migration. `GET /status` checks database readiness. Service routes require the
 bearer token; the service must be placed on a private control network. The
 deployment must keep it off `antnest-runtime-management` and deny Runtime

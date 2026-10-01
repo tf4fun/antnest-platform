@@ -27,6 +27,24 @@ const commands = [
   { name: "plan", description: "Plan a task", input: { hint: "Describe your task" } },
 ];
 
+test("lists preset and personal Skill commands and selects one into an unsent task draft", () => {
+  const submit = vi.fn();
+  const skills = [
+    { name: "skill:system:review", description: "Review files", input: { hint: "Task for this preset Skill" } },
+    { name: "skill:personal:review", description: "Review my workspace", input: { hint: "Task for this personal Skill" } },
+  ];
+  render(<EditableComposer value="/skill" commands={skills} draftMode historyReady={false} onSubmit={submit} />);
+  const editor = screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" });
+  fireEvent.focus(editor);
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  expect(screen.getByText("Preset Skill")).toBeTruthy();
+  expect(screen.getByText("Personal Skill")).toBeTruthy();
+  fireEvent.click(screen.getByRole("option", { name: /skill:personal:review/ }));
+  expect(editor.value).toBe("/skill:personal:review ");
+  expect(submit).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(editor);
+});
+
 test("busy command input stays editable and sends controls without invoking Stop", () => {
   const input = props();
   render(<Composer {...input} value="/status" sending cancellable agentStatus="busy"

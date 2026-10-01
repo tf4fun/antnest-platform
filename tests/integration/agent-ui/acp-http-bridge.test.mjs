@@ -21,6 +21,7 @@ const { createNodeHttpHandler } = await import(
 
 test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable metadata", async () => {
   const observedHeaders = [];
+  let diagnosticKind = "writer";
   const gatewayTraceId = "0123456789abcdef0123456789abcdef";
   const gatewayParentSpanId = "1111111111111111";
   const promptMeta = [];
@@ -30,11 +31,13 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
   const agent = acp
     .agent({ name: "agent-ui-http-fixture" })
     .onRequest(acp.methods.agent.initialize, ({ params }) => {
+      assert.deepEqual(params.clientCapabilities.session?.notices, {});
       assert.deepEqual(params._meta?.["antnest.dev/bridge"], {
         intentReceipt: 1,
         targetCancel: 1,
         deliveryMark: 1,
         configurationCas: 1,
+        learningNotices: 1,
       });
       return {
         protocolVersion: acp.PROTOCOL_VERSION,
@@ -43,6 +46,7 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
           sessionCapabilities: { fork: {} },
         },
         _meta: {
+          "antnest.dev/skill-commands": { version: 1, commands: [{ name: "skill:system:review", description: "Review files", input: { hint: "Task" } }] },
           "antnest.dev/bridge": {
             intentReceipt: 1,
             targetCancel: 1,
@@ -164,6 +168,59 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       response.end();
       return;
     }
+    if (
+      request.url === "/rpc/agent-acp/workspace/agents/agent-1/learning-status"
+    ) {
+      assert.equal(request.method, "GET");
+      response.writeHead(diagnosticKind === "unavailable" ? 503 : 200, {
+        "content-type": "application/json",
+      });
+      response.end(
+        JSON.stringify(
+          diagnosticKind === "unavailable"
+            ? { code: "learning_status_unavailable", retryable: true }
+            : {
+                agentId: diagnosticKind === "foreign" ? "agent-2" : "agent-1",
+                blocked:
+                  diagnosticKind === "empty"
+                    ? null
+                    : {
+                        reason: "writer_present",
+                        ...(diagnosticKind === "invalid"
+                          ? { command: "private process args" }
+                          : {}),
+                      },
+              },
+        ),
+      );
+      return;
+    }
+    if (
+      request.url ===
+      "/rpc/agent-acp/workspace/agents/agent-1/learning-changes?limit=20"
+    ) {
+      assert.equal(request.method, "GET");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          items: [
+            {
+              changeId: "change-1",
+              sequence: "1",
+              agentId: "agent-1",
+              kind: "skill_created",
+              occurredAt: "2026-09-29T00:00:00Z",
+              skillName: "workflow",
+              changeSummary: "Learned a workflow",
+            },
+          ],
+          nextCursor: "sealed-1",
+          sealedCursor: "sealed-1",
+          olderCursor: null,
+        }),
+      );
+      return;
+    }
     if (request.url?.endsWith("/intents/intent-1")) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
@@ -240,6 +297,7 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
             requestPermission: () => ({ outcome: { outcome: "cancelled" } }),
           },
         });
+        assert.deepEqual(bridge.skillCommands, [{ name: "skill:system:review", description: "Review files", input: { hint: "Task" } }]);
         return 200;
       },
       { traceparent: `00-${gatewayTraceId}-${gatewayParentSpanId}-01` },
@@ -328,6 +386,23 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
     assert.deepEqual(await bridge.readAgentExecutionState(), {
       availability: "busy",
       activeSessionId: "session-2",
+    });
+    assert.deepEqual(
+      (await bridge.readLearningChanges()).items.map((item) => item.changeId),
+      ["change-1"],
+    );
+    assert.deepEqual(await bridge.readLearningStatus(), {
+      agentId: "agent-1",
+      blocked: { reason: "writer_present" },
+    });
+    for (const kind of ["foreign", "invalid", "unavailable"]) {
+      diagnosticKind = kind;
+      await assert.rejects(bridge.readLearningStatus());
+    }
+    diagnosticKind = "empty";
+    assert.deepEqual(await bridge.readLearningStatus(), {
+      agentId: "agent-1",
+      blocked: null,
     });
     const states = [];
     await bridge.watchAgentExecutionState((state) => {

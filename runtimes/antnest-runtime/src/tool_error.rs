@@ -38,6 +38,7 @@ macro_rules! define_tool_error_codes {
 }
 
 define_tool_error_codes! {
+    AtomicSkillReplaceUnsupported => "atomic_skill_replace_unsupported",
     Canceled => "canceled",
     ChildProcessContainmentUnproven => "child_process_containment_unproven",
     ContentNotUtf8 => "content_not_utf8",
@@ -55,10 +56,37 @@ define_tool_error_codes! {
     RuntimeBusy => "runtime_busy",
     RuntimeFailed => "runtime_failed",
     RuntimeUnavailable => "runtime_unavailable",
+    SkillContentChangedDuringActivation => "skill_content_changed_during_activation",
+    SkillBackgroundTaskRunning => "skill_background_task_running",
+    SkillManagedCallInFlight => "skill_managed_call_in_flight",
+    SkillGenerationCancelled => "skill_generation_cancelled",
+    SkillStorageFull => "skill_storage_full",
+    SkillWritersUnknown => "skill_writers_unknown",
     SpawnFailed => "spawn_failed",
     Timeout => "timeout",
+    TemporaryRunClosed => "temporary_run_closed",
+    TemporaryScopeBusy => "temporary_scope_busy",
+    TemporaryBackgroundNotSupported => "temporary_background_not_supported",
     WaitFailed => "wait_failed",
     WriteFailed => "write_failed",
+}
+
+impl ToolErrorCode {
+    #[cfg(test)]
+    pub(crate) const fn is_model_facing(self) -> bool {
+        !matches!(
+            self,
+            Self::AtomicSkillReplaceUnsupported
+                | Self::SkillContentChangedDuringActivation
+                | Self::SkillBackgroundTaskRunning
+                | Self::SkillManagedCallInFlight
+                | Self::SkillGenerationCancelled
+                | Self::SkillStorageFull
+                | Self::SkillWritersUnknown
+                | Self::TemporaryRunClosed
+                | Self::TemporaryScopeBusy
+        )
+    }
 }
 
 impl std::fmt::Display for ToolErrorCode {
@@ -91,6 +119,7 @@ pub(crate) struct ToolError {
     pub(crate) code: ToolErrorCode,
     pub(crate) message: String,
     pub(crate) effect_state: ToolEffectState,
+    pub(crate) blocked_subject_id: Option<String>,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -107,6 +136,9 @@ impl ToolError {
     pub(crate) fn unknown(code: ToolErrorCode, message: impl std::fmt::Display) -> Self {
         Self::with_effect(code, message, ToolEffectState::Unknown)
     }
+    pub(crate) fn settled(code: ToolErrorCode, message: impl std::fmt::Display) -> Self {
+        Self::with_effect(code, message, ToolEffectState::Settled)
+    }
 
     pub(crate) fn outcome_unknown(message: impl std::fmt::Display) -> Self {
         Self::unknown(ToolErrorCode::OutcomeUnknown, message)
@@ -121,8 +153,14 @@ impl ToolError {
             code,
             message: message.to_string(),
             effect_state,
+            blocked_subject_id: None,
             source: None,
         }
+    }
+
+    pub(crate) fn with_blocked_subject(mut self, subject_id: impl Into<String>) -> Self {
+        self.blocked_subject_id = Some(subject_id.into());
+        self
     }
 
     pub(crate) fn invalid_params(message: impl std::fmt::Display) -> Self {

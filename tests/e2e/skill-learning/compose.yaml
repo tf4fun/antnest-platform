@@ -1,0 +1,21 @@
+services:
+  agent-controller:
+    image: ${ANTNEST_E2E_AGENT_CONTROLLER_IMAGE:-antnest/agent-controller:local}
+  runtime-controller:
+    environment:
+      ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: ${ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS:?}
+  agent-acp-service:
+    environment:
+      ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: http://agent-controller:8080
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: ${ANTNEST_E2E_SKILL_SIGNING_KID:-fixture-key}
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: ${ANTNEST_E2E_SKILL_SIGNING_KEY:?}
+  stage3-model:
+    command: ["node", "/tests/e2e/skill-learning/automatic-model.mjs"]
+    environment:
+      ANTNEST_E2E_HOLD_REVIEW: ${ANTNEST_E2E_HOLD_REVIEW:-false}
+      ANTNEST_E2E_REVIEW_SKIP: ${ANTNEST_E2E_REVIEW_SKIP:-false}
+      ANTNEST_E2E_REVIEW_FAILURE: ${ANTNEST_E2E_REVIEW_FAILURE:-false}
+      ANTNEST_E2E_REVIEW_UNTRUSTED: ${ANTNEST_E2E_REVIEW_UNTRUSTED:-false}
+      ANTNEST_E2E_PINNED: ${ANTNEST_E2E_PINNED:-false}
+      ANTNEST_E2E_SKILL_LEARNING_DEBUG: ${ANTNEST_E2E_SKILL_LEARNING_DEBUG:-false}
+      ANTNEST_E2E_TOOL_USABILITY: ${ANTNEST_E2E_TOOL_USABILITY:-false}

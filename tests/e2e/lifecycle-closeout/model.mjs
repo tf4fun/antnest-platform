@@ -54,15 +54,15 @@ export function decide(payload) {
           arguments: {
             command:
               "printf 'held\\n' >> /workspace/.c3-run-effects\nprintf '%s' \"$$\" > /workspace/.c3-run-started\nwhile [ ! -e /workspace/.c3-run-release ]; do sleep 0.1; done\nprintf 'finished\\n' >> /workspace/.c3-run-effects\nprintf 'c3-held-complete\\n'",
-            working_dir: { root: "workspace", path: "." },
+            working_dir: ".",
             timeout_ms: 120000,
           },
         }
       : {
           name: "read",
           arguments: {
-            path: { root: "workspace", path: ".c3-run-effects" },
-            offset: 0,
+            path: ".c3-run-effects",
+            offset: 1,
             limit: 4096,
           },
         };

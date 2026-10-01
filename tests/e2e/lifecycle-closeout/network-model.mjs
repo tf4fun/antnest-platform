@@ -29,7 +29,7 @@ export function decideNetwork(payload) {
       name: "bash",
       arguments: {
         command,
-        working_dir: { root: "workspace", path: "." },
+        working_dir: ".",
         timeout_ms: 55000,
       },
     },

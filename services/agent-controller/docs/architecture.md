@@ -492,6 +492,24 @@ deletion and would make failed initial provisioning impossible to clean up.
 
 ## Persistence Ownership
 
+Skill Learning policy is a separate Controller-owned aggregate per Agent. A
+first owner-scoped read materializes the v1 automatic default; it is not part
+of a Template, Agent Spec or Runtime deployment digest. The policy row records
+its own sequence and deterministic SHA-256 revision. A mutation locks current
+Identity admission and Agent ownership, then atomically stores the new policy
+and a request-ID receipt. Exact retries return that receipt; changed payloads
+or stale policy revisions conflict. The read/result policy includes a
+server-owned activation cut: the lazy default uses the Agent creation timestamp,
+an `off` to `automatic` transition refreshes
+it, and other mutations preserve it. It participates in the policy revision
+but cannot be selected by a mutation caller. Owner-authorized canonical pins
+are accepted because they only remove automatic maintenance rights; no existing
+path or ownership is inferred. The reserved `adopted_paths` list remains empty
+in the first automatic-learning delivery; explicit adoption is deferred.
+ACP consumes the policy through the
+scoped internal read and recheck it before an L3 candidate commit. See the
+[Skill Learning contract](../../../contracts/skill-learning/learning-api.md).
+
 The initial schema owns:
 
 - `provider_connections` (connection metadata and current encrypted credential);
@@ -599,10 +617,14 @@ Required metrics are low-cardinality:
   reads RC's live receipt while preparing or ready and returns a dependency
   error if that read fails. Full ACP/Console integration and legacy-asset
   migration remain separate acceptance work.
-- The separate [learning proposal](../../../docs/skill-learning-design.md)
-  assigns Agent learning scope, authorization and budget configuration to a
-  mandatory Controller batch. ACP owns candidates, confirmation and execution;
-  learning is not a Registry prerequisite.
+- The separate [learning design](../../../docs/skill-learning-design.md)
+  assigns automatic-learning policy, scope/pinning, authorization and budgets to
+  Controller. Its policy persistence and scoped read/mutation have passed local
+  gates; Controller accepts owner-authorized pins and rejects nonempty
+  `adopted_paths`. ACP owns triggers, managed provenance, candidates,
+  policy-bound application records and execution; manual saving is optional.
+  The automatic happy path has isolated Docker evidence, while remaining LI1
+  gates still need acceptance.
 - A Kubernetes adapter changes Runtime Controller only.
 - A KMS adapter replaces local encrypted credential storage behind the
   credential port without changing Run contracts.

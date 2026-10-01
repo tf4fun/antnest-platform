@@ -14,6 +14,7 @@ import type {
   ExecuteRunResult,
 } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { createAcpV1Agent } from "../../../../services/agent-acp-service/src/transport/acp/v1/agent.js";
+import type { LearningChangeItem } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
 import {
   SessionOutputStreams,
   sessionOutputKey,
@@ -27,6 +28,207 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it("publishes Skills before Session creation and retains the catalog on delivery checkpoints and refreshes after a Run", async () => {
+    const notifications: acp.SessionNotification[] = [];
+    const commands = [
+      {
+        name: "skill:system:review",
+        description: "Review files",
+        input: { hint: "Task" },
+      },
+    ];
+    const read = vi.fn(() =>
+      Promise.resolve({ executionId: "runtime-1", commands }),
+    );
+    const application = createApplication({
+      resumeSession: vi.fn(() =>
+        Promise.resolve({
+          sequence: 0,
+          appendVersion: 0,
+          replay: [],
+        }),
+      ),
+    });
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+      skillCommands: { read },
+    });
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        notifications.push(params);
+      });
+    await client.connectWith(agent, async (context) => {
+      const initialized = await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+          },
+        },
+      });
+      expect(initialized._meta?.["antnest.dev/skill-commands"]).toEqual({
+        version: 1,
+        commands,
+      });
+      await context.request(acp.methods.agent.session.load, {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      });
+      await context.request(acp.methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "/skill:system:review Read this file" }],
+      });
+      const updates = notifications.filter(
+        (item) => item.update.sessionUpdate === "available_commands_update",
+      );
+      expect(updates.length).toBeGreaterThan(1);
+      for (const item of updates) {
+        if (item.update.sessionUpdate === "available_commands_update")
+          expect(item.update.availableCommands).toContainEqual(commands[0]);
+      }
+      expect(read.mock.calls.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+  it("routes a committed learning change through the SDK notice method only after Session association", async () => {
+    const notifications: acp.SessionNotification[] = [];
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        notifications.push(params);
+      });
+    let send:
+      | ((sessionId: string, item: LearningChangeItem) => Promise<void>)
+      | undefined;
+    const attach = vi.fn(() => Promise.resolve());
+    const detach = vi.fn();
+    const disconnect = vi.fn();
+    const notices = {
+      subscribe: vi.fn((_binding: ConnectionBinding, sender: typeof send) => {
+        send = sender;
+        return { attach, detach, disconnect };
+      }),
+    };
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication(),
+      promptCapabilities: { image: false, embeddedContext: false },
+      notices,
+    });
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { session: { notices: {} } },
+      });
+      await context.request(acp.methods.agent.session.load, {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      });
+      expect(attach).toHaveBeenCalledWith("session-1");
+      await send?.("session-1", {
+        changeId: "change-1",
+        sequence: "1",
+        agentId: binding.agentId,
+        kind: "skill_created",
+        occurredAt: "2026-09-29T00:00:00.000Z",
+        skillName: "inspect-first",
+        changeSummary: "已新增 Skill「inspect-first」",
+        sourceSessionId: "session-1",
+        sourceRunId: "run-1",
+      });
+      expect(notifications.at(-1)).toMatchObject({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "notice",
+          severity: "info",
+          title: "已新增 Skill「inspect-first」",
+          _meta: {
+            "antnest.dev/skill-learning": {
+              version: 1,
+              changeId: "change-1",
+              sequence: "1",
+              agentId: binding.agentId,
+              kind: "skill_created",
+              occurredAt: "2026-09-29T00:00:00.000Z",
+              skillName: "inspect-first",
+              changeSummary: "已新增 Skill「inspect-first」",
+              sourceSessionId: "session-1",
+              sourceRunId: "run-1",
+            },
+          },
+        },
+      });
+      await context.request(acp.methods.agent.session.close, {
+        sessionId: "session-1",
+      });
+      expect(detach).toHaveBeenCalledWith("session-1");
+    });
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms learning notices only when the SDK client advertises notices and the Bridge extension", async () => {
+    const notices = {
+      subscribe: vi.fn(() => ({
+        attach: () => Promise.resolve(),
+        detach: () => undefined,
+        disconnect: () => undefined,
+      })),
+    };
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication(),
+      promptCapabilities: { image: false, embeddedContext: false },
+      notices,
+    });
+    await acp.client().connectWith(agent, async (context) => {
+      const initialized = await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { session: { notices: {} } },
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+            learningNotices: 1,
+          },
+        },
+      });
+      expect(initialized._meta?.["antnest.dev/bridge"]).toMatchObject({
+        learningNotices: 1,
+      });
+    });
+    const ordinaryAgent = createAcpV1Agent({
+      binding: { ...binding, connectionId: "connection-without-notices" },
+      application: createApplication(),
+      promptCapabilities: { image: false, embeddedContext: false },
+      notices,
+    });
+    await acp.client().connectWith(ordinaryAgent, async (context) => {
+      const initialized = await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+            learningNotices: 1,
+          },
+        },
+      });
+      expect(initialized._meta?.["antnest.dev/bridge"]).not.toHaveProperty(
+        "learningNotices",
+      );
+    });
+  });
+
   it("keeps accepted execution observable after its first output attachment fails", async () => {
     const proceed = Promise.withResolvers<void>();
     const finished = Promise.withResolvers<void>();

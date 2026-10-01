@@ -32,7 +32,7 @@ export type ModelResult = (
 export type ModelDelta = { kind: "message" | "thought"; text: string };
 
 export type ModelRequest = {
-  purpose?: "permission_judge";
+  purpose?: "permission_judge" | "skill_learning";
   snapshot: RunExecutionSnapshot;
   messages: ModelMessage[];
   tools: ModelToolDefinition[];

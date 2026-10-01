@@ -22,6 +22,7 @@ export class PostgresWorkerLock {
   private readonly loss = Promise.withResolvers<Error>();
   private readonly monitorAbort = new AbortController();
   private readonly monitor: Promise<void>;
+  private recovery: Promise<number> | undefined;
 
   private constructor(
     private readonly client: PoolClient,
@@ -62,11 +63,48 @@ export class PostgresWorkerLock {
     return this.loss.promise;
   }
 
+  public pauseAbandonedLearningTasks(): Promise<number> {
+    if (!this.isHeld()) return Promise.reject(new WorkerOwnershipLostError());
+    this.recovery ??= this.pauseAbandonedLearningTasksUnderLock().finally(() => {
+      this.recovery = undefined;
+    });
+    return this.recovery;
+  }
+
+  private async pauseAbandonedLearningTasksUnderLock(): Promise<number> {
+    await this.client.query("BEGIN");
+    try {
+      await this.client.query(
+        `UPDATE learning_maintenance_intents SET state='unknown'
+         WHERE action='release' AND state='pending'`,
+      );
+      await this.client.query(
+        `UPDATE learning_model_calls SET state='unknown'
+         WHERE state='reserved' AND task_id IN
+           (SELECT id FROM learning_tasks WHERE state='running')`,
+      );
+      const result = await this.client.query(
+        `UPDATE learning_tasks SET state='paused',pause_reason='worker_lost',updated_at=now()
+         WHERE state='running'`,
+      );
+      if (!this.isHeld()) throw new WorkerOwnershipLostError();
+      await this.client.query("COMMIT");
+      if (!this.isHeld()) throw new WorkerOwnershipLostError();
+      return result.rowCount ?? 0;
+    } catch (error) {
+      await this.client.query("ROLLBACK").catch(() => {
+        this.discard = true;
+      });
+      throw error;
+    }
+  }
+
   public async release(): Promise<void> {
     if (this.released) {
       return;
     }
     this.released = true;
+    await this.recovery?.catch(() => undefined);
     this.monitorAbort.abort();
     await this.monitor;
     const shouldUnlock = this.held;

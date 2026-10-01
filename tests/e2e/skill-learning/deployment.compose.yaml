@@ -1,0 +1,9 @@
+# Only images and the deterministic model differ from the standard deployment.
+# Source/learning authentication is supplied by compose.yaml, never by this file.
+services:
+  agent-controller:
+    image: ${ANTNEST_E2E_AGENT_CONTROLLER_IMAGE:?}
+  skill-registry:
+    image: ${ANTNEST_E2E_DISCOVERY_REGISTRY_IMAGE:?}
+  stage3-model:
+    command: ["node", "/tests/e2e/skill-learning/automatic-model.mjs"]

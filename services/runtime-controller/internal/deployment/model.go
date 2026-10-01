@@ -113,12 +113,13 @@ func (c Configuration) Validate() error {
 }
 
 type RuntimeSpec struct {
-	MCPServers []MCPServer    `json:"mcp_servers,omitempty"`
-	AgentID    string         `json:"agent_id"`
-	Generation uint64         `json:"generation"`
-	Listen     SocketAddress  `json:"listen"`
-	Network    NetworkSpec    `json:"network"`
-	Filesystem FilesystemSpec `json:"filesystem"`
+	MCPServers                []MCPServer           `json:"mcp_servers,omitempty"`
+	SkillMaintenanceVerifiers *MaintenanceVerifiers `json:"skill_maintenance_verifiers,omitempty"`
+	AgentID                   string                `json:"agent_id"`
+	Generation                uint64                `json:"generation"`
+	Listen                    SocketAddress         `json:"listen"`
+	Network                   NetworkSpec           `json:"network"`
+	Filesystem                FilesystemSpec        `json:"filesystem"`
 }
 
 type SocketAddress struct {
@@ -170,6 +171,15 @@ func (d Deployment) ValidateFor(key Key) error {
 	}
 	if err := validateMCPServers(d.RuntimeSpec.MCPServers); err != nil {
 		return err
+	}
+	if verifiers := d.RuntimeSpec.SkillMaintenanceVerifiers; verifiers != nil {
+		canonical, err := verifiers.Normalize()
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(verifiers.Keys, canonical.Keys) {
+			return invalid("skill_maintenance_verifiers keys must be sorted by kid")
+		}
 	}
 	if d.Resources.MemoryBytes < 128<<20 {
 		return invalid("resources.memory_bytes must be at least 134217728")
@@ -506,20 +516,21 @@ const (
 )
 
 type Operation struct {
-	ImageReference  string
-	ImageID         string
-	RequestID       string
-	RequestDigest   string
-	Kind            OperationKind
-	AgentID         string
-	RuntimeRevision RuntimeRevision
-	State           OperationState
-	Effect          EffectState
-	Inspection      *Environment
-	ErrorCode       string
-	ErrorDetail     string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ImageReference       string
+	ImageID              string
+	MaintenanceVerifiers *MaintenanceVerifiers
+	RequestID            string
+	RequestDigest        string
+	Kind                 OperationKind
+	AgentID              string
+	RuntimeRevision      RuntimeRevision
+	State                OperationState
+	Effect               EffectState
+	Inspection           *Environment
+	ErrorCode            string
+	ErrorDetail          string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 
 	Attempt                 uint64
 	ExpectedRevision        RuntimeRevision

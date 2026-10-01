@@ -3,14 +3,16 @@ import type { RuntimeInformation } from "../domain/runtime-information.js";
 
 export function runtimeContext(information: RuntimeInformation, characterBudget: number): string {
   const notice =
-    "\n[Runtime information truncated; use read at the listed root/path for complete guidance or skill contents. Additional entries may be omitted.]";
+    "\n[Runtime information truncated; use read with the listed string path for complete guidance or skill contents. Additional entries may be omitted.]";
   const sections = [
     "# Current Runtime information (refreshed for this request)",
     `Environment: ${JSON.stringify(information.environment)}`,
-    "Skill entries are summaries. Read the listed root/path before use. System skills are platform-provided; personal skills are workspace-owned.",
+    "Skill entries are summaries. Use read({path: the listed string path}) before use. File tools accept workspace-relative paths, /workspace/ paths and read-only /skills/ paths. System skills are platform-provided; personal skills are workspace-owned.",
   ];
   if (information.instructions !== null)
-    sections.push(`## Workspace guidance ${JSON.stringify(information.instructions.path)}`);
+    sections.push(
+      `## Workspace guidance ${JSON.stringify(toolPath(information.instructions.path))}`,
+    );
   let remaining = characterBudget - notice.length - sections.join("\n").length;
   if (remaining < 0)
     throw new DomainError(
@@ -27,9 +29,10 @@ export function runtimeContext(information: RuntimeInformation, characterBudget:
   }
   // Keep metadata entries whole so every retained locator remains usable.
   const entries = [
-    ...information.skills.map((skill) => JSON.stringify(skill)),
+    ...information.skills.map((skill) => JSON.stringify({ ...skill, path: toolPath(skill.path) })),
     ...information.warnings.map(
-      (warning) => `Runtime information warning: ${JSON.stringify(warning)}`,
+      (warning) =>
+        `Runtime information warning: ${JSON.stringify({ ...warning, path: toolPath(warning.path) })}`,
     ),
   ];
   for (const entry of entries) {
@@ -41,4 +44,8 @@ export function runtimeContext(information: RuntimeInformation, characterBudget:
     remaining -= entry.length + 1;
   }
   return sections.join("\n") + (truncated ? notice : "");
+}
+
+function toolPath(path: { root: "workspace" | "system_skills"; path: string }): string {
+  return `${path.root === "workspace" ? "/workspace" : "/skills"}/${path.path}`;
 }

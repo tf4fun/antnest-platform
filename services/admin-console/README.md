@@ -1,5 +1,18 @@
 # Admin Console
 
+Skills now includes **Discover Agent Skills**: search the caller's own dynamic
+sources, review current package text/files and explicitly promote an immutable
+formal version. Stable retries and source/head conflicts follow Registry's
+existing publication rules. See [D6 delivery](../../docs/skill-discovery-console-delivery-20261001.md)
+for unit, HTTP, build and desktop/mobile Docker gates. The separate
+[DI1 integration](../../docs/skill-propagation-integration-delivery-20261001.md)
+passes actual automatic sources, normal login/promotion and frozen Template/create/rebuild/Run.
+
+Skill publication uses an accessible ZIP picker with package name/size feedback,
+an explicit Cancel action, and a disabled publish action until a package is
+selected. Cancelling clears the selection; retrying a failed upload retains the
+same File object and its existing idempotency behavior.
+
 Provider connections, credential rotation and model metadata now have separate
 management workflows. Builtin defaults remain Console-owned, persisted choices
 Controller-owned. See [Provider management](docs/provider-management.md) for

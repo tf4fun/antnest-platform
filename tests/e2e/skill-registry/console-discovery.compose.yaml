@@ -1,0 +1,25 @@
+services:
+  postgres:
+    extends: {file: discovery.compose.yaml, service: postgres}
+  source:
+    extends: {file: discovery.compose.yaml, service: source}
+  registry:
+    extends: {file: discovery.compose.yaml, service: registry}
+  console:
+    image: ${ANTNEST_DISCOVERY_CONSOLE_IMAGE}
+    depends_on:
+      registry: {condition: service_healthy}
+    environment:
+      ANTNEST_IDENTITY_SERVICE_URL: http://source:8080
+      ANTNEST_AGENT_CONTROLLER_URL: http://source:8080
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://source:8080
+      ANTNEST_SKILL_REGISTRY_URL: http://registry:8080
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: discovery-registry-control-token-at-least-32-bytes
+    ports: ["127.0.0.1::8080"]
+    healthcheck:
+      test: [CMD, /usr/local/bin/admin-console, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+volumes:
+  database:

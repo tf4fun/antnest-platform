@@ -18,7 +18,7 @@ describe("Tool presentation", () => {
       describeTool(
         tool(name),
         {
-          path: { root: "workspace", path: "notes/./file.txt" },
+          path: "notes/./file.txt",
           offset: 512,
           old_string: "fragment",
           new_string: "replacement",
@@ -45,7 +45,7 @@ describe("Tool presentation", () => {
         describeTool(
           { ...tool(name), title: "Search company documents" },
           {
-            path: { root: "workspace", path: "private.txt" },
+            path: "private.txt",
           },
           "/home/agent",
         ),
@@ -72,35 +72,40 @@ describe("Tool presentation", () => {
 
   it.each([
     undefined,
-    "file.txt",
-    { root: "workspace", path: "/etc/passwd" },
-    { root: "workspace", path: "../outside" },
-    { root: "workspace", path: "a/../b" },
-    { root: "workspace", path: "a\0b" },
-    { root: "unknown", path: "file" },
-  ])("omits locations for invalid named paths: %j", (path) => {
+    "/etc/passwd",
+    "../outside",
+    "a/../b",
+    "a\0b",
+    { root: "workspace", path: "file" },
+  ])("omits locations for invalid string paths: %j", (path) => {
     expect(describeTool(tool("read"), { path }, "/home/agent")).not.toHaveProperty("locations");
   });
 
   it("never guesses missing or system Skill root addresses", () => {
-    expect(
-      describeTool(tool("read"), { path: { root: "workspace", path: "file" } }),
-    ).not.toHaveProperty("locations");
-    expect(
-      describeTool(
-        tool("read"),
-        { path: { root: "system_skills", path: "guide/SKILL.md" } },
-        "/home/agent",
-      ),
-    ).toEqual({ title: "Read system_skills/guide/SKILL.md", toolKind: "read" });
+    expect(describeTool(tool("read"), { path: "file" })).not.toHaveProperty("locations");
+    expect(describeTool(tool("read"), { path: "/skills/guide/SKILL.md" }, "/home/agent")).toEqual({
+      title: "Read /skills/guide/SKILL.md",
+      toolKind: "read",
+    });
   });
 
   it.each([" notes.txt", "notes.txt ", "\ufeffnotes.txt"])(
     "does not guess normalization of whitespace-bearing path %j",
     (path) => {
-      const args = { path: { root: "workspace", path } };
+      const args = { path };
       expect(describeTool(tool("read"), args, "/home/agent")).not.toHaveProperty("locations");
-      expect(args.path.path).toBe(path);
+      expect(args.path).toBe(path);
+    },
+  );
+
+  it.each(["/workspace/notes/file.txt", "~/notes/file.txt"])(
+    "maps virtual workspace path %s to the observed Runtime workspace",
+    (path) => {
+      expect(describeTool(tool("read"), { path }, "/home/agent")).toEqual({
+        title: "Read /home/agent/notes/file.txt",
+        toolKind: "read",
+        locations: [{ path: "/home/agent/notes/file.txt" }],
+      });
     },
   );
 

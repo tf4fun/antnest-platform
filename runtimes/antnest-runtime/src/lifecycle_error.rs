@@ -70,5 +70,6 @@ define_error_codes!(RuntimeErrorCode {
     ShutdownTimeout => "shutdown_timeout",
     SignalListenerFailed => "signal_listener_failed",
     TelemetryInitializationFailed => "telemetry_initialization_failed",
+    TemporaryCleanupFailed => "temporary_cleanup_failed",
     UnexpectedExit => "unexpected_exit",
 });

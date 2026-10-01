@@ -11,8 +11,19 @@ the production-image regression. The real-stack two-Node-owner race also passes:
 one write succeeds, the other returns 409, and both views converge on the
 winner. Schemas for platform-owned values are
 [`workspace-bridge.schema.json`](workspace-bridge.schema.json). The public ACP
-v1 message shapes remain those of installed SDK 1.4.0; clients that do not
+v1 message shapes remain those of installed SDK 1.5.0; clients that do not
 negotiate the extension retain existing behavior.
+
+The installed SDK also includes experimental `notice` updates. The current
+Bridge does not advertise `clientCapabilities.session.notices` or project them.
+The separate [Skill learning notification proposal](../../docs/skill-learning-notifications-design.md)
+selects SDK `notice` for live delivery, with a planned `learningNotices` Bridge
+capability and namespaced change metadata. SDK HTTP routes notices through an
+associated delivery Session; learning-source IDs are separate metadata. Durable
+learning-result reads restore Node/FE projections after gaps; they do not reuse this contract's ACP transcript
+watermarks or add notices to `session/load` replay. This capability, recovery
+routes and workspace fields are reserved by the
+[L0 contract](../skill-learning/learning-api.md) and not yet implemented here.
 
 ## Capability and wire shape
 

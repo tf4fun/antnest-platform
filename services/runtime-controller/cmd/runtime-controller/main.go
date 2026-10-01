@@ -174,6 +174,9 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("control", "control_service_initialization_failed", err)
 	}
+	if err := service.SetMaintenanceVerifiers(configuration.MaintenanceVerifiers); err != nil {
+		return classified("control", "maintenance_verifier_initialization_failed", err)
+	}
 	service.SetSkillVolumeInspector(skillVolumes)
 	service.SetActiveSkillSetVerifier(repository, skillVolumes)
 	monitor, err := platformmonitor.New(

@@ -23,7 +23,10 @@ and network boundaries.
 - Managed MCP elicitation is deferred pending official SDK support; see
   [Elicitation](docs/elicitation.md). No SDK fork or partial interaction bridge
   is maintained; existing non-interactive managed tools remain supported.
-- Read files through named roots; write and edit only the workspace.
+- Accept string paths for file tools, resolve them to named roots, and write/edit
+  only the workspace. `read({path: "notes.txt"})` defaults to the first 2000
+  lines; `bash({command: "pwd"})` defaults to the workspace and 120-second timeout.
+  See the [builtin input contract](../../contracts/runtime/builtin-tools.schema.json).
 - Collect bounded environment information, root `AGENTS.md`, and Skill metadata
   through the non-root `info` subprocess for `antnest://runtime/info`.
 - Carry structurally valid IPv4/TCP packets to Runtime Egress as one raw packet
@@ -31,6 +34,14 @@ and network boundaries.
 - Preserve background processes across successful calls and turns. Cancellation
   targets only the current invocation's process group; PID 1 reaps exited orphans
   without terminating live jobs. Container stop/rebuild reclaims the environment.
+- Accept signed, Run-bound temporary Skill packages through separate private
+  HTTP endpoints. Deliver real UID/GID 1000 files under the reserved workspace
+  namespace and remove them on release, startup and normal shutdown. While a
+  temporary scope is active, new Bash calls are foreground-only and retire
+  their own remaining subprocesses before returning. See the
+  [temporary contract](../../contracts/runtime/temporary-skills.md) and
+  [Runtime delivery evidence](../../docs/skill-discovery-runtime-delivery-20261001.md).
+  ACP's install and durable Run cleanup consumer is still pending.
 - Expose `GET /status` only after bootstrap is complete.
 - Emit structured stderr logs and optionally export HTTP/tool traces through
   OTLP.

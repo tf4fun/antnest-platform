@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/builtin-tools.schema.json",
+  "$defs": {
+    "read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "offset": { "type": "integer", "minimum": 1, "default": 1 },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000,
+          "default": 2000
+        }
+      }
+    },
+    "write": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "content"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "content": { "type": "string" }
+      }
+    },
+    "edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "old_string", "new_string"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "old_string": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8388608
+        },
+        "new_string": { "type": "string" }
+      }
+    },
+    "bash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "working_dir": { "type": "string", "minLength": 1, "default": "." },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000,
+          "default": 120000
+        },
+        "env": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

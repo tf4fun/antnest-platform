@@ -33,7 +33,7 @@ for (const version of [1, 2]) {
     );
     const recovered = `v${version}-recovered-effect`;
     assert.equal(
-      decide(payload(recovered)).call.arguments.path.path,
+      decide(payload(recovered)).call.arguments.path,
       `acp-unknown-v${version}.log`,
     );
     assert.equal(
@@ -50,10 +50,7 @@ for (const version of [1, 2]) {
     const phase = `v${version}-baseline`;
     const first = decide(payload(phase));
     assert.equal(first.call.name, "bash");
-    assert.deepEqual(first.call.arguments.working_dir, {
-      root: "workspace",
-      path: ".",
-    });
+    assert.deepEqual(first.call.arguments.working_dir, ".");
     assert.equal(first.call.arguments.timeout_ms, 10000);
     assert(
       first.call.arguments.command.includes(">> /workspace/acp-effects.log"),
@@ -80,8 +77,8 @@ for (const version of [1, 2]) {
     assert.deepEqual(decide(payload(phase)).call, {
       name: "read",
       arguments: {
-        path: { root: "workspace", path: "acp-effects.log" },
-        offset: 0,
+        path: "acp-effects.log",
+        offset: 1,
         limit: 4096,
       },
     });

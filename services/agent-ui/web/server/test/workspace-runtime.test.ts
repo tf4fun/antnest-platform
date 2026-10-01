@@ -20,6 +20,54 @@ const scope = {
 const base =
   "http://localhost/api/app/workspace/v1/agents/agent-1/sessions/session-1";
 
+test("Agent View exposes a learning result delivered through an uncached Session", async () => {
+  let update!: (value: unknown) => void;
+  const runtime = createWorkspaceRuntime({
+    connect: async (_scope, callbacks) => {
+      update = callbacks.update as (value: unknown) => void;
+      return {
+        async readAgentExecutionState() {
+          return { availability: "ready" as const, activeSessionId: null };
+        },
+        async readLearningChanges() { return {
+          items: [{ changeId: "prior-change", sequence: "1", agentId: "agent-1",
+            kind: "skill_created" as const, occurredAt: "2026-09-29T00:00:00Z",
+            skillName: "workflow", changeSummary: "Earlier learning result" }],
+          nextCursor: "sealed-1", sealedCursor: "sealed-1", olderCursor: null,
+        }; },
+        async load() { return { cut: { sealedWatermark: 0, appendVersion: 0 } }; },
+        async readExecution(sessionId) { return { sessionId, appendVersion: 0,
+          outputWatermark: 0, activeRunId: null, recentReceipts: [],
+          configurationRevision: null }; },
+        async readIntent() { return { kind: "unknown" as const }; },
+        async prompt() {}, async cancel() {}, close() {},
+      };
+    },
+  });
+  const headers = { "x-antnest-organization-id": "org-1",
+    "x-antnest-principal-id": "user-1", "x-antnest-agent-id": "agent-1" };
+  const read = async () => runtime.handle(new Request(
+    "http://localhost/api/app/workspace/v1/agents/agent-1/view", { headers }));
+  try {
+    assert.deepEqual((await (await read())?.json()).systemNotices.map(
+      (item: { changeId: string }) => item.changeId), ["prior-change"]);
+    update({ sessionId: "uncached-session", update: {
+      sessionUpdate: "notice", severity: "info", title: "Learned a workflow",
+      description: "Skill learning result saved.",
+      _meta: { "antnest.dev/skill-learning": {
+        version: 1, changeId: "change-1", sequence: "1", agentId: "agent-1",
+        kind: "skill_created", occurredAt: "2026-09-29T00:00:00Z",
+        skillName: "workflow", changeSummary: "Learned a workflow",
+        sourceSessionId: "uncached-session",
+      } },
+    } });
+    const view = await (await read())?.json();
+    assert.deepEqual(view.systemNotices.map((item: { changeId: string }) => item.changeId),
+      ["prior-change", "change-1"]);
+    assert.equal(view.selectedView, null);
+  } finally { await runtime.drain(1_000); }
+});
+
 test("Session View carries ACP title and timestamp through replay and live updates", async () => {
   let update!: (value: unknown) => void;
   let watermark = 0;
@@ -1608,4 +1656,32 @@ test("runtime sweep keeps a recovered Run alive without observers then retires a
     now = 1_200_000; await runtime.sweep(); assert.equal(closes, 1);
     assert.equal(runtime.metrics().cachedBytes, 0); assert.equal(cancels, 0);
   } finally { await runtime.drain(100); }
+});
+
+
+test("ordinary Views and sweeps do not fetch learning status; explicit diagnostic reads remain authorized", async () => {
+  let reads = 0;
+  const runtime = createWorkspaceRuntime({
+    connect: async () => ({
+      async readAgentExecutionState() { return { availability: "ready" as const, activeSessionId: null }; },
+      async readLearningStatus() { reads++; return { agentId: "agent-1", blocked: { reason: "writer_present" as const } }; },
+      async load() { return { cut: { sealedWatermark: 0, appendVersion: 0 } }; },
+      async readExecution(sessionId) { return { sessionId, appendVersion: 0, outputWatermark: 0, activeRunId: null, recentReceipts: [], configurationRevision: null }; },
+      async readIntent() { return { kind: "unknown" as const }; },
+      async prompt() {}, async cancel() {}, close() {},
+    }),
+  });
+  const url = "http://localhost/api/app/workspace/v1/agents/agent-1/view";
+  const headers = { "x-antnest-organization-id": "org-1", "x-antnest-principal-id": "user-1", "x-antnest-agent-id": "agent-1" };
+  try {
+    const ordinary = await runtime.handle(new Request(url, { headers }));
+    assert.equal((await ordinary?.json()).learningStatus, null);
+    await runtime.sweep();
+    assert.equal(reads, 0);
+    const explicit = await runtime.handle(new Request(`${url}?learningStatus=1`, { headers }));
+    assert.equal((await explicit?.json()).learningStatus.blocked.reason, "writer_present");
+    assert.equal(reads, 1);
+    assert.equal((await runtime.handle(new Request(`${url}?learningStatus=1`)))?.status, 401);
+    assert.equal(reads, 1);
+  } finally { await runtime.drain(1_000); }
 });

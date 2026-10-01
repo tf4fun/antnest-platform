@@ -19,9 +19,10 @@ Streamable HTTP server transport.
 Antnest tests the SDK-facing tool list and calls. It does not copy the complete
 MCP specification into a local schema.
 
-### Planned Skill Maintenance Boundary (L0, Not Implemented)
+### Skill Maintenance Boundary (L1 Local Gates Passed)
 
-The [learning design](../../../docs/skill-learning-design.md) proposes a separate
+The [learning design](../../../docs/skill-learning-design.md) and
+[L0 contract](../../../contracts/skill-learning/learning-api.md) define a separate
 `POST /internal/skill-maintenance/{action}` control endpoint, not a Tool or an
 additional built-in. It must not appear in `tools/list`, the information Resource,
 or model definitions. Ordinary `tools/call` must reject reserved maintenance
@@ -42,9 +43,74 @@ maintenance cannot be isolated. `X-Antnest-Expected-Execution-ID` remains only a
 identity and cannot authorize this path. ACP's internal-origin check is a second
 layer. All file operations still use the Execution Actor and UID/GID 1000 executor.
 
-These are pending L0/L1/L1R/L3 requirements, not current routes, auth capabilities
-or changes to ordinary MCP's existing trusted-network policy. `tools/list`
-remains the sole authority for model-callable tools.
+Runtime now rejects `antnest_skill_maintenance_` and `antnest_skill_temporary_`
+names in ordinary `tools/call`
+and validates up to two Ed25519 public keys in RuntimeSpec. The private HTTP
+route rejects missing/invalid credentials before it can reach the actor and
+checks the ticket signature, action, body digest, Agent, execution and time.
+The private executor subcommands also reject direct invocation by UID 1000,
+so an Agent Bash call cannot bypass the HTTP ticket check.
+The separate [temporary Skill contract](../../../contracts/runtime/temporary-skills.md)
+defines signed install/release endpoints, ordinary read/foreground Bash use,
+effect-aware receipts and local cleanup. These operations stay outside
+`tools/list` and personal/system Skill discovery. Runtime D4 passes its Linux
+executor and named-volume HTTP gates; ACP's durable Run consumer follows in a
+separate batch.
+For `check`, `commit`, `observe`, `cancel` and `release`, it strictly parses
+the bounded JSON body and binds request ID, job and generation to the ticket.
+`prepare` now parses exactly two bounded multipart parts after verifying the
+signature over the raw body. It checks Registry v1 manifest examples, archive
+paths/types/limits, and artifact/content identities against signed metadata.
+The private HTTP route passes valid `prepare`, `check`, `commit`, `observe`, `cancel` and `release` requests through the Execution
+Actor to the UID/GID 1000 executor. It writes a hidden, no-overwrite candidate
+tree with a bounded receipt, binds it to the current execution ID, and verifies
+the original expected base digest and existing bytes on an exact retry. `check` independently validates the
+complete candidate inventory and canonical content digest. `commit` checks the
+saved check marker, active base digest, and candidate bytes; it records an
+intent before atomic directory installation, then verifies the active digest.
+The Actor holds its single execution slot and conservatively blocks when live
+child ownership cannot be established. Linux executor and Docker HTTP tests
+cover ownership, duplicate requests, restart identity, drift rejection,
+conditional create and commit replay. RC/ACP integration
+remains pending. `observe` reads the persisted commit intent and
+current active digest after restart; missing, ambiguous, or unreadable intent remains
+`unknown`, and changed active content is `conflict`.
+`cancel` closes the in-memory generation, cancels and waits for active Runtime
+maintenance executors, then persists a cancellation marker in the workspace
+volume. Prepare, check, and commit reject that generation, including after a
+Runtime restart.
+The L1 filesystem primitive has Linux unit coverage for `RENAME_NOREPLACE`
+and `RENAME_EXCHANGE`; a Docker Desktop named-volume probe confirms those flags
+and directory `fsync` on the actual volume. It is now used by `commit`.
+`ChildRegistry` also has a Linux-tested scan for live direct children outside
+its managed set. It retains Bash process groups after their launching shell exits,
+and scans managed MCP descendants while excluding the idle server process itself.
+Commit admission returns a bounded blocker identity and releases the
+execution slot; unknown children remain fail-closed. Docker HTTP coverage starts
+a Bash background process, observes the blocked receipt, stops it through a
+normal Bash call, then completes the commit. The same Docker flow uses an
+official SDK managed MCP fixture to create a child that survives its Tool reply;
+the Runtime reports `managed_call_in_flight` and `managed:<server id>`, then
+allows the commit after the child exits. Deterministic executor tests model
+the post-exchange, pre-receipt commit window and release's post-detach and
+post-unlink windows without relying on SIGKILL timing. Lost responses, normal
+Runtime restarts, cancellation, and later observation are covered by the Docker
+HTTP flow. The L1 local gates pass; full cross-service recovery remains LI1 work.
+The L0 retention amendment adds signed `release` and a 256 MiB hidden-storage
+cap. `prepare` returns a storage key. The Runtime now accepts signed
+`release` through its private HTTP route, checks the stored identity/content,
+atomically detaches one hidden directory, and keeps an idempotent completion
+receipt. A Docker HTTP flow covers candidate storage,
+including cleanup after cancellation and replay after a same-name directory
+appears. The 256 MiB scanner includes candidates
+and detached release trees; it rejects symlinks and checks capacity before
+each new hidden write. Docker HTTP coverage fills storage, observes
+`skill_storage_full`, releases space, then retries successfully. ACP retention
+decisions and calls remain L3 work; Runtime's physical release boundary has
+passed its local gates.
+Ordinary MCP's existing
+trusted-network policy is unchanged. `tools/list` remains the sole authority
+for model-callable tools.
 
 ## Status
 
@@ -237,18 +303,20 @@ Input:
 ```json
 {
   "command": "python script.py",
-  "working_dir": {"root": "workspace", "path": "."},
-  "env": [{"name": "LANG", "value": "C.UTF-8"}],
+  "working_dir": ".",
+  "env": [{ "name": "LANG", "value": "C.UTF-8" }],
   "timeout_ms": 30000
 }
 ```
 
-The working root must be `workspace`. Timeout is between 1 and 86,400,000 ms.
+Only `command` is required. `working_dir` is a string relative to the workspace
+or beneath `/workspace/`, and defaults to `.`. `timeout_ms` defaults to 120000
+and accepts 1..86400000 ms. The working directory cannot target `/skills/`.
 Stdout and stderr are independently bounded to 1 MiB. The MCP result contains a
 human-readable text block plus structured content:
 
 ```json
-{"exit_code": 0, "stdout": "", "stderr": "", "truncated": false}
+{ "exit_code": 0, "stdout": "", "stderr": "", "truncated": false }
 ```
 
 The child starts from an empty environment. Runtime injects `HOME` and `PATH`;
@@ -264,23 +332,32 @@ processes. Container stop/replacement owns the complete environment lifetime.
 
 ### `read`
 
+The public input shapes are frozen in
+[builtin-tools.schema.json](../../../contracts/runtime/builtin-tools.schema.json).
+String paths relative to the workspace, `~/path`, and `/workspace/path` target
+the workspace; `/skills/path` targets the read-only System Skill root. Other
+absolute paths, traversal, symlinks and special files remain rejected. Internal
+executor messages retain typed named roots; those messages are not model inputs.
+
 Input:
 
 ```json
 {
-  "path": {"root": "workspace", "path": "notes.txt"},
-  "offset": 0,
-  "limit": 1048576
+  "path": "notes.txt",
+  "offset": 1,
+  "limit": 2000
 }
 ```
 
-The root may be `workspace` or `system_skills`. Result text is UTF-8 and
-bounded to the requested byte range. A non-UTF-8 slice is a tool error rather
-than an opaque Base64 response. `offset` is zero or greater; `limit` is between
-1 and 8,388,608 bytes.
+Only `path` is required. `offset` is a 1-based line number, default 1; `limit`
+counts lines, defaults to 2000 and accepts 1..20000. UTF-8 output preserves the
+original text and line endings, and stops on whole lines at 50 KiB. Follow
+`next_offset` when truncated. Invalid UTF-8 and a single line exceeding the
+output budget are explicit errors, rather than split Unicode or a cursor that
+cannot advance. The original file remains bounded to 8 MiB.
 
 ```json
-{"content": "selected UTF-8 text", "truncated": false}
+{ "content": "selected UTF-8 text", "truncated": false, "next_offset": null }
 ```
 
 ### `write`
@@ -289,16 +366,16 @@ Input:
 
 ```json
 {
-  "path": {"root": "workspace", "path": "notes.txt"},
+  "path": "notes.txt",
   "content": "hello"
 }
 ```
 
-Only `workspace` is writable. UTF-8 content is bounded to 8 MiB and the result
-contains `bytes_written`.
+Only the workspace is writable. Parent directories are created automatically.
+UTF-8 content is bounded to 8 MiB and the result contains `bytes_written`.
 
 ```json
-{"bytes_written": 5}
+{ "bytes_written": 5 }
 ```
 
 ### `edit`
@@ -307,7 +384,7 @@ Input:
 
 ```json
 {
-  "path": {"root": "workspace", "path": "notes.txt"},
+  "path": "notes.txt",
   "old_string": "before",
   "new_string": "after"
 }
@@ -317,7 +394,7 @@ Input:
 resulting file cannot exceed 8 MiB.
 
 ```json
-{"bytes_written": 5}
+{ "bytes_written": 5 }
 ```
 
 ## Errors And Cancellation
@@ -330,12 +407,12 @@ stable `error_code`.
 Every completed MCP Tool response carries an explicit effect projection in
 `structuredContent`:
 
-| Field | Meaning |
-| --- | --- |
-| `effect_state=none` | the Tool did not produce an externally visible effect |
-| `effect_state=settled` | Runtime received the authoritative completed result |
+| Field                  | Meaning                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `effect_state=none`    | the Tool did not produce an externally visible effect                                 |
+| `effect_state=settled` | Runtime received the authoritative completed result                                   |
 | `effect_state=unknown` | the operation may have produced an effect, but Runtime cannot prove its final outcome |
-| `effect_source` | `runtime_mcp` only when the state is `unknown`; otherwise `null` |
+| `effect_source`        | `runtime_mcp` only when the state is `unknown`; otherwise `null`                      |
 
 Successful responses retain their existing result fields and add
 `effect_state=settled` plus `effect_source=null`. Error responses add
@@ -356,13 +433,13 @@ enforces its local single-flight invariant.
 
 Stable tool error codes:
 
-| Scope | Codes |
-| --- | --- |
+| Scope                     | Codes                                                                                                                                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | shared execution boundary | `invalid_params`, `runtime_failed`, `runtime_busy`, `runtime_unavailable`, `canceled`, `timeout`, `outcome_unknown`, `encode_result_failed`, `spawn_failed`, `output_capture_failed`, `child_process_containment_unproven` |
-| `bash` | `invalid_path`, `wait_failed` |
-| `read` | `read_failed`, `content_not_utf8` |
-| `write` | `write_failed` |
-| `edit` | `edit_read_failed`, `old_string_not_found`, `old_string_not_unique`, `result_too_large`, `edit_failed` |
+| `bash`                    | `invalid_path`, `wait_failed`                                                                                                                                                                                              |
+| `read`                    | `read_failed`, `content_not_utf8`, `result_too_large`                                                                                                                                                                      |
+| `write`                   | `write_failed`                                                                                                                                                                                                             |
+| `edit`                    | `edit_read_failed`, `old_string_not_found`, `old_string_not_unique`, `result_too_large`, `edit_failed`                                                                                                                     |
 
 The exhaustive machine-readable list is `tool_errors` in
 `contracts/runtime/contract.json`. Runtime, the Executor process protocol, and

@@ -1,0 +1,9 @@
+services:
+  agent-acp-service:
+    environment:
+      NODE_OPTIONS: --import /tests/e2e/skill-learning/maintenance-response-gate.mjs
+      ANTNEST_E2E_HOLD_BEFORE_COMMIT: ${ANTNEST_E2E_HOLD_BEFORE_COMMIT:-false}
+      ANTNEST_E2E_HOLD_AFTER_INSTALL: ${ANTNEST_E2E_HOLD_AFTER_INSTALL:-false}
+      ANTNEST_E2E_HOLD_RELEASE: ${ANTNEST_E2E_HOLD_RELEASE:-false}
+    volumes:
+      - ./tests:/tests:ro

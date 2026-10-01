@@ -47,6 +47,9 @@ type skillSummary struct {
 }
 
 func (h *handler) registerSkillRoutes() {
+	h.mux.HandleFunc("POST /api/admin/skill-sources/search", h.withPrincipal(h.searchSkillSources))
+	h.mux.HandleFunc("POST /api/admin/skill-sources/preview", h.withPrincipal(h.previewSkillSource))
+	h.mux.HandleFunc("POST /api/admin/skill-sources/promote", h.withPrincipal(h.promoteSkillSource))
 	h.mux.HandleFunc("GET /api/admin/skills", h.withPrincipal(h.listSkills))
 	h.mux.HandleFunc("POST /api/admin/skills", h.withPrincipal(h.publishSkill))
 	h.mux.HandleFunc("GET /api/admin/skills/{skill_id}/versions", h.withPrincipal(h.listSkillVersions))
@@ -115,6 +118,9 @@ func (h *handler) listSkills(w http.ResponseWriter, r *http.Request, actor princ
 			return
 		}
 	}
+	if page.NextAfterID != nil && *page.NextAfterID == "" {
+		page.NextAfterID = nil
+	}
 	writeJSON(w, http.StatusOK, page)
 }
 
@@ -145,6 +151,9 @@ func (h *handler) listSkillVersions(w http.ResponseWriter, r *http.Request, acto
 			writeError(w, http.StatusBadGateway, "invalid_upstream_response", "Skill version response is invalid")
 			return
 		}
+	}
+	if page.NextAfterVersion != nil && *page.NextAfterVersion == 0 {
+		page.NextAfterVersion = nil
 	}
 	writeJSON(w, http.StatusOK, page)
 }
@@ -272,26 +281,31 @@ func browserSkillUpload(w http.ResponseWriter, r *http.Request, revision bool) (
 }
 
 func (h *handler) skillCall(w http.ResponseWriter, r *http.Request, method, path, query, contentType string, body []byte) ([]byte, bool) {
+	expectedStatus := http.StatusOK
+	if method == http.MethodPost {
+		expectedStatus = http.StatusCreated
+	}
+	data, _, ok := h.skillResponse(w, r, method, path, query, contentType, body, expectedStatus, maximumSkillUpload)
+	return data, ok
+}
+
+func (h *handler) skillResponse(w http.ResponseWriter, r *http.Request, method, path, query, contentType string, body []byte, expectedStatus, maximum int) ([]byte, http.Header, bool) {
 	if h.registry == nil {
 		writeError(w, 503, "dependency_unavailable", "Skill Registry is not configured")
-		return nil, false
+		return nil, nil, false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.requestTimeout)
 	defer cancel()
 	result, err := h.registry.Do(ctx, method, path, query, contentType, body)
 	if err != nil || result == nil || result.Body == nil {
 		writeError(w, 503, "dependency_unavailable", "Skill Registry is unavailable")
-		return nil, false
+		return nil, nil, false
 	}
 	defer func() { _ = result.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(result.Body, maximumSkillUpload+1))
-	if err != nil || len(data) > maximumSkillUpload {
+	data, err := io.ReadAll(io.LimitReader(result.Body, int64(maximum)+1))
+	if err != nil || len(data) > maximum {
 		writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
-		return nil, false
-	}
-	expectedStatus := http.StatusOK
-	if method == http.MethodPost {
-		expectedStatus = http.StatusCreated
+		return nil, nil, false
 	}
 	if result.StatusCode != expectedStatus {
 		var failure struct {
@@ -302,28 +316,29 @@ func (h *handler) skillCall(w http.ResponseWriter, r *http.Request, method, path
 		}
 		if json.Unmarshal(data, &failure) != nil || failure.Error.Code == "" {
 			writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
-			return nil, false
+			return nil, nil, false
 		}
 		if result.StatusCode == 401 {
 			writeError(w, 503, "dependency_unavailable", "Skill Registry authentication failed")
-			return nil, false
+			return nil, nil, false
 		}
 		allowed := map[int]map[string]bool{
 			400: {"invalid_request": true, "invalid_package": true},
 			404: {"not_found": true},
-			409: {"name_conflict": true, "request_conflict": true, "revision_conflict": true},
+			409: {"name_conflict": true, "request_conflict": true, "revision_conflict": true, "content_changed": true},
 			413: {"limit_exceeded": true},
 			429: {"busy": true},
-			503: {"temporarily_unavailable": true},
+			502: {"source_invalid": true},
+			503: {"temporarily_unavailable": true, "source_unavailable": true},
 		}
 		if !allowed[result.StatusCode][failure.Error.Code] || len(failure.Error.Message) > 512 || strings.ContainsAny(failure.Error.Message, "\r\n\x00") {
 			writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
-			return nil, false
+			return nil, nil, false
 		}
 		writeError(w, result.StatusCode, failure.Error.Code, failure.Error.Message)
-		return nil, false
+		return nil, nil, false
 	}
-	return data, true
+	return data, result.Header, true
 }
 
 func (h *handler) downloadSkillVersion(w http.ResponseWriter, r *http.Request, actor principal.Principal) {

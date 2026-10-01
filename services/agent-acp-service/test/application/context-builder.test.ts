@@ -1,4 +1,4 @@
-import { emptyRuntimePreparation } from "../fixtures/runtime-information.js";
+import { emptyRuntimePreparation, runtimeInformation } from "../fixtures/runtime-information.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextBuilder } from "../../src/application/context-builder.js";
@@ -6,6 +6,116 @@ import type { ContextRepository, ContextSource } from "../../src/ports/context-r
 import type { RunExecutionSnapshot } from "../../src/domain/types.js";
 
 describe("ContextBuilder", () => {
+  it("loads the selected Skill as transient user context and preserves attachments and stored history", async () => {
+    const information = runtimeInformation();
+    const content = [
+      { type: "text" as const, text: "/skill:system:documents Find the release notes" },
+      { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" },
+    ];
+    const readSkill = vi.fn(() => Promise.resolve("# Documents\nSearch the release index."));
+    const saveCheckpoint = vi.fn();
+    const builder = new ContextBuilder({
+      repository: {
+        load: () =>
+          Promise.resolve({
+            checkpoint: null,
+            messages: [{ sequence: 1, kind: "user_message", content }],
+          }),
+        saveCheckpoint,
+      },
+      runtimeInformation: { read: () => Promise.resolve(information) },
+      tools: { list: () => Promise.resolve([]) },
+      readSkill,
+      id: () => "checkpoint-1",
+      now: () => new Date(),
+    });
+    const result = await builder.build("session-1", snapshot(), new AbortController().signal);
+    expect(readSkill).toHaveBeenCalledWith(
+      snapshot().runtime,
+      information.skills[0]!.path,
+      expect.any(AbortSignal),
+    );
+    expect(result.messages.at(-1)?.content[0]).toMatchObject({
+      type: "text",
+    });
+    expect(JSON.stringify(result.messages.at(-1)?.content[0])).toContain(
+      "Search the release index.",
+    );
+    expect(result.messages.at(-1)?.content[1]).toEqual(content[1]);
+    expect(JSON.stringify(result.messages.at(-1))).toContain("Find the release notes");
+    expect(content[0]?.text).toBe("/skill:system:documents Find the release notes");
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale Skill command before reading arbitrary paths", async () => {
+    const readSkill = vi.fn();
+    const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
+      readSkill,
+      repository: {
+        load: () =>
+          Promise.resolve({
+            checkpoint: null,
+            messages: [
+              {
+                sequence: 1,
+                kind: "user_message",
+                content: [{ type: "text", text: "/skill:personal:missing Do it" }],
+              },
+            ],
+          }),
+        saveCheckpoint: vi.fn(),
+      },
+      id: () => "checkpoint-1",
+      now: () => new Date(),
+    });
+    await expect(
+      builder.build("session-1", snapshot(), new AbortController().signal),
+    ).rejects.toThrow("no longer available");
+    expect(readSkill).not.toHaveBeenCalled();
+  });
+
+  it("does not reload historical Skill commands or save expanded bodies when compacting", async () => {
+    const information = runtimeInformation();
+    const readSkill = vi.fn(() => Promise.resolve("PRIVATE SKILL BODY"));
+    const saveCheckpoint = vi.fn();
+    const messages: ContextSource["messages"] = [
+      {
+        sequence: 1,
+        kind: "user_message",
+        content: [{ type: "text", text: `/skill:system:documents ${"old ".repeat(1000)}` }],
+      },
+      { sequence: 2, kind: "agent_message", content: [{ type: "text", text: "done" }] },
+      {
+        sequence: 3,
+        kind: "user_message",
+        content: [{ type: "text", text: "/skill:system:documents Find current docs" }],
+      },
+    ];
+    const builder = new ContextBuilder({
+      repository: { load: () => Promise.resolve({ checkpoint: null, messages }), saveCheckpoint },
+      runtimeInformation: { read: () => Promise.resolve(information) },
+      tools: { list: () => Promise.resolve([]) },
+      readSkill,
+      id: () => "checkpoint-1",
+      now: () => new Date(),
+    });
+    const constrained = snapshot();
+    constrained.executionSpec.model.contextWindow = 1536;
+    constrained.executionSpec.model.maxOutputTokens = 128;
+    const result = await builder.build("session-1", constrained, new AbortController().signal);
+    expect(readSkill).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result.messages.at(-1))).toContain("PRIVATE SKILL BODY");
+    expect(saveCheckpoint).toHaveBeenCalled();
+    expect(JSON.stringify(saveCheckpoint.mock.calls)).not.toContain("PRIVATE SKILL BODY");
+    messages[2] = {
+      sequence: 3,
+      kind: "user_message",
+      content: [{ type: "text", text: "Another task" }],
+    };
+    await builder.build("session-1", constrained, new AbortController().signal);
+    expect(readSkill).toHaveBeenCalledTimes(1);
+  });
   it("builds system, environment, and conversation context in order", async () => {
     const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
     const repository: ContextRepository = {

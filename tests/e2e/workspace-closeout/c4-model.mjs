@@ -47,8 +47,8 @@ export function decide(payload) {
     const call = {
       name: "read",
       arguments: {
-        path: { root: "workspace", path: ".c4-browser-note" },
-        offset: 0,
+        path: ".c4-browser-note",
+        offset: 1,
         limit: 4096,
       },
     };

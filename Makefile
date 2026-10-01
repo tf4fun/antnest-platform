@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-managed-mcp-fixtures test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-managed-mcp-fixtures test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller e2e-skill-learning-runtime e2e-skill-learning-automatic e2e-skill-learning-preempt e2e-skill-learning-policy-off e2e-skill-learning-lifecycle-disable e2e-skill-learning-lifecycle-rebuild e2e-skill-learning-ui-outage e2e-skill-learning-skip e2e-skill-learning-model-failure e2e-skill-learning-restart
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -58,7 +58,7 @@ test-go:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs agent-controller
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs admin-console
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs edge-gateway
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/skill-registry/...
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs skill-registry
 
 .PHONY: test-go-unit
 test-go-unit:
@@ -82,6 +82,10 @@ test-verification-python:
 test-node:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
+	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs
+	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs
+	node --test --test-concurrency=1 tests/integration/runtime-tools/contracts.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
@@ -241,6 +245,114 @@ docker-build-runtime-controller:
 	docker compose build runtime-egress
 	docker compose build runtime-controller
 
+e2e-skill-learning-runtime:
+	docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-build .
+	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-local .
+	node tests/e2e/skill-learning/runtime-prepare.mjs
+
+e2e-skill-learning-automatic:
+	node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-runtime-tool-usability
+e2e-runtime-tool-usability:
+	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
+	ANTNEST_E2E_SKILL_LEARNING_DEBUG=true ANTNEST_E2E_TOOL_USABILITY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-learning-trace
+e2e-skill-learning-trace:
+	ANTNEST_E2E_LEARNING_TRACE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+e2e-skill-learning-cleanup:
+	ANTNEST_E2E_SKILL_CLEANUP=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-learning-cleanup e2e-skill-learning-cleanup-lost-response
+
+e2e-skill-learning-cleanup-lost-response:
+	ANTNEST_E2E_SKILL_CLEANUP_LOST_RESPONSE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+e2e-skill-learning-preempt:
+	node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+e2e-skill-learning-policy-off:
+	ANTNEST_E2E_POLICY_OFF=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+e2e-skill-learning-lifecycle-disable:
+	ANTNEST_E2E_LIFECYCLE_DISABLE=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+e2e-skill-learning-lifecycle-rebuild:
+	ANTNEST_E2E_LIFECYCLE_REBUILD=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+.PHONY: e2e-skill-learning-held-commit-disable
+e2e-skill-learning-held-commit-disable:
+	node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+
+.PHONY: e2e-skill-learning-held-commit-foreground
+e2e-skill-learning-held-commit-foreground:
+	ANTNEST_E2E_FOREGROUND_DURING_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+
+.PHONY: e2e-skill-learning-atomic-commit-foreground
+e2e-skill-learning-atomic-commit-foreground:
+	ANTNEST_E2E_FOREGROUND_DURING_ATOMIC_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+
+.PHONY: e2e-skill-learning-lost-commit-disable
+e2e-skill-learning-lost-commit-disable:
+	ANTNEST_E2E_DROP_COMMIT_RESPONSE=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+
+.PHONY: e2e-skill-learning-pre-dispatch-disable
+e2e-skill-learning-pre-dispatch-disable:
+	ANTNEST_E2E_HOLD_BEFORE_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+
+.PHONY: e2e-skill-learning-atomic-commit-disable
+e2e-skill-learning-atomic-commit-disable:
+	ANTNEST_E2E_HOLD_AFTER_INSTALL=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+
+.PHONY: e2e-skill-learning-notice-send-failure
+e2e-skill-learning-notice-send-failure:
+	ANTNEST_E2E_NOTICE_SEND_FAILURE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-learning-key-compromise
+e2e-skill-learning-key-compromise:
+	ANTNEST_E2E_SKILL_KEY_COMPROMISE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-learning-key-rotation
+e2e-skill-learning-key-rotation:
+	ANTNEST_E2E_SKILL_KEY_ROTATION=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-learning-pinned
+e2e-skill-learning-pinned:
+	ANTNEST_E2E_SKILL_PINNED=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-learning-untrusted-only
+e2e-skill-learning-untrusted-only:
+	ANTNEST_E2E_REVIEW_UNTRUSTED=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+e2e-skill-learning-ui-outage:
+	ANTNEST_E2E_UI_OUTAGE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+e2e-skill-learning-skip:
+	ANTNEST_E2E_REVIEW_SKIP=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+.PHONY: e2e-skill-learning-debug
+e2e-skill-learning-debug:
+	ANTNEST_E2E_SKILL_LEARNING_DEBUG=true ANTNEST_E2E_LEARNING_TRACE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+e2e-skill-learning-model-failure:
+	ANTNEST_E2E_REVIEW_FAILURE=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+.PHONY: e2e-skill-learning-model-recovery
+e2e-skill-learning-model-recovery:
+	ANTNEST_E2E_REVIEW_RECOVERY=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+.PHONY: e2e-skill-learning-browser e2e-skill-learning-diagnostics-browser
+e2e-skill-learning-browser:
+	ANTNEST_E2E_SKILL_BROWSER=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+
+e2e-skill-learning-diagnostics-browser:
+	ANTNEST_E2E_SKILL_BROWSER=true ANTNEST_E2E_REVIEW_RECOVERY=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
+e2e-skill-learning-restart:
+	ANTNEST_E2E_REVIEW_RESTART=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
+
 docker-build: docker-build-runtime-controller
 	docker compose --profile stage2 build temporal
 	docker compose build agent-acp-service
@@ -255,6 +367,7 @@ docker-build-stage3: docker-build-runtime-controller
 	docker compose --profile stage3 build agent-acp-service
 	docker compose --profile stage3 build identity-service
 	docker compose --profile stage3 build agent-controller
+	docker compose --profile stage3 build skill-registry
 	docker compose --profile stage3 build admin-console
 	docker compose --profile stage3 build agent-ui
 	docker compose --profile stage3 build edge-gateway
@@ -305,6 +418,57 @@ e2e-stage4-skill-ready-drift:
 .PHONY: e2e-stage4-skill-target-drift
 e2e-stage4-skill-target-drift:
 	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_TARGET_DRIFT=true sh tests/e2e/e2e-stage3a.sh
+
+.PHONY: e2e-skill-discovery-registry
+e2e-skill-discovery-registry:
+	node tests/e2e/skill-registry/discovery-docker.mjs
+
+.PHONY: e2e-skill-discovery-acp
+e2e-skill-discovery-acp:
+	ANTNEST_E2E_SKILL_DISCOVERY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-discovery-tools
+e2e-skill-discovery-tools:
+	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-temporary-runtime
+e2e-skill-temporary-runtime:
+	node tests/e2e/skill-registry/temporary-runtime.mjs --build
+
+.PHONY: e2e-skill-temporary-acp
+e2e-skill-temporary-acp:
+	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-discovery-console
+e2e-skill-discovery-console:
+	node tests/e2e/skill-registry/console-discovery.mjs
+
+.PHONY: e2e-skill-propagation
+e2e-skill-propagation:
+	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: test-skill-deployment e2e-skill-deployment
+test-skill-deployment:
+	node --test --test-concurrency=1 tests/integration/skill-registry/deployment-config.test.mjs
+
+e2e-skill-deployment:
+	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-source-lifecycle
+e2e-skill-source-lifecycle:
+	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true ANTNEST_E2E_SKILL_SOURCE_LIFECYCLE=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-discovery-caller
+e2e-skill-discovery-caller:
+	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true ANTNEST_E2E_SKILL_CALLER=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-skill-discovery-caller-registry
+e2e-skill-discovery-caller-registry:
+	ANTNEST_E2E_DISCOVERY_CALLER=true node tests/e2e/skill-registry/discovery-docker.mjs
+
+.PHONY: e2e-skill-registry-trace
+e2e-skill-registry-trace:
+	ANTNEST_E2E_DISCOVERY_CALLER=true ANTNEST_E2E_REGISTRY_TRACE=true node tests/e2e/skill-registry/discovery-docker.mjs
 
 .PHONY: e2e-stage4-skill-registry-outage
 e2e-stage4-skill-registry-outage:

@@ -45,6 +45,27 @@ pub(crate) struct RuntimeSpec {
     network: NetworkSpec,
     filesystem: FilesystemSpec,
     mcp_servers: Vec<crate::managed_mcp::spec::ServerSpec>,
+    maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SkillMaintenanceVerifier {
+    kid: String,
+    public_key: [u8; 32],
+}
+
+impl SkillMaintenanceVerifier {
+    pub(crate) fn new(kid: String, public_key: [u8; 32]) -> Self {
+        Self { kid, public_key }
+    }
+
+    pub(crate) fn kid(&self) -> &str {
+        &self.kid
+    }
+
+    pub(crate) fn public_key(&self) -> &[u8; 32] {
+        &self.public_key
+    }
 }
 
 impl RuntimeSpec {
@@ -63,6 +84,7 @@ impl RuntimeSpec {
             network,
             filesystem,
             mcp_servers: Vec::new(),
+            maintenance_verifiers: Vec::new(),
         })
     }
 
@@ -92,6 +114,18 @@ impl RuntimeSpec {
 
     pub(crate) fn mcp_servers(&self) -> &[crate::managed_mcp::spec::ServerSpec] {
         &self.mcp_servers
+    }
+
+    pub(crate) fn with_maintenance_verifiers(
+        mut self,
+        verifiers: Vec<SkillMaintenanceVerifier>,
+    ) -> Self {
+        self.maintenance_verifiers = verifiers;
+        self
+    }
+
+    pub(crate) fn maintenance_verifiers(&self) -> &[SkillMaintenanceVerifier] {
+        &self.maintenance_verifiers
     }
 }
 

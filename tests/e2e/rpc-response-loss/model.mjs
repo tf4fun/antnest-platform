@@ -38,7 +38,7 @@ export function decide(payload) {
           (match[3] === "write"
             ? `printf '%s\\n' '${marker}' >> /workspace/${marker}.log; `
             : "") + `cat /workspace/${marker}.log`,
-        working_dir: { root: "workspace", path: "." },
+        working_dir: ".",
         timeout_ms: 10000,
       },
     },

@@ -19,6 +19,7 @@ export async function startProgressFixture(
   options: {
     title?: string;
     toolName?: string;
+    inputSchema?: z.ZodObject;
     meta?: Record<string, unknown>;
     structuredContent?: Record<string, unknown>;
   } = {},
@@ -27,24 +28,28 @@ export async function startProgressFixture(
   const ended = Promise.withResolvers<void>();
   const outcome = Promise.withResolvers<boolean>();
   const executionIds: string[] = [];
+  const receivedArguments: Record<string, unknown>[] = [];
   const handler = createMcpHandler(
     () => {
       const mcp = new McpServer({ name: "progress-fixture", version: "1.0.0" });
       mcp.registerTool(
         options.toolName ?? "read",
         {
-          inputSchema: z.object({
-            path: z.union([
-              z.string(),
-              z.object({
-                root: z.enum(["workspace", "system_skills"]),
-                path: z.string(),
-              }),
-            ]),
-          }),
+          inputSchema:
+            options.inputSchema ??
+            z.object({
+              path: z.union([
+                z.string(),
+                z.object({
+                  root: z.enum(["workspace", "system_skills"]),
+                  path: z.string(),
+                }),
+              ]),
+            }),
           ...(options.title === undefined ? {} : { title: options.title }),
         },
-        async (_args, context) => {
+        async (_args: Record<string, unknown>, context: ServerContext) => {
+          receivedArguments.push(_args);
           executionIds.push(
             context.http?.req?.headers.get("x-antnest-expected-execution-id") ??
               "missing",
@@ -53,7 +58,7 @@ export async function startProgressFixture(
           const isError = await outcome.promise;
           ended.resolve();
           return {
-            content: [{ type: "text", text: "final result" }],
+            content: [{ type: "text" as const, text: "final result" }],
             isError,
             ...(options.meta === undefined ? {} : { _meta: options.meta }),
             ...(options.structuredContent === undefined
@@ -83,6 +88,7 @@ export async function startProgressFixture(
     endpoint: new URL(`http://127.0.0.1:${address.port}/mcp`),
     ready: ready.promise,
     executionIds,
+    receivedArguments,
     async progress(progress: number, message: string, wrongToken = false) {
       const context = await ready.promise;
       const token = context.mcpReq._meta?.progressToken;

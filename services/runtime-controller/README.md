@@ -2,6 +2,21 @@
 
 > Status: existing Runtime lifecycle Docker adapter complete; Kubernetes remains a later adapter.
 
+Skill Learning L1R adds `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS`, a JSON
+object with a `keys` array of at most two `{kid,algorithm,public_key_base64url}`
+entries. Only `Ed25519` and canonical unpadded base64url 32-byte public keys
+are accepted. Omission defaults to an empty, maintenance-disabled set; malformed
+explicit values fail startup. RC sorts and freezes the complete set when it
+accepts each create, rebuild or Enable operation. The PostgreSQL operation
+snapshot and RuntimeSpec deployment digest retain that set across retries and
+RC restarts; changing RC configuration affects only later accepted operations.
+The private signing key belongs to ACP and must never be placed in this RC
+configuration. See the [learning design](../../docs/skill-learning-design.md)
+for rotation and incident procedure. RC local and isolated PostgreSQL gates
+pass. ACP policy/signing, normal key rotation and the current learning functional
+integration gates also pass; the [learning audit](../../docs/skill-learning-acceptance-audit-20260930.md)
+records the manual compromise drill's limits and the separate human acceptance stage.
+
 Stage 4 B3 system-Skill delivery has passed its local and applicable Docker
 gates. A replayed `ready` preparation
 fully reads the owned volume's manifest and file contents before returning a

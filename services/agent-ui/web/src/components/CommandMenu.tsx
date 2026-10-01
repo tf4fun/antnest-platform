@@ -1,4 +1,4 @@
-import { CornerDownLeft, Slash } from "lucide-react";
+import { BookOpen, CornerDownLeft, Slash } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import type { WorkspaceCommand } from "../../server/src/protocol/available-commands.ts";
 
@@ -30,9 +30,9 @@ export function CommandMenu({ id, commands, activeIndex, emptyMessage, onActive,
             onMouseDown={(event) => event.preventDefault()}
             onMouseEnter={() => onActive(index)}
             onClick={() => onSelect(command)}>
-            <span className="command-menu-icon" aria-hidden="true"><Slash size={16} /></span>
+            <span className="command-menu-icon" aria-hidden="true">{command.name.startsWith("skill:") ? <BookOpen size={16} /> : <Slash size={16} />}</span>
             <span className="command-menu-copy">
-              <strong>/{command.name}</strong>
+              <span className="command-menu-title"><strong>/{command.name}</strong>{command.name.startsWith("skill:system:") ? <small className="command-menu-kind">Preset Skill</small> : command.name.startsWith("skill:personal:") ? <small className="command-menu-kind">Personal Skill</small> : null}</span>
               <span>{command.description}</span>
               {command.input ? <small>{command.input.hint}</small> : null}
             </span>

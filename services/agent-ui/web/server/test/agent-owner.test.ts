@@ -22,6 +22,21 @@ const permission: RequestPermissionRequest = {
   options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }],
 };
 
+test("keeps one Agent Skill catalog before a Session exists and replaces it on ACP discovery", async () => {
+  const f = fixture();
+  const initial = [{ name: "skill:system:review", description: "Review", input: { hint: "Task" } }];
+  const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork, connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks), skillCommands: initial }) });
+  try {
+    assert.deepEqual(owner.skillCommands, initial);
+    assert.equal(owner.cachedSessionCount, 0);
+    await f.callback().update({ sessionId: "session-1", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "help", description: "Help" }, { name: "skill:personal:review", description: "Personal review", input: { hint: "Task" } }] } });
+    assert.deepEqual(owner.skillCommands.map((item) => item.name), ["skill:personal:review"]);
+    await f.callback().update({ sessionId: "session-1", update: { sessionUpdate: "available_commands_update", availableCommands: [] } });
+    assert.deepEqual(owner.skillCommands, []);
+  } finally { owner.close(); }
+  assert.deepEqual(owner.skillCommands, []);
+});
+
 function fixture() {
   const calls: string[] = [];
   let callback!: {
@@ -85,6 +100,132 @@ function fixture() {
     work: () => work,
   };
 }
+
+test("learning notices reach the Agent owner without a cached delivery Session and deduplicate", async () => {
+  const f = fixture();
+  let changes = 0;
+  const owner = await AgentBridgeOwner.open({
+    scope,
+    retainWork: f.retainWork,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async readAgentExecutionState() {
+        return { availability: "ready" as const, activeSessionId: null };
+      },
+    }),
+    agentChanged: () => { changes++; },
+  });
+  try {
+    await owner.readAgentExecutionState();
+    const notice: SessionNotification = {
+      sessionId: "uncached-source-session",
+      update: {
+        sessionUpdate: "notice",
+        severity: "info",
+        title: "Learned a workflow",
+        description: "Skill learning result saved.",
+        _meta: { "antnest.dev/skill-learning": {
+          version: 1, changeId: "change-1", sequence: "1", agentId: scope.agentId,
+          kind: "skill_created", occurredAt: "2026-09-29T00:00:00Z",
+          skillName: "workflow", changeSummary: "Learned a workflow",
+          sourceSessionId: "uncached-source-session",
+        } },
+      },
+    };
+    await f.callback().update(notice);
+    await f.callback().update({ ...notice, sessionId: "another-delivery-session" });
+    await f.callback().update({ ...notice, update: {
+      ...notice.update,
+      _meta: { "antnest.dev/skill-learning": {
+        version: 1, changeId: "foreign-change", sequence: "2", agentId: "other-agent",
+        kind: "skill_created",
+      } },
+    } });
+    assert.equal(owner.systemNotices.length, 1);
+    assert.equal(owner.systemNotices[0]?.changeId, "change-1");
+    assert.equal(owner.systemNotices[0]?.occurredAt, "2026-09-29T00:00:00Z");
+    assert.equal(changes, 1);
+    assert.equal(owner.estimatedCachedHistoryBytes, 0);
+  } finally { owner.close(); }
+});
+
+test("learning change recovery deduplicates a live notice and restores a prior result", async () => {
+  const f = fixture();
+  const owner = await AgentBridgeOwner.open({
+    scope, retainWork: f.retainWork,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async readAgentExecutionState() {
+        return { availability: "ready" as const, activeSessionId: null };
+      },
+      async readLearningChanges() {
+        return { items: [
+          { changeId: "change-1", sequence: "1", agentId: scope.agentId,
+            kind: "skill_created" as const, occurredAt: "2026-09-29T00:00:00Z",
+            skillName: "workflow", changeSummary: "Learned a workflow" },
+          { changeId: "change-2", sequence: "2", agentId: scope.agentId,
+            kind: "skill_updated" as const, occurredAt: "2026-09-29T00:01:00Z",
+            skillName: "workflow", changeSummary: "Improved the workflow" },
+        ], nextCursor: "sealed-2", sealedCursor: "sealed-2", olderCursor: null };
+      },
+    }),
+  });
+  try {
+    await owner.readAgentExecutionState();
+    await f.callback().update({ sessionId: "uncached-session", update: {
+      sessionUpdate: "notice", severity: "info", title: "Improved the workflow",
+      description: "Skill learning result saved.",
+      _meta: { "antnest.dev/skill-learning": {
+        version: 1, changeId: "change-2", sequence: "2", agentId: scope.agentId,
+        kind: "skill_updated", occurredAt: "2026-09-29T00:01:00Z",
+        skillName: "workflow", changeSummary: "Improved the workflow",
+      } },
+    } });
+    await owner.syncLearningChanges();
+    assert.deepEqual(owner.systemNotices.map((item) => item.changeId),
+      ["change-1", "change-2"]);
+    assert.equal(owner.systemNotices[1]?.changeSummary, "Improved the workflow");
+    assert.equal(owner.estimatedCachedHistoryBytes, 0);
+  } finally { owner.close(); }
+});
+
+test("a stale learning snapshot does not replace a notice received during its read", async () => {
+  const f = fixture();
+  const pending = Promise.withResolvers<{
+    items: Array<{ changeId: string; sequence: string; agentId: string;
+      kind: "skill_created"; occurredAt: string; skillName: string; changeSummary: string }>;
+    nextCursor: string; sealedCursor: string; olderCursor: null;
+  }>();
+  const owner = await AgentBridgeOwner.open({
+    scope, retainWork: f.retainWork,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async readLearningChanges() { return pending.promise; },
+    }),
+  });
+  try {
+    const sync = owner.syncLearningChanges();
+    await f.callback().update({ sessionId: "delivery-session", update: {
+      sessionUpdate: "notice", severity: "info", title: "Improved the workflow",
+      description: "Skill learning result saved.",
+      _meta: { "antnest.dev/skill-learning": {
+        version: 1, changeId: "change-2", sequence: "2", agentId: scope.agentId,
+        kind: "skill_updated", occurredAt: "2026-09-29T00:01:00Z",
+        skillName: "workflow", changeSummary: "Improved the workflow",
+      } },
+    } });
+    pending.resolve({
+      items: [{ changeId: "change-1", sequence: "1", agentId: scope.agentId,
+        kind: "skill_created", occurredAt: "2026-09-29T00:00:00Z",
+        skillName: "workflow", changeSummary: "Learned a workflow" }],
+      nextCursor: "sealed-1", sealedCursor: "sealed-1", olderCursor: null,
+    });
+    await sync;
+    assert.deepEqual(owner.systemNotices.map((item) => item.changeId),
+      ["change-1", "change-2"]);
+    assert.equal(owner.systemNotices[1]?.changeSummary, "Improved the workflow");
+  } finally { owner.close(); }
+});
 
 test("command catalogs survive checkpoint replay, live replacement and Session isolation", async () => {
   const f = fixture();
@@ -1565,4 +1706,60 @@ test("replacing a reconciled replay announces the new view to an existing stream
     "recovered",
   );
   owner.close();
+});
+
+test("learning status reads are coalesced and failure clears authoritative state", async () => {
+  const f = fixture();
+  let now = 0;
+  let reads = 0;
+  let failed = false;
+  const owner = await AgentBridgeOwner.open({
+    scope, retainWork: f.retainWork, now: () => now,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async readLearningStatus() {
+        reads++;
+        if (failed) throw new Error("unavailable");
+        return { agentId: scope.agentId, blocked: { reason: "writer_present" as const } };
+      },
+    }),
+  });
+  try {
+    assert.equal(owner.learningStatus, null);
+    await Promise.all([owner.syncLearningStatus(), owner.syncLearningStatus()]);
+    assert.equal(reads, 1);
+    assert.equal(owner.learningStatus?.blocked?.reason, "writer_present");
+    await owner.syncLearningStatus();
+    assert.equal(reads, 1);
+    now = 5000;
+    failed = true;
+    await assert.rejects(owner.syncLearningStatus());
+    assert.equal(owner.learningStatus, null);
+    await owner.syncLearningStatus();
+    assert.equal(reads, 2);
+  } finally { owner.close(); }
+});
+
+test("Agent sweeps never poll learning diagnostics, even with an open stream", async () => {
+  const f = fixture();
+  let reads = 0;
+  const owner = await AgentBridgeOwner.open({
+    scope, retainWork: f.retainWork,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async readLearningStatus() { reads++; return { agentId: scope.agentId, blocked: null }; },
+    }),
+  });
+  try {
+    await owner.sweep();
+    const stream = owner.subscribeAgentJournal(null, null, () => ({}));
+    await stream.next();
+    await owner.sweep();
+    assert.equal(reads, 0);
+    await owner.syncLearningStatus();
+    assert.equal(reads, 1);
+    await stream.return?.();
+    await owner.sweep();
+    assert.equal(reads, 1);
+  } finally { owner.close(); }
 });

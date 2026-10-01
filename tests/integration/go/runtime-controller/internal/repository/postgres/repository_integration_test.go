@@ -177,6 +177,35 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAcceptedMaintenanceVerifiersSurviveRepositoryReplay(t *testing.T) {
+	store, database, ctx := integrationRepository(t)
+	operation := integrationOperation("maintenance-snapshot", deployment.OperationInitializeRuntime, time.Now().UTC())
+	operation.ImageReference = "antnest/runtime:latest"
+	operation.ImageID = integrationSpecDigest
+	operation.Transition = deployment.LifecycleInitializing
+	operation.MaintenanceVerifiers = &deployment.MaintenanceVerifiers{Keys: []deployment.MaintenanceVerifierKey{{
+		KID: "current", Algorithm: "Ed25519",
+		PublicKeyBase64URL: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+	}}}
+	accepted, replay, err := store.BeginTransition(ctx, operation)
+	if err != nil || replay || accepted.MaintenanceVerifiers == nil {
+		t.Fatalf("accept operation: %+v replay=%t err=%v", accepted, replay, err)
+	}
+	var persisted []byte
+	if err := database.QueryRowContext(ctx, `SELECT maintenance_verifiers FROM runtime_controller.operations WHERE request_id=$1`, operation.RequestID).Scan(&persisted); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"kid": "current"`) && !strings.Contains(string(persisted), `"kid":"current"`) {
+		t.Fatalf("maintenance verifier snapshot missing from accepted operation: %s", persisted)
+	}
+	operation.MaintenanceVerifiers = &deployment.MaintenanceVerifiers{Keys: []deployment.MaintenanceVerifierKey{}}
+	recovered, replay, err := store.BeginTransition(ctx, operation)
+	if err != nil || !replay || recovered.MaintenanceVerifiers == nil ||
+		len(recovered.MaintenanceVerifiers.Keys) != 1 || recovered.MaintenanceVerifiers.Keys[0].KID != "current" {
+		t.Fatalf("replay did not retain accepted verifier: %+v replay=%t err=%v", recovered, replay, err)
+	}
+}
+
 func TestRepositoryMigrationJournalAndReadinessProbe(t *testing.T) {
 	repository, database, ctx := integrationRepository(t)
 	if err := Migrate(ctx, database); err != nil {
@@ -417,7 +446,8 @@ func integrationOperation(requestID string, kind deployment.OperationKind, now t
 		SourceState:     deployment.LifecycleUninitialized,
 		Generation:      1, SpecDigest: digest, Attempt: 1,
 		State: deployment.OperationRunning, Effect: deployment.EffectUnknown,
-		CreatedAt: now, UpdatedAt: now,
+		MaintenanceVerifiers: &deployment.MaintenanceVerifiers{Keys: []deployment.MaintenanceVerifierKey{}},
+		CreatedAt:            now, UpdatedAt: now,
 	}
 }
 

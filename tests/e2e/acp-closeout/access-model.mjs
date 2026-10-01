@@ -43,7 +43,7 @@ export function decideAccess(payload) {
       name: "bash",
       arguments: {
         command: `printf '%s\\n' '${phase}' >> /workspace/${phase}.log; cat /workspace/${phase}.log`,
-        working_dir: { root: "workspace", path: "." },
+        working_dir: ".",
         timeout_ms: 10000,
       },
     },

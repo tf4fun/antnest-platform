@@ -91,7 +91,7 @@ describe.skipIf(databaseUrl === undefined)(
             {
               id: "file-tool",
               name: toolName,
-              arguments: { path: { root: "workspace", path: "requested.txt" } },
+              arguments: { path: "requested.txt" },
             },
           ],
         })

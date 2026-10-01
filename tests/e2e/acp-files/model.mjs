@@ -7,7 +7,6 @@ export const contentMarker = "F03_PRIVATE_FILE_PREFIX";
 const relative = 'reports /记录".txt';
 const before = `${contentMarker}\nold middle\ntail\n`;
 const after = `${contentMarker}\nnew middle\ntail\n`;
-const path = (name) => ({ root: "workspace", path: name });
 const success = (result) => ({
   ...result,
   effect_state: "settled",
@@ -17,7 +16,7 @@ const write = (id, name, oldText, newText, withDiff = true) => ({
   id,
   tool: "write",
   path: `/workspace/${name}`,
-  args: { path: path(name), content: newText },
+  args: { path: name, content: newText },
   result: success({ bytes_written: Buffer.byteLength(newText) }),
   ...(withDiff ? { change: { before: oldText, after: newText } } : {}),
 });
@@ -25,7 +24,7 @@ const edit = (id, oldString, newString, changed = true) => ({
   id,
   tool: "edit",
   path: `/workspace/${relative}`,
-  args: { path: path(relative), old_string: oldString, new_string: newString },
+  args: { path: relative, old_string: oldString, new_string: newString },
   result: success({ bytes_written: Buffer.byteLength(after) }),
   ...(changed ? { change: { before, after } } : {}),
 });
@@ -36,8 +35,8 @@ export const cases = [
     id: "read",
     tool: "read",
     path: `/workspace/${relative}`,
-    args: { path: path(relative), offset: 0, limit: 4096 },
-    result: success({ content: after, truncated: false }),
+    args: { path: relative, offset: 1, limit: 4096 },
+    result: success({ content: after, truncated: false, next_offset: null }),
   },
   write("empty-create", "empty.txt", null, ""),
   write("empty-replace", "empty.txt", "", "replaced empty\n"),

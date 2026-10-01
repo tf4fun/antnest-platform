@@ -1,5 +1,10 @@
 # Agent UI
 
+The `/` menu includes each preset and personal Runtime Skill, including in a new
+conversation before Session creation. Selecting a Skill completes an unsent task
+draft; sending it uses the normal Prompt path. See the
+[Skill command contract](../../contracts/agent-acp/skill-commands.md).
+
 Agent UI is Antnest Platform's end-user conversation workspace. It presents
 Agents, Sessions, messages, tool activity, and attachments without owning Agent
 execution or exposing internal service credentials to the browser.
@@ -65,6 +70,25 @@ state and each Session's history, draft and interaction phase are separate.
 No business state is written to localStorage, sessionStorage or IndexedDB.
 Reload restores Agent/Session selection from the URL and authoritative content
 through the Node Bridge, which rebuilds its view from ACP.
+
+Skill learning results use SDK notices and bounded recovery through Agent
+View/SSE. Only applied changes produce a toast and result count; source links
+use the existing conversation route. Background deferral diagnostics are read
+on demand when learning results open, via `GET /agents/A/view?learningStatus=1`.
+Ordinary Views, stream refreshes and runtime sweeps do not poll this status.
+Unknown reads remain unavailable rather than reporting successful learning.
+Unavailability describes a prior unfinished review; diagnostics do not promise
+to replay an unknown model request. New completed tasks can still be reviewed
+when the service recovers, subject to existing idle, cooldown and budget limits.
+The result-panel presentation passes 144 frontend component tests and both
+real-stack browser gates. Backend gates pass 253 Node tests,
+13 HTTP-client tests, the SDK HTTP component test and type checking.
+The root opt-in gates `make e2e-skill-learning-browser` and
+`make e2e-skill-learning-diagnostics-browser` pass real Docker-stack Playwright
+acceptance for create/update/read, source navigation, notices, on-demand diagnostics,
+model recovery and reload/mobile restoration. The existing five browser
+integration tests, production client/SSR build and type checking also pass.
+Development keeps the existing style; visual refinements follow during human acceptance.
 
 ## Owns
 

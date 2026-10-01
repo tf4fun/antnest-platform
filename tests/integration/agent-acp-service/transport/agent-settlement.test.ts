@@ -110,6 +110,7 @@ describe("Agent settlement HTTP contract", () => {
         supervisor: new RunSupervisor({
           execute: () => Promise.reject(new Error("No execution expected")),
         }),
+        learning: { closeForLifecycle: () => Promise.resolve(true) },
         protection: {
           hasUnstoppedRuntimeCalls: () => Promise.resolve(protectedRuntime),
         },
@@ -245,6 +246,7 @@ describe("Agent settlement HTTP contract", () => {
       const settlement = new AgentSettlement({
         directory: local.directory,
         supervisor,
+        learning: { closeForLifecycle: () => Promise.resolve(true) },
         protection: { hasUnstoppedRuntimeCalls: read },
         now: () => new Date(),
       });

@@ -53,6 +53,7 @@ var (
 		{version: 21, name: "legacy_skill_migration_bindings", sql: mustMigration("migrations/0021_legacy_skill_migration_bindings.sql")},
 		{version: 22, name: "legacy_proof_loss_recoveries", sql: mustMigration("migrations/0022_legacy_proof_loss_recoveries.sql")},
 		{version: 23, name: "legacy_source_recoveries", sql: mustMigration("migrations/0023_legacy_source_recoveries.sql")},
+		{version: 24, name: "skill_learning_policy", sql: mustMigration("migrations/0024_skill_learning_policy.sql")},
 	}
 )
 

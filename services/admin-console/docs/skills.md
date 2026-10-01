@@ -6,6 +6,26 @@ versions and artifact bytes. The browser calls only `/api/admin/skills...` throu
 the existing authenticated Edge route; it never receives the Registry service
 token or selects the organization/actor used for publication.
 
+The D6 [source/promotion contract](../../../contracts/admin-console/skill-discovery.md)
+adds search, preview and promote POSTs under `/api/admin/skill-sources/`. These
+use the same administrator admission and the authenticated caller's own source
+access. An administrator cannot substitute another Agent owner's identity.
+**Discover Agent Skills** searches live mappings, then shows a bounded package
+preview before explicit promotion. New formal Skills and same-name appended
+versions retain exact source ref/digest, target CAS and a stable command key
+after uncertain failures. A deterministic conflict requires fresh review.
+Publication success and inventory refresh are separate; failed refresh does
+not publish again. Formal versions remain fixed Template choices applied by
+explicit rebuild. The [D6 delivery record](../../../docs/skill-discovery-console-delivery-20261001.md)
+records local gates and desktop/mobile real Console/Registry Docker evidence;
+the complete four-step propagation workflow belongs to DI1.
+
+Preview keeps package bytes only in bounded request memory, streams canonical
+digest/checksum verification, and returns UTF-8 SKILL.md plus file metadata.
+It shares the two package-processing slots with publication and retains no ZIP
+cache. Responses are no-store. Registry's terminal empty-string/zero cursors
+are normalized to browser null so the final page can identify the current head.
+
 The BFF reads organization and actor from the trusted Gateway principal. List
 and version cursors are bounded and have a separate page/retry state. Uploads
 accept one ZIP (8 MiB maximum) with at most two concurrent BFF uploads;
@@ -75,8 +95,12 @@ check passed against real Identity, Gateway, Console and Registry containers:
 an unauthenticated request was rejected, an administrator login could publish
 and list a Skill, and a forged organization header did not change the visible
 scope.
-Controller/RC installation and the full
-Template → Runtime chain remain outside this batch.
+Controller/RC installation and the full Template → Runtime chain retain their
+separate service/integration evidence. Dynamic Agent sources and explicit
+promotion are admitted in [D6](../../../docs/skill-discovery-console-delivery-20261001.md);
+[DI1](../../../docs/skill-propagation-integration-delivery-20261001.md) now verifies
+the actual automatic-learning/source-use → real login/preview/promotion → frozen
+Template/create/rebuild/Run workflow, including two distinct versions and source invalidation.
 
 For repeatable isolated verification, build the Registry and Console images,
 start `postgres`, `skill-registry-database-init` and `skill-registry` under a

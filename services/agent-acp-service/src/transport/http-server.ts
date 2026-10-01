@@ -1,4 +1,7 @@
+import type { LearningStatusReader } from "../application/learning-status-reader.js";
+import { learningStatusRoute, serveLearningStatus } from "./learning-status.js";
 import { randomUUID } from "node:crypto";
+import { skillSourceRoute, serveSkillSource } from "./skill-sources.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 
@@ -8,6 +11,7 @@ import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AcpApplicationPort } from "../ports/acp-application.js";
+import type { SkillCommandsPort } from "../ports/skill-commands.js";
 import { trustedIdentity } from "./trusted-identity.js";
 import { promptCapabilities } from "./acp/capabilities.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
@@ -25,7 +29,10 @@ import type { AgentSettlementPort } from "../ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "../ports/agent-execution-state.js";
 import type { ExecutionAuditPort } from "../ports/execution-audit.js";
 import type { BridgeObservationService } from "../application/bridge-observation.js";
+import type { LearningChangeReader } from "../application/learning-change-reader.js";
+import type { LearningNoticePublisher } from "../application/learning-notice-publisher.js";
 import { bridgeObservationRoute, serveBridgeObservation } from "./bridge-observation.js";
+import { learningChangeRoute, serveLearningChanges } from "./learning-changes.js";
 import { executionAuditRoute, serveExecutionAudit } from "./execution-audit.js";
 import {
   AGENT_EXECUTION_STATE_PATH,
@@ -39,12 +46,17 @@ import {
 } from "./execution-configuration.js";
 
 export type AgentAcpHttpServerOptions = {
+  skillSources?: Parameters<typeof serveSkillSource>[3];
   outputs?: SessionOutputStreams;
   executionConfiguration?: ExecutionConfigurationPort;
   settlement?: AgentSettlementPort;
   executionState?: AgentExecutionStatePort;
   executionAudits?: ExecutionAuditPort;
   bridgeObservation?: Pick<BridgeObservationService, "readIntent" | "readSession">;
+  learningStatus?: Pick<LearningStatusReader, "read">;
+  learningChanges?: Pick<LearningChangeReader, "list">;
+  notices?: Pick<LearningNoticePublisher, "subscribe">;
+  skillCommands?: SkillCommandsPort;
   stateDeliveryTimeoutMs?: number;
   maxConfigurationBytes?: number;
   permissions?: PermissionConnectionsPort;
@@ -137,6 +149,39 @@ export class AgentAcpHttpServer {
   }
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const sourceRoute = skillSourceRoute(request.url);
+    if (sourceRoute !== undefined) {
+      await serveSkillSource(
+        request,
+        response,
+        sourceRoute,
+        this.options.skillSources,
+        this.options.ready,
+      );
+      return;
+    }
+    const statusRoute = learningStatusRoute(request.url);
+    if (statusRoute !== undefined) {
+      await serveLearningStatus(
+        request,
+        response,
+        statusRoute,
+        this.options.learningStatus,
+        this.options.ready,
+      );
+      return;
+    }
+    const changesRoute = learningChangeRoute(request.url);
+    if (changesRoute !== undefined) {
+      await serveLearningChanges(
+        request,
+        response,
+        changesRoute,
+        this.options.learningChanges,
+        this.options.ready,
+      );
+      return;
+    }
     const bridgeRoute = bridgeObservationRoute(request.url);
     if (bridgeRoute !== undefined) {
       await serveBridgeObservation(
@@ -260,6 +305,10 @@ export class AgentAcpHttpServer {
               promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
+              ...(this.options.notices === undefined ? {} : { notices: this.options.notices }),
+              ...(this.options.skillCommands === undefined
+                ? {}
+                : { skillCommands: this.options.skillCommands }),
               ...(this.options.permissions === undefined
                 ? {}
                 : { permissions: this.options.permissions }),

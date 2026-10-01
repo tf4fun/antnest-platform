@@ -2,11 +2,12 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::config::{
-    FilesystemSpecInput, Ipv4EndpointInput, NetworkSpecInput, RuntimeSpecInput, SocketAddressInput,
+    FilesystemSpecInput, Ipv4EndpointInput, NetworkSpecInput, RuntimeSpecInput,
+    SkillMaintenanceVerifiersInput, SocketAddressInput,
 };
 use crate::mcp::{
     EXPECTED_EXECUTION_HEADER, MCP_PATH, RuntimeHttp, RuntimeStatus, STATUS_PATH,
-    execution_fence_error, route_label,
+    execution_fence_error, reject_reserved_maintenance_tool, route_label,
 };
 use crate::spec::RuntimeIdentity;
 
@@ -202,6 +203,7 @@ fn shared_contract_matches_runtime_http_surface() {
         contract.tool_errors,
         crate::tool_error::ToolErrorCode::ALL
             .iter()
+            .filter(|code| code.is_model_facing())
             .map(|code| code.as_str())
             .collect::<Vec<_>>()
     );
@@ -231,6 +233,7 @@ fn shared_contract_matches_runtime_http_surface() {
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
     let input = RuntimeSpecInput {
         mcp_servers: Vec::new(),
+        skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
         agent_id: "agent-1".into(),
         generation: 2,
         listen: SocketAddressInput {
@@ -331,6 +334,7 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
 fn valid_input() -> RuntimeSpecInput {
     RuntimeSpecInput {
         mcp_servers: Vec::new(),
+        skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
         agent_id: "agent-1".into(),
         generation: 2,
         listen: SocketAddressInput {
@@ -395,6 +399,23 @@ fn mcp_execution_fence_fails_closed() {
         axum::http::HeaderValue::from_static("execution-1"),
     );
     assert_eq!(execution_fence_error(&headers, &status), None);
+}
+
+#[test]
+fn maintenance_names_cannot_enter_the_model_tool_path() {
+    for name in [
+        "antnest_skill_maintenance_prepare",
+        "antnest_skill_maintenance_commit",
+        "antnest_skill_maintenance_future_action",
+        "antnest_skill_temporary_install",
+        "antnest_skill_temporary_release",
+        "antnest_skill_temporary_future_action",
+    ] {
+        assert!(reject_reserved_maintenance_tool(name).is_err(), "{name}");
+    }
+    for name in ["bash", "read", "mcp__notes__search"] {
+        assert!(reject_reserved_maintenance_tool(name).is_ok(), "{name}");
+    }
 }
 
 include!(concat!(

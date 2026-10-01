@@ -1,10 +1,14 @@
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::spec::{FilesystemSpec, NetworkSpec, RuntimeIdentity, RuntimeSpec, UdpEndpoint};
+use crate::spec::{
+    FilesystemSpec, NetworkSpec, RuntimeIdentity, RuntimeSpec, SkillMaintenanceVerifier,
+    UdpEndpoint,
+};
 
 const RUNTIME_SPEC_ENV: &str = "ANTNEST_RUNTIME_SPEC";
 
@@ -28,6 +32,22 @@ pub(crate) struct RuntimeSpecInput {
     pub(crate) filesystem: FilesystemSpecInput,
     #[serde(default)]
     pub(crate) mcp_servers: Vec<crate::managed_mcp::spec::ServerInput>,
+    #[serde(default)]
+    pub(crate) skill_maintenance_verifiers: SkillMaintenanceVerifiersInput,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SkillMaintenanceVerifiersInput {
+    pub(crate) keys: Vec<SkillMaintenanceVerifierInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SkillMaintenanceVerifierInput {
+    pub(crate) kid: String,
+    pub(crate) algorithm: String,
+    pub(crate) public_key_base64url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -98,6 +118,8 @@ pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
 
 impl RuntimeSpecInput {
     pub(crate) fn try_into_runtime_spec(self) -> Result<RuntimeSpec, ConfigError> {
+        let maintenance_verifiers =
+            validate_maintenance_verifiers(&self.skill_maintenance_verifiers.keys)?;
         if self.network.packet_contract_revision != crate::packet::PACKET_CONTRACT_REVISION {
             return Err(ConfigError::Invalid {
                 name: "network.packet_contract_revision",
@@ -123,13 +145,61 @@ impl RuntimeSpecInput {
             .map_err(|error| invalid_spec("listen", error))
             .and_then(|spec| {
                 crate::managed_mcp::spec::validate_servers(self.mcp_servers)
-                    .map(|servers| spec.with_mcp_servers(servers))
+                    .map(|servers| {
+                        spec.with_mcp_servers(servers)
+                            .with_maintenance_verifiers(maintenance_verifiers)
+                    })
                     .map_err(|error| ConfigError::Invalid {
                         name: "mcp_servers",
                         message: error.to_string(),
                     })
             })
     }
+}
+
+fn validate_maintenance_verifiers(
+    keys: &[SkillMaintenanceVerifierInput],
+) -> Result<Vec<SkillMaintenanceVerifier>, ConfigError> {
+    if keys.len() > 2 {
+        return Err(ConfigError::Invalid {
+            name: "skill_maintenance_verifiers",
+            message: "at most two public keys are allowed".into(),
+        });
+    }
+    let mut validated = Vec::with_capacity(keys.len());
+    for key in keys {
+        if key.kid.is_empty()
+            || key.kid.len() > 128
+            || !key.kid.bytes().enumerate().all(|(index, byte)| {
+                byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'_' | b'-'))
+            })
+            || key.algorithm != "Ed25519"
+            || validated
+                .iter()
+                .any(|existing: &SkillMaintenanceVerifier| existing.kid() == key.kid)
+        {
+            return Err(ConfigError::Invalid {
+                name: "skill_maintenance_verifiers",
+                message: "invalid or duplicate public key identity".into(),
+            });
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(key.public_key_base64url.as_bytes())
+            .map_err(|_| ConfigError::Invalid {
+                name: "skill_maintenance_verifiers",
+                message: "invalid public key encoding".into(),
+            })?;
+        if bytes.len() != 32 || URL_SAFE_NO_PAD.encode(&bytes) != key.public_key_base64url {
+            return Err(ConfigError::Invalid {
+                name: "skill_maintenance_verifiers",
+                message: "public key must be canonical Ed25519 bytes".into(),
+            });
+        }
+        let public_key: [u8; 32] = bytes.try_into().expect("length checked");
+        validated.push(SkillMaintenanceVerifier::new(key.kid.clone(), public_key));
+    }
+    validated.sort_by(|left, right| left.kid().cmp(right.kid()));
+    Ok(validated)
 }
 
 fn socket_from_input(
@@ -212,6 +282,42 @@ mod tests {
     }
 
     #[test]
+    fn maintenance_verifiers_are_optional_bounded_public_keys() {
+        let empty = decode_runtime_spec(&serde_json::to_string(&valid_input()).unwrap()).unwrap();
+        assert!(empty.maintenance_verifiers().is_empty());
+
+        let mut value = serde_json::to_value(valid_input()).unwrap();
+        value["skill_maintenance_verifiers"] = serde_json::json!({"keys": [{
+            "kid": "learning-1", "algorithm": "Ed25519",
+            "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }]});
+        let enabled = decode_runtime_spec(&value.to_string()).unwrap();
+        assert_eq!(enabled.maintenance_verifiers().len(), 1);
+        assert_eq!(enabled.maintenance_verifiers()[0].kid(), "learning-1");
+        assert_eq!(enabled.maintenance_verifiers()[0].public_key(), &[0; 32]);
+
+        for invalid in [
+            serde_json::json!({"keys": [{"kid": "learning-1", "algorithm": "none",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}),
+            serde_json::json!({"keys": [{"kid": "learning-1", "algorithm": "Ed25519",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}]}),
+            serde_json::json!({"keys": [{"kid": "learning-1", "algorithm": "Ed25519",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+                {"kid": "learning-1", "algorithm": "Ed25519",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}),
+            serde_json::json!({"keys": [{"kid": "a", "algorithm": "Ed25519",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+                {"kid": "b", "algorithm": "Ed25519",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+                {"kid": "c", "algorithm": "Ed25519",
+                "public_key_base64url": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}),
+        ] {
+            value["skill_maintenance_verifiers"] = invalid;
+            assert!(decode_runtime_spec(&value.to_string()).is_err());
+        }
+    }
+
+    #[test]
     fn runtime_spec_preserves_validated_managed_servers() {
         let mut value = serde_json::to_value(valid_input()).unwrap();
         value["mcp_servers"] = serde_json::json!([{
@@ -249,6 +355,7 @@ mod tests {
         RuntimeSpecInput {
             agent_id: "agent-config-test".into(),
             mcp_servers: Vec::new(),
+            skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
             generation: 7,
             listen: SocketAddressInput {
                 host: "0.0.0.0".into(),

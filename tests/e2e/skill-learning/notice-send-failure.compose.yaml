@@ -1,0 +1,6 @@
+services:
+  agent-acp-service:
+    environment:
+      NODE_OPTIONS: --import /tests/e2e/skill-learning/notice-send-failure.mjs
+    volumes:
+      - ./tests:/tests:ro

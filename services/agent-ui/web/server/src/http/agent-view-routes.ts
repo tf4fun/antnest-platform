@@ -10,7 +10,7 @@ const validId = (value: string) =>
   value.length > 0 && value.length <= 200 && !/[/\\\x00-\x1f]/u.test(value);
 
 export function createAgentViewHandler(dependencies: {
-  read(scope: BridgeScope, sessionId: string | null): Promise<unknown>;
+  read(scope: BridgeScope, sessionId: string | null, learningStatus?: boolean): Promise<unknown>;
 }): (request: Request) => Promise<Response | null> {
   return async (request) => {
     const url = new URL(request.url);
@@ -33,8 +33,11 @@ export function createAgentViewHandler(dependencies: {
     const sessions = url.searchParams.getAll("sessionId");
     if (sessions.length > 1 || (sessions.length === 1 && !validId(sessions[0]!)))
       return error(422, "invalid_request", "Agent view request is invalid", "none");
+    const learningStatus = url.searchParams.getAll("learningStatus");
+    if (learningStatus.length > 1 || (learningStatus.length === 1 && learningStatus[0] !== "1"))
+      return error(422, "invalid_request", "Learning status selection is invalid", "none");
     try {
-      return json(await dependencies.read(scope, sessions[0] ?? null));
+      return json(await dependencies.read(scope, sessions[0] ?? null, learningStatus.length === 1));
     } catch (cause) {
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;

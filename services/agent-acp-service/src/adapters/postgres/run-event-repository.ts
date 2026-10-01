@@ -219,11 +219,16 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const attempts = await client.query<{
         id: string;
         tool_call_id: string;
-        source: "runtime" | "client";
+        source: "runtime" | "client" | "agent";
         state: string;
         tool_effect_state: ToolEffectState;
+        temporary_scope: boolean;
+        temporary_pending: boolean;
       }>(
-        `SELECT id, tool_call_id, source, state, tool_effect_state
+        `SELECT id, tool_call_id, source, state, tool_effect_state,
+                (source='agent' AND source_id='skill_registry' AND tool_name='load_skill'
+                 AND EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=tool_attempts.run_id)) AS temporary_scope,
+                EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=tool_attempts.run_id AND t.released_at IS NULL) AS temporary_pending
            FROM tool_attempts
           WHERE run_id = $1
           ORDER BY created_at, id
@@ -235,27 +240,50 @@ export class PostgresRunEventRepository implements RunEventRepository {
       let interrupted = 0;
       for (const attempt of attempts.rows) {
         effectState = combineEffects(effectState, attempt.tool_effect_state);
-        const attemptEffectSource = attempt.source === "runtime" ? "runtime_mcp" : "client_mcp";
+        const attemptEffectSource =
+          attempt.source === "runtime" || attempt.temporary_scope
+            ? "runtime_mcp"
+            : attempt.source === "client"
+              ? "client_mcp"
+              : "unclassified";
         if (attempt.tool_effect_state === "unknown") {
           unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
         }
         if (attempt.state !== "in_progress") {
           continue;
         }
-        effectState = "unknown";
-        unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
+        const interruptedEffect = attempt.temporary_scope
+          ? attempt.temporary_pending
+            ? "unknown"
+            : "settled"
+          : attempt.source === "agent"
+            ? "none"
+            : "unknown";
+        effectState = combineEffects(effectState, interruptedEffect);
+        if (interruptedEffect === "unknown")
+          unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
         const content = [
           {
             type: "text" as const,
-            text: "Tool outcome is unknown because Agent ACP Service restarted.",
+            text:
+              attempt.source === "agent" && !attempt.temporary_scope
+                ? "Skill discovery read was interrupted by Agent ACP Service restart. No Runtime mutation was dispatched."
+                : "Tool outcome is unknown because Agent ACP Service restarted.",
           },
         ];
         await client.query(
           `UPDATE tool_attempts
               SET state = 'failed', result_summary = $2::jsonb,
-                  tool_effect_state = 'unknown', finished_at = $3, updated_at = $3
+                  tool_effect_state = $4, finished_at = $3, updated_at = $3,
+                  runtime_call_stopped = CASE WHEN source='agent' THEN $5 ELSE runtime_call_stopped END
             WHERE id = $1`,
-          [attempt.id, JSON.stringify(content), interruptedAt],
+          [
+            attempt.id,
+            JSON.stringify(content),
+            interruptedAt,
+            interruptedEffect,
+            attempt.source === "agent" && (!attempt.temporary_scope || !attempt.temporary_pending),
+          ],
         );
         await appendLocked(
           client,

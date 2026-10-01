@@ -89,15 +89,15 @@ function toolCall(phase) {
         arguments: {
           command:
             "printf 'C4_BROWSER_NOTE=alpha-beta\\n' >> /workspace/.c4-browser-note; printf 'workspace-written\\n'",
-          working_dir: { root: "workspace", path: "." },
+          working_dir: ".",
           timeout_ms: 10000,
         },
       }
     : {
         name: "read",
         arguments: {
-          path: { root: "workspace", path: ".c4-browser-note" },
-          offset: 0,
+          path: ".c4-browser-note",
+          offset: 1,
           limit: 4096,
         },
       };

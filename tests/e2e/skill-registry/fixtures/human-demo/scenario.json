@@ -1,0 +1,25 @@
+{
+  "name": "Human acceptance demo",
+  "skill_name": "acceptance-status",
+  "template_name": "Acceptance Demo Template",
+  "agent_name": "Acceptance Demo Agent",
+  "model_id": "deepseek-flash",
+  "system_prompt": "你是一名工作区助手。使用当前可用的 Skill 完成相关任务，通过实际工具结果核验文件内容，用中文简洁回复。",
+  "steps": [
+    "在 Chrome 中登录本机验收环境。",
+    "通过 Skills 页面上传演示 ZIP，展示发布后不可变的版本与摘要。",
+    "创建模板，选择现有模型并引用 acceptance-status v1。",
+    "从模板创建 Agent，展示 Skill 准备进度直至 Runtime 就绪。",
+    "打开聊天，在没有 Session 的页面直接发送第一条消息，展示自动创建 Session。",
+    "执行文件交付任务，展示运行中的工具调用和结果。",
+    "Run 完成后保持空闲，观察真实模型的自动 Skill 复盘与结果通知；若有生成结果，打开来源会话。",
+    "如已生成个人 Skill，在新会话中完成后续任务，观察其发现和读取。"
+  ],
+  "messages": {
+    "greeting": "你好",
+    "workspace_task": "请完成一个小型项目的发布交接任务。先在工作区创建 demo/brief.md，内容是：项目为内部知识助手；目标是支持文档问答；首版检查点是登录可用、文档读取可用、回答带来源。另创建 demo/checklist.md，列出这三个检查点，并明确目前只是交接资料整理，尚未实际执行产品检查。创建完成后读取这两份文件，以读取到的实际内容为依据生成 demo/handover.md，按预设 Skill 的格式写交付摘要，并引用 brief.md 和 checklist.md。最后再读取 handover.md，确认项目名称、三个检查点和未执行的检查都写清楚，然后汇报结果。",
+    "follow_up": "请整理上一项任务的交接资料：先读取 demo/brief.md、demo/checklist.md 和 demo/handover.md，按当前可用的 Skill 检查内容是否一致，汇报实际读取的文件和仍待完成的检查。"
+  },
+  "learning_expectation": "至少三个已执行的工具轮次使成功 Run 具备复盘线索。真实模型仍可能判定无需生成 Skill；不修改冷却时间，不伪造通知或学习结果。",
+  "preparation_boundary": "准备阶段只生成本地上传材料并打开登录页；Skill、模板、Agent 和会话均在现场通过 UI 创建。"
+}

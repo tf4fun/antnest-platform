@@ -36,6 +36,9 @@ including commands usable without a Session. `POST /agents/A/commands` dispatche
 them without a model Prompt or Run; command feedback is transient. Configuration
 CAS, targeted Stop and exact Session ownership continue through existing operations.
 Native Session `availableCommands` retains its separate ACP meaning.
+Agent View `skillCommands` supplies the current Agent's discoverable preset and
+personal Skills, including before a Session exists. Discovery, naming and normal
+Prompt invocation follow the [Skill command contract](../agent-acp/skill-commands.md).
 
 The machine-readable catalog maps every route to its request/response schema.
 All paths in that catalog are relative to the prefix. Path IDs are opaque and
@@ -64,6 +67,13 @@ requests. An older operation not discoverable in that set remains available
 through its direct operation URL; the arrays are not an archive of every
 Session. Entries retain their `sessionId`, and the Bridge must not hide a
 running operation merely because a different Session was selected.
+The [Skill learning L0 contract](../skill-learning/learning-api.md) reserves an
+optional `systemNotices` Agent View field and corresponding delta path. L4
+populates it from SDK `notice` plus bounded learning-record recovery. The
+Node/FE projection carries the committed record's `changeId`, `sequence`,
+`agentId`, `kind`, `occurredAt`, `skillName` and `changeSummary`, with optional
+source Session/Run identifiers. Notice delivery does not
+advance ACP transcript output watermarks or create a model message.
 `promptCapabilities` projects only the SDK's negotiated image, audio and
 embedded-context booleans. The browser uses them for attachment admission;
 missing values mean unsupported. Internal ACP capabilities and metadata are
@@ -342,3 +352,16 @@ HTTP snapshot, without decoding a signed cursor or requiring a redundant reset.
 It must equal the retained Agent View cursor. Once the stream projection is
 established, both cursor and stream revision continuity are checked. HTTP reads
 publish any new state into that same journal before issuing their snapshot cut.
+
+The optional `learningStatus` Agent View field and delta path carry the minimal
+owner-scoped learning blocker from the learning contract. `null` means no
+current authoritative read; `{agentId, blocked:null}` means a successful read
+with no blocker. The status Agent must match the enclosing View. Read failures
+must not become a success notice or an authoritative empty status. Node
+consumer wiring is in development; frontend guidance and integration acceptance
+remain pending. Only an explicit `GET /agents/A/view?learningStatus=1` requests
+a diagnostic read (coalesced for five seconds); the optional `sessionId` selection retains its usual
+semantics. Duplicate or other `learningStatus` values are invalid. Ordinary
+View reads, SSE refreshes and runtime sweeps do not query learning status.
+The browser requests it once when the user opens learning results, cancels its
+read on close/Agent switch, and never adds a timer or automatic retry loop.

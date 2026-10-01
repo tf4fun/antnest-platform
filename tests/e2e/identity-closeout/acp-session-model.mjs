@@ -25,7 +25,7 @@ export function decide(payload) {
       name: "bash",
       arguments: {
         command: `printf '%s\\n' '${phase}' >> /workspace/session-effects.log; cat /workspace/session-effects.log`,
-        working_dir: { root: "workspace", path: "." },
+        working_dir: ".",
         timeout_ms: 10000,
       },
     },

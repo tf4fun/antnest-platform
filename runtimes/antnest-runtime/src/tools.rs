@@ -18,6 +18,7 @@ use crate::roots::{NamedRoot, NamedRoots, RootError};
 use crate::tool_error::{ToolError, ToolErrorCode};
 
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const MAX_READ_OUTPUT_BYTES: usize = 50 * 1024;
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const PROCESS_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -215,15 +216,13 @@ impl ToolEngine {
             .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
             .map_err(|error| ToolError::new(ToolErrorCode::ReadFailed, error))?;
         reject_canceled(&cancel)?;
-        let offset = input.offset().min(result.data.len());
-        let limit = input.limit();
-        let end = offset.saturating_add(limit).min(result.data.len());
-        let content = std::str::from_utf8(&result.data[offset..end])
-            .map_err(|error| ToolError::new(ToolErrorCode::ContentNotUtf8, error))?
-            .to_owned();
+        let text = std::str::from_utf8(&result.data)
+            .map_err(|error| ToolError::new(ToolErrorCode::ContentNotUtf8, error))?;
+        let (content, next_offset) = text_page(text, input.offset(), input.limit())?;
         Ok(ReadResult {
             content,
-            truncated: end < result.data.len(),
+            truncated: next_offset.is_some(),
+            next_offset,
             file,
         })
     }
@@ -455,8 +454,63 @@ async fn join_output(task: OutputTask) -> CapturedOutput {
     }
 }
 
+fn text_page(
+    text: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<(String, Option<usize>), ToolError> {
+    let mut content = String::new();
+    for (lines_read, line) in text
+        .split_inclusive('\n')
+        .skip(offset.saturating_sub(1))
+        .enumerate()
+    {
+        if lines_read == limit || content.len() + line.len() > MAX_READ_OUTPUT_BYTES {
+            if lines_read == 0 {
+                return Err(ToolError::new(
+                    ToolErrorCode::ResultTooLarge,
+                    "a single line exceeds the 50 KiB read budget; use bash to inspect a bounded fragment",
+                ));
+            }
+            return Ok((content, Some(offset + lines_read)));
+        }
+        content.push_str(line);
+    }
+    Ok((content, None))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn line_pages_preserve_unicode_and_return_a_progressing_cursor() {
+        let (first, next) = super::text_page("标题\r\n第一步\n第二步\n", 1, 2).unwrap();
+        assert_eq!(first, "标题\r\n第一步\n");
+        assert_eq!(next, Some(3));
+        assert_eq!(
+            super::text_page("标题\r\n第一步\n第二步\n", next.unwrap(), 2).unwrap(),
+            ("第二步\n".into(), None)
+        );
+        assert_eq!(
+            super::text_page("", 1, 2000).unwrap(),
+            (String::new(), None)
+        );
+        assert_eq!(
+            super::text_page("last line", 1, 2000).unwrap(),
+            ("last line".into(), None)
+        );
+    }
+
+    #[test]
+    fn read_byte_budget_stops_at_a_whole_line_without_splitting_utf8() {
+        let line = format!("{}\n", "中".repeat(10000));
+        let text = format!("{line}{line}");
+        assert_eq!(
+            super::text_page(&text, 1, 2000).unwrap(),
+            (line.clone(), Some(2))
+        );
+        assert_eq!(super::text_page(&text, 2, 2000).unwrap(), (line, None));
+        assert!(super::text_page(&"x".repeat(50 * 1024 + 1), 1, 2000).is_err());
+    }
     #[tokio::test]
     async fn inherited_output_pipe_returns_captured_prefix_without_failing_the_call() {
         use tokio::io::AsyncWriteExt as _;

@@ -41,7 +41,11 @@ export class RunSupervisor implements RunLifecyclePort {
   private readonly active = new Map<string, RunSlot>();
   private readonly changes = new InvalidationListeners();
 
-  public constructor(private readonly delegate: RunExecutionPort) {}
+  public constructor(
+    private readonly delegate: RunExecutionPort,
+    private readonly beforeAccept: (scope: AgentScope, signal: AbortSignal) => Promise<void> = () =>
+      Promise.resolve(),
+  ) {}
 
   public get stopSignal(): AbortSignal {
     return this.stopping.signal;
@@ -82,6 +86,7 @@ export class RunSupervisor implements RunLifecyclePort {
     this.active.set(key, slot);
     this.changes.invalidate(key);
     try {
+      await this.beforeAccept(input.binding, slot.controller.signal);
       const accepted = await accept(slot.controller.signal);
       slot.runId = accepted.runId;
       if (slot.pendingTargetCancels.has(accepted.runId))
