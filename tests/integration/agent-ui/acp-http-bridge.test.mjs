@@ -46,7 +46,16 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
           sessionCapabilities: { fork: {} },
         },
         _meta: {
-          "antnest.dev/skill-commands": { version: 1, commands: [{ name: "skill:system:review", description: "Review files", input: { hint: "Task" } }] },
+          "antnest.dev/skill-commands": {
+            version: 1,
+            commands: [
+              {
+                name: "skill:system:review",
+                description: "Review files",
+                input: { hint: "Task" },
+              },
+            ],
+          },
           "antnest.dev/bridge": {
             intentReceipt: 1,
             targetCancel: 1,
@@ -297,7 +306,13 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
             requestPermission: () => ({ outcome: { outcome: "cancelled" } }),
           },
         });
-        assert.deepEqual(bridge.skillCommands, [{ name: "skill:system:review", description: "Review files", input: { hint: "Task" } }]);
+        assert.deepEqual(bridge.skillCommands, [
+          {
+            name: "skill:system:review",
+            description: "Review files",
+            input: { hint: "Task" },
+          },
+        ]);
         return 200;
       },
       { traceparent: `00-${gatewayTraceId}-${gatewayParentSpanId}-01` },

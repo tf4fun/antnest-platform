@@ -1,0 +1,59 @@
+name: ci
+
+# Repository-wide checks. Each service has its own path-filtered workflow for
+# lint, unit tests, and its container image.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  repository:
+    name: Repository checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: services/agent-acp-service/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/runtime-controller/go.mod
+          cache: false
+
+      # Root test sources are formatted and linted with the ACP service's
+      # locked Prettier and ESLint installation.
+      - name: Install shared Node tooling
+        run: npm --prefix services/agent-acp-service ci
+
+      - name: Markdown links
+        run: make check-links
+
+      - name: Storage policy
+        run: make test-storage-policy
+
+      - name: Root test source syntax
+        run: find tests -name '*.mjs' -type f -print0 | xargs -0 -n1 node --check
+
+      - name: Root test source formatting
+        run: services/agent-acp-service/node_modules/.bin/prettier --check 'tests/**/*.mjs' 'tests/**/*.ts'
+
+      - name: Contract, tooling, and fixture suites
+        run: make test-repo

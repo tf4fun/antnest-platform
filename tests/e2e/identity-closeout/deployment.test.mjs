@@ -14,6 +14,7 @@ function rows() {
     "admin-console",
     "agent-ui",
     "runtime-egress",
+    "skill-registry",
     "oidc-fixture",
   ].map((name) => ({
     Config: {
@@ -44,7 +45,7 @@ function rows() {
   }));
 }
 test("Identity deployment requires actual HTTPS trust and isolated ingress", () => {
-  assert.equal(inspectIdentityDeployment(rows(), "fixture").services, 12);
+  assert.equal(inspectIdentityDeployment(rows(), "fixture").services, 13);
   for (const mutate of [
     (r) =>
       (r.find(

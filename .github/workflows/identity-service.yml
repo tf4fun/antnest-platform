@@ -1,0 +1,55 @@
+name: identity-service
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/identity-service/**
+      - tests/integration/go/identity-service/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/identity-service.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/identity-service/**
+      - tests/integration/go/identity-service/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/identity-service.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: ./.github/workflows/_go-service.yml
+    with:
+      service: identity-service
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-identity-service
+      dockerfile: services/identity-service/Dockerfile

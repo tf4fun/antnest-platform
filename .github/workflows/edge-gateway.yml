@@ -1,0 +1,55 @@
+name: edge-gateway
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/edge-gateway/**
+      - tests/integration/go/edge-gateway/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/edge-gateway.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/edge-gateway/**
+      - tests/integration/go/edge-gateway/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/edge-gateway.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: ./.github/workflows/_go-service.yml
+    with:
+      service: edge-gateway
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-edge-gateway
+      dockerfile: services/edge-gateway/Dockerfile

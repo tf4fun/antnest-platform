@@ -1,0 +1,52 @@
+name: antnest-runtime
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - runtimes/antnest-runtime/**
+      - tests/integration/antnest-runtime/**
+      - tests/integration/skill-registry/package-rules-v1.json
+      - contracts/runtime/**
+      - .github/workflows/runtime.yml
+      - .github/workflows/_rust-crate.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - runtimes/antnest-runtime/**
+      - tests/integration/antnest-runtime/**
+      - tests/integration/skill-registry/package-rules-v1.json
+      - contracts/runtime/**
+      - .github/workflows/runtime.yml
+      - .github/workflows/_rust-crate.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: ./.github/workflows/_rust-crate.yml
+    with:
+      crate-path: runtimes/antnest-runtime
+      integration-path: tests/integration/antnest-runtime
+      apt-packages: libnftables-dev pkg-config
+      extra-test-args: --example managed-mcp-fixture
+
+  # Published images are always built without ANTNEST_RUNTIME_FEATURES; the
+  # test-only feature gates must never reach a released runtime.
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-runtime
+      dockerfile: runtimes/antnest-runtime/Dockerfile

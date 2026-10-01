@@ -1,0 +1,79 @@
+name: admin-console
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/admin-console/**
+      - tests/integration/go/admin-console/**
+      - tests/integration/admin-console/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/admin-console.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/admin-console/**
+      - tests/integration/go/admin-console/**
+      - tests/integration/admin-console/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/admin-console.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: ./.github/workflows/_go-service.yml
+    with:
+      service: admin-console
+
+  web:
+    name: Web typecheck and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/admin-console/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: services/admin-console/web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  image:
+    needs: [check, web]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-admin-console
+      dockerfile: services/admin-console/Dockerfile

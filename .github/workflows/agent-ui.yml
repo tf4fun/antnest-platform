@@ -1,0 +1,65 @@
+name: agent-ui
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/agent-ui/**
+      - tests/integration/agent-ui/**
+      - contracts/**
+      - .nvmrc
+      - .github/workflows/agent-ui.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/agent-ui/**
+      - tests/integration/agent-ui/**
+      - contracts/**
+      - .nvmrc
+      - .github/workflows/agent-ui.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Typecheck and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/agent-ui/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: services/agent-ui/web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - name: Bridge integration tests
+        run: npm run test:bridge:integration
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-agent-ui
+      dockerfile: services/agent-ui/Dockerfile

@@ -77,9 +77,21 @@ test-rust:
 .PHONY: test-verification-python
 test-verification-python:
 	python3 -B -m unittest discover -s tests/support/verification -p '*_test.py'
-	python3 -B -m unittest discover -s tests/integration/verification -p '*_test.py'
 
-test-node:
+.PHONY: check-links
+check-links:
+	node tests/support/check-markdown-links.mjs
+
+test-node: test-repo
+	npm --prefix services/agent-acp-service test
+	npm --prefix services/agent-acp-service run test:integration
+	npm --prefix services/admin-console/web test
+	npm --prefix services/agent-ui/web test
+
+# Repository-level contract, tooling, and fixture suites. They need Node,
+# Python, and the agent-acp-service dependencies, but no Docker or databases.
+.PHONY: test-repo
+test-repo:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs
@@ -91,10 +103,6 @@ test-node:
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
 	node --test tests/e2e/observability/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs
-	npm --prefix services/agent-acp-service test
-	npm --prefix services/agent-acp-service run test:integration
-	npm --prefix services/admin-console/web test
-	npm --prefix services/agent-ui/web test
 	$(MAKE) test-managed-mcp-fixtures
 	$(MAKE) test-rpc-response-loss-fixtures
 	$(MAKE) test-acp-persistence-fixtures

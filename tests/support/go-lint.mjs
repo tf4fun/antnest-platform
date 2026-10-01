@@ -61,21 +61,24 @@ if (
     "edge-gateway",
     "skill-registry",
   ];
-  const services = overlayServices;
+  const requested = process.argv.slice(2);
+  for (const service of requested) {
+    if (!overlayServices.includes(service))
+      throw new Error(`unknown Go lint service: ${service}`);
+  }
+  const services = requested.length ? requested : overlayServices;
   const output = resolve(root, "artifacts/verification/go-lint");
-  const result = await withGoTestSources(
-    { root, services: overlayServices, output },
-    () =>
-      runCommand({
-        command: [
-          "golangci-lint",
-          "run",
-          ...services.map((service) => `./services/${service}/...`),
-        ],
-        cwd: root,
-        output,
-        name: `go-lint-${Date.now()}-${process.pid}`,
-      }),
+  const result = await withGoTestSources({ root, services, output }, () =>
+    runCommand({
+      command: [
+        "golangci-lint",
+        "run",
+        ...services.map((service) => `./services/${service}/...`),
+      ],
+      cwd: root,
+      output,
+      name: `go-lint-${Date.now()}-${process.pid}`,
+    }),
   );
   console.log(JSON.stringify(result));
   process.exitCode = result.exit_code;

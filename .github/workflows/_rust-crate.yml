@@ -1,0 +1,72 @@
+name: Rust crate checks
+
+on:
+  workflow_call:
+    inputs:
+      crate-path:
+        description: Crate directory relative to the repository root.
+        required: true
+        type: string
+      integration-path:
+        description: Root integration test directory compiled into the crate.
+        required: true
+        type: string
+      apt-packages:
+        description: Extra Ubuntu packages needed to build the crate.
+        required: false
+        default: ""
+        type: string
+      extra-test-args:
+        description: Additional cargo test invocation arguments, run after the default suite.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Format, clippy and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: ${{ inputs.crate-path }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        if: inputs.apt-packages != ''
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ inputs.apt-packages }}
+
+      # rust-toolchain.toml pins the channel and components.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.crate-path }} -> target
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: rustfmt integration sources
+        working-directory: .
+        run: rustfmt --edition 2024 --check ${{ inputs.integration-path }}/*.rs
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: Additional cargo tests
+        if: inputs.extra-test-args != ''
+        run: cargo test --locked ${{ inputs.extra-test-args }}

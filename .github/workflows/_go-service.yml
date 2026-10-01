@@ -1,0 +1,73 @@
+name: Go service checks
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: Directory name under services/.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GOLANGCI_LINT_VERSION: v2.14.0
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/${{ inputs.service }}/go.mod
+          cache-dependency-path: services/${{ inputs.service }}/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check formatting
+        run: |
+          unformatted="$(find "services/${{ inputs.service }}" "tests/integration/go/${{ inputs.service }}" -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needs to be run on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # Built with the pinned Go toolchain so it understands the module's
+      # language version.
+      - name: Install golangci-lint
+        env:
+          GOWORK: "off"
+        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+
+      # The lint wrapper links the root integration sources into the service
+      # tree so golangci-lint checks them with the package they belong to.
+      - name: golangci-lint
+        run: node tests/support/go-lint.mjs "${{ inputs.service }}"
+
+      # go.work spans every Go service; the module must build and test on its
+      # own, exactly as its container image does.
+      - name: go vet
+        working-directory: services/${{ inputs.service }}
+        env:
+          GOWORK: "off"
+        run: go vet ./...
+
+      - name: Unit tests
+        working-directory: services/${{ inputs.service }}
+        env:
+          GOWORK: "off"
+        run: go test -race -count=1 ./...
+
+      # Root integration sources are compiled into the service packages through
+      # a Go overlay. Without database settings, PostgreSQL and Temporal cases
+      # skip and only the dependency-free component tests run.
+      - name: Integration tests without external dependencies
+        run: node tests/integration/go/run.mjs "${{ inputs.service }}" -- -race

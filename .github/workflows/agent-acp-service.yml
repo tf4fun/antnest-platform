@@ -1,0 +1,75 @@
+name: agent-acp-service
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/agent-acp-service/**
+      - tests/integration/agent-acp-service/**
+      - contracts/**
+      - .nvmrc
+      - .github/workflows/agent-acp-service.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/agent-acp-service/**
+      - tests/integration/agent-acp-service/**
+      - contracts/**
+      - .nvmrc
+      - .github/workflows/agent-acp-service.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: services/agent-acp-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: services/agent-acp-service/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run format:check
+
+      - run: npm run lint
+
+      - name: Lint root integration sources
+        working-directory: .
+        run: services/agent-acp-service/node_modules/.bin/eslint --config services/agent-acp-service/eslint.config.js tests/integration/agent-acp-service
+
+      - run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # PostgreSQL-backed suites run through `make test-agent-acp-postgres`.
+      - name: Integration tests without external dependencies
+        run: npm run test:integration
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-agent-acp-service
+      dockerfile: services/agent-acp-service/Dockerfile

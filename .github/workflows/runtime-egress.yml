@@ -1,0 +1,50 @@
+name: runtime-egress
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/runtime-egress/**
+      - tests/integration/runtime-egress/**
+      - contracts/runtime/**
+      - contracts/egress/**
+      - rust-toolchain.toml
+      - .github/workflows/runtime-egress.yml
+      - .github/workflows/_rust-crate.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/runtime-egress/**
+      - tests/integration/runtime-egress/**
+      - contracts/runtime/**
+      - contracts/egress/**
+      - rust-toolchain.toml
+      - .github/workflows/runtime-egress.yml
+      - .github/workflows/_rust-crate.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: ./.github/workflows/_rust-crate.yml
+    with:
+      crate-path: services/runtime-egress
+      integration-path: tests/integration/runtime-egress
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-runtime-egress
+      dockerfile: services/runtime-egress/Dockerfile

@@ -1,0 +1,55 @@
+name: runtime-controller
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - services/runtime-controller/**
+      - tests/integration/go/runtime-controller/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/runtime-controller.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  pull_request:
+    paths:
+      - services/runtime-controller/**
+      - tests/integration/go/runtime-controller/**
+      - tests/support/**
+      - contracts/**
+      - go.work
+      - go.work.sum
+      - .golangci.yml
+      - .nvmrc
+      - .github/workflows/runtime-controller.yml
+      - .github/workflows/_go-service.yml
+      - .github/workflows/_image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: ./.github/workflows/_go-service.yml
+    with:
+      service: runtime-controller
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_image.yml
+    with:
+      image: antnest-runtime-controller
+      dockerfile: services/runtime-controller/Dockerfile
