@@ -3,8 +3,9 @@
 Skill Registry's first release is accepted for the current clean development
 deployment. There is no legacy business data to migrate. Old shared-volume
 migration, protected off-host legacy export and exceptional legacy-source
-restoration are outside this release's scope. Their existing code and tests are
-historical work, not pending delivery gates. The
+restoration are removed from compiled services, current contracts and runnable
+acceptance entrypoints. The [2026-10-01 release cleanup](legacy-skill-release-cleanup-20261001.md)
+records the source, image and fresh-schema boundary. The
 [acceptance audit](skill-registry-acceptance-audit-20260928.md) records the evidence
 and limits; the [minimal design](skill-registry-minimal-design.md) defines the
 implemented hosting, frozen Template references and read-only Runtime delivery.

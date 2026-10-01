@@ -180,7 +180,6 @@ services:
       ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${ANTNEST_RUNTIME_CONTROLLER_SCOPE:-antnest-platform}
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
-      ANTNEST_RUNTIME_LEGACY_BACKUP_ROOT: /legacy-skill-backups
       ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
       ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
@@ -201,7 +200,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runtime-system-skills:/system-skills-volume:ro
-      - runtime-legacy-backups:/legacy-skill-backups
     ports:
       - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-58080}:8080
     healthcheck:
@@ -371,7 +369,6 @@ services:
       ANTNEST_TEMPORAL_ADDRESS: temporal:7233
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@postgres:5432/antnest_agent_controller
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-      ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS: ${ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS:-}
       ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
       ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT:-5m}
@@ -614,5 +611,3 @@ volumes:
   postgres-data:
   runtime-system-skills:
     name: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
-  runtime-legacy-backups:
-    name: ${ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME:-antnest-legacy-skill-backups}

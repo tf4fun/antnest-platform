@@ -47,12 +47,6 @@ var (
 		{version: 15, name: "template_skills", sql: mustMigration("migrations/0015_template_skills.sql")},
 		{version: 16, name: "skill_preparation_intents", sql: mustMigration("migrations/0016_skill_preparation_intents.sql")},
 		{version: 17, name: "skill_preparation_attempts", sql: mustMigration("migrations/0017_skill_preparation_attempts.sql")},
-		{version: 18, name: "legacy_system_skills_gate", sql: mustMigration("migrations/0018_legacy_system_skills_gate.sql")},
-		{version: 19, name: "legacy_system_skill_choices", sql: mustMigration("migrations/0019_legacy_system_skill_choices.sql")},
-		{version: 20, name: "legacy_export_verifier_keys", sql: mustMigration("migrations/0020_legacy_export_verifier_keys.sql")},
-		{version: 21, name: "legacy_skill_migration_bindings", sql: mustMigration("migrations/0021_legacy_skill_migration_bindings.sql")},
-		{version: 22, name: "legacy_proof_loss_recoveries", sql: mustMigration("migrations/0022_legacy_proof_loss_recoveries.sql")},
-		{version: 23, name: "legacy_source_recoveries", sql: mustMigration("migrations/0023_legacy_source_recoveries.sql")},
 		{version: 24, name: "skill_learning_policy", sql: mustMigration("migrations/0024_skill_learning_policy.sql")},
 	}
 )

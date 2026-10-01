@@ -178,7 +178,6 @@ func run(ctx context.Context) (resultErr error) {
 		return classified("control", "maintenance_verifier_initialization_failed", err)
 	}
 	service.SetSkillVolumeInspector(skillVolumes)
-	service.SetActiveSkillSetVerifier(repository, skillVolumes)
 	monitor, err := platformmonitor.New(
 		observedPlatform, service, observationHealth, slog.Default(), time.Second,
 		configuration.ReconciliationTimeout,
@@ -270,28 +269,6 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("rpc", "rpc_handler_initialization_failed", err)
 	}
-	handler.SetActiveSkillVerifier(service)
-	legacyInventory, err := platformdocker.NewLegacyInventoryReader(
-		dockerClient, "/system-skills-volume", configuration.SystemSkillsVolume, configuration.ControllerScope,
-	)
-	if err != nil {
-		return classified("legacy_inventory", "legacy_inventory_initialization_failed", err)
-	}
-	handler.SetLegacyInventory(legacyInventory)
-	backupRootInfo, err := os.Lstat(configuration.LegacyBackupRoot)
-	if err != nil || !backupRootInfo.IsDir() {
-		return classified("legacy_backup", "legacy_backup_storage_unavailable", fmt.Errorf("legacy backup mount is absent or invalid: %v", err))
-	}
-	if err := os.Chmod(configuration.LegacyBackupRoot, 0700); err != nil {
-		return classified("legacy_backup", "legacy_backup_storage_unavailable", err)
-	}
-	legacyBackup, err := platformdocker.NewLegacyBackupWriter(
-		dockerClient, "/system-skills-volume", configuration.LegacyBackupRoot, configuration.SystemSkillsVolume, configuration.ControllerScope,
-	)
-	if err != nil {
-		return classified("legacy_backup", "legacy_backup_initialization_failed", err)
-	}
-	handler.SetLegacyBackup(legacyBackup)
 	serverContext, cancelServer := context.WithCancelCause(context.WithoutCancel(ctx))
 	defer cancelServer(rpc.ErrServerShutdown)
 	server := &http.Server{

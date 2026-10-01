@@ -16,20 +16,10 @@ Reusing a key with identical input returns the original result; reuse with
 different input returns `request_id_conflict`. W3C `traceparent` and optional
 `tracestate` propagate across the boundary.
 
-The read-only `GET /internal/legacy-system-skills/inventory` returns the
-bounded physical shared-volume inventory and every currently mounted Docker
-consumer. It exposes hashes and metadata, never Skill body bytes. It does not
-resolve an Agent's migration gate; see the [legacy inventory contract](../../../contracts/skill-registry/legacy-migration-inventory.md).
-`POST /internal/legacy-system-skills/backups` requires `Idempotency-Key` and
-`expected_inventory_digest`. It creates a private archive and returns its
-manifest/archive digests after readback. An exact replay rechecks the stored
-files; a changed expected inventory returns `409 legacy_backup_conflict`.
-`GET /internal/legacy-system-skills/backups/{backup_ref}` rechecks the complete
-stored archive and manifest before returning the receipt. Missing IDs return
-`404`; damaged evidence returns `503`. It never reads the live shared volume.
-The [backup evidence contract](../../../contracts/skill-registry/legacy-migration-backup.md)
-requires a separately verified protected export before a migration gate can
-be cleared.
+Legacy shared-volume Skill inventory, backup and migration-only active-set
+verification are not part of this API. Their retired paths return 404 for all
+methods. Normal Skill preparation and the Docker adapter's mount/manifest
+verification continue to protect lifecycle operations.
 
 ## Runtime Revision
 
@@ -134,15 +124,6 @@ endpoint returns retryable `skill_cleanup_in_progress` while an old physical
 set is being removed and non-retryable `skill_preparation_closed` after Delete
 has begun. Refer to the [delivery contract](../../../contracts/skill-registry/runtime-delivery-api.md)
 for the complete preparation and recovery flow.
-
-For a migration publish gate, Controller calls the read-only
-`POST /internal/runtimes/{agent_id}/skill-sets/verify-active` with the frozen
-collection, its still-held preparation reference and the expected current
-Runtime revision. RC rechecks the current Environment and actual running
-container, read-only Skill mount, owned volume and manifest. A successful
-receipt contains the checked Runtime revision, collection identity, manifest
-digest and verification time. See the
-[active verification contract](../../../contracts/skill-registry/active-skill-set-verification.md).
 
 The Controller injects Agent identity, internal generation, Runtime listener,
 workspace and system-Skill paths, platform networking, mounts, healthcheck,

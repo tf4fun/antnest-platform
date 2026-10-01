@@ -1,5 +1,5 @@
 {
-  "revision": 12,
+  "revision": 13,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "schemas": {
@@ -40,30 +40,6 @@
       "errors": ["runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
     },
     {
-      "operation_id": "inventoryLegacySystemSkills",
-      "method": "GET",
-      "path": "/internal/legacy-system-skills/inventory",
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/legacy_system_skills_inventory"}},
-      "errors": ["legacy_inventory_unavailable"]
-    },
-    {
-      "operation_id": "backupLegacySystemSkills",
-      "method": "POST",
-      "path": "/internal/legacy-system-skills/backups",
-      "required_headers": ["Idempotency-Key"],
-      "request_body": "control-api.schema.json#/$defs/legacy_system_skills_backup_request",
-      "responses": {"201": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/legacy_system_skills_backup_receipt"}},
-      "errors": ["invalid_request", "idempotency_key_required", "legacy_backup_conflict", "legacy_backup_unavailable"]
-    },
-    {
-      "operation_id": "getLegacySystemSkillsBackup",
-      "method": "GET",
-      "path": "/internal/legacy-system-skills/backups/{backup_ref}",
-      "path_parameters": {"backup_ref": "control-api.schema.json#/$defs/legacy_system_skills_backup_ref"},
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/legacy_system_skills_backup_receipt"}},
-      "errors": ["invalid_request", "legacy_backup_not_found", "legacy_backup_unavailable"]
-    },
-    {
       "operation_id": "inspectRuntime",
       "method": "GET",
       "path": "/internal/runtimes/{agent_id}",
@@ -89,16 +65,6 @@
       "query_parameters": {"organization_id": "control-api.schema.json#/$defs/organization_id"},
       "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/skill_prepare_receipt"}},
       "errors": ["invalid_request", "preparation_not_found", "skill_preparation_unavailable", "deadline_exceeded", "internal_error"]
-    },
-    {
-      "operation_id": "verifyActiveRuntimeSkillSet",
-      "method": "POST",
-      "path": "/internal/runtimes/{agent_id}/skill-sets/verify-active",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
-      "request_body": "control-api.schema.json#/$defs/active_skill_verification_request",
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/active_skill_verification_receipt"}},
-      "errors": ["invalid_request", "idempotency_key_required", "runtime_not_found", "runtime_revision_conflict", "prepared_skill_set_invalidated", "runtime_drift", "skill_preflight_unavailable", "deadline_exceeded", "internal_error"]
     },
     {
       "operation_id": "releaseRuntimeSkillPreparation",
@@ -228,10 +194,6 @@
     "runtime_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "preparation_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "skill_preparation_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "legacy_inventory_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "legacy_backup_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "legacy_backup_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "legacy_backup_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
     "skill_cleanup_in_progress": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
     "skill_preparation_closed": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "runtime_lifecycle_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},

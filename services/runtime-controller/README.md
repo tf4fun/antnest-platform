@@ -74,43 +74,15 @@ After removing the owned invalid volume, the worker requeues the same frozen
 set. Delete
 closes new preparation admission and cancels in-flight work in its lifecycle
 transaction. The core Registry→Template→Controller→RC→Runtime/ACP Docker
-workflow has passed. Controlled legacy shared-volume migration and exact-source
-recovery pass isolated Docker gates; independent protected off-host export
-acceptance is outside the current clean-development-deployment scope, which
-has no legacy business data. The Skill Registry first-release business scope
-has passed its local and Docker gates.
-The read-only legacy shared-volume inventory endpoint scans the mounted volume
-twice without following symlinks, hashes every regular file and reports all
-Docker consumers, including stopped and foreign containers. The separate
-`POST /internal/legacy-system-skills/backups` copies an explicitly observed
-inventory to a restricted persistent volume, reads its archive and manifest
-back, and returns an idempotent receipt. This same-host copy still needs a
-verified protected export before Controller may finish any Agent migration;
-`GET /internal/legacy-system-skills/backups/{backup_ref}` revalidates the
-stored archive and manifest without reading Docker or the live shared volume.
-None of these endpoints lifts the existing gate.
-The separate `legacy-backup-export` maintenance binary copies an RC backup
-directory into an operator-mounted private destination, verifies source and
-destination archives, and reports `copy_verified`. It does not certify that the
-destination is off-host; the migration gate still requires independent protected
-export verification.
-The `legacy-backup-attest` maintenance binary is intended to run on an
-independent verifier, with its own private Ed25519 key and read-only access to
-the protected export. It reads the full archive again and emits the signed
-[`v1 attestation`](../../contracts/skill-registry/legacy-export-attestation.md).
+workflow has passed. This clean-development release excludes legacy shared-volume
+migration, export and exceptional recovery. Their maintenance executables,
+inventory/backup routes and migration-only verification RPC are removed; see
+the [release cleanup](../../docs/legacy-skill-release-cleanup-20261001.md).
 
-Do not mount that key in the RC service. The same-host Docker test validates
-the command and signature mechanics only. Controller consumes a valid signed
-attestation in the explicit migration operation; the gate opens only after a
-verified target mount and atomic publication. Independent off-host evidence
-remains to be exercised.
-
-The private `POST /internal/runtimes/{agent_id}/skill-sets/verify-active`
-endpoint rechecks a still-held prepared reference against the current
-Environment revision, running container deployment identity, read-only Skill
-mount and manifest. It returns a point-in-time receipt for Controller's
-implemented migration publish gate. See the
-[verification contract](../../contracts/skill-registry/active-skill-set-verification.md).
+The normal Docker adapter verifies the actual candidate or adopted Runtime's
+read-only Skill mount, owned volume labels and manifest before start or recovery
+success. Skill preparation and reuse also verify the collection itself; removing
+the retired migration API does not remove those lifecycle checks.
 An isolated root integration test publishes a fixed Registry version over HTTP,
 asks RC to prepare and Initialize it over HTTP, and verifies the owned Docker
 volume's labels, manifest, exact `SKILL.md`, idempotent receipt, actual candidate

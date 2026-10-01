@@ -23,7 +23,6 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	platformdocker "soft/antnest-platform/services/runtime-controller/internal/platform/docker"
 	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
 	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
@@ -60,33 +59,18 @@ type Service interface {
 }
 
 type Handler struct {
-	service             Service
-	skillPreparation    SkillPreparationService
-	activeSkillVerifier ActiveSkillSetVerifier
-	legacyInventory     LegacyInventoryService
-	legacyBackup        LegacyBackupService
-	hub                 *observation.Hub
-	heartbeat           time.Duration
-	requestTimeout      time.Duration
-	mux                 *http.ServeMux
+	service          Service
+	skillPreparation SkillPreparationService
+	hub              *observation.Hub
+	heartbeat        time.Duration
+	requestTimeout   time.Duration
+	mux              *http.ServeMux
 }
 
 type SkillPreparationService interface {
 	Prepare(context.Context, string, string, skillset.PrepareRequest) (skillset.PreparationReceipt, error)
 	Get(context.Context, string, string, string) (skillset.PreparationReceipt, error)
 	Release(context.Context, string, string, string, string) error
-}
-
-type LegacyInventoryService interface {
-	Inventory(context.Context) (platformdocker.LegacySystemSkillsInventory, error)
-}
-
-func (h *Handler) SetLegacyInventory(service LegacyInventoryService) {
-	h.legacyInventory = service
-}
-
-func (h *Handler) SetLegacyBackup(service LegacyBackupService) {
-	h.legacyBackup = service
 }
 
 func NewHandler(
@@ -118,12 +102,8 @@ func NewHandler(
 	mux.HandleFunc("GET /status", handler.status)
 	registerRPC("GET /internal/runtime-images/resolve", handler.resolveImage)
 	registerRPC("GET /internal/runtimes", handler.listRuntimes)
-	registerRPC("GET /internal/legacy-system-skills/inventory", handler.legacySystemSkillsInventory)
-	registerRPC("POST /internal/legacy-system-skills/backups", handler.createLegacySystemSkillsBackup)
-	registerRPC("GET /internal/legacy-system-skills/backups/{backup_ref}", handler.getLegacySystemSkillsBackup)
 	registerRPC("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
 	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/prepare", handler.prepareSkillSet)
-	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/verify-active", handler.verifyActiveSkillSet)
 	registerRPC("GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}", handler.getSkillPreparation)
 	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release", handler.releaseSkillPreparation)
 	registerRPC("POST /internal/runtimes/{agent_id}/initialize", handler.initializeRuntime)
@@ -136,9 +116,6 @@ func NewHandler(
 	mux.HandleFunc("GET /internal/runtime-observations/watch", handler.watchObservations)
 	for _, pattern := range []string{
 		"/internal/runtime-images/resolve",
-		"/internal/legacy-system-skills/inventory",
-		"/internal/legacy-system-skills/backups",
-		"/internal/legacy-system-skills/backups/{backup_ref}",
 		"/status", "/internal/runtimes", "/internal/runtimes/{agent_id}",
 		"/internal/runtimes/{agent_id}/initialize", "/internal/runtimes/{agent_id}/update",
 		"/internal/runtimes/{agent_id}/disable", "/internal/runtimes/{agent_id}/enable",

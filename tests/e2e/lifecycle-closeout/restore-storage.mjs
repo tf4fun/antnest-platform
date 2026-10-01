@@ -72,30 +72,11 @@ FROM (
   return requiredSkillVolumeNames(JSON.parse(output));
 }
 
-export async function stage4RecoveryPlan(
-  config,
-  docker,
-  workspaceVolumes,
-  legacyVolume,
-) {
+export async function stage4RecoveryPlan(config, docker, workspaceVolumes) {
   assert(Array.isArray(workspaceVolumes), "missing workspace inventory");
-  assert(
-    typeof legacyVolume === "string" && legacyVolume.length > 0,
-    "missing legacy Skill volume",
-  );
-  const backupVolume = config.env?.ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME;
-  assert(
-    typeof backupVolume === "string" && backupVolume.length > 0,
-    "missing legacy backup volume",
-  );
   const pg = await postgresContainer(config, docker);
   const skillVolumes = await skillVolumeInventory(docker, pg.Id);
-  const volumes = [
-    ...workspaceVolumes,
-    legacyVolume,
-    backupVolume,
-    ...skillVolumes,
-  ];
+  const volumes = [...workspaceVolumes, ...skillVolumes];
   assert(
     volumes.every((name) => typeof name === "string" && name.length > 0),
     "invalid recovery volume",

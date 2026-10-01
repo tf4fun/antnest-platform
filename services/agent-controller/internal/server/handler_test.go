@@ -244,7 +244,6 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 		{name: "concurrent", err: ports.ErrConcurrentChange, status: http.StatusConflict, code: "lifecycle_conflict"},
 		{name: "Agent missing", err: application.ErrAgentNotFound, status: http.StatusNotFound, code: "agent_not_found"},
 		{name: "Agent not ready", err: application.ErrAgentNotReady, status: http.StatusConflict, code: "agent_not_ready"},
-		{name: "legacy Skills migration", err: application.ErrLegacySystemSkillsMigrationRequired, status: http.StatusConflict, code: "legacy_system_skills_migration_required"},
 		{name: "Agent busy", err: application.ErrLifecycleConflict, status: http.StatusConflict, code: "lifecycle_conflict"},
 		{name: "internal", err: errors.New("database detail"), status: http.StatusInternalServerError, code: "internal_error"},
 	}
@@ -708,24 +707,23 @@ type catalogServiceStub struct {
 }
 
 type lifecycleServiceStub struct {
-	input                application.CreateAgentInput
-	result               application.CreateAgentResult
-	rebuildInput         application.RebuildAgentInput
-	legacyMigrationInput application.LegacySkillMigrationOperationInput
-	rebuildResult        application.RebuildAgentResult
-	disableInput         application.DisableAgentInput
-	disableResult        application.DisableAgentResult
-	enableInput          application.EnableAgentInput
-	enableResult         application.EnableAgentResult
-	deleteInput          application.DeleteAgentInput
-	deleteResult         application.DeleteAgentResult
-	operation            application.OperationView
-	operationRequestID   string
-	skillStatus          application.SkillPreparationStatus
-	skillStatusOrg       string
-	skillStatusRequest   string
-	err                  error
-	createHadDeadline    bool
+	input              application.CreateAgentInput
+	result             application.CreateAgentResult
+	rebuildInput       application.RebuildAgentInput
+	rebuildResult      application.RebuildAgentResult
+	disableInput       application.DisableAgentInput
+	disableResult      application.DisableAgentResult
+	enableInput        application.EnableAgentInput
+	enableResult       application.EnableAgentResult
+	deleteInput        application.DeleteAgentInput
+	deleteResult       application.DeleteAgentResult
+	operation          application.OperationView
+	operationRequestID string
+	skillStatus        application.SkillPreparationStatus
+	skillStatusOrg     string
+	skillStatusRequest string
+	err                error
+	createHadDeadline  bool
 }
 
 func (service *lifecycleServiceStub) GetSkillPreparationStatus(_ context.Context, organizationID, requestID string) (application.SkillPreparationStatus, error) {
@@ -782,11 +780,6 @@ func (service *lifecycleServiceStub) RebuildAgent(
 	_ context.Context, input application.RebuildAgentInput,
 ) (application.RebuildAgentResult, error) {
 	service.rebuildInput = input
-	return service.rebuildResult, service.err
-}
-
-func (service *lifecycleServiceStub) MigrateLegacySkills(_ context.Context, input application.LegacySkillMigrationOperationInput) (application.RebuildAgentResult, error) {
-	service.legacyMigrationInput = input
 	return service.rebuildResult, service.err
 }
 

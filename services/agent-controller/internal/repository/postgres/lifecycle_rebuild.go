@@ -106,9 +106,6 @@ func (repository *Repository) BeginAgentRebuild(
 		if loadErr != nil {
 			return ports.AgentRebuildState{}, false, loadErr
 		}
-		if !sameLegacyMigrationBinding(state.LegacyMigration, input.LegacyMigration) {
-			return ports.AgentRebuildState{}, false, ports.ErrRequestConflict
-		}
 		return state, true, nil
 	case !errors.Is(err, ports.ErrNotFound):
 		return ports.AgentRebuildState{}, false, err
@@ -122,9 +119,6 @@ func (repository *Repository) BeginAgentRebuild(
 	}
 	if !matchesRebuildSource(agent, input) {
 		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
-	}
-	if err := checkLegacyLifecycleAdmission(ctx, transaction, agent, input.LegacyMigration, input.Now); err != nil {
-		return ports.AgentRebuildState{}, false, err
 	}
 	sourceSpec, err := loadAgentSpec(ctx, transaction, input.ExpectedSpecRevisionID)
 	if err != nil {
@@ -151,18 +145,6 @@ func (repository *Repository) BeginAgentRebuild(
 		input.RequestedEvent.AggregateSequence != agent.AggregateSequence+1 {
 		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
 	}
-	if input.LegacyMigration != nil {
-		choice, err := loadLatestLegacySkillChoice(ctx, transaction, agent.AgentID)
-		if err != nil {
-			return ports.AgentRebuildState{}, false, err
-		}
-		if choice == nil {
-			return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
-		}
-		if err := checkLegacyTargetAgainstChoice(agent.OrganizationID, sourceSpec.Snapshot, input.TargetSpec.Snapshot, *choice); err != nil {
-			return ports.AgentRebuildState{}, false, err
-		}
-	}
 	if err := requireEnabledTemplateSpec(ctx, transaction, agent.OrganizationID, input.TargetSpec.Snapshot); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
@@ -170,9 +152,6 @@ func (repository *Repository) BeginAgentRebuild(
 		return ports.AgentRebuildState{}, false, err
 	}
 	if err := insertLifecycleOperation(ctx, transaction, input.Operation); err != nil {
-		return ports.AgentRebuildState{}, false, err
-	}
-	if err := insertLegacyMigrationBinding(ctx, transaction, input.Operation.RequestID, input.AgentID, input.LegacyMigration, input.Now); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
 	result, err := transaction.Exec(ctx, `
@@ -202,7 +181,7 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	agent.UpdatedAt = input.Now
 	state := ports.AgentRebuildState{
 		Agent: agent, SourceSpec: sourceSpec, SourceExecution: sourceExecution,
-		TargetSpec: input.TargetSpec, Operation: input.Operation, LegacyMigration: input.LegacyMigration,
+		TargetSpec: input.TargetSpec, Operation: input.Operation,
 	}
 	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
 		return ports.AgentRebuildState{}, false, err
@@ -294,17 +273,8 @@ func (repository *Repository) PublishAgentRebuild(
 	if input.RebuiltEvent.AggregateSequence != state.Agent.AggregateSequence+1 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	resolveMigration, err := checkLegacyMigrationPublish(ctx, transaction, state, input)
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
 	if err := publishRuntimeTarget(ctx, transaction, operation, input.RebuiltEvent, input.Now); err != nil {
 		return ports.AgentRebuildState{}, err
-	}
-	if resolveMigration {
-		if err := resolveLegacyMigration(ctx, transaction, operation.AgentID, input.RequestID, input.Now); err != nil {
-			return ports.AgentRebuildState{}, err
-		}
 	}
 	if _, err := transaction.Exec(ctx, `UPDATE agent_controller.agents SET access_revision = $2 WHERE id = $1`,
 		operation.AgentID, input.AccessRevision); err != nil {
@@ -558,13 +528,9 @@ func loadAgentRebuildState(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	legacyMigration, err := loadLegacyMigrationBinding(ctx, queryer, operation.RequestID)
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
 	return ports.AgentRebuildState{
 		Agent: agent, SourceSpec: sourceSpec, SourceExecution: sourceExecution,
-		TargetSpec: targetSpec, Operation: operation, LegacyMigration: legacyMigration,
+		TargetSpec: targetSpec, Operation: operation,
 	}, nil
 }
 

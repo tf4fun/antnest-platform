@@ -16,10 +16,9 @@ import {
 } from "./restore-storage.mjs";
 import { databases, stage4Databases, keyNames } from "./restore-evidence.mjs";
 
-test("Stage 4 recovery plan combines workspaces, legacy contents, private backups and DB-derived Skill volumes", async () => {
+test("Stage 4 recovery plan covers workspaces and DB-derived Skill volumes without legacy storage", async () => {
   const config = {
     project: "antnest-fixture",
-    env: { ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME: "legacy-backups" },
     compose: (args) => ["compose", ...args],
   };
   const docker = async (args) => {
@@ -43,35 +42,19 @@ test("Stage 4 recovery plan combines workspaces, legacy contents, private backup
     ]);
   };
   assert.deepEqual(
-    await stage4RecoveryPlan(
-      config,
-      docker,
-      ["workspace-a", "workspace-b"],
-      "legacy-skills",
-    ),
+    await stage4RecoveryPlan(config, docker, ["workspace-a", "workspace-b"]),
     {
       databases: stage4Databases,
-      volumes: [
-        "workspace-a",
-        "workspace-b",
-        "legacy-skills",
-        "legacy-backups",
-        "skill-owned",
-      ],
+      volumes: ["workspace-a", "workspace-b", "skill-owned"],
     },
   );
   await assert.rejects(
-    stage4RecoveryPlan(config, docker, ["workspace-a"], "workspace-a"),
+    stage4RecoveryPlan(config, docker, ["skill-owned"]),
     /overlap/,
   );
   await assert.rejects(
-    stage4RecoveryPlan(
-      { ...config, env: {} },
-      docker,
-      ["workspace-a"],
-      "legacy-skills",
-    ),
-    /missing legacy backup volume/,
+    stage4RecoveryPlan({ ...config, env: {} }, docker, [""]),
+    /invalid recovery volume/,
   );
 });
 

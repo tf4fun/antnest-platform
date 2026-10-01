@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -142,13 +141,6 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err := repository.Migrate(ctx); err != nil {
 		return classifyFailure("database_migration", err)
 	}
-	verifierKeys := make(map[string]ed25519.PublicKey, len(cfg.LegacyExportVerifierKeys))
-	for _, key := range cfg.LegacyExportVerifierKeys {
-		verifierKeys[key.KeyID] = key.PublicKey
-	}
-	if err := repository.ReconcileLegacyVerifierKeys(ctx, verifierKeys); err != nil {
-		return classifyFailure("legacy_verifier_configuration", err)
-	}
 	eventNotifier, err := postgres.OpenEventNotifier(
 		ctx, cfg.DatabaseURL,
 		postgres.WithEventNotifierObserver(func(state string) {
@@ -199,19 +191,12 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	legacyMigration := application.NewLegacySkillMigrationService(repository, runtime, runtime, catalog, systemClock{},
-		application.WithLegacyExportVerifierTrust(verifierKeys, repository))
 	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
 		repository, repository, egress, runtime, systemClock{}, cfg.DrainTimeout,
 		application.WithIdentityDirectory(identity),
 		application.WithLifecycleExecution(execution),
 		application.WithSkillPreparation(repository, runtime),
-		application.WithLegacySkillMigrationGate(repository),
-		application.WithActiveSkillSetVerifier(runtime),
-		application.WithLegacyMigrationPreflight(legacyMigration),
 	)
-	proofLossRecovery := application.NewLegacyProofLossRecoveryService(repository, runtime, egress, systemClock{})
-	sourceRecovery := application.NewLegacySourceRecoveryService(repository, runtime, egress, execution, systemClock{}, cfg.DrainTimeout)
 	queries := application.NewAgentQueryService(repository)
 	events := application.NewEventService(repository, eventNotifier, repository)
 	workflowClient, closeWorkflowClient, err := orchestration.Open(ctx, cfg.TemporalAddress, logger)
@@ -219,21 +204,19 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		return classifyFailure("workflow_startup", err)
 	}
 	defer closeWorkflowClient()
-	workflowWorker := orchestration.NewWorkerWithSourceRecovery(workflowClient, lifecycle, cfg.ShutdownTimeout, sourceRecovery, proofLossRecovery)
+	workflowWorker := orchestration.NewWorker(workflowClient, lifecycle, cfg.ShutdownTimeout)
 	if err := workflowWorker.Start(); err != nil {
 		return classifyFailure("workflow_worker_startup", err)
 	}
 	defer workflowWorker.Stop()
-	commands := orchestration.NewServiceWithSourceRecovery(lifecycle, workflowClient, sourceRecovery, proofLossRecovery)
+	commands := orchestration.NewService(lifecycle, workflowClient)
 	identityWorker, err := application.NewIdentityRevocationWorker(identity, repository, commands, cfg.IdentityRevocationPollInterval, logger)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	handler, err := server.NewHandlerWithRecoveries(
+	handler, err := server.NewHandler(
 		catalog, commands, application.NewAgentConfigurationService(repository, identity, systemClock{}), queries, events,
 		application.NewNetworkPolicyService(repository, egress), repository.Ping,
-		commands, commands,
-		legacyMigration,
 	)
 	if err != nil {
 		return classifyFailure("service_composition", err)

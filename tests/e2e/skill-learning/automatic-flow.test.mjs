@@ -22,6 +22,7 @@ import { collectDiscoveryTrace } from "./discovery-trace.mjs";
 import { temporaryAcpFlow } from "./temporary-acp-flow.mjs";
 import { callerAcpFlow } from "./caller-flow.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
+import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -355,6 +356,27 @@ test(
         ]),
         true,
       );
+      if (propagation) {
+        const acpContainer = await docker(
+          composeArgs(config.project, [
+            ...overlay,
+            "ps",
+            "-q",
+            "agent-acp-service",
+          ]),
+        );
+        const release = await assertReleasedSkillSurface({
+          docker,
+          project: config.project,
+          rcImage,
+          acpContainer,
+        });
+        await writeFile(
+          `${propagationOutput()}/release-surface.json`,
+          JSON.stringify(release, null, 2),
+          { mode: 0o600 },
+        );
+      }
       const fixture = await setup(config, abort.signal);
       const postgresContainer = await docker(
         composeArgs(config.project, [...overlay, "ps", "-q", "postgres"]),

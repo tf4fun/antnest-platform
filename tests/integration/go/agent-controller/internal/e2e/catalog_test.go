@@ -224,12 +224,6 @@ func (catalogOnlyLifecycle) RebuildAgent(
 	return application.RebuildAgentResult{}, application.ErrDependencyUnavailable
 }
 
-func (catalogOnlyLifecycle) MigrateLegacySkills(
-	context.Context, application.LegacySkillMigrationOperationInput,
-) (application.RebuildAgentResult, error) {
-	return application.RebuildAgentResult{}, application.ErrDependencyUnavailable
-}
-
 func (catalogOnlyLifecycle) DisableAgent(
 	context.Context, application.DisableAgentInput,
 ) (application.DisableAgentResult, error) {

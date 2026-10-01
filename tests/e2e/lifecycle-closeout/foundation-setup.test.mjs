@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   setupFoundation,
   configureFoundation,
   inspectFoundationDeployment,
 } from "./foundation-setup.mjs";
+
+test("foundation Skill preparation uses the selected Runtime Controller candidate", async () => {
+  const compose = await readFile(
+    new URL("./foundation.compose.yaml", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    compose,
+    /ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: \$\{ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest\/runtime-controller:local\}/,
+  );
+});
 
 test("foundation setup uses stable Model IDs and actual Template revision", async () => {
   const calls = [];

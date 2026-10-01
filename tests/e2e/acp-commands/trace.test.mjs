@@ -98,6 +98,146 @@ function fixture(kind = "command", http = false) {
 }
 const inspect = (f) =>
   inspectCommandTrace(f.trace, f.expected, ["PRIVATE"], f.requests ?? []);
+
+function catalogRead(f) {
+  for (const [id, method] of [
+    ["catalog-discover", "discover"],
+    ["catalog-info", "resources/read"],
+  ]) {
+    f.add(
+      `${id}-client`,
+      "request",
+      "HTTP POST antnest-runtime",
+      undefined,
+      5,
+      {
+        "span.kind": "client",
+      },
+    );
+    f.add(
+      `${id}-server`,
+      `${id}-client`,
+      "HTTP POST /mcp",
+      "antnest-runtime",
+      5,
+      {
+        "span.kind": "server",
+        "rpc.method": method,
+      },
+    );
+    f.add(
+      `${id}-operation`,
+      `${id}-server`,
+      "runtime.mcp.operation",
+      "antnest-runtime",
+      5,
+      {
+        "rpc.method": method,
+      },
+    );
+  }
+  f.add(
+    "catalog-executor",
+    "catalog-info-operation",
+    "runtime.executor",
+    "antnest-runtime",
+    5,
+  );
+  return f;
+}
+
+test("Session setup and command completion may refresh Skill metadata without model or tool execution", () => {
+  for (const http of [false, true])
+    for (const [kind, method] of [
+      ["request", "session/new"],
+      ["request", "session/load"],
+      ["request", "session/resume"],
+      ["request", "session/fork"],
+      ["command", "session/prompt"],
+    ]) {
+      const f = catalogRead(fixture(kind, http));
+      const previous = f.expected.method;
+      f.expected.method = method;
+      for (const span of f.trace.spans) {
+        if (span.operationName === `acp ${previous}`)
+          span.operationName = `acp ${method}`;
+        for (const tag of span.tags)
+          if (tag.key === "rpc.method" && tag.value === previous)
+            tag.value = method;
+      }
+      const result = inspect(f);
+      assert.equal(result.runtime_information_reads, 1);
+      assert.equal(result.runtime_tool_calls, 0);
+      assert.equal(result.no_model_or_tools, true);
+      assert.equal(result.no_model_or_runtime, false);
+    }
+});
+
+test("Skill catalog refresh cannot hide tool execution, detached calls, extra reads or rejected access", () => {
+  for (const http of [false, true])
+    for (const mutate of [
+      (f) =>
+        f.add(
+          "hidden-tool",
+          "catalog-info-operation",
+          "runtime.mcp.tool",
+          "antnest-runtime",
+        ),
+      (f) => {
+        f.trace.spans.find(
+          (s) => s.spanID === "catalog-info-server",
+        ).tags[1].value = "tools/call";
+      },
+      (f) => {
+        f.trace.spans.find(
+          (s) => s.spanID === "catalog-info-operation",
+        ).tags[0].value = "tools/call";
+      },
+      (f) => {
+        f.trace.spans.find(
+          (s) => s.spanID === "catalog-executor",
+        ).references[0].spanID = "catalog-discover-operation";
+      },
+      (f) => {
+        f.trace.spans.find(
+          (s) => s.spanID === "catalog-info-server",
+        ).references[0].spanID = "forward";
+      },
+      (f) =>
+        f.add(
+          "extra-read",
+          "catalog-info-client",
+          "HTTP POST /mcp",
+          "antnest-runtime",
+          5,
+          { "span.kind": "server", "rpc.method": "resources/read" },
+        ),
+      (f) => f.add("hidden-model", "request", "model.complete"),
+      (f) => {
+        f.trace.spans = f.trace.spans.filter(
+          (span) => span.spanID !== "catalog-discover-operation",
+        );
+      },
+      (f) => {
+        f.trace.spans = f.trace.spans.filter(
+          (span) => span.processID !== "antnest-runtime",
+        );
+      },
+      (f) => {
+        f.expected.rejection = "session_access_denied";
+      },
+      (f) => {
+        f.expected.method = "session/list";
+        f.trace.spans[2].tags.find((t) => t.key === "rpc.method").value =
+          "session/list";
+      },
+    ]) {
+      const f = catalogRead(fixture("request", http));
+      mutate(f);
+      assert.throws(() => inspect(f));
+    }
+});
+
 test("ordinary execution verifies the explicitly expected read tool after Rebuild", () => {
   const f = fixture("ordinary");
   f.expected.toolName = "read";

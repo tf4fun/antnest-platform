@@ -66,27 +66,6 @@ func (client *Client) ReleaseSkillPreparation(ctx context.Context, releaseID, or
 	return nil
 }
 
-func (client *Client) VerifyActiveSkillSet(ctx context.Context, requestID, agentID string, input ports.ActiveSkillSetVerificationRequest) (ports.ActiveSkillSetVerificationReceipt, error) {
-	digest, err := domain.SkillSetDigest(input.OrganizationID, input.SystemSkills)
-	if err != nil || input.SystemSkills == nil || input.PreparedSkillSet.LayoutVersion != domain.SkillLayoutVersion ||
-		input.PreparedSkillSet.SkillSetDigest != digest || !runtimeRevisionPattern.MatchString(input.ExpectedRuntimeRevision) ||
-		!preparedReferencePattern.MatchString(input.PreparedReferenceID) || requestID == "" {
-		return ports.ActiveSkillSetVerificationReceipt{}, dependencyFailure("invalid_request", false, err)
-	}
-	path := "/internal/runtimes/" + url.PathEscape(agentID) + "/skill-sets/verify-active"
-	body, err := client.skillRequest(ctx, http.MethodPost, path, "", requestID, input, http.StatusOK, "verify_active_skills", agentID)
-	if err != nil {
-		return ports.ActiveSkillSetVerificationReceipt{}, err
-	}
-	var receipt ports.ActiveSkillSetVerificationReceipt
-	if err := json.Unmarshal(body, &receipt); err != nil || receipt.AgentID != agentID || receipt.RuntimeRevision != input.ExpectedRuntimeRevision ||
-		receipt.SkillSetDigest != digest || receipt.LayoutVersion != input.PreparedSkillSet.LayoutVersion ||
-		!skillSetDigestPattern.MatchString(receipt.ManifestDigest) || receipt.VerifiedAt.IsZero() {
-		return ports.ActiveSkillSetVerificationReceipt{}, dependencyFailure("invalid_response", true, err)
-	}
-	return receipt, nil
-}
-
 func (client *Client) skillRequest(ctx context.Context, method, path, query, requestID string, payload any, wantStatus int, action, agentID string) (body []byte, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
@@ -151,4 +130,3 @@ func decodeSkillPreparation(body []byte, requestID, agentID, organizationID, own
 }
 
 var _ ports.SkillPreparationClient = (*Client)(nil)
-var _ ports.ActiveSkillSetVerifier = (*Client)(nil)

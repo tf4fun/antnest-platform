@@ -111,12 +111,8 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 		"GET /internal/runtime-images/resolve":                                            {"200"},
 		"GET /status":                                                                     {"200", "503"},
 		"GET /internal/runtimes":                                                          {"200"},
-		"GET /internal/legacy-system-skills/inventory":                                    {"200"},
-		"POST /internal/legacy-system-skills/backups":                                     {"201"},
-		"GET /internal/legacy-system-skills/backups/{backup_ref}":                         {"200"},
 		"GET /internal/runtimes/{agent_id}":                                               {"200"},
 		"POST /internal/runtimes/{agent_id}/skill-sets/prepare":                           {"202"},
-		"POST /internal/runtimes/{agent_id}/skill-sets/verify-active":                     {"200"},
 		"GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}":          {"200"},
 		"POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release": {"204"},
 		"POST /internal/runtimes/{agent_id}/initialize":                                   {"200", "202"},
@@ -172,7 +168,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 			if !slices.Contains(route.RequiredHeaders, "Idempotency-Key") {
 				t.Fatalf("mutation route %s omits Idempotency-Key", key)
 			}
-			if !strings.Contains(route.Path, "/skill-sets/") && route.Path != "/internal/legacy-system-skills/backups" {
+			if !strings.Contains(route.Path, "/skill-sets/") {
 				for _, code := range []string{"agent_mutation_in_progress", "mutation_lock_lost"} {
 					if !slices.Contains(route.Errors, code) {
 						t.Fatalf("mutation route %s omits coordination error %s", key, code)
@@ -265,8 +261,6 @@ func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 	assertRequiredFields(t, schema, "skill_prepare_request", skillset.PrepareRequest{OrganizationID: "org_00000000000000000000000000000000", OwnerOperationID: "build-1", LayoutVersion: 1, SkillSetDigest: "sha256:" + strings.Repeat("a", 64), SystemSkills: []skillset.FrozenSkill{}})
 	assertRequiredFields(t, schema, "skill_prepare_receipt", skillset.PreparationReceipt{RequestID: "prepare-1", AgentID: "agent-1", OrganizationID: "org_00000000000000000000000000000000", OwnerOperationID: "build-1", State: skillset.PreparationQueued})
 	assertRequiredFields(t, schema, "skill_release_request", skillReleaseRequest{OrganizationID: "org_00000000000000000000000000000000", OwnerOperationID: "build-1"})
-	assertRequiredFields(t, schema, "active_skill_verification_request", control.ActiveSkillSetVerificationRequest{OrganizationID: "org_00000000000000000000000000000000", ExpectedRuntimeRevision: testRuntimeRevision, PreparedReferenceID: "psr_" + strings.Repeat("a", 32), PreparedSkillSet: skillset.PreparedSet{SkillSetDigest: "sha256:" + strings.Repeat("a", 64), LayoutVersion: 1}, SystemSkills: []skillset.FrozenSkill{}})
-	assertRequiredFields(t, schema, "active_skill_verification_receipt", control.ActiveSkillSetVerificationReceipt{AgentID: "agent-1", RuntimeRevision: testRuntimeRevision, SkillSetDigest: "sha256:" + strings.Repeat("a", 64), LayoutVersion: 1, ManifestDigest: "sha256:" + strings.Repeat("b", 64), VerifiedAt: now})
 	assertRequiredFields(t, schema, "image_resolution", imageResolutionResponse{
 		Reference: "antnest/runtime:local", ImageRef: "sha256:" + strings.Repeat("a", 64),
 	})

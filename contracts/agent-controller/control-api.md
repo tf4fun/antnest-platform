@@ -375,85 +375,11 @@ The target collection remains frozen across admission retries. Runtime requests
 carry its persistent reference; completed or failed lifecycle operations release
 the Controller-owned reference. Pre-admission invalidation gets a new durable
 preparation request; a fenced rebuild rejection restores the proven source and
-ends that operation before releasing its reference. Agents that predate the
-per-Agent system-Skill collection are marked for explicit migration review by
-the Controller upgrade. Their Enable and rebuild requests return HTTP 409
-`legacy_system_skills_migration_required` until the legacy volume inventory and
-target choice have been recorded. New Agents are not marked by that upgrade.
-The Controller [choice endpoint](../skill-registry/legacy-migration-choice.md)
-now records a per-Agent inventory digest, RC backup reference and either
-an explicit empty target or a fixed nonempty Template revision. It rechecks the
-live RC inventory and verified local backup receipt, retains all choice
-revisions, and keeps the legacy gate
-closed. Recording a choice is not an Enable or Rebuild and does not complete
-migration. An enabled Agent with a proven executable source may then start
-`POST /internal/agents/{agent_id}/legacy-system-skills-migration/operations`
-with `Idempotency-Key`, organization and actor IDs, latest `choice_sequence`
-and the complete [v1 attestation](../skill-registry/legacy-export-attestation.md).
-The trusted internal caller must authenticate the administrator before forwarding
-these IDs. Controller rechecks the live inventory, backup and active signing
-key before preparing the chosen set. This request has an identity distinct from
-ordinary Rebuild. For an `empty` choice, it preserves the source model and
-Runtime settings while replacing system Skills with a dedicated empty set;
-for `template_revision`, it freezes the selected Template revision. A pending
-preparation can be retried using the same key and body. Enabled Agents use
-Rebuild phases; disabled Agents use a controlled Enable with a new frozen
-AgentSpec. That Enable holds its network attachment closed until RC verifies the
-target Runtime's mounted Skill set. Both paths recheck the active mount at
-publish, then atomically publish the new configuration and resolve the legacy
-marker. A missing or mismatched RC receipt leaves it pending. An enabled Agent
-without a proven executable source returns 409
-`legacy_migration_recovery_required` before preparation or lifecycle admission;
-the operator must restore or reconcile that source before retrying. Disposable
-cross-service Docker checks pass for both the enabled Rebuild and disabled
-Enable paths; off-host operator verification remains pending.
-For a pending pre-cutover marker whose enabled execution source is unprovable,
-the trusted administrator may call
-`POST /internal/agents/{agent_id}/legacy-system-skills-migration/source-recovery`
-with `Idempotency-Key`, `organization_id` and `actor_principal_id`. Controller
-requires an exact, live RC source revision before admitting the operation.
-The durable receipt is available through the organization-scoped operation
-query. ACP drain, Egress fence and RC Disable precede atomic publication of a
-disabled Agent; the marker remains pending. See the
-[source-recovery contract](../skill-registry/legacy-source-recovery.md).
-For the bounded post-effect proof-loss case, the trusted internal administrator
-may call
-`POST /internal/agents/{agent_id}/legacy-system-skills-migration/proof-loss-recovery`
-with `Idempotency-Key`, `organization_id`, `actor_principal_id`, and
-`failed_migration_request_id`. Controller accepts only the named failed
-migration's exact RC target with Egress closed, then uses a durable Temporal
-operation to disable that target and publish the Agent as disabled. It leaves
-the legacy migration marker pending; a fresh explicit migration proof is still
-required before Enable. The same request replays the durable receipt, and
-`GET /internal/agent-operations/{request_id}?organization_id=...` returns it
-within the caller's organization. The [bounded recovery contract](../skill-registry/legacy-proof-loss-recovery.md)
-defines the error and identity rules. A disposable Docker proof-revocation
-scenario passes recovery to disabled, closed Egress, retained volumes, exact
-request replay, and fresh-proof controlled Enable. The Docker
-scenario replays the committed receipt after Controller recreation with the
-surviving verifier key promoted to current; a revoked key cannot remain in
-startup configuration. Removing a second quarantined target container returns
-manual recovery while Egress and the migration marker stay closed. An unknown
-RC Disable effect remains retriable under the same child request in service
-tests. A live Docker fault kills Controller after RC finishes Disable but
-before the Controller receipt commits; after key rotation and recreation, the
-same child request is reconciled and published once. The Runtime process is
-also restarted under the same RC revision before successful recovery. After a
-separate missing-container rejection, an out-of-band RC Update creates a live
-replacement at a different revision; Controller rejects the old recovery
-target without stopping the replacement or opening Egress and keeps the
-migration marker pending.
-A competing recovery request returns `lifecycle_conflict` without a second
-operation record; exact replay of the running request returns its original
-receipt.
-The normal recovery Docker scenario passes complete Jaeger parentage through
-the Workflow, RC Disable, Egress recheck, and publication SQL. The separate
-SIGKILL replay keeps raw Trace diagnostics; missing parents from the killed
-process are not counted as normal topology success.
-After admission, a definitive RC rejection or changed Egress is recorded as
-`manual_recovery_required` with a bounded reason. Same-key POST replay returns
-the receipt with HTTP 409; the organization-scoped GET still returns it with
-HTTP 200. The Agent remains quarantined and its migration marker pending.
+ends that operation before releasing its reference.
+Legacy shared-volume migration and its recovery operations are absent from
+the released contract and handlers; those paths return 404. No migration gate
+is installed when provisioning a fresh database. See the
+[release boundary](../../docs/legacy-skill-release-cleanup-20261001.md).
 Empty-set Templates remain usable.
 `disable`, `enable`, and `delete` express explicit desired-state transitions.
 Lifecycle methods return the durable operation; callers inspect by request ID

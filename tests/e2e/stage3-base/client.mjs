@@ -56,7 +56,6 @@ const fencedInvalidationMode =
 const restartRebuildMode =
   process.env.ANTNEST_E2E_SKILL_RESTART_REBUILD === "true";
 const readyFaultMode = readyLossMode || readyDriftMode;
-const legacyInventoryMode = process.env.ANTNEST_E2E_LEGACY_INVENTORY === "true";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway);
@@ -952,84 +951,6 @@ async function eventStream() {
 }
 async function main() {
   assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
-  if (legacyInventoryMode) {
-    const inventory = await internal(
-      "http://runtime-controller:8080",
-      "/internal/legacy-system-skills/inventory",
-    );
-    const content =
-      "Legacy shared Skill volume content awaiting explicit migration.";
-    const digest = createHash("sha256").update(content).digest("hex");
-    const note = inventory.entries.find(
-      (entry) => entry.path === "legacy-note.txt",
-    );
-    assert.equal(note?.kind, "regular");
-    assert.equal(note?.digest, `sha256:${digest}`);
-    assert.equal(note?.size, Buffer.byteLength(content));
-    assert.match(inventory.inventory_digest, /^sha256:[a-f0-9]{64}$/);
-    assert(
-      inventory.references.some(
-        (ref) =>
-          ref.container_id === process.env.ANTNEST_E2E_LEGACY_HELPER_ID &&
-          !ref.managed &&
-          !ref.running,
-      ),
-    );
-    const backupBody = JSON.stringify({
-      expected_inventory_digest: inventory.inventory_digest,
-    });
-    const backupRequest = async (body, status = 201) => {
-      const response = await fetch(
-        "http://runtime-controller:8080/internal/legacy-system-skills/backups",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": "legacy-backup-e2e",
-          },
-          body,
-          signal: AbortSignal.timeout(30000),
-        },
-      );
-      assert.equal(response.status, status);
-      return response.json();
-    };
-    const backup = await backupRequest(backupBody);
-    assert.equal(backup.backup_ref, "legacy-backup-e2e");
-    assert.equal(backup.volume_name, inventory.volume_name);
-    assert.equal(backup.inventory_digest, inventory.inventory_digest);
-    assert.equal(backup.entries.length, inventory.entries.length);
-    assert.match(backup.archive_digest, /^sha256:[a-f0-9]{64}$/);
-    assert.match(backup.manifest_digest, /^sha256:[a-f0-9]{64}$/);
-    const replay = await backupRequest(backupBody);
-    assert.deepEqual(replay, backup);
-    const stored = await internal(
-      "http://runtime-controller:8080",
-      "/internal/legacy-system-skills/backups/legacy-backup-e2e",
-    );
-    assert.deepEqual(stored, backup);
-    const absent = await internal(
-      "http://runtime-controller:8080",
-      "/internal/legacy-system-skills/backups/missing-e2e",
-      404,
-    );
-    assert.equal(absent.code, "legacy_backup_not_found");
-    const changed = await backupRequest(
-      JSON.stringify({ expected_inventory_digest: "sha256:" + "0".repeat(64) }),
-      409,
-    );
-    assert.equal(changed.code, "legacy_backup_conflict");
-    console.log(
-      JSON.stringify({
-        status: "legacy_inventory_passed",
-        files: inventory.entries.length,
-        foreign_reference: true,
-        backup_verified: true,
-        receipt_readback: true,
-        replayed: true,
-      }),
-    );
-  }
   const { principal, ownerId } = await identity(admin, secrets);
   await login(member);
   secrets.push(...member.cookies.values());

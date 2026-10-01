@@ -66,7 +66,6 @@ type CatalogService interface {
 type LifecycleService interface {
 	CreateAgent(context.Context, application.CreateAgentInput) (application.CreateAgentResult, error)
 	RebuildAgent(context.Context, application.RebuildAgentInput) (application.RebuildAgentResult, error)
-	MigrateLegacySkills(context.Context, application.LegacySkillMigrationOperationInput) (application.RebuildAgentResult, error)
 	DisableAgent(context.Context, application.DisableAgentInput) (application.DisableAgentResult, error)
 	EnableAgent(context.Context, application.EnableAgentInput) (application.EnableAgentResult, error)
 	DeleteAgent(context.Context, application.DeleteAgentInput) (application.DeleteAgentResult, error)
@@ -93,34 +92,16 @@ type AgentEventService interface {
 	WatchAgentEvents(context.Context, string, string, int64, application.AgentEventEmitter) error
 }
 
-type LegacySkillMigrationService interface {
-	GetLegacySkillMigration(context.Context, string, string) (application.LegacySkillMigrationReview, error)
-	RecordLegacySkillChoice(context.Context, application.RecordLegacySkillChoiceInput) (ports.LegacySkillChoice, error)
-}
-
-type LegacyProofLossRecoveryService interface {
-	RecoverLegacyProofLoss(context.Context, application.LegacyProofLossRecoveryInput) (ports.LegacyProofLossRecoveryRecord, error)
-	GetLegacyProofLossRecovery(context.Context, string, string) (ports.LegacyProofLossRecoveryRecord, error)
-}
-
-type LegacySourceRecoveryService interface {
-	RecoverLegacySource(context.Context, application.LegacySourceRecoveryInput) (ports.LegacySourceRecoveryRecord, error)
-	GetLegacySourceRecovery(context.Context, string, string) (ports.LegacySourceRecoveryRecord, error)
-}
-
 type HealthCheck func(context.Context) error
 
 type handler struct {
-	catalog           CatalogService
-	lifecycle         LifecycleService
-	configuration     AgentConfigurationService
-	queries           AgentQueryService
-	events            AgentEventService
-	network           NetworkPolicyService
-	health            HealthCheck
-	legacySkills      LegacySkillMigrationService
-	proofLossRecovery LegacyProofLossRecoveryService
-	sourceRecovery    LegacySourceRecoveryService
+	catalog       CatalogService
+	lifecycle     LifecycleService
+	configuration AgentConfigurationService
+	queries       AgentQueryService
+	events        AgentEventService
+	network       NetworkPolicyService
+	health        HealthCheck
 }
 
 type routeDefinition struct {
@@ -130,42 +111,9 @@ type routeDefinition struct {
 }
 
 func NewHandler(
-	catalog CatalogService,
-	lifecycle LifecycleService,
-	configuration AgentConfigurationService,
-	queries AgentQueryService,
-	events AgentEventService,
-	network NetworkPolicyService,
+	catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
+	queries AgentQueryService, events AgentEventService, network NetworkPolicyService,
 	health HealthCheck,
-	legacyServices ...LegacySkillMigrationService,
-) (http.Handler, error) {
-	return newHandler(catalog, lifecycle, configuration, queries, events, network, health, nil, nil, legacyServices...)
-}
-
-func NewHandlerWithRecovery(
-	catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
-	queries AgentQueryService, events AgentEventService, network NetworkPolicyService,
-	health HealthCheck, recovery LegacyProofLossRecoveryService, legacyServices ...LegacySkillMigrationService,
-) (http.Handler, error) {
-	if recovery == nil {
-		return nil, fmt.Errorf("legacy proof-loss recovery service is required")
-	}
-	return newHandler(catalog, lifecycle, configuration, queries, events, network, health, recovery, nil, legacyServices...)
-}
-
-func NewHandlerWithRecoveries(catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
-	queries AgentQueryService, events AgentEventService, network NetworkPolicyService, health HealthCheck,
-	proofLoss LegacyProofLossRecoveryService, source LegacySourceRecoveryService, legacyServices ...LegacySkillMigrationService) (http.Handler, error) {
-	if proofLoss == nil || source == nil {
-		return nil, fmt.Errorf("legacy recovery services are required")
-	}
-	return newHandler(catalog, lifecycle, configuration, queries, events, network, health, proofLoss, source, legacyServices...)
-}
-
-func newHandler(
-	catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
-	queries AgentQueryService, events AgentEventService, network NetworkPolicyService,
-	health HealthCheck, recovery LegacyProofLossRecoveryService, source LegacySourceRecoveryService, legacyServices ...LegacySkillMigrationService,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -189,13 +137,7 @@ func newHandler(
 		return nil, fmt.Errorf("network policy service is required")
 	}
 	h := &handler{
-		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, health: health, proofLossRecovery: recovery, sourceRecovery: source,
-	}
-	if len(legacyServices) > 1 {
-		return nil, fmt.Errorf("only one legacy Skill migration service is supported")
-	}
-	if len(legacyServices) == 1 {
-		h.legacySkills = legacyServices[0]
+		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, health: health,
 	}
 	mux := http.NewServeMux()
 	for _, route := range h.routes() {
@@ -235,11 +177,6 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "POST /internal/agents", handler: h.createAgent},
 		{pattern: "GET /internal/agents", handler: h.listAgents},
 		{pattern: "GET /internal/agents/{agent_id}", handler: h.getAgent},
-		{pattern: "GET /internal/agents/{agent_id}/legacy-system-skills-migration", handler: h.getLegacySkillMigration},
-		{pattern: "POST /internal/agents/{agent_id}/legacy-system-skills-migration/choices", handler: h.recordLegacySkillChoice},
-		{pattern: "POST /internal/agents/{agent_id}/legacy-system-skills-migration/operations", handler: h.startLegacySkillMigration},
-		{pattern: "POST /internal/agents/{agent_id}/legacy-system-skills-migration/proof-loss-recovery", handler: h.recoverLegacyProofLoss},
-		{pattern: "POST /internal/agents/{agent_id}/legacy-system-skills-migration/source-recovery", handler: h.recoverLegacySource},
 		{pattern: "GET /internal/agents/{agent_id}/network-policy", handler: h.getAgentNetworkPolicy},
 		{pattern: "PUT /internal/agents/{agent_id}/network-policy", handler: h.setAgentNetworkPolicy},
 		{pattern: "POST /internal/agents/{agent_id}/rebuild", handler: h.rebuildAgent},
@@ -986,28 +923,6 @@ func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *h
 	operation, err := h.lifecycle.GetLifecycleOperation(request.Context(), request.PathValue("request_id"))
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
-			if h.sourceRecovery != nil {
-				recovery, recoveryErr := h.sourceRecovery.GetLegacySourceRecovery(request.Context(), query, request.PathValue("request_id"))
-				if recoveryErr == nil {
-					writeJSON(response, http.StatusOK, legacySourceRecoveryPayload(recovery))
-					return
-				}
-				if !errors.Is(recoveryErr, ports.ErrNotFound) {
-					writeServiceError(request.Context(), response, recoveryErr)
-					return
-				}
-			}
-			if h.proofLossRecovery != nil {
-				recovery, recoveryErr := h.proofLossRecovery.GetLegacyProofLossRecovery(request.Context(), query, request.PathValue("request_id"))
-				if recoveryErr == nil {
-					writeJSON(response, http.StatusOK, legacyProofLossRecoveryPayload(recovery))
-					return
-				}
-				if !errors.Is(recoveryErr, ports.ErrNotFound) {
-					writeServiceError(request.Context(), response, recoveryErr)
-					return
-				}
-			}
 			writeError(response, http.StatusNotFound, "operation_not_found", "lifecycle operation was not found", false)
 			return
 		}
@@ -1377,24 +1292,6 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusConflict, errorResponse{
 			Code: "agent_not_ready", Message: "Agent is not ready", Retryable: true,
 		}
-	case errors.Is(err, application.ErrLegacySystemSkillsMigrationRequired):
-		return http.StatusConflict, errorResponse{Code: "legacy_system_skills_migration_required", Message: "Review legacy system Skills before enabling or rebuilding this Agent"}
-	case errors.Is(err, application.ErrLegacyMigrationRecoveryRequired):
-		return http.StatusConflict, errorResponse{Code: "legacy_migration_recovery_required", Message: "Agent has no proven executable source; restore or reconcile the source before migrating", Retryable: false}
-	case errors.Is(err, application.ErrLegacyProofLossRecoveryNotApplicable):
-		return http.StatusConflict, errorResponse{Code: "legacy_proof_loss_recovery_not_applicable", Message: "Agent is not quarantined by the named migration", Retryable: false}
-	case errors.Is(err, application.ErrLegacySourceRecoveryNotApplicable):
-		return http.StatusConflict, errorResponse{Code: "legacy_source_recovery_not_applicable", Message: "Agent has no recoverable legacy source", Retryable: false}
-	case errors.Is(err, application.ErrLegacySourceManualRecoveryRequired):
-		return http.StatusConflict, errorResponse{Code: "legacy_source_manual_recovery_required", Message: "Runtime source needs manual reconciliation", Retryable: false}
-	case errors.Is(err, application.ErrLegacyMigrationManualRecoveryRequired):
-		return http.StatusConflict, errorResponse{Code: "legacy_migration_manual_recovery_required", Message: "Runtime or network target needs manual reconciliation", Retryable: false}
-	case errors.Is(err, application.ErrLegacyInventoryChanged):
-		return http.StatusConflict, errorResponse{Code: "legacy_inventory_changed", Message: "Legacy system Skill inventory changed; review the current inventory", Retryable: false}
-	case errors.Is(err, application.ErrLegacyBackupMismatch):
-		return http.StatusConflict, errorResponse{Code: "legacy_backup_mismatch", Message: "Legacy system Skill backup does not match the current choice", Retryable: false}
-	case errors.Is(err, application.ErrLegacyAttestationInvalid):
-		return http.StatusConflict, errorResponse{Code: "legacy_attestation_invalid", Message: "Legacy system Skill export attestation is invalid", Retryable: false}
 	case errors.Is(err, application.ErrLifecycleConflict):
 		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "Agent lifecycle is busy"}
 	case errors.Is(err, ports.ErrDisabledReference):

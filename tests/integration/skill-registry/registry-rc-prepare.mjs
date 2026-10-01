@@ -83,6 +83,21 @@ async function jsonCall(base, path, options = {}) {
 }
 
 const artifact = zipSkill();
+for (const path of [
+  "/internal/legacy-system-skills/inventory",
+  "/internal/legacy-system-skills/backups",
+  "/internal/legacy-system-skills/backups/retired",
+  `/internal/runtimes/${agentID}/skill-sets/verify-active`,
+]) {
+  for (const method of ["GET", "POST", "HEAD", "DELETE"]) {
+    const response = await fetch(controller + path, {
+      method,
+      headers: { "Idempotency-Key": "retired-release-route" },
+    });
+    assert.equal(response.status, 404, `${method} ${path} must be retired`);
+    await response.arrayBuffer();
+  }
+}
 const form = new FormData();
 form.append(
   "metadata",

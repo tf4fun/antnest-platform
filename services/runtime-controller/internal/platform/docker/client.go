@@ -105,35 +105,6 @@ func (c *Client) ListManagedContainers(ctx context.Context) ([]Container, error)
 	return result, nil
 }
 
-// ListAllContainers is used only by the legacy shared-volume inventory. A
-// managed-label filter would silently omit foreign Docker volume consumers.
-func (c *Client) ListAllContainers(ctx context.Context) ([]Container, error) {
-	var summaries []struct {
-		ID string `json:"Id"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/containers/json?all=1", nil, &summaries); err != nil {
-		return nil, err
-	}
-	if len(summaries) > 10_000 {
-		return nil, fmt.Errorf("legacy inventory container limit exceeded")
-	}
-	result := make([]Container, 0, len(summaries))
-	for _, summary := range summaries {
-		if strings.TrimSpace(summary.ID) == "" {
-			return nil, fmt.Errorf("docker container summary is missing an ID")
-		}
-		container, err := c.InspectContainer(ctx, summary.ID)
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrLegacyInventoryChanged
-		}
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, container)
-	}
-	return result, nil
-}
-
 func (c *Client) ListManagedContainerIDs(ctx context.Context) ([]string, error) {
 	encodedFilters, err := json.Marshal(map[string][]string{"label": {labelManaged + "=runtime"}})
 	if err != nil {

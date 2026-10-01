@@ -5,7 +5,7 @@ import "soft/antnest-platform/services/agent-controller/internal/domain"
 // A configured resource can be managed before any execution has become healthy.
 func (record AgentRecord) HasConfiguredRuntime() bool {
 	if record.AgentSpecRevisionID == "" || record.RuntimeRevision == "" ||
-		(record.FailureCode == "lifecycle_invariant_failed" || record.FailureCode == "legacy_migration_proof_lost") || record.LifecycleState != domain.AgentCreated ||
+		record.FailureCode == "lifecycle_invariant_failed" || record.LifecycleState != domain.AgentCreated ||
 		record.ActivationState != domain.ActivationEnabled {
 		return false
 	}

@@ -10,12 +10,6 @@ import (
 
 var ErrSkillNotFound = errors.New("skill version not found")
 
-// LegacySkillMigrationGate protects Agents created before per-Agent system
-// Skill collections existed. A pending decision blocks enable and rebuild.
-type LegacySkillMigrationGate interface {
-	LegacySystemSkillsMigrationRequired(context.Context, string) (bool, error)
-}
-
 // SkillVersionResolver returns Registry-owned immutable metadata for exact versions.
 type SkillVersionResolver interface {
 	Resolve(context.Context, string, []domain.SkillReference) ([]domain.FrozenSkill, error)
@@ -58,27 +52,6 @@ type SkillPreparationClient interface {
 	PrepareSkillSet(context.Context, string, string, SkillPreparationRequest) (SkillPreparationReceipt, error)
 	GetSkillPreparation(context.Context, string, string, string) (SkillPreparationReceipt, error)
 	ReleaseSkillPreparation(context.Context, string, string, string, string, string) error
-}
-
-type ActiveSkillSetVerificationRequest struct {
-	OrganizationID          string               `json:"organization_id"`
-	ExpectedRuntimeRevision string               `json:"expected_runtime_revision"`
-	PreparedReferenceID     string               `json:"prepared_reference_id"`
-	PreparedSkillSet        PreparedSkillSet     `json:"prepared_skill_set"`
-	SystemSkills            []domain.FrozenSkill `json:"system_skills"`
-}
-
-type ActiveSkillSetVerificationReceipt struct {
-	AgentID         string    `json:"agent_id"`
-	RuntimeRevision string    `json:"runtime_revision"`
-	SkillSetDigest  string    `json:"skill_set_digest"`
-	LayoutVersion   uint32    `json:"layout_version"`
-	ManifestDigest  string    `json:"manifest_digest"`
-	VerifiedAt      time.Time `json:"verified_at"`
-}
-
-type ActiveSkillSetVerifier interface {
-	VerifyActiveSkillSet(context.Context, string, string, ActiveSkillSetVerificationRequest) (ActiveSkillSetVerificationReceipt, error)
 }
 
 // SkillPreparationIntent freezes the target before an Agent lifecycle transition.

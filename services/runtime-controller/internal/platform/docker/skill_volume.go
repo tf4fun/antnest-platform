@@ -30,28 +30,6 @@ var ErrSkillVolumeMissing = errors.New("owned Skill volume is missing")
 var ErrSkillMountVerificationFailed = errors.New("prepared Skill mount verification failed")
 var ErrSkillCollectionDrift = fmt.Errorf("%w: ready Skill collection content differs", ErrConflict)
 
-// VerifyActiveRuntimeMount binds a current Environment generation to the
-// running container and then verifies the physical read-only Skill mount.
-func (w *SkillVolumeWriter) VerifyActiveRuntimeMount(ctx context.Context, prepared skillset.PreparedMaterialization, generation uint64, specDigest string) error {
-	if generation == 0 || !strings.HasPrefix(specDigest, "sha256:") || len(specDigest) != 71 {
-		return fmt.Errorf("%w: generation is absent", ErrSkillMountVerificationFailed)
-	}
-	container, err := w.engine.InspectContainer(ctx, containerName(prepared.Key.AgentID))
-	if err != nil || !container.Running || container.Status != "running" || container.Name != containerName(prepared.Key.AgentID) ||
-		container.Labels[labelManaged] != "runtime" || container.Labels[labelScope] != prepared.Key.Scope || container.Labels[labelAgentID] != prepared.Key.AgentID ||
-		container.Labels[labelGeneration] != fmt.Sprint(generation) || container.Labels[labelSpecDigest] != specDigest {
-		return fmt.Errorf("%w: active Runtime identity differs: %v", ErrSkillMountVerificationFailed, err)
-	}
-	if err := w.VerifyRuntimeMount(ctx, prepared.Key, container.ID, prepared.ManifestDigest); err != nil {
-		return err
-	}
-	current, err := w.engine.InspectContainer(ctx, containerName(prepared.Key.AgentID))
-	if err != nil || current.ID != container.ID || !current.Running || current.Labels[labelGeneration] != fmt.Sprint(generation) || current.Labels[labelSpecDigest] != specDigest {
-		return fmt.Errorf("%w: Runtime changed during verification: %v", ErrSkillMountVerificationFailed, err)
-	}
-	return nil
-}
-
 // VerifyRuntimeMount checks the actual mount after Docker creates a candidate
 // Runtime and before it is allowed to start, and rechecks an adopted running
 // Runtime before reporting recovery success. Docker may auto-create a missing

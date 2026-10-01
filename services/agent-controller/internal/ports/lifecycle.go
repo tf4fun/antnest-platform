@@ -18,27 +18,25 @@ const (
 	NetworkReleaseQuarantined       = "quarantined"
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"
 
-	EventAgentCreateRequested          = "agent_create_requested"
-	EventAgentReady                    = "agent_ready"
-	EventAgentCreated                  = "agent_created"
-	EventAgentBuildFailed              = "agent_build_failed"
-	EventAgentRebuildRequested         = "agent_rebuild_requested"
-	EventAgentRebuilt                  = "agent_rebuilt"
-	EventAgentDisableRequested         = "agent_disable_requested"
-	EventAgentDisabled                 = "agent_disabled"
-	EventAgentLegacyProofLossRecovered = "agent_legacy_proof_loss_recovered"
-	EventAgentLegacySourceRecovered    = "agent_legacy_source_recovered"
-	EventAgentDisableFailed            = "agent_disable_failed"
-	EventAgentEnableRequested          = "agent_enable_requested"
-	EventAgentEnabled                  = "agent_enabled"
-	EventAgentEnableFailed             = "agent_enable_failed"
-	EventAgentDeleteRequested          = "agent_delete_requested"
-	EventAgentDeleted                  = "agent_deleted"
-	EventAgentLifecycleQuarantined     = "agent_lifecycle_quarantined"
-	EventAgentRuntimeRestarted         = "agent_runtime_restarted"
-	EventAgentRuntimeMissing           = "agent_runtime_missing"
-	EventAgentRuntimeConditionChanged  = "agent_runtime_condition_changed"
-	EventAgentOwnerRevoked             = "agent_owner_revoked"
+	EventAgentCreateRequested         = "agent_create_requested"
+	EventAgentReady                   = "agent_ready"
+	EventAgentCreated                 = "agent_created"
+	EventAgentBuildFailed             = "agent_build_failed"
+	EventAgentRebuildRequested        = "agent_rebuild_requested"
+	EventAgentRebuilt                 = "agent_rebuilt"
+	EventAgentDisableRequested        = "agent_disable_requested"
+	EventAgentDisabled                = "agent_disabled"
+	EventAgentDisableFailed           = "agent_disable_failed"
+	EventAgentEnableRequested         = "agent_enable_requested"
+	EventAgentEnabled                 = "agent_enabled"
+	EventAgentEnableFailed            = "agent_enable_failed"
+	EventAgentDeleteRequested         = "agent_delete_requested"
+	EventAgentDeleted                 = "agent_deleted"
+	EventAgentLifecycleQuarantined    = "agent_lifecycle_quarantined"
+	EventAgentRuntimeRestarted        = "agent_runtime_restarted"
+	EventAgentRuntimeMissing          = "agent_runtime_missing"
+	EventAgentRuntimeConditionChanged = "agent_runtime_condition_changed"
+	EventAgentOwnerRevoked            = "agent_owner_revoked"
 )
 
 type AgentSpecSource interface {
@@ -280,18 +278,6 @@ type AgentRebuildState struct {
 	SourceExecution ExecutionRecord
 	TargetSpec      AgentSpecRecord
 	Operation       LifecycleOperationRecord
-	LegacyMigration *LegacySkillMigrationBinding
-}
-
-// LegacySkillMigrationBinding is frozen with a rebuild admission. The proof is
-// carried as bytes so replay and later publish inspect exactly the same input.
-type LegacySkillMigrationBinding struct {
-	ChoiceRequestID   string
-	ChoiceSequence    int64
-	KeyID             string
-	Attestation       []byte
-	AttestationDigest string
-	ExpiresAt         time.Time
 }
 
 type AgentDisableState struct {
@@ -315,7 +301,6 @@ type AgentEnableState struct {
 	SourceSpec              AgentSpecRecord
 	LastSuccessfulExecution ExecutionRecord
 	Operation               LifecycleOperationRecord
-	LegacyMigration         *LegacySkillMigrationBinding
 }
 
 type AgentDeleteBase struct {
@@ -364,7 +349,6 @@ type BeginAgentRebuild struct {
 	Operation                   LifecycleOperationRecord
 	RequestedEvent              AgentEventRecord
 	Now                         time.Time
-	LegacyMigration             *LegacySkillMigrationBinding
 }
 
 type AdvanceAgentRebuild struct {
@@ -385,17 +369,11 @@ type LifecycleAdvanceResult struct {
 }
 
 type PublishAgentRebuild struct {
-	RequestID          string
-	Fingerprint        string
-	AccessRevision     string
-	RebuiltEvent       AgentEventRecord
-	Now                time.Time
-	LegacyVerification *LegacySkillPublishVerification
-}
-
-type LegacySkillPublishVerification struct {
-	PreparedReferenceID string
-	Receipt             ActiveSkillSetVerificationReceipt
+	RequestID      string
+	Fingerprint    string
+	AccessRevision string
+	RebuiltEvent   AgentEventRecord
+	Now            time.Time
 }
 
 type FailAgentRebuild struct {
@@ -462,8 +440,6 @@ type BeginAgentEnable struct {
 	ExpectedSpecRevisionID      string
 	ExpectedExecutionRevisionID string
 	ExpectedRuntimeRevision     string
-	TargetSpec                  *AgentSpecRecord
-	LegacyMigration             *LegacySkillMigrationBinding
 	Operation                   LifecycleOperationRecord
 	RequestedEvent              AgentEventRecord
 	Now                         time.Time
@@ -481,11 +457,10 @@ type AdvanceAgentEnable struct {
 }
 
 type PublishAgentEnable struct {
-	RequestID          string
-	Fingerprint        string
-	EnabledEvent       AgentEventRecord
-	Now                time.Time
-	LegacyVerification *LegacySkillPublishVerification
+	RequestID    string
+	Fingerprint  string
+	EnabledEvent AgentEventRecord
+	Now          time.Time
 }
 
 type FailAgentEnable struct {

@@ -1,23 +1,11 @@
 package config
 
 import (
-	"bytes"
-	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"regexp"
 	"strings"
 	"time"
 )
-
-var legacyVerifierKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
-
-type LegacyExportVerifierKey struct {
-	KeyID     string
-	PublicKey ed25519.PublicKey
-}
 
 type Config struct {
 	Execution                      ExecutionConfiguration
@@ -30,7 +18,6 @@ type Config struct {
 	IdentityServiceURL             string
 	SkillRegistryURL               string
 	SkillRegistryAPIToken          string
-	LegacyExportVerifierKeys       []LegacyExportVerifierKey
 	DependencyTimeout              time.Duration
 	DrainTimeout                   time.Duration
 	ObservationPollInterval        time.Duration
@@ -127,92 +114,7 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config.EncryptionKey = key
-	verifierKeys, err := decodeLegacyExportVerifierKeys(lookup("ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS"))
-	if err != nil {
-		return Config{}, err
-	}
-	config.LegacyExportVerifierKeys = verifierKeys
 	return config, nil
-}
-
-func decodeLegacyExportVerifierKeys(raw string) ([]LegacyExportVerifierKey, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	input, err := decodeUniqueJSONObject([]byte(raw))
-	if err != nil || len(input) < 1 || len(input) > 2 || input["current"] == nil {
-		return nil, fmt.Errorf("ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS requires a current key")
-	}
-	for field := range input {
-		if field != "current" && field != "next" {
-			return nil, fmt.Errorf("ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS has an unknown field")
-		}
-	}
-	decode := func(raw json.RawMessage) (LegacyExportVerifierKey, error) {
-		value, err := decodeUniqueJSONObject(raw)
-		if err != nil || len(value) != 2 || value["key_id"] == nil || value["public_key"] == nil {
-			return LegacyExportVerifierKey{}, fmt.Errorf("verifier entry must contain exactly key_id and public_key")
-		}
-		var id, encoded string
-		if err := json.Unmarshal(value["key_id"], &id); err != nil || !legacyVerifierKeyIDPattern.MatchString(id) {
-			return LegacyExportVerifierKey{}, fmt.Errorf("invalid verifier key ID")
-		}
-		if err := json.Unmarshal(value["public_key"], &encoded); err != nil {
-			return LegacyExportVerifierKey{}, fmt.Errorf("invalid Ed25519 public key")
-		}
-		decoded, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || len(decoded) != ed25519.PublicKeySize || base64.StdEncoding.EncodeToString(decoded) != encoded {
-			return LegacyExportVerifierKey{}, fmt.Errorf("invalid Ed25519 public key")
-		}
-		return LegacyExportVerifierKey{KeyID: id, PublicKey: ed25519.PublicKey(decoded)}, nil
-	}
-	current, err := decode(input["current"])
-	if err != nil {
-		return nil, fmt.Errorf("ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS: %w", err)
-	}
-	keys := []LegacyExportVerifierKey{current}
-	if raw, present := input["next"]; present {
-		next, err := decode(raw)
-		if err != nil {
-			return nil, fmt.Errorf("ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS: %w", err)
-		}
-		if next.KeyID == current.KeyID || bytes.Equal(next.PublicKey, current.PublicKey) {
-			return nil, fmt.Errorf("ANTNEST_AGENT_CONTROLLER_LEGACY_EXPORT_VERIFIER_KEYS requires distinct keys and IDs")
-		}
-		keys = append(keys, next)
-	}
-	return keys, nil
-}
-
-func decodeUniqueJSONObject(raw []byte) (map[string]json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
-		return nil, fmt.Errorf("expected JSON object")
-	}
-	values := map[string]json.RawMessage{}
-	for decoder.More() {
-		field, err := decoder.Token()
-		if err != nil {
-			return nil, err
-		}
-		name, ok := field.(string)
-		if !ok || values[name] != nil {
-			return nil, fmt.Errorf("duplicate JSON field")
-		}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
-		}
-		values[name] = value
-	}
-	if _, err := decoder.Token(); err != nil {
-		return nil, err
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, fmt.Errorf("trailing JSON content")
-	}
-	return values, nil
 }
 
 func decodeEncryptionKey(raw string) ([]byte, error) {

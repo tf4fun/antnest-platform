@@ -16,23 +16,18 @@ import (
 )
 
 var ErrDependencyUnavailable = errors.New("dependency unavailable")
-var ErrLegacySystemSkillsMigrationRequired = errors.New("legacy system Skills migration required")
-var ErrLegacyMigrationRecoveryRequired = errors.New("legacy Skill migration source requires operator recovery")
 
 type LifecycleService struct {
-	specs                    ports.AgentSpecSource
-	store                    ports.LifecycleStore
-	egress                   ports.EgressClient
-	runtime                  ports.RuntimeClient
-	identities               ports.OwnerAuthorizationSource
-	clock                    ports.Clock
-	drainTimeout             time.Duration
-	execution                ports.LifecycleExecution
-	skillIntents             ports.SkillPreparationIntentStore
-	skillClient              ports.SkillPreparationClient
-	legacySkills             ports.LegacySkillMigrationGate
-	activeSkillVerifier      ports.ActiveSkillSetVerifier
-	legacyMigrationPreflight LegacyMigrationPreflight
+	specs        ports.AgentSpecSource
+	store        ports.LifecycleStore
+	egress       ports.EgressClient
+	runtime      ports.RuntimeClient
+	identities   ports.OwnerAuthorizationSource
+	clock        ports.Clock
+	drainTimeout time.Duration
+	execution    ports.LifecycleExecution
+	skillIntents ports.SkillPreparationIntentStore
+	skillClient  ports.SkillPreparationClient
 }
 
 type LifecycleOption func(*LifecycleService)
@@ -52,36 +47,6 @@ func WithSkillPreparation(intents ports.SkillPreparationIntentStore, client port
 		service.skillIntents = intents
 		service.skillClient = client
 	}
-}
-
-func WithLegacySkillMigrationGate(gate ports.LegacySkillMigrationGate) LifecycleOption {
-	return func(service *LifecycleService) { service.legacySkills = gate }
-}
-
-func WithActiveSkillSetVerifier(verifier ports.ActiveSkillSetVerifier) LifecycleOption {
-	return func(service *LifecycleService) { service.activeSkillVerifier = verifier }
-}
-
-type LegacyMigrationPreflight interface {
-	VerifyLegacySkillMigrationPrerequisites(context.Context, string, string, int64, LegacyExportAttestation) (ports.LegacySkillChoice, error)
-}
-
-func WithLegacyMigrationPreflight(preflight LegacyMigrationPreflight) LifecycleOption {
-	return func(service *LifecycleService) { service.legacyMigrationPreflight = preflight }
-}
-
-func (service *LifecycleService) requireLegacySkillMigrationResolved(ctx context.Context, agentID string) error {
-	if service.legacySkills == nil {
-		return nil
-	}
-	required, err := service.legacySkills.LegacySystemSkillsMigrationRequired(ctx, agentID)
-	if err != nil {
-		return fmt.Errorf("%w: check legacy system Skills migration: %v", ErrDependencyUnavailable, err)
-	}
-	if required {
-		return ErrLegacySystemSkillsMigrationRequired
-	}
-	return nil
 }
 
 const defaultDrainTimeout = 5 * time.Minute

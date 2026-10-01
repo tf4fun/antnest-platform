@@ -50,8 +50,6 @@ try {
   const workspaceVolumes = [agentA, agentB].map(
     (agent) => `antnest-workspace-${agent}`,
   );
-  const legacyVolume = config.env.ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME;
-  const backupVolume = config.env.ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME;
   const skillVolumes = ["ready-a", "ready-empty-b", "candidate-a"].map(
     (suffix) => `${config.project}-skill-${suffix}`,
   );
@@ -73,8 +71,6 @@ try {
   for (const [name, file] of [
     [workspaceVolumes[0], "personal-a"],
     [workspaceVolumes[1], "personal-b"],
-    [legacyVolume, "legacy-shared"],
-    [backupVolume, "backup-receipt"],
     [skillVolumes[0], "preset-a"],
     [skillVolumes[1], ".antnest-skills.json"],
     [skillVolumes[2], "candidate-checkpoint"],
@@ -130,18 +126,8 @@ try {
     "-c",
     sql,
   ]);
-  const plan = await stage4RecoveryPlan(
-    config,
-    docker,
-    workspaceVolumes,
-    legacyVolume,
-  );
-  assert.deepEqual(plan.volumes, [
-    ...workspaceVolumes,
-    legacyVolume,
-    backupVolume,
-    ...skillVolumes.sort(),
-  ]);
+  const plan = await stage4RecoveryPlan(config, docker, workspaceVolumes);
+  assert.deepEqual(plan.volumes, [...workspaceVolumes, ...skillVolumes.sort()]);
   const backup = await backupStorage(
     config,
     docker,
@@ -149,18 +135,18 @@ try {
     plan.volumes,
     plan.databases,
   );
-  assert.equal(backup.volumes.length, 7);
+  assert.equal(backup.volumes.length, 5);
   assert.equal(Object.keys(backup.fingerprints).length, 8);
   const restored = await restoreStorage(config, docker, directory, {
     postgres: backup.postgres.name,
     ...plan,
   });
   assert.deepEqual(
-    await stage4RecoveryPlan(config, docker, workspaceVolumes, legacyVolume),
+    await stage4RecoveryPlan(config, docker, workspaceVolumes),
     plan,
   );
   assert.equal(restored.database_count, 8);
-  assert.equal(restored.persistent_volumes, 7);
+  assert.equal(restored.persistent_volumes, 5);
   console.log(
     JSON.stringify({
       status: "passed",

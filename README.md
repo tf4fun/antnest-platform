@@ -6,7 +6,7 @@ than around one shared application package.
 
 The [current implementation and acceptance index](docs/current-status.md)
 distinguishes the latest service boundaries, recorded verification and remaining
-scope. Updated 2026-09-29; historical stage reports retain their original scope.
+scope. Updated 2026-10-01; historical stage reports retain their original scope.
 The [dependency refresh and regression](docs/dependency-refresh-20260926.md)
 records the verified pre-Stage-4 candidate. Development uses Node 24.21.0 LTS
 (`.nvmrc`), Go 1.27.1 (`go.work`) and Rust 1.98.1 (`rust-toolchain.toml`).
@@ -21,11 +21,14 @@ The [minimal Skill Registry design](docs/skill-registry-minimal-design.md)
 limits its first delivery to hosting, pinned Template references, and read-only
 Runtime delivery on Agent creation/rebuild.
 Its review revision requires resumable preparation before lifecycle changes and
-verified per-Agent set reuse. The separate [Skill learning draft](docs/skill-learning-design.md)
-uses candidates, evidence and user confirmation before idle-time activation;
-that learning proposal remains pending. Skill Registry is accepted for the
-current clean development deployment, which has no old business data to migrate.
-Legacy migration and off-host legacy export are outside this release's scope.
+verified per-Agent set reuse. The separate [Skill learning design](docs/skill-learning-design.md)
+is implemented with automatic personal-Skill generation, bounded background
+review and learning notices. Skill Registry is accepted for the current clean
+development deployment, which has no old business data to migrate.
+The [release cleanup](docs/legacy-skill-release-cleanup-20261001.md) removes
+legacy migration/export binaries, RPCs, published contracts and dedicated
+recovery workflows from the build and deployment. This release provisions a
+fresh database; it does not upgrade the retired legacy development schema.
 
 [Test ownership and commands](tests/README.md) define the repository test layout:
 unit tests stay within their service, integration tests live in

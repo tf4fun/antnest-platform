@@ -20,12 +20,6 @@ type LifecycleCommand struct {
 	TemplateID              string
 	TemplateRevision        int64
 	OwnerRevocationSequence int64
-	LegacyMigration         *LegacyMigrationCommand
-}
-
-type LegacyMigrationCommand struct {
-	ChoiceSequence int64
-	Attestation    LegacyExportAttestation
 }
 
 type LifecycleResult struct {
@@ -63,17 +57,7 @@ func (service *LifecycleService) QuarantineLifecycle(ctx context.Context, failur
 
 func (command LifecycleCommand) rebuild() RebuildAgentInput {
 	input := RebuildAgentInput{RequestID: command.RequestID, OrganizationID: command.OrganizationID, ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID, TemplateID: command.TemplateID, TemplateRevision: command.TemplateRevision}
-	if command.LegacyMigration != nil {
-		input.migration = &LegacySkillMigrationOperationInput{RequestID: command.RequestID, OrganizationID: command.OrganizationID,
-			ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID, ChoiceSequence: command.LegacyMigration.ChoiceSequence,
-			Attestation: command.LegacyMigration.Attestation}
-	}
 	return input
-}
-func (command LifecycleCommand) legacyMigrationInput() LegacySkillMigrationOperationInput {
-	return LegacySkillMigrationOperationInput{RequestID: command.RequestID, OrganizationID: command.OrganizationID,
-		ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID,
-		ChoiceSequence: command.LegacyMigration.ChoiceSequence, Attestation: command.LegacyMigration.Attestation}
 }
 func (command LifecycleCommand) disable() DisableAgentInput {
 	return DisableAgentInput{RequestID: command.RequestID, OrganizationID: command.OrganizationID, ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID, OwnerRevocationSequence: command.OwnerRevocationSequence}
@@ -94,10 +78,6 @@ func (service *LifecycleService) AdmitLifecycle(ctx context.Context, command Lif
 		result, err := service.DisableAgent(ctx, command.disable())
 		return LifecycleResult(result), err
 	case domain.OperationEnable:
-		if command.LegacyMigration != nil {
-			result, err := service.migrateDisabledLegacySkills(ctx, command.legacyMigrationInput())
-			return LifecycleResult(result), err
-		}
 		result, err := service.EnableAgent(ctx, command.enable())
 		return LifecycleResult(result), err
 	case domain.OperationDelete:
@@ -134,8 +114,6 @@ func (service *LifecycleService) AdvanceLifecycle(ctx context.Context, command L
 		var fingerprint string
 		if command.Kind == domain.OperationRebuild {
 			fingerprint, err = rebuildAgentFingerprint(command.rebuild())
-		} else if command.LegacyMigration != nil {
-			fingerprint, err = legacyMigrationEnableFingerprint(command.legacyMigrationInput())
 		} else {
 			fingerprint, err = enableAgentFingerprint(command.enable())
 		}
@@ -207,11 +185,6 @@ func (service *LifecycleService) lifecycleStage(ctx context.Context, command Lif
 		return loadLifecycleStage(ctx, command.disable(), command.RequestID, command.OrganizationID, validateDisableAgentInput, disableAgentFingerprint, service.store.ReplayAgentDisable,
 			func(s ports.AgentDisableState) LifecycleResult { return LifecycleResult(disableAgentResult(s)) }, service.stepAgentDisable)
 	case domain.OperationEnable:
-		if command.LegacyMigration != nil {
-			return loadLifecycleStage(ctx, command.legacyMigrationInput(), command.RequestID, command.OrganizationID,
-				validateLegacyMigrationOperationInput, legacyMigrationEnableFingerprint, service.store.ReplayAgentEnable,
-				func(s ports.AgentEnableState) LifecycleResult { return LifecycleResult(enableAgentResult(s)) }, service.stepAgentEnable)
-		}
 		return loadLifecycleStage(ctx, command.enable(), command.RequestID, command.OrganizationID, validateEnableAgentInput, enableAgentFingerprint, service.store.ReplayAgentEnable,
 			func(s ports.AgentEnableState) LifecycleResult { return LifecycleResult(enableAgentResult(s)) }, service.stepAgentEnable)
 	case domain.OperationDelete:

@@ -146,35 +146,6 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 	}
 }
 
-func TestLegacyInventoryListsForeignAndStoppedDockerContainers(t *testing.T) {
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		switch request.URL.Path {
-		case "/v1.47/containers/json":
-			if request.URL.Query().Get("all") != "1" || request.URL.Query().Has("filters") {
-				t.Errorf("legacy inventory excluded Docker containers: %s", request.URL.RawQuery)
-			}
-			return jsonResponse(http.StatusOK, []map[string]string{{"Id": "owned"}, {"Id": "foreign"}}), nil
-		case "/v1.47/containers/owned/json", "/v1.47/containers/foreign/json":
-			id := strings.Split(request.URL.Path, "/")[3]
-			return jsonResponse(http.StatusOK, map[string]any{
-				"Id": id, "State": map[string]any{"Running": id == "owned", "Status": "exited"},
-				"Config": map[string]any{"Labels": map[string]string{}},
-				"Mounts": []map[string]any{{"Type": "volume", "Name": "legacy", "Destination": "/skills", "RW": false}},
-			}), nil
-		default:
-			return responseWith(http.StatusNotFound, "missing"), nil
-		}
-	})
-	client, err := NewHTTPClient(&http.Client{Transport: transport}, "http://docker")
-	if err != nil {
-		t.Fatal(err)
-	}
-	containers, err := client.ListAllContainers(context.Background())
-	if err != nil || len(containers) != 2 || len(containers[0].Mounts) != 1 || len(containers[1].Mounts) != 1 {
-		t.Fatalf("legacy references incomplete: %+v, %v", containers, err)
-	}
-}
-
 func TestHTTPClientPreservesNotFoundAndAmbiguousTransport(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return responseWith(http.StatusNotFound, "missing"), nil

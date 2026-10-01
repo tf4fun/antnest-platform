@@ -1,5 +1,0 @@
-services:
-  stage3-model:
-    command: ["node", "/lifecycle/restore-model.mjs"]
-    environment:
-      ANTNEST_E2E_SKILL_RESTORE: "true"

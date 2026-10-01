@@ -8,7 +8,6 @@ network_name="antnest-skill-prepare-network-$suffix"
 runtime_image="antnest/skill-runtime-integration:$suffix"
 temp_root=${TMPDIR:-/tmp}
 temp_dir=$(mktemp -d "${temp_root%/}/antnest-skill-prepare.XXXXXX")
-install -d -m 0700 "$temp_dir/legacy-backups"
 registry_pid=''
 controller_pid=''
 proxy_pid=''
@@ -77,7 +76,6 @@ start_controller() {
   ANTNEST_RUNTIME_CONTROLLER_LISTEN="127.0.0.1:$controller_port" \
     ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL="postgres://postgres:antnest_test@127.0.0.1:$pg_port/postgres?sslmode=disable" \
     ANTNEST_RUNTIME_MANAGEMENT_NETWORK="$network_name" \
-    ANTNEST_RUNTIME_LEGACY_BACKUP_ROOT="$temp_dir/legacy-backups" \
     ANTNEST_SKILL_REGISTRY_URL="$registry_for_controller" \
     ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE=postgres:17.11-bookworm \
     "$temp_dir/runtime-controller" >"$temp_dir/controller-$1.log" 2>&1 &

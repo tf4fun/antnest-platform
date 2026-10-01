@@ -615,16 +615,18 @@ Required metrics are low-cardinality:
   stores the intent before lifecycle admission and exposes its scoped progress
   through `GET /internal/agent-skill-preparations/{request_id}`. The endpoint
   reads RC's live receipt while preparing or ready and returns a dependency
-  error if that read fails. Full ACP/Console integration and legacy-asset
-  migration remain separate acceptance work.
+  error if that read fails. ACP/Console delivery is verified in the explicit
+  integration batch. Old shared-volume migration and exceptional recovery are
+  absent from the clean-development release; see the
+  [release cleanup](../../../docs/legacy-skill-release-cleanup-20261001.md).
 - The separate [learning design](../../../docs/skill-learning-design.md)
   assigns automatic-learning policy, scope/pinning, authorization and budgets to
   Controller. Its policy persistence and scoped read/mutation have passed local
   gates; Controller accepts owner-authorized pins and rejects nonempty
   `adopted_paths`. ACP owns triggers, managed provenance, candidates,
   policy-bound application records and execution; manual saving is optional.
-  The automatic happy path has isolated Docker evidence, while remaining LI1
-  gates still need acceptance.
+  Current automatic-learning delivery and integration evidence is maintained in
+  the [acceptance index](../../../docs/current-status.md).
 - A Kubernetes adapter changes Runtime Controller only.
 - A KMS adapter replaces local encrypted credential storage behind the
   credential port without changing Run contracts.

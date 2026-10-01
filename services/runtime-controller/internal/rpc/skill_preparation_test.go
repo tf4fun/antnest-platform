@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
-	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
 	"soft/antnest-platform/services/runtime-controller/internal/skillset"
 )
@@ -17,35 +15,6 @@ import (
 type preparationStub struct {
 	received skillset.PrepareRequest
 	released bool
-}
-
-type activeSkillVerificationStub struct {
-	input  control.ActiveSkillSetVerificationRequest
-	called bool
-}
-
-func (stub *activeSkillVerificationStub) VerifyActiveSkillSet(_ context.Context, agentID string, input control.ActiveSkillSetVerificationRequest) (control.ActiveSkillSetVerificationReceipt, error) {
-	stub.called, stub.input = true, input
-	return control.ActiveSkillSetVerificationReceipt{AgentID: agentID, RuntimeRevision: input.ExpectedRuntimeRevision,
-		SkillSetDigest: input.PreparedSkillSet.SkillSetDigest, LayoutVersion: input.PreparedSkillSet.LayoutVersion,
-		ManifestDigest: "sha256:" + strings.Repeat("b", 64), VerifiedAt: time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)}, nil
-}
-
-func TestActiveSkillVerificationRoute(t *testing.T) {
-	handler, err := NewHandler(&fakeService{}, observation.NewHub(), time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stub := &activeSkillVerificationStub{}
-	handler.SetActiveSkillVerifier(stub)
-	body := `{"organization_id":"org_00000000000000000000000000000000","expected_runtime_revision":"rtv_0123456789abcdef0123456789abcdef","prepared_reference_id":"psr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","prepared_skill_set":{"skill_set_digest":"sha256:` + strings.Repeat("a", 64) + `","layout_version":1},"system_skills":[]}`
-	request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/skill-sets/verify-active", strings.NewReader(body))
-	request.Header.Set("Idempotency-Key", "verify-active-1")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !stub.called || stub.input.ExpectedRuntimeRevision != deployment.RuntimeRevision("rtv_0123456789abcdef0123456789abcdef") || !strings.Contains(response.Body.String(), `"manifest_digest"`) {
-		t.Fatalf("verify active response=%d body=%s input=%+v", response.Code, response.Body.String(), stub.input)
-	}
 }
 
 func (s *preparationStub) Prepare(_ context.Context, requestID, agentID string, input skillset.PrepareRequest) (skillset.PreparationReceipt, error) {

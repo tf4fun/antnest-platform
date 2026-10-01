@@ -698,7 +698,6 @@ func (store *rebuildLifecycleStoreStub) BeginAgentRebuild(
 		Agent: agent, SourceSpec: store.base.ConfiguredSpec,
 		SourceExecution: store.base.SourceExecution,
 		TargetSpec:      input.TargetSpec, Operation: input.Operation,
-		LegacyMigration: input.LegacyMigration,
 	}
 	store.replayed = true
 	return store.state, false, nil

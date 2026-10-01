@@ -78,14 +78,6 @@ if [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ] && [ "${ANTNEST_E2E_
   echo 'Skill Rebuild restart and fenced invalidation require separate disposable profiles' >&2
   exit 1
 fi
-case "${ANTNEST_E2E_LEGACY_INVENTORY:-false}" in
-  true|false) ;;
-  *) echo 'ANTNEST_E2E_LEGACY_INVENTORY must be true or false' >&2; exit 1 ;;
-esac
-if [ "${ANTNEST_E2E_LEGACY_INVENTORY:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" != true ]; then
-  echo 'Legacy Skill inventory requires Skill delivery acceptance' >&2
-  exit 1
-fi
 if [ "${ANTNEST_E2E_SKILL_READY_LOSS:-false}" = true ] && [ "${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" = true ]; then
   echo 'Ready Skill volume fault profiles are mutually exclusive' >&2
   exit 1
@@ -152,7 +144,6 @@ export ANTNEST_EDGE_PUBLIC_BASE_URL="http://127.0.0.1:${ANTNEST_EDGE_HOST_PORT}"
 export ANTNEST_RUNTIME_CONTROLLER_SCOPE="$COMPOSE_PROJECT_NAME"
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${COMPOSE_PROJECT_NAME}-system-skills"
-export ANTNEST_RUNTIME_LEGACY_BACKUP_VOLUME="${COMPOSE_PROJECT_NAME}-legacy-skill-backups"
 export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="10.243.${network_octet}.0/24"
 export ANTNEST_EGRESS_IPV4="10.243.${network_octet}.3"
 export ANTNEST_JAEGER_RUNTIME_IPV4="10.243.${network_octet}.4"

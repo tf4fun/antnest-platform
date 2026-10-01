@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 35 {
+	if contract.Revision != 36 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -337,9 +337,9 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},
 	}
-	boundary, err := NewHandlerWithRecoveries(
+	boundary, err := NewHandler(
 		catalog, lifecycle, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
-		func(context.Context) error { return nil }, &proofLossRecoveryServiceStub{}, &sourceRecoveryServiceStub{}, &legacyMigrationServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new control boundary: %v", err)
@@ -395,24 +395,6 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 		"POST /internal/agents/{agent_id}/delete": lifecycleRequest{
 			RequestID: "request-delete", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
 		},
-		"POST /internal/agents/{agent_id}/legacy-system-skills-migration/choices": application.RecordLegacySkillChoiceInput{
-			OrganizationID: "org-1", ActorPrincipalID: "admin-1", Kind: "empty", VolumeName: "legacy",
-			InventoryDigest: "sha256:" + strings.Repeat("a", 64), BackupRef: "backup-1", BackupDigest: "sha256:" + strings.Repeat("b", 64),
-		},
-		"POST /internal/agents/{agent_id}/legacy-system-skills-migration/operations": application.LegacySkillMigrationOperationInput{
-			OrganizationID: "org-1", ActorPrincipalID: "admin-1", ChoiceSequence: 1,
-			Attestation: application.LegacyExportAttestation{Version: 1, KeyID: "key-1", VerifierID: "offhost-1",
-				StorageRef: "s3://backups.example/legacy/backup-1", BackupRef: "backup-1", VolumeName: "legacy",
-				InventoryDigest: "sha256:" + strings.Repeat("a", 64), ArchiveDigest: "sha256:" + strings.Repeat("c", 64),
-				ManifestDigest: "sha256:" + strings.Repeat("b", 64), VerifiedAt: "2026-09-28T00:00:00Z",
-				ExpiresAt: "2026-09-28T01:00:00Z", Signature: "c2lnbmF0dXJl"},
-		},
-		"POST /internal/agents/{agent_id}/legacy-system-skills-migration/proof-loss-recovery": legacyProofLossRecoveryRequest{
-			OrganizationID: "org-1", ActorPrincipalID: "admin-1", FailedMigrationRequestID: "failed-1",
-		},
-		"POST /internal/agents/{agent_id}/legacy-system-skills-migration/source-recovery": legacySourceRecoveryRequest{
-			OrganizationID: "org-1", ActorPrincipalID: "admin-1",
-		},
 	}
 
 	for resource, operations := range contract.Resources {
@@ -441,7 +423,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 			}
 			request := httptest.NewRequest(route.Method, path, body)
 			if slices.Contains(route.Headers, "Idempotency-Key") {
-				request.Header.Set("Idempotency-Key", "legacy-contract-test")
+				request.Header.Set("Idempotency-Key", "control-contract-test")
 			}
 			if route.Request != "" {
 				request.Header.Set("Content-Type", contract.MediaTypes.Request)
@@ -499,11 +481,6 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "access_denied", err: application.ErrAccessDenied},
 		{code: "configuration_conflict", err: ports.ErrConcurrentChange, method: http.MethodPost, path: "/rpc/agent-controller/set-agent-authorization", body: `{"request_id":"cas","agent_id":"agent","principal_id":"owner","expected_access_revision":"access","expected_authorization_revision":1,"authorization":{"mode":"auto","tool_rules":[]}}`},
 		{code: "agent_not_ready", err: application.ErrAgentNotReady},
-		{code: "legacy_system_skills_migration_required", err: application.ErrLegacySystemSkillsMigrationRequired},
-		{code: "legacy_migration_recovery_required", err: application.ErrLegacyMigrationRecoveryRequired},
-		{code: "legacy_inventory_changed", err: application.ErrLegacyInventoryChanged, method: http.MethodPost, path: "/internal/agents/agent-1/legacy-system-skills-migration/choices", body: `{"organization_id":"org-1","actor_principal_id":"admin-1","kind":"empty","volume_name":"legacy","inventory_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","backup_ref":"backup-1","backup_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`},
-		{code: "legacy_backup_mismatch", err: application.ErrLegacyBackupMismatch, method: http.MethodPost, path: "/internal/agents/agent-1/legacy-system-skills-migration/choices", body: `{"organization_id":"org-1","actor_principal_id":"admin-1","kind":"empty","volume_name":"legacy","inventory_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","backup_ref":"backup-1","backup_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`},
-		{code: "legacy_attestation_invalid", err: application.ErrLegacyAttestationInvalid, method: http.MethodPost, path: "/internal/agents/agent-1/legacy-system-skills-migration/operations", body: `{"organization_id":"org-1","actor_principal_id":"admin-1","choice_sequence":1,"attestation":{"version":1}}`},
 		{code: "lifecycle_conflict", err: application.ErrLifecycleConflict},
 		{
 			code: "operation_not_found", err: ports.ErrNotFound,
@@ -523,7 +500,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 				&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
-				func(context.Context) error { return nil }, &legacyMigrationServiceStub{err: test.err})
+				func(context.Context) error { return nil })
 
 			if err != nil {
 				t.Fatalf("new control boundary: %v", err)
@@ -535,9 +512,6 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 				body = `{"request_id":"request-error","organization_id":"org-1","actor_principal_id":"admin-1","owner_user_id":"user-1","name":"Agent","template_id":"template-1","template_revision":1}`
 			}
 			request := httptest.NewRequest(method, path, strings.NewReader(body))
-			if test.code == "legacy_inventory_changed" || test.code == "legacy_backup_mismatch" || test.code == "legacy_attestation_invalid" {
-				request.Header.Set("Idempotency-Key", "legacy-contract-test")
-			}
 			if body != "" {
 				request.Header.Set("Content-Type", contract.MediaTypes.Request)
 			}
@@ -909,11 +883,6 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		ports.ErrExecutionCapacityExceeded,
 		application.ErrAgentNotFound,
 		application.ErrAgentNotReady,
-		application.ErrLegacySystemSkillsMigrationRequired,
-		application.ErrLegacyMigrationRecoveryRequired,
-		application.ErrLegacyInventoryChanged,
-		application.ErrLegacyBackupMismatch,
-		application.ErrLegacyAttestationInvalid,
 		application.ErrLifecycleConflict,
 		application.ErrDependencyUnavailable,
 		context.DeadlineExceeded,

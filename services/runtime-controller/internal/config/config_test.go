@@ -26,9 +26,6 @@ func TestLoadUsesThinDockerAdapterDefaults(t *testing.T) {
 	if config.SystemSkillsVolume != "antnest-system-skills" {
 		t.Fatalf("unexpected system Skills volume: %s", config.SystemSkillsVolume)
 	}
-	if config.LegacyBackupRoot != "/legacy-skill-backups" {
-		t.Fatalf("unexpected legacy backup root: %s", config.LegacyBackupRoot)
-	}
 	if config.ControllerScope != "antnest-runtime-management" {
 		t.Fatalf("controller scope did not default to the management network: %s", config.ControllerScope)
 	}

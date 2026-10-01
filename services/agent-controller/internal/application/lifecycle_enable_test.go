@@ -479,13 +479,10 @@ func (store *enableLifecycleStoreStub) BeginAgentEnable(
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	operation := input.Operation
 	target := store.base.Spec
-	if input.TargetSpec != nil {
-		target = *input.TargetSpec
-	}
 	store.state = ports.AgentEnableState{
 		Agent: agent, Spec: target, SourceSpec: store.base.Spec,
 		LastSuccessfulExecution: store.base.LastSuccessfulExecution,
-		Operation:               operation, LegacyMigration: input.LegacyMigration,
+		Operation:               operation,
 	}
 	store.replayed = true
 	return store.state, false, nil

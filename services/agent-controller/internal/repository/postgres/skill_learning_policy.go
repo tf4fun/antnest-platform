@@ -167,7 +167,7 @@ func ensureLearningPolicy(ctx context.Context, tx *databaseTransaction, agent po
 	computed, err := policy.RevisionForSequence(uint64(sequence))
 	if err != nil || policy.Validate() != nil || revision != policy.Revision || computed != revision ||
 		policy.OrganizationID != agent.OrganizationID || policy.AgentID != agent.AgentID || policy.OwnerPrincipalID != agent.OwnerUserID {
-		return domain.SkillLearningPolicy{}, 0, fmt.Errorf("Skill learning policy persistence invariant failed")
+		return domain.SkillLearningPolicy{}, 0, fmt.Errorf("skill learning policy persistence invariant failed")
 	}
 	return policy, sequence, nil
 }

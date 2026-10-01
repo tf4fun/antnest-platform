@@ -37,10 +37,6 @@ import {
   assertFrozenSkill,
   publishSkill,
 } from "../skill-registry/stage3-fixture.mjs";
-import {
-  createLegacyExportFixture,
-  assertRestoredLegacyExport,
-} from "./legacy-export-restore.mjs";
 
 export function configureRestore(config) {
   for (const key of keyNames)
@@ -280,16 +276,14 @@ async function restoreScenario(
     "mkdir -p /workspace/.antnest/skills/restore-fixture; printf '%s\\n' '# Personal recovery skill' > /workspace/.antnest/skills/restore-fixture/SKILL.md; printf '\\000\\001\\377' > /workspace/.c5-binary; chmod 600 /workspace/.c5-binary; ln -s .c5-binary /workspace/.c5-link",
   ]);
   const skills = config.env.ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME;
-  await volumeTool(config, docker, skills, directory, [
-    "sh",
-    "-c",
-    "mkdir -p /data/restore-fixture; printf '%s\\n' '# System recovery skill' > /data/restore-fixture/SKILL.md; chmod 644 /data/restore-fixture/SKILL.md",
-  ]);
+  if (!config.skillRestore)
+    await volumeTool(config, docker, skills, directory, [
+      "sh",
+      "-c",
+      "mkdir -p /data/restore-fixture; printf '%s\\n' '# System recovery skill' > /data/restore-fixture/SKILL.md; chmod 644 /data/restore-fixture/SKILL.md",
+    ]);
   await command("disable", created.agentID, {});
   if (peerCreated) await command("disable", peerCreated.agentID, {});
-  const legacyExport = config.skillRestore
-    ? await createLegacyExportFixture(config, docker, directory, skills)
-    : undefined;
   const offline = await json(`/api/admin/agents/${created.agentID}`);
   const peerOffline = peerCreated
     ? await json(`/api/admin/agents/${peerCreated.agentID}`)
@@ -350,12 +344,10 @@ async function restoreScenario(
   );
   await docker(config.compose(["stop", "-t", "20", "stage3-model"]), true);
   const plan = config.skillRestore
-    ? await stage4RecoveryPlan(
-        config,
-        docker,
-        [initial.volume, peerInitial.volume],
-        skills,
-      )
+    ? await stage4RecoveryPlan(config, docker, [
+        initial.volume,
+        peerInitial.volume,
+      ])
     : { databases, volumes: [initial.volume, skills] };
   const backup = await backupStorage(
     config,
@@ -379,12 +371,10 @@ async function restoreScenario(
   });
   if (config.skillRestore)
     assert.deepEqual(
-      await stage4RecoveryPlan(
-        config,
-        docker,
-        [initial.volume, peerInitial.volume],
-        skills,
-      ),
+      await stage4RecoveryPlan(config, docker, [
+        initial.volume,
+        peerInitial.volume,
+      ]),
       plan,
     );
   await docker(
@@ -400,9 +390,6 @@ async function restoreScenario(
   );
   if (config.skillRestore)
     await docker(config.compose(["stop", "-t", "20", "skill-registry"]), true);
-  const restoredLegacyExport = legacyExport
-    ? await assertRestoredLegacyExport(config, docker, directory, legacyExport)
-    : undefined;
 
   console.error(
     "Restore: checking authentication, saved policy/configuration, history and new Tool execution",
@@ -792,7 +779,6 @@ async function restoreScenario(
           independent_skill_volumes: true,
           offline_missing_skill_volume_blocked: true,
           unaffected_peer_run: true,
-          restored_legacy_export: restoredLegacyExport,
         }
       : {}),
     file_metadata_preserved: true,

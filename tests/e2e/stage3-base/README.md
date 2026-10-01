@@ -129,38 +129,11 @@ transport failure only when creation, recovery inspection and lifecycle
 completion are all present. A changed running mount is separately rejected by
 the RC service test.
 
-`make e2e-stage4-skill-legacy-inventory` places a nonempty legacy note in the
-disposable shared volume and retains a stopped foreign container mounting it.
-RC's read-only inventory must report the exact file hash and foreign reference;
-the normal Skill delivery business and Trace gates still run afterward.
-`make e2e-stage4-skill-legacy-choice` uses a separate disposable project to
-verify the RC backup receipt through Controller's choice endpoint. It simulates
-the pre-cutover marker on a newly created Agent, checks rejected and accepted
-choices, verifies a private destination copy from RC's backup volume, and
-confirms Enable remains blocked. The test destination is local: this is not
-off-host export evidence and does not perform migration.
-`make e2e-stage4-skill-legacy-migration` extends that disposable project through
-controlled Enable for a disabled Agent and Rebuild for an enabled Agent. It
-checks invalid proof and stale choice rejection, marker resolution and the
-read-only managed Skill mount. The enabled Rebuild selects a fixed nonempty
-Template revision and confirms its frozen Skill is readable by the Runtime's
-unprivileged user. A real ACP SDK Run then asks the model to call Runtime
-`read` for that Skill and checks the returned versioned body. Its verifier
-runs on the same host, so a real
-off-host operator transfer and verification remain separate acceptance work.
-The opt-in `make e2e-stage4-skill-post-migration-restart` gate also recreates
-Controller and RC after the migration, then verifies ordinary Disable/Enable
-and Rebuild to the same frozen Template revision reuse the read-only Skill
-volume while the marker remains resolved. Publishing v2 and revising the
-Template leave the Agent pinned to v1 until an explicit Rebuild installs v2;
-the Runtime body and a new ACP Run verify the new version. After Disable, the
-gate removes only that Agent's labeled retained v2 volume, then confirms Enable
-rematerializes the fixed collection into a new read-only volume and another ACP
-Run reads v2 while the migration marker stays resolved.
-The same project revokes the trusted proof key exactly when another migration
-reaches Publish: Controller must re-close Egress, fail and quarantine that
-operation, leave its marker pending, and require source recovery before a new
-request can be admitted.
+Legacy shared-volume inventory, choice, migration and exceptional recovery
+gates are retired from the release. Current Skill lifecycle gates continue to
+use frozen Template versions and prepared read-only sets. Historical sources
+and evidence are recoverable from Git commit `5e86f46`; see the
+[release cleanup](../../../docs/legacy-skill-release-cleanup-20261001.md).
 
 Identity/OIDC, Managed MCP and fault profiles now dispatch to their separate
 migrated launchers. Their old inline copies are superseded. The explicit

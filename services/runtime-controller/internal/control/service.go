@@ -61,8 +61,6 @@ type Service struct {
 	mutationTimeout      time.Duration
 	skillScope           string
 	skillInspector       SkillVolumeInspector
-	activeReferenceStore repositoryport.PreparedSkillReferenceStore
-	activeMountVerifier  ActiveSkillMountVerifier
 	maintenanceVerifiers deployment.MaintenanceVerifiers
 }
 

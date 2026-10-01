@@ -502,30 +502,6 @@ e2e-stage4-skill-fenced-invalidation:
 e2e-stage4-skill-restart-rebuild:
 	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_RESTART_REBUILD=true sh tests/e2e/e2e-stage3a.sh
 
-.PHONY: e2e-stage4-skill-legacy-inventory
-e2e-stage4-skill-legacy-inventory:
-	ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_LEGACY_INVENTORY=true sh tests/e2e/e2e-stage3a.sh
-
-.PHONY: e2e-stage4-skill-legacy-choice
-e2e-stage4-skill-legacy-choice:
-	node tests/e2e/skill-registry/legacy-choice-docker.mjs
-
-.PHONY: e2e-stage4-skill-legacy-migration
-e2e-stage4-skill-legacy-migration:
-	ANTNEST_E2E_LEGACY_MIGRATION=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
-
-.PHONY: e2e-stage4-skill-post-migration-restart
-e2e-stage4-skill-post-migration-restart:
-	ANTNEST_E2E_LEGACY_MIGRATION=true ANTNEST_E2E_POST_MIGRATION_RESTART=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
-
-.PHONY: e2e-stage4-skill-legacy-recovery-trace
-e2e-stage4-skill-legacy-recovery-trace:
-	ANTNEST_E2E_LEGACY_MIGRATION=true ANTNEST_E2E_RECOVERY_NORMAL=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
-
-.PHONY: e2e-stage4-skill-source-recovery
-e2e-stage4-skill-source-recovery:
-	ANTNEST_E2E_LEGACY_MIGRATION=true ANTNEST_E2E_RECOVERY_NORMAL=true ANTNEST_E2E_SOURCE_RECOVERY=true node tests/e2e/skill-registry/legacy-choice-docker.mjs
-
 .PHONY: e2e-identity-access e2e-identity-core
 e2e-identity-core:
 	ANTNEST_E2E_IDENTITY_CORE=true sh tests/e2e/e2e-stage3a.sh
