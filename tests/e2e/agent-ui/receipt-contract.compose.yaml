@@ -1,0 +1,8 @@
+# Current candidates for the receipt regression; normal local tags stay intact.
+services:
+  identity-service:
+    image: ${ANTNEST_RECEIPT_E2E_IDENTITY_IMAGE:?required candidate image}
+  runtime-controller:
+    image: ${ANTNEST_RECEIPT_E2E_RC_IMAGE:?required candidate image}
+    environment:
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${ANTNEST_RECEIPT_E2E_RC_IMAGE:?required candidate image}

@@ -73,6 +73,50 @@ The negotiated transport remains official ACP v1 Streamable HTTP
 standard response body. Tests cover the actual SDK encoder, HTTP/SSE transport
 and parser preservation in addition to schema acceptance of `_meta`.
 
+## Receipt failure classification
+
+Every `intentReceipt` contains the required `errorClass`, including receipts
+embedded in `executionObservation.recentReceipts`. Its value is `null` or a
+nonempty ASCII snake_case code matching `^[a-z][a-z0-9_]*$`, at most 128
+characters. A non-null code is allowed only in `failed`, `cancelled` or `unknown`
+phases; all other phases carry `null`. A terminal phase may also carry `null`
+when no failure classification was recorded. The phase remains authoritative
+for completion and retry decisions.
+
+This is an open classification vocabulary. Clients preserve a well-formed
+unknown code and show their generic failure explanation instead of rejecting
+the receipt or automatically retrying it. Codes contain classification only,
+never provider error messages, credentials or tool output.
+
+Current producer values include:
+
+| Codes | Meaning |
+| --- | --- |
+| `model_unsupported_content`, `model_unavailable`, `model_http_error`, `model_invalid_response` | Model input, availability, HTTP or response failures |
+| `provider_unavailable` | Provider unavailable after model execution |
+| `run_deadline_exceeded`, `run_failed`, `run_setup_failed` | Deadline, generic execution or setup failure |
+| `tool_outcome_unknown`, `cancelled_tool_outcome_unknown` | Unresolved tool effects, including cancellation |
+| `service_restarted_during_run`, `service_restarted_during_tool` | Recovery classification after an ACP restart |
+| `temporary_skill_cleanup_pending` | Temporary Skill cleanup has not completed |
+| `context_budget_exhausted` | Context budget prevents execution |
+| `invalid_tool_schema`, `duplicate_tool_call_id` | Tool schema or batch preflight failure |
+| `internal_error` | Persisted classification does not satisfy this contract |
+
+Domain and Tool preflight errors may supply additional well-formed codes.
+ACP normalizes invalid stored codes to `internal_error` at the observation
+boundary and forces `null` outside failure phases. This changes neither the
+stored Run outcome nor its phase. Normalization emits a diagnostic containing
+the original classification capped at 128 characters and its original length;
+it does not add provider messages to the public response.
+
+`intentReceipt: 1` remains unchanged: deployed ACP already emits `errorClass`
+and Agent UI already requires it. This corrects the published schema and
+tightens validation rather than adding a new negotiated wire field. Shared
+[receipt fixtures](../../tests/support/fixtures/agent-acp/bridge-receipts.json)
+cover null, known and future codes, both length boundaries, malformed codes,
+missing fields and phase consistency. Producer and consumer admissions run
+separately before the full Gateway/Workspace integration.
+
 ## Conditional Session configuration
 
 The execution observation's `configurationRevision` is the lowercase SHA-256

@@ -546,6 +546,30 @@ test("ACP extension validates intent, target cancellation and complete delivery 
   );
 });
 
+test("ACP receipts and embedded observations share the required failure classification", () => {
+  const receipt = definition(acp, "intentReceipt");
+  const observation = definition(acp, "executionObservation");
+  const fixtures = json(
+    "../../support/fixtures/agent-acp/bridge-receipts.json",
+  );
+  const execution = (value) => ({
+    sessionId: "session-1",
+    appendVersion: 2,
+    outputWatermark: 4,
+    activeRunId: null,
+    recentReceipts: [value],
+    configurationRevision: "a".repeat(64),
+  });
+  for (const fixture of fixtures.valid) {
+    assert.equal(receipt(fixture.receipt), true, fixture.name);
+    assert.equal(observation(execution(fixture.receipt)), true, fixture.name);
+  }
+  for (const fixture of fixtures.invalid) {
+    assert.equal(receipt(fixture.receipt), false, fixture.name);
+    assert.equal(observation(execution(fixture.receipt)), false, fixture.name);
+  }
+});
+
 test("ACP configuration condition carries one producer revision", () => {
   const condition = definition(acp, "configurationCondition");
   assert.equal(condition({ expectedRevision: "a".repeat(64) }), true);

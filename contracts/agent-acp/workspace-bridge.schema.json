@@ -5,6 +5,12 @@
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 200 },
     "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "errorClass": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*$" },
+        { "type": "null" }
+      ]
+    },
     "promptIntent": {
       "type": "object",
       "properties": {
@@ -84,10 +90,16 @@
         "phase": { "enum": ["persisting", "accepted", "running", "awaiting_permission", "cancelling", "completed", "failed", "cancelled", "unknown"] },
         "appendVersion": { "$ref": "#/$defs/revision" },
         "outputWatermark": { "$ref": "#/$defs/revision" },
-        "stopReason": { "type": ["string", "null"] }
+        "stopReason": { "type": ["string", "null"] },
+        "errorClass": { "$ref": "#/$defs/errorClass" }
       },
-      "required": ["intentId", "sessionId", "runId", "phase", "appendVersion", "outputWatermark", "stopReason"],
-      "additionalProperties": false
+      "required": ["intentId", "sessionId", "runId", "phase", "appendVersion", "outputWatermark", "stopReason", "errorClass"],
+      "additionalProperties": false,
+      "if": {
+        "properties": { "phase": { "enum": ["failed", "cancelled", "unknown"] } },
+        "required": ["phase"]
+      },
+      "else": { "properties": { "errorClass": { "type": "null" } } }
     },
     "executionObservation": {
       "type": "object",

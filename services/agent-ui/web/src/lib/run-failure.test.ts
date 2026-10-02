@@ -10,5 +10,6 @@ test("known model rejection gives actionable copy without remote details", () =>
 
 test("unknown failure classes are not presented as model capability errors", () => {
   assert.equal(runFailureMessage("provider_unavailable"), undefined);
+  assert.equal(runFailureMessage("vendor_future_failure"), undefined);
   assert.equal(runFailureMessage(null), undefined);
 });

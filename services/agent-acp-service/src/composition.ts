@@ -522,7 +522,7 @@ export function buildComponents(
     bridgeObservation: new BridgeObservationService({
       access,
       sessions: sessionService,
-      repository: new PostgresBridgeObservationRepository(kernel),
+      repository: new PostgresBridgeObservationRepository(kernel, telemetry),
     }),
     learningStatus: new LearningStatusReader(access, new PostgresLearningStatusRead(kernel)),
     learningChanges: new LearningChangeReader(

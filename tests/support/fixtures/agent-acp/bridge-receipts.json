@@ -1,0 +1,689 @@
+{
+  "knownErrorClasses": [
+    "model_unsupported_content",
+    "model_unavailable",
+    "model_http_error",
+    "model_invalid_response",
+    "provider_unavailable",
+    "run_deadline_exceeded",
+    "run_failed",
+    "run_setup_failed",
+    "tool_outcome_unknown",
+    "cancelled_tool_outcome_unknown",
+    "service_restarted_during_run",
+    "service_restarted_during_tool",
+    "temporary_skill_cleanup_pending",
+    "context_budget_exhausted",
+    "duplicate_tool_call_id",
+    "invalid_tool_schema",
+    "internal_error"
+  ],
+  "valid": [
+    {
+      "name": "persisting_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "persisting",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "accepted_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "accepted",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "running_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "running",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "awaiting_permission_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "awaiting_permission",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "cancelling_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "cancelling",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "completed_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "completed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "failed_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "cancelled_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "cancelled",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "unknown_null",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "unknown",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": null
+      }
+    },
+    {
+      "name": "model_unsupported_content",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "model_unsupported_content"
+      }
+    },
+    {
+      "name": "model_unavailable",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "model_unavailable"
+      }
+    },
+    {
+      "name": "model_http_error",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "model_http_error"
+      }
+    },
+    {
+      "name": "model_invalid_response",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "model_invalid_response"
+      }
+    },
+    {
+      "name": "provider_unavailable",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "provider_unavailable"
+      }
+    },
+    {
+      "name": "run_deadline_exceeded",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_deadline_exceeded"
+      }
+    },
+    {
+      "name": "run_failed",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    },
+    {
+      "name": "run_setup_failed",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_setup_failed"
+      }
+    },
+    {
+      "name": "tool_outcome_unknown",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "tool_outcome_unknown"
+      }
+    },
+    {
+      "name": "cancelled_tool_outcome_unknown",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "cancelled_tool_outcome_unknown"
+      }
+    },
+    {
+      "name": "service_restarted_during_run",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "service_restarted_during_run"
+      }
+    },
+    {
+      "name": "service_restarted_during_tool",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "service_restarted_during_tool"
+      }
+    },
+    {
+      "name": "temporary_skill_cleanup_pending",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "temporary_skill_cleanup_pending"
+      }
+    },
+    {
+      "name": "context_budget_exhausted",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "context_budget_exhausted"
+      }
+    },
+    {
+      "name": "duplicate_tool_call_id",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "duplicate_tool_call_id"
+      }
+    },
+    {
+      "name": "invalid_tool_schema",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "invalid_tool_schema"
+      }
+    },
+    {
+      "name": "internal_error",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "internal_error"
+      }
+    },
+    {
+      "name": "unknown_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "vendor_future_failure"
+      }
+    },
+    {
+      "name": "maximum_length",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "cancelled_with_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "cancelled",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "cancelled_tool_outcome_unknown"
+      }
+    },
+    {
+      "name": "unknown_with_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "unknown",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "tool_outcome_unknown"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null
+      }
+    },
+    {
+      "name": "empty",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": ""
+      }
+    },
+    {
+      "name": "too_long",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "uppercase",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "RunFailed"
+      }
+    },
+    {
+      "name": "hyphen",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run-failed"
+      }
+    },
+    {
+      "name": "space",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run failed"
+      }
+    },
+    {
+      "name": "trailing_newline",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed\n"
+      }
+    },
+    {
+      "name": "unicode",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "运行_failure"
+      }
+    },
+    {
+      "name": "numeric_prefix",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "1_failure"
+      }
+    },
+    {
+      "name": "underscore_prefix",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "_failure"
+      }
+    },
+    {
+      "name": "leading_space",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": " run_failed"
+      }
+    },
+    {
+      "name": "trailing_space",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed "
+      }
+    },
+    {
+      "name": "wrong_type",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": 42
+      }
+    },
+    {
+      "name": "wrong_array",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": []
+      }
+    },
+    {
+      "name": "wrong_object",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "failed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": {
+          "code": "run_failed"
+        }
+      }
+    },
+    {
+      "name": "persisting_has_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "persisting",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    },
+    {
+      "name": "accepted_has_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "accepted",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    },
+    {
+      "name": "running_has_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "running",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    },
+    {
+      "name": "awaiting_permission_has_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "awaiting_permission",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    },
+    {
+      "name": "cancelling_has_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "cancelling",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    },
+    {
+      "name": "completed_has_error_class",
+      "receipt": {
+        "intentId": "intent-1",
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "phase": "completed",
+        "appendVersion": 2,
+        "outputWatermark": 4,
+        "stopReason": null,
+        "errorClass": "run_failed"
+      }
+    }
+  ]
+}

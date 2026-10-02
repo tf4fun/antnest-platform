@@ -1177,6 +1177,7 @@ test(
         ...operation,
         phase: "failed",
         stopReason: "runtime_unavailable",
+        errorClass: "vendor_future_failure",
       };
       publish();
       await secondPage.getByText("Offline", { exact: true }).first().waitFor();

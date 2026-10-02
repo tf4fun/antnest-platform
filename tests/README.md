@@ -65,6 +65,7 @@ scenario and remove every resource they own. They are never part of
 | `e2e-identity-core`, `e2e-identity-access`, `e2e-agent-access`, `e2e-organization-display` | `identity-closeout/` | Login, sessions, access control, Agent access and real local/OIDC Organization display through Node/SSR/browser. |
 | `e2e-lifecycle`, `e2e-lifecycle-shutdown`, `-health`, `-restore`, `-interrupted`, `-network`, `-loss`, `-crash` | `lifecycle-closeout/` | Agent and platform lifecycle, normal shutdown, health, backup restore, interruption, network loss and Runtime loss. `e2e-lifecycle-crash` is an abnormal-exit diagnostic excluded from the stable targets. |
 | `e2e-workspace`, `e2e-workspace-browser` | `workspace-closeout/` | Agent UI workspace protocol and browser behavior. |
+| `e2e-agent-ui-receipt-contract` | `agent-ui/` | A real failed Run through Gateway and Chromium; actual ACP receipt/observation JSON validates against the shared schema and Node parsers; workspace failure survives reload. Builds isolated current ACP, Agent UI, Gateway, Identity and RC candidates without replacing local tags. |
 | `e2e-stage3-skill-delivery`, `e2e-stage4-skill-*`, `integration-stage4-skill-*` | `stage3-base/`, `lifecycle-closeout/`, `tests/integration/skill-registry/` | Skill package delivery to Runtimes, including Registry outage, races, response loss, drift and restore. |
 | `e2e-skill-learning-*`, `e2e-runtime-tool-usability` | `skill-learning/` | Automatic Skill learning: creation and update, notices, preemption, policy and lifecycle cancellation, commit windows, key rotation, model failure and recovery, restart and browser checks. |
 | `e2e-skill-discovery-*`, `e2e-skill-temporary-*`, `e2e-skill-propagation`, `e2e-skill-deployment`, `e2e-skill-source-lifecycle`, `e2e-skill-registry-trace` | `skill-registry/`, `skill-learning/` | Skill Registry discovery, temporary Runtime use, Console promotion, Template propagation and source lifecycle. |
@@ -73,6 +74,11 @@ All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need
 installed Playwright Chromium and close their browsers before Docker cleanup.
+`e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
+Playwright Chromium and the standard local stack images. Its captured receipt
+evidence defaults to `artifacts/verification/`; override its directory with
+`ANTNEST_UI_RECEIPT_E2E_OUTPUT`. It closes Chromium, removes its labeled candidate
+images and compares the retained Docker environment after cleanup.
 
 Some contract checks can be run directly:
 

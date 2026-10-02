@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { readFileSync } from "node:fs";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { PostgresBridgeObservationRepository } from "../../src/adapters/postgres/bridge-observation-repository.js";
+import { BridgeObservationService } from "../../src/application/bridge-observation.js";
 
 describe("AgentAcpHttpServer", () => {
   let server: AgentAcpHttpServer | undefined;
@@ -11,6 +15,91 @@ describe("AgentAcpHttpServer", () => {
     await server?.close().catch((error: unknown) => {
       throw new Error("server teardown failed", { cause: error });
     });
+  });
+
+  it("real HTTP receipts and observations serialize the repository mapping against the central contract", async () => {
+    const schema = JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/agent-acp/workspace-bridge.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { $schema: string; $defs: Record<string, object> };
+    const ajv = new Ajv2020({ strict: true, validateFormats: false });
+    const receipt = ajv.compile({
+      $schema: schema.$schema,
+      $defs: schema.$defs,
+      $ref: "#/$defs/intentReceipt",
+    });
+    const observation = ajv.compile({
+      $schema: schema.$schema,
+      $defs: schema.$defs,
+      $ref: "#/$defs/executionObservation",
+    });
+    let errorClass: string | null = "model_unsupported_content";
+    const query = vi.fn((sql: string) =>
+      Promise.resolve({
+        rows: sql.includes("FROM acp_sessions")
+          ? [
+              {
+                append_version: "2",
+                configuration_revision: "1",
+                last_message_sequence: "4",
+                active_run_id: null,
+              },
+            ]
+          : sql.startsWith("SET ")
+            ? []
+            : [
+                {
+                  bridge_intent_id: "intent-1",
+                  session_id: "session-1",
+                  run_id: "run-1",
+                  state: "failed",
+                  append_version: "2",
+                  output_watermark: "4",
+                  stop_reason: null,
+                  error_class: errorClass,
+                },
+              ],
+      }),
+    );
+    const transaction = async (operation: (client: never) => Promise<unknown>) =>
+      operation({ query } as never);
+    const repository = new PostgresBridgeObservationRepository({ query, transaction } as never);
+    const access = { assert: vi.fn().mockResolvedValue(undefined) };
+    const sessions = { requireAuthorized: vi.fn().mockResolvedValue(undefined) };
+    server = new AgentAcpHttpServer({
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+      bridgeObservation: new BridgeObservationService({ access, sessions, repository }),
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+    const base = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/sessions/session-1`;
+    const headers = {
+      "X-Antnest-Organization-Id": "organization-1",
+      "X-Antnest-Principal-Id": "principal-1",
+      "X-Antnest-Agent-Id": "agent-1",
+    };
+    for (const original of ["model_unsupported_content", "Invalid-Class", null]) {
+      errorClass = original;
+      const expected = original === "Invalid-Class" ? "internal_error" : original;
+      const lookup = await fetch(`${base}/intents/intent-1`, { headers });
+      expect(lookup.status).toBe(200);
+      const actualReceipt: unknown = await lookup.json();
+      expect(receipt(actualReceipt), JSON.stringify(receipt.errors)).toBe(true);
+      expect(actualReceipt).toMatchObject({ phase: "failed", errorClass: expected });
+      const current = await fetch(`${base}/execution`, { headers });
+      expect(current.status).toBe(200);
+      const actualObservation: unknown = await current.json();
+      expect(observation(actualObservation), JSON.stringify(observation.errors)).toBe(true);
+      expect(actualObservation).toMatchObject({ recentReceipts: [actualReceipt] });
+      expect(current.headers.get("cache-control")).toBe("no-store");
+    }
+    expect(access.assert).toHaveBeenCalledTimes(6);
+    expect(sessions.requireAuthorized).toHaveBeenCalledTimes(6);
   });
 
   it("serves learning status with trusted identity and no caller-selected task", async () => {

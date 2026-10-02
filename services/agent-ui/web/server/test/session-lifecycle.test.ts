@@ -96,7 +96,7 @@ test("late execution reads cannot roll back a newer durable observation or resur
     const older = owner.authorizeExecution("one");
     const newer = owner.authorizeExecution("one");
     const receipt: IntentReceipt = { sessionId: "one", intentId: "intent", runId: "run",
-      phase: "completed", appendVersion: 1, outputWatermark: 1, stopReason: "end_turn" };
+      phase: "completed", appendVersion: 1, outputWatermark: 1, stopReason: "end_turn", errorClass: null };
     replies[1]!({ sessionId: "one", appendVersion: 1, outputWatermark: 1,
       activeRunId: null, recentReceipts: [receipt], configurationRevision: null });
     await newer;
@@ -153,7 +153,7 @@ test("known local admission advances the live append version without replay duri
   try {
     await owner.authorizeSession("one");
     const receipt: IntentReceipt = { sessionId: "one", intentId: "intent", runId: "run",
-      phase: "running", appendVersion: 1, outputWatermark: 2, stopReason: null };
+      phase: "running", appendVersion: 1, outputWatermark: 2, stopReason: null, errorClass: null };
     f.port.prompt = async () => {
       for (const [sequence, sessionUpdate, text] of [[1, "user_message_chunk", "Question"], [2, "agent_message_chunk", "Answer"]] as const)
         await f.callbacks().update({ sessionId: "one", update: { sessionUpdate, messageId: String(sequence), content: { type: "text", text } },
