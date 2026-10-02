@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-var maintenanceKID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var maintenanceKID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 type MaintenanceVerifierKey struct {
 	KID                string `json:"kid"`
@@ -24,7 +24,7 @@ func (v MaintenanceVerifiers) Normalize() (MaintenanceVerifiers, error) {
 	}
 	keys := slices.Clone(v.Keys)
 	for _, key := range keys {
-		if len(key.KID) == 0 || len(key.KID) > 64 || !maintenanceKID.MatchString(key.KID) {
+		if !maintenanceKID.MatchString(key.KID) {
 			return MaintenanceVerifiers{}, invalid("skill_maintenance_verifiers kid is invalid")
 		}
 		if key.Algorithm != "Ed25519" {

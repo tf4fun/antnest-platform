@@ -1,0 +1,46 @@
+{
+  "valid": [
+    "a",
+    "Z",
+    "0",
+    "9key",
+    "development-1",
+    "key_2026-01",
+    "A_b-C9",
+    "a-",
+    "a_",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "0_______________________________________________________________"
+  ],
+  "invalid": [
+    "",
+    "-key",
+    "_key",
+    ".key",
+    "release.2026",
+    "release.2026-01",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "key/1",
+    "key 1",
+    "key:1",
+    "key@1",
+    "clé",
+    "ключ",
+    "键",
+    "𝒌ey",
+    "1️⃣",
+    " key",
+    "key ",
+    "key\n",
+    "key\r",
+    "key\r\n",
+    "key\t",
+    "key\nnext",
+    "key\u0000",
+    "key ",
+    "key ",
+    "key "
+  ]
+}

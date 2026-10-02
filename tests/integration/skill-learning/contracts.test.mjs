@@ -30,6 +30,64 @@ const digest = `sha256:${"d".repeat(64)}`;
 const revision = "e".repeat(64);
 const path = ".antnest/skills/fix-timeouts";
 
+const maintenanceKidFixtures = JSON.parse(
+  await readFile(
+    new URL(
+      "../../../contracts/runtime/maintenance-kid-fixtures.json",
+      import.meta.url,
+    ),
+  ),
+);
+const runtimeSchema = JSON.parse(
+  await readFile(
+    new URL(
+      "../../../contracts/runtime/runtime-spec.schema.json",
+      import.meta.url,
+    ),
+  ),
+);
+const runtimeValidator = new Ajv2020({ strict: true, validateFormats: false });
+runtimeValidator.addSchema(runtimeSchema);
+const validateVerifiers = runtimeValidator.getSchema(
+  `${runtimeSchema.$id}#/$defs/skillMaintenanceVerifiers`,
+);
+
+test("maintenance key identity has one bounded RuntimeSpec grammar", () => {
+  assert.equal(
+    runtimeSchema.$defs.maintenanceKid.pattern,
+    "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+  );
+  assert.equal(
+    runtimeSchema.$defs.skillMaintenanceVerifiers.properties.keys.items
+      .properties.kid.$ref,
+    "#/$defs/maintenanceKid",
+  );
+});
+
+for (const [group, kids] of Object.entries(maintenanceKidFixtures)) {
+  for (const kid of kids) {
+    test(`maintenance key identity ${group}: ${JSON.stringify(kid)}`, () => {
+      assert.equal(
+        validateVerifiers({
+          keys: [
+            { kid, algorithm: "Ed25519", public_key_base64url: "A".repeat(43) },
+          ],
+        }),
+        group === "valid",
+        JSON.stringify(validateVerifiers.errors),
+      );
+      assert.equal(
+        accepts("runtime_verifiers", {
+          keys: [
+            { kid, algorithm: "Ed25519", public_key_base64url: "A".repeat(43) },
+          ],
+        }),
+        group === "valid",
+      );
+    });
+  }
+}
+
 test("learning status exposes one bounded blocker without maintenance authority or process arguments", () => {
   const status = { agentId: agent, blocked: null };
   assert(accepts("learning_status", status));

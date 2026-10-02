@@ -85,6 +85,11 @@
     }
   },
   "$defs": {
+    "maintenanceKid": {
+      "type": "string", "minLength": 1, "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "description": "Exact ASCII maintenance key identity shared by RC, Runtime and ACP. No whitespace normalization; see maintenance-kid-fixtures.json."
+    },
     "socketAddress": {
       "type": "object",
       "additionalProperties": false,
@@ -107,8 +112,7 @@
             "type": "object", "additionalProperties": false,
             "required": ["kid", "algorithm", "public_key_base64url"],
             "properties": {
-              "kid": { "type": "string", "minLength": 1, "maxLength": 64,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+              "kid": { "$ref": "#/$defs/maintenanceKid" },
               "algorithm": { "const": "Ed25519" },
               "public_key_base64url": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
             }

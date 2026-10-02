@@ -138,7 +138,11 @@ func parseMaintenanceVerifiers(raw string) (deployment.MaintenanceVerifiers, err
 	if parsed.Keys == nil {
 		return deployment.MaintenanceVerifiers{}, fmt.Errorf("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS requires a keys array")
 	}
-	return parsed.Normalize()
+	normalized, err := parsed.Normalize()
+	if err != nil {
+		return deployment.MaintenanceVerifiers{}, fmt.Errorf("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: %w", err)
+	}
+	return normalized, nil
 }
 
 func runtimeTelemetryEnvironment(lookup func(string) string) map[string]string {

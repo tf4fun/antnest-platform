@@ -124,7 +124,8 @@ Ownership rules, identities and dependency directions are described in
 ## Project status
 
 Antnest is under active development and has no tagged release yet. Interfaces
-and storage schemas can still change between commits. Known gaps and planned
+and storage schemas can still change between commits. Check the
+[release notes](CHANGELOG.md) before upgrading. Known gaps and planned
 work are tracked in [GitHub issues](https://github.com/tf4fun/antnest-platform/issues).
 Feedback and contributions are very welcome.
 

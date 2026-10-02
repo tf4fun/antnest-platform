@@ -1,6 +1,7 @@
 const DEFAULT_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_STATE_DELIVERY_TIMEOUT_MS = 10_000;
+export const MAINTENANCE_KID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 
 export type AgentAcpConfig = {
   listen: { host: string; port: number };
@@ -130,14 +131,14 @@ function parseSkillLearningControllerUrl(
 function parseSkillMaintenanceSigning(
   environment: NodeJS.ProcessEnv,
 ): Pick<AgentAcpConfig, "skillMaintenanceSigning"> {
-  const kid = optional(environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID);
+  const kid = environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID || undefined;
   const encoded = optional(environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY);
   if (kid === undefined && encoded === undefined) return {};
   if (kid === undefined || encoded === undefined)
     throw new ConfigError(
       "Skill maintenance signing kid and private key must be configured together",
     );
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(kid))
+  if (!MAINTENANCE_KID_PATTERN.test(kid))
     throw new ConfigError("Invalid Skill maintenance signing kid");
   if (
     encoded.length > 4096 ||

@@ -157,6 +157,14 @@ impl RuntimeSpecInput {
     }
 }
 
+fn valid_maintenance_kid(kid: &str) -> bool {
+    !kid.is_empty()
+        && kid.len() <= 64
+        && kid.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'_' | b'-'))
+        })
+}
+
 fn validate_maintenance_verifiers(
     keys: &[SkillMaintenanceVerifierInput],
 ) -> Result<Vec<SkillMaintenanceVerifier>, ConfigError> {
@@ -168,19 +176,25 @@ fn validate_maintenance_verifiers(
     }
     let mut validated = Vec::with_capacity(keys.len());
     for key in keys {
-        if key.kid.is_empty()
-            || key.kid.len() > 128
-            || !key.kid.bytes().enumerate().all(|(index, byte)| {
-                byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'_' | b'-'))
-            })
-            || key.algorithm != "Ed25519"
-            || validated
-                .iter()
-                .any(|existing: &SkillMaintenanceVerifier| existing.kid() == key.kid)
+        if !valid_maintenance_kid(&key.kid) {
+            return Err(ConfigError::Invalid {
+                name: "skill_maintenance_verifiers",
+                message: "invalid kid".into(),
+            });
+        }
+        if key.algorithm != "Ed25519" {
+            return Err(ConfigError::Invalid {
+                name: "skill_maintenance_verifiers",
+                message: "unsupported public key algorithm".into(),
+            });
+        }
+        if validated
+            .iter()
+            .any(|existing: &SkillMaintenanceVerifier| existing.kid() == key.kid)
         {
             return Err(ConfigError::Invalid {
                 name: "skill_maintenance_verifiers",
-                message: "invalid or duplicate public key identity".into(),
+                message: "duplicate kid".into(),
             });
         }
         let bytes = URL_SAFE_NO_PAD
@@ -315,6 +329,44 @@ mod tests {
             value["skill_maintenance_verifiers"] = invalid;
             assert!(decode_runtime_spec(&value.to_string()).is_err());
         }
+    }
+
+    #[test]
+    fn maintenance_verifier_kids_match_shared_fixtures() {
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/runtime/maintenance-kid-fixtures.json"
+        ))
+        .unwrap();
+        for (group, expected) in [("valid", true), ("invalid", false)] {
+            for kid in fixtures[group].as_array().unwrap() {
+                let kid = kid.as_str().unwrap();
+                let keys = [SkillMaintenanceVerifierInput {
+                    kid: kid.into(),
+                    algorithm: "Ed25519".into(),
+                    public_key_base64url: URL_SAFE_NO_PAD.encode([0; 32]),
+                }];
+                let result = validate_maintenance_verifiers(&keys);
+                assert_eq!(result.is_ok(), expected, "kid {kid:?}: {result:?}");
+                if let Ok(keys) = result {
+                    assert_eq!(keys[0].kid(), kid);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn maintenance_verifier_duplicate_kid_has_a_distinct_error() {
+        let keys = [0, 1].map(|byte| SkillMaintenanceVerifierInput {
+            kid: "key_2026-01".into(),
+            algorithm: "Ed25519".into(),
+            public_key_base64url: URL_SAFE_NO_PAD.encode([byte; 32]),
+        });
+        let error = validate_maintenance_verifiers(&keys).unwrap_err();
+        assert!(
+            matches!(error, ConfigError::Invalid { name: "skill_maintenance_verifiers", ref message }
+                if message == "duplicate kid"),
+            "{error}"
+        );
     }
 
     #[test]

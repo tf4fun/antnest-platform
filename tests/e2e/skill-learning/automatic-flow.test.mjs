@@ -23,6 +23,7 @@ import { temporaryAcpFlow } from "./temporary-acp-flow.mjs";
 import { callerAcpFlow } from "./caller-flow.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
+import { assertMaintenanceKidStartupRejected } from "./maintenance-kid.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -32,6 +33,7 @@ const discoveryTools = process.env.ANTNEST_E2E_SKILL_DISCOVERY_TOOLS === "true";
 const temporaryTools = process.env.ANTNEST_E2E_SKILL_TEMPORARY === "true";
 const propagation = process.env.ANTNEST_E2E_SKILL_PROPAGATION === "true";
 const deployment = process.env.ANTNEST_E2E_SKILL_DEPLOYMENT === "true";
+const signingKid = deployment ? "key_2026-01" : "fixture-key";
 const sourceLifecycle =
   process.env.ANTNEST_E2E_SKILL_SOURCE_LIFECYCLE === "true";
 const callerDiscovery = process.env.ANTNEST_E2E_SKILL_CALLER === "true";
@@ -228,12 +230,12 @@ test(
             type: "pkcs8",
           })
           .toString("base64"),
-        ANTNEST_E2E_SKILL_SIGNING_KID: "fixture-key",
+        ANTNEST_E2E_SKILL_SIGNING_KID: signingKid,
         ANTNEST_E2E_PINNED: String(pinned),
         ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS: JSON.stringify({
           keys: [
             {
-              kid: "fixture-key",
+              kid: signingKid,
               algorithm: "Ed25519",
               public_key_base64url: rawPublic.toString("base64url"),
             },
@@ -344,6 +346,22 @@ test(
             ["build", "-f", `services/${service}/Dockerfile`, "-t", tag, "."],
             true,
           );
+      if (deployment) {
+        const invalidKid = await assertMaintenanceKidStartupRejected({
+          docker,
+          image: rcImage,
+          project: config.project,
+        });
+        await writeFile(
+          `${propagationOutput()}/maintenance-kid.json`,
+          JSON.stringify(
+            { signing_kid: signingKid, invalid_configuration: invalidKid },
+            null,
+            2,
+          ),
+          { mode: 0o600, flag: "wx" },
+        );
+      }
       await docker(
         composeArgs(config.project, [
           ...overlay,

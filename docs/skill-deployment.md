@@ -23,6 +23,20 @@ values explicitly:
 | `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` | Runtime Controller public current/next verifier set; frozen into a Runtime on create/rebuild |
 | `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`         | Separate source-read bearer shared by ACP and Registry; at least 32 printable characters  |
 
+The signing and verifier `kid` use one exact ASCII identity:
+`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` (1–64 characters, letter or digit first,
+then letters, digits, `_` or `-`). Dots, non-ASCII characters and whitespace
+are rejected, without trimming. ACP's signing `kid` must exactly match a
+trusted Runtime verifier. The authoritative definition is in
+[RuntimeSpec](../contracts/runtime/runtime-spec.schema.json#/$defs/maintenanceKid);
+the schema, RC, Runtime and ACP share the
+[accept/reject fixtures](../contracts/runtime/maintenance-kid-fixtures.json).
+
+Before upgrading an existing deployment, check the
+[signing key ID compatibility notice](../CHANGELOG.md#unreleased). ACP now
+rejects signing key IDs with leading or trailing whitespace, as well as
+whitespace-only values, at startup; previous versions trimmed them.
+
 The Registry API bearer remains the existing `ANTNEST_SKILL_REGISTRY_API_TOKEN`
 and must differ from the source bearer. From the source bearer, Compose sets the
 private addresses and tokens on both sides. Setting the signing private key also
