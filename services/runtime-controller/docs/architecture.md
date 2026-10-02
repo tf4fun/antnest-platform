@@ -406,6 +406,15 @@ a transaction-scoped PostgreSQL notification; every replica turns that shared
 wakeup into a local SSE Hub notification. Notifications carry no facts and may
 coalesce: consumers always recover facts from the ordered journal.
 
+Transient leadership/readiness query failures and reconciliation failures do
+not end the process. Failed initial reconciliation withdraws shared readiness
+and releases leadership before retrying. Consecutive failures back off from
+one second to a configured maximum with bounded jitter; Watch readiness resets
+the delay. Explicit permanent configuration/schema/programming errors still
+return to supervision. See
+[observation recovery](operations.md#observation-dependency-recovery) for the
+startup and local `/status` distinction.
+
 Startup verifies the journal and wake-up paths separately. An insert/read probe
 uses a reserved explicit sequence and is rolled back, so it neither creates a
 fake Runtime fact nor advances the production sequence. A uniquely identified,

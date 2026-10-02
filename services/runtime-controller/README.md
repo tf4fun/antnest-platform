@@ -86,6 +86,7 @@ service.
 | `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | `2m` | Complete mutation bound, including lock wait |
 | `ANTNEST_RUNTIME_RPC_TIMEOUT` | no | `3m` | Internal RPC bound; must exceed the mutation timeout |
 | `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT` | no | `2m` | Inventory reconciliation bound |
+| `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no | `30s` | Maximum observation retry delay, including jitter; must be at least `1s` |
 | `ANTNEST_OBSERVATION_RETENTION` | no | `168h` | Observation journal retention |
 | `ANTNEST_RUNTIME_SSE_HEARTBEAT` | no | `15s` | Observation Watch heartbeat interval |
 | `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no | `false` | `true` or `false`; `true` records complete RPC bodies, including credentials, and is forwarded to new Runtimes |
@@ -93,6 +94,15 @@ service.
 Standard `OTEL_*` variables configure OTLP `http/protobuf` export. Selected
 `OTEL_*` keys, optionally overridden by `ANTNEST_RUNTIME_OTEL_*`, are forwarded
 to managed Runtimes. See [operations](docs/operations.md) for details.
+
+Transient observation leadership/readiness query and reconciliation failures
+retry without ending the process. Failed initial reconciliation releases
+leadership before retrying; readiness is announced only after reconciliation
+and the Watch handshake succeed. Retries start at `1s`, double to the configured
+limit, include up to 20% positive jitter within that limit, and reset after
+Watch readiness. Explicit permanent configuration/schema/programming errors
+still return to startup supervision. The standard Compose service uses
+`restart: unless-stopped` as a fallback for process failures.
 
 ## Dependencies
 
@@ -124,6 +134,7 @@ From the repository root:
 make test-go                           # unit tests with root integration overlays
 make test-runtime-controller-postgres  # repository tests against disposable PostgreSQL
 make e2e-runtime-controller            # builds images and runs the lifecycle E2E
+make e2e-runtime-controller-observation-retry # isolated Docker socket outage/recovery
 make integration-stage4-skill-prepare  # Registry to Runtime Controller Skill preparation
 docker build -f services/runtime-controller/Dockerfile -t antnest/runtime-controller:local .
 ```
@@ -137,6 +148,12 @@ The root Go runner overlays those sources into the owning packages so they can
 reach package-private details. The lifecycle E2E covers initialization from an
 empty environment, Controller restart recovery, Runtime restart observation,
 Update, Disable workspace retention, Enable, and Delete cleanup.
+
+The observation retry E2E builds a separately tagged candidate Controller and
+uses a private Unix-socket proxy to simulate unavailable Docker at startup and
+a later Watch disconnect. It verifies readiness leases, zero process restarts,
+and successful Runtime Initialize/Delete after recovery, then removes its
+owned containers, volumes, networks and candidate image.
 
 Opt-in checks:
 

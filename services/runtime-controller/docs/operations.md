@@ -33,6 +33,7 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | Go duration; complete mutation bound including lock wait; default `2m` |
 | `ANTNEST_RUNTIME_RPC_TIMEOUT` | no | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout |
 | `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT` | no | Go duration; complete physical/logical inventory reconciliation bound; default `2m` |
+| `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no | Go duration; observation retry cap including jitter; default `30s`, minimum `1s` |
 | `ANTNEST_OBSERVATION_RETENTION` | no | Go duration; journal retention; default `168h` |
 | `ANTNEST_RUNTIME_SSE_HEARTBEAT` | no | Go duration; internal SSE heartbeat; default `15s` |
 
@@ -108,6 +109,45 @@ startup failures surface on Inspect/List and observations, not creation.
 One unhealthy Runtime does not make the Controller unready. Its state appears
 in `InspectRuntime` and Runtime observations. Readiness never inspects every
 Runtime; full inventory belongs only to reconciliation.
+
+### Observation Dependency Recovery
+
+Leadership acquisition, follower Watch-readiness queries, and reconciliation
+retry transient dependency failures instead of terminating Runtime Controller.
+After a failed initial reconciliation, the monitor withdraws shared Watch
+readiness and releases leadership before waiting and trying again. The monitor
+also withdraws readiness on lease loss and Watch disconnection. It only
+announces readiness after inventory reconciliation and the Watch handshake
+succeed; observing another leader's ready lease permits a follower to start.
+
+Consecutive failures use exponential backoff from `1s`, doubling up to
+`ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` (default `30s`). Up to 20%
+positive jitter is added without exceeding the configured cap. A successful
+Watch-readiness announcement or ready-leader probe resets the backoff. Healthy
+followers poll leadership/readiness once per second. Shutdown interrupts retry
+waits and releases an acquired lease.
+
+During an initial outage, startup keeps waiting for monitor readiness and does
+not open the HTTP listener yet; the process remains running and its healthcheck
+cannot succeed. After the first successful startup, a Docker Watch outage does
+not change the existing local `/status` readiness contract or stop the control
+API. Actual Docker-dependent lifecycle calls can fail until Docker recovers.
+Database connectivity and journal/notification readiness remain required by
+`/status`.
+
+Retry logs carry `result=retrying`, a bounded `retry_delay`, and one of
+`observation_leadership_query_failed`, `observation_reconcile_failed`,
+`observation_leadership_lost`, `observation_monitor_run_failed`, or
+`platform_reconciliation_failed`. Errors use the existing sanitized diagnostic
+path. `runtime_controller_observation_reconcile_failures_total` counts failed
+reconciliations; `runtime.platform.reconciliations` retains its result labels.
+
+Only explicitly marked `monitor.PermanentError` failures exit the monitor loop.
+Invalid startup configuration and unknown future migration versions still fail
+startup; this retry policy does not change database bootstrap or notification
+listener supervision. The standard Compose service uses
+`restart: unless-stopped` as a fallback for process exits, not as the monitor's
+retry mechanism. Docker healthcheck failure alone does not restart a container.
 
 ## Platform Health And Restart
 

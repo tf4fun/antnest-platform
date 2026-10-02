@@ -20,11 +20,12 @@ import (
 )
 
 var (
-	monitorMeter       = otel.Meter("github.com/tf4fun/antnest-platform/runtime-controller/platform-monitor")
-	monitorTracer      = otel.Tracer("github.com/tf4fun/antnest-platform/runtime-controller/platform-monitor")
-	watchReconnects    = mustCounter(monitorMeter.Int64Counter("runtime.platform.watch.reconnects"))
-	reconciliations    = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliations"))
-	reconciliationGaps = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliation.gaps"))
+	monitorMeter           = otel.Meter("github.com/tf4fun/antnest-platform/runtime-controller/platform-monitor")
+	monitorTracer          = otel.Tracer("github.com/tf4fun/antnest-platform/runtime-controller/platform-monitor")
+	watchReconnects        = mustCounter(monitorMeter.Int64Counter("runtime.platform.watch.reconnects"))
+	reconciliations        = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliations"))
+	reconciliationGaps     = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliation.gaps"))
+	reconciliationFailures = mustCounter(monitorMeter.Int64Counter("runtime_controller_observation_reconcile_failures_total"))
 )
 
 type Sink interface {
@@ -45,8 +46,10 @@ type Runner struct {
 	health           Health
 	logger           *slog.Logger
 	retryDelay       time.Duration
+	maxRetryDelay    time.Duration
 	reconcileTimeout time.Duration
 	now              func() time.Time
+	wait             func(context.Context, time.Duration) bool
 }
 
 func New(
@@ -55,20 +58,25 @@ func New(
 	health Health,
 	logger *slog.Logger,
 	retryDelay time.Duration,
+	maxRetryDelay time.Duration,
 	reconcileTimeout time.Duration,
 ) (*Runner, error) {
 	if source == nil || sink == nil || health == nil || logger == nil {
-		return nil, fmt.Errorf("platform source, observation sink, health tracker, and logger are required")
+		return nil, &PermanentError{Err: fmt.Errorf("platform source, observation sink, health tracker, and logger are required")}
 	}
 	if retryDelay <= 0 {
-		return nil, fmt.Errorf("platform Watch retry delay must be positive")
+		return nil, &PermanentError{Err: fmt.Errorf("platform Watch retry delay must be positive")}
+	}
+	if maxRetryDelay < retryDelay {
+		return nil, &PermanentError{Err: fmt.Errorf("platform Watch maximum retry delay must not be below the initial delay")}
 	}
 	if reconcileTimeout <= 0 {
-		return nil, fmt.Errorf("platform reconciliation timeout must be positive")
+		return nil, &PermanentError{Err: fmt.Errorf("platform reconciliation timeout must be positive")}
 	}
 	return &Runner{
 		source: source, sink: sink, health: health, logger: logger,
-		retryDelay: retryDelay, reconcileTimeout: reconcileTimeout, now: time.Now,
+		retryDelay: retryDelay, maxRetryDelay: maxRetryDelay,
+		reconcileTimeout: reconcileTimeout, now: time.Now, wait: wait,
 	}, nil
 }
 
@@ -81,6 +89,7 @@ func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error)
 		result := "completed"
 		if resultErr != nil {
 			result = "error"
+			reconciliationFailures.Add(ctx, 1)
 			span.RecordError(diagnostics.Error(resultErr))
 			span.SetStatus(codes.Error, "platform reconciliation failed")
 		}
@@ -138,8 +147,9 @@ func (r *Runner) Run(
 	onUnready func(context.Context) error,
 ) error {
 	if onReady == nil || onUnready == nil {
-		return fmt.Errorf("platform Watch readiness callbacks are required")
+		return &PermanentError{Err: fmt.Errorf("platform Watch readiness callbacks are required")}
 	}
+	backoff := newRetryBackoff(r.retryDelay, r.maxRetryDelay)
 	for {
 		watchReady := false
 		watchErr := r.source.Watch(
@@ -150,6 +160,7 @@ func (r *Runner) Run(
 					return err
 				}
 				watchReady = true
+				backoff.reset()
 				r.health.MarkMonitor(true)
 				return nil
 			},
@@ -160,11 +171,15 @@ func (r *Runner) Run(
 		if watchReady {
 			r.health.MarkMonitor(false)
 			if err := callWithTimeout(onUnready); err != nil && ctx.Err() == nil {
-				return fmt.Errorf("withdraw platform Watch readiness: %w", err)
+				return errors.Join(watchErr, fmt.Errorf("withdraw platform Watch readiness: %w", err))
 			}
 		}
 		if ctx.Err() != nil {
 			return nil
+		}
+		if isPermanent(watchErr) {
+			r.health.MarkMonitor(false)
+			return watchErr
 		}
 		watchReconnects.Add(ctx, 1)
 		r.logger.WarnContext(ctx, "platform event stream disconnected",
@@ -175,16 +190,16 @@ func (r *Runner) Run(
 			if reconcileErr := r.Reconcile(ctx, true); reconcileErr == nil {
 				break
 			} else {
-				r.logger.ErrorContext(ctx, "platform reconciliation failed",
-					"component", "platform_reconciliation", "result", "error",
-					"error_class", "platform_reconciliation_failed", "error", diagnostics.Message(reconcileErr))
-			}
-			if !wait(ctx, r.retryDelay) {
-				return nil
+				if isPermanent(reconcileErr) {
+					return reconcileErr
+				}
+				if !r.retry(ctx, backoff, "platform_reconciliation_failed", "platform reconciliation failed", reconcileErr) {
+					return nil
+				}
 			}
 		}
 		since = disconnectedAt
-		if !wait(ctx, r.retryDelay) {
+		if !r.wait(ctx, backoff.next()) {
 			return nil
 		}
 	}
@@ -194,25 +209,42 @@ func (r *Runner) RunCoordinated(
 	ctx context.Context, coordinator repository.ObservationCoordinator, ready func(),
 ) error {
 	if coordinator == nil || ready == nil {
-		return fmt.Errorf("observation coordinator and readiness callback are required")
+		return &PermanentError{Err: fmt.Errorf("observation coordinator and readiness callback are required")}
 	}
+	backoff := newRetryBackoff(r.retryDelay, r.maxRetryDelay)
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		leadership, acquired, err := coordinator.TryAcquireObservationLeadership(ctx)
 		if err != nil {
 			r.health.MarkMonitor(false)
-			return fmt.Errorf("acquire observation monitor leadership: %w", err)
+			if isPermanent(err) {
+				return fmt.Errorf("acquire observation monitor leadership: %w", err)
+			}
+			if !r.retry(ctx, backoff, "observation_leadership_query_failed", "observation leadership query failed", err) {
+				return nil
+			}
+			continue
 		}
 		if !acquired {
 			monitorReady, readyErr := coordinator.ObservationMonitorReady(ctx)
 			if readyErr != nil {
 				r.health.MarkMonitor(false)
-				return fmt.Errorf("probe observation monitor readiness: %w", readyErr)
+				if isPermanent(readyErr) {
+					return fmt.Errorf("probe observation monitor readiness: %w", readyErr)
+				}
+				if !r.retry(ctx, backoff, "observation_leadership_query_failed", "observation readiness query failed", readyErr) {
+					return nil
+				}
+				continue
 			}
 			r.health.MarkMonitor(monitorReady)
 			if monitorReady {
+				backoff.reset()
 				ready()
 			}
-			if !wait(ctx, r.retryDelay) {
+			if !r.wait(ctx, r.retryDelay) {
 				return nil
 			}
 			continue
@@ -240,6 +272,7 @@ func (r *Runner) RunCoordinated(
 					if err := leadership.MarkObservationReady(readyCtx); err != nil {
 						return err
 					}
+					backoff.reset()
 					r.health.MarkMonitor(true)
 					ready()
 					return nil
@@ -251,27 +284,46 @@ func (r *Runner) RunCoordinated(
 		cancelLeader()
 		<-leaseWatchDone
 		releaseErr := releaseLeadership(leadership)
+		r.health.MarkMonitor(false)
 		if ctx.Err() != nil {
-			return errors.Join(reconcileErr, runErr, releaseErr)
+			return nil
+		}
+		resultErr := errors.Join(reconcileErr, runErr, releaseErr)
+		if isPermanent(resultErr) {
+			return resultErr
 		}
 		if leaseLost {
-			r.health.MarkMonitor(false)
-			r.logger.WarnContext(ctx, "observation monitor leadership was lost",
-				"component", "platform_watch", "result", "disconnected",
-				"error_class", "observation_leadership_lost",
-				"error", diagnostics.Message(leadership.Err()))
-			if !wait(ctx, r.retryDelay) {
+			if !r.retry(ctx, backoff, "observation_leadership_lost", "observation monitor leadership was lost", errors.Join(leadership.Err(), resultErr)) {
 				return nil
 			}
 			continue
 		}
 		if reconcileErr != nil {
-			return errors.Join(reconcileErr, releaseErr)
+			if !r.retry(ctx, backoff, "observation_reconcile_failed", "observation reconciliation failed", resultErr) {
+				return nil
+			}
+			continue
 		}
-		if err := errors.Join(runErr, releaseErr); err != nil {
-			return err
+		if resultErr != nil {
+			if !r.retry(ctx, backoff, "observation_monitor_run_failed", "observation monitor run failed", resultErr) {
+				return nil
+			}
+			continue
 		}
+		return &PermanentError{Err: errors.New("observation monitor stopped unexpectedly")}
 	}
+}
+
+func (r *Runner) retry(ctx context.Context, backoff *retryBackoff, class, message string, err error) bool {
+	r.health.MarkMonitor(false)
+	if ctx.Err() != nil {
+		return false
+	}
+	delay := backoff.next()
+	r.logger.WarnContext(ctx, message,
+		"component", "platform_monitor", "result", "retrying", "error_class", class,
+		"error", diagnostics.Message(err), "retry_delay", delay.String())
+	return r.wait(ctx, delay)
 }
 
 func leadershipEnded(leadership repository.Leadership) bool {

@@ -166,6 +166,7 @@ services:
 
   runtime-controller:
     image: antnest/runtime-controller:local
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/runtime-controller/Dockerfile
@@ -184,6 +185,7 @@ services:
       ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
+      ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY: ${ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY:-30s}
       ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: ${ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:-}
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}

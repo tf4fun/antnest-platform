@@ -11,6 +11,8 @@ import (
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
+const MonitorRetryDelay = time.Second
+
 type Config struct {
 	ListenAddress         string
 	DatabaseURL           string
@@ -26,6 +28,7 @@ type Config struct {
 	MutationTimeout       time.Duration
 	RPCRequestTimeout     time.Duration
 	ReconciliationTimeout time.Duration
+	MonitorMaxRetryDelay  time.Duration
 	ObservationRetention  time.Duration
 	SSEHeartbeat          time.Duration
 	RuntimeOTEL           map[string]string
@@ -53,6 +56,15 @@ func Load(lookup func(string) string) (Config, error) {
 	)
 	if err != nil {
 		return Config{}, err
+	}
+	monitorMaxRetryDelay, err := duration(
+		lookup, "ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY", 30*time.Second,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if monitorMaxRetryDelay < MonitorRetryDelay {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY must be at least %s", MonitorRetryDelay)
 	}
 	retention, err := duration(lookup, "ANTNEST_OBSERVATION_RETENTION", 7*24*time.Hour)
 	if err != nil {
@@ -84,6 +96,7 @@ func Load(lookup func(string) string) (Config, error) {
 		MutationTimeout:       mutationTimeout,
 		RPCRequestTimeout:     rpcTimeout,
 		ReconciliationTimeout: reconciliationTimeout,
+		MonitorMaxRetryDelay:  monitorMaxRetryDelay,
 		ObservationRetention:  retention,
 		SSEHeartbeat:          heartbeat,
 		RuntimeOTEL:           runtimeTelemetryEnvironment(lookup),

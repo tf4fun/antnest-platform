@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+Runtime Controller now retries transient observation leadership/readiness
+queries and initial reconciliation failures instead of exiting
+([#17](https://github.com/tf4fun/antnest-platform/issues/17)). Observation retries
+use capped exponential backoff with jitter; operators can set
+`ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` (default `30s`, minimum
+`1s`). Failed initial attempts release leadership and keep Watch readiness
+withdrawn until recovery. Standard Compose also uses `restart: unless-stopped`
+for the Controller. See the
+[recovery and readiness semantics](services/runtime-controller/docs/operations.md#observation-dependency-recovery).
+
 ### Changed
 
 ACP now reads `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID` exactly as supplied,

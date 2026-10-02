@@ -1,0 +1,375 @@
+import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
+import { parseArgs } from "node:util";
+import {
+  cleanup,
+  composeArgs,
+  configuration,
+  dockerClient,
+} from "../lifecycle-closeout/docker.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
+
+const { values } = parseArgs({
+  options: {
+    output: {
+      type: "string",
+      default: "artifacts/verification/runtime-controller-observation-retry",
+    },
+  },
+});
+const abort = new AbortController();
+const interrupt = () =>
+  abort.abort(new Error("observation recovery verification interrupted"));
+process.once("SIGINT", interrupt);
+process.once("SIGTERM", interrupt);
+const timer = setTimeout(interrupt, 900000);
+let config,
+  imageTag,
+  imageID,
+  controllerID,
+  failure,
+  result,
+  cleaned = false;
+
+async function waitFor(check, label, timeout = 60000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    abort.signal.throwIfAborted();
+    if (await check()) return;
+    await delay(200, undefined, { signal: abort.signal });
+  }
+  throw new Error(`${label} did not converge`);
+}
+
+async function removeCandidateImage(config, tag, id) {
+  if (!tag) return;
+  const docker = dockerClient(config.env, undefined, 60000);
+  let image;
+  try {
+    [image] = JSON.parse(await docker(["image", "inspect", tag]));
+  } catch (error) {
+    if (id) throw error;
+    return;
+  }
+  if (id) assert.equal(image.Id, id);
+  assert.equal(image.Config.Labels["io.antnest.test-project"], config.project);
+  await docker(["image", "rm", tag]);
+}
+
+try {
+  config = await configuration(abort.signal);
+  config.evidence = `${values.output}/${config.project}`;
+  imageTag = `antnest/runtime-controller:observation-retry-${config.project.slice(-8)}`;
+  Object.assign(config.env, {
+    ANTNEST_RUNTIME_CONTROLLER_HOST_PORT: config.env.ANTNEST_EDGE_HOST_PORT,
+    ANTNEST_OBSERVATION_PROXY_HOST_PORT:
+      config.env.ANTNEST_LIFECYCLE_MODEL_HOST_PORT,
+    ANTNEST_OBSERVATION_TEST_CONTROLLER_IMAGE: imageTag,
+    ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY: "1s",
+    ANTNEST_POSTGRES_ADMIN_PASSWORD: "observation-test-admin",
+    ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: "",
+    OTEL_SDK_DISABLED: "true",
+    OTEL_TRACES_EXPORTER: "none",
+    OTEL_METRICS_EXPORTER: "none",
+    OTEL_LOGS_EXPORTER: "none",
+    ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "false",
+  });
+  for (const role of [
+    "EGRESS",
+    "RUNTIME_CONTROLLER",
+    "AGENT_ACP",
+    "IDENTITY",
+    "AGENT_CONTROLLER",
+    "SKILL_REGISTRY",
+    "TEMPORAL",
+  ])
+    config.env[`ANTNEST_${role}_POSTGRES_PASSWORD`] =
+      "observation-test-database";
+  config.compose = (args) =>
+    composeArgs(config.project, [
+      "-f",
+      "tests/e2e/runtime-controller/observation-retry.compose.yaml",
+      ...args,
+    ]);
+  const docker = dockerClient(config.env, abort.signal);
+  console.log(`Disposable observation recovery project: ${config.project}`);
+  await docker(
+    [
+      "build",
+      "--label",
+      `io.antnest.test-project=${config.project}`,
+      "-f",
+      "services/runtime-controller/Dockerfile",
+      "-t",
+      imageTag,
+      ".",
+    ],
+    true,
+  );
+  imageID = await docker(["image", "inspect", "--format", "{{.Id}}", imageTag]);
+  const rendered = JSON.parse(
+    await docker(config.compose(["config", "--format", "json"])),
+  );
+  assert.equal(
+    rendered.services["runtime-controller"].restart,
+    "unless-stopped",
+  );
+  assert.equal(
+    rendered.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY,
+    "1s",
+  );
+  await docker(
+    config.compose([
+      "up",
+      "-d",
+      "--no-build",
+      "--pull",
+      "never",
+      "postgres",
+      "runtime-egress",
+      "runtime-controller",
+    ]),
+    true,
+  );
+  controllerID = await docker(
+    config.compose(["ps", "-q", "runtime-controller"]),
+  );
+  assert.match(controllerID, /^[a-f0-9]{64}$/);
+  const state = async () =>
+    JSON.parse(await docker(["inspect", controllerID]))[0];
+  const logs = async () =>
+    (await docker(["logs", controllerID]))
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line));
+  const initial = await state();
+  assert.equal(initial.Image, imageID);
+  assert.equal(initial.HostConfig.RestartPolicy.Name, "unless-stopped");
+  function assertSameProcess(current) {
+    assert.equal(current.State.Running, true);
+    assert.equal(current.State.Restarting, false);
+    assert.equal(
+      current.RestartCount,
+      0,
+      "restart policy must not hide monitor process exits",
+    );
+    assert.equal(current.State.StartedAt, initial.State.StartedAt);
+  }
+  const controller = `http://127.0.0.1:${config.env.ANTNEST_RUNTIME_CONTROLLER_HOST_PORT}`;
+  const proxy = `http://127.0.0.1:${config.env.ANTNEST_OBSERVATION_PROXY_HOST_PORT}`;
+  const request = async (path, body, key) => {
+    const response = await fetch(controller + path, {
+      method: body ? "POST" : "GET",
+      headers: {
+        "content-type": "application/json",
+        ...(key ? { "Idempotency-Key": key } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(180000)]),
+    });
+    assert.equal(response.status, 200, `${path}: HTTP ${response.status}`);
+    return response.json();
+  };
+  const proxyMode = async (mode) => {
+    const response = await fetch(`${proxy}/${mode}`, {
+      method: "POST",
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const monitorReady = async () =>
+    Number(
+      await docker(
+        config.compose([
+          "exec",
+          "-T",
+          "postgres",
+          "psql",
+          "-U",
+          "antnest_test_admin",
+          "-d",
+          "antnest_runtime_controller",
+          "-At",
+          "-c",
+          `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = ${0x414e5402} AND objid = 2 AND objsubid = 2 AND granted`,
+        ]),
+      ),
+    ) > 0;
+  await waitFor(async () => {
+    assertSameProcess(await state());
+    return (
+      (await logs()).filter(
+        (line) => line.error_class === "observation_reconcile_failed",
+      ).length >= 2
+    );
+  }, "initial reconciliation retry");
+  assert.equal(await monitorReady(), false);
+  await assert.rejects(
+    docker([
+      "exec",
+      controllerID,
+      "/usr/local/bin/runtime-controller",
+      "--healthcheck",
+    ]),
+  );
+  const startupFailures = await logs();
+  await proxyMode("online");
+  await waitFor(async () => {
+    try {
+      return (
+        (await request("/status")).status === "ready" && (await monitorReady())
+      );
+    } catch {
+      return false;
+    }
+  }, "startup recovery");
+  assertSameProcess(await state());
+
+  await proxyMode("offline");
+  await waitFor(async () => {
+    assertSameProcess(await state());
+    return (
+      !(await monitorReady()) &&
+      (await logs()).some(
+        (line) => line.error_class === "platform_reconciliation_failed",
+      )
+    );
+  }, "Watch disconnect reconciliation");
+  assert.equal(
+    (await request("/status")).status,
+    "ready",
+    "local readiness must not probe Docker",
+  );
+  await proxyMode("online");
+  await waitFor(monitorReady, "Watch recovery");
+  assertSameProcess(await state());
+
+  const agent = `agent_${config.project.slice(-8).padEnd(32, "0")}`;
+  const egress = `${config.project}-runtime-egress-1`;
+  await waitFor(async () => {
+    const [current] = JSON.parse(await docker(["inspect", egress]));
+    return current.State.Health.Status === "healthy";
+  }, "Egress readiness");
+  const network = JSON.parse(
+    await docker([
+      "exec",
+      egress,
+      "curl",
+      "--fail-with-body",
+      "-sS",
+      "-X",
+      "PUT",
+      `http://${config.env.ANTNEST_EGRESS_CONTROL_IPV4}:8081/internal/agent-networks/${agent}`,
+    ]),
+  );
+  const created = await request(
+    `/internal/runtimes/${agent}/initialize`,
+    {
+      configuration: {
+        image_ref: config.image,
+        network: {
+          packet_contract_revision: network.packet_contract_revision,
+          egress_endpoint: network.egress_endpoint,
+          tunnel_ipv4: network.tunnel_ipv4,
+          resolver_ipv4: network.resolver_ipv4,
+        },
+        resources: {
+          memory_bytes: 536870912,
+          pids_limit: 256,
+          tmpfs_bytes: 67108864,
+        },
+      },
+    },
+    `initialize-${agent}`,
+  );
+  assert.equal(created.state, "completed");
+  assert.equal(created.inspection.lifecycle_state, "provisioned");
+  const runtime = JSON.parse(
+    await docker(["inspect", `antnest-runtime-${agent}`]),
+  )[0];
+  assert.equal(runtime.State.Running, true);
+  const observations = await request(
+    "/internal/runtime-observations?after_sequence=0&limit=100",
+  );
+  assert(
+    observations.observations.filter((value) => value.kind === "reconciled")
+      .length >= 2,
+  );
+  const deleted = await request(
+    `/internal/runtimes/${agent}/delete`,
+    { expected_revision: created.target_revision },
+    `delete-${agent}`,
+  );
+  assert.equal(deleted.state, "completed");
+  assert.equal(deleted.inspection.lifecycle_state, "deleted");
+  assertSameProcess(await state());
+  writeEvidenceFile(
+    config.evidence,
+    "startup-retries.private.json",
+    JSON.stringify(startupFailures),
+  );
+  writeEvidenceFile(
+    config.evidence,
+    "recovery.private.json",
+    JSON.stringify({ logs: await logs(), observations, created, deleted }),
+  );
+  result = {
+    project: config.project,
+    image_id: imageID,
+    initial_failures: startupFailures.filter(
+      (line) => line.error_class === "observation_reconcile_failed",
+    ).length,
+    restart_count: 0,
+    startup_recovered: true,
+    watch_recovered: true,
+    runtime_created: true,
+  };
+} catch (error) {
+  failure = error;
+  if (config && controllerID) {
+    try {
+      const docker = dockerClient(config.env, undefined, 60000);
+      writeEvidenceFile(
+        config.evidence,
+        "failure-logs.private.txt",
+        await docker(["logs", controllerID]),
+      );
+    } catch {
+      /* Preserve the original failure and still clean up. */
+    }
+  }
+} finally {
+  clearTimeout(timer);
+  if (config) {
+    try {
+      await cleanup(config);
+      await removeCandidateImage(config, imageTag, imageID);
+      cleaned = true;
+    } catch (error) {
+      failure = failure
+        ? new AggregateError(
+            [failure, error],
+            "verification and cleanup failed",
+          )
+        : error;
+    }
+    writeEvidenceFile(
+      config.evidence,
+      "result.json",
+      JSON.stringify({
+        ...result,
+        status: failure ? "failed" : "passed",
+        cleanup: cleaned,
+        ...(failure ? { error: failure.message } : {}),
+      }),
+    );
+  }
+  process.removeListener("SIGINT", interrupt);
+  process.removeListener("SIGTERM", interrupt);
+}
+if (failure) {
+  console.error(`Observation recovery E2E failed: ${failure.message}`);
+  process.exitCode = 1;
+} else console.log(JSON.stringify({ ...result, cleanup: cleaned }));
