@@ -58,14 +58,3 @@ func (s *flappingStartupReadiness) Status(context.Context) (control.Readiness, e
 	return control.Readiness{DatabaseReady: true, PlatformReady: true, ObservationReady: true,
 		MonitorReady: s.health.MonitorReady()}, nil
 }
-
-func (s *flappingStartupReadiness) Ready(ctx context.Context) error {
-	status, err := s.Status(ctx)
-	if err != nil {
-		return err
-	}
-	if !status.Ready() {
-		return errors.New("platform observation monitor is not ready")
-	}
-	return nil
-}

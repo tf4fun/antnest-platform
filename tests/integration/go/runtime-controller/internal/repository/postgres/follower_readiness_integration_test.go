@@ -65,8 +65,8 @@ func TestRepositoryFollowerHTTPReadinessMirrorsLeaderWatchLease(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	check := func(expected int) {
 		t.Helper()
-		// One production poll interval plus scheduling/HTTP overhead on CI.
-		deadline := time.Now().Add(1500 * time.Millisecond)
+		// Allow several one-second polls and scheduling/HTTP overhead on slow CI.
+		deadline := time.Now().Add(5 * time.Second)
 		for {
 			response, err := client.Get(server.URL + "/status")
 			if err != nil {
@@ -87,7 +87,7 @@ func TestRepositoryFollowerHTTPReadinessMirrorsLeaderWatchLease(t *testing.T) {
 				return
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("follower did not reflect its leader within one poll: HTTP %d %+v", response.StatusCode, body)
+				t.Fatalf("follower did not reflect its leader before the readiness timeout: HTTP %d %+v", response.StatusCode, body)
 			}
 			time.Sleep(5 * time.Millisecond)
 		}

@@ -122,17 +122,6 @@ func NewService(
 	return service, nil
 }
 
-func (s *Service) Ready(ctx context.Context) error {
-	status, err := s.Status(ctx)
-	if err != nil {
-		return err
-	}
-	if !status.Ready() {
-		return fmt.Errorf("runtime controller is not ready")
-	}
-	return nil
-}
-
 func (s *Service) Status(ctx context.Context) (Readiness, error) {
 	var status Readiness
 	var result error
