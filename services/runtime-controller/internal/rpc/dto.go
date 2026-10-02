@@ -81,13 +81,14 @@ type readinessResponse struct {
 	DatabaseReady    bool   `json:"database_ready"`
 	PlatformReady    bool   `json:"platform_ready"`
 	ObservationReady bool   `json:"observation_ready"`
+	MonitorReady     bool   `json:"monitor_ready"`
 }
 
 func readinessFromDomain(status string, value control.Readiness) readinessResponse {
 	return readinessResponse{
 		Status: status, Live: true, Ready: value.Ready(),
 		DatabaseReady: value.DatabaseReady, PlatformReady: value.PlatformReady,
-		ObservationReady: value.ObservationReady,
+		ObservationReady: value.ObservationReady, MonitorReady: value.MonitorReady,
 	}
 }
 

@@ -98,13 +98,16 @@ Controller readiness requires:
    leaving a synthetic business fact;
 4. a separately committed, payload-only notification probe traverses the
    active PostgreSQL LISTEN callback without entering the journal;
+5. the background monitor has completed reconciliation and the Watch
+   handshake, or a follower has observed the leader's shared Watch-ready lease.
 
-Platform inventory/Watch initialization still occurs at startup, but `/status`
-does not call Docker or Runtime `/status`, and a later Docker Watch outage does
-not make local readiness recursively depend on the deployment platform. The
-legacy `platform_ready` field denotes successful local adapter initialization.
-Network/volume failures surface on actual lifecycle calls. Runtime health and
-startup failures surface on Inspect/List and observations, not creation.
+`/status` reads the monitor's cached in-process state without calling Docker or
+Runtime `/status` or scanning inventory. Contract revision 14 requires the
+separate `monitor_ready` boolean. `observation_ready` still describes journal
+and notification readiness; `platform_ready` still denotes successful local
+adapter initialization. Overall `ready` requires all four component flags.
+Runtime health and startup failures surface on Inspect/List and observations,
+not creation.
 
 One unhealthy Runtime does not make the Controller unready. Its state appears
 in `InspectRuntime` and Runtime observations. Readiness never inspects every
@@ -129,11 +132,27 @@ waits and releases an acquired lease.
 
 During an initial outage, startup keeps waiting for monitor readiness and does
 not open the HTTP listener yet; the process remains running and its healthcheck
-cannot succeed. After the first successful startup, a Docker Watch outage does
-not change the existing local `/status` readiness contract or stop the control
-API. Actual Docker-dependent lifecycle calls can fail until Docker recovers.
-Database connectivity and journal/notification readiness remain required by
-`/status`.
+cannot succeed. After the first ready callback, startup rechecks only local
+dependencies. A monitor flap during that recheck allows HTTP to open with 503
+instead of terminating the process. Local dependency failures retain their
+startup failure semantics.
+
+After startup, monitor retries and Watch reconnection return HTTP 503 with
+`live: true`, `ready: false` and `monitor_ready: false`; recovery returns HTTP
+200. Followers mirror the shared lease within their normal one-second poll.
+The control API and retry loop keep running. A Watch-only disconnect leaves
+other Docker APIs reachable, so lifecycle calls can still succeed. A missing
+socket, daemon outage or permission failure also makes actual Docker-dependent
+calls fail. These cases have the same monitor readiness signal but different
+effects on lifecycle calls.
+
+Every Watch reconnect includes reconciliation followed by a retry wait of at
+least one second before the next handshake, so a short 503 window is expected
+even when other Docker APIs remain reachable. Use the existing Compose
+healthcheck `retries` or Kubernetes `failureThreshold` to tolerate brief
+reconnects; there is no extra grace-period setting. `/status` reports the cached
+state immediately rather than hiding the gap. The Controller's `--healthcheck`
+reads only the HTTP status code, so it also fails during this window.
 
 Retry logs carry `result=retrying`, a bounded `retry_delay`, and one of
 `observation_leadership_query_failed`, `observation_reconcile_failed`,

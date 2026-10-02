@@ -400,7 +400,7 @@ func (s *fakeService) Status(context.Context) (control.Readiness, error) {
 	if s.readyErr != nil {
 		return control.Readiness{}, s.readyErr
 	}
-	return control.Readiness{DatabaseReady: true, PlatformReady: true, ObservationReady: true}, nil
+	return control.Readiness{DatabaseReady: true, PlatformReady: true, ObservationReady: true, MonitorReady: true}, nil
 }
 func (s *fakeService) InitializeRuntime(
 	_ context.Context, _ string, agentID string, configuration deployment.Configuration,

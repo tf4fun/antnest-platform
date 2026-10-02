@@ -56,14 +56,15 @@
     "readiness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "live", "ready", "database_ready", "platform_ready", "observation_ready"],
+      "required": ["status", "live", "ready", "database_ready", "platform_ready", "observation_ready", "monitor_ready"],
       "properties": {
         "status": {"enum": ["ready", "not_ready"]},
         "live": {"type": "boolean", "const": true},
         "ready": {"type": "boolean"},
         "database_ready": {"type": "boolean"},
         "platform_ready": {"type": "boolean"},
-        "observation_ready": {"type": "boolean"}
+        "observation_ready": {"type": "boolean"},
+        "monitor_ready": {"type": "boolean", "description": "Cached background monitor state: reconciliation and Watch handshake completed, or a follower observed the shared Watch-ready lease."}
       }
     },
     "runtime_inspection": {

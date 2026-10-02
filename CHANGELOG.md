@@ -16,6 +16,15 @@ for the Controller. See the
 
 ### Changed
 
+Runtime Controller control contract revision 14 adds the required boolean
+`monitor_ready` to both `/status` response shapes
+([#88](https://github.com/tf4fun/antnest-platform/issues/88)). After startup,
+monitor retries and Watch reconnection now return HTTP 503 with `live: true`
+and `monitor_ready: false`, returning to HTTP 200 after recovery. The process
+keeps running, and `/status` reads cached state without probing Docker. The
+Controller's own status-code-only healthcheck needs no parser change. Existing
+probe failure thresholds absorb short reconnect windows.
+
 ACP now reads `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID` exactly as supplied,
 without trimming whitespace, as part of the unified Skill maintenance key ID
 validation ([#5](https://github.com/tf4fun/antnest-platform/issues/5)). This affects

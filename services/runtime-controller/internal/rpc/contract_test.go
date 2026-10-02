@@ -269,7 +269,7 @@ func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 		ExpectedRevision: testRuntimeRevision, Configuration: configurationDTO{},
 	})
 	assertRequiredFields(t, schema, "readiness", readinessFromDomain("ready", control.Readiness{
-		DatabaseReady: true, PlatformReady: true, ObservationReady: true,
+		DatabaseReady: true, PlatformReady: true, ObservationReady: true, MonitorReady: true,
 	}))
 	assertRequiredFields(t, schema, "runtime_inspection", runtimeInspectionFromDomain(inspection))
 	assertRequiredFields(t, schema, "runtime_list", runtimesResponse{

@@ -65,6 +65,23 @@ func checkHealth(lookup func(string) string) (resultErr error) {
 	return nil
 }
 
+type startupReadinessService interface {
+	Status(context.Context) (control.Readiness, error)
+}
+
+func checkStartupReadiness(ctx context.Context, service startupReadinessService) error {
+	status, err := service.Status(ctx)
+	if err != nil {
+		return err
+	}
+	// The first monitor handshake has already happened. A later flap belongs to
+	// HTTP readiness and background recovery, not fatal startup supervision.
+	if !status.LocalReady() {
+		return errors.New("local Runtime Controller initialization is not ready")
+	}
+	return nil
+}
+
 func joinCloseError(resultErr *error, resource string, closeFunc func() error) {
 	if err := closeFunc(); err != nil {
 		*resultErr = errors.Join(*resultErr, fmt.Errorf("close %s: %w", resource, err))
@@ -277,7 +294,7 @@ func run(ctx context.Context) (resultErr error) {
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: time.Minute,
 		BaseContext: func(net.Listener) context.Context { return serverContext },
 	}
-	if err := service.Ready(ctx); err != nil {
+	if err := checkStartupReadiness(ctx, service); err != nil {
 		return classified("readiness", "startup_readiness_failed", err)
 	}
 	workerContext, stopWorkers := context.WithCancel(ctx)

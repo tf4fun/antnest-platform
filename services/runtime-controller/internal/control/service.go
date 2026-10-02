@@ -41,6 +41,7 @@ func (e *ObservationCursorExpiredError) Error() string {
 
 type ObservationReadiness interface {
 	ObservationReady() error
+	MonitorReady() bool
 }
 
 type RuntimeVerifier interface {
@@ -81,9 +82,14 @@ type Readiness struct {
 	DatabaseReady    bool
 	PlatformReady    bool
 	ObservationReady bool
+	MonitorReady     bool
 }
 
 func (r Readiness) Ready() bool {
+	return r.LocalReady() && r.MonitorReady
+}
+
+func (r Readiness) LocalReady() bool {
 	return r.DatabaseReady && r.PlatformReady && r.ObservationReady
 }
 
@@ -143,6 +149,7 @@ func (s *Service) Status(ctx context.Context) (Readiness, error) {
 	// The public field retains its shape but reports local adapter initialization.
 	// Docker/Runtime reachability is observed by actual lifecycle operations.
 	status.PlatformReady = s.platform != nil
+	status.MonitorReady = s.observations.MonitorReady()
 	if ctx.Err() != nil {
 		result = errors.Join(result, ctx.Err())
 	}

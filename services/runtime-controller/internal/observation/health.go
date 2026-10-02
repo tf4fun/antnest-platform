@@ -19,6 +19,10 @@ func (h *Health) MarkMonitor(healthy bool) {
 	h.monitor.Store(healthy)
 }
 
+func (h *Health) MonitorReady() bool {
+	return h.monitor.Load()
+}
+
 func (h *Health) MarkNotifications(healthy bool) {
 	h.notifications.Store(healthy)
 }

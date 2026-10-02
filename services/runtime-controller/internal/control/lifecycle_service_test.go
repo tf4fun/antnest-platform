@@ -762,3 +762,4 @@ func (lifecycleVerifier) Verify(_ context.Context, value deployment.Inspection) 
 type lifecycleObservationReadiness struct{}
 
 func (lifecycleObservationReadiness) ObservationReady() error { return nil }
+func (lifecycleObservationReadiness) MonitorReady() bool      { return true }
