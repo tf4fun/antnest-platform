@@ -8,6 +8,7 @@ export function assertSecretFree(text, secrets) {
       assert(!text.includes(value), "secret credential appeared in evidence");
     }
   }
+  assert(!text.includes("ant_api_"), "access credential appeared in evidence");
 }
 
 function records(logs) {
