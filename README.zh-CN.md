@@ -107,7 +107,8 @@ Runtime Controller 的 Kubernetes 适配器，见 [docs/stage-4-services.md](doc
 
 ## 项目状态
 
-Antnest 仍在积极开发中，尚未发布正式版本，接口和存储结构仍可能变化。已知问题和后续计划
+Antnest 仍在积极开发中，尚未发布正式版本，接口和存储结构仍可能变化。升级前请查看
+[发布说明](CHANGELOG.md)（英文）。已知问题和后续计划
 记录在 [GitHub issues](https://github.com/tf4fun/antnest-platform/issues) 中，欢迎反馈和贡献。
 
 ## 快速开始

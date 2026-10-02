@@ -32,6 +32,11 @@ trusted Runtime verifier. The authoritative definition is in
 the schema, RC, Runtime and ACP share the
 [accept/reject fixtures](../contracts/runtime/maintenance-kid-fixtures.json).
 
+Before upgrading an existing deployment, check the
+[signing key ID compatibility notice](../CHANGELOG.md#unreleased). ACP now
+rejects signing key IDs with leading or trailing whitespace, as well as
+whitespace-only values, at startup; previous versions trimmed them.
+
 The Registry API bearer remains the existing `ANTNEST_SKILL_REGISTRY_API_TOKEN`
 and must differ from the source bearer. From the source bearer, Compose sets the
 private addresses and tokens on both sides. Setting the signing private key also

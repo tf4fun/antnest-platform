@@ -1,0 +1,27 @@
+# Changelog
+
+## Unreleased
+
+### Changed
+
+ACP now reads `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID` exactly as supplied,
+without trimming whitespace, as part of the unified Skill maintenance key ID
+validation ([#5](https://github.com/tf4fun/antnest-platform/issues/5)). This affects
+existing deployments in two cases:
+
+- A value with leading or trailing whitespace, such as `" key"` or `"key "`,
+  was previously trimmed and accepted when paired with a valid signing key.
+  It now causes ACP startup to fail.
+- A whitespace-only value previously counted as unconfigured when no signing
+  private key was configured. It now causes ACP startup to fail.
+
+Before upgrading or restarting, remove whitespace from the signing key ID in
+environment variables and deployment secrets. The ID must match
+`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` and exactly match a trusted Runtime verifier ID.
+To leave signing unconfigured, keep both `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`
+and `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY` unset or exactly empty; do not use
+spaces as an empty value. These configuration errors are rejected at startup,
+before ACP begins serving requests.
+
+See the [Skill deployment guide](docs/skill-deployment.md) for configuration and
+key rotation instructions.
