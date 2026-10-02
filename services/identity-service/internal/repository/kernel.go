@@ -123,7 +123,7 @@ func (s *Store) getPrincipal(
 	var userActive, membershipActive, organizationActive bool
 	err := queryer.QueryRow(ctx, `
 		SELECT u.id, o.id, COALESCE(m.id, ''), u.system_role, COALESCE(m.role, 'member'),
-		       u.active, COALESCE(m.active, FALSE), o.active
+		       u.active, COALESCE(m.active, FALSE), o.active, o.slug, o.name
 		FROM users u
 		JOIN organizations o ON o.id = $2
 		LEFT JOIN organization_memberships m
@@ -133,6 +133,7 @@ func (s *Store) getPrincipal(
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
 		&principal.SystemRole, &principal.OrganizationRole,
 		&userActive, &membershipActive, &organizationActive,
+		&principal.OrganizationSlug, &principal.OrganizationName,
 	)
 	if err != nil {
 		return domain.Principal{}, normalizeError(err)
@@ -154,7 +155,7 @@ func (s *Store) resolveOrganizationPrincipal(
 	var userActive, membershipActive, organizationActive bool
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id, o.id, m.id, u.system_role, m.role,
-		       u.active, m.active, o.active
+		       u.active, m.active, o.active, o.slug, o.name
 		FROM users u
 		JOIN organization_memberships m
 		  ON m.user_id = u.id AND m.organization_id = $2 AND m.scim_deleted_at IS NULL
@@ -164,6 +165,7 @@ func (s *Store) resolveOrganizationPrincipal(
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
 		&principal.SystemRole, &principal.OrganizationRole,
 		&userActive, &membershipActive, &organizationActive,
+		&principal.OrganizationSlug, &principal.OrganizationName,
 	)
 	if err != nil {
 		return domain.Principal{}, normalizeError(err)

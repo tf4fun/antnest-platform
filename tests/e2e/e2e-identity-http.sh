@@ -39,6 +39,14 @@ run_suite() {
 gateway="http://127.0.0.1:$ANTNEST_EDGE_HOST_PORT"
 jaeger="http://127.0.0.1:$ANTNEST_JAEGER_UI_HOST_PORT"
 if [ "$ANTNEST_IDENTITY_SUITE" = core ]; then
+  docker_cmd run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
+    --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    -e ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG -e ANTNEST_BOOTSTRAP_ORGANIZATION_NAME \
+    -e ANTNEST_BOOTSTRAP_ADMIN_EMAIL -e ANTNEST_BOOTSTRAP_ADMIN_PASSWORD \
+    -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
+    node:24.21.0-bookworm-slim node /fixture/principal-client.mjs \
+    >"$evidence/principal.json" 2>"$evidence/principal.stderr"
+  node -e 'const assert=require("node:assert/strict"); const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); assert.equal(r.status,"business_passed"); console.log(JSON.stringify(r));' "$evidence/principal.json"
   run_suite local-scim "$root/tests/e2e/identity-closeout/client.mjs" "$gateway" "$jaeger"
   docker_cmd cp "$COMPOSE_PROJECT_NAME-oidc-fixture-1:/certs/tls.crt" "$temporary/tls.crt" >/dev/null
   run_suite oidc "$root/tests/e2e/identity-closeout/oidc-client.mjs" "$gateway" "$jaeger" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/canaries.json"

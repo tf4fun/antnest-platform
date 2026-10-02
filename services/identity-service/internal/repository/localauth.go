@@ -25,7 +25,7 @@ func (a *LocalAuthAdapter) FindLocalCredential(
 	var userActive, membershipActive, organizationActive bool
 	err := a.store.pool.QueryRow(ctx, `
 			SELECT c.password_hash, u.id, m.organization_id, m.id, u.system_role, m.role,
-			       u.active, m.active, o.active
+			       u.active, m.active, o.active, o.slug, o.name
 			FROM users u
 			JOIN local_credentials c ON c.user_id = u.id
 			JOIN organization_memberships m ON m.user_id = u.id
@@ -36,6 +36,7 @@ func (a *LocalAuthAdapter) FindLocalCredential(
 		&result.PasswordHash, &result.Principal.UserID, &result.Principal.OrganizationID,
 		&result.Principal.MembershipID, &result.Principal.SystemRole,
 		&result.Principal.OrganizationRole, &userActive, &membershipActive, &organizationActive,
+		&result.Principal.OrganizationSlug, &result.Principal.OrganizationName,
 	)
 	if err != nil {
 		return localauth.LocalCredential{}, normalizeError(err)
@@ -112,7 +113,14 @@ func lockVerifiedLocalCredential(ctx context.Context, tx *databaseTransaction, c
 	if err != nil {
 		return fmt.Errorf("revalidate verified local credential: %w", err)
 	}
-	if current != command.Principal {
+	// Revalidate authorization facts, not organization display metadata. A
+	// rename between password verification and issuance does not revoke access.
+	if current.UserID != command.Principal.UserID ||
+		current.OrganizationID != command.Principal.OrganizationID ||
+		current.MembershipID != command.Principal.MembershipID ||
+		current.SystemRole != command.Principal.SystemRole ||
+		current.OrganizationRole != command.Principal.OrganizationRole ||
+		current.Active != command.Principal.Active {
 		return domain.ErrUnauthenticated
 	}
 	return nil
@@ -129,7 +137,7 @@ func (a *LocalAuthAdapter) ResolveToken(
 	err := a.store.pool.QueryRow(ctx, `
 		SELECT t.id, t.last_used_at,
 		       u.id, m.organization_id, m.id, u.system_role, m.role,
-		       u.active, m.active, o.active
+		       u.active, m.active, o.active, o.slug, o.name
 		FROM api_tokens t
 		JOIN users u ON u.id = t.user_id
 		JOIN organization_memberships m
@@ -142,6 +150,7 @@ func (a *LocalAuthAdapter) ResolveToken(
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
 		&principal.SystemRole, &principal.OrganizationRole,
 		&userActive, &membershipActive, &organizationActive,
+		&principal.OrganizationSlug, &principal.OrganizationName,
 	)
 	if err != nil {
 		return domain.Principal{}, normalizeError(err)

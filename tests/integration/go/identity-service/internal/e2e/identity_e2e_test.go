@@ -130,6 +130,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if login.Principal.UserID != bootstrap.User.ID || login.AccessToken == "" {
 		t.Fatalf("local login = %#v", login)
 	}
+	assertPrincipalOrganization(t, login.Principal, bootstrap.Organization)
 	assertResolvedPrincipal(t, identity.Client(), identity.URL, login.AccessToken, bootstrap.User.ID)
 
 	var issued scim.IssueTokenResult
@@ -174,6 +175,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if completed.Principal.UserID != createdUser.User.ID || completed.AccessToken == "" {
 		t.Fatalf("OIDC did not bind the SCIM-created user: %#v", completed)
 	}
+	assertPrincipalOrganization(t, completed.Principal, bootstrap.Organization)
 	assertResolvedPrincipal(t, identity.Client(), identity.URL, completed.AccessToken, createdUser.User.ID)
 
 	var replay oidcflow.CompleteLoginResult
@@ -181,6 +183,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if replay.AccessToken != "" || replay.TokenID != completed.TokenID || !replay.AlreadyCompleted || idp.ExchangeCount() != 1 {
 		t.Fatalf("OIDC callback was not idempotent: first=%#v replay=%#v exchanges=%d", completed, replay, idp.ExchangeCount())
 	}
+	assertPrincipalOrganization(t, replay.Principal, bootstrap.Organization)
 	for table, kind := range map[string]string{
 		"organizations": "org", "users": "user", "organization_memberships": "membership",
 		"groups": "group", "group_memberships": "groupmembership", "oidc_providers": "oidcprovider",
