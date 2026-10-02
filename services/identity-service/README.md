@@ -64,13 +64,15 @@ resolution is to implement the existing contract (option 1). Contract revision
 
 Pending consumer work belongs to separate service batches:
 
-- Edge Gateway: preserve organization slug/name in its principal and session
+- [Edge Gateway #92](https://github.com/tf4fun/antnest-platform/issues/92):
+  preserve organization slug/name in its principal and session
   projection, including its own contract and regression coverage.
-- Agent UI: use the projected Organization name in session/bootstrap state
+- [Agent UI #93](https://github.com/tf4fun/antnest-platform/issues/93):
+  use the projected Organization name in session/bootstrap state
   instead of the placeholder label, with its own UI contract and tests.
-- Integration: verify Identity → Gateway → Agent UI after both consumer
-  batches pass. This Identity producer fix does not claim that workflow is
-  complete.
+- [Integration tracked in #93](https://github.com/tf4fun/antnest-platform/issues/93):
+  verify Identity → Gateway → Agent UI after both consumer batches pass. This
+  Identity producer fix does not claim that workflow is complete.
 
 ## Configuration
 

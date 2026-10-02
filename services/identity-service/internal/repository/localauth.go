@@ -115,12 +115,11 @@ func lockVerifiedLocalCredential(ctx context.Context, tx *databaseTransaction, c
 	}
 	// Revalidate authorization facts, not organization display metadata. A
 	// rename between password verification and issuance does not revoke access.
-	if current.UserID != command.Principal.UserID ||
-		current.OrganizationID != command.Principal.OrganizationID ||
-		current.MembershipID != command.Principal.MembershipID ||
-		current.SystemRole != command.Principal.SystemRole ||
-		current.OrganizationRole != command.Principal.OrganizationRole ||
-		current.Active != command.Principal.Active {
+	// Compare every remaining field so new authorization facts are not omitted.
+	expected := command.Principal
+	current.OrganizationSlug, current.OrganizationName = "", ""
+	expected.OrganizationSlug, expected.OrganizationName = "", ""
+	if current != expected {
 		return domain.ErrUnauthenticated
 	}
 	return nil
