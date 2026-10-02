@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 13,
+  "version": 14,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -20,7 +20,8 @@
       "authentication": "none",
       "success_status": 200,
       "request_required": ["organization_slug", "email", "password"],
-      "response_required": ["principal", "expires_at"]
+      "response_required": ["principal", "expires_at"],
+      "response_schema": "session-response.schema.json#/$defs/login"
     },
     "login_methods": {
       "method": "POST",
@@ -46,7 +47,8 @@
       "path": "/api/session",
       "authentication": "browser_session",
       "success_status": 200,
-      "response_required": ["principal"]
+      "response_required": ["principal"],
+      "response_schema": "session-response.schema.json#/$defs/session"
     },
     "logout": {
       "method": "DELETE",
@@ -202,7 +204,9 @@
         "X-Antnest-Principal-ID",
         "X-Antnest-User-ID",
         "X-Antnest-Membership-ID",
-        "X-Antnest-Administrator"
+        "X-Antnest-Administrator",
+        "X-Antnest-Organization-Slug",
+        "X-Antnest-Organization-Name"
       ],
       "trust": "strip all incoming X-Antnest identity fields before injecting verified values",
       "identity_failure": "401 or 503; do not contact Node",
@@ -215,7 +219,10 @@
       "authentication": "browser_session_at_entry_and_lease_revalidation",
       "transport": "SSE",
       "replay": "scope_bound_cursor_or_reset",
-      "cursor_sources": ["cursor query on initial EventSource", "Last-Event-ID on reconnect"],
+      "cursor_sources": [
+        "cursor query on initial EventSource",
+        "Last-Event-ID on reconnect"
+      ],
       "lease_max_seconds": 300,
       "buffering": "disabled",
       "upstream_disconnect": "observation only; never cancel ACP Run"
@@ -242,7 +249,9 @@
     "X-Antnest-Principal-ID",
     "X-Antnest-Agent-ID",
     "X-Antnest-Agent-Access-Subject",
-    "X-Antnest-Administrator"
+    "X-Antnest-Administrator",
+    "X-Antnest-Organization-Slug",
+    "X-Antnest-Organization-Name"
   ],
   "response_headers": ["X-Antnest-Trace-ID"],
   "upstream_injected_headers": [
@@ -251,8 +260,20 @@
     "X-Antnest-Agent-ID",
     "X-Antnest-User-ID",
     "X-Antnest-Membership-ID",
-    "X-Antnest-Administrator"
+    "X-Antnest-Administrator",
+    "X-Antnest-Organization-Slug",
+    "X-Antnest-Organization-Name"
   ],
+  "organization_display": {
+    "source": "Identity revision-13 principal.organization_slug and principal.organization_name",
+    "transport": "X-Antnest-Organization-Slug and X-Antnest-Organization-Name; one canonical unpadded Base64URL value per header, encoding the exact UTF-8 string",
+    "scope": "authenticated Agent UI Workspace API and SSR HTML only; anonymous assets and other upstreams receive neither header",
+    "validation": "required non-whitespace strings; Node rejects missing, duplicate, non-canonical Base64URL or invalid UTF-8 values with 401 before discovery",
+    "bootstrap_principal_schema": "../agent-ui/workspace-api.schema.json#/$defs/verifiedWorkspacePrincipal",
+    "authorization": "display only; organization_id, user_id, membership_id, roles and active state retain authorization authority",
+    "freshness": "no metadata cache; each authenticated request resolves Identity again; re-bootstrap and SSR reload observe the current name without changing session scope",
+    "deployment": "Gateway producer #92 first; Agent UI bootstrap consumer #93 then activates the verifiedWorkspacePrincipal schema; full integration follows both local admissions"
+  },
   "error": {
     "required": ["code", "message"],
     "codes": [

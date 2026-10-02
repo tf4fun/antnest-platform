@@ -1,5 +1,7 @@
 # Disposable Identity profiles. Never included by retained deployment Compose.
 services:
+  edge-gateway:
+    image: ${ANTNEST_E2E_GATEWAY_IMAGE:-antnest/edge-gateway:local}
   temporal:
     ports: !reset []
   runtime-controller:

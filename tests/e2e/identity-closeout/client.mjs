@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { assertOrganizationSession } from "./organization-session.mjs";
 import {
   GatewayClient,
   assertNoStore,
@@ -36,6 +37,7 @@ async function login(client, email, loginPassword, status = 200) {
     status,
   });
   if (status === 200) {
+    assertOrganizationSession(response.body, "login");
     assertNoStore(response.headers);
     assert(!("access_token" in response.body));
     const cookie = response.headers
@@ -58,6 +60,10 @@ async function localSessions() {
   });
   await login(member, email, "incorrect-password", 401);
   const loggedIn = await login(member, email, password);
+  assertOrganizationSession(
+    (await member.request("/api/session")).body,
+    "session",
+  );
   assert.equal(loggedIn.body.principal.user_id, created.user.id);
   assert.equal(loggedIn.body.principal.organization_role, "member");
   traces.push({
@@ -77,6 +83,7 @@ async function localSessions() {
     },
   });
   checks.push("local-login-and-member-boundary");
+  checks.push("gateway-local-login-session-organization-metadata");
 
   const validCookie = member.cookie;
   for (const csrf of ["", "wrong-csrf"]) {

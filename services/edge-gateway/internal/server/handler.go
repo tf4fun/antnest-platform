@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,8 @@ import (
 const (
 	HeaderUserID             = "X-Antnest-User-ID"
 	HeaderOrganizationID     = "X-Antnest-Organization-ID"
+	HeaderOrganizationSlug   = "X-Antnest-Organization-Slug"
+	HeaderOrganizationName   = "X-Antnest-Organization-Name"
 	HeaderMembershipID       = "X-Antnest-Membership-ID"
 	HeaderSystemRole         = "X-Antnest-System-Role"
 	HeaderOrganizationRole   = "X-Antnest-Organization-Role"
@@ -45,6 +48,7 @@ const (
 
 var trustedHeaders = []string{
 	HeaderUserID, HeaderOrganizationID, HeaderMembershipID,
+	HeaderOrganizationSlug, HeaderOrganizationName,
 	HeaderSystemRole, HeaderOrganizationRole, HeaderAgentAccessSubject, HeaderPrincipalID, HeaderAgentID,
 }
 
@@ -547,19 +551,12 @@ func (h *handler) workspaceApplication(response http.ResponseWriter, request *ht
 	for _, header := range []string{
 		HeaderOrganizationID, HeaderPrincipalID, HeaderUserID,
 		HeaderMembershipID, HeaderAgentID, HeaderAdministrator,
+		HeaderOrganizationSlug, HeaderOrganizationName,
 	} {
 		request.Header.Del(header)
 	}
 	if !asset {
-		request.Header.Set(HeaderOrganizationID, principal.OrganizationID)
-		request.Header.Set(HeaderPrincipalID, principal.UserID)
-		request.Header.Set(HeaderUserID, principal.UserID)
-		request.Header.Set(HeaderMembershipID, principal.MembershipID)
-		if principal.Administrator() {
-			request.Header.Set(HeaderAdministrator, "true")
-		} else {
-			request.Header.Set(HeaderAdministrator, "false")
-		}
+		setWorkspacePrincipalHeaders(request.Header, principal)
 	}
 	h.workspaceBridgeProxy.ServeHTTP(response, request)
 }
@@ -821,6 +818,20 @@ func setPrincipalHeaders(header http.Header, principal identity.Principal) {
 	header.Set(HeaderMembershipID, principal.MembershipID)
 	header.Set(HeaderSystemRole, principal.SystemRole)
 	header.Set(HeaderOrganizationRole, principal.OrganizationRole)
+}
+
+func setWorkspacePrincipalHeaders(header http.Header, principal identity.Principal) {
+	header.Set(HeaderOrganizationID, principal.OrganizationID)
+	header.Set(HeaderPrincipalID, principal.UserID)
+	header.Set(HeaderUserID, principal.UserID)
+	header.Set(HeaderMembershipID, principal.MembershipID)
+	header.Set(HeaderOrganizationSlug, base64.RawURLEncoding.EncodeToString([]byte(principal.OrganizationSlug)))
+	header.Set(HeaderOrganizationName, base64.RawURLEncoding.EncodeToString([]byte(principal.OrganizationName)))
+	if principal.Administrator() {
+		header.Set(HeaderAdministrator, "true")
+	} else {
+		header.Set(HeaderAdministrator, "false")
+	}
 }
 
 func setSecurityHeaders(response http.ResponseWriter) {

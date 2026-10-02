@@ -53,6 +53,13 @@ Organization's slug and name. The result contains check names only, without
 access credentials. This producer probe is independent of Gateway's response
 projection. Set the test-only `ANTNEST_E2E_IDENTITY_IMAGE` override to validate
 an isolated candidate image without replacing the local development tag.
+
+The real Gateway login and session outputs are separately checked against
+[`session-response.schema.json`](../../../contracts/edge-gateway/session-response.schema.json)
+by `organization-session.mjs`, including ordinary/admin local sessions and OIDC
+sessions. Missing or mismatched Organization labels and credential fields fail
+admission. `ANTNEST_E2E_GATEWAY_IMAGE` selects an isolated Gateway candidate;
+this producer regression does not yet prove the Node/SSR/browser consumer #93.
 `ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE` similarly selects a current RC dependency
 image (including its Skill preparer) when the local tag has fallen behind
 deployment changes. Both overrides apply only to this disposable profile.

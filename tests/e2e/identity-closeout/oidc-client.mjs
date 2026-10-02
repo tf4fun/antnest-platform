@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { assertOrganizationSession } from "./organization-session.mjs";
 import { GatewayClient, assertNoStore } from "./support.mjs";
 import {
   verifyIdentityEvidence as verifyIdentityTraces,
@@ -141,7 +142,10 @@ async function complete(browser, callback, expected = true) {
   return response;
 }
 async function principal(browser) {
-  return (await browser.request("/api/session")).body.principal;
+  return assertOrganizationSession(
+    (await browser.request("/api/session")).body,
+    "session",
+  );
 }
 async function login(browser, account, name = providerName, expected = true) {
   const started = await start(browser, name);
@@ -234,6 +238,7 @@ await complete(local, first.callback, false);
 assert.equal((await stats()).attempts, before.attempts);
 assert.equal((await principal(local)).user_id, identity.user_id);
 checks.push("local-identity-convergence-and-replay-without-exchange");
+checks.push("gateway-oidc-session-organization-metadata");
 
 const transferable = await authorize(await start(local), "local");
 before = await stats();

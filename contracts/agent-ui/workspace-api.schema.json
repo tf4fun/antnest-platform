@@ -3,6 +3,24 @@
   "$id": "https://antnest.dev/contracts/agent-ui/workspace-api.schema.json",
   "title": "Agent UI workspace v1 wire values",
   "$defs": {
+    "organizationDisplay": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "verifiedWorkspacePrincipal": {
+      "description": "Gateway revision-14 projection. Activated for bootstrap by the Agent UI consumer batch #93; labels are display facts, not authorization inputs.",
+      "type": "object",
+      "properties": {
+        "userId": { "$ref": "#/$defs/id" },
+        "organizationId": { "$ref": "#/$defs/id" },
+        "organizationSlug": { "$ref": "#/$defs/organizationDisplay" },
+        "organizationName": { "$ref": "#/$defs/organizationDisplay" },
+        "administrator": { "type": "boolean" }
+      },
+      "required": ["userId", "organizationId", "organizationSlug", "organizationName", "administrator"],
+      "additionalProperties": false
+    },
     "learningStatus": {"type": "object", "additionalProperties": false, "required": ["agentId", "blocked"], "properties": {"agentId": {"$ref": "#/$defs/id"}, "blocked": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["reason"], "properties": {"reason": {"enum": ["writer_present", "unknown_effect", "model_unavailable", "runtime_unavailable", "review_inconclusive"]}, "skillName": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"}, "sourceSessionId": {"$ref": "#/$defs/id"}, "sourceRunId": {"$ref": "#/$defs/id"}}}]}}},
     "id": { "type": "string", "minLength": 1, "maxLength": 200 },
     "revision": {

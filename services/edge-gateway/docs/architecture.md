@@ -71,6 +71,21 @@ One reverse proxy target, `ANTNEST_AGENT_UI_URL`, serves both the `/workspace/`
 application (SSR HTML and hashed assets) and the Workspace HTTP/SSE API at
 `/api/app/workspace/v1/*`. There is no separate Bridge base URL.
 
+Identity supplies the required Organization slug/name on local login, token
+resolution and OIDC completion. Browser session JSON preserves both. Workspace
+HTML and API requests additionally receive verified `X-Antnest-Organization-Slug`
+and `X-Antnest-Organization-Name`: one canonical unpadded Base64URL value per
+header over the exact UTF-8 label. Browser values are removed before admission;
+anonymous assets and other upstreams receive neither header. Neither label
+affects scope or administrator status. A new authenticated bootstrap or SSR
+request observes current Identity metadata without a Gateway cache. Missing or
+blank metadata fails as `503 identity_unavailable`, preserving existing cookies.
+The blank check includes U+FEFF, matching the Node consumer's whitespace check;
+valid labels retain their exact UTF-8 bytes rather than being trimmed.
+The [shared projection contract](../../../contracts/agent-ui/organization-projection.md)
+defines Node decoding and the #92 → #93 → integration sequence. This Gateway
+batch does not alter the old `/api/app/bootstrap` projection tracked by #64.
+
 The Workspace API accepts only `GET` and `POST`. Each request resolves the
 browser session and replaces incoming identity headers with the verified
 Organization, Principal, User, Membership, administrator flag and path Agent ID.

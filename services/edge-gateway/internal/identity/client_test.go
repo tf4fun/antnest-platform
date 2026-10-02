@@ -24,7 +24,7 @@ func TestClientCallsIdentityContractAndPropagatesTrace(t *testing.T) {
 		}
 		return jsonResponse(http.StatusOK, `{
 			"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z",
-			"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"member-1","system_role":"admin","organization_role":"admin","active":true}
+			"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","organization_role":"admin","active":true}
 		}`), nil
 	})}
 	client, err := NewClient("http://identity.internal", &http.Client{Transport: telemetry.NewHTTPTransport(httpClient.Transport)})
@@ -98,7 +98,7 @@ func TestResolveRejectsIncompleteAuthorityResponse(t *testing.T) {
 
 func TestResolvePreservesExplicitInactivePrincipal(t *testing.T) {
 	client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{"principal":{"user_id":"u","organization_id":"o","membership_id":"m","active":false}}`), nil
+		return jsonResponse(http.StatusOK, `{"principal":{"user_id":"u","organization_id":"o","organization_slug":"engineering","organization_name":"Engineering","membership_id":"m","active":false}}`), nil
 	})})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestClientSupportsBrowserOIDCFlow(t *testing.T) {
 		case "/protocol/oidc/callback":
 			return jsonResponse(http.StatusOK, `{
 				"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z",
-				"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"member-1","system_role":"user","organization_role":"member","active":true}
+				"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"user","organization_role":"member","active":true}
 			}`), nil
 		default:
 			t.Fatalf("unexpected path=%s", request.URL.Path)

@@ -8,7 +8,7 @@ OpenAPI.
 
 ## Workspace routes
 
-Version 13 of `session-contract.json` includes the Node Workspace HTML, HTTP
+Version 14 of `session-contract.json` includes the Node Workspace HTML, HTTP
 API and SSE routes. Gateway authenticates HTML and business API requests, while
 hashed static assets are served without a browser session. The browser uses
 this route set instead of a direct ACP connection.
@@ -27,6 +27,30 @@ rejected for that reason.
 Identity access tokens are cookie-only secrets. Token IDs remain Identity audit
 identifiers and are not stored in the browser session. Neither may appear in
 the JSON response schemas described by this contract.
+
+## Organization display projection
+
+Browser login and session responses must pass
+[`session-response.schema.json`](session-response.schema.json). Their principal
+preserves Identity revision 13's required `organization_slug` and
+`organization_name`. Missing, null, empty or whitespace-only metadata is an
+unavailable Identity response, not a successful session or evidence of revocation.
+
+Authenticated Workspace API and SSR HTML requests carry the exact labels in
+`X-Antnest-Organization-Slug` and `X-Antnest-Organization-Name`, each encoded as
+one canonical, unpadded Base64URL value over UTF-8. Gateway removes browser
+values before injecting verified values; anonymous assets and other upstreams
+receive neither header. See the shared
+[Organization projection](../agent-ui/organization-projection.md) for decoding,
+freshness and staged consumer activation. Labels do not confer authorization.
+
+Gateway producer [#92](https://github.com/tf4fun/antnest-platform/issues/92)
+precedes Node/SSR/frontend consumer
+[#93](https://github.com/tf4fun/antnest-platform/issues/93). Only the latter
+activates the new principal in the bootstrap wire schema and runs full UI
+integration after both service admissions. The old `/api/app/bootstrap` is
+unchanged; its retirement remains tracked by
+[#64](https://github.com/tf4fun/antnest-platform/issues/64).
 
 ## Workspace state
 

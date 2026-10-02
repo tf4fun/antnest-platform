@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/edge-gateway/session-response.schema.json",
+  "title": "Gateway browser session responses, revision 14",
+  "$defs": {
+    "principal": {
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string", "minLength": 1 },
+        "organization_id": { "type": "string", "minLength": 1 },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "membership_id": { "type": "string", "minLength": 1 },
+        "system_role": { "enum": ["admin", "user"] },
+        "organization_role": { "enum": ["admin", "member"] },
+        "active": { "type": "boolean" }
+      },
+      "required": [
+        "user_id",
+        "organization_id",
+        "organization_slug",
+        "organization_name",
+        "membership_id",
+        "system_role",
+        "organization_role",
+        "active"
+      ],
+      "additionalProperties": false
+    },
+    "login": {
+      "type": "object",
+      "properties": {
+        "principal": { "$ref": "#/$defs/principal" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["principal", "expires_at"],
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "properties": { "principal": { "$ref": "#/$defs/principal" } },
+      "required": ["principal"],
+      "additionalProperties": false
+    }
+  }
+}
