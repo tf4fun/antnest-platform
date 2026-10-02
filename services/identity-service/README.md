@@ -62,17 +62,26 @@ resolution is to implement the existing contract (option 1). Contract revision
 `resolve_principal` still returns the separate, narrower
 `organization_principal_binding` shape.
 
-Pending consumer work belongs to separate service batches:
+Consumer delivery and verification are recorded in separate service batches:
 
 - [Edge Gateway #92](https://github.com/tf4fun/antnest-platform/issues/92):
-  preserve organization slug/name in its principal and session
-  projection, including its own contract and regression coverage.
+  preserves Organization slug/name in its principal and browser sessions,
+  and projects verified UTF-8 labels to Node under the revision-14 Gateway
+  contract, with its own regression coverage.
 - [Agent UI #93](https://github.com/tf4fun/antnest-platform/issues/93):
-  use the projected Organization name in session/bootstrap state
-  instead of the placeholder label, with its own UI contract and tests.
+  consumes that projection in Node bootstrap, SSR and both frontend mappings;
+  the chooser and account footer display the real Organization name, with
+  its own contract, component and browser tests.
 - [Integration tracked in #93](https://github.com/tf4fun/antnest-platform/issues/93):
-  verify Identity → Gateway → Agent UI after both consumer batches pass. This
-  Identity producer fix does not claim that workflow is complete.
+  verified Identity → Gateway → Agent UI with real local/OIDC sessions after
+  both service admissions passed, including display refresh, logout, inactive
+  membership and Organization isolation. See the
+  [Organization display E2E suite](../../tests/e2e/identity-closeout/README.md#organization-display-integration).
+
+Deployment order is Identity (including #91), Gateway (including #94), then
+Agent UI (including #95). See the
+[release deployment notes](../../CHANGELOG.md#organization-display-deployment-order)
+for the failure behavior when components are upgraded out of order.
 
 ## Configuration
 

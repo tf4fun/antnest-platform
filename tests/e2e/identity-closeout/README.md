@@ -87,6 +87,16 @@ with the Identity Organization row, including Unicode and escaped HTML text.
 Forged headers, foreign Agent requests, logout/cookie replay and inactive local
 and OIDC memberships must retain ID-based authorization boundaries.
 
+Gateway's Go real-output schema tests use `santhosh-tekuri/jsonschema` with the
+default Go regexp engine, whose `\s` whitespace class is ASCII-only (`\S` is
+its complement). Those
+schema checks alone do not establish rejection of Unicode-only whitespace such
+as NBSP. Gateway's Identity-client `verified()` validation rejects blank labels
+before projection, with a separate Unicode-whitespace regression. Node also
+requires non-whitespace decoded labels, and the central-schema checks here use
+Ajv's JavaScript regexp semantics. Admission combines the Go schema gate with
+these boundary and cross-service checks.
+
 Because Identity has no public Organization rename command, a coordinator-only
 fixture checks disposable project/run ownership before reading and temporarily
 changing only `organizations.slug/name` in the Identity test database. It
