@@ -10,6 +10,22 @@ this service directory is the only implementation authority for the service.
 Resolve enterprise authentication and directory protocols into stable Antnest
 principals without importing Agent, Channel, Runtime, or UI concepts.
 
+## Principal Projection
+
+The existing revision-13 principal contract requires Organization slug and
+name alongside subject, Organization, Membership, roles, and active state.
+All organization-scoped repository builders select those fields from the
+already-joined Organization row, including completed OIDC session replay.
+Local login returns the metadata read during credential lookup; access-token
+resolution and callback replay read the current Organization row rather than
+storing display labels in token/session records.
+
+The user-only `getPrincipal` branch remains an internal unscoped actor for
+system administration. It is not a principal response on login, token
+resolution, or callback routes. `resolve_principal` projects its separate
+Organization binding DTO and does not acquire extra response fields.
+See the [producer decision and pending consumers](../README.md#principal-response-contract).
+
 ## Resource Identifiers
 
 New owned records use `<kind>_<32 lowercase hex digits>` from the
@@ -138,9 +154,12 @@ and must be handled as a secret. The callback response never echoes it.
 API and SCIM token rows contain hashes and metadata only. Plaintext exists
 only in the issuance response.
 Local password verification runs outside a database transaction. Token issuance
-must then revalidate the verified password hash and exact principal against
+must then revalidate the verified password hash and authorization facts against
 active Organization, User, and Membership records inside the issuance
-transaction. Changed credentials, role bindings, or inactive/deleted membership
+transaction: User, Organization and Membership IDs, both roles, and active
+state. Organization slug/name are excluded from this comparison, so a rename
+between verification and issuance does not reject an otherwise authorized
+login. Changed credentials, role bindings, or inactive/deleted membership
 reject that login with `unauthenticated`, without an issued-token row or event.
 The caller starts a fresh login rather than silently accepting a stale snapshot.
 The lock order is User, Organization, then Membership/credential, matching

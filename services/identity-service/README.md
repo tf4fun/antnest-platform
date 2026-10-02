@@ -47,6 +47,33 @@ principal and are authorized against Identity Service's own system or
 organization role facts. The internal RPC schema is
 [`contracts/identity/identity-contract.json`](../../contracts/identity/identity-contract.json).
 
+### Principal response contract
+
+Local login, access-token resolution, and both initial and replayed OIDC
+callbacks return all eight required `principal` fields: `user_id`,
+`organization_id`, `organization_slug`, `organization_name`, `membership_id`,
+`system_role`, `organization_role`, and `active`. Organization slug and name
+come from Identity's Organization row; they are presentation facts, not
+authorization inputs.
+
+For [issue #3](https://github.com/tf4fun/antnest-platform/issues/3), the chosen
+resolution is to implement the existing contract (option 1). Contract revision
+13 stays unchanged; no schema or database migration is required.
+`resolve_principal` still returns the separate, narrower
+`organization_principal_binding` shape.
+
+Pending consumer work belongs to separate service batches:
+
+- [Edge Gateway #92](https://github.com/tf4fun/antnest-platform/issues/92):
+  preserve organization slug/name in its principal and session
+  projection, including its own contract and regression coverage.
+- [Agent UI #93](https://github.com/tf4fun/antnest-platform/issues/93):
+  use the projected Organization name in session/bootstrap state
+  instead of the placeholder label, with its own UI contract and tests.
+- [Integration tracked in #93](https://github.com/tf4fun/antnest-platform/issues/93):
+  verify Identity → Gateway → Agent UI after both consumer batches pass. This
+  Identity producer fix does not claim that workflow is complete.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -112,6 +139,13 @@ the PostgreSQL suite. The suite covers deterministic login-admission races and
 a local HTTPS OIDC fixture (authorization redirect, PKCE, client
 authentication, signed ID token, and JWKS). It also checks completion
 deadlines, immutable client registration, and secret rotation.
+Real handler responses are validated against the central principal JSON
+Schema. PostgreSQL tests check every principal builder, both OIDC callback
+paths, fresh organization metadata on token resolution, and organization
+renames during local login without weakening password/role/status checks.
+`make e2e-identity-core` additionally checks real Identity login and token
+resolution inside the disposable Docker network, before the Gateway/SCIM/OIDC
+suite.
 
 Root `make` targets that cover this service: `make fmt-check`, `make lint`,
 `make test-go`, `make test-identity-postgres`, and `make docker-build-stage3`.

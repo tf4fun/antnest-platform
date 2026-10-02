@@ -8,6 +8,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/exaring/otelpgx v0.12.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.22.0

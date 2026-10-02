@@ -94,6 +94,8 @@ type GroupMembership struct {
 type Principal struct {
 	UserID           string           `json:"user_id"`
 	OrganizationID   string           `json:"organization_id"`
+	OrganizationSlug string           `json:"organization_slug"`
+	OrganizationName string           `json:"organization_name"`
 	MembershipID     string           `json:"membership_id"`
 	SystemRole       SystemRole       `json:"system_role"`
 	OrganizationRole OrganizationRole `json:"organization_role"`

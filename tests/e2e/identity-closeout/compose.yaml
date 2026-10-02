@@ -2,7 +2,12 @@
 services:
   temporal:
     ports: !reset []
+  runtime-controller:
+    image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
+    environment:
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
   identity-service:
+    image: ${ANTNEST_E2E_IDENTITY_IMAGE:-antnest/identity-service:local}
     labels:
       io.antnest.e2e-run-id: ${ANTNEST_E2E_RUN_ID:?required}
     environment:

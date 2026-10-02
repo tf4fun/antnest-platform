@@ -46,6 +46,17 @@ compact final counts and Trace summaries, never credentials or payloads.
 
 ## Local login and SCIM
 
+Before the Gateway suite, `principal-client.mjs` calls the real Identity
+local-login and resolve-access-token RPCs from a disposable container in the
+internal Docker network. Both principals must contain the bootstrap
+Organization's slug and name. The result contains check names only, without
+access credentials. This producer probe is independent of Gateway's response
+projection. Set the test-only `ANTNEST_E2E_IDENTITY_IMAGE` override to validate
+an isolated candidate image without replacing the local development tag.
+`ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE` similarly selects a current RC dependency
+image (including its Skill preparer) when the local tag has fallen behind
+deployment changes. Both overrides apply only to this disposable profile.
+
 1. Local login establishes HttpOnly session cookies without returning the token
    in JSON. Member access, rejected CSRF logout, successful logout and replay of
    the revoked cookie are tested separately.

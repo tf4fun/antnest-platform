@@ -494,7 +494,7 @@ func (a *OIDCAdapter) ensureOIDCMembership(
 	var userActive, membershipActive, organizationActive bool
 	err := tx.QueryRow(ctx, `
 		SELECT u.id, o.id, m.id, u.system_role, m.role,
-		       u.active, m.active, o.active
+		       u.active, m.active, o.active, o.slug, o.name
 		FROM users u
 		JOIN organization_memberships m
 		  ON m.user_id = u.id AND m.organization_id = $2 AND m.scim_deleted_at IS NULL
@@ -510,6 +510,8 @@ func (a *OIDCAdapter) ensureOIDCMembership(
 		&userActive,
 		&membershipActive,
 		&organizationActive,
+		&principal.OrganizationSlug,
+		&principal.OrganizationName,
 	)
 	if err != nil && err != pgx.ErrNoRows {
 		return domain.Principal{}, err
@@ -539,6 +541,7 @@ func (a *OIDCAdapter) sessionByState(
 	var userID, membershipID string
 	var systemRole domain.SystemRole
 	var organizationRole domain.OrganizationRole
+	var organizationSlug, organizationName string
 	var userActive, membershipActive, organizationActive bool
 	var tokenID string
 	var tokenExpiresAt, tokenRevokedAt *time.Time
@@ -548,7 +551,8 @@ func (a *OIDCAdapter) sessionByState(
 		       COALESCE(u.id, ''), COALESCE(m.id, ''),
 		       COALESCE(u.system_role, 'user'), COALESCE(m.role, 'member'),
 		       COALESCE(u.active, FALSE), COALESCE(m.active, FALSE), COALESCE(o.active, FALSE),
-		       COALESCE(t.id, ''), t.expires_at, t.revoked_at
+		       COALESCE(t.id, ''), t.expires_at, t.revoked_at,
+		       COALESCE(o.slug, ''), COALESCE(o.name, '')
 		FROM oidc_auth_sessions s
 		LEFT JOIN users u ON u.id = s.completed_user_id
 		LEFT JOIN organization_memberships m
@@ -566,6 +570,7 @@ func (a *OIDCAdapter) sessionByState(
 		&userID, &membershipID, &systemRole, &organizationRole,
 		&userActive, &membershipActive, &organizationActive,
 		&tokenID, &tokenExpiresAt, &tokenRevokedAt,
+		&organizationSlug, &organizationName,
 	)
 	if err != nil {
 		return oidcflow.AuthSession{}, oidcflow.CompletedLogin{}, err
@@ -582,6 +587,7 @@ func (a *OIDCAdapter) sessionByState(
 			SessionID: session.ID, TokenID: tokenID,
 			Principal: domain.Principal{
 				UserID: userID, OrganizationID: session.OrganizationID, MembershipID: membershipID,
+				OrganizationSlug: organizationSlug, OrganizationName: organizationName,
 				SystemRole: systemRole, OrganizationRole: organizationRole,
 				Active: userActive && membershipActive && organizationActive,
 			},

@@ -4,6 +4,16 @@
 
 ### Fixed
 
+Identity Service now includes the required `organization_slug` and
+`organization_name` in local-login, access-token-resolution, and initial and
+replayed OIDC callback principals
+([#3](https://github.com/tf4fun/antnest-platform/issues/3)). It implements the
+existing revision-13 contract without a migration. Organization display
+changes do not invalidate password verification; authorization IDs, roles,
+active state, and the password hash are still revalidated before token
+issuance. Gateway and Agent UI consumption remain
+[separate follow-up batches](services/identity-service/README.md#principal-response-contract).
+
 Runtime Controller now retries transient observation leadership/readiness
 queries and initial reconciliation failures instead of exiting
 ([#17](https://github.com/tf4fun/antnest-platform/issues/17)). Observation retries

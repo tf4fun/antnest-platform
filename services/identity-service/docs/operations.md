@@ -111,6 +111,11 @@ There is no per-field filtering or bespoke payload size limit. See
 - The first successful callback returns the raw access token once. Replaying a
   completed callback returns only principal, token ID, expiry, and
   `already_completed=true`; it never returns the raw token again.
+- Login, token resolution, and both callback response paths include the
+  required `organization_slug` and `organization_name` in `principal`.
+  Identity's revision-13 contract and database schema do not change. Token
+  resolution and callback replay read current Organization display metadata;
+  consumers should not treat those labels as authorization facts.
 - Browser logout revokes by the presented opaque access token. Identity returns
   `revoked` when it commits revocation and `already_invalid` for an unknown,
   expired, or previously revoked credential; repeating the request is safe.
@@ -127,9 +132,13 @@ There is no per-field filtering or bespoke payload size limit. See
 - An OIDC exchange that reaches the login deadline before issuing its token
   fails with `oidc_session_expired` (`410`), records an `expired` failure stage,
   and cannot be retried under the same login state. Start a new login instead.
-- Local login revalidates the password hash and active principal during token
-  issuance. If they changed during password verification, login returns the
-  same `unauthenticated` (`401`) as invalid credentials and commits no token.
+- Local login revalidates the password hash, identity IDs, roles, and active
+  state during token issuance. If they changed during password verification,
+  login returns the same `unauthenticated` (`401`) as invalid credentials and
+  commits no token.
+  Organization slug/name changes alone do not reject login. Its response uses
+  metadata read during credential lookup; resolving the token reads the latest
+  Organization row.
   Password rotation itself does not revoke previously issued access tokens;
   logout revokes the presented token and global User disable revokes all of
   that User's tokens. Organization Membership deactivation blocks resolution
