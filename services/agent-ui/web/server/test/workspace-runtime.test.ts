@@ -301,7 +301,7 @@ test("live history remains complete in HTTP, multipart output and Agent SSE", as
         async readExecution(sessionId) { return { sessionId, appendVersion: 1,
           outputWatermark: 0, activeRunId: "run-1", recentReceipts: [{ sessionId,
             intentId: "intent-1", runId: "run-1", phase: "running" as const,
-            appendVersion: 1, outputWatermark: 0, stopReason: null }],
+            appendVersion: 1, outputWatermark: 0, stopReason: null, errorClass: null }],
           configurationRevision: null }; },
         async readIntent() { return { kind: "unknown" as const }; },
         async prompt() {}, async cancel() {}, close() {},
@@ -611,7 +611,7 @@ test("Agent view checks an active Session while selected history is still loadin
           activeRunId: sessionId === "session-2" ? "run-2" : null,
           recentReceipts: sessionId === "session-2" ? [{
             sessionId, intentId: "intent-2", runId: "run-2", phase: "running" as const,
-            appendVersion: 1, outputWatermark: 0, stopReason: null,
+            appendVersion: 1, outputWatermark: 0, stopReason: null, errorClass: null,
           }] : [], configurationRevision: null };
       },
       async readIntent() { return { kind: "unknown" as const }; },
@@ -732,7 +732,7 @@ test("Agent view exposes an active operation without selecting its Session", asy
             phase: "running" as const,
             appendVersion: 1,
             outputWatermark: 0,
-            stopReason: null,
+            stopReason: null, errorClass: null,
           }],
           configurationRevision: null,
         };
@@ -923,7 +923,7 @@ test("runtime binds real owner leases to command routes and durable recovery", a
           phase: "running",
           appendVersion: 4,
           outputWatermark: 0,
-          stopReason: null,
+          stopReason: null, errorClass: null,
         },
       };
     },
@@ -1073,7 +1073,7 @@ test("operation recovery reads durable receipt even when historical replay is un
             phase: "running",
             appendVersion: 4,
             outputWatermark: 9,
-            stopReason: null,
+            stopReason: null, errorClass: null,
           },
         };
       },
@@ -1350,6 +1350,7 @@ test("prompt acceptance and durable receipt changes appear in View and SSE", asy
     appendVersion: number;
     outputWatermark: number;
     stopReason: null;
+    errorClass: null;
   }> = [];
   const runtime = createWorkspaceRuntime({
     connect: async () => ({
@@ -1428,7 +1429,7 @@ test("prompt acceptance and durable receipt changes appear in View and SSE", asy
       phase: "running",
       appendVersion: 1,
       outputWatermark: 0,
-      stopReason: null,
+      stopReason: null, errorClass: null,
     },
   ];
   const durableView = await (

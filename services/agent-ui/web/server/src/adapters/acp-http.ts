@@ -95,7 +95,15 @@ const receiptSchema = z.strictObject({
   appendVersion: z.number().int().nonnegative().safe(),
   outputWatermark: z.number().int().nonnegative().safe(),
   stopReason: z.string().nullable(),
-  errorClass: z.string().max(128).nullable(),
+  errorClass: z.string()
+    .min(1).max(128).regex(/^[a-z][a-z0-9_]*$/u).nullable(),
+}).superRefine((receipt, context) => {
+  if (receipt.errorClass !== null && !["failed", "cancelled", "unknown"].includes(receipt.phase)) {
+    context.addIssue({
+      code: "custom", path: ["errorClass"],
+      message: "A non-failure receipt must have a null classification",
+    });
+  }
 });
 
 const observationSchema = z.strictObject({
@@ -443,8 +451,7 @@ export class AcpHttpBridge {
     const response = await this.internalGet(
       `/rpc/agent-acp/workspace/sessions/${encodeURIComponent(sessionId)}/execution`,
     );
-    await requireSuccessfulObservation(response);
-    return observationSchema.parse(await response.json());
+    return parseExecutionObservation(response);
   }
 
   public async readAgentExecutionState(): Promise<AgentExecutionState> {
@@ -616,6 +623,13 @@ export async function consumeAgentExecutionStateStream(
     signal.removeEventListener("abort", cancel);
     await reader.cancel().catch(() => {});
   }
+}
+
+export async function parseExecutionObservation(
+  response: Response,
+): Promise<ExecutionObservation> {
+  await requireSuccessfulObservation(response);
+  return observationSchema.parse(await response.json());
 }
 
 export async function parseIntentObservation(

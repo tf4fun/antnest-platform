@@ -193,6 +193,17 @@ HTTP `202` confirms Bridge admission; the operation and ACP receipt determine
 execution status. ACP owns the authoritative replay: loading a Session builds
 a replacement projection while keeping the cached transcript readable. Only a
 successful replay replaces that transcript; failed replay retains it.
+
+Both intent receipts and nested execution observations require `errorClass`:
+either `null` or a 1–128 character ASCII code matching `^[a-z][a-z0-9_]*$`.
+Only `failed`, `cancelled` and `unknown` receipts may carry a non-null code.
+Node validates both response paths against the same receipt parser and keeps
+the classification in its operation projection. The vocabulary remains open:
+an unfamiliar valid code uses the ordinary failed-turn presentation, without
+automatic retry or a model capability hint. `intentReceipt: 1` is unchanged.
+See the [shared receipt contract](../../../contracts/agent-acp/workspace-bridge.md#receipt-failure-classification)
+and [shared validation fixtures](../../../tests/support/fixtures/agent-acp/bridge-receipts.json).
+
 Selected-Session cold replay retries transient ACP failures up to four total
 attempts under one server-owned work lease. The lease spans each backoff and
 keeps concurrent readers on the same recovery workflow; permanent missing or

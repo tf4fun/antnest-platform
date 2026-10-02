@@ -424,7 +424,7 @@ export function operationFromReceipt(receipt: IntentReceipt): Operation {
     runId: receipt.runId,
     outputWatermark: receipt.outputWatermark,
     stopReason: receipt.stopReason,
-    ...(receipt.errorClass === undefined ? {} : { errorClass: receipt.errorClass }),
+    errorClass: receipt.errorClass,
   };
 }
 

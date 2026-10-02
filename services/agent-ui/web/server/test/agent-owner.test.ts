@@ -775,7 +775,7 @@ test("receipt-only checks do not retain Session view bookkeeping", async () => {
                       phase: "completed" as const,
                       appendVersion: 3,
                       outputWatermark: 0,
-                      stopReason: "end_turn",
+                      stopReason: "end_turn", errorClass: null,
                     },
                   ],
           };
@@ -1181,7 +1181,7 @@ test("a durable terminal receipt releases prompt work even if the ACP call never
                 phase: "completed" as const,
                 appendVersion: 4,
                 outputWatermark: 0,
-                stopReason: "end_turn",
+                stopReason: "end_turn", errorClass: null,
               },
             ],
           };
@@ -1205,7 +1205,7 @@ test("a durable terminal receipt releases prompt work even if the ACP call never
     phase: "completed",
     runId: "run-1",
     outputWatermark: 0,
-    stopReason: "end_turn",
+    stopReason: "end_turn", errorClass: null,
   });
   owner.close();
 });
@@ -1243,7 +1243,7 @@ test("execution read reconciles a local intent omitted from the recent receipt w
             phase: "completed" as const,
             appendVersion: 3,
             outputWatermark: 8,
-            stopReason: "end_turn",
+            stopReason: "end_turn", errorClass: null,
           },
         };
       },
@@ -1332,7 +1332,7 @@ test("selected history waits for the terminal receipt watermark even when execut
             phase: "completed" as const,
             appendVersion: 3,
             outputWatermark: 8,
-            stopReason: "end_turn",
+            stopReason: "end_turn", errorClass: null,
           },
         };
       },
@@ -1419,7 +1419,7 @@ test("a second sealed replay applies a direct terminal receipt to the rebuilt tu
             phase: "completed" as const,
             appendVersion: 3,
             outputWatermark: 8,
-            stopReason: "end_turn",
+            stopReason: "end_turn", errorClass: null,
           },
         };
       },
@@ -1561,7 +1561,7 @@ test("owner materializes sealed replay into stable compact turns", async () => {
                 phase: "completed" as const,
                 appendVersion: 3,
                 outputWatermark: 1,
-                stopReason: "end_turn",
+                stopReason: "end_turn", errorClass: null,
               },
             ],
           };

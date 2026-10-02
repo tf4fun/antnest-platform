@@ -111,7 +111,7 @@ test("uncertain operation count and oldest age end when a receipt resolves it", 
   });
   operations.observeReceipts("session-1", [{
     intentId: "intent-1", sessionId: "session-1", runId: "run-1",
-    phase: "running", appendVersion: 3, outputWatermark: 0, stopReason: null,
+    phase: "running", appendVersion: 3, outputWatermark: 0, stopReason: null, errorClass: null,
   }]);
   assert.deepEqual(operations.snapshotMetrics(), {
     uncertainOperations: 0, oldestUncertainMs: 0,
@@ -136,6 +136,7 @@ test("read-only recovery after a Bridge restart uses the durable receipt without
           appendVersion: 3,
           outputWatermark: 8,
           stopReason: "end_turn",
+          errorClass: null,
         },
       }),
     cancel: () => Promise.resolve(),
@@ -149,6 +150,7 @@ test("read-only recovery after a Bridge restart uses the durable receipt without
     runId: "run-1",
     outputWatermark: 8,
     stopReason: "end_turn",
+    errorClass: null,
   });
   assert.equal(dispatches, 0);
 });
@@ -182,7 +184,7 @@ test("cancellation refuses a stale Run ID and only targets the durable matching 
           phase: "running" as const,
           appendVersion: 3,
           outputWatermark: 1,
-          stopReason: null,
+          stopReason: null, errorClass: null,
         },
       }),
     cancel: async (_sessionId, runId) => {
@@ -207,10 +209,10 @@ test("a late cancellation response cannot replace an observed terminal receipt",
   const running = {
     intentId: "intent-1", sessionId: "session-1", runId: "run-1",
     phase: "running" as const, appendVersion: 3, outputWatermark: 1,
-    stopReason: null,
+    stopReason: null, errorClass: null,
   };
   const completed = { ...running, phase: "completed" as const,
-    outputWatermark: 2, stopReason: "end_turn" };
+    outputWatermark: 2, stopReason: "end_turn", errorClass: null };
   const operations = new OperationCoordinator({
     prompt: () => Promise.resolve(),
     readIntent: () => Promise.resolve({ kind: "receipt" as const, receipt: running }),
@@ -242,7 +244,7 @@ test("a recovered operation rereads its durable outcome after cancellation", asy
       return Promise.resolve({ kind: "receipt" as const, receipt: {
         intentId: "intent-1", sessionId: "session-1", runId: "run-1",
         phase, appendVersion: 3, outputWatermark: phase === "running" ? 1 : 2,
-        stopReason: phase === "running" ? null : "end_turn",
+        stopReason: phase === "running" ? null : "end_turn", errorClass: null,
       } });
     },
     cancel: () => { cancelStarted(); return cancelling; },
@@ -270,7 +272,7 @@ test("terminal reconciliation releases a work hold once after prompt completion"
           phase: "completed" as const,
           appendVersion: 3,
           outputWatermark: 2,
-          stopReason: "end_turn",
+          stopReason: "end_turn", errorClass: null,
         },
       }),
     cancel: () => Promise.resolve(),
@@ -315,7 +317,7 @@ test("local acceptance appears in the View until a durable receipt supersedes it
     phase: "running" as const,
     appendVersion: 3,
     outputWatermark: 1,
-    stopReason: null,
+    stopReason: null, errorClass: null,
   };
   assert.equal(
     operations.snapshot("session-1", [receipt])[0]?.acceptance,
