@@ -52,7 +52,7 @@ other upstream errors deny access with 503 without destroying the browser's
 session. A retry must revalidate with Identity; unavailable never means admitted.
 
 ```text
-HTTP limits/security headers
+HTTP limits/security header defaults wrapper
   -> W3C trace extraction/root span
   -> remove known trusted identity/access-subject headers
   -> route match
@@ -63,7 +63,29 @@ HTTP limits/security headers
        -> authenticated bootstrap -> Controller ID/name metadata
        -> scoped state observation -> Agent ACP snapshot/watch
   -> Admin Console or Agent UI application proxy
+  -> final response commit: supply only missing security headers
 ```
+
+## Response Security Headers
+
+The service that renders a document owns its Content Security Policy. Agent UI
+owns the nonce-bearing CSP on Workspace HTML, including its `blob:` image and
+media sources. Gateway forwards an upstream CSP unchanged, without adding,
+merging or rewriting policies. Multiple policies deliberately sent by an
+upstream also remain unchanged; the Gateway adds no extra policy.
+
+Gateway supplies defaults for `Content-Security-Policy`,
+`X-Content-Type-Options`, `Referrer-Policy` and `X-Frame-Options` independently,
+only when the final response has no value for that header. This happens after
+proxy response headers have been copied, immediately before the final status,
+first body write or Flush. Interim 1xx responses do not commit defaults. Empty
+responses receive defaults when the handler returns.
+
+Gateway-generated errors, redirects and JSON responses, and proxied Admin
+Console static files or Workspace assets without their own policy, retain the
+existing defaults. An upstream HTML response without CSP receives that same
+fallback. The wrapper preserves streaming Flush errors, response deadlines and
+WebSocket hijacking; it does not buffer response bodies.
 
 ## Agent UI and Workspace API
 
