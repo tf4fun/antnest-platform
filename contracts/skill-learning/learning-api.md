@@ -283,8 +283,10 @@ with a fresh ticket.
 
 RC freezes the sorted `skill_maintenance_verifiers.keys` array inside each
 accepted RuntimeSpec/deployment digest. Zero keys disable maintenance; at most
-two keys are trusted. Every `kid` is unique and bound to exact Ed25519 public
-bytes. The base64url field decodes to exactly 32 bytes. RC stores the complete
+two keys are trusted. Every `kid` follows the shared
+[RuntimeSpec identity rule](../runtime/runtime-spec.schema.json#/$defs/maintenanceKid)
+and [fixtures](../runtime/maintenance-kid-fixtures.json), is unique, and is bound
+to exact Ed25519 public bytes. The base64url field decodes to exactly 32 bytes. RC stores the complete
 public-key snapshot atomically with operation acceptance and uses that snapshot
 on replay and restart, never the latest RC config. ACP has one current signing
 `kid`; it may switch to the preloaded next key only after checking all relevant

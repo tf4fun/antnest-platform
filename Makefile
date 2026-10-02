@@ -89,15 +89,15 @@ test-node: test-repo
 	npm --prefix services/agent-ui/web test
 
 # Repository-level contract, tooling, and fixture suites. They need Node,
-# Python, and the agent-acp-service dependencies, but no Docker or databases.
+# Go, Python, and the agent-acp-service dependencies, but no Docker or databases.
 .PHONY: test-repo
 test-repo:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
-	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs
+	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/contracts.test.mjs
-	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs

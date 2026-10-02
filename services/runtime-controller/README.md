@@ -33,7 +33,10 @@ service.
 - Prepare per-Agent system Skill volumes from exact Skill Registry versions and
   mount them read-only into Runtime containers.
 - Freeze the Runtime Skill maintenance verifier keys into each accepted
-  lifecycle operation.
+  lifecycle operation. Key IDs follow the shared
+  [RuntimeSpec grammar](../../contracts/runtime/runtime-spec.schema.json#/$defs/maintenanceKid)
+  and [fixtures](../../contracts/runtime/maintenance-kid-fixtures.json);
+  invalid operator configuration fails at startup before creating Runtimes.
 - Serialize all mutations for one Agent across Controller replicas, and elect
   one platform-Watch consumer.
 - Emit structured logs, traces, and low-cardinality metrics.

@@ -28,6 +28,12 @@ maintenance. Features remain explicitly opt-in through operator-owned values:
   malformed opt-in configuration must fail existing startup validation; Compose
   does not silently supply signing keys or invent an authentication fallback.
 
+Signing and verifier key IDs follow the exact `maintenanceKid` definition in
+[RuntimeSpec](../runtime/runtime-spec.schema.json#/$defs/maintenanceKid):
+1–64 ASCII letters, digits, `_` or `-`, starting with a letter or digit,
+without dots or whitespace normalization. All four validators use the
+[shared key ID fixtures](../runtime/maintenance-kid-fixtures.json).
+
 Registry stays outside Runtime management and Egress networks and exposes no
 host port. The `compose.stage3.yaml` override removes ACP's direct host port. Agent UI receives
 neither source bearer nor signing material; the browser still uses Gateway and

@@ -80,6 +80,12 @@ it keep standard ACP wire behavior.
 
 ## Configuration
 
+The maintenance signing key ID follows the shared
+[RuntimeSpec grammar](../../contracts/runtime/runtime-spec.schema.json#/$defs/maintenanceKid)
+and [fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
+It is matched exactly against the Runtime's trusted verifier IDs; startup
+rejects invalid IDs without trimming whitespace.
+
 | Variable                                        | Required | Default             | Description                                                                                                    |
 | ----------------------------------------------- | -------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `ANTNEST_ACP_DATABASE_URL`                      | yes      | -                   | `postgres://` or `postgresql://` URL of the service-owned database                                             |

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +70,22 @@ func TestLoadMaintenanceVerifierBootstrap(t *testing.T) {
 		if _, err := Load(func(key string) string { return values[key] }); err == nil {
 			t.Fatalf("non-object maintenance verifier set accepted: %s", malformed)
 		}
+	}
+}
+
+func TestLoadMaintenanceVerifierRejectionNamesEnvironmentVariable(t *testing.T) {
+	for _, kid := range []string{"release.2026", "bad key"} {
+		t.Run(kid, func(t *testing.T) {
+			values := map[string]string{
+				"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL":     "postgres://runtime:runtime@postgres/runtime",
+				"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":          "antnest-runtime-management",
+				"ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS": `{"keys":[{"kid":"` + kid + `","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`,
+			}
+			_, err := Load(func(key string) string { return values[key] })
+			if err == nil || !strings.Contains(err.Error(), "ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS") {
+				t.Fatalf("rejection does not identify the configured variable: %v", err)
+			}
+		})
 	}
 }
 

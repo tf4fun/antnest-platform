@@ -3,8 +3,45 @@ package deployment
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"os"
 	"testing"
 )
+
+func TestMaintenanceVerifierKIDFixtures(t *testing.T) {
+	encoded, err := os.ReadFile("../../../../contracts/runtime/maintenance-kid-fixtures.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures struct {
+		Valid   []string `json:"valid"`
+		Invalid []string `json:"invalid"`
+	}
+	if err := json.Unmarshal(encoded, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range []struct {
+		name  string
+		kids  []string
+		valid bool
+	}{{"valid", fixtures.Valid, true}, {"invalid", fixtures.Invalid, false}} {
+		for _, kid := range group.kids {
+			t.Run(group.name+"/"+kid, func(t *testing.T) {
+				input := MaintenanceVerifiers{Keys: []MaintenanceVerifierKey{{
+					KID: kid, Algorithm: "Ed25519", PublicKeyBase64URL: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+				}}}
+				actual, err := input.Normalize()
+				if group.valid {
+					if err != nil || len(actual.Keys) != 1 || actual.Keys[0].KID != kid {
+						t.Fatalf("valid kid %q changed or rejected: %+v %v", kid, actual, err)
+					}
+				} else if !errors.Is(err, ErrInvalid) {
+					t.Fatalf("invalid kid %q accepted: %+v %v", kid, actual, err)
+				}
+			})
+		}
+	}
+}
 
 func TestMaintenanceVerifierSetNormalizesAndChangesDeploymentIdentity(t *testing.T) {
 	first := base64.RawURLEncoding.EncodeToString(make([]byte, 32))

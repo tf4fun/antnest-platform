@@ -1,9 +1,16 @@
 import { generateKeyPairSync } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
+const MAINTENANCE_KIDS = JSON.parse(
+  readFileSync(
+    new URL("../../../contracts/runtime/maintenance-kid-fixtures.json", import.meta.url),
+    "utf8",
+  ),
+) as { valid: string[]; invalid: string[] };
 const SIGNING_KEY = generateKeyPairSync("ed25519")
   .privateKey.export({
     type: "pkcs8",
@@ -12,6 +19,25 @@ const SIGNING_KEY = generateKeyPairSync("ed25519")
   .toString("base64");
 
 describe("loadConfig", () => {
+  it.each(MAINTENANCE_KIDS.valid)("accepts shared maintenance kid %j unchanged", (kid) => {
+    const config = loadConfig({
+      ...requiredEnvironment(),
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
+      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+    });
+    expect(config.skillMaintenanceSigning?.kid).toBe(kid);
+  });
+
+  it.each(MAINTENANCE_KIDS.invalid)("rejects shared maintenance kid %j", (kid) => {
+    expect(() =>
+      loadConfig({
+        ...requiredEnvironment(),
+        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
+        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+      }),
+    ).toThrow();
+  });
+
   it("enables discovery only with a fixed Registry origin, distinct source token and Runtime signer", () => {
     const env = {
       ...requiredEnvironment(),

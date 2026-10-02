@@ -68,6 +68,11 @@ published outside the trusted Docker or Kubernetes network.
 
 ## Configuration
 
+Skill maintenance verifier key IDs use the shared
+[RuntimeSpec grammar](../../contracts/runtime/runtime-spec.schema.json#/$defs/maintenanceKid)
+and [accept/reject fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
+Startup rejects invalid IDs and reports duplicate IDs separately.
+
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `ANTNEST_RUNTIME_SPEC` | Yes | none | Immutable RuntimeSpec as a JSON document. Decoded strictly (unknown fields rejected) against [runtime-spec.schema.json](../../contracts/runtime/runtime-spec.schema.json). Supplied by Runtime Controller. |
