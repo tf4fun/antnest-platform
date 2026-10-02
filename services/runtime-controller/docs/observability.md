@@ -29,10 +29,16 @@ distinguishes completion.
   opaque revision, private generation/attempt and physical IDs. Persistence is
   instrumented at the pgx execution boundary, not by repository method.
   No domain telemetry port, lifecycle state machine or database is added.
-- `/status` checks local initialization and own persistence only. The existing
+- `/status` checks local initialization, own persistence and the cached
+  background monitor state. `monitor_ready` is required in control contract
+  revision 14; monitor retries/reconnection report HTTP 503 while the process
+  remains live. The existing
   `platform_ready` wire field describes adapter initialization, not a fresh
-  Docker permission/health probe. Runtime verification remains part of real
-  lifecycle and inspection requests, not Controller readiness.
+  Docker permission/health probe. `observation_ready` still describes the
+  journal/notification path. A Watch-only disconnect can leave lifecycle calls
+  working, while an unreachable Docker API causes actual platform calls to
+  fail. Runtime verification remains part of real lifecycle and inspection
+  requests. See [recovery and probe thresholds](operations.md#observation-dependency-recovery).
 
 ## PostgreSQL Execution
 

@@ -415,6 +415,12 @@ return to supervision. See
 [observation recovery](operations.md#observation-dependency-recovery) for the
 startup and local `/status` distinction.
 
+Control readiness combines local initialization, journal/notifications and
+the cached monitor state. `/status` exposes the latter as `monitor_ready` and
+returns 503 during retries/reconnection while the process and control routes
+keep running. After the first ready callback, startup only rechecks local
+dependencies, so a monitor flap cannot turn into a fatal startup error.
+
 Startup verifies the journal and wake-up paths separately. An insert/read probe
 uses a reserved explicit sequence and is rolled back, so it neither creates a
 fake Runtime fact nor advances the production sequence. A uniquely identified,
@@ -588,8 +594,8 @@ driver error text can still contain server-supplied values. SQL tracing requires
 a recording parent and adds no root for unparented background queries. LISTEN
 has a finite SQL span, not a session-lifetime repository span or wrapper metric.
 Docker event HTTP CLIENT and observation SSE SERVER spans follow their actual
-stream lifetimes. `/status` checks only local initialization and own storage,
-not fresh Docker or Runtime health.
+stream lifetimes. `/status` checks local initialization, own storage and cached
+monitor readiness, without fresh Docker or Runtime health calls.
 
 Each lifecycle mutation has one finite `runtime.lifecycle.*` span plus an
 operation count and duration metric labeled only by operation kind, result,

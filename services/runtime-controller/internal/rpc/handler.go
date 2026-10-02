@@ -153,7 +153,11 @@ func (h *Handler) status(response http.ResponseWriter, request *http.Request) {
 	if err != nil || !status.Ready() {
 		label = "not_ready"
 		code = http.StatusServiceUnavailable
-		telemetry.ObserveError(response, err, "readiness", "not_ready", "Local Runtime Controller readiness is unavailable")
+		message := "Runtime Controller readiness is unavailable"
+		if status.LocalReady() && !status.MonitorReady {
+			message = "Platform observation monitor is not ready"
+		}
+		telemetry.ObserveError(response, err, "readiness", "not_ready", message)
 	}
 	writeJSON(response, code, readinessFromDomain(label, status))
 }

@@ -61,7 +61,7 @@ service.
 | Direction | Interface | Purpose |
 | --- | --- | --- |
 | Inbound | Internal JSON-over-HTTP RPC ([control API](api/control-api.md)) | Image resolution, lifecycle commands, Inspect/List, operation queries, observation List/Watch, Skill set preparation |
-| Inbound | `GET /status` | Local liveness and readiness (database, observation pipeline, adapter initialization) |
+| Inbound | `GET /status` | Liveness and readiness (database, journal/notifications, adapter initialization and cached monitor state) |
 | Outbound | Docker Engine API `v1.47` over a Unix socket | Containers, volumes, networks, events, image inspection |
 | Outbound | Runtime `GET /status` | Bounded verification of Runtime identity and `execution_id` |
 | Outbound | Skill Registry internal API | Resolve and download exact Skill versions for preparation |
@@ -103,6 +103,14 @@ limit, include up to 20% positive jitter within that limit, and reset after
 Watch readiness. Explicit permanent configuration/schema/programming errors
 still return to startup supervision. The standard Compose service uses
 `restart: unless-stopped` as a fallback for process failures.
+
+Control contract revision 14 adds a required `monitor_ready` field to `/status`.
+Monitor retries and Watch reconnection return HTTP 503 with `live: true`; a
+ready Watch or ready-leader probe restores HTTP 200. The route reads cached
+state and does not call Docker or scan Runtimes. A Watch-only disconnect can
+leave lifecycle calls working; a Docker API outage makes actual platform calls
+fail. Brief reconnects have a 503 window handled by existing probe failure
+thresholds. See [operations](docs/operations.md#observation-dependency-recovery).
 
 ## Dependencies
 
@@ -151,9 +159,11 @@ Update, Disable workspace retention, Enable, and Delete cleanup.
 
 The observation retry E2E builds a separately tagged candidate Controller and
 uses a private Unix-socket proxy to simulate unavailable Docker at startup and
-a later Watch disconnect. It verifies readiness leases, zero process restarts,
-and successful Runtime Initialize/Delete after recovery, then removes its
-owned containers, volumes, networks and candidate image.
+a later socket outage. It verifies HTTP 200/503/200, readiness leases, zero
+process restarts, and successful Runtime Initialize/Delete. It separately
+disconnects only Watch and proves a lifecycle call still works while
+`monitor_ready` is false, then removes its owned containers, volumes, networks
+and candidate image.
 
 Opt-in checks:
 

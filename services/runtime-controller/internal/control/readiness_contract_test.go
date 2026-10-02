@@ -23,6 +23,24 @@ func TestStatusOnlyChecksLocalInitializationAndOwnStorage(t *testing.T) {
 	}
 }
 
+func TestStatusIncludesCachedMonitorReadinessWithoutProbingDocker(t *testing.T) {
+	store := &readinessStore{}
+	observations := &readinessObservations{}
+	service := &Service{repository: store, platform: readinessPlatform{}, observations: observations}
+	for _, ready := range []bool{false, true, false} {
+		observations.monitor = ready
+		status, err := service.Status(context.Background())
+		if err != nil || status.Ready() != ready || status.MonitorReady != ready || !status.LocalReady() {
+			t.Fatalf("monitor state %t: status=%+v err=%v", ready, status, err)
+		}
+	}
+}
+
+type readinessObservations struct{ monitor bool }
+
+func (*readinessObservations) ObservationReady() error { return nil }
+func (h *readinessObservations) MonitorReady() bool    { return h.monitor }
+
 type readinessStore struct {
 	repository.Store
 	calls int

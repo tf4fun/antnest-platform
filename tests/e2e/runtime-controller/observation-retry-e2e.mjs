@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import {
@@ -8,6 +10,34 @@ import {
   dockerClient,
 } from "../lifecycle-closeout/docker.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
+
+const requireAcp = createRequire(
+  new URL("../../../services/agent-acp-service/package.json", import.meta.url),
+);
+const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
+const api = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../services/runtime-controller/api/control-api.schema.json",
+      import.meta.url,
+    ),
+  ),
+);
+const validateStatus = new Ajv2020({ strict: true }).compile(
+  api.$defs.readiness,
+);
+
+function assertMonitorStatus(body, ready) {
+  assert.deepEqual(body, {
+    status: ready ? "ready" : "not_ready",
+    live: true,
+    ready,
+    database_ready: true,
+    platform_ready: true,
+    observation_ready: true,
+    monitor_ready: ready,
+  });
+}
 
 const { values } = parseArgs({
   options: {
@@ -158,7 +188,7 @@ try {
   }
   const controller = `http://127.0.0.1:${config.env.ANTNEST_RUNTIME_CONTROLLER_HOST_PORT}`;
   const proxy = `http://127.0.0.1:${config.env.ANTNEST_OBSERVATION_PROXY_HOST_PORT}`;
-  const request = async (path, body, key) => {
+  const request = async (path, body, key, expectedStatus = 200) => {
     const response = await fetch(controller + path, {
       method: body ? "POST" : "GET",
       headers: {
@@ -168,8 +198,15 @@ try {
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(180000)]),
     });
-    assert.equal(response.status, 200, `${path}: HTTP ${response.status}`);
-    return response.json();
+    assert.equal(
+      response.status,
+      expectedStatus,
+      `${path}: HTTP ${response.status}`,
+    );
+    const value = await response.json();
+    if (path === "/status")
+      assert(validateStatus(value), JSON.stringify(validateStatus.errors));
+    return value;
   };
   const proxyMode = async (mode) => {
     const response = await fetch(`${proxy}/${mode}`, {
@@ -225,6 +262,7 @@ try {
       return false;
     }
   }, "startup recovery");
+  assertMonitorStatus(await request("/status"), true);
   assertSameProcess(await state());
 
   await proxyMode("offline");
@@ -237,13 +275,27 @@ try {
       )
     );
   }, "Watch disconnect reconciliation");
-  assert.equal(
-    (await request("/status")).status,
-    "ready",
-    "local readiness must not probe Docker",
+  assertMonitorStatus(
+    await request("/status", undefined, undefined, 503),
+    false,
+  );
+  await assert.rejects(
+    docker([
+      "exec",
+      controllerID,
+      "/usr/local/bin/runtime-controller",
+      "--healthcheck",
+    ]),
   );
   await proxyMode("online");
-  await waitFor(monitorReady, "Watch recovery");
+  await waitFor(async () => {
+    try {
+      return (await request("/status")).monitor_ready && (await monitorReady());
+    } catch {
+      return false;
+    }
+  }, "HTTP and Watch recovery");
+  assertMonitorStatus(await request("/status"), true);
   assertSameProcess(await state());
 
   const agent = `agent_${config.project.slice(-8).padEnd(32, "0")}`;
@@ -297,6 +349,20 @@ try {
     observations.observations.filter((value) => value.kind === "reconciled")
       .length >= 2,
   );
+  await proxyMode("disconnect-watch");
+  await waitFor(async () => {
+    try {
+      const status = await request("/status", undefined, undefined, 503);
+      return !status.monitor_ready && !(await monitorReady());
+    } catch {
+      return false;
+    }
+  }, "Watch-only disconnect readiness");
+  assertMonitorStatus(
+    await request("/status", undefined, undefined, 503),
+    false,
+  );
+  assertSameProcess(await state());
   const deleted = await request(
     `/internal/runtimes/${agent}/delete`,
     { expected_revision: created.target_revision },
@@ -304,6 +370,19 @@ try {
   );
   assert.equal(deleted.state, "completed");
   assert.equal(deleted.inspection.lifecycle_state, "deleted");
+  assertMonitorStatus(
+    await request("/status", undefined, undefined, 503),
+    false,
+  );
+  await proxyMode("resume-watch");
+  await waitFor(async () => {
+    try {
+      return (await request("/status")).monitor_ready && (await monitorReady());
+    } catch {
+      return false;
+    }
+  }, "Watch-only HTTP recovery");
+  assertMonitorStatus(await request("/status"), true);
   assertSameProcess(await state());
   writeEvidenceFile(
     config.evidence,
@@ -324,6 +403,8 @@ try {
     restart_count: 0,
     startup_recovered: true,
     watch_recovered: true,
+    monitor_readiness_recovered: true,
+    watch_only_lifecycle_succeeded: true,
     runtime_created: true,
   };
 } catch (error) {

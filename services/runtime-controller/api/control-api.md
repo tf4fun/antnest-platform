@@ -300,16 +300,35 @@ failure or identity conflict is an error, never proof of deletion.
 
 ## Status
 
-`GET /status` reports local initialization and own-storage readiness:
+`GET /status` reports local initialization, own-storage and background monitor
+readiness. Control contract revision 14 adds the required `monitor_ready`
+boolean on both HTTP 200 and HTTP 503 responses:
 
 ```json
-{"status":"ready","live":true,"ready":true,"database_ready":true,"platform_ready":true,"observation_ready":true}
+{"status":"ready","live":true,"ready":true,"database_ready":true,"platform_ready":true,"observation_ready":true,"monitor_ready":true}
 ```
 
-One unhealthy Runtime does not make the service unready. No Docker or Runtime
-health call is made by this route. The existing `platform_ready` field denotes
-local adapter initialization, not a recursive platform probe. Later platform
-Watch outages are diagnostic conditions, not local readiness failures.
+`ready` requires all four component flags. `platform_ready` denotes local
+adapter initialization; `observation_ready` denotes journal and notification
+readiness. `monitor_ready` reads only the in-process flag maintained by the
+background monitor, without calling Docker or scanning Runtimes. Leaders set
+it after reconciliation and the Watch handshake; followers mirror the shared
+Watch-ready lease on their normal one-second poll.
+
+Monitor retries and Watch reconnection report HTTP 503 while the process
+continues running. For a monitor-only outage:
+
+```json
+{"status":"not_ready","live":true,"ready":false,"database_ready":true,"platform_ready":true,"observation_ready":true,"monitor_ready":false}
+```
+
+One unhealthy Runtime does not make the Controller unready. A Watch-only
+disconnect can make Controller readiness false while lifecycle calls still
+succeed through a reachable Docker API. Docker API unavailability also causes
+actual platform-dependent calls to fail. See
+[operations](../docs/operations.md#observation-dependency-recovery) for startup
+and probe thresholds. The Controller's own `--healthcheck` consumes only the
+HTTP status code.
 
 ## Failure Semantics
 

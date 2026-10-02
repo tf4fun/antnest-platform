@@ -40,6 +40,7 @@ type crashJob struct {
 type crashReady struct{}
 
 func (crashReady) ObservationReady() error { return nil }
+func (crashReady) MonitorReady() bool      { return true }
 
 type crashVerifier struct{}
 

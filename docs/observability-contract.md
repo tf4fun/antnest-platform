@@ -139,7 +139,11 @@ its placeholders; parameters and result rows are not recorded.
 ## 4. Health Checks
 
 `GET /status` reflects only the service's own initialization, stopping state and
-necessary local dependencies such as its own storage. It does not recursively
+necessary local dependencies such as its own storage, including cached health
+of required background workers. Runtime Controller exposes its observation
+monitor state as `monitor_ready`; retries/reconnection report 503 while the
+process remains live. Reading that state makes no extra dependency request.
+It does not recursively
 call other business services' `/status`. When a real downstream business call
 fails, that actual call failure is recorded. Requests with upstream context keep
 the normal SERVER hierarchy; autonomous high-frequency successful probes may be

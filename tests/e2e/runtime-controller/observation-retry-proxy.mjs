@@ -10,8 +10,22 @@ export async function startObservationProxy({
   port = 8081,
 } = {}) {
   const connections = new Set();
+  const watches = new Set();
   let forwarded = 0;
+  let watchBlocked = false;
   const docker = createServer((incoming, outgoing) => {
+    const watch = /^(?:\/v[0-9.]+)?\/events(?:\?|$)/.test(incoming.url);
+    if (watch && watchBlocked) {
+      outgoing.writeHead(503, { "content-type": "application/json" });
+      outgoing.end(
+        JSON.stringify({ message: "fixture Watch temporarily disconnected" }),
+      );
+      return;
+    }
+    if (watch) {
+      watches.add(outgoing);
+      outgoing.once("close", () => watches.delete(outgoing));
+    }
     forwarded++;
     const upstream = request(
       {
@@ -61,6 +75,14 @@ export async function startObservationProxy({
         await online();
       else if (incoming.method === "POST" && incoming.url === "/offline")
         await offline();
+      else if (
+        incoming.method === "POST" &&
+        incoming.url === "/disconnect-watch"
+      ) {
+        watchBlocked = true;
+        for (const stream of watches) stream.destroy();
+      } else if (incoming.method === "POST" && incoming.url === "/resume-watch")
+        watchBlocked = false;
       else if (incoming.method !== "GET" || incoming.url !== "/status") {
         outgoing.writeHead(404);
         outgoing.end();
