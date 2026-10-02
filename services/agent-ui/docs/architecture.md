@@ -44,6 +44,16 @@ A failed replay never replaces the previous readable view.
 5. A Run remains in ACP after the browser closes or Node restarts. Re-entering
    the workspace reloads its view and any pending permission request.
 
+Node owns each Workspace document's nonce-bearing CSP. Gateway preserves that
+policy and supplies only missing security headers, per its
+[response security header rules](../../edge-gateway/docs/architecture.md#response-security-headers).
+The browser entry loads `browser-validation.ts` before modules that construct
+frontend schemas, enabling Zod's `jitless` parser. This skips the default
+`new Function` environment probe, which otherwise emits a CSP violation even
+when Zod catches the exception and falls back to interpretation. Schema
+validation remains enabled; the document's CSP does not allow `unsafe-eval`.
+Server-side parsing keeps its existing configuration.
+
 Bootstrap and SSR share `readWorkspacePrincipal`: it requires verified
 Organization/Principal IDs, the administrator flag and the two display headers
 from Gateway revision 14. Each label must be canonical unpadded Base64URL over
