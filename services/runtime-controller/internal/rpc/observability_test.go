@@ -1,7 +1,6 @@
 package rpc
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -21,15 +19,17 @@ import (
 )
 
 func TestRPCContentSwitchAndProtocolOutcome(t *testing.T) {
+	for _, run := range []string{"first", "repeat"} {
+		t.Run(run, testRPCContentSwitchAndProtocolOutcome)
+	}
+}
+
+func testRPCContentSwitchAndProtocolOutcome(t *testing.T) {
+	t.Helper()
 	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	previous := otel.GetTracerProvider()
-	otel.SetTracerProvider(provider)
+	rpcTestTracerProvider.RegisterSpanProcessor(recorder)
 	t.Cleanup(func() {
-		otel.SetTracerProvider(previous)
-		if err := provider.Shutdown(context.Background()); err != nil {
-			t.Error(err)
-		}
+		rpcTestTracerProvider.UnregisterSpanProcessor(recorder)
 	})
 	operation := deployment.Operation{
 		RequestID: "operation-42", AgentID: "agent-1", Kind: deployment.OperationInitializeRuntime,
@@ -47,15 +47,15 @@ func TestRPCContentSwitchAndProtocolOutcome(t *testing.T) {
 		{"unknown", "true", `{"unknown":"CANARY"}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			recorder.Reset()
 			t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", test.flag)
 			handler := telemetry.HTTPHandler(newTestHandler(t, &fakeService{operation: operation}))
 			request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", strings.NewReader(test.body))
 			request.Header.Set("Idempotency-Key", "operation-42")
 			request.Header.Set("Cookie", "COOKIE_CANARY")
 			handler.ServeHTTP(httptest.NewRecorder(), request)
-			spans := recorder.Ended()
-			server := spans[len(spans)-1]
-			if server.SpanKind() != trace.SpanKindServer || server.Name() != "HTTP POST /internal/runtimes/{agent_id}/initialize" {
+			server := recordedRPCServerSpan(t, recorder)
+			if server.Name() != "HTTP POST /internal/runtimes/{agent_id}/initialize" {
 				t.Fatal("RPC route changed")
 			}
 			var payload string
@@ -101,16 +101,17 @@ func TestRPCContentSwitchAndProtocolOutcome(t *testing.T) {
 	}
 
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
+	recorder.Reset()
 	operation.State = deployment.OperationFailed
 	operation.ErrorCode = "platform_unavailable"
 	handler := telemetry.HTTPHandler(newTestHandler(t, &fakeService{operation: operation}))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/runtime-operations/operation-42", nil))
-	spans := recorder.Ended()
-	if response.Code != http.StatusOK || spans[len(spans)-1].Status().Code != codes.Error {
+	server := recordedRPCServerSpan(t, recorder)
+	if response.Code != http.StatusOK || server.Status().Code != codes.Error {
 		t.Fatal("HTTP 200 hid failed operation status")
 	}
-	for _, event := range spans[len(spans)-1].Events() {
+	for _, event := range server.Events() {
 		if event.Name != "antnest.error" {
 			continue
 		}
@@ -127,6 +128,19 @@ func TestRPCContentSwitchAndProtocolOutcome(t *testing.T) {
 			t.Fatal("causes is not bounded JSON")
 		}
 	}
+}
+
+func recordedRPCServerSpan(t *testing.T, recorder *tracetest.SpanRecorder) sdktrace.ReadOnlySpan {
+	t.Helper()
+	spans := recorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("RPC HTTP handler did not emit any spans")
+	}
+	server := spans[len(spans)-1]
+	if server.SpanKind() != trace.SpanKindServer {
+		t.Fatalf("RPC HTTP handler's last span has kind %s, want SERVER", server.SpanKind())
+	}
+	return server
 }
 
 func eventAttributes(values []attribute.KeyValue) map[attribute.Key]attribute.Value {
