@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const maximumResponseBytes = 2 << 20
@@ -187,13 +188,21 @@ type principalResponse struct {
 func (response *principalResponse) verified() (Principal, error) {
 	if response == nil || response.Active == nil ||
 		strings.TrimSpace(response.UserID) == "" || strings.TrimSpace(response.OrganizationID) == "" ||
-		strings.TrimSpace(response.MembershipID) == "" || strings.TrimSpace(response.OrganizationSlug) == "" ||
-		strings.TrimSpace(response.OrganizationName) == "" {
+		strings.TrimSpace(response.MembershipID) == "" || !hasDisplayText(response.OrganizationSlug) ||
+		!hasDisplayText(response.OrganizationName) {
 		return Principal{}, fmt.Errorf("identity service returned an incomplete principal")
 	}
 	principal := response.Principal
 	principal.Active = *response.Active
 	return principal, nil
+}
+
+func hasDisplayText(value string) bool {
+	// ECMAScript trim and the Node consumer also treat U+FEFF as whitespace.
+	// Check presence only: projection must retain Identity's exact UTF-8 text.
+	return strings.TrimFunc(value, func(character rune) bool {
+		return unicode.IsSpace(character) || character == '\uFEFF'
+	}) != ""
 }
 
 func (client *Client) RevokeByAccessToken(

@@ -80,6 +80,8 @@ anonymous assets and other upstreams receive neither header. Neither label
 affects scope or administrator status. A new authenticated bootstrap or SSR
 request observes current Identity metadata without a Gateway cache. Missing or
 blank metadata fails as `503 identity_unavailable`, preserving existing cookies.
+The blank check includes U+FEFF, matching the Node consumer's whitespace check;
+valid labels retain their exact UTF-8 bytes rather than being trimmed.
 The [shared projection contract](../../../contracts/agent-ui/organization-projection.md)
 defines Node decoding and the #92 → #93 → integration sequence. This Gateway
 batch does not alter the old `/api/app/bootstrap` projection tracked by #64.

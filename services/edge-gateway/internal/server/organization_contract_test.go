@@ -185,42 +185,50 @@ func TestOrganizationProjectionDoesNotReachAnonymousAssetsOrConsole(t *testing.T
 
 func TestOrganizationMalformedIdentityNeverAdmitsWorkspace(t *testing.T) {
 	for _, field := range []string{"organization_slug", "organization_name"} {
-		principal := displayPrincipal(t, "Engineering", false)
-		data, err := json.Marshal(principal)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var value map[string]any
-		if err := json.Unmarshal(data, &value); err != nil {
-			t.Fatal(err)
-		}
-		delete(value, field)
-		body, err := json.Marshal(map[string]any{"principal": value, "access_token": "ant_api_private", "expires_at": "2026-10-03T00:00:00Z"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		client, err := identity.NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
-		})})
-		if err != nil {
-			t.Fatal(err)
-		}
-		contacted := 0
-		gateway := newTestHandler(t, client, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { contacted++ }), time.Now())
-		for _, route := range []struct{ method, path, body string }{
-			{http.MethodPost, "/api/session/login", `{"organization_slug":"engineering","email":"member@example.com","password":"synthetic"}`},
-			{http.MethodGet, "/api/session", ""},
-			{http.MethodGet, "/api/app/workspace/v1/bootstrap", ""},
-			{http.MethodGet, "/workspace/", ""},
-		} {
-			request := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
-			request.Header.Set("Content-Type", "application/json")
-			addSessionCookies(request, "ant_api_private", "csrf")
-			response := httptest.NewRecorder()
-			gateway.ServeHTTP(response, request)
-			if response.Code != 503 || contacted != 0 || len(response.Result().Cookies()) != 0 {
-				t.Fatalf("%s admitted malformed Identity or destroyed a browser session", route.path)
-			}
+		for _, invalid := range []string{"missing", "unicode_whitespace"} {
+			t.Run(field+"/"+invalid, func(t *testing.T) {
+				principal := displayPrincipal(t, "Engineering", false)
+				data, err := json.Marshal(principal)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var value map[string]any
+				if err := json.Unmarshal(data, &value); err != nil {
+					t.Fatal(err)
+				}
+				if invalid == "missing" {
+					delete(value, field)
+				} else {
+					value[field] = "\uFEFF\u00A0\u2028"
+				}
+				body, err := json.Marshal(map[string]any{"principal": value, "access_token": "ant_api_private", "expires_at": "2026-10-03T00:00:00Z"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				client, err := identity.NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
+				})})
+				if err != nil {
+					t.Fatal(err)
+				}
+				contacted := 0
+				gateway := newTestHandler(t, client, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { contacted++ }), time.Now())
+				for _, route := range []struct{ method, path, body string }{
+					{http.MethodPost, "/api/session/login", `{"organization_slug":"engineering","email":"member@example.com","password":"synthetic"}`},
+					{http.MethodGet, "/api/session", ""},
+					{http.MethodGet, "/api/app/workspace/v1/bootstrap", ""},
+					{http.MethodGet, "/workspace/", ""},
+				} {
+					request := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+					request.Header.Set("Content-Type", "application/json")
+					addSessionCookies(request, "ant_api_private", "csrf")
+					response := httptest.NewRecorder()
+					gateway.ServeHTTP(response, request)
+					if response.Code != 503 || contacted != 0 || len(response.Result().Cookies()) != 0 {
+						t.Fatalf("%s admitted malformed Identity or destroyed a browser session", route.path)
+					}
+				}
+			})
 		}
 	}
 }

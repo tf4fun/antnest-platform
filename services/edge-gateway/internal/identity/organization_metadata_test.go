@@ -91,7 +91,8 @@ func TestOrganizationMetadataIsRequiredOnEveryIdentityClientPath(t *testing.T) {
 				name  string
 				value any
 			}{
-				{"missing", nil}, {"null", nil}, {"empty", ""}, {"whitespace", " \t\n"}, {"wrong_type", 42},
+				{"missing", nil}, {"null", nil}, {"empty", ""}, {"whitespace", " \t\n"},
+				{"unicode_whitespace", "\uFEFF\u00A0\u2028"}, {"wrong_type", 42},
 			} {
 				t.Run(method+"/"+field+"/"+invalid.name, func(t *testing.T) {
 					payload := organizationResponse(t)
@@ -107,5 +108,22 @@ func TestOrganizationMetadataIsRequiredOnEveryIdentityClientPath(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestOrganizationDisplayTextPreservesVisibleUTF8WithoutTrimming(t *testing.T) {
+	for _, method := range []string{"login", "resolve", "oidc", "oidc_replay"} {
+		t.Run(method, func(t *testing.T) {
+			payload := organizationResponse(t)
+			name := "\uFEFF 研发 · Équipe 🚀 "
+			payload["principal"].(map[string]any)["organization_name"] = name
+			principal, err := callOrganizationClient(t, method, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if principal.OrganizationName != name {
+				t.Fatal("display validation must preserve Identity's exact UTF-8 text")
+			}
+		})
 	}
 }
