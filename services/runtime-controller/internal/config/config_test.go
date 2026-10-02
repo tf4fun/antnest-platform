@@ -47,6 +47,41 @@ func TestLoadAllowsAnExplicitControllerScope(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidMonitorRetryLimit(t *testing.T) {
+	for _, raw := range []string{"invalid", "0s", "-1s", "500ms"} {
+		t.Run(raw, func(t *testing.T) {
+			values := map[string]string{
+				"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL":            "postgres://runtime:runtime@postgres/runtime",
+				"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":                 "antnest-runtime-management",
+				"ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY": raw,
+			}
+			_, err := Load(func(key string) string { return values[key] })
+			if err == nil || !strings.Contains(err.Error(), "ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY") {
+				t.Fatalf("invalid monitor retry limit %q was not rejected: %v", raw, err)
+			}
+		})
+	}
+}
+
+func TestLoadMonitorRetryLimit(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want time.Duration
+	}{{"", 30 * time.Second}, {"1s", time.Second}, {"45s", 45 * time.Second}} {
+		t.Run(test.raw, func(t *testing.T) {
+			values := map[string]string{
+				"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL":            "postgres://runtime:runtime@postgres/runtime",
+				"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":                 "antnest-runtime-management",
+				"ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY": test.raw,
+			}
+			loaded, err := Load(func(key string) string { return values[key] })
+			if err != nil || loaded.MonitorMaxRetryDelay != test.want {
+				t.Fatalf("monitor retry limit = %s, want %s: %v", loaded.MonitorMaxRetryDelay, test.want, err)
+			}
+		})
+	}
+}
+
 func TestLoadMaintenanceVerifierBootstrap(t *testing.T) {
 	values := map[string]string{
 		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",

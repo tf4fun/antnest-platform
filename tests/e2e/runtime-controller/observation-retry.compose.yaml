@@ -1,0 +1,32 @@
+services:
+  observation-docker-proxy:
+    image: antnest/agent-acp-service:local
+    user: "0:0"
+    command: ["node", "/app/tests/e2e/runtime-controller/observation-retry-proxy.mjs"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - observation-docker-socket:/fault
+      - ./tests:/app/tests:ro
+    ports:
+      - 127.0.0.1:${ANTNEST_OBSERVATION_PROXY_HOST_PORT}:8081
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8081/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    networks: [development]
+  runtime-controller:
+    image: ${ANTNEST_OBSERVATION_TEST_CONTROLLER_IMAGE}
+    ports:
+      - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT}:8080
+    environment:
+      ANTNEST_DOCKER_HOST: unix:///fault/docker.sock
+      ANTNEST_SKILL_REGISTRY_URL: ""
+      ANTNEST_SKILL_REGISTRY_API_TOKEN: ""
+    volumes:
+      - observation-docker-socket:/fault
+    depends_on:
+      observation-docker-proxy:
+        condition: service_healthy
+volumes:
+  observation-docker-socket: {}

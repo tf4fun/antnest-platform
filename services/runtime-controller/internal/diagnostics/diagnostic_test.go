@@ -53,3 +53,21 @@ func TestErrorPreservesNilAndSanitizesMessage(t *testing.T) {
 		t.Fatalf("sanitized error = %v", got)
 	}
 }
+
+func TestPermanentClassificationIsExplicitAndRedactsCauses(t *testing.T) {
+	secret := errors.New("password=PERMANENT_SECRET_CANARY")
+	permanent := &permanentDiagnosticError{cause: secret}
+	joined := errors.Join(context.DeadlineExceeded, fmt.Errorf("wrapped: %w", permanent))
+	if !IsPermanent(joined) || IsPermanent(secret) || IsPermanent(nil) || IsPermanent(context.DeadlineExceeded) {
+		t.Fatal("permanence was inferred from transient error text or lost through wrapping")
+	}
+	if strings.Contains(Message(joined), "PERMANENT_SECRET_CANARY") {
+		t.Fatal("permanent error classification leaked an arbitrary cause")
+	}
+}
+
+type permanentDiagnosticError struct{ cause error }
+
+func (*permanentDiagnosticError) Permanent() bool { return true }
+func (e *permanentDiagnosticError) Error() string { return e.cause.Error() }
+func (e *permanentDiagnosticError) Unwrap() error { return e.cause }

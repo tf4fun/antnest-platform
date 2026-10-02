@@ -25,6 +25,13 @@ func Error(err error) error {
 	return errors.New(Message(err))
 }
 
+// Error producers explicitly mark permanent failures. Do not infer permanence
+// from arbitrary Docker, database or provider response text.
+func IsPermanent(err error) bool {
+	var permanent interface{ Permanent() bool }
+	return errors.As(err, &permanent) && permanent.Permanent()
+}
+
 // Arbitrary error strings can contain entire Docker/SQL/provider responses.
 // Preserve types and registered facts, never guess safety from regex redaction.
 func Causes(err error) []string {
@@ -68,6 +75,9 @@ func CauseTypes(err error) []string {
 }
 
 func safeCause(err error) string {
+	if IsPermanent(err) {
+		return "permanent configuration, schema or programming error"
+	}
 	for _, known := range []error{
 		context.Canceled, context.DeadlineExceeded, io.EOF, io.ErrUnexpectedEOF,
 		deployment.ErrInvalid, deployment.ErrIdentityConflict, deployment.ErrStatusUnverified,

@@ -99,6 +99,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/runtime-tools/contracts.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
+	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
 	node --test tests/e2e/observability/*.test.mjs
@@ -531,6 +532,10 @@ e2e-agent-access:
 
 e2e-runtime-controller: docker-build-runtime-controller
 	sh tests/e2e/runtime-controller/run.sh
+
+.PHONY: e2e-runtime-controller-observation-retry
+e2e-runtime-controller-observation-retry:
+	node tests/e2e/runtime-controller/observation-retry-e2e.mjs
 
 .PHONY: e2e-managed-mcp-v1 e2e-managed-mcp-v2
 e2e-managed-mcp-v1:

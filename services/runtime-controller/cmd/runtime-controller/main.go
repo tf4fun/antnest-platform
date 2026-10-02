@@ -179,7 +179,8 @@ func run(ctx context.Context) (resultErr error) {
 	}
 	service.SetSkillVolumeInspector(skillVolumes)
 	monitor, err := platformmonitor.New(
-		observedPlatform, service, observationHealth, slog.Default(), time.Second,
+		observedPlatform, service, observationHealth, slog.Default(), config.MonitorRetryDelay,
+		configuration.MonitorMaxRetryDelay,
 		configuration.ReconciliationTimeout,
 	)
 	if err != nil {

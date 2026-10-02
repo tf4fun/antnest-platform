@@ -47,7 +47,7 @@ func TestReconcileStopsBeforeCompletionWhenRetainedStorageCannotBeVerified(t *te
 	sink := &fakeSink{storageErr: errors.New("workspace inventory unavailable")}
 	health := &fakeHealth{}
 	runner, err := New(&fakeSource{}, sink, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestReconcileStopsBeforeCompletionWhenRetainedStorageCannotBeVerified(t *te
 func TestReconcileDoesNotDeclareWatchReadyBeforeHandshake(t *testing.T) {
 	health := &fakeHealth{}
 	runner, err := New(&fakeSource{}, &fakeSink{}, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestReconcileDoesNotDeclareMalformedOrUnclaimedInventoryConverged(t *testin
 	}}}
 	sink := &fakeSink{validateErr: errors.New("generation claim mismatch")}
 	health := &fakeHealth{}
-	runner, err := New(source, sink, health, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+	runner, err := New(source, sink, health, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestReconcileDoesNotDeclareMalformedOrUnclaimedInventoryConverged(t *testin
 func TestCoordinatedFollowerIsReadyOnlyWhenLeaderWatchIsReady(t *testing.T) {
 	health := &fakeHealth{}
 	runner, err := New(&fakeSource{}, &fakeSink{}, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestCoordinatedFollowerIsReadyOnlyWhenLeaderWatchIsReady(t *testing.T) {
 func TestCoordinatedFollowerDoesNotPublishReadinessForUnreadyLeader(t *testing.T) {
 	health := &fakeHealth{}
 	runner, err := New(&fakeSource{}, &fakeSink{}, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestCoordinatedLeaderCancelsWatchAndReelectsAfterLeaseLoss(t *testing.T) {
 	source := &blockingSource{started: make(chan struct{})}
 	health := &recordingHealth{}
 	runner, err := New(source, &fakeSink{}, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestCoordinatedLeaderCancelsWatchAndReelectsAfterLeaseLoss(t *testing.T) {
 
 func newTestRunner(t *testing.T, source platform.ObservationSource, sink Sink) *Runner {
 	t.Helper()
-	runner, err := New(source, sink, &fakeHealth{}, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+	runner, err := New(source, sink, &fakeHealth{}, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, 30*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
