@@ -4,6 +4,14 @@
 
 ### Fixed
 
+ACP Workspace Bridge's shared schema now requires the `errorClass` already
+emitted on intent receipts and nested execution observations
+([#4](https://github.com/tf4fun/antnest-platform/issues/4)). ACP normalizes invalid
+stored classifications to `internal_error` at the read boundary, with a bounded
+server diagnostic, and emits `null` for non-failure phases. Agent UI preserves
+the required value and validates both response paths with the same rules.
+Unknown valid codes retain the generic failed-turn presentation.
+
 Edge Gateway now preserves Identity's Organization slug/name in local-login,
 token-resolution and OIDC principals and browser session responses
 ([#92](https://github.com/tf4fun/antnest-platform/issues/92)). Agent UI's Node
@@ -36,6 +44,14 @@ for the Controller. See the
 [recovery and readiness semantics](services/runtime-controller/docs/operations.md#observation-dependency-recovery).
 
 ### Changed
+
+Bridge receipt error classes must be `null` or a 1–128 character ASCII code
+matching `^[a-z][a-z0-9_]*$`; only `failed`, `cancelled` and `unknown` phases may
+carry non-null codes. The vocabulary remains open and `intentReceipt: 1` stays
+unchanged. Deploy the ACP producer normalization before the stricter Agent UI
+consumer when upgrading separately, so malformed stored codes do not cause
+observation parsing failures. See the
+[receipt failure contract](contracts/agent-acp/workspace-bridge.md#receipt-failure-classification).
 
 Gateway's browser session contract advances to revision 14. Authenticated
 Workspace API and SSR requests now carry `X-Antnest-Organization-Slug` and
