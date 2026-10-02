@@ -433,6 +433,13 @@ The emitted classifications include:
 Domain and Tool preflight codes extend this list; well-formed future values
 remain readable as generic failures. The normalized observation does not rewrite
 the original database classification.
+Run setup errors validate their raw `error.code` against the same length and
+ASCII pattern before terminal persistence. Missing, non-string or malformed
+codes, including OS codes such as `ECONNREFUSED` and SQLSTATE `40001`, persist as
+`run_setup_failed`; valid known and future codes remain unchanged. New setup
+failures therefore do not repeatedly trigger receipt normalization warnings.
+The read-boundary guard remains for legacy or otherwise invalid stored rows.
+
 An online v1 Prompt response separately waits for its preceding notifications;
 v2 emits idle only after transcript and local terminal facts are durable. Each
 output operation has a 30-second bound. Disconnection, authorization failure,

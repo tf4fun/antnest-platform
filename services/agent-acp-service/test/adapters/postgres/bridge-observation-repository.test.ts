@@ -71,12 +71,14 @@ describe("durable Bridge intent receipt", () => {
       "a".repeat(128),
     ]) {
       const { repository, telemetry } = persisted(errorClass);
-      const receipt = await repository.readIntent("session-1", "intent-1");
-      const observation = await repository.readSession("session-1");
-      expect(validReceipt(receipt), JSON.stringify(validReceipt.errors)).toBe(true);
-      expect(validObservation(observation), JSON.stringify(validObservation.errors)).toBe(true);
-      expect(receipt?.errorClass).toBe(errorClass);
-      expect(observation?.recentReceipts[0]).toEqual(receipt);
+      for (let read = 0; read < 3; read++) {
+        const receipt = await repository.readIntent("session-1", "intent-1");
+        const observation = await repository.readSession("session-1");
+        expect(validReceipt(receipt), JSON.stringify(validReceipt.errors)).toBe(true);
+        expect(validObservation(observation), JSON.stringify(validObservation.errors)).toBe(true);
+        expect(receipt?.errorClass).toBe(errorClass);
+        expect(observation?.recentReceipts[0]).toEqual(receipt);
+      }
       expect(telemetry.log).not.toHaveBeenCalled();
     }
   });

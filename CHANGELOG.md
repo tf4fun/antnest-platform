@@ -11,6 +11,9 @@ stored classifications to `internal_error` at the read boundary, with a bounded
 server diagnostic, and emits `null` for non-failure phases. Agent UI preserves
 the required value and validates both response paths with the same rules.
 Unknown valid codes retain the generic failed-turn presentation.
+Run setup errors also validate raw codes before persistence, storing
+`run_setup_failed` for malformed codes such as `ECONNREFUSED` or `40001`.
+This avoids repeated normalization warnings when observing new setup failures.
 
 Edge Gateway now preserves Identity's Organization slug/name in local-login,
 token-resolution and OIDC principals and browser session responses

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import { RunExecutor, type RunExecutorDependencies } from "../../src/application/run-executor.js";
 import {
@@ -18,9 +19,76 @@ import type { AuthenticatedModelTransport } from "../../src/ports/model.js";
 import type { RunEventRepository } from "../../src/ports/run-event-repository.js";
 import type { ToolCatalogPort } from "../../src/ports/tools.js";
 
+const receiptFixtures = JSON.parse(
+  readFileSync(
+    new URL("../../../../tests/support/fixtures/agent-acp/bridge-receipts.json", import.meta.url),
+    "utf8",
+  ),
+) as { knownErrorClasses: string[] };
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("RunExecutor", () => {
+  it.each([
+    { name: "network code", code: "ECONNREFUSED" },
+    { name: "PostgreSQL SQLSTATE", code: "40001" },
+    { name: "empty code", code: "" },
+    { name: "overlong code", code: "a".repeat(129) },
+    { name: "uppercase code", code: "RunFailed" },
+    { name: "hyphenated code", code: "run-failed" },
+    { name: "leading space", code: " run_failed" },
+    { name: "trailing space", code: "run_failed " },
+    { name: "trailing newline", code: "run_failed\n" },
+    { name: "Unicode code", code: "échec" },
+    { name: "underscore prefix", code: "_run_failed" },
+    { name: "missing code", code: undefined },
+    { name: "null code", code: null },
+    { name: "numeric code", code: 40001 },
+    { name: "boolean code", code: true },
+    { name: "array code", code: ["run_failed"] },
+    { name: "object code", code: { value: "run_failed" } },
+  ])("persists run_setup_failed for an invalid setup $name", async ({ code }) => {
+    const f = setup();
+    f.build.mockRejectedValueOnce(Object.assign(new Error("private setup failure"), { code }));
+    await expect(f.execute()).resolves.toEqual({
+      terminalClass: "failed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      errorClass: "run_setup_failed",
+    });
+    expect(f.finish).toHaveBeenCalledExactlyOnceWith({
+      runId: f.input.accepted.runId,
+      terminalClass: "failed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      errorClass: "run_setup_failed",
+      finishedAt: f.dependencies.now(),
+    });
+    expect(f.complete).not.toHaveBeenCalled();
+    expect(f.tools.call).not.toHaveBeenCalled();
+    expect(f.recoveryRequired).not.toHaveBeenCalled();
+  });
+
+  it.each([...receiptFixtures.knownErrorClasses, "vendor_future_failure", "a".repeat(128)])(
+    "preserves a valid open setup classification %s before persistence",
+    async (code) => {
+      const f = setup();
+      f.build.mockRejectedValueOnce(Object.assign(new Error("private setup failure"), { code }));
+      await expect(f.execute()).resolves.toMatchObject({
+        terminalClass: "failed",
+        errorClass: code,
+      });
+      expect(f.finish).toHaveBeenCalledExactlyOnceWith({
+        runId: f.input.accepted.runId,
+        terminalClass: "failed",
+        executorState: "quiescent",
+        toolEffectState: "none",
+        errorClass: code,
+        finishedAt: f.dependencies.now(),
+      });
+    },
+  );
+
   it.each([false, true])(
     "releases temporary files before terminal state, independently of Run cancellation (%s)",
     async (cancelled) => {

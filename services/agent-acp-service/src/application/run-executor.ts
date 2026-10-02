@@ -219,7 +219,10 @@ function errorClass(error: unknown): string {
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    typeof error.code === "string"
+    typeof error.code === "string" &&
+    error.code.length >= 1 &&
+    error.code.length <= 128 &&
+    /^[a-z][a-z0-9_]*$/u.test(error.code)
   ) {
     return error.code;
   }
