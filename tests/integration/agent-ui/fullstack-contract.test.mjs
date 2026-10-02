@@ -622,7 +622,7 @@ test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", (
 
 test("active Gateway contract describes the deployed Node Workspace routes", () => {
   const gateway = json("../../../contracts/edge-gateway/session-contract.json");
-  assert.equal(gateway.version, 13);
+  assert.equal(gateway.version, 14);
   assert.equal(
     gateway.routes.workspace_application.authentication,
     "browser_session_for_html; none_for_assets",
@@ -651,6 +651,8 @@ test("active Gateway contract describes the deployed Node Workspace routes", () 
     "X-Antnest-User-ID",
     "X-Antnest-Membership-ID",
     "X-Antnest-Administrator",
+    "X-Antnest-Organization-Slug",
+    "X-Antnest-Organization-Name",
   ]);
   assert.ok(gateway.trusted_headers.includes("X-Antnest-Administrator"));
   assert.equal(

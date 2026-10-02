@@ -33,15 +33,7 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 	if err != nil {
 		return err
 	}
-	request.Header.Set(HeaderOrganizationID, principal.OrganizationID)
-	request.Header.Set(HeaderPrincipalID, principal.UserID)
-	request.Header.Set(HeaderUserID, principal.UserID)
-	request.Header.Set(HeaderMembershipID, principal.MembershipID)
-	if principal.Administrator() {
-		request.Header.Set(HeaderAdministrator, "true")
-	} else {
-		request.Header.Set(HeaderAdministrator, "false")
-	}
+	setWorkspacePrincipalHeaders(request.Header, principal)
 	if agentID != "" {
 		request.Header.Set(HeaderAgentID, agentID)
 	} else {
@@ -133,6 +125,7 @@ func (h *handler) newWorkspaceBridgeProxy(target *url.URL) *httputil.ReverseProx
 				"Accept", "Content-Type", "If-Match", "Idempotency-Key", "Last-Event-ID",
 				HeaderOrganizationID, HeaderPrincipalID, HeaderUserID,
 				HeaderMembershipID, HeaderAgentID, HeaderAdministrator,
+				HeaderOrganizationSlug, HeaderOrganizationName,
 			} {
 				for _, value := range proxyRequest.In.Header.Values(name) {
 					headers.Add(name, value)

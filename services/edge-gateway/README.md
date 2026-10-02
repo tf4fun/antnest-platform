@@ -60,6 +60,18 @@ identity headers, cookies and access tokens never reach internal services.
 All other service interfaces are private deployment details. ACP HTTP and
 WebSocket behavior is described in [Architecture](docs/architecture.md).
 
+Browser login and session principals preserve Identity's required Organization
+slug/name. Gateway projects these display facts to the active Node Workspace
+API and SSR as verified UTF-8 Base64URL headers; see
+[Organization projection](../../contracts/agent-ui/organization-projection.md).
+Every authenticated request re-resolves Identity, so re-bootstrap observes a
+rename without changing authorization scope. Gateway delivery
+[#92](https://github.com/tf4fun/antnest-platform/issues/92) precedes the pending
+Agent UI consumer and full integration
+[#93](https://github.com/tf4fun/antnest-platform/issues/93). The unused legacy
+`/api/app/bootstrap` projection is unchanged, pending
+[#64](https://github.com/tf4fun/antnest-platform/issues/64).
+
 ## Configuration
 
 | Variable | Required | Default | Description |

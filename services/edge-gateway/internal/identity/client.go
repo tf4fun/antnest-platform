@@ -18,6 +18,8 @@ const maximumResponseBytes = 2 << 20
 type Principal struct {
 	UserID           string `json:"user_id"`
 	OrganizationID   string `json:"organization_id"`
+	OrganizationSlug string `json:"organization_slug"`
+	OrganizationName string `json:"organization_name"`
 	MembershipID     string `json:"membership_id"`
 	SystemRole       string `json:"system_role"`
 	OrganizationRole string `json:"organization_role"`
@@ -100,9 +102,20 @@ func NewClient(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 }
 
 func (client *Client) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
-	var result LoginResult
+	var result struct {
+		LoginResult
+		Principal *principalResponse `json:"principal"`
+	}
 	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/local-login", input, &result)
-	return result, err
+	if err != nil {
+		return LoginResult{}, err
+	}
+	principal, err := result.Principal.verified()
+	if err != nil {
+		return LoginResult{}, err
+	}
+	result.LoginResult.Principal = principal
+	return result.LoginResult, nil
 }
 
 func (client *Client) ListLoginMethods(ctx context.Context, organizationSlug string) ([]LoginMethod, error) {
@@ -138,30 +151,48 @@ func (client *Client) CompleteOIDCLogin(
 	target := client.base.ResolveReference(&url.URL{
 		Path: "/protocol/oidc/callback", RawQuery: query.Encode(),
 	})
-	var result OIDCCallbackResult
+	var result struct {
+		OIDCCallbackResult
+		Principal *principalResponse `json:"principal"`
+	}
 	err := client.doRequest(ctx, http.MethodGet, target, nil, &result)
-	return result, err
+	if err != nil {
+		return OIDCCallbackResult{}, err
+	}
+	principal, err := result.Principal.verified()
+	if err != nil {
+		return OIDCCallbackResult{}, err
+	}
+	result.OIDCCallbackResult.Principal = principal
+	return result.OIDCCallbackResult, nil
 }
 
 func (client *Client) Resolve(ctx context.Context, accessToken string) (Principal, error) {
 	var result struct {
-		Principal *struct {
-			Principal
-			Active *bool `json:"active"`
-		} `json:"principal"`
+		Principal *principalResponse `json:"principal"`
 	}
 	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/resolve-access-token",
 		map[string]string{"access_token": accessToken}, &result)
 	if err != nil {
 		return Principal{}, err
 	}
-	if result.Principal == nil || result.Principal.Active == nil ||
-		strings.TrimSpace(result.Principal.UserID) == "" || strings.TrimSpace(result.Principal.OrganizationID) == "" ||
-		strings.TrimSpace(result.Principal.MembershipID) == "" {
+	return result.Principal.verified()
+}
+
+type principalResponse struct {
+	Principal
+	Active *bool `json:"active"`
+}
+
+func (response *principalResponse) verified() (Principal, error) {
+	if response == nil || response.Active == nil ||
+		strings.TrimSpace(response.UserID) == "" || strings.TrimSpace(response.OrganizationID) == "" ||
+		strings.TrimSpace(response.MembershipID) == "" || strings.TrimSpace(response.OrganizationSlug) == "" ||
+		strings.TrimSpace(response.OrganizationName) == "" {
 		return Principal{}, fmt.Errorf("identity service returned an incomplete principal")
 	}
-	principal := result.Principal.Principal
-	principal.Active = *result.Principal.Active
+	principal := response.Principal
+	principal.Active = *response.Active
 	return principal, nil
 }
 

@@ -46,7 +46,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 	upstreamStopped := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/rpc/identity/resolve-access-token" {
-			if _, err := io.WriteString(w, `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"member-1","system_role":"admin","active":true}}`); err != nil {
+			if _, err := io.WriteString(w, `{"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","active":true}}`); err != nil {
 				t.Error(err)
 			}
 			return

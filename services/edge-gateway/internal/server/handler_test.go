@@ -762,6 +762,7 @@ func assertCookie(t *testing.T, cookies []*http.Cookie, name string, httpOnly bo
 func administratorPrincipal() identity.Principal {
 	return identity.Principal{
 		UserID: "user-admin", OrganizationID: "org-1", MembershipID: "membership-1",
+		OrganizationSlug: "engineering", OrganizationName: "Engineering",
 		SystemRole: "admin", OrganizationRole: "admin", Active: true,
 	}
 }
