@@ -411,6 +411,28 @@ The scoped Bridge intent observation reads a Run's durable `error_class` with
 its terminal receipt. It exposes only that bounded classification, not model
 provider messages, so the Node Bridge can show a useful rejection after an
 asynchronous Prompt or a browser reload.
+Every receipt and embedded recent receipt contains `errorClass`: null outside
+failed, cancelled or unknown phases; otherwise null or a 1–128 character
+ASCII snake_case code. The vocabulary is open. Invalid stored codes project as
+`internal_error`, preserving durable outcome and phase; normalization logs a
+bounded classification diagnostic. Known emitted classes and client handling
+are listed in the [Bridge contract](../../../contracts/agent-acp/workspace-bridge.md#receipt-failure-classification).
+
+The emitted classifications include:
+
+- Model/provider: `model_unsupported_content`, `model_unavailable`,
+  `model_http_error`, `model_invalid_response`, `provider_unavailable`.
+- Execution/budget: `run_deadline_exceeded`, `run_failed`, `run_setup_failed`,
+  `context_budget_exhausted`.
+- Tool/recovery: `tool_outcome_unknown`, `cancelled_tool_outcome_unknown`,
+  `service_restarted_during_run`, `service_restarted_during_tool`,
+  `invalid_tool_schema`, `duplicate_tool_call_id`.
+- Skill cleanup and normalization: `temporary_skill_cleanup_pending`,
+  `internal_error`.
+
+Domain and Tool preflight codes extend this list; well-formed future values
+remain readable as generic failures. The normalized observation does not rewrite
+the original database classification.
 An online v1 Prompt response separately waits for its preceding notifications;
 v2 emits idle only after transcript and local terminal facts are durable. Each
 output operation has a 30-second bound. Disconnection, authorization failure,

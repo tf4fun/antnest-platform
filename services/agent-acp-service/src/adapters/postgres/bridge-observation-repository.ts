@@ -6,6 +6,7 @@ import type {
   BridgeSessionExecution,
 } from "../../ports/bridge-observation.js";
 import type { PostgresKernel } from "./kernel.js";
+import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 
 type ReceiptRow = {
   bridge_intent_id: string;
@@ -24,7 +25,10 @@ const RECEIPT_COLUMNS = `r.bridge_intent_id, r.session_id, r.id AS run_id,
     AS output_watermark`;
 
 export class PostgresBridgeObservationRepository implements BridgeObservationRepository {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    private readonly telemetry: TelemetryPort = NOOP_TELEMETRY,
+  ) {}
 
   public async readIntent(
     sessionId: string,
@@ -35,7 +39,7 @@ export class PostgresBridgeObservationRepository implements BridgeObservationRep
         WHERE r.session_id = $1 AND r.bridge_intent_id = $2`,
       [sessionId, intentId],
     );
-    return result.rows[0] === undefined ? null : receipt(result.rows[0]);
+    return result.rows[0] === undefined ? null : receipt(result.rows[0], this.telemetry);
   }
 
   public readSession(sessionId: string): Promise<BridgeSessionExecution | null> {
@@ -75,13 +79,26 @@ export class PostgresBridgeObservationRepository implements BridgeObservationRep
         ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
       [sessionId],
     );
-    return result.rows.map(receipt);
+    return result.rows.map((row) => receipt(row, this.telemetry));
   }
 }
 
-function receipt(row: ReceiptRow): BridgeIntentReceipt {
+function receipt(row: ReceiptRow, telemetry: TelemetryPort): BridgeIntentReceipt {
   const phase =
     row.state === "admitting" ? "persisting" : row.state === "unresolved" ? "unknown" : row.state;
+  const errorClass =
+    phase === "failed" || phase === "cancelled" || phase === "unknown"
+      ? normalizeErrorClass(row.error_class)
+      : null;
+  if (errorClass !== row.error_class) {
+    telemetry.log("warn", "bridge_receipt_error_class_normalized", {
+      "run.id": row.run_id,
+      phase,
+      original_error_class: row.error_class?.slice(0, 128),
+      original_error_class_length: row.error_class?.length ?? 0,
+      normalized_error_class: errorClass ?? "none",
+    });
+  }
   return {
     intentId: row.bridge_intent_id,
     sessionId: row.session_id,
@@ -90,8 +107,15 @@ function receipt(row: ReceiptRow): BridgeIntentReceipt {
     appendVersion: safeNumber(row.append_version),
     outputWatermark: safeNumber(row.output_watermark),
     stopReason: row.stop_reason,
-    errorClass: row.error_class,
+    errorClass,
   };
+}
+
+function normalizeErrorClass(value: string | null): string | null {
+  if (value === null) return null;
+  return value.length >= 1 && value.length <= 128 && /^[a-z][a-z0-9_]*$/u.test(value)
+    ? value
+    : "internal_error";
 }
 
 function safeNumber(value: string): number {
