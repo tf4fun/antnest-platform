@@ -176,6 +176,10 @@ e2e-agent-ui-receipt-contract:
 	npm --prefix services/agent-ui/web run build:server
 	ANTNEST_UI_RECEIPT_E2E=1 node --test tests/e2e/agent-ui/receipt-contract.test.mjs
 
+.PHONY: e2e-gateway-security-headers
+e2e-gateway-security-headers:
+	ANTNEST_GATEWAY_SECURITY_E2E=1 node --test tests/e2e/edge-gateway/security-headers-docker.test.mjs
+
 .PHONY: e2e-lifecycle-interrupted
 e2e-lifecycle-interrupted:
 	node tests/e2e/lifecycle-closeout/interrupted-run.mjs

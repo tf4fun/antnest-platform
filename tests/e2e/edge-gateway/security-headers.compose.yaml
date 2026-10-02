@@ -1,0 +1,8 @@
+# Isolated current candidates; ordinary local tags are never replaced.
+services:
+  identity-service:
+    image: ${ANTNEST_SECURITY_E2E_IDENTITY_IMAGE:?required candidate image}
+  runtime-controller:
+    image: ${ANTNEST_SECURITY_E2E_RC_IMAGE:?required candidate image}
+    environment:
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${ANTNEST_SECURITY_E2E_RC_IMAGE:?required candidate image}
