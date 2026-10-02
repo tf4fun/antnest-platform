@@ -34,7 +34,7 @@ function props(): ComponentProps<typeof Sidebar> {
     })),
     activeAgentId: "agent-1",
     activeConversationId: "session-1",
-    principal: {
+    principal: { organizationSlug: "engineering",
       userId: "user",
       organizationId: "org",
       displayName: "User",

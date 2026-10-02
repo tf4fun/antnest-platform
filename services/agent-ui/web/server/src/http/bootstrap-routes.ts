@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { error, json } from "./command-routes.ts";
+import { readWorkspacePrincipal } from "./workspace-principal.ts";
 
 export type BootstrapScope = { organizationId: string; principalId: string };
 
@@ -21,14 +22,11 @@ export function createBootstrapHandler(dependencies: {
       return null;
     if (request.method !== "GET")
       return error(405, "method_not_allowed", "Method is not allowed", "none");
-    const organizationId = request.headers.get("x-antnest-organization-id");
-    const principalId = request.headers.get("x-antnest-principal-id");
-    const administrator = request.headers.get("x-antnest-administrator");
-    if (!validTrustedId(organizationId) || !validTrustedId(principalId) ||
-      (administrator !== "true" && administrator !== "false"))
+    const principal = readWorkspacePrincipal(request.headers);
+    if (principal === null)
       return error(401, "unauthenticated", "Trusted identity is missing", "login");
     try {
-      const raw = await dependencies.discover({ organizationId, principalId });
+      const raw = await dependencies.discover({ organizationId: principal.organizationId, principalId: principal.userId });
       const agents = z.array(workspaceAgent).max(20_000).parse(raw);
       const seen = new Set<string>();
       const projected = agents.map((agent) => {
@@ -45,7 +43,7 @@ export function createBootstrapHandler(dependencies: {
         };
       });
       return json({
-        principal: { userId: principalId, organizationId, administrator: administrator === "true" },
+        principal,
         agents: projected,
         renderedAt: new Date(dependencies.now()).toISOString(),
         bridgeEpoch: dependencies.epoch,
@@ -54,9 +52,4 @@ export function createBootstrapHandler(dependencies: {
       return error(503, "workspace_unavailable", "Agent workspace is unavailable", "retry_read");
     }
   };
-}
-
-function validTrustedId(value: string | null): value is string {
-  return value !== null && value.length > 0 && value.length <= 200 &&
-    value.trim() === value && !/[,\x00-\x1f\x7f]/u.test(value);
 }

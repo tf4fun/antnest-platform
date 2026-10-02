@@ -6,7 +6,7 @@ const path = "http://localhost/api/app/workspace/v1/bootstrap";
 const headers = {
   "x-antnest-organization-id": "org-1",
   "x-antnest-principal-id": "user-1",
-  "x-antnest-administrator": "true",
+  "x-antnest-administrator": "true", "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc",
 };
 
 test("bootstrap returns the trusted principal and only safe Controller Agent facts", async () => {
@@ -28,7 +28,7 @@ test("bootstrap returns the trusted principal and only safe Controller Agent fac
   assert.equal(response?.headers.get("cache-control"), "no-store");
   assert.deepEqual(scopes, [{ organizationId: "org-1", principalId: "user-1" }]);
   assert.deepEqual(await response?.json(), {
-    principal: { userId: "user-1", organizationId: "org-1", administrator: true },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: true },
     agents: [{
       agentId: "agent-1", name: "Research", lifecycle: "created",
       activation: "enabled", runtime: "available",

@@ -75,7 +75,7 @@ test("document paths reject unknown shapes and retain escaped identifiers for GE
     const address = server.address();
     assert.ok(address && typeof address !== "string");
     const origin = `http://127.0.0.1:${address.port}`;
-    const headers = { "x-antnest-organization-id": "org", "x-antnest-principal-id": "user", "x-antnest-administrator": "false" };
+    const headers = { "x-antnest-organization-id": "org", "x-antnest-principal-id": "user", "x-antnest-administrator": "false", "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc", };
     for (const path of ["/workspace/agent/sessions/", "/workspace/agent/sessions/s/extra", "/workspace/?agent=agent", "/workspace/agent/?return_to=//other", "/workspace/%00/", "/workspace/assets/"]) {
       assert.equal((await fetch(origin + path, { headers })).status, 404, path);
     }
@@ -115,7 +115,7 @@ test("workspace document requires trusted identity and isolates bootstrap by req
       const response = await fetch(base, { headers: {
         "x-antnest-organization-id": "org-1",
         "x-antnest-principal-id": userId,
-        "x-antnest-administrator": "false",
+        "x-antnest-administrator": "false", "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc",
       } });
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("cache-control"), "private, no-store");
@@ -150,7 +150,7 @@ test("slow authorized bootstrap renders a generic shell within its wait budget",
     const response = await fetch(`http://127.0.0.1:${address.port}/workspace/`, { headers: {
       "x-antnest-organization-id": "org-1",
       "x-antnest-principal-id": "user-1",
-      "x-antnest-administrator": "false",
+      "x-antnest-administrator": "false", "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc",
     } });
     assert.equal(response.status, 200);
     assert.equal(await response.text(), "generic-shell");

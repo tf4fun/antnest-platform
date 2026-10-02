@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import BridgeApp from "./BridgeApp";
 
 const bootstrap = (userId: string, agentId: string) => ({
-  principal: { userId, organizationId: "org-1", administrator: false },
+  principal: { organizationSlug: "engineering", organizationName: "Engineering", userId, organizationId: "org-1", administrator: false },
   agents: [{ agentId, name: `Agent ${agentId}`, lifecycle: "created",
     activation: "enabled", runtime: "available" }],
   renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",

@@ -82,6 +82,7 @@ export type SessionUsage = { used: number; size: number; cost?: SessionCost };
 export type Principal = {
   userId: string;
   organizationId: string;
+  organizationSlug: string;
   displayName: string;
   organizationName: string;
   administrator: boolean;

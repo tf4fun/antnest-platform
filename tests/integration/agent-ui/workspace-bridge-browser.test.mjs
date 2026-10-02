@@ -237,6 +237,8 @@ test(
                 if (path === "/api/app/workspace/v1/bootstrap") {
                   writeJSON(response, {
                     principal: {
+                      organizationSlug: "engineering",
+                      organizationName: "Engineering",
                       userId: "user-1",
                       organizationId: "org-1",
                       administrator: false,
@@ -814,12 +816,12 @@ test(
         "The old SSE observer must release its connection",
       );
       await page
-        .locator(".topbar-agent .presence")
+        .locator(".topbar-status .presence")
         .getByText("Status unavailable")
         .waitFor();
       assert.equal(await composerStatus.innerText(), "Connection unavailable");
       assert.equal(
-        await page.locator(".topbar-agent .presence").getAttribute("role"),
+        await page.locator(".topbar-status .presence").getAttribute("role"),
         "status",
         "Disconnected Agent status must be announced to assistive technology",
       );
@@ -852,7 +854,7 @@ test(
         "A dropped SSE stream must reconnect to its scoped View",
       );
       await page
-        .locator(".topbar-agent .presence")
+        .locator(".topbar-status .presence")
         .getByText("Available")
         .waitFor();
       await page
@@ -1180,7 +1182,7 @@ test(
       await secondPage.getByText("Offline", { exact: true }).first().waitFor();
       assert.equal(
         await secondPage
-          .locator(".topbar-agent .presence")
+          .locator(".topbar-status .presence")
           .getAttribute("role"),
         "status",
       );
@@ -1559,6 +1561,8 @@ test(
                 if (url.pathname === "/api/app/workspace/v1/bootstrap") {
                   writeJSON(response, {
                     principal: {
+                      organizationSlug: "engineering",
+                      organizationName: "Engineering",
                       userId: "user-1",
                       organizationId: "org-1",
                       administrator: false,

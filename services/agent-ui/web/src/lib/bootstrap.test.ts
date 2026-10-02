@@ -5,8 +5,35 @@ import { workspaceFromBootstrap, workspaceFromBridgeBootstrap } from "./bootstra
 const principal = {
   user_id: "user-1",
   organization_id: "org-1",
+  organization_slug: "engineering",
+  organization_name: "Engineering",
   administrator: false,
 };
+
+test("both bootstrap mappings preserve verified Organization labels instead of a placeholder", () => {
+  const labels = { organization_slug: "engineering", organization_name: "研发 · Équipe 🚀" };
+  const legacy = workspaceFromBootstrap({ principal: { ...principal, ...labels }, agents: [] });
+  assert.equal(legacy.principal.organizationName, labels.organization_name);
+  const bridge = workspaceFromBridgeBootstrap({
+    principal: { userId: principal.user_id, organizationId: principal.organization_id, administrator: false,
+      organizationSlug: labels.organization_slug, organizationName: labels.organization_name },
+    agents: [], renderedAt: "2026-10-02T00:00:00Z", bridgeEpoch: "epoch",
+  });
+  assert.deepEqual(bridge.principal, legacy.principal);
+});
+
+test("both bootstrap mappings require nonempty verified Organization labels", () => {
+  for (const field of ["organization_slug", "organization_name"]) {
+    for (const invalid of [undefined, "", " \t\n", "\uFEFF\u00A0\u2028", false]) {
+      const input = { ...principal, organization_slug: "engineering", organization_name: "Engineering", [field]: invalid };
+      assert.throws(() => workspaceFromBootstrap({ principal: input, agents: [] }));
+      assert.throws(() => workspaceFromBridgeBootstrap({ principal: {
+        userId: input.user_id, organizationId: input.organization_id, administrator: input.administrator,
+        organizationSlug: input.organization_slug, organizationName: input.organization_name,
+      }, agents: [], renderedAt: "2026-10-02T00:00:00Z", bridgeEpoch: "epoch" }));
+    }
+  }
+});
 
 const management = {
   lifecycle_state: "created",
@@ -98,7 +125,7 @@ test("rejects missing, inconsistent and execution-only management state", () => 
 
 test("Bridge bootstrap maps the verified principal and Agent directory into the current UI model", () => {
   const workspace = workspaceFromBridgeBootstrap({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: true },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: true },
     agents: [{ agentId: "agent-1", name: "Research", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00.000Z", bridgeEpoch: "epoch-1",
   });
@@ -110,7 +137,7 @@ test("Bridge bootstrap maps the verified principal and Agent directory into the 
 
 test("Bridge bootstrap rejects duplicate or inconsistent Agent entries", () => {
   const base = {
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     renderedAt: "2026-09-23T00:00:00.000Z", bridgeEpoch: "epoch-1",
   };
   assert.throws(() => workspaceFromBridgeBootstrap({ ...base, agents: [

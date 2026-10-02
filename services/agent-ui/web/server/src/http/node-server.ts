@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BridgeTelemetry } from "../telemetry.ts";
 import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../protocol/workspace-route.ts";
+import { readWorkspacePrincipal } from "./workspace-principal.ts";
 
 type WorkspaceHandler = { handle(request: Request): Promise<Response | null> };
 type DocumentOptions = {
@@ -279,14 +280,7 @@ async function serveDocument(
   output: ServerResponse,
   route: WorkspaceRoute,
 ): Promise<void> {
-  const organizationId = request.headers.get("x-antnest-organization-id");
-  const principalId = request.headers.get("x-antnest-principal-id");
-  const administrator = request.headers.get("x-antnest-administrator");
-  const validId = (value: string | null) =>
-    value !== null && value.length > 0 && value.length <= 256 &&
-    !/[\u0000-\u001f\u007f]/.test(value);
-  if (!validId(organizationId) || !validId(principalId) ||
-    (administrator !== "true" && administrator !== "false")) {
+  if (readWorkspacePrincipal(request.headers) === null) {
     output.writeHead(401, { "cache-control": "private, no-store" }).end();
     return;
   }

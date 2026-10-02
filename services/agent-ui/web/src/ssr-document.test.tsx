@@ -19,12 +19,12 @@ async function documentFor(bootstrap: unknown): Promise<string> {
 
 test("SSR document keeps each request's bootstrap and safely serializes script text", async () => {
   const first = await documentFor({
-    principal: { userId: "user-one", organizationId: "org", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-one", organizationId: "org", administrator: false },
     agents: [{ agentId: "agent-1", name: "<script>alert(1)</script>", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch",
   });
   const second = await documentFor({
-    principal: { userId: "user-two", organizationId: "org", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-two", organizationId: "org", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent two", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch",
   });

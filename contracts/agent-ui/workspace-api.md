@@ -25,6 +25,17 @@ Neither path, body, cursor nor `Idempotency-Key` can select an identity. All
 reads, cached views, idempotency hits and SSE resumes repeat scope checks. A
 scope is `(organization, principal, agent)`; a Session adds its Session ID.
 
+`GET /bootstrap` and Workspace SSR additionally require the verified
+Organization slug/name supplied by Gateway revision 14. Their transport is one
+canonical, unpadded Base64URL UTF-8 value in each of
+`X-Antnest-Organization-Slug` and `X-Antnest-Organization-Name`. Missing,
+duplicate or malformed values return `401` before discovery. The browser-safe
+principal has required `organizationSlug` and `organizationName` strings;
+these are display facts only. The Node handler, shared schema, frontend mappings
+and SSR/hydration use the same principal without a placeholder fallback. A new
+authenticated bootstrap observes current Identity metadata without resetting
+an unchanged ID-based scope. See [Organization projection](organization-projection.md).
+
 The browser receives no ACP connection identifier, provider credential, Runtime
 address, internal access token, trusted identity header or raw admin audit
 record. `contentBlock` values are the user's negotiated ACP content and must be

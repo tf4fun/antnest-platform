@@ -5,6 +5,7 @@ export function previewWorkspace(): WorkspaceSnapshot {
     principal: {
       userId: "preview-user",
       organizationId: "preview-org",
+      organizationSlug: "antnest-labs",
       displayName: "Lin Xia",
       organizationName: "Antnest Labs",
       administrator: true,

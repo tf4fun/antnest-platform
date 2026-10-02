@@ -86,6 +86,13 @@ semantics are described in [Architecture](docs/architecture.md#bridge-capacity-a
 ## Dependencies
 
 - Edge Gateway: the only supported caller; supplies verified identity.
+- Organization display: Gateway revision 14 supplies verified slug/name as
+  canonical UTF-8 Base64URL headers. Node decodes and validates the same
+  principal for bootstrap and SSR; both frontend bootstrap mappings require
+  these labels. The chooser and account footer render the real name with the
+  existing styles. A reload or re-bootstrap reads current Identity metadata,
+  without changing ID-based authorization or clearing a same-identity Session.
+  See the [shared projection contract](../../contracts/agent-ui/organization-projection.md).
 - Agent ACP Service: required for all conversation and execution-state work.
 - Agent Controller: required for Agent discovery at bootstrap; the
   authenticated shell remains usable while discovery is temporarily unavailable.

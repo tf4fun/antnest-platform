@@ -69,6 +69,8 @@ const legacy = createServer(async (request, response) => {
       response.end(
         JSON.stringify({
           principal: {
+            organization_slug: "engineering",
+            organization_name: "Engineering",
             user_id: "user",
             organization_id: "org",
             administrator: false,
@@ -109,6 +111,8 @@ const current = createWorkspaceHttpServer(
         return null;
       return Response.json({
         principal: {
+          organizationSlug: "engineering",
+          organizationName: "Engineering",
           userId: "user",
           organizationId: "org",
           administrator: false,
@@ -143,6 +147,8 @@ try {
                 "x-antnest-organization-id": "org",
                 "x-antnest-principal-id": "user",
                 "x-antnest-administrator": "false",
+                "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+                "x-antnest-organization-name": "RW5naW5lZXJpbmc",
               }
             : {},
       });

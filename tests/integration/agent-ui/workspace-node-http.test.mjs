@@ -293,7 +293,12 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
       get(
         `${origin}/workspace/agent-1/sessions/session-1`,
         {
-          headers: { ...headers, "x-antnest-administrator": "false" },
+          headers: {
+            ...headers,
+            "x-antnest-administrator": "false",
+            "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+            "x-antnest-organization-name": "RW5naW5lZXJpbmc",
+          },
         },
         resolve,
       ).once("error", reject);

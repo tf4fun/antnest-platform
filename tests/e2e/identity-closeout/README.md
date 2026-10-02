@@ -18,6 +18,7 @@ Trace warnings and expected rejection errors are reported as failures.
 | Command | Profile |
 | --- | --- |
 | `make e2e-identity-core` | Local login, SCIM and OIDC |
+| `make e2e-organization-display` | Real local/OIDC browser sessions, Organization projection and display freshness |
 | `make e2e-identity-access` | HTTP access isolation, Identity outage and token expiry |
 | `make e2e-agent-access` | Agent organization access and owner offboarding |
 | `make e2e-acp-session` | Browser logout and Identity faults on existing ACP connections |
@@ -59,10 +60,58 @@ The real Gateway login and session outputs are separately checked against
 by `organization-session.mjs`, including ordinary/admin local sessions and OIDC
 sessions. Missing or mismatched Organization labels and credential fields fail
 admission. `ANTNEST_E2E_GATEWAY_IMAGE` selects an isolated Gateway candidate;
-this producer regression does not yet prove the Node/SSR/browser consumer #93.
+this producer regression alone does not prove the Node/SSR/browser consumer #93.
 `ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE` similarly selects a current RC dependency
 image (including its Skill preparer) when the local tag has fallen behind
 deployment changes. Both overrides apply only to this disposable profile.
+
+## Organization display integration
+
+`make e2e-organization-display` uses an independent core-composition profile after Gateway #92
+and Agent UI #93 have each passed their service admission. It runs the real
+Identity → Gateway → Node bootstrap → browser workflow, including local login
+and an OIDC login initiated in the product UI. The browser-facing IdP authorize
+hop maps the fixture's internal DNS name to its published TLS port; it forwards
+the real verified HTTPS redirect without mocking Identity, Gateway or Node.
+Identity still performs real discovery, token exchange and JWKS verification.
+It provisions its own synthetic users and OIDC Provider; it does not reuse the
+login-attempt budget consumed by the core suite's rejection/rotation scenarios.
+Gateway's normal login limits remain enabled.
+
+The same User is a member of one Organization and an administrator of another.
+Each has a real Controller-created Agent, synthetic model configuration and a
+Runtime; no model prompt is submitted. The actual Node response is validated
+against the central schema and passed unchanged into the production frontend
+decoder. JavaScript-disabled SSR and hydrated chooser/account labels must agree
+with the Identity Organization row, including Unicode and escaped HTML text.
+Forged headers, foreign Agent requests, logout/cookie replay and inactive local
+and OIDC memberships must retain ID-based authorization boundaries.
+
+Gateway's Go real-output schema tests use `santhosh-tekuri/jsonschema` with the
+default Go regexp engine, whose `\s` whitespace class is ASCII-only (`\S` is
+its complement). Those
+schema checks alone do not establish rejection of Unicode-only whitespace such
+as NBSP. Gateway's Identity-client `verified()` validation rejects blank labels
+before projection, with a separate Unicode-whitespace regression. Node also
+requires non-whitespace decoded labels, and the central-schema checks here use
+Ajv's JavaScript regexp semantics. Admission combines the Go schema gate with
+these boundary and cross-service checks.
+
+Because Identity has no public Organization rename command, a coordinator-only
+fixture checks disposable project/run ownership before reading and temporarily
+changing only `organizations.slug/name` in the Identity test database. It
+restores those columns on exit. Reload and re-bootstrap must observe the change
+without altering principal IDs/roles, Agent selection or an unsaved draft. The
+other Organization remains unaffected. This fixture is not a product rename API.
+
+`ANTNEST_E2E_AGENT_UI_IMAGE` selects an isolated UI candidate alongside the
+Identity, Gateway and RC overrides above. Playwright comes from the locked Agent
+UI dependencies and requires its Chromium installation. All contexts and child
+processes are closed before the parent removes its Docker resources. Browser
+JSON/HTML and service logs are scanned for synthetic access credentials; only
+check names and counts become lasting evidence. Session cookies and IdP canaries
+remain in memory or the parent's private temporary directory and are removed on
+teardown.
 
 1. Local login establishes HttpOnly session cookies without returning the token
    in JSON. Member access, rejected CSRF logout, successful logout and replay of

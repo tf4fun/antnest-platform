@@ -20,7 +20,13 @@ test(
             return null;
           const userId = request.headers.get("x-antnest-principal-id");
           return Response.json({
-            principal: { userId, organizationId: "org", administrator: false },
+            principal: {
+              organizationSlug: "engineering",
+              organizationName: "Engineering",
+              userId,
+              organizationId: "org",
+              administrator: false,
+            },
             agents: [
               {
                 agentId: "agent-1",
@@ -51,6 +57,8 @@ test(
               "x-antnest-organization-id": "org",
               "x-antnest-principal-id": userId,
               "x-antnest-administrator": "false",
+              "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+              "x-antnest-organization-name": "RW5naW5lZXJpbmc",
             },
           });
           try {
@@ -212,6 +220,8 @@ test(
           "x-antnest-principal-id": "user",
           "x-antnest-agent-id": "agent-1",
           "x-antnest-administrator": "false",
+          "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+          "x-antnest-organization-name": "RW5naW5lZXJpbmc",
         },
       });
       const page = await context.newPage();
@@ -279,6 +289,8 @@ test(
             return Response.json({ invalid: "bootstrap" });
           return Response.json({
             principal: {
+              organizationSlug: "engineering",
+              organizationName: "Engineering",
               userId: "recovered",
               organizationId: "org",
               administrator: false,
@@ -310,6 +322,8 @@ test(
           "x-antnest-organization-id": "org",
           "x-antnest-principal-id": "recovered",
           "x-antnest-administrator": "false",
+          "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+          "x-antnest-organization-name": "RW5naW5lZXJpbmc",
         },
       });
       try {

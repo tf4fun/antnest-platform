@@ -506,7 +506,7 @@ test("runtime bootstrap discovers agents without creating an ACP owner", async (
     { headers: {
       "x-antnest-organization-id": "org-1",
       "x-antnest-principal-id": "user-1",
-      "x-antnest-administrator": "false",
+      "x-antnest-administrator": "false", "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc",
     } },
   ));
   assert.equal(response?.status, 200);

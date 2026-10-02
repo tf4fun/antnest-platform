@@ -136,6 +136,10 @@ test-lifecycle-fixtures:
 e2e-lifecycle:
 	node tests/e2e/lifecycle-closeout/run.mjs
 
+.PHONY: e2e-organization-display
+e2e-organization-display:
+	ANTNEST_E2E_IDENTITY_CORE=true ANTNEST_E2E_ORGANIZATION_DISPLAY=true sh tests/e2e/e2e-stage3a.sh
+
 .PHONY: e2e-lifecycle-shutdown
 e2e-lifecycle-shutdown:
 	node tests/e2e/lifecycle-closeout/run.mjs shutdown

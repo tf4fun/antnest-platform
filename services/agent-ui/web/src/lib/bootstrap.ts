@@ -1,10 +1,14 @@
 import { z } from "zod";
 import type { WorkspaceSnapshot } from "./types";
 
+const organizationDisplay = z.string().min(1).refine((value) => value.trim() !== "");
+
 const bootstrapSchema = z.object({
   principal: z.object({
     user_id: z.string().min(1),
     organization_id: z.string().min(1),
+    organization_slug: organizationDisplay,
+    organization_name: organizationDisplay,
     administrator: z.boolean(),
   }),
   agents: z
@@ -42,6 +46,8 @@ const bridgeBootstrapSchema = z.strictObject({
   principal: z.strictObject({
     userId: z.string().min(1),
     organizationId: z.string().min(1),
+    organizationSlug: organizationDisplay,
+    organizationName: organizationDisplay,
     administrator: z.boolean(),
   }),
   agents: z.array(z.strictObject({
@@ -62,6 +68,8 @@ export function workspaceFromBridgeBootstrap(payload: unknown): WorkspaceSnapsho
     principal: {
       user_id: bootstrap.principal.userId,
       organization_id: bootstrap.principal.organizationId,
+      organization_slug: bootstrap.principal.organizationSlug,
+      organization_name: bootstrap.principal.organizationName,
       administrator: bootstrap.principal.administrator,
     },
     agents: bootstrap.agents.map((agent) => ({
@@ -83,7 +91,8 @@ export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
       displayName: bootstrap.principal.administrator
         ? "Administrator"
         : "Signed in",
-      organizationName: "Organization workspace",
+      organizationSlug: bootstrap.principal.organization_slug,
+      organizationName: bootstrap.principal.organization_name,
       administrator: bootstrap.principal.administrator,
     },
     connection: "offline",

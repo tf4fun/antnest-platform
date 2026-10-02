@@ -38,6 +38,7 @@ const agents: WorkspaceSnapshot["agents"] = [
 const principal = {
   userId: "user",
   organizationId: "org",
+  organizationSlug: "engineering",
   displayName: "User",
   organizationName: "Organization",
   administrator: false,
