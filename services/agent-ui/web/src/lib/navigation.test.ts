@@ -13,7 +13,7 @@ test("routes express workspace and Session hierarchy with independently encoded 
 });
 
 test("selection is explicit, scoped and never falls back from an unknown Agent", () => {
-  const snapshot = workspaceFromBootstrap({ principal: { user_id: "u", organization_id: "o", administrator: true },
+  const snapshot = workspaceFromBootstrap({ principal: { organization_slug: "engineering", organization_name: "Engineering", user_id: "u", organization_id: "o", administrator: true },
     agents: [{ agent_id: "a1", name: "One", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available" },
       { agent_id: "a2", name: "Two", lifecycle_state: "created", activation_state: "disabled", runtime_state: "exited" }] });
   assert.equal(selectWorkspaceRoute(snapshot, { agentId: "", sessionId: null }).activeAgentId, "");
@@ -24,7 +24,7 @@ test("selection is explicit, scoped and never falls back from an unknown Agent",
 });
 
 test("selecting another Session releases completed process from the workspace cache", () => {
-  const base = workspaceFromBootstrap({ principal: { user_id: "u", organization_id: "o", administrator: true },
+  const base = workspaceFromBootstrap({ principal: { organization_slug: "engineering", organization_name: "Engineering", user_id: "u", organization_id: "o", administrator: true },
     agents: [{ agent_id: "a1", name: "One", lifecycle_state: "created",
       activation_state: "enabled", runtime_state: "available" }] });
   const selected = selectWorkspaceRoute({ ...base, activeAgentId: "a1",

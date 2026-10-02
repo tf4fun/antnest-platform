@@ -44,6 +44,23 @@ A failed replay never replaces the previous readable view.
 5. A Run remains in ACP after the browser closes or Node restarts. Re-entering
    the workspace reloads its view and any pending permission request.
 
+Bootstrap and SSR share `readWorkspacePrincipal`: it requires verified
+Organization/Principal IDs, the administrator flag and the two display headers
+from Gateway revision 14. Each label must be canonical unpadded Base64URL over
+valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata
+returns `401` before discovery or rendering. The real bootstrap principal uses
+the central `verifiedWorkspacePrincipal` schema, including `organizationSlug`
+and `organizationName`. Both browser bootstrap decoders preserve those fields;
+the chooser and account footer render the name as escaped text. SSR serializes
+the same response for hydration; there is no successful placeholder fallback.
+
+Labels are excluded from owner keys, Agent/Session admission and identity-change
+comparisons. Node does not cache Organization metadata. Each new Gateway-authenticated
+bootstrap/reload observes the current Identity row; a display-only rename
+updates presentation while retaining a same-identity Agent/Session selection.
+See the [projection contract](../../../contracts/agent-ui/organization-projection.md)
+for the #92 producer → #93 consumer → explicit integration order.
+
 The [Skill learning system notices](../../../docs/skill-learning-notifications-design.md)
 use SDK 1.5.0's `notice` for live delivery from ACP, then reuse this HTTP/SSE
 browser path. ACP persists learning changes before publishing; Node advertises

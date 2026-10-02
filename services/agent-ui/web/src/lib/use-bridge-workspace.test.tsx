@@ -9,7 +9,7 @@ test("leaving a Session releases completed process from published workspace hist
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let changed!: (snapshot: unknown) => void;
   const api = { bootstrap: async () => ({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-25T00:00:00Z", bridgeEpoch: "epoch-1",
@@ -44,7 +44,7 @@ test("leaving a Session releases completed process from published workspace hist
 test("a missing Session deep link returns to the Agent directory", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/gone");
   const bootstrap = async () => ({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-25T00:00:00Z", bridgeEpoch: "epoch-1",
@@ -65,7 +65,7 @@ test("a missing Session deep link returns to the Agent directory", async () => {
 test("Bridge workspace bootstraps through HTTP and observes the selected Agent", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/");
   const bootstrap = vi.fn(async () => ({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
@@ -93,7 +93,7 @@ test("a disconnected observer keeps saved history but does not advertise stale a
     selectedSessionId: "session-1", selectedView: { historyState: "ready" } },
     operations: [], permissions: [], conversation };
   const api = { bootstrap: async () => ({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
@@ -114,7 +114,7 @@ test("a disconnected observer keeps saved history but does not advertise stale a
 test("Bridge prompt clears the draft after HTTP admission while operation stays active", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const bootstrap = async () => ({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
@@ -157,7 +157,7 @@ test("first send creates a Session, waits for its View, and submits once", async
     changed(snapshot as never);
   });
   let changed!: (snapshot: never) => void;
-  const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+  const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
     organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
     name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -192,7 +192,7 @@ test("first send stays pending until the created Session View becomes ready", as
   });
   const submitPrompt = vi.fn(async () => ({ operationId: "intent", sessionId: "created",
     phase: "dispatching", acceptance: "bridge" }));
-  const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+  const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
     organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
     name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -227,7 +227,7 @@ test("ambiguous creation retains the draft and requires a directory refresh befo
     "Workspace request timed out", undefined, "workspace_request_timeout", "retry_read"); });
   let changed!: (snapshot: never) => void;
   let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
-  const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+  const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
     organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
     name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -261,7 +261,7 @@ test("blocked selected View keeps saved messages read-only and offers retry", as
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const select = vi.fn(async () => {});
   const api = { bootstrap: async () => ({
-    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
@@ -291,7 +291,7 @@ test("blocked selected View keeps saved messages read-only and offers retry", as
 test("Bridge Session switching preserves separate unsent drafts", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const api = {
-    bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
+    bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
       lifecycle: "created", activation: "enabled", runtime: "available" }],
       renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -318,7 +318,7 @@ test("Bridge Session switching preserves separate unsent drafts", async () => {
 test("new conversation selects a local Agent draft without creating a Session", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const api = {
-    bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
+    bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
       lifecycle: "created", activation: "enabled", runtime: "available" }],
       renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -341,7 +341,7 @@ test("late Session creation does not replace a newer explicit selection", async 
   let changed!: (snapshot: never) => void;
   let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
   const api = {
-    bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
+    bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
       lifecycle: "created", activation: "enabled", runtime: "available" }],
       renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -373,7 +373,7 @@ test("late Session creation does not replace a newer explicit selection", async 
 
 test("late hydration bootstrap retains a local Agent draft without creating a Session", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/");
-  const bootstrap = { principal: { userId: "user-1", organizationId: "org-1",
+  const bootstrap = { principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
     administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
     lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" };
@@ -394,12 +394,41 @@ test("late hydration bootstrap retains a local Agent draft without creating a Se
   expect(result.current.draft).toBe("SSR draft");
 });
 
+test("display-only re-bootstrap updates Organization labels without resetting Session, draft or owner", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+  let organizationName = "Engineering";
+  let organizationSlug = "engineering";
+  const close = vi.fn();
+  const select = vi.fn(async () => {});
+  const makeController = vi.fn(() => ({ select, close,
+    snapshot: { connection: "ready", view: null, operations: [], permissions: [] } }) as never);
+  const api = {
+    bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
+      organizationSlug, organizationName, administrator: false },
+      agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+      renderedAt: "2026-10-02T00:00:00Z", bridgeEpoch: "epoch" }),
+    sessions: async () => ({ items: [{ sessionId: "session-1", title: "Saved", updatedAt: null, activeOperationId: null }], nextCursor: null }),
+  };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never, makeController }));
+  await waitFor(() => expect(select).toHaveBeenCalledWith("session-1"));
+  act(() => result.current.setDraft("Keep my unsent message"));
+  organizationName = "研发 · Équipe 🚀"; organizationSlug = "renamed";
+  await act(async () => { await result.current.refreshWorkspace(); });
+  expect(result.current.workspace?.principal.organizationName).toBe(organizationName);
+  expect(result.current.workspace?.principal.organizationSlug).toBe(organizationSlug);
+  expect(result.current.workspace?.activeAgentId).toBe("agent-1");
+  expect(result.current.workspace?.activeConversationId).toBe("session-1");
+  expect(result.current.draft).toBe("Keep my unsent message");
+  expect(makeController).toHaveBeenCalledOnce();
+  expect(close).not.toHaveBeenCalled();
+});
+
 test("refreshing into another principal clears private drafts for an overlapping Agent", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let principal = "user-1";
   const select = vi.fn(async () => {});
   const api = {
-    bootstrap: vi.fn(async () => ({ principal: { userId: principal,
+    bootstrap: vi.fn(async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: principal,
       organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
         activation: "enabled", runtime: "available" }],
@@ -427,7 +456,7 @@ test("refreshing into another principal clears private drafts for an overlapping
 
 test("hydration bootstrap replacing the principal drops the SSR identity's draft", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
-  const bootstrapFor = (userId: string) => ({ principal: { userId,
+  const bootstrapFor = (userId: string) => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId,
     organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
@@ -452,7 +481,7 @@ test("removing a Bridge attachment releases its preview URL before page unload",
   const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview-one");
   const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   try {
-    const api = { bootstrap: async () => ({ principal: { userId: "user-1",
+    const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
       organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
         activation: "enabled", runtime: "available" }],

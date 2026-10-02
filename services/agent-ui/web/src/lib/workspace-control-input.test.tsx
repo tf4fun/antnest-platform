@@ -7,7 +7,7 @@ afterEach(cleanup);
 async function setup(sessionId: string | null = null, busy = false) {
   window.history.replaceState(null, "", `/workspace/agent/${sessionId ? `sessions/${sessionId}` : ""}`);
   const api = {
-    bootstrap: async () => ({ principal: { userId: "user", organizationId: "org", administrator: false },
+    bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user", organizationId: "org", administrator: false },
       agents: [{ agentId: "agent", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }], renderedAt: "now", bridgeEpoch: "epoch" }),
     sessions: async () => ({ items: [], nextCursor: null }),
     createSession: vi.fn(),

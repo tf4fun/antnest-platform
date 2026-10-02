@@ -485,6 +485,8 @@ test(
               "x-antnest-organization-id": "org-1",
               "x-antnest-principal-id": "user-1",
               "x-antnest-administrator": "false",
+              "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+              "x-antnest-organization-name": "RW5naW5lZXJpbmc",
             },
             signal: AbortSignal.any([
               AbortSignal.timeout(10_000),
@@ -578,6 +580,8 @@ test(
             "x-antnest-organization-id": "org-1",
             "x-antnest-principal-id": "user-1",
             "x-antnest-administrator": "false",
+            "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+            "x-antnest-organization-name": "RW5naW5lZXJpbmc",
             traceparent: `00-${gatewayTraceId}-${gatewayParentSpanId}-01`,
           },
           signal: AbortSignal.any([
@@ -612,6 +616,8 @@ test(
           "x-antnest-organization-id": "org-1",
           "x-antnest-principal-id": "user-1",
           "x-antnest-administrator": "false",
+          "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
+          "x-antnest-organization-name": "RW5naW5lZXJpbmc",
         },
         signal: AbortSignal.any([
           AbortSignal.timeout(10_000),

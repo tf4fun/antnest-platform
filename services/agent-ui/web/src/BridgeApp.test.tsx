@@ -27,7 +27,7 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
     const url = String(input);
     requests.push(url);
     if (url.endsWith("/bootstrap")) return Response.json({
-      principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+      principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
         activation: "enabled", runtime: "available" }],
       renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",

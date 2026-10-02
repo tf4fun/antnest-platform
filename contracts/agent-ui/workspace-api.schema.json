@@ -9,7 +9,7 @@
       "pattern": "\\S"
     },
     "verifiedWorkspacePrincipal": {
-      "description": "Gateway revision-14 projection. Activated for bootstrap by the Agent UI consumer batch #93; labels are display facts, not authorization inputs.",
+      "description": "Gateway revision-14 projection consumed by Agent UI bootstrap/SSR; labels are display facts, not authorization inputs.",
       "type": "object",
       "properties": {
         "userId": { "$ref": "#/$defs/id" },
@@ -78,16 +78,7 @@
     "bootstrap": {
       "type": "object",
       "properties": {
-        "principal": {
-          "type": "object",
-          "properties": {
-            "userId": { "$ref": "#/$defs/id" },
-            "organizationId": { "$ref": "#/$defs/id" },
-            "administrator": { "type": "boolean" }
-          },
-          "required": ["userId", "organizationId", "administrator"],
-          "additionalProperties": false
-        },
+        "principal": { "$ref": "#/$defs/verifiedWorkspacePrincipal" },
         "agents": {
           "type": "array",
           "items": {
