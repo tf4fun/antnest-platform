@@ -12,21 +12,20 @@ is described in the [Agent UI architecture](../../services/agent-ui/docs/archite
 The public prefix is `/api/app/workspace/v1`. Gateway authenticates each request,
 enforces the CSRF token on POST, and overwrites all internal identity headers.
 Gateway checks `Origin` only when the request supplies it: a present `Origin`
-must match the Gateway origin, and an absent one is not rejected. Node receives
-organization, principal, user and membership in trusted headers, plus a
-verified administrator flag for `/bootstrap`. For Agent-scoped paths
-(`/agents/{agentId}/...`), Gateway also sets `X-Antnest-Agent-ID` from the
-path; Node requires the Organization, Principal and Agent headers and rejects
-an Agent-scoped request without them. Node then verifies Agent and Session
-access through its upstream calls. Gateway overwrites the
-flag from the resolved Identity principal; a browser-supplied value is never
-forwarded.
+must match the Gateway origin, and an absent one is not rejected. Node verifies
+Gateway workload identity and Identity-signed CCT before business handling.
+Signed subject, Organization and roles determine authority; raw identity and
+administrator headers grant nothing. Agent API paths (`/agents/{agentId}/...`)
+match signed `agt`. HTML and bootstrap use Organization-scoped CCT for discovery,
+even when a document selects an Agent. Authenticated upstream calls verify Agent
+and Session access and forward CCT unchanged. See the
+[service-authentication contract](service-authentication.md).
 Neither path, body, cursor nor `Idempotency-Key` can select an identity. All
 reads, cached views, idempotency hits and SSE resumes repeat scope checks. A
 scope is `(organization, principal, agent)`; a Session adds its Session ID.
 
 `GET /bootstrap` and Workspace SSR additionally require the verified
-Organization slug/name supplied by Gateway revision 14. Their transport is one
+Organization slug/name supplied by Gateway revision 15. Their transport is one
 canonical, unpadded Base64URL UTF-8 value in each of
 `X-Antnest-Organization-Slug` and `X-Antnest-Organization-Name`. Missing,
 duplicate or malformed values return `401` before discovery. The browser-safe

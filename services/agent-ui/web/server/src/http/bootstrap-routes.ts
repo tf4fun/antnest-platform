@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { error, json } from "./command-routes.ts";
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
+import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
 
 export type BootstrapScope = { organizationId: string; principalId: string };
 
@@ -26,7 +27,9 @@ export function createBootstrapHandler(dependencies: {
     if (principal === null)
       return error(401, "unauthenticated", "Trusted identity is missing", "login");
     try {
-      const raw = await dependencies.discover({ organizationId: principal.organizationId, principalId: principal.userId });
+      const scope = { organizationId: principal.organizationId, principalId: principal.userId };
+      bindScopeContext(scope, verifiedRequestContext(request.headers)!);
+      const raw = await dependencies.discover(scope);
       const agents = z.array(workspaceAgent).max(20_000).parse(raw);
       const seen = new Set<string>();
       const projected = agents.map((agent) => {

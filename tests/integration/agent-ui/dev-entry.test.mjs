@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { testSecurityEnvironment } from "./auth-fixture.mjs";
 
 const web = fileURLToPath(
   new URL("../../../services/agent-ui/web/", import.meta.url),
@@ -29,6 +30,7 @@ test(
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...testSecurityEnvironment(),
         ANTNEST_AGENT_ACP_SERVICE_URL: "http://127.0.0.1:1",
         ANTNEST_AGENT_UI_BRIDGE_HOST: "127.0.0.1",
         ANTNEST_AGENT_UI_BRIDGE_PORT: String(port),

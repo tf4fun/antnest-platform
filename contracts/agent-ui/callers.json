@@ -1,6 +1,6 @@
 {
   "service": "agent-ui",
-  "status": "planned",
+  "status": "enforced",
   "implementation_issues": [
     26
   ],
@@ -274,13 +274,13 @@
       ]
     },
     "services/agent-ui/web/server/src/http/bootstrap-routes.ts": {
-      "sha256": "01d47c5659a9fccebf09ce96a42b0feb4ccf1a66b4c6cd91211f186385ebf8c4",
+      "sha256": "b406c2dbf55b6c2befeccf0282b0403b2866ad467f143c54836af1a53061ba7f",
       "routes": [
         "GET /api/app/workspace/v1/bootstrap"
       ]
     },
     "services/agent-ui/web/server/src/http/command-routes.ts": {
-      "sha256": "3aa69d326b61a864c84cdfa3a682b60f8096c9ef6906c45d85e2a3f9453afb4a",
+      "sha256": "0ddb461774a2713a85ff3c86d593a778a883442ed4a9af92fb51b289865ce1b4",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
@@ -315,7 +315,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/node-server.ts": {
-      "sha256": "cb243ec523291d7b8445492f1458a7f4f7e5da4f721691a56866a424cca067f1",
+      "sha256": "c4c9d7ca83bb9271d66e7ec149b72bca6c15ea7eabf26b12f7ee1fdc78cbd422",
       "routes": [
         "GET /status",
         "GET /live",
@@ -354,6 +354,39 @@
     },
     "services/agent-ui/web/server/src/workspace-runtime.ts": {
       "sha256": "1ca15a5219e6958fc4e2da4c543a5df5ac6715802cd6837c8f237c7ffa622ab2",
+      "routes": []
+    },
+    "services/agent-ui/web/server/src/http/request-authentication.ts": {
+      "sha256": "54642d7354afda7c7c60f7e4e16a2c97c7f4a645c2356e7b2526b1535b982e7a",
+      "routes": [
+        "GET /api/app/workspace/v1/agents/{agentId}/events",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/content",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process/{itemId}/content",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/view",
+        "GET /api/app/workspace/v1/agents/{agentId}/view",
+        "GET /api/app/workspace/v1/bootstrap",
+        "GET /workspace/",
+        "GET /workspace/{agentId}/",
+        "GET /workspace/{agentId}/sessions/{sessionId}",
+        "POST /api/app/workspace/v1/agents/{agentId}/commands",
+        "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision",
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions",
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/configuration",
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}/cancel",
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
+        "HEAD /workspace/",
+        "HEAD /workspace/{agentId}/",
+        "HEAD /workspace/{agentId}/sessions/{sessionId}",
+        "GET /workspace/assets/{asset_name}",
+        "HEAD /workspace/assets/{asset_name}"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/json-request.ts": {
+      "sha256": "9fe37f778559161e659d69db0378810b7730b22ab532f750e5b340acbdb159f3",
       "routes": []
     }
   }

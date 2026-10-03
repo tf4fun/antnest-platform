@@ -1,6 +1,8 @@
 # Verified Organization display metadata
 
-Gateway browser contract revision 14 consumes Identity principal revision 13.
+Gateway session contract revision 15 consumes Identity principal revision 14.
+Node verifies Gateway workload identity and the signed CCT; display headers
+never supply subject, Organization or administrator authority.
 `organization_slug` and `organization_name` are required, non-whitespace strings
 from the authenticated Organization row. IDs, membership, roles and active state
 remain authorization facts; neither label determines scope or administrator access.
@@ -20,8 +22,9 @@ Node accepts only the Base64URL alphabet, verifies canonical re-encoding, decode
 UTF-8 strictly and requires a non-whitespace decoded string. Duplicate headers
 (including a comma-joined value), padding, invalid UTF-8, missing or empty values
 return `401 unauthenticated` before Controller discovery. The private Node
-listener remains reachable only through the trusted deployment network; display
-headers do not create an alternative browser identity source.
+listener verifies workload credentials regardless of network reachability;
+display headers do not create an alternative browser identity source. See the
+[service-authentication contract](service-authentication.md).
 
 The active bootstrap emits decoded `organizationSlug` and `organizationName`
 alongside `userId`, `organizationId` and `administrator`. The shared

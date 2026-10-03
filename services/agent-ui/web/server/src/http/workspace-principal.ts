@@ -7,15 +7,12 @@ export type WorkspacePrincipal = {
 };
 
 export function readWorkspacePrincipal(headers: Headers): WorkspacePrincipal | null {
-  const userId = headers.get("x-antnest-principal-id");
-  const organizationId = headers.get("x-antnest-organization-id");
-  const administrator = headers.get("x-antnest-administrator");
+  const claims = verifiedRequestContext(headers)?.claims;
   const organizationSlug = decodeDisplay(headers.get("x-antnest-organization-slug"));
   const organizationName = decodeDisplay(headers.get("x-antnest-organization-name"));
-  if (!validTrustedId(userId) || !validTrustedId(organizationId) ||
-    (administrator !== "true" && administrator !== "false") ||
-    organizationSlug === null || organizationName === null) return null;
-  return { userId, organizationId, organizationSlug, organizationName, administrator: administrator === "true" };
+  if (!claims || organizationSlug === null || organizationName === null) return null;
+  return { userId: claims.sub, organizationId: claims.org, organizationSlug, organizationName,
+    administrator: claims.sys_role === "admin" || claims.org_role === "admin" };
 }
 
 function decodeDisplay(value: string | null): string | null {
@@ -31,7 +28,4 @@ function decodeDisplay(value: string | null): string | null {
   }
 }
 
-function validTrustedId(value: string | null): value is string {
-  return value !== null && value.length > 0 && value.length <= 200 &&
-    value.trim() === value && !/[,\x00-\x1f\x7f]/u.test(value);
-}
+import { verifiedRequestContext } from "./trusted-identity.ts";

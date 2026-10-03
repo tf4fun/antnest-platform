@@ -1,4 +1,10 @@
+import { ServiceAuthentication } from "./adapters/service-authentication.ts";
+import { CallerContextVerifier } from "./adapters/caller-context.ts";
+import { RequestAuthentication } from "./http/request-authentication.ts";
+
 export type ServiceConfig = {
+  authentication: RequestAuthentication;
+  dependencyFetchers: { acp: typeof fetch; controller?: typeof fetch };
   acpBaseUrl: URL;
   controllerBaseUrl: URL | undefined;
   host: string;
@@ -93,7 +99,26 @@ export function parseServiceConfig(
   }
   const serviceName = environment.OTEL_SERVICE_NAME ?? "agent-ui";
   if (!serviceName.trim()) throw new Error("Invalid OTEL_SERVICE_NAME");
+  let identity: URL;
+  try {
+    identity = new URL(environment.ANTNEST_AGENT_UI_IDENTITY_URL ?? "");
+    if (!["http:", "https:"].includes(identity.protocol) || identity.username || identity.password ||
+      identity.search || identity.hash || identity.pathname !== "/") throw new Error();
+  } catch { throw new Error("Invalid Identity service URL"); }
+  const origins = [identity.origin, acpBaseUrl.origin, ...(controllerBaseUrl ? [controllerBaseUrl.origin] : [])];
+  if (new Set(origins).size !== origins.length) throw new Error("Distinct dependency origins are required");
+  const workload = new ServiceAuthentication(environment);
+  let authentication: RequestAuthentication;
+  let dependencyFetchers: ServiceConfig["dependencyFetchers"];
+  try {
+    authentication = new RequestAuthentication(workload,
+      new CallerContextVerifier(identity.origin, workload.fetchFor("identity-service", identity.origin)));
+    dependencyFetchers = { acp: workload.fetchFor("agent-acp-service", acpBaseUrl.origin),
+      ...(controllerBaseUrl ? { controller: workload.fetchFor("agent-controller", controllerBaseUrl.origin) } : {}) };
+  } catch (error) { void workload.close(); throw error; }
   return {
+    authentication,
+    dependencyFetchers,
     acpBaseUrl,
     controllerBaseUrl,
     host: environment.ANTNEST_AGENT_UI_BRIDGE_HOST ?? "0.0.0.0",

@@ -1,6 +1,7 @@
+import { startTestWorkspaceService as startWorkspaceService, testFetch as fetch } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { startWorkspaceService } from "../src/service-lifecycle.ts";
+
 
 test("standalone Node service sweeps idle owners and stops its timer on close", async () => {
   let sweeps = 0;
@@ -64,7 +65,9 @@ test("Bridge drain stops admitting requests while liveness remains available", a
     assert.equal(readiness.status, 503);
     assert.equal((await readiness.json()).status, "draining");
     assert.equal((await fetch(`${base}/live`)).status, 200);
-    assert.equal((await fetch(`${base}/api/app/workspace/v1/bootstrap`)).status, 503);
+    assert.equal((await fetch(`${base}/api/app/workspace/v1/bootstrap`, { headers: {
+      "x-antnest-organization-id": "org", "x-antnest-principal-id": "user",
+    } })).status, 503);
     assert.equal(handled, 0);
     releaseDrain();
     await closing;

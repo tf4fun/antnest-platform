@@ -1,3 +1,4 @@
+import { TestRequest as Request } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createAgentViewHandler } from "../src/http/agent-view-routes.ts";

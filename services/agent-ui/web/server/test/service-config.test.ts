@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseServiceConfig } from "../src/service-config.ts";
+import { parseServiceConfig as parseConfig } from "../src/service-config.ts";
+import { testSecurityEnvironment } from "./support/auth-fixture.ts";
+
+function parseServiceConfig(environment: Record<string, string | undefined>) {
+  const { authentication, dependencyFetchers: _clients, ...config } = parseConfig({ ...testSecurityEnvironment(), ...environment });
+  void authentication.workload.close();
+  return config;
+}
 
 test("Bridge service requires an internal ACP base and a valid listen port", () => {
   assert.deepEqual(

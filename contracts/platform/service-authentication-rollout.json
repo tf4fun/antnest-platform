@@ -69,7 +69,7 @@
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (144 tests, 347 subtests, zero skips/failures); authenticated WebSocket rotation and account-switch CAS regressions passed",
         "docker": "node tests/e2e/service-authentication/gateway/run.mjs (58 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
-        "pending_consumers": ["agent-ui", "agent-controller"],
+        "pending_consumers": ["agent-controller"],
         "cross_service_e2e": "pending final integration batch"
       }
     },
@@ -103,7 +103,7 @@
         "unit_contract_component": "127 unit files / 1386 tests; 22 component files / 183 tests; real token/mTLS URI verification, SDK v1/v2 WebSocket expiry, catalog caller matrix and control listener separation passed",
         "postgres": "37 files / 322 tests; zero skips/failures; isolated database cleaned",
         "docker": "node tests/e2e/agent-acp-service/sdk-regressions-docker.mjs (14 authentication/listener checks and five SDK business scenarios, including restart; cleaned)",
-        "pending_consumers": ["agent-ui", "agent-controller", "skill-registry"],
+        "pending_consumers": ["agent-controller", "skill-registry"],
         "pending_runtime_client": "#29/#30 must first define and produce the private, instance-specific connection reference; a later ACP-owned batch adopts it. Existing execution fences and maintenance tickets are retained.",
         "pending_provider_policy": "#28 requires a shared destination-policy contract, Controller discovery/creation guard, and a separate ACP model-client batch.",
         "cross_service_e2e": "pending final integration batch"
@@ -112,12 +112,18 @@
     {
       "owner": "agent-ui",
       "issues": [26],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "workload and CCT verification",
         "bridge context forwarding",
         "JSON media-type checks"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "430 server unit tests; 162 frontend unit tests; 148 frontend component tests; 43 HTTP/SDK/TLS/memory component tests; browser and dev-entry gates passed; zero skips/failures",
+        "docker": "node --test tests/e2e/agent-ui/bridge-container.test.mjs (14 authentication checks, official ACP SDK, SSR, replay, commands, SSE, memory, idle recovery and normal-stop telemetry; cleaned)",
+        "pending_consumers": ["agent-controller"],
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "agent-controller",

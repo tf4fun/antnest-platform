@@ -4,6 +4,19 @@
 
 ### Fixed
 
+Agent UI now verifies Gateway workload credentials and Identity-signed CCT before
+Workspace handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
+Signed subject, Organization, roles and Agent scope replace authority from raw
+identity hints; display labels and browser JSON stay unchanged. HTML/bootstrap
+retain Organization-scoped discovery, while Agent APIs require signed `agt`.
+Bridge forwards CCT unchanged with UI's own rotating workload credentials.
+Malformed media, UTF-8 and duplicate JSON members fail before business effects.
+Expiry denies new operations without cancelling accepted Runs. Startup requires
+the shared exact authentication settings and `ANTNEST_AGENT_UI_IDENTITY_URL`,
+with distinct pinned dependency origins; container health supports TLS/mTLS and
+custom ports. Controller/deployment admission and final integration remain later
+batches on `feat/service-authentication`; #58 owns long-lived renewal.
+
 ACP now verifies workload credentials and Identity-signed caller context before
 protocol, workspace or audit handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26),
 [#27](https://github.com/tf4fun/antnest-platform/issues/27)). Controller publication
@@ -15,7 +28,7 @@ reject new operations without cancelling accepted model work; #58 owns renewal.
 Authenticated Identity, optional learning-policy and Registry clients validate
 credentials at startup and reread token files per request. Deploy with the new
 mandatory service-authentication settings and `ANTNEST_ACP_IDENTITY_URL`; nonempty
-legacy Registry/source bearer settings now fail startup. Controller/Registry/UI
+legacy Registry/source bearer settings now fail startup. Controller/Registry
 consumers, private Runtime instance credentials, network deployment and final
 integration remain later batches on `feat/service-authentication`.
 
@@ -50,7 +63,7 @@ WebSocket connection; invalid replacements fail closed without stale fallback.
 Internal origins, TLS DNS/service identities and redirects are constrained.
 Gateway session contract revision 15 keeps browser JSON unchanged and rejects
 new direct WebSocket messages after the handshake CCT expires; reconnect does
-not cancel accepted Runs. Identity must upgrade first; UI/ACP/Controller
+not cancel accepted Runs. Identity must upgrade first; Controller
 consumers, deployment credentials and final integration remain pending on
 `feat/service-authentication`. #58 separately owns long-lived renewal.
 

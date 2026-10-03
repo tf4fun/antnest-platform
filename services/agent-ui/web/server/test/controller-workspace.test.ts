@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { discoverWorkspaceAgents } from "../src/adapters/controller-workspace.ts";
+import { testScope } from "./support/auth-fixture.ts";
 
 test("Controller discovery pages an authorized scope and stops at the final cursor", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const agents = await discoverWorkspaceAgents({
     baseUrl: new URL("http://controller.internal:8080"),
-    scope: { organizationId: "org-1", principalId: "user-1" },
+    scope: testScope({ organizationId: "org-1", principalId: "user-1" }),
     fetchImpl: async (url, init) => {
       calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
       return Response.json(calls.length === 1
@@ -27,7 +28,7 @@ test("Controller discovery pages an authorized scope and stops at the final curs
 test("Controller discovery rejects repeated cursors and partial pages", async () => {
   const input = {
     baseUrl: new URL("http://controller.internal:8080"),
-    scope: { organizationId: "org-1", principalId: "user-1" },
+    scope: testScope({ organizationId: "org-1", principalId: "user-1" }),
   };
   await assert.rejects(discoverWorkspaceAgents({
     ...input,

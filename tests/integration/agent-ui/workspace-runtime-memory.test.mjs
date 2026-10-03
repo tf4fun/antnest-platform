@@ -1,3 +1,4 @@
+import { TestRequest as Request } from "../../../services/agent-ui/web/server/test/support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import inspector from "node:inspector";
 import { test } from "node:test";

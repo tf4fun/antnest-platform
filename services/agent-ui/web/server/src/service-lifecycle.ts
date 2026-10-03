@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { createWorkspaceHttpServer } from "./http/node-server.ts";
 import type { ServerResponse } from "node:http";
 import type { BridgeTelemetry } from "./telemetry.ts";
+import type { RequestAuthentication } from "./http/request-authentication.ts";
 
 type WorkspaceRuntime = {
   handle(request: Request): Promise<Response | null>;
@@ -10,6 +11,7 @@ type WorkspaceRuntime = {
 };
 
 export async function startWorkspaceService(input: {
+  authentication: RequestAuthentication;
   runtime: WorkspaceRuntime;
   host: string;
   port: number;
@@ -35,6 +37,7 @@ export async function startWorkspaceService(input: {
     throw new RangeError("Invalid Bridge drain timeout");
   let draining = false;
   const server = createWorkspaceHttpServer(input.runtime, {
+    authentication: input.authentication,
     ...input.document,
     isDraining: () => draining,
     telemetry: input.telemetry,

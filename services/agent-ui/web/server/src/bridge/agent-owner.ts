@@ -1304,7 +1304,7 @@ function advertises(
   );
 }
 
-export function connectAcpHttp(baseUrl: URL, fetchImpl?: typeof fetch) {
+export function connectAcpHttp(baseUrl: URL, fetchImpl: typeof fetch) {
   return (
     scope: BridgeScope,
     callbacks: AcpBridgeCallbacks,

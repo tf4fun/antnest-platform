@@ -3,7 +3,7 @@
 This document defines workspace control commands: their discovery, the
 private dispatch route and the initial command set. Agent UI owns the contract.
 ACP remains the Session/Run authority; Edge Gateway retains authentication,
-CSRF and trusted identity injection. A future Channel Manager is expected to
+CSRF and signed caller-context forwarding. A future Channel Manager is expected to
 reuse these semantics, but no channel integration exists. Its scope is
 described in [Stage 4 services](../../docs/stage-4-services.md); a
 channel-facing contract is not yet defined.

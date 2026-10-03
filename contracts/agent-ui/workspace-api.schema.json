@@ -9,7 +9,7 @@
       "pattern": "\\S"
     },
     "verifiedWorkspacePrincipal": {
-      "description": "Gateway revision-14 projection consumed by Agent UI bootstrap/SSR; labels are display facts, not authorization inputs.",
+      "description": "Gateway revision-15 display projection consumed by Agent UI bootstrap/SSR; signed CCT supplies identities/roles and labels are display facts only.",
       "type": "object",
       "properties": {
         "userId": { "$ref": "#/$defs/id" },

@@ -1,8 +1,13 @@
+import { verifiedRequestContext } from "../../../services/agent-ui/web/server/dist/http/trusted-identity.js";
+import {
+  createTestWorkspaceHttpServer as createWorkspaceHttpServer,
+  testBrowserContext,
+} from "./auth-fixture.mjs";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
-import { createWorkspaceHttpServer } from "../../../services/agent-ui/web/server/dist/http/node-server.js";
+
 import { loadWorkspaceDocument } from "../../../services/agent-ui/web/server/dist/ssr-assets.js";
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
 
@@ -18,7 +23,7 @@ test(
             new URL(request.url).pathname !== "/api/app/workspace/v1/bootstrap"
           )
             return null;
-          const userId = request.headers.get("x-antnest-principal-id");
+          const userId = verifiedRequestContext(request.headers)?.claims.sub;
           return Response.json({
             principal: {
               organizationSlug: "engineering",
@@ -51,7 +56,7 @@ test(
       assert.ok(address && typeof address !== "string");
       for (const userId of ["one", "two"])
         for (const javaScriptEnabled of [false, true]) {
-          const context = await browser.newContext({
+          const context = await testBrowserContext(browser, {
             javaScriptEnabled,
             extraHTTPHeaders: {
               "x-antnest-organization-id": "org",
@@ -239,7 +244,7 @@ test(
       browser = await chromium.launch({ headless: true });
       const address = server.address();
       assert.ok(address && typeof address !== "string");
-      const context = await browser.newContext({
+      const context = await testBrowserContext(browser, {
         extraHTTPHeaders: {
           "x-antnest-organization-id": "org",
           "x-antnest-principal-id": "user",
@@ -342,7 +347,7 @@ test(
     try {
       const address = server.address();
       assert.ok(address && typeof address !== "string");
-      const context = await browser.newContext({
+      const context = await testBrowserContext(browser, {
         extraHTTPHeaders: {
           "x-antnest-organization-id": "org",
           "x-antnest-principal-id": "recovered",

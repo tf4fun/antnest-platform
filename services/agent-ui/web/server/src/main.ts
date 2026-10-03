@@ -7,7 +7,9 @@ import { loadWorkspaceDocument } from "./ssr-assets.ts";
 import { startBridgeTelemetry } from "./telemetry.ts";
 
 const config = parseServiceConfig(process.env);
-const telemetry = await startBridgeTelemetry(config.telemetry);
+const telemetry = await startBridgeTelemetry(config.telemetry).catch(async error => {
+  await config.authentication.workload.close(); throw error;
+});
 const runtime = createWorkspaceRuntime({
   maxOwners: config.maxOwners,
   recordColdReplay: telemetry.recordColdReplay,
@@ -19,18 +21,21 @@ const runtime = createWorkspaceRuntime({
     : (scope) => discoverWorkspaceAgents({
         baseUrl: config.controllerBaseUrl!,
         scope,
+        fetchImpl: config.dependencyFetchers.controller!,
       }),
   connect: (scope, callbacks) =>
     AcpHttpBridge.open({
       baseUrl: config.acpBaseUrl,
       scope,
       callbacks,
+      fetchImpl: config.dependencyFetchers.acp,
     }),
 });
 telemetry.registerRuntimeMetrics(runtime.metrics);
 let service: Awaited<ReturnType<typeof startWorkspaceService>>;
 try {
   service = await startWorkspaceService({
+    authentication: config.authentication,
     runtime,
     document: await loadWorkspaceDocument(),
     host: config.host,
@@ -41,6 +46,7 @@ try {
     onForcedDrain: () => console.warn("Bridge drain did not close cleanly"),
   });
 } catch (error) {
+  await config.authentication.workload.close();
   await telemetry.shutdown();
   throw error;
 }
@@ -57,6 +63,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       catch (error) { console.error("Bridge shutdown failed", error); failed = true; }
       try { await telemetry.shutdown(); }
       catch (error) { console.error("Bridge telemetry shutdown failed", error); failed = true; }
+      try { await config.authentication.workload.close(); }
+      catch { console.error("Bridge authentication client shutdown failed"); failed = true; }
       process.exit(failed ? 1 : 0);
     })();
   });

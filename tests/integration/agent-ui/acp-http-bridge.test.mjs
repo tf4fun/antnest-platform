@@ -7,6 +7,10 @@ import { ConfigurationConflictError } from "../../../services/agent-ui/web/serve
 import { SessionReplay } from "../../../services/agent-ui/web/server/dist/bridge/session-replay.js";
 import { parseDeliveryMark } from "../../../services/agent-ui/web/server/dist/bridge/delivery.js";
 import { startBridgeTelemetry } from "../../../services/agent-ui/web/server/dist/telemetry.js";
+import { ServiceAuthentication } from "../../../services/agent-ui/web/server/dist/adapters/service-authentication.js";
+import { bridgeHeaders } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
+import { refreshScopeContext } from "../../../services/agent-ui/web/server/dist/http/trusted-identity.js";
+import { testScope, testSecurityEnvironment } from "./auth-fixture.mjs";
 
 const fromUi = createRequire(
   new URL("../../../services/agent-ui/web/package.json", import.meta.url),
@@ -274,6 +278,17 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
     serviceName: "agent-ui-acp-test",
   });
   let bridge;
+  const scope = testScope({
+    organizationId: "org-1",
+    principalId: "user-1",
+    agentId: "agent-1",
+  });
+  const expectedContext = bridgeHeaders(scope)["Antnest-Caller-Context"];
+  const workload = new ServiceAuthentication(testSecurityEnvironment());
+  const fetchImpl = workload.fetchFor(
+    "agent-acp-service",
+    `http://127.0.0.1:${address.port}`,
+  );
   try {
     const notifications = [];
     const replay = new SessionReplay({
@@ -289,11 +304,8 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       async () => {
         bridge = await AcpHttpBridge.open({
           baseUrl: new URL(`http://127.0.0.1:${address.port}`),
-          scope: {
-            organizationId: "org-1",
-            principalId: "user-1",
-            agentId: "agent-1",
-          },
+          scope,
+          fetchImpl,
           callbacks: {
             update: (value) => {
               notifications.push(value);
@@ -435,14 +447,29 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       "Later ACP work must not inherit the ended HTTP parent span",
     );
     for (const headers of observedHeaders) {
-      assert.equal(headers["x-antnest-organization-id"], "org-1");
-      assert.equal(headers["x-antnest-principal-id"], "user-1");
-      assert.equal(headers["x-antnest-agent-id"], "agent-1");
+      assert.equal(headers["antnest-caller-context"], expectedContext);
+      assert.match(
+        headers["antnest-service-authorization"] ?? "",
+        /^Bearer [A-Za-z0-9_-]{43}$/u,
+      );
+      assert.equal(headers["x-antnest-organization-id"], undefined);
+      assert.equal(headers["x-antnest-principal-id"], undefined);
+      assert.equal(headers["x-antnest-agent-id"], undefined);
       assert.equal(headers.cookie, undefined);
+      assert.equal(headers.authorization, undefined);
     }
+    const newer = testScope({ ...scope });
+    refreshScopeContext(scope, newer);
+    await bridge.forkSession("session-1");
+    assert.equal(
+      observedHeaders.at(-1)["antnest-caller-context"],
+      bridgeHeaders(newer)["Antnest-Caller-Context"],
+      "Official SDK HTTP calls use the newer verified context without replacing the connection",
+    );
   } finally {
     bridge?.close();
     await transport.close();
+    await workload.close();
     await telemetry.shutdown();
     listener.closeAllConnections();
     await new Promise((resolve, reject) =>
