@@ -437,9 +437,8 @@
             "const": "context-v1"
           },
           "skill_instructions": {
-            "type": "array",
-            "description": "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime.",
             "maxItems": 0,
+            "type": "array",
             "items": {
               "type": "object",
               "properties": {
@@ -463,7 +462,8 @@
                 "instructions"
               ],
               "additionalProperties": false
-            }
+            },
+            "description": "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime."
           },
           "max_model_requests": {
             "type": "integer",

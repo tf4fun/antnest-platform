@@ -11,13 +11,17 @@ draft v2 HTTP/batch transport is not implemented. HTTP itself is an
 experimental ACP transport, not an additional stable v1 protocol requirement.
 Client MCP injection remains disabled.
 
-Transport parsing, connection IDs, POST message routing, GET SSE delivery and
-DELETE connection closure belong to the official SDK.
+Connection IDs, POST message routing, GET SSE delivery and DELETE connection
+closure belong to the official SDK. The Node adapter validates JSON media type,
+UTF-8, duplicate keys and body limits before handing a request to that SDK.
 Antnest supplies the existing v1 Agent handler, bound to authorized platform
 identity. There is no second application API or stdio subprocess bridge.
 
-Every HTTP request requires trusted organization, principal and Agent identity
-headers supplied by Gateway. A transport connection is bound to that immutable
+Every HTTP request requires verified Gateway/UI workload and an unchanged
+Identity-signed CCT with ACP audience and Agent scope. Signed claims supply the
+organization, principal and Agent; raw identity hints grant nothing. See the
+[authentication contract](../../../contracts/agent-acp/service-authentication.md).
+A transport connection is bound to that immutable
 tuple; ACP checks current access locally using the Controller-published execution
 projection. There is no per-request Controller resolution. `Acp-Connection-Id`
 is not a credential; another binding cannot read, write or close that connection.

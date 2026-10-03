@@ -1,3 +1,4 @@
+import { testSecurityEnvironment } from "./support/auth-fixture.js";
 import { getEventListeners } from "node:events";
 import { generateKeyPairSync } from "node:crypto";
 import { Pool } from "pg";
@@ -40,8 +41,11 @@ describe("production execution configuration composition", () => {
     const components = buildComponents(
       pool,
       loadConfig({
-        ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+        ...testSecurityEnvironment(),
+        ...{
+          ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+        },
       }),
       NOOP_TELEMETRY,
       vi.fn(),
@@ -77,8 +81,11 @@ describe("production execution configuration composition", () => {
       const components = buildComponents(
         pool,
         loadConfig({
-          ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+          ...testSecurityEnvironment(),
+          ...{
+            ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+            ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+          },
         }),
         NOOP_TELEMETRY,
         vi.fn(),
@@ -116,9 +123,12 @@ describe("production execution configuration composition", () => {
     const configured = buildComponents(
       pool,
       loadConfig({
-        ...basic,
-        ...signer,
-        ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://controller:8080",
+        ...testSecurityEnvironment(),
+        ...{
+          ...basic,
+          ...signer,
+          ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://controller:8080",
+        },
       }),
       NOOP_TELEMETRY,
       vi.fn(),
@@ -128,7 +138,7 @@ describe("production execution configuration composition", () => {
       expect(
         buildComponents(
           pool,
-          loadConfig(basic),
+          loadConfig({ ...testSecurityEnvironment(), ...basic }),
           NOOP_TELEMETRY,
           vi.fn(),
           new AbortController().signal,
@@ -137,7 +147,7 @@ describe("production execution configuration composition", () => {
       expect(
         buildComponents(
           pool,
-          loadConfig({ ...basic, ...signer }),
+          loadConfig({ ...testSecurityEnvironment(), ...{ ...basic, ...signer } }),
           NOOP_TELEMETRY,
           vi.fn(),
           new AbortController().signal,
@@ -173,8 +183,11 @@ describe("production execution configuration composition", () => {
       const execute = vi.spyOn(RunExecutor.prototype, "execute").mockReturnValue(finish.promise);
       const pool = new Pool();
       const config = loadConfig({
-        ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+        ...testSecurityEnvironment(),
+        ...{
+          ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+        },
       });
       const components = buildComponents(
         pool,

@@ -22,11 +22,7 @@ it("sends only metadata to the fixed Registry route, bounds acknowledgements and
   const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
     Promise.resolve(Response.json({ outcome: "applied", sequence: 3 })),
   );
-  const client = new RegistrySkillProjectionClient(
-    "http://registry/",
-    "registry-test-token",
-    fetchFn,
-  );
+  const client = new RegistrySkillProjectionClient("http://registry/", fetchFn);
   await client.send(projection, new AbortController().signal);
   expect(fetchFn.mock.calls[0]?.[0]).toBe("http://registry/internal/skill-projections");
   const init = fetchFn.mock.calls[0]?.[1];

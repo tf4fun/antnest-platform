@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SkillSources } from "../application/skill-sources.js";
 import {
@@ -6,6 +5,8 @@ import {
   skillSourceArtifactSchema,
   skillSourceInspectSchema,
 } from "../domain/skill-source.js";
+import { authenticatedCaller } from "./trusted-identity.js";
+import { readRpcRequest, RpcRequestError } from "./rpc-request.js";
 
 const PREFIX = "/internal/skill-sources/";
 export function skillSourceRoute(
@@ -22,19 +23,12 @@ export async function serveSkillSource(
   route: "inspect" | "artifact" | "invalid",
   options:
     | {
-        token: string;
         service: Pick<SkillSources, "inspect" | "artifact">;
       }
     | undefined,
   ready: () => Promise<boolean>,
 ): Promise<void> {
-  const provided = Buffer.from(request.headers.authorization ?? "");
-  const expected = Buffer.from(`Bearer ${options?.token ?? ""}`);
-  if (
-    options === undefined ||
-    provided.length !== expected.length ||
-    !timingSafeEqual(provided, expected)
-  ) {
+  if (options === undefined || authenticatedCaller(request) !== "skill-registry") {
     json(response, 401, "unauthorized", "Source reader authorization required");
     return;
   }
@@ -43,10 +37,7 @@ export async function serveSkillSource(
     json(response, 405, "method_not_allowed", "Use POST");
     return;
   }
-  if (
-    route === "invalid" ||
-    !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "")
-  ) {
+  if (route === "invalid") {
     json(response, 400, "invalid_request", "Invalid source request");
     return;
   }
@@ -57,27 +48,9 @@ export async function serveSkillSource(
   response.once("close", close);
   const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(8500)]);
   try {
-    const chunks: Buffer[] = [];
-    let bytes = 0;
     const maximum = route === "inspect" ? 8192 : 4096;
-    for await (const chunk of request) {
-      signal.throwIfAborted();
-      const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-      bytes += part.length;
-      if (bytes > maximum) {
-        response.setHeader("Connection", "close");
-        json(response, 400, "invalid_request", "Source request exceeds its bound");
-        return;
-      }
-      chunks.push(part);
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    } catch {
-      json(response, 400, "invalid_request", "Invalid source JSON");
-      return;
-    }
+    const parsed = await readRpcRequest(request, maximum);
+    signal.throwIfAborted();
     const checked =
       route === "inspect"
         ? skillSourceInspectSchema.safeParse(parsed)
@@ -106,6 +79,10 @@ export async function serveSkillSource(
       response.end(value.package.artifact);
     }
   } catch (error) {
+    if (error instanceof RpcRequestError) {
+      json(response, error.status, error.code, error.message);
+      return;
+    }
     const failure =
       error instanceof SkillSourceError ? error : new SkillSourceError("source_unavailable");
     json(

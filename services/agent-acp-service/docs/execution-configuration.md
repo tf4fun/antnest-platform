@@ -219,7 +219,8 @@ an idle subscription and does not add polling or heartbeats. Reconnection reads
 current state instead of assuming that the terminal frame was delivered.
 
 `get-agent-execution-state` and `watch-agent-execution-state` are read-only
-internal POST routes. They consume trusted caller headers and an empty JSON
+internal POST routes on the workspace listener. They consume verified Gateway/UI
+workload, an Agent-scoped signed CCT and an empty JSON
 body. The state derives from the live execution directory, local Agent slot and
 durable old-Runtime protection, never Controller Run admissions or a new table.
 Read failure is unavailable, not idle. Busy includes acceptance and terminal

@@ -23,7 +23,7 @@ export class ControllerLearningPolicyClient {
 
   public constructor(
     baseUrl: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: (input: string | URL, init: RequestInit) => Promise<Response>,
   ) {
     this.baseUrl = new URL(baseUrl);
     if (

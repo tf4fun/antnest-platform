@@ -196,13 +196,13 @@ learning change and managed identity. Registry receives only organization,
 source Agent and owner, name, description, sequence, digest and active state.
 Content stays in the Agent-owned store and Runtime workspace.
 
-Discovery is enabled only when `ANTNEST_ACP_SKILL_REGISTRY_URL`,
-`ANTNEST_ACP_SKILL_REGISTRY_TOKEN` and `ANTNEST_ACP_SKILL_SOURCE_TOKEN` are all
-set together with the maintenance signing configuration. The two tokens must be
-distinct printable values of at least 32 bytes, and the Registry URL must be an
-origin. The Registry's paired source URL and token must point at this ACP
-deployment. The standard Compose stack derives all of them from
-`ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`; see [Skill deployment](../../../docs/skill-deployment.md).
+Discovery is enabled by the fixed `ANTNEST_ACP_SKILL_REGISTRY_URL` origin and
+maintenance signing configuration, using the
+[shared service authentication profile](../../../contracts/agent-acp/service-authentication.md).
+ACP sends its per-Registry credential and source routes accept only verified
+Registry workload. The old Registry/source bearer settings fail startup when
+nonempty. Registry client and Compose adoption remain later owning batches;
+Runtime outbound credentials await the private RC instance connection contract.
 
 - One background worker delivers durable metadata heads with persisted bounded
   backoff, reconciles acknowledgements and fills missing heads from confirmed
@@ -210,7 +210,7 @@ deployment. The standard Compose stack derives all of them from
   inactive managed state produces a higher-sequence tombstone. A Registry outage
   never fails a completed learning operation or Run.
 - `POST /internal/skill-sources/inspect` and `POST /internal/skill-sources/artifact`
-  accept only the source bearer. They apply strict schemas, 8 KiB and 4 KiB body
+  accept only verified Registry workload. They apply strict schemas, 8 KiB and 4 KiB body
   limits, current owner access and exact sequence and digest checks. Both need an
   available source Agent Runtime; otherwise they return `source_unavailable`.
   Retained candidate bytes are never served as an offline substitute.

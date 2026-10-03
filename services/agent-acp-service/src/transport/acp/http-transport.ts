@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { createNodeHttpHandler } from "@agentclientprotocol/sdk/experimental/node";
+import { createValidatedNodeHttpHandler } from "./validated-node-handler.js";
 import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
 import { TracedAcpHttpServer } from "../../telemetry/acp-http.js";
 
@@ -166,7 +166,7 @@ class HttpConnection {
   public id: string | undefined;
   private readonly server: AcpServer;
   private readonly requests = new Set<ServerResponse>();
-  private readonly handler: ReturnType<typeof createNodeHttpHandler>;
+  private readonly handler: ReturnType<typeof createValidatedNodeHttpHandler>;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
   private pendingDeletes = 0;
@@ -186,9 +186,7 @@ class HttpConnection {
         });
       }),
     });
-    this.handler = createNodeHttpHandler(this.server, {
-      maxRequestBodyBytes: options.maxPayloadBytes,
-    });
+    this.handler = createValidatedNodeHttpHandler(this.server, options.maxPayloadBytes);
   }
 
   public handle(request: IncomingMessage, response: ServerResponse): Promise<void> {

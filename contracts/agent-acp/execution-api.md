@@ -9,42 +9,38 @@ extension. External ACP versions and payloads are unchanged.
 ## Transport And Identity
 
 The internal base path is `/rpc/agent-acp`. Requests and responses use JSON over
-HTTP. Only Controller may publish execution configurations. Gateway must not
-expose these routes. No per-Run ticket, signature, or credential lookup exists.
+HTTP. The [ACP authentication contract](service-authentication.md) and
+[platform profile](../platform/service-authentication.md) define mandatory
+workload authentication, exact route allowlists and Identity-signed CCTs.
+`ANTNEST_ACP_CONTROL_LISTEN` (default `:8081`) serves only Controller publication,
+settlement and minimal health. The workspace listener `ANTNEST_ACP_LISTEN`
+(default `:8080`) returns 404 for publication and settlement regardless of
+credentials, method or query; Gateway must not expose either operation.
+Missing/invalid Controller workload returns 401 `service_unauthenticated`,
+with the token challenge; a verified wrong service returns 403
+`caller_not_allowed`. There is no per-Run credential lookup or legacy control
+token. State get/watch remain on the workspace listener for Gateway and Agent UI.
 
-Gateway overwrites these internal headers after authenticating the caller:
-
-- `X-Antnest-Organization-Id`
-- `X-Antnest-Principal-Id`
-- `X-Antnest-Agent-Id`
-
-The first two values come from verified identity; the third comes from the
-Agent route. ACP binds HTTP/WebSocket connections to the tuple and checks
-Session ownership locally. The old opaque Agent access subject is not a fallback.
-All identifiers are opaque, nonempty strings, at most 200 characters.
-Configuration, settlement and audit JSON use this same rule without imposing
-an identifier naming convention. Generated schemas follow the owning domain
-definitions; transport header validation is not part of those domain schemas.
-Adapters must not silently normalize identifiers. Runtime MCP rejects an execution
-ID that its HTTP header cannot carry unchanged, before connecting or dispatching.
-A storage failure (including a value PostgreSQL cannot represent) does not publish
-the new snapshot or return a successful apply acknowledgement.
-The trusted-header envelope requires one unambiguous HTTP field value: no
-leading/trailing whitespace, comma-joined values or control characters. HTTP
-header validity is a transport constraint, not a namespace grammar; printable
-values such as `principal+service@example.org` and `agent/department:1` are
-preserved exactly. Node header validation rejects values the transport cannot
-represent; no trimming, case folding or identity normalization is applied.
+Workspace identity is derived from verified CCT `org`, `sub` and `agt`; HTTP,
+WebSocket and Session ownership are bound to that tuple. Raw `X-Antnest-*`
+fields never select authority. Opaque identifiers preserve punctuation and
+Unicode without trimming or case normalization. Domain JSON retains its own
+schemas; the signed carrier avoids encoding those identities as individual
+HTTP fields. Runtime MCP still rejects an execution ID that its fence header
+cannot carry unchanged before dispatch. A storage representation failure does
+not publish or acknowledge a new snapshot.
 
 ## Apply Execution Snapshot
 
 `POST /rpc/agent-acp/apply-execution-snapshot`
 
-This entry accepts `application/json` (optional charset). The body limit is
+This control entry accepts one `application/json` field with only optional
+UTF-8 charset. The body limit is
 independent from ACP prompt size, initially 16 MiB and configurable by ACP.
-Unsupported methods return 405, oversized bodies 413 and unsupported media or
-content encoding 415; rejected requests cannot publish a partial snapshot.
-Invalid JSON uses the same non-secret 400 envelope as invalid configuration.
+Unsupported control methods have no caller grant and are rejected at admission;
+oversized bodies return 413 and unsupported media or content encoding 415.
+Strict UTF-8, duplicate members, extra documents and case aliases return 400
+before effects; rejected requests cannot publish a partial snapshot.
 
 The body is one complete organization snapshot. A monotonically increasing,
 JavaScript-safe integer `revision` orders all changes to that organization's
@@ -205,8 +201,8 @@ The existing workspace state functionality moves from Controller to ACP.
 streams current-view changes. They are internal read-only routes under
 `/rpc/agent-acp`, not custom ACP protocol methods or admission APIs.
 
-The request is `POST` with an empty JSON object and the trusted identity
-headers above. An Agent cannot be selected or an identity overridden in the
+The request is `POST` with an empty JSON object, verified Gateway/UI workload
+and an Agent-scoped signed CCT. An Agent cannot be selected or an identity overridden in the
 body. `get-agent-execution-state` returns one JSON state;
 `watch-agent-execution-state` returns `text/event-stream` with `workspace_state`
 events. Each event is the complete current view, without replay IDs or a journal.
@@ -244,8 +240,8 @@ Catalog changes remain relevant because Sessions may select any organization
 model. Gateway and Agent UI consume `configuration_revision` rather than the old
 numeric `agent_revision`; no Controller execution-state fallback is retained.
 
-Gateway authenticates and forwards the trusted organization/principal/Agent
-tuple. The view derives locally from current access/configuration and Agent
+Gateway authenticates and forwards the unchanged signed CCT. ACP derives the
+organization/principal/Agent tuple from its verified claims. The view derives locally from current access/configuration and Agent
 execution ownership; it exposes the active Session only to its authorized
 owner. Controller retains Agent names and management metadata, but no longer
 JOINs Run admissions or aggregates execution state. ACP does not need a second
@@ -294,11 +290,11 @@ Runs sort descending by `(created_at, run_id)`. Event queries select either
 pagination streams, not a combined event journal. Cursors bind to organization,
 query filters, Run and stream as applicable; every page is separately authorized.
 
-The trusted management headers are `X-Antnest-User-ID`,
-`X-Antnest-Organization-ID`, `X-Antnest-Membership-ID`, `X-Antnest-System-Role`
-and `X-Antnest-Organization-Role`. The caller must be a current system or
-organization administrator and is restricted to the selected verified
-organization. Missing/malformed context is 401, an ordinary user is 403;
+Audit routes require verified Console workload and exactly one unchanged CCT
+with ACP audience and organization scope. Subject, membership and roles come
+only from signed claims. The caller must be a system or organization
+administrator and is restricted to the signed organization under the bounded
+offline grant. Missing/malformed context is 401, an ordinary user is 403;
 unknown and out-of-scope Runs both return 404. The body cannot select identity.
 These are management queries, not owner Session API replacements.
 

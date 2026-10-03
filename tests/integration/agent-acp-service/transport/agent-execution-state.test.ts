@@ -1,3 +1,4 @@
+import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
@@ -117,6 +118,7 @@ async function listen(
     setSessionConfiguration: unexpected,
   };
   const server = new AgentAcpHttpServer({
+    authentication: testAuthentication(),
     application,
     ...(executionState === undefined ? {} : { executionState }),
     ready: () => Promise.resolve(ready),

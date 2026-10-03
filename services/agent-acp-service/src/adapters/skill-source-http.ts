@@ -13,8 +13,7 @@ type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 export class RegistrySkillProjectionClient {
   public constructor(
     private readonly url: string,
-    private readonly token: string,
-    private readonly fetchFn: Fetch = tracedFetch(fetch, "skill_registry"),
+    private readonly fetchFn: Fetch,
   ) {}
 
   public async send(projection: SkillProjection, signal: AbortSignal): Promise<void> {
@@ -23,7 +22,7 @@ export class RegistrySkillProjectionClient {
       new URL("internal/skill-projections", this.url).toString(),
       {
         method: "PUT",
-        headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
         redirect: "error",
         signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),

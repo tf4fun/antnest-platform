@@ -91,7 +91,8 @@ The all-zero key in the repository's `.env.example` is for disposable local
 data only. Production deployment must inject a random key and retain it for the
 lifetime of the service-owned database.
 
-There is no outbound Controller URL or per-request Controller timeout.
+Normal execution does not resolve access or credentials from Controller.
+The optional learning-policy client has its own authenticated Controller origin.
 Controller calls `POST /rpc/agent-acp/apply-execution-snapshot`; its
 [contract](../../../contracts/agent-acp/execution-api.md) defines complete
 organization snapshots, applied revision and failure semantics. A stored snapshot
@@ -102,16 +103,24 @@ alone cannot initialize a restarted process's credentials.
 Both `/v1/acp` and `/v2/acp` accept WebSocket upgrades. `/v1/acp` additionally
 accepts SDK Streamable HTTP POST/GET SSE/DELETE; `/v2/acp` does not accept that
 HTTP transport. See the [HTTP transport contract](http-transport.md).
-The trusted caller supplies `X-Antnest-Organization-ID`,
-`X-Antnest-Principal-ID` and `X-Antnest-Agent-ID`. Edge Gateway must strip any
-external values and derive the tuple from authentication and the selected Agent.
-The old opaque subject is not a fallback. Both transports bind the same tuple;
+The caller must be a verified Gateway/UI workload and supply Identity's unchanged
+signed CCT with ACP audience and Agent scope. ACP derives the tuple from verified
+claims; raw identity hints and the old opaque subject are not fallbacks. Both transports bind the same tuple;
 resource operations check the current local grant, not a Controller RPC or a
 cached connection grant. Missing current configuration returns an ACP error.
 
 The endpoint fixes the protocol version for the complete connection. Stable v1
 and draft v2 are separate adapters over the same application core. The
-unversioned `/acp` returns not found and never negotiates a default version.
+unversioned `/acp` has no caller grant and never negotiates a default version.
+
+`ANTNEST_ACP_CONTROL_LISTEN` serves only Controller publication/settlement and
+minimal health. Bind it to the control network; workspace returns 404 for those
+operations. Both listeners must open before readiness and close on startup
+failure. Exact service mode, per-receiver files and authenticated Identity origin
+are mandatory; incomplete TLS or invalid replacements fail closed. The removed
+`ANTNEST_ACP_SKILL_REGISTRY_TOKEN` / `ANTNEST_ACP_SKILL_SOURCE_TOKEN` settings
+fail startup when nonempty. See the
+[authentication contract](../../../contracts/agent-acp/service-authentication.md).
 
 ## Telemetry
 
@@ -218,8 +227,9 @@ admission, and durable event persistence must not introduce the inverse order.
 The service is internal. Do not publish its port directly to the internet.
 Compose or Kubernetes network policy permits:
 
-- inbound only from Edge Gateway, Agent UI bridge, Channel Gateway, and trusted
-  development clients;
+- workspace inbound only from authenticated Gateway, Agent UI, Console and
+  Registry on their documented routes; Controller uses its separate listener;
+- outbound to authenticated Identity for bounded JWKS verification;
 - outbound to its private PostgreSQL, configured model APIs,
   the Runtime MCP endpoint in a Run snapshot and that Runtime's private
   Skill maintenance and temporary-Skill endpoints;

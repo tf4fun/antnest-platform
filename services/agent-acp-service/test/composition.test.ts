@@ -1,3 +1,4 @@
+import { testSecurityEnvironment } from "./support/auth-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../src/ports/telemetry.js";
 
@@ -19,10 +20,13 @@ describe("development startup diagnostics", () => {
       const log = vi.fn<TelemetryPort["log"]>();
       try {
         const config = loadConfig({
-          ANTNEST_ACP_DATABASE_URL: "postgres://agent:secret@postgres/agent_acp",
-          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 7).toString("base64"),
-          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
-          ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: agentId,
+          ...testSecurityEnvironment(),
+          ...{
+            ANTNEST_ACP_DATABASE_URL: "postgres://agent:secret@postgres/agent_acp",
+            ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 7).toString("base64"),
+            ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
+            ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: agentId,
+          },
         });
         await expect(
           startAgentAcpService(config, { ...NOOP_TELEMETRY, log }, vi.fn()),

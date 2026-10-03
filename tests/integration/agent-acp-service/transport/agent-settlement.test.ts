@@ -1,3 +1,7 @@
+import {
+  testAuthentication,
+  workloadHeaders,
+} from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import {
@@ -68,14 +72,15 @@ async function listen(settlement?: AgentSettlementPort, ready = true) {
     setSessionConfiguration: unexpected,
   };
   server = new AgentAcpHttpServer({
+    authentication: testAuthentication(),
     ...(settlement === undefined ? {} : { settlement }),
     application,
     ready: () => Promise.resolve(ready),
     maxConfigurationBytes: 2048,
     maxWebSocketPayloadBytes: 1024,
   });
-  await server.listen("127.0.0.1", 0);
-  const address = server.address();
+  await server.listenControl("127.0.0.1", 0);
+  const address = server.controlAddress();
   if (address === null || typeof address === "string")
     throw new Error("Missing address");
   return `http://127.0.0.1:${address.port}${route}`;
@@ -89,7 +94,11 @@ function post(
 ) {
   return fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: {
+      ...workloadHeaders("agent-controller"),
+      "content-type": "application/json",
+      ...headers,
+    },
     body: JSON.stringify(body),
     ...(signal === undefined ? {} : { signal }),
   });
@@ -171,6 +180,7 @@ describe("Agent settlement HTTP contract", () => {
     const response = await fetch(url, {
       method: kind === "GET" ? "GET" : "POST",
       headers: {
+        ...workloadHeaders("agent-controller"),
         "content-type": kind === "non JSON" ? "text/plain" : "application/json",
         ...(kind === "encoded" ? { "content-encoding": "gzip" } : {}),
       },
@@ -191,7 +201,7 @@ describe("Agent settlement HTTP contract", () => {
       oversized: 413,
       encoded: 415,
       "non JSON": 415,
-      GET: 405,
+      GET: 403,
     }[kind];
     expect(response.status).toBe(expectedStatus);
     await response.text();

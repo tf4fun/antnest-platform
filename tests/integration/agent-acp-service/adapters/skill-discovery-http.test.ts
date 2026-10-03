@@ -1,4 +1,8 @@
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ServiceAuthentication } from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
+import { testSecurityEnvironment } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { once } from "node:events";
 import { expect, it } from "vitest";
 import { RegistrySkillDiscoveryClient } from "../../../../services/agent-acp-service/src/adapters/skill-discovery-http.js";
@@ -71,6 +75,8 @@ it("reads exact Skill identity over real HTTP and cancels unfinished body I/O", 
       }
     });
   });
+  const environment = testSecurityEnvironment();
+  const workload = new ServiceAuthentication(environment);
   try {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -79,7 +85,7 @@ it("reads exact Skill identity over real HTTP and cancels unfinished body I/O", 
       throw new Error("Missing HTTP fixture port");
     const client = new RegistrySkillDiscoveryClient(
       `http://127.0.0.1:${address.port}`,
-      "read-only-fixture-token",
+      workload.fetchFor("skill-registry", `http://127.0.0.1:${address.port}`),
     );
     expect(
       (await client.search(search, new AbortController().signal)).items,
@@ -92,8 +98,9 @@ it("reads exact Skill identity over real HTTP and cancels unfinished body I/O", 
       artifactDigest: pkg.artifactDigest,
       requiresRuntimeDelivery: false,
     });
-    expect(received[0]?.headers.authorization).toBe(
-      "Bearer read-only-fixture-token",
+    expect(received[0]?.headers.authorization).toBeUndefined();
+    expect(received[0]?.headers["antnest-service-authorization"]).toBe(
+      `Bearer ${readFileSync(join(environment.ANTNEST_SERVICE_AUTH_TOKEN_DIR, "skill-registry"), "utf8")}`,
     );
     expect(received[0]?.body).toEqual(search);
     expect(received[1]?.body).toEqual(selected);
@@ -106,6 +113,7 @@ it("reads exact Skill identity over real HTTP and cancels unfinished body I/O", 
     await rejected;
     await disconnected.promise;
   } finally {
+    await workload.close();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

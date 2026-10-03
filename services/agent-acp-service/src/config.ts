@@ -1,10 +1,16 @@
 const DEFAULT_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+import { ServiceAuthentication } from "./adapters/service-authentication.js";
+import { CallerContextVerifier } from "./adapters/caller-context.js";
+import { RequestAuthentication } from "./transport/request-authentication.js";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_STATE_DELIVERY_TIMEOUT_MS = 10_000;
 export const MAINTENANCE_KID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 
 export type AgentAcpConfig = {
+  authentication: RequestAuthentication;
+  dependencyFetchers: { controller?: typeof fetch; registry?: typeof fetch };
   listen: { host: string; port: number };
+  controlListen: { host: string; port: number };
   databaseUrl: string;
   databaseTimeoutMs: number;
   stateDeliveryTimeoutMs: number;
@@ -13,7 +19,7 @@ export type AgentAcpConfig = {
   skillMaintenanceSigning?: { kid: string; privateKey: KeyObject };
   skillLearningControllerUrl?: string;
   skillLearningDebugAgentId?: string;
-  skillDiscovery?: { registryUrl: string; registryToken: string; sourceToken: string };
+  skillDiscovery?: { registryUrl: string };
   runTimeoutMs: number;
   maxWebSocketPayloadBytes: number;
   maxConfigurationBytes: number;
@@ -42,9 +48,43 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     environment.ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS ?? "false",
     "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
   );
+  const workload = new ServiceAuthentication(environment);
+  const identityUrl = normalizedHttpUrl(
+    required(environment, "ANTNEST_ACP_IDENTITY_URL"),
+    "ANTNEST_ACP_IDENTITY_URL",
+  );
+  const identityFetch = workload.fetchFor("identity-service", identityUrl.toString());
+  const authentication = new RequestAuthentication(
+    workload,
+    new CallerContextVerifier(identityUrl.toString(), identityFetch),
+  );
+  const discovery = parseSkillDiscovery(environment);
+  const learningController = parseSkillLearningControllerUrl(environment);
+  const dependencyFetchers: AgentAcpConfig["dependencyFetchers"] = {};
+  const origins = new Set([identityUrl.origin]);
+  if (discovery.skillDiscovery !== undefined) {
+    const origin = new URL(discovery.skillDiscovery.registryUrl).origin;
+    if (origins.has(origin)) throw new ConfigError("Dependency origins must be distinct");
+    origins.add(origin);
+    dependencyFetchers.registry = workload.fetchFor(
+      "skill-registry",
+      discovery.skillDiscovery.registryUrl,
+    );
+  }
+  if (learningController.skillLearningControllerUrl !== undefined) {
+    const origin = new URL(learningController.skillLearningControllerUrl).origin;
+    if (origins.has(origin)) throw new ConfigError("Dependency origins must be distinct");
+    dependencyFetchers.controller = workload.fetchFor(
+      "agent-controller",
+      learningController.skillLearningControllerUrl,
+    );
+  }
 
   return {
+    authentication,
+    dependencyFetchers,
     listen: parseListen(environment.ANTNEST_ACP_LISTEN ?? ":8080"),
+    controlListen: parseListen(environment.ANTNEST_ACP_CONTROL_LISTEN ?? ":8081"),
     databaseUrl,
     databaseTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_DATABASE_TIMEOUT ?? "10s",
@@ -57,9 +97,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     clientMcpKey: parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY")),
     allowDevelopmentSettings,
     ...parseSkillMaintenanceSigning(environment),
-    ...parseSkillLearningControllerUrl(environment),
+    ...learningController,
     ...parseSkillLearningDebugAgentId(environment, allowDevelopmentSettings),
-    ...parseSkillDiscovery(environment),
+    ...discovery,
     runTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_RUN_TIMEOUT ?? "30m",
       "ANTNEST_ACP_RUN_TIMEOUT",
@@ -88,26 +128,16 @@ function parseSkillDiscovery(
   environment: NodeJS.ProcessEnv,
 ): Pick<AgentAcpConfig, "skillDiscovery"> {
   const registryUrl = optional(environment.ANTNEST_ACP_SKILL_REGISTRY_URL);
-  const registryToken = optional(environment.ANTNEST_ACP_SKILL_REGISTRY_TOKEN);
-  const sourceToken = optional(environment.ANTNEST_ACP_SKILL_SOURCE_TOKEN);
-  if (registryUrl === undefined && registryToken === undefined && sourceToken === undefined)
-    return {};
-  if (registryUrl === undefined || registryToken === undefined || sourceToken === undefined)
+  if (environment.ANTNEST_ACP_SKILL_REGISTRY_TOKEN || environment.ANTNEST_ACP_SKILL_SOURCE_TOKEN)
     throw new ConfigError(
-      "Skill discovery Registry URL, Registry token and source reader token must be configured together",
+      "Legacy Registry/source tokens are unsupported; use service authentication",
     );
-  if (
-    ![registryToken, sourceToken].every((v) => /^[!-~]{32,4096}$/u.test(v)) ||
-    registryToken === sourceToken
-  )
-    throw new ConfigError(
-      "Skill discovery requires distinct printable bearer tokens of at least 32 bytes",
-    );
+  if (registryUrl === undefined) return {};
   if (optional(environment.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY) === undefined)
     throw new ConfigError("Skill discovery requires Runtime observation signing configuration");
   const url = normalizedHttpUrl(registryUrl, "ANTNEST_ACP_SKILL_REGISTRY_URL");
   if (url.pathname !== "/") throw new ConfigError("Skill discovery Registry URL must be an origin");
-  return { skillDiscovery: { registryUrl: url.toString(), registryToken, sourceToken } };
+  return { skillDiscovery: { registryUrl: url.toString() } };
 }
 
 function parseSkillLearningDebugAgentId(

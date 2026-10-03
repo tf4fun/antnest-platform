@@ -103,7 +103,10 @@ export const agentConfigurationSchema = z.strictObject({
         instructions: z.string(),
       }),
     )
-    .max(0),
+    .max(0)
+    .describe(
+      "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime.",
+    ),
   max_model_requests: revision,
   runtime: z
     .strictObject({

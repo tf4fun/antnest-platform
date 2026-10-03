@@ -1,3 +1,4 @@
+import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { createServer } from "node:http";
 import {
   binding,
@@ -82,6 +83,7 @@ describe("ACP v1 Streamable HTTP", () => {
     skillCommands?: AgentAcpHttpServerOptions["skillCommands"],
   ) {
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application,
       ready: () => Promise.resolve(ready),
       maxWebSocketPayloadBytes: limit,
@@ -250,8 +252,16 @@ describe("ACP v1 Streamable HTTP", () => {
       maxConnections: 1,
       idleTimeoutMs,
     });
+    const authentication = testAuthentication();
     const listener = createServer((request, response) => {
-      void transport.handle(request, response);
+      void authentication.admit(request).then((admission) => {
+        if ("status" in admission) {
+          response.writeHead(admission.status);
+          response.end();
+          return;
+        }
+        return transport.handle(request, response);
+      });
     });
     closeTransport = async () => {
       await transport.close();
@@ -643,7 +653,7 @@ describe("ACP v1 Streamable HTTP", () => {
     expect(malformed.status).toBe(400);
     await malformed.text();
     expect((await request("GET")).status).toBe(400);
-    expect((await request("PUT")).status).toBe(405);
+    expect((await request("PUT")).status).toBe(403);
     await open();
   });
 });

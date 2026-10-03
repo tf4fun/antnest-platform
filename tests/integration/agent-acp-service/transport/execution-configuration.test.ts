@@ -1,3 +1,7 @@
+import {
+  testAuthentication,
+  workloadHeaders,
+} from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import {
@@ -51,6 +55,25 @@ afterAll(async () => {
 });
 
 describe("execution configuration HTTP contract", () => {
+  it("keeps the current revision when an authenticated Controller republishes an older snapshot", async () => {
+    const local = await localExecution();
+    const url = await listen(local.directory);
+    const current = executionConfiguration();
+    current.revision = 2;
+    current.agents[0]!.system_prompt = "current revision";
+    const applied = await post(url, current);
+    expect(applied.status).toBe(200);
+    await applied.text();
+    const stale = await post(url, executionConfiguration());
+    expect(stale.status).toBe(200);
+    expect(await stale.json()).toMatchObject({ applied_revision: 2 });
+    expect(
+      local.directory.inspect(executionIdentity()).configuration.revision,
+    ).toBe(2);
+    expect(
+      local.directory.inspect(executionIdentity()).agent.system_prompt,
+    ).toBe("current revision");
+  });
   it("applies a complete snapshot through the real directory and acknowledges only publication", async () => {
     const local = await localExecution(false);
     const published = Promise.withResolvers<void>();
@@ -172,7 +195,10 @@ describe("execution configuration HTTP contract", () => {
     const url = await listen(local.directory);
     const response = await fetch(`${url}${route}`, {
       method: "POST",
-      headers: { "content-type": String(type) },
+      headers: {
+        ...workloadHeaders("agent-controller"),
+        "content-type": String(type),
+      },
       body: String(body),
     });
     expect(response.status).toBe(status);
@@ -185,7 +211,10 @@ describe("execution configuration HTTP contract", () => {
     const url = await listen({ apply }, 32);
     const oversized = await fetch(`${url}${route}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        ...workloadHeaders("agent-controller"),
+        "content-type": "application/json",
+      },
       body: "a".repeat(64),
     });
     expect(oversized.status).toBe(413);
@@ -193,6 +222,7 @@ describe("execution configuration HTTP contract", () => {
     const encoded = await fetch(`${url}${route}`, {
       method: "POST",
       headers: {
+        ...workloadHeaders("agent-controller"),
         "content-type": "application/json",
         "content-encoding": "gzip",
       },
@@ -208,9 +238,11 @@ describe("execution configuration HTTP contract", () => {
     const missing = await post(url, executionConfiguration());
     expect(missing.status).toBe(503);
     await missing.text();
-    const method = await fetch(`${url}${route}`);
-    expect(method.status).toBe(405);
-    expect(method.headers.get("allow")).toBe("POST");
+    const method = await fetch(`${url}${route}`, {
+      headers: workloadHeaders("agent-controller"),
+    });
+    expect(method.status).toBe(403);
+    expect(method.headers.get("allow")).toBeNull();
     await method.text();
     const obsolete = await fetch(`${url}/rpc/agent-acp/acquire-run`, {
       method: "POST",
@@ -277,6 +309,7 @@ async function listen(
   maxConfigurationBytes = 16 * 1024 * 1024,
 ) {
   server = new AgentAcpHttpServer({
+    authentication: testAuthentication(),
     ...(configuration === undefined
       ? {}
       : { executionConfiguration: configuration }),
@@ -285,8 +318,8 @@ async function listen(
     ready: () => Promise.resolve(true),
     maxWebSocketPayloadBytes: 1024,
   });
-  await server.listen("127.0.0.1", 0);
-  const address = server.address();
+  await server.listenControl("127.0.0.1", 0);
+  const address = server.controlAddress();
   if (address === null || typeof address === "string")
     throw new Error("Expected TCP address");
   return `http://127.0.0.1:${address.port}`;
@@ -299,7 +332,11 @@ function post(
 ) {
   return fetch(`${url}${route}`, {
     method: "POST",
-    headers: { "content-type": "application/json; charset=utf-8", ...headers },
+    headers: {
+      ...workloadHeaders("agent-controller"),
+      "content-type": "application/json; charset=utf-8",
+      ...headers,
+    },
     body: JSON.stringify(input),
   });
 }

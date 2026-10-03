@@ -1,3 +1,4 @@
+import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { SessionConfigurationService } from "../../../../services/agent-acp-service/src/application/session-configuration.js";
 import { PostgresToolPermissions } from "../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { ToolPermissions } from "../../../../services/agent-acp-service/src/application/tool-permissions.js";
@@ -204,6 +205,7 @@ export async function startBoundaryApplication(
   const cancel = vi.spyOn(application, "cancelRun");
   const readOutput = vi.spyOn(application, "readSessionOutput");
   const server = new AgentAcpHttpServer({
+    authentication: testAuthentication(),
     executionConfiguration: directory,
     executionState: new AgentExecutionState({
       directory,

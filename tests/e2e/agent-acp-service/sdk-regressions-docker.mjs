@@ -15,11 +15,23 @@ import {
 import { Pool } from "../../../services/agent-acp-service/node_modules/pg/esm/index.mjs";
 import { z } from "../../../services/agent-acp-service/node_modules/zod/index.js";
 import { executionConfiguration } from "../../../services/agent-acp-service/test/fixtures/execution-configuration.ts";
+import {
+  createFixture,
+  headers as authenticatedHeaders,
+} from "../service-authentication/acp/auth-fixture.mjs";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 
 // Service-owned Docker E2E: the production image and its migrations execute
 // against isolated PostgreSQL, with controlled HTTP model/MCP dependencies.
 const execute = promisify(execFile);
 const prefix = `antnest-acp-sdk-${randomUUID().slice(0, 8)}`;
+const credentials = resolve(
+  "artifacts/verification/acp-authentication",
+  prefix,
+  "credentials",
+);
+const authentication = createFixture(credentials);
 const image =
   process.env.ANTNEST_ACP_AUDIT_IMAGE ?? "antnest/agent-acp-service:sdk-fixes";
 const stop = new AbortController();
@@ -119,6 +131,16 @@ try {
     { legacy: "reject" },
   );
   server = createServer((request, response) => {
+    if (request.url === "/rpc/identity/jwks") {
+      assert.equal(
+        request.headers["antnest-service-authorization"],
+        `Bearer ${authentication.outgoing}`,
+      );
+      assert.equal(request.headers["antnest-caller-context"], undefined);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(authentication.jwks));
+      return;
+    }
     void (async () => {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
@@ -237,10 +259,26 @@ try {
     prefix,
     "--add-host",
     "host.docker.internal:host-gateway",
+    "--user",
+    `${process.getuid()}:${process.getgid()}`,
+    "--volume",
+    `${credentials}:/run/auth:ro`,
     "-p",
     "127.0.0.1::8080",
+    "-p",
+    "127.0.0.1::8081",
     "-e",
     `ANTNEST_ACP_DATABASE_URL=postgres://acp_audit:fixture@${postgres}:5432/acp_audit`,
+    "-e",
+    "ANTNEST_SERVICE_AUTH_MODE=token",
+    "-e",
+    "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true",
+    "-e",
+    "ANTNEST_SERVICE_AUTH_CALLERS_FILE=/run/auth/callers.json",
+    "-e",
+    "ANTNEST_SERVICE_AUTH_TOKEN_DIR=/run/auth/outgoing",
+    "-e",
+    `ANTNEST_ACP_IDENTITY_URL=${fixtureOrigin}`,
     "-e",
     "ANTNEST_ACP_CLIENT_MCP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "-e",
@@ -248,6 +286,7 @@ try {
     image,
   ]);
   let origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  let controlOrigin = `http://127.0.0.1:${await hostPort(service, 8081)}`;
   await waitFor(async () => {
     try {
       return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
@@ -259,12 +298,127 @@ try {
   config.providers[0].base_url = `${fixtureOrigin}/v1`;
   config.agents[0].default_authorization.mode = "auto";
   config.agents[0].runtime.mcp_endpoint = `${fixtureOrigin}/mcp`;
-  async function publish() {
-    const response = await fetch(
-      `${origin}/rpc/agent-acp/apply-execution-snapshot`,
-      {
+  let authenticationChecks = 0;
+  for (const operation of ["apply-execution-snapshot", "settle-agent"]) {
+    for (const base of [origin, controlOrigin]) {
+      const response = await fetch(`${base}/rpc/agent-acp/${operation}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        body: "{}",
+        signal: stop.signal,
+      });
+      assert.equal(response.status, base === origin ? 404 : 401);
+      await response.text();
+      authenticationChecks++;
+    }
+    const hidden = await fetch(`${origin}/rpc/agent-acp/${operation}`, {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(authentication, "agent-controller"),
+        "content-type": "application/json",
+      },
+      body: "{}",
+      signal: stop.signal,
+    });
+    assert.equal(hidden.status, 404);
+    await hidden.text();
+    authenticationChecks++;
+  }
+  for (const [headers, status, code] of [
+    [{}, 401, "service_unauthenticated"],
+    [
+      authenticatedHeaders(authentication, "runtime-controller"),
+      403,
+      "caller_not_allowed",
+    ],
+    [
+      authenticatedHeaders(authentication, "edge-gateway"),
+      401,
+      "caller_context_invalid",
+    ],
+    [
+      authenticatedHeaders(authentication, "edge-gateway", {
+        agt: "agent-1",
+        aud: ["agent-ui"],
+      }),
+      401,
+      "caller_context_invalid",
+    ],
+    [
+      authenticatedHeaders(authentication, "edge-gateway", {
+        agt: "agent-1",
+        iat: 1,
+        exp: 61,
+      }),
+      401,
+      "caller_context_invalid",
+    ],
+  ]) {
+    const response = await fetch(
+      `${origin}/rpc/agent-acp/get-agent-execution-state`,
+      {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+          "x-antnest-agent-id": "agent-1",
+          "x-antnest-organization-id": "organization-1",
+          "x-antnest-principal-id": "principal-1",
+        },
+        body: "{}",
+        signal: stop.signal,
+      },
+    );
+    assert.equal(response.status, status);
+    assert.equal((await response.json()).code, code);
+    authenticationChecks++;
+  }
+  const denied = await fetch(
+    `${controlOrigin}/rpc/agent-acp/apply-execution-snapshot`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(authentication, "edge-gateway", {
+          agt: "agent-1",
+        }),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(config),
+      signal: stop.signal,
+    },
+  );
+  assert.equal(denied.status, 403);
+  await denied.text();
+  authenticationChecks++;
+  for (const [body, media, status] of [
+    ['{"organization_id":"a","organization_id":"b"}', "application/json", 400],
+    ["{}", "application/json; charset=latin1", 415],
+  ]) {
+    const response = await fetch(
+      `${controlOrigin}/rpc/agent-acp/apply-execution-snapshot`,
+      {
+        method: "POST",
+        headers: {
+          ...authenticatedHeaders(authentication, "agent-controller"),
+          "content-type": media,
+        },
+        body,
+        signal: stop.signal,
+      },
+    );
+    assert.equal(response.status, status);
+    await response.text();
+    authenticationChecks++;
+  }
+  async function publish() {
+    const response = await fetch(
+      `${controlOrigin}/rpc/agent-acp/apply-execution-snapshot`,
+      {
+        method: "POST",
+        headers: {
+          ...authenticatedHeaders(authentication, "agent-controller"),
+          "content-type": "application/json",
+        },
         body: JSON.stringify(config),
         signal: stop.signal,
       },
@@ -282,6 +436,9 @@ try {
       .connect(
         createHttpStream(`${origin}/v1/acp`, {
           headers: {
+            ...authenticatedHeaders(authentication, "agent-ui", {
+              agt: "agent-1",
+            }),
             "x-antnest-organization-id": "organization-1",
             "x-antnest-principal-id": "principal-1",
             "x-antnest-agent-id": "agent-1",
@@ -378,6 +535,7 @@ try {
   await docker(["restart", service]);
   // Docker may allocate a different ephemeral published port on restart.
   origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  controlOrigin = `http://127.0.0.1:${await hostPort(service, 8081)}`;
   await waitFor(async () => {
     try {
       return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
@@ -562,6 +720,7 @@ try {
     ],
     modelRequests: modelRequests.length,
     toolCalls,
+    authenticationChecks,
   };
 } catch (error) {
   failures.push(error);
@@ -599,6 +758,7 @@ try {
       failures.push(error);
     }
   }
+  rmSync(credentials, { recursive: true, force: true });
   process.removeListener("SIGINT", interrupt);
   process.removeListener("SIGTERM", interrupt);
 }

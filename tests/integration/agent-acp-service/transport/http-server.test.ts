@@ -1,3 +1,4 @@
+import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import {
   identityHeaders,
   snapshot,
@@ -34,10 +35,52 @@ describe("AgentAcpHttpServer", () => {
   });
 
   it.each([1, 2] as const)(
+    "refuses a new ACP v%s request after context expiry without requesting Run cancellation",
+    async (version) => {
+      const application = applicationPort();
+      server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
+        application,
+        ready: () => Promise.resolve(true),
+        maxWebSocketPayloadBytes: 65536,
+      });
+      await server.listen("127.0.0.1", 0);
+      const socket = await openRawWebSocket(server, `/v${version}/acp`);
+      try {
+        await initializeRaw(socket, version);
+        const closed = new Promise<{ code: number; reason: string }>(
+          (resolve) =>
+            socket.once("close", (code, reason) =>
+              resolve({ code, reason: reason.toString() }),
+            ),
+        );
+        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 120000);
+        socket.send(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "session/list",
+            params: {},
+          }),
+        );
+        expect(await closed).toEqual({
+          code: 1008,
+          reason: "caller_context_expired",
+        });
+        expect(application.listSessions).not.toHaveBeenCalled();
+        expect(application.cancelRun).not.toHaveBeenCalled();
+      } finally {
+        socket.terminate();
+      }
+    },
+  );
+
+  it.each([1, 2] as const)(
     "preserves opaque identity through ACP v%s WebSocket",
     async (version) => {
       const application = applicationPort();
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application,
         ready: () => Promise.resolve(true),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -87,6 +130,7 @@ describe("AgentAcpHttpServer", () => {
     const application = applicationPort();
     const errors: Array<{ error: unknown; operation: string }> = [];
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application,
       ready: vi.fn(() => Promise.resolve(true)),
       id: sequentialIds(),
@@ -184,6 +228,7 @@ describe("AgentAcpHttpServer", () => {
   it("serves the official stable ACP v1 stream on its explicit endpoint", async () => {
     const application = applicationPort();
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application,
       ready: vi.fn(() => Promise.resolve(true)),
       id: sequentialIds(),
@@ -240,6 +285,7 @@ describe("AgentAcpHttpServer", () => {
 
   it("rejects new WebSocket connections while the service is not ready", async () => {
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(false)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -271,6 +317,7 @@ describe("AgentAcpHttpServer", () => {
     "does not expose an unspecified ACP route at %s",
     async (path) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -295,7 +342,7 @@ describe("AgentAcpHttpServer", () => {
         socket.once("error", () => undefined);
       });
 
-      expect(status).toBe(404);
+      expect(status).toBe(403);
       await server.close();
       server = undefined;
     },
@@ -303,6 +350,7 @@ describe("AgentAcpHttpServer", () => {
 
   it("terminates an open ACP connection during deterministic shutdown", async () => {
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -332,6 +380,7 @@ describe("AgentAcpHttpServer", () => {
     "requires trusted identity before upgrading %s",
     async (path) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -357,6 +406,7 @@ describe("AgentAcpHttpServer", () => {
         .fn<AcpApplicationPort["createSession"]>()
         .mockRejectedValue(new DomainError(code, "Cannot access Agent"));
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application,
         ready: () => Promise.resolve(true),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -384,9 +434,10 @@ describe("AgentAcpHttpServer", () => {
   );
 
   it.each(["/v1/acp", "/v2/acp"])(
-    "rejects malformed trusted identity on %s",
+    "rejects malformed signed caller context on %s",
     async (path) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: () => Promise.resolve(true),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -395,7 +446,7 @@ describe("AgentAcpHttpServer", () => {
       await expect(
         upgradeStatus(server, path, {
           ...identityHeaders(),
-          "x-antnest-principal-id": "first,second",
+          "Antnest-Caller-Context": "invalid",
         }),
       ).resolves.toBe(401);
       await expect(
@@ -413,6 +464,7 @@ describe("AgentAcpHttpServer", () => {
     "returns a parse error and keeps %s usable",
     async (path, version) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -436,6 +488,7 @@ describe("AgentAcpHttpServer", () => {
     "closes %s when it sends a binary frame",
     async (path) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -456,6 +509,7 @@ describe("AgentAcpHttpServer", () => {
     "closes %s when its message exceeds the configured bound",
     async (path) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 32,
@@ -475,6 +529,7 @@ describe("AgentAcpHttpServer", () => {
   it("rejects every v2 Session request before initialize without entering application code", async () => {
     const application = applicationPort();
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application,
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -530,6 +585,7 @@ describe("AgentAcpHttpServer", () => {
     "returns method-not-found on %s without closing the connection",
     async (path, version) => {
       server = new AgentAcpHttpServer({
+        authentication: testAuthentication(),
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -572,6 +628,7 @@ describe("AgentAcpHttpServer", () => {
     );
     application.cancelRun = cancelRun;
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application,
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -609,6 +666,7 @@ describe("AgentAcpHttpServer", () => {
 
   it("rejects v2 initialize when it is mixed into a batch", async () => {
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -676,6 +734,7 @@ describe("AgentAcpHttpServer", () => {
       }),
     };
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: withOutputHistory(application, {
         title: "hi",
         updatedAt: "2026-08-30T00:00:01.000Z",

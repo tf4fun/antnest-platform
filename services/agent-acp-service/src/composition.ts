@@ -82,6 +82,7 @@ import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
 import { LearningChangeCursor } from "./domain/learning-change-cursor.js";
 import { ControllerLearningPolicyClient } from "./adapters/controller-learning-policy.js";
+import { tracedFetch } from "./telemetry/http.js";
 import { DirectoryLearningRuntimeBinding } from "./adapters/learning-runtime-binding.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
 import { RuntimeSkillMaintenanceClient } from "./adapters/runtime-skill-maintenance-client.js";
@@ -115,6 +116,7 @@ import { InstrumentedToolPermissions } from "./telemetry/instrumented-permission
 export type RunningAgentAcpService = {
   failure: Promise<Error>;
   address(): ReturnType<AgentAcpHttpServer["address"]>;
+  controlAddress(): ReturnType<AgentAcpHttpServer["controlAddress"]>;
   shutdown(): Promise<void>;
 };
 
@@ -134,6 +136,7 @@ export async function startAgentAcpService(
   let serving = false;
   let requestedFailure: Error | undefined;
   let components: ReturnType<typeof buildComponents> | undefined;
+  let listeningServer: AgentAcpHttpServer | undefined;
   const ownership = new AbortController();
   const recoveryRequired = (error: Error): void => {
     requestedFailure ??= error;
@@ -185,6 +188,7 @@ export async function startAgentAcpService(
     }
 
     const server = new AgentAcpHttpServer({
+      authentication: config.authentication,
       executionConfiguration: built.directory,
       settlement: built.settlement,
       executionState: built.executionState,
@@ -205,6 +209,8 @@ export async function startAgentAcpService(
       ready: async () =>
         serving && acquiredWorkerLock.isHeld() && (await dependenciesReady(pool, telemetry)),
     });
+    listeningServer = server;
+    await server.listenControl(config.controlListen.host, config.controlListen.port);
     await server.listen(config.listen.host, config.listen.port);
     serving = true;
     built.learningNotices.start();
@@ -224,6 +230,8 @@ export async function startAgentAcpService(
     telemetry.log("info", "service_started", {
       listen_host: config.listen.host,
       listen_port: config.listen.port,
+      control_listen_host: config.controlListen.host,
+      control_listen_port: config.controlListen.port,
     });
 
     let shutdownPromise: Promise<void> | undefined;
@@ -239,7 +247,11 @@ export async function startAgentAcpService(
           ...(projectionRun === undefined ? [] : [projectionRun]),
           temporaryCleanupRun,
         ]);
-        results.push(await settle(acquiredWorkerLock.release()), await settle(pool.end()));
+        results.push(
+          await settle(acquiredWorkerLock.release()),
+          await settle(pool.end()),
+          await settle(config.authentication.workload.close()),
+        );
         telemetry.log("info", "service_stopped");
         const failures = results
           .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -250,7 +262,12 @@ export async function startAgentAcpService(
       })();
       return shutdownPromise;
     };
-    return { failure: failure.promise, shutdown, address: () => server.address() };
+    return {
+      failure: failure.promise,
+      shutdown,
+      address: () => server.address(),
+      controlAddress: () => server.controlAddress(),
+    };
   } catch (error) {
     const startupError = asError(error);
     ownership.abort(startupError);
@@ -259,9 +276,11 @@ export async function startAgentAcpService(
     }
     components?.supervisor.stop(startupError);
     components?.learningNotices.stop();
+    await listeningServer?.close().catch(() => undefined);
     await components?.supervisor.shutdown().catch(() => undefined);
     await workerLock?.release().catch(() => undefined);
     await pool.end().catch(() => undefined);
+    await config.authentication.workload.close().catch(() => undefined);
     throw startupError;
   }
 }
@@ -351,7 +370,7 @@ export function buildComponents(
           runtime: rawTools,
           registry: new RegistrySkillDiscoveryClient(
             config.skillDiscovery.registryUrl,
-            config.skillDiscovery.registryToken,
+            tracedFetch(config.dependencyFetchers.registry!, "skill_registry"),
           ),
           authority: new PostgresSkillDiscoveryAuthority(kernel, directory),
           temporary: temporarySkills,
@@ -454,7 +473,6 @@ export function buildComponents(
     discovery === undefined || sourceVerifier === undefined
       ? undefined
       : {
-          token: discovery.sourceToken,
           service: new SkillSources({
             directory,
             repository: sourceRepository,
@@ -478,7 +496,10 @@ export function buildComponents(
   const projectionClient =
     discovery === undefined
       ? undefined
-      : new RegistrySkillProjectionClient(discovery.registryUrl, discovery.registryToken);
+      : new RegistrySkillProjectionClient(
+          discovery.registryUrl,
+          tracedFetch(config.dependencyFetchers.registry!, "skill_registry"),
+        );
   const skillProjectionWorker =
     projectionClient === undefined
       ? undefined
@@ -563,7 +584,10 @@ function buildLearningWorker(input: {
     config.skillMaintenanceSigning === undefined
   )
     return undefined;
-  const policy = new ControllerLearningPolicyClient(config.skillLearningControllerUrl);
+  const policy = new ControllerLearningPolicyClient(
+    config.skillLearningControllerUrl,
+    tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
+  );
   const scanStore = new PostgresLearningScan(kernel);
   const evidence = new PostgresLearningEvidence(kernel);
   const budget = new PostgresLearningBudget(kernel);

@@ -4,6 +4,21 @@
 
 ### Fixed
 
+ACP now verifies workload credentials and Identity-signed caller context before
+protocol, workspace or audit handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26),
+[#27](https://github.com/tf4fun/antnest-platform/issues/27)). Controller publication
+and settlement move to `ANTNEST_ACP_CONTROL_LISTEN` (default `:8081`); workspace
+returns 404 for those paths. Signed claims determine identity, including Unicode
+and punctuation; raw identity headers grant nothing. Strict JSON rejects ambiguous
+media types, duplicate members and malformed UTF-8 before effects. Expired CCTs
+reject new operations without cancelling accepted model work; #58 owns renewal.
+Authenticated Identity, optional learning-policy and Registry clients validate
+credentials at startup and reread token files per request. Deploy with the new
+mandatory service-authentication settings and `ANTNEST_ACP_IDENTITY_URL`; nonempty
+legacy Registry/source bearer settings now fail startup. Controller/Registry/UI
+consumers, private Runtime instance credentials, network deployment and final
+integration remain later batches on `feat/service-authentication`.
+
 Gateway preserves the existing account-switch CAS guard for network-policy
 writes while stripping browser identity headers ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
 It validates the one expected organization/user pair against authenticated

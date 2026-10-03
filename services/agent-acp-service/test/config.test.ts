@@ -1,3 +1,4 @@
+import { testSecurityEnvironment } from "./support/auth-fixture.js";
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -21,9 +22,12 @@ const SIGNING_KEY = generateKeyPairSync("ed25519")
 describe("loadConfig", () => {
   it.each(MAINTENANCE_KIDS.valid)("accepts shared maintenance kid %j unchanged", (kid) => {
     const config = loadConfig({
-      ...requiredEnvironment(),
-      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
-      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
+        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+      },
     });
     expect(config.skillMaintenanceSigning?.kid).toBe(kid);
   });
@@ -31,44 +35,46 @@ describe("loadConfig", () => {
   it.each(MAINTENANCE_KIDS.invalid)("rejects shared maintenance kid %j", (kid) => {
     expect(() =>
       loadConfig({
-        ...requiredEnvironment(),
-        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
-        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+        ...testSecurityEnvironment(),
+        ...{
+          ...requiredEnvironment(),
+          ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
+          ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+        },
       }),
     ).toThrow();
   });
 
-  it("enables discovery only with a fixed Registry origin, distinct source token and Runtime signer", () => {
+  it("enables discovery with authenticated dependencies and rejects legacy tokens", () => {
     const env = {
       ...requiredEnvironment(),
       ANTNEST_ACP_SKILL_REGISTRY_URL: "http://skill-registry:8080",
-      ANTNEST_ACP_SKILL_REGISTRY_TOKEN: "registry-token-".repeat(4),
-      ANTNEST_ACP_SKILL_SOURCE_TOKEN: "source-token-".repeat(4),
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "source-key",
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
     };
-    expect(loadConfig(env).skillDiscovery).toEqual({
+    expect(loadConfig({ ...testSecurityEnvironment(), ...env }).skillDiscovery).toEqual({
       registryUrl: "http://skill-registry:8080/",
-      registryToken: env.ANTNEST_ACP_SKILL_REGISTRY_TOKEN,
-      sourceToken: env.ANTNEST_ACP_SKILL_SOURCE_TOKEN,
     });
     for (const patch of [
-      { ANTNEST_ACP_SKILL_SOURCE_TOKEN: undefined },
+      { ANTNEST_ACP_SKILL_SOURCE_TOKEN: "legacy-token" },
       { ANTNEST_ACP_SKILL_REGISTRY_TOKEN: "short" },
-      { ANTNEST_ACP_SKILL_SOURCE_TOKEN: env.ANTNEST_ACP_SKILL_REGISTRY_TOKEN },
+      { ANTNEST_ACP_SKILL_REGISTRY_URL: "http://identity.invalid/" },
       { ANTNEST_ACP_SKILL_REGISTRY_URL: "http://registry/other/" },
       {
         ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: undefined,
         ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: undefined,
       },
     ])
-      expect(() => loadConfig({ ...env, ...patch })).toThrow();
-    expect(loadConfig(requiredEnvironment()).skillDiscovery).toBeUndefined();
+      expect(() => loadConfig({ ...testSecurityEnvironment(), ...{ ...env, ...patch } })).toThrow();
+    expect(
+      loadConfig({ ...testSecurityEnvironment(), ...requiredEnvironment() }).skillDiscovery,
+    ).toBeUndefined();
   });
   it("validates required values and applies bounded defaults", () => {
-    const config = loadConfig(requiredEnvironment());
+    const config = loadConfig({ ...testSecurityEnvironment(), ...requiredEnvironment() });
 
     expect(config.listen).toEqual({ host: "0.0.0.0", port: 8080 });
+    expect(config.controlListen).toEqual({ host: "0.0.0.0", port: 8081 });
     expect(config.databaseUrl).toBe("postgres://agent:secret@postgres/agent_acp");
     expect(config.databaseTimeoutMs).toBe(10_000);
     expect(config.stateDeliveryTimeoutMs).toBe(10_000);
@@ -92,9 +98,12 @@ describe("loadConfig", () => {
 
   it("loads an Ed25519 maintenance signer only with a complete identity", () => {
     const config = loadConfig({
-      ...requiredEnvironment(),
-      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "key-next",
-      ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "key-next",
+        ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: SIGNING_KEY,
+      },
     });
     expect(config.skillMaintenanceSigning?.kid).toBe("key-next");
     expect(config.skillMaintenanceSigning?.privateKey.asymmetricKeyType).toBe("ed25519");
@@ -103,31 +112,43 @@ describe("loadConfig", () => {
 
   it("loads a normalized Controller endpoint for Skill learning policy reads", () => {
     const config = loadConfig({
-      ...requiredEnvironment(),
-      ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://agent-controller:8080/internal/",
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://agent-controller:8080",
+      },
     });
-    expect(config.skillLearningControllerUrl).toBe("http://agent-controller:8080/internal/");
+    expect(config.skillLearningControllerUrl).toBe("http://agent-controller:8080/");
   });
 
   it("scopes development debug learning to one explicitly configured Agent", () => {
     expect(
       loadConfig({
-        ...requiredEnvironment(),
-        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
-        ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: " agent-debug ",
+        ...testSecurityEnvironment(),
+        ...{
+          ...requiredEnvironment(),
+          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
+          ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: " agent-debug ",
+        },
       }).skillLearningDebugAgentId,
     ).toBe("agent-debug");
     expect(
       loadConfig({
-        ...requiredEnvironment(),
-        ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "",
+        ...testSecurityEnvironment(),
+        ...{
+          ...requiredEnvironment(),
+          ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "",
+        },
       }).skillLearningDebugAgentId,
     ).toBeUndefined();
     expect(() =>
       loadConfig({
-        ...requiredEnvironment(),
-        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
-        ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "agent/other",
+        ...testSecurityEnvironment(),
+        ...{
+          ...requiredEnvironment(),
+          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
+          ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "agent/other",
+        },
       }),
     ).toThrow();
   });
@@ -137,9 +158,12 @@ describe("loadConfig", () => {
     (gate) => {
       expect(() =>
         loadConfig({
-          ...requiredEnvironment(),
-          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
-          ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "agent-debug",
+          ...testSecurityEnvironment(),
+          ...{
+            ...requiredEnvironment(),
+            ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+            ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "agent-debug",
+          },
         }),
       ).toThrow(
         new ConfigError(
@@ -151,8 +175,11 @@ describe("loadConfig", () => {
 
   it.each(["true", "false"])("accepts the exact development gate %j", (gate) => {
     const config = loadConfig({
-      ...requiredEnvironment(),
-      ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+      },
     });
     expect(config.allowDevelopmentSettings).toBe(gate === "true");
     expect(config.skillLearningDebugAgentId).toBeUndefined();
@@ -163,8 +190,11 @@ describe("loadConfig", () => {
     (gate) => {
       expect(() =>
         loadConfig({
-          ...requiredEnvironment(),
-          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+          ...testSecurityEnvironment(),
+          ...{
+            ...requiredEnvironment(),
+            ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+          },
         }),
       ).toThrow(new ConfigError("ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS must be true or false"));
     },
@@ -172,20 +202,23 @@ describe("loadConfig", () => {
 
   it("parses explicit IPv6, duration and telemetry values", () => {
     const config = loadConfig({
-      ...requiredEnvironment(),
-      ANTNEST_ACP_LISTEN: "[::1]:18080",
-      ANTNEST_ACP_RUN_TIMEOUT: "750ms",
-      ANTNEST_ACP_DATABASE_TIMEOUT: "3s",
-      ANTNEST_ACP_STATE_DELIVERY_TIMEOUT: "250ms",
-      ANTNEST_ACP_MAX_PROMPT_BYTES: "1048576",
-      ANTNEST_ACP_MAX_CONFIGURATION_BYTES: "2097152",
-      ANTNEST_ACP_SHUTDOWN_TIMEOUT: "2m",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel:4318",
-      OTEL_SERVICE_NAME: "antnest-acp-test",
-      OTEL_SDK_DISABLED: "true",
-      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "true",
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_METRICS_EXPORTER: "none",
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_LISTEN: "[::1]:18080",
+        ANTNEST_ACP_RUN_TIMEOUT: "750ms",
+        ANTNEST_ACP_DATABASE_TIMEOUT: "3s",
+        ANTNEST_ACP_STATE_DELIVERY_TIMEOUT: "250ms",
+        ANTNEST_ACP_MAX_PROMPT_BYTES: "1048576",
+        ANTNEST_ACP_MAX_CONFIGURATION_BYTES: "2097152",
+        ANTNEST_ACP_SHUTDOWN_TIMEOUT: "2m",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel:4318",
+        OTEL_SERVICE_NAME: "antnest-acp-test",
+        OTEL_SDK_DISABLED: "true",
+        ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "true",
+        OTEL_TRACES_EXPORTER: "otlp",
+        OTEL_METRICS_EXPORTER: "none",
+      },
     });
 
     expect(config.listen).toEqual({ host: "::1", port: 18080 });
@@ -268,7 +301,9 @@ describe("loadConfig", () => {
       },
     ],
   ])("rejects %s", (_name, overrides) => {
-    expect(() => loadConfig({ ...requiredEnvironment(), ...overrides })).toThrow();
+    expect(() =>
+      loadConfig({ ...testSecurityEnvironment(), ...{ ...requiredEnvironment(), ...overrides } }),
+    ).toThrow();
   });
 });
 

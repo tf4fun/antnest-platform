@@ -34,15 +34,15 @@ Internal POST RPCs under `/rpc/agent-acp`:
   no fabricated sequence spanning these two existing stores. Permission rows
   expose their current decision and timestamps, not a new event journal.
 
-Gateway authenticates a current administrator and forwards its existing trusted
-management context to Console BFF. BFF forwards the same context to ACP:
-`X-Antnest-User-ID`, `X-Antnest-Organization-ID`, `X-Antnest-Membership-ID`,
-`X-Antnest-System-Role`, and `X-Antnest-Organization-Role`.
+Gateway authenticates the user and forwards Identity's signed CCT to Console BFF.
+BFF forwards it unchanged with Console's own workload credential. ACP verifies
+signature, audience, expiry and organization scope before deriving the actor.
 ACP accepts a system administrator or organization administrator, always limited
 to the verified organization in that context. Body/query fields cannot change
 identity or widen organization scope. Ordinary owners use ACP Session APIs,
-not administrative audit RPCs. Gateway must overwrite external identity headers.
-Private-network trust is unchanged; these RPCs are not public OpenAPI routes.
+not administrative audit RPCs. Unsigned identity fields never authenticate an
+administrator. These RPCs are internal, not public OpenAPI routes; see the
+[authentication contract](../../../contracts/agent-acp/service-authentication.md).
 
 Cursors contain only pagination anchors plus query scope. They are not access
 credentials. Authorization is evaluated on every request, and every SQL query

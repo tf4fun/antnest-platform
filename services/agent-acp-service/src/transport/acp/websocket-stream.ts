@@ -2,16 +2,26 @@ import type * as acpV1 from "@agentclientprotocol/sdk";
 import type * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import type WebSocket from "ws";
 import type { RawData } from "ws";
+import { strictJson } from "../../adapters/strict-json.js";
 
-export function createAcpV1WebSocketStream(socket: WebSocket): acpV1.Stream {
-  return createWebSocketJsonStream<acpV1.AnyMessage>(socket);
+export function createAcpV1WebSocketStream(
+  socket: WebSocket,
+  authorized = () => true,
+): acpV1.Stream {
+  return createWebSocketJsonStream<acpV1.AnyMessage>(socket, authorized);
 }
 
-export function createAcpV2WebSocketWireStream(socket: WebSocket): acpV2.WireStream {
-  return createWebSocketJsonStream<acpV2.AnyWireMessage>(socket);
+export function createAcpV2WebSocketWireStream(
+  socket: WebSocket,
+  authorized = () => true,
+): acpV2.WireStream {
+  return createWebSocketJsonStream<acpV2.AnyWireMessage>(socket, authorized);
 }
 
-function createWebSocketJsonStream<Message>(socket: WebSocket): {
+function createWebSocketJsonStream<Message>(
+  socket: WebSocket,
+  authorized: () => boolean,
+): {
   readable: ReadableStream<Message>;
   writable: WritableStream<Message>;
 } {
@@ -27,7 +37,17 @@ function createWebSocketJsonStream<Message>(socket: WebSocket): {
           return;
         }
         try {
-          controller.enqueue(JSON.parse(textFrame(data)) as Message);
+          const message = strictJson(textFrame(data));
+          if (
+            !authorized() &&
+            typeof message === "object" &&
+            message !== null &&
+            "method" in message
+          ) {
+            socket.close(1008, "caller_context_expired");
+            return;
+          }
+          controller.enqueue(message as Message);
         } catch {
           sendParseError(socket);
         }
@@ -93,15 +113,15 @@ function sendParseError(socket: WebSocket): void {
   );
 }
 
-function textFrame(data: RawData): string {
+function textFrame(data: RawData): Buffer {
   if (data instanceof ArrayBuffer) {
-    return Buffer.from(data).toString("utf8");
+    return Buffer.from(data);
   }
   if (Array.isArray(data)) {
-    return Buffer.concat(data).toString("utf8");
+    return Buffer.concat(data);
   }
   if (Buffer.isBuffer(data)) {
-    return data.toString("utf8");
+    return data;
   }
   throw new TypeError("Unsupported WebSocket text frame");
 }

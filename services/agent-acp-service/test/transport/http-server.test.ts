@@ -1,3 +1,4 @@
+import { testAuthentication, testHeaders } from "../support/auth-fixture.js";
 import { sessionConfigurationView } from "../support/fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
@@ -69,6 +70,7 @@ describe("AgentAcpHttpServer", () => {
     const access = { assert: vi.fn().mockResolvedValue(undefined) };
     const sessions = { requireAuthorized: vi.fn().mockResolvedValue(undefined) };
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -78,11 +80,11 @@ describe("AgentAcpHttpServer", () => {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
     const base = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/sessions/session-1`;
-    const headers = {
+    const headers = testHeaders({
       "X-Antnest-Organization-Id": "organization-1",
       "X-Antnest-Principal-Id": "principal-1",
       "X-Antnest-Agent-Id": "agent-1",
-    };
+    });
     for (const original of ["model_unsupported_content", "Invalid-Class", null]) {
       errorClass = original;
       const expected = original === "Invalid-Class" ? "internal_error" : original;
@@ -105,6 +107,7 @@ describe("AgentAcpHttpServer", () => {
   it("serves learning status with trusted identity and no caller-selected task", async () => {
     const read = vi.fn(() => Promise.resolve({ agentId: "agent-1", blocked: null }));
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -114,15 +117,15 @@ describe("AgentAcpHttpServer", () => {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
     const url = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/agents/agent-1/learning-status`;
-    const headers = {
+    const headers = testHeaders({
       "X-Antnest-Organization-Id": "organization-1",
       "X-Antnest-Principal-Id": "principal-1",
       "X-Antnest-Agent-Id": "agent-1",
-    };
+    });
     expect((await fetch(url)).status).toBe(401);
-    expect((await fetch(url.replace("agent-1", "agent-2"), { headers })).status).toBe(404);
+    expect((await fetch(url.replace("agent-1", "agent-2"), { headers })).status).toBe(401);
     expect((await fetch(`${url}?taskId=x`, { headers })).status).toBe(400);
-    expect((await fetch(url, { headers, method: "POST" })).status).toBe(405);
+    expect((await fetch(url, { headers, method: "POST" })).status).toBe(403);
     expect(read).not.toHaveBeenCalled();
     const result = await fetch(url, { headers });
     expect(result.status).toBe(200);
@@ -138,6 +141,7 @@ describe("AgentAcpHttpServer", () => {
 
   it("closes idempotently when startup never reached listen", async () => {
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -168,6 +172,7 @@ describe("AgentAcpHttpServer", () => {
       configurationRevision: null,
     });
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -181,11 +186,11 @@ describe("AgentAcpHttpServer", () => {
     expect(denied.status).toBe(401);
     expect(readIntent).not.toHaveBeenCalled();
     const allowed = await fetch(url, {
-      headers: {
+      headers: testHeaders({
         "X-Antnest-Organization-Id": "organization-1",
         "X-Antnest-Principal-Id": "principal-1",
         "X-Antnest-Agent-Id": "agent-1",
-      },
+      }),
     });
     expect(allowed.status).toBe(200);
     await expect(allowed.json()).resolves.toMatchObject({ intentId: "intent-1", runId: "run-1" });
@@ -210,6 +215,7 @@ describe("AgentAcpHttpServer", () => {
       }),
     );
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -220,12 +226,12 @@ describe("AgentAcpHttpServer", () => {
     if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
     const url = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/agents/agent-1/learning-changes`;
     expect((await fetch(`${url}?after=0&limit=2`)).status).toBe(401);
-    const headers = {
+    const headers = testHeaders({
       "X-Antnest-Organization-Id": "organization-1",
       "X-Antnest-Principal-Id": "principal-1",
       "X-Antnest-Agent-Id": "agent-1",
-    };
-    expect((await fetch(url.replace("agent-1", "agent-2"), { headers })).status).toBe(404);
+    });
+    expect((await fetch(url.replace("agent-1", "agent-2"), { headers })).status).toBe(401);
     expect((await fetch(`${url}?after=0&after=0`, { headers })).status).toBe(400);
     expect((await fetch(`${url}?after=0&before=x`, { headers })).status).toBe(400);
     expect((await fetch(`${url}?unknown=x`, { headers })).status).toBe(400);
@@ -246,6 +252,7 @@ describe("AgentAcpHttpServer", () => {
 
   it("does not expose out-of-scope Skill undo routes", async () => {
     server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
       application: applicationPort(),
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -263,9 +270,9 @@ describe("AgentAcpHttpServer", () => {
     expect(
       (await fetch(post, { method: "POST", headers: { "Content-Type": "application/json" }, body }))
         .status,
-    ).toBe(404);
+    ).toBe(401);
     const readUrl = `${base}/learning-undo-operations/undo-1`;
-    expect((await fetch(readUrl)).status).toBe(404);
+    expect((await fetch(readUrl)).status).toBe(401);
   });
 });
 
