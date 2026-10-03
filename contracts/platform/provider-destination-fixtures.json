@@ -1,0 +1,478 @@
+{
+  "policy_version": 1,
+  "private_flag": "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS",
+  "private_prefixes": [
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+    "fec0::/10"
+  ],
+  "always_denied_prefixes": [
+    "0.0.0.0/8",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.88.99.0/24",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "::/128",
+    "64:ff9b::/96",
+    "64:ff9b:1::/48",
+    "100::/64",
+    "100:0:0:1::/64",
+    "2001::/32",
+    "2001:2::/48",
+    "2001:10::/28",
+    "2001:db8::/32",
+    "2002::/16",
+    "3fff::/20",
+    "5f00::/16",
+    "ff00::/8"
+  ],
+  "address_vectors": [
+    {
+      "name": "public-v4",
+      "address": "8.8.8.8",
+      "default_allowed": true,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "public-v6",
+      "address": "2606:4700:4700::1111",
+      "default_allowed": true,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "public-mapped-v4",
+      "address": "::ffff:8.8.8.8",
+      "default_allowed": true,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "outside-cgn",
+      "address": "100.128.1.2",
+      "default_allowed": true,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "loopback",
+      "address": "127.0.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "loopback-entire-prefix",
+      "address": "127.255.255.254",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "rfc1918-10",
+      "address": "10.2.3.4",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "rfc1918-172-first",
+      "address": "172.16.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "rfc1918-172-last",
+      "address": "172.31.255.254",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "outside-rfc1918-172",
+      "address": "172.32.0.1",
+      "default_allowed": true,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "rfc1918-192",
+      "address": "192.168.1.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "cgn-first",
+      "address": "100.64.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "cgn-last",
+      "address": "100.127.255.254",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "link-local",
+      "address": "169.254.1.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "metadata-v4",
+      "address": "169.254.169.254",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "metadata-cgn",
+      "address": "100.100.100.200",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "ula",
+      "address": "fd12:3456::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "ula-first",
+      "address": "fc00::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "metadata-v6",
+      "address": "fd00:ec2::254",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "link-local-v6",
+      "address": "fe80::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "link-local-v6-last",
+      "address": "febf::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "deprecated-site-local",
+      "address": "fec0::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "loopback-v6",
+      "address": "::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "mapped-loopback",
+      "address": "::ffff:127.0.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "mapped-private",
+      "address": "::ffff:192.168.1.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": true
+    },
+    {
+      "name": "unspecified-v4",
+      "address": "0.0.0.0",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "this-network-v4",
+      "address": "0.2.3.4",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "unspecified-v6",
+      "address": "::",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "mapped-unspecified",
+      "address": "::ffff:0.0.0.0",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "broadcast",
+      "address": "255.255.255.255",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "multicast-v4",
+      "address": "224.0.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "reserved-v4",
+      "address": "240.0.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "documentation-v4",
+      "address": "192.0.2.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "documentation-v4-2",
+      "address": "198.51.100.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "documentation-v4-3",
+      "address": "203.0.113.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "protocol-assignment",
+      "address": "192.0.0.8",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "deprecated-relay",
+      "address": "192.88.99.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "benchmark-v4",
+      "address": "198.18.0.1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "benchmark-v4-last",
+      "address": "198.19.255.254",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "documentation-v6",
+      "address": "2001:db8::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "documentation-v6-new",
+      "address": "3fff::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "benchmark-v6",
+      "address": "2001:2::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "discard-v6",
+      "address": "100::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "dummy-v6",
+      "address": "100:0:0:1::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "nat64-private",
+      "address": "64:ff9b::a00:1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "nat64-local",
+      "address": "64:ff9b:1::a00:1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "teredo",
+      "address": "2001::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "6to4",
+      "address": "2002:7f00:1::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "orchid-deprecated",
+      "address": "2001:10::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "sr-sid",
+      "address": "5f00::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "multicast-v6",
+      "address": "ff02::1",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    },
+    {
+      "name": "scoped-address",
+      "address": "fe80::1%en0",
+      "default_allowed": false,
+      "private_opt_in_allowed": false
+    }
+  ],
+  "url_vectors": [
+    {
+      "name": "https-public",
+      "url": "https://api.deepseek.com/v1",
+      "syntax_allowed": true
+    },
+    {
+      "name": "http-local",
+      "url": "http://127.0.0.1:8000/v1",
+      "syntax_allowed": true
+    },
+    {
+      "name": "ipv6",
+      "url": "http://[::1]:8000/v1",
+      "syntax_allowed": true
+    },
+    {
+      "name": "unsupported-scheme",
+      "url": "file:///tmp/model",
+      "syntax_allowed": false
+    },
+    {
+      "name": "user-info",
+      "url": "https://user:secret@provider.example/v1",
+      "syntax_allowed": false
+    },
+    {
+      "name": "query",
+      "url": "https://provider.example/v1?key=secret",
+      "syntax_allowed": false
+    },
+    {
+      "name": "fragment",
+      "url": "https://provider.example/v1#secret",
+      "syntax_allowed": false
+    },
+    {
+      "name": "empty",
+      "url": "",
+      "syntax_allowed": false
+    },
+    {
+      "name": "padded",
+      "url": " https://provider.example/v1 ",
+      "syntax_allowed": false
+    },
+    {
+      "name": "opaque",
+      "url": "https:provider.example",
+      "syntax_allowed": false
+    },
+    {
+      "name": "invalid-port",
+      "url": "https://provider.example:65536/v1",
+      "syntax_allowed": false
+    },
+    {
+      "name": "zero-port",
+      "url": "http://provider.example:0/v1",
+      "syntax_allowed": false
+    },
+    {
+      "name": "missing-host",
+      "url": "https:///v1",
+      "syntax_allowed": false
+    },
+    {
+      "name": "encoded-host",
+      "url": "http://%31%32%37.0.0.1/v1",
+      "syntax_allowed": false
+    },
+    {
+      "name": "scoped-ipv6",
+      "url": "http://[fe80::1%25en0]/v1",
+      "syntax_allowed": false
+    }
+  ],
+  "dns_vectors": [
+    {
+      "name": "public-answers",
+      "answers": ["8.8.8.8", "2606:4700:4700::1111"],
+      "default_code": "allowed",
+      "private_opt_in_code": "allowed"
+    },
+    {
+      "name": "mixed-private",
+      "answers": ["8.8.8.8", "10.0.0.1"],
+      "default_code": "provider_endpoint_forbidden",
+      "private_opt_in_code": "allowed"
+    },
+    {
+      "name": "mapped-private",
+      "answers": ["::ffff:127.0.0.1"],
+      "default_code": "provider_endpoint_forbidden",
+      "private_opt_in_code": "allowed"
+    },
+    {
+      "name": "mixed-reserved",
+      "answers": ["8.8.8.8", "0.0.0.0"],
+      "default_code": "provider_endpoint_forbidden",
+      "private_opt_in_code": "provider_endpoint_forbidden"
+    },
+    {
+      "name": "empty",
+      "answers": [],
+      "default_code": "provider_endpoint_unavailable",
+      "private_opt_in_code": "provider_endpoint_unavailable"
+    },
+    {
+      "name": "lookup-failure",
+      "answers": null,
+      "default_code": "provider_endpoint_unavailable",
+      "private_opt_in_code": "provider_endpoint_unavailable"
+    }
+  ],
+  "required_transport_scenarios": [
+    "rebinding-after-validation",
+    "mixed-A-and-AAAA",
+    "literal-socket-pinning",
+    "redirect-without-following",
+    "ignore-environment-proxy",
+    "credential-absent-from-errors-and-telemetry",
+    "deadline-and-cancellation"
+  ]
+}

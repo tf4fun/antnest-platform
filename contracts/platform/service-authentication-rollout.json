@@ -207,5 +207,18 @@
         "normal browser and lifecycle regressions"
       ]
     }
-  ]
+  ],
+  "provider_destination_policy": {
+    "issue": 28,
+    "version": 1,
+    "contract": "provider-destination-policy.md",
+    "fixtures": "provider-destination-fixtures.json",
+    "status": "contract-frozen",
+    "pending_service_batches": [
+      "agent-controller",
+      "admin-console",
+      "agent-acp-service"
+    ],
+    "cross_service_e2e": "pending final integration batch"
+  }
 }

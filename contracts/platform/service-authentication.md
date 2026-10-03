@@ -9,6 +9,10 @@ issuer/JWKS. Remaining service adoption, deployment changes and Docker security
 E2E are tracked in the [rollout ledger](service-authentication-rollout.json).
 This document does not describe the current unauthenticated listeners as secure.
 
+Provider URLs use the separate [destination policy](provider-destination-policy.md)
+for #28. Workload authentication authorizes internal callers; it does not authorize
+an arbitrary outbound Provider address or permit secrets to be sent there.
+
 ## 1. Two independent identities
 
 Every internal business request MUST establish both its immediate calling

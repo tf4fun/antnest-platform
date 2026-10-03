@@ -4,6 +4,11 @@
 
 ### Fixed
 
+The shared Provider destination policy and IPv4/IPv6/DNS fixtures are frozen for
+#28 before Controller, Console and ACP adoption. The policy specifies private
+endpoint opt-in, checked literal-IP dialing, disabled proxies/redirects and
+bounded errors that exclude credentials. Production adoption and final E2E remain pending.
+
 Controller now authenticates every business route and rejects forged Organization,
 actor and Agent scope before effects (#32 / #28 prerequisite). Console management
 requires a signed administrator CCT; Gateway/UI workspace discovery requires the
