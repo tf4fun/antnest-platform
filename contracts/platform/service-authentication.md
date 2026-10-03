@@ -303,8 +303,21 @@ metadata, not copies of service source or a production authorization library.
 Replacing a custom matcher with a declarative registration in its owning batch
 can remove its guard after equivalent route-coverage tests pass.
 
-Caller catalogs cannot silently omit current registrations, omit `callers`,
-add public internal business routes or leave stale policies. They still require
+The current Go scan resolves wrapper arguments only within their owning
+directory/package; it does not follow imported calls such as
+`probe.Reg(mux, "POST /internal/x")`. Current route wrappers are unexported
+methods or local closures. [#29](https://github.com/tf4fun/antnest-platform/issues/29)
+must add an admission rule rejecting any exported function or method that uses
+its own parameter, or a value derived from it, as the route pattern passed to
+`Handle` or `HandleFunc`. Reject the definition even when an in-package call is
+known. This rule is pending, not enforced by the foundation. Its regression
+must cover an in-package known route plus an unlisted imported call. Fixed
+literal registrations and a constructor's local closure parameters are not
+exported pattern parameters.
+
+Within the supported registration patterns, admission checks reject omitted
+caller policies, missing `callers`, public internal business routes and stale
+policies. They still require
 human review for the correctness of each caller/context grant. Passing this
 repository check does **not** prove middleware enforcement.
 

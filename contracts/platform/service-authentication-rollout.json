@@ -115,7 +115,8 @@
       "deliverables": [
         "workload verification and image policy",
         "management listener isolation",
-        "JSON media-type checks"
+        "JSON media-type checks",
+        "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc"
       ]
     },
     {
