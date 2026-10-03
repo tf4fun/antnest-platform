@@ -86,6 +86,13 @@ Reading or editing a saved model uses Controller's configuration, not current
 catalogue values. Controller validates and persists organization data and
 credentials; Console owns no persistent model or credential store.
 
+Browser discovery DTOs and routes remain at revision 49. Console requires
+Controller revision 38 and forwards saved/draft discovery to its authenticated
+model-only endpoints. The former plaintext `/access` consumer is removed;
+Console has no Provider HTTP adapter. Scope comes from the signed CCT, draft
+credentials are request-only, and errors use bounded static messages. See the
+[Provider discovery policy](../platform/provider-destination-policy.md).
+
 The contract covers Provider connection creation, list and detail, and
 independent credential rotation. Model creation references
 `provider_connection_id`; model revisions accept no credential or endpoint.

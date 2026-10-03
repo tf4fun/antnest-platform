@@ -22,7 +22,6 @@ import (
 
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/providerdiscovery"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
@@ -69,7 +68,6 @@ type Dependencies struct {
 type handler struct {
 	authentication         *serviceauth.Receiver
 	callerContext          *callercontext.Verifier
-	modelLister            providerdiscovery.Lister
 	backend                Backend
 	registry               RegistryBackend
 	skillUploads           chan struct{}
@@ -97,8 +95,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	}
 	h := &handler{
 		authentication: dependencies.Authentication, callerContext: dependencies.CallerContext,
-		modelLister: providerdiscovery.New(config.RequestTimeout, nil),
-		backend:     dependencies.Backend, assets: dependencies.Assets,
+		backend: dependencies.Backend, assets: dependencies.Assets,
 		registry:     dependencies.Registry,
 		skillUploads: make(chan struct{}, 2),
 		fileServer:   http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,

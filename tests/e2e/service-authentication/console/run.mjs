@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { writeFileSync, renameSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
@@ -13,6 +13,7 @@ export async function runConsoleAcceptance({
   authentication = true,
   preparation = true,
   shutdown = true,
+  discovery = true,
 } = {}) {
   const project = `antnest-console-auth-${randomUUID()}`;
   const evidence = resolve(
@@ -279,6 +280,105 @@ export async function runConsoleAcceptance({
           "fetch('http://127.0.0.1:8101/test/state').then(r=>r.text()).then(v=>process.stdout.write(v))",
         ]),
       );
+    if (discovery) {
+      const draftSecret = "synthetic-provider-secret";
+      const hash = (value) => createHash("sha256").update(value).digest("hex");
+      const context = callerContext(fixture);
+      const before = (await state()).discovery.length;
+      const happy = await request(
+        "/api/admin/provider-connections/happy/models/discovery",
+        {
+          context,
+          headers: {
+            Authorization: "Bearer browser-credential",
+            Cookie: "browser=credential",
+            "X-Antnest-Organization-ID": "forged-org",
+          },
+        },
+      );
+      assert.deepEqual(JSON.parse(happy.text), {
+        models: [
+          {
+            model_id: "remote",
+            display_name: "Remote",
+            context_window: 128000,
+            supports_images: false,
+          },
+        ],
+      });
+      assert.equal(happy.response.headers.get("cache-control"), "no-store");
+      assert(!happy.text.includes(draftSecret));
+      checks++;
+      for (const [outcome, status, code] of [
+        ["forbidden", 422, "provider_endpoint_forbidden"],
+        ["unavailable", 503, "provider_endpoint_unavailable"],
+        ["failed", 502, "provider_discovery_failed"],
+        ["missing", 404, "reference_not_found"],
+        ["disabled", 409, "reference_disabled"],
+      ]) {
+        const result = await request(
+          `/api/admin/provider-connections/${outcome}/models/discovery`,
+          { status, code, context },
+        );
+        assert(!result.text.includes(draftSecret));
+        assert(!result.text.includes("http://private"));
+        checks++;
+      }
+      const draft = (outcome, extra = {}) =>
+        JSON.stringify({
+          provider_key: "deepseek",
+          base_url: `http://dependencies:8101/${outcome}`,
+          credential: { method: "api_key", api_key: draftSecret },
+          ...extra,
+        });
+      const empty = await request("/api/admin/provider-models/discovery", {
+        method: "POST",
+        context,
+        headers: { "Content-Type": "application/json" },
+        body: draft("empty"),
+      });
+      assert.deepEqual(JSON.parse(empty.text), { models: [] });
+      checks++;
+      const forbidden = await request("/api/admin/provider-models/discovery", {
+        method: "POST",
+        context,
+        headers: { "Content-Type": "application/json" },
+        body: draft("forbidden"),
+        status: 422,
+        code: "provider_endpoint_forbidden",
+      });
+      assert(!forbidden.text.includes(draftSecret));
+      checks++;
+      for (const extra of [
+        { organization_id: "forged-org" },
+        { allow_private_endpoints: true },
+      ])
+        await request("/api/admin/provider-models/discovery", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: draft("empty", extra),
+          status: 400,
+        });
+      await request("/api/admin/provider-connections/happy/models/discovery", {
+        context: callerContext(fixture, { org_role: "member" }),
+        status: 403,
+      });
+      const calls = (await state()).discovery.slice(before);
+      assert.equal(calls.length, 8);
+      for (const call of calls) {
+        assert.equal(call.organization, "org-1");
+        assert.equal(call.contextDigest, hash(context));
+        if (call.path === "/internal/provider-discovery/draft")
+          assert.equal(call.credentialDigest, hash(draftSecret));
+        else assert.equal(call.credentialDigest, undefined);
+      }
+      assert(!JSON.stringify(calls).includes(draftSecret));
+      const logs = await docker(["logs", id]);
+      assert(!logs.includes(draftSecret));
+      assert(!logs.includes(context));
+      assert(!logs.includes("http://private"));
+      checks++;
+    }
     if (preparation) {
       const before = (await state()).preparationCalls;
       const path = "/api/admin/agent-skill-preparations/by-idempotency-key";

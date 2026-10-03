@@ -12,7 +12,7 @@ import (
 
 type providerCredentialInput struct {
 	Method string `json:"method"`
-	APIKey string `json:"api_key"`
+	Secret string `json:"api_key"`
 }
 
 type providerModelInput struct {
@@ -74,7 +74,7 @@ func (h *handler) createProviderConnection(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if !required(input.ProviderKey, input.DisplayName, input.BaseURL, input.Credential.Method, input.Credential.APIKey) || input.Models == nil {
+	if !required(input.ProviderKey, input.DisplayName, input.BaseURL, input.Credential.Method, input.Credential.Secret) || input.Models == nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Provider connection fields and a models array are required")
 		return
 	}
@@ -102,7 +102,7 @@ func (h *handler) rotateProviderCredential(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if !required(input.ExpectedVersion, input.Credential.Method, input.Credential.APIKey) {
+	if !required(input.ExpectedVersion, input.Credential.Method, input.Credential.Secret) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Credential and its expected version are required")
 		return
 	}

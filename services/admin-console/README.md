@@ -19,7 +19,7 @@ come from verified Identity-signed caller context, never from browser input.
 - Explicit browser DTO allowlists that keep control-plane fields internal.
 - Organization scoping from verified Identity-signed caller context.
 - Builtin Provider and model catalog defaults (`internal/server/builtin_catalog.go`).
-- Provider model discovery against administrator-supplied Provider base URLs.
+- Model selection and a thin proxy to Controller-owned Provider discovery.
 - Skill inventory, upload, discovery and promotion through Skill Registry.
 - Static application delivery and lifecycle event forwarding (SSE).
 
@@ -29,47 +29,47 @@ come from verified Identity-signed caller context, never from browser input.
 - Identity, Provider connection, Model Profile, Template, Agent, operation,
   event or Runtime records (Identity Service and Agent Controller).
 - Execution audit records (Agent ACP Service) and Skill packages (Skill Registry).
-- Provider secret storage or retrieval outside a scoped Controller read.
+- Provider HTTP access, decrypted stored credentials or Provider secret storage.
 - Durable retries or cross-service workflows.
 - Any PostgreSQL schema. The service has no database, migration, backup or
   persistent volume.
 
 ## Interfaces
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | `/api/admin/*` via Edge Gateway | Administrator BFF; see the [admin contract](../../contracts/admin-console/admin-contract.json) |
-| Inbound | `/api/admin/skill-sources/*` | Skill discovery and promotion; see the [skill discovery contract](../../contracts/admin-console/skill-discovery.md) |
-| Inbound | `/` and static assets | Embedded React application |
-| Inbound | `GET /status` | Local readiness only |
-| Outbound | Identity Service RPC | Directory, OIDC, SCIM credentials, account profile and password |
-| Outbound | Agent Controller RPC | Catalog, Templates, Agents, lifecycle, events, network policy, synchronization |
-| Outbound | Agent ACP Service RPC | Organization-scoped execution audit |
-| Outbound | Skill Registry HTTP (optional) | Skill packages, versions and artifacts |
-| Outbound | Provider `GET {base_url}/models` | Model discovery against administrator-supplied URLs |
+| Direction | Interface                       | Purpose                                                                                                             |
+| --------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Inbound   | `/api/admin/*` via Edge Gateway | Administrator BFF; see the [admin contract](../../contracts/admin-console/admin-contract.json)                      |
+| Inbound   | `/api/admin/skill-sources/*`    | Skill discovery and promotion; see the [skill discovery contract](../../contracts/admin-console/skill-discovery.md) |
+| Inbound   | `/` and static assets           | Embedded React application                                                                                          |
+| Inbound   | `GET /status`                   | Local readiness only                                                                                                |
+| Outbound  | Identity Service RPC            | Directory, OIDC, SCIM credentials, account profile and password                                                     |
+| Outbound  | Agent Controller RPC            | Catalog, Templates, Agents, lifecycle, events, network policy, synchronization                                      |
+| Outbound  | Agent ACP Service RPC           | Organization-scoped execution audit                                                                                 |
+| Outbound  | Skill Registry HTTP (optional)  | Skill packages, versions and artifacts                                                                              |
+| Outbound  | Controller model-only discovery | Saved connections and ephemeral drafts; no Provider HTTP client in Console                                          |
 
 Edge Gateway is the only supported external caller; do not publish Admin
 Console directly.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | `:8080` | HTTP listen address; the container health check uses its port |
-| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | Identity Service base URL (absolute HTTP(S), no query or fragment) |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | Agent Controller base URL |
-| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | Agent ACP Service base URL for execution audit |
-| `ANTNEST_SKILL_REGISTRY_URL` | no | empty | Skill Registry base URL; without it Skill routes return `503 dependency_unavailable` |
-| `ANTNEST_SERVICE_AUTH_MODE` | yes | - | Exactly `token` or `mtls`; see the [authentication contract](../../contracts/admin-console/service-authentication.md) |
-| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | token mode | - | Read-only Gateway caller hashes, loaded at startup |
-| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | token mode | - | Per-receiver credentials, validated at startup and read on every new request |
-| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | no | `false` | Exact `true` only for disposable token-mode development HTTP |
-| `ANTNEST_SERVICE_AUTH_TLS_*` | TLS | - | CA, certificate, key and server DNS identity; required in mTLS mode |
-| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | empty | Default Runtime image reference offered when creating a Template |
-| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | `15s` | Timeout for non-streaming dependency calls, including Provider discovery |
-| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | `15s` | Graceful HTTP drain budget |
-| `ANTNEST_ENVIRONMENT` | no | empty | Deployment environment resource attribute for telemetry |
-| `OTEL_*` | no | - | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+| Variable                                        | Required   | Default | Description                                                                                                                                                                 |
+| ----------------------------------------------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_ADMIN_CONSOLE_LISTEN`                  | no         | `:8080` | HTTP listen address; the container health check uses its port                                                                                                               |
+| `ANTNEST_IDENTITY_SERVICE_URL`                  | yes        | -       | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
+| `ANTNEST_AGENT_CONTROLLER_URL`                  | yes        | -       | Agent Controller base URL                                                                                                                                                   |
+| `ANTNEST_AGENT_ACP_SERVICE_URL`                 | yes        | -       | Agent ACP Service base URL for execution audit                                                                                                                              |
+| `ANTNEST_SKILL_REGISTRY_URL`                    | no         | empty   | Skill Registry base URL; without it Skill routes return `503 dependency_unavailable`                                                                                        |
+| `ANTNEST_SERVICE_AUTH_MODE`                     | yes        | -       | Exactly `token` or `mtls`; see the [authentication contract](../../contracts/admin-console/service-authentication.md)                                                       |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`             | token mode | -       | Read-only Gateway caller hashes, loaded at startup                                                                                                                          |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                | token mode | -       | Per-receiver credentials, validated at startup and read on every new request                                                                                                |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | no         | `false` | Exact `true` only for disposable token-mode development HTTP                                                                                                                |
+| `ANTNEST_SERVICE_AUTH_TLS_*`                    | TLS        | -       | CA, certificate, key and server DNS identity; required in mTLS mode                                                                                                         |
+| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF`       | no         | empty   | Default Runtime image reference offered when creating a Template                                                                                                            |
+| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`              | no         | `15s`   | Timeout for non-streaming dependency calls, including Provider discovery                                                                                                    |
+| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT`                | no         | `15s`   | Graceful HTTP drain budget                                                                                                                                                  |
+| `ANTNEST_ENVIRONMENT`                           | no         | empty   | Deployment environment resource attribute for telemetry                                                                                                                     |
+| `OTEL_*`                                        | no         | -       | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
 
 Edge Gateway forwards admin requests with a 10-second
 `ANTNEST_EDGE_REQUEST_TIMEOUT`, shorter than the 15-second Console dependency
@@ -86,8 +86,6 @@ origin, so there is no Console variable for them. See
 - Agent ACP Service: required for execution audit, which does not depend on
   Controller availability.
 - Skill Registry: optional; only Skill pages depend on it.
-- Outbound network access to Provider endpoints for model discovery. The base
-  URL is administrator-supplied and not restricted to an allowlist of hosts.
 - OTLP collector: optional, when trace export is configured.
 
 `GET /status` never probes a dependency; failures are reported by the affected
@@ -173,8 +171,10 @@ Expired cache or unavailable Identity fails closed. JSON request bodies reject
 non-UTF-8 charsets, duplicate members, case aliases and extra documents.
 
 Dependency origins must identify distinct services. Registry shares this policy;
-its previous `ANTNEST_SKILL_REGISTRY_API_TOKEN` configuration is removed. External
-Provider discovery uses a separate client without workload or CCT credentials.
+its previous `ANTNEST_SKILL_REGISTRY_API_TOKEN` configuration is removed. Provider
+discovery requires Controller contract revision 38. Console forwards the verified
+administrator CCT unchanged, sends draft credentials once, and receives model
+metadata only. It cannot retrieve a saved key or enable private Provider access.
 Identity and Gateway must deploy before Console. Controller, ACP and Registry
 consumption, deployment provisioning and complete cross-service Docker acceptance
 remain separate batches on `feat/service-authentication`.

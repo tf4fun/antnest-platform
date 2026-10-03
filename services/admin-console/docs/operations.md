@@ -6,19 +6,19 @@ operator's point of view.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | `:8080` | HTTP listen address |
-| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | trusted Identity Service base URL |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL |
-| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | trusted ACP execution-audit base URL |
-| `ANTNEST_SKILL_REGISTRY_URL` | no | empty | Skill Registry base URL; when empty, Skill routes return `503 dependency_unavailable` |
-| `ANTNEST_SERVICE_AUTH_MODE` | yes | - | Exact `token` or `mtls`; shared workload configuration described below |
-| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | empty | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
-| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | `15s` | bounded non-streaming dependency timeout, including Provider model discovery |
-| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | `15s` | graceful HTTP drain budget |
-| `ANTNEST_ENVIRONMENT` | no | empty | deployment environment telemetry attribute |
-| `OTEL_*` | no | - | standard OTLP HTTP/protobuf signal configuration |
+| Variable                                  | Required | Default | Description                                                                                                         |
+| ----------------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_ADMIN_CONSOLE_LISTEN`            | no       | `:8080` | HTTP listen address                                                                                                 |
+| `ANTNEST_IDENTITY_SERVICE_URL`            | yes      | -       | trusted Identity Service base URL                                                                                   |
+| `ANTNEST_AGENT_CONTROLLER_URL`            | yes      | -       | trusted Agent Controller base URL                                                                                   |
+| `ANTNEST_AGENT_ACP_SERVICE_URL`           | yes      | -       | trusted ACP execution-audit base URL                                                                                |
+| `ANTNEST_SKILL_REGISTRY_URL`              | no       | empty   | Skill Registry base URL; when empty, Skill routes return `503 dependency_unavailable`                               |
+| `ANTNEST_SERVICE_AUTH_MODE`               | yes      | -       | Exact `token` or `mtls`; shared workload configuration described below                                              |
+| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no       | empty   | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
+| `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`        | no       | `15s`   | bounded non-streaming dependency timeout, including Provider model discovery                                        |
+| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT`          | no       | `15s`   | graceful HTTP drain budget                                                                                          |
+| `ANTNEST_ENVIRONMENT`                     | no       | empty   | deployment environment telemetry attribute                                                                          |
+| `OTEL_*`                                  | no       | -       | standard OTLP HTTP/protobuf signal configuration                                                                    |
 
 Edge Gateway forwards admin requests with its own 10-second
 `ANTNEST_EDGE_REQUEST_TIMEOUT`, which is shorter than the 15-second Console
@@ -33,15 +33,15 @@ embedded into the binary, so no writable web volume is required. See
 
 ## Outbound Network Access
 
-Provider model discovery runs in Console, not in Controller. It makes outbound
-HTTP(S) `GET {base_url}/models` requests to the base URL an administrator enters
-for a Provider connection, using that connection's API key. Console therefore
-needs outbound network access to the Provider endpoints in use. There is no
-host allowlist: any absolute HTTP(S) base URL without credentials, query or
-fragment is accepted, so an administrator can direct these requests at any
-host reachable from the Console container, including internal addresses.
-Restrict Console egress at the network layer if that is not acceptable.
-Redirects are not followed and responses are limited to 8 MiB.
+Console needs private authenticated access only to its owning-service dependencies
+and configured telemetry exporter. Provider HTTP access belongs to Controller;
+Console proxies saved and draft discovery and receives model metadata only.
+Controller applies the [destination policy](../../../contracts/platform/provider-destination-policy.md),
+including all-address DNS checks, socket pinning, redirect/proxy rejection and
+bounded responses. Controller and Console must deploy the revision-38 discovery
+change together. The operator-only `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS`
+setting belongs to Controller and ACP, defaults false and is unsafe when enabled;
+Console and browser requests cannot opt into private or metadata destinations.
 
 The default Runtime image is a Template input, not an already published
 execution binding. `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` may contain a local

@@ -55,6 +55,8 @@ func safeErrorCode(code string) string {
 	switch code {
 	case "invalid_request", "invalid_idempotency_key", "unauthenticated", "forbidden", "not_found", "method_not_allowed", "invalid_current_password", "runtime_image_required", "principal_changed",
 		"encoding_failed", "invalid_upstream_response", "dependency_unavailable", "dependency_invalid_response", "internal_error", "service_stopping", "streaming_unavailable", "application_unavailable", "upstream_rejected", "agent_inventory_unavailable",
+		"provider_endpoint_forbidden", "provider_endpoint_unavailable", "provider_discovery_failed",
+		"organization_mismatch", "actor_mismatch", "reference_not_found", "reference_disabled",
 		"agent_not_found", "agent_network_not_found", "policy_revision_not_found", "resource_version_conflict", "agent_network_unavailable", "cleanup_failed", "conflict", "idempotency_conflict", "revision_not_found", "model_profile_not_found", "template_not_found", "operation_not_found":
 		return code
 	default:

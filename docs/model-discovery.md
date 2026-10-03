@@ -38,10 +38,10 @@ ciphertext together, validates the endpoint, and opens the key inside Controller
 Draft discovery forwards the submitted credential once and does not persist it.
 The former plaintext `/access` export and its response schema are removed.
 
-The Controller producer is admitted on `feat/service-authentication`. Console's
-thin-proxy adoption and ACP's independent model-call policy are pending service
-batches in the [rollout ledger](../contracts/platform/service-authentication-rollout.json);
-the browser flow below is the target, not completed cross-service acceptance.
+Controller discovery and the Console thin proxy are admitted on
+`feat/service-authentication`. ACP's independent model-call policy remains a
+separate service batch in the [rollout ledger](../contracts/platform/service-authentication-rollout.json).
+Complete cross-service acceptance follows all service and deployment batches.
 
 Console exposes `GET /api/admin/provider-connections/{connection_id}/models/discovery`
 for saved connections, and `POST /api/admin/provider-models/discovery` for drafts

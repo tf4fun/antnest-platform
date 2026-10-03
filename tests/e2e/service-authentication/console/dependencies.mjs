@@ -11,6 +11,7 @@ const stats = {
   opened: 0,
   closed: 0,
   active: 0,
+  discovery: [],
 };
 const servers = [];
 const watches = new Set();
@@ -77,6 +78,66 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           return json(w, { status: "changed" });
       }
       if (service === "agent-controller") {
+        if (
+          path === "/internal/provider-discovery/draft" ||
+          /^\/internal\/provider-connections\/[^/]+\/discover-models$/u.test(
+            path,
+          )
+        ) {
+          if (r.method !== "POST" || new URL(r.url, "http://fixture").search)
+            throw Error("discovery_contract_invalid");
+          const draft = path === "/internal/provider-discovery/draft";
+          if (!draft && Object.keys(body).length !== 1)
+            throw Error("saved_discovery_must_not_read_credentials");
+          stats.discovery.push({
+            path,
+            organization: body.organization_id,
+            contextDigest: createHash("sha256").update(token).digest("hex"),
+            ...(draft
+              ? {
+                  credentialDigest: createHash("sha256")
+                    .update(body.credential.api_key)
+                    .digest("hex"),
+                }
+              : {}),
+          });
+          const outcome = draft
+            ? new URL(body.base_url).pathname.split("/").at(-1)
+            : path.split("/").at(-2);
+          const failures = {
+            forbidden: [422, "provider_endpoint_forbidden"],
+            unavailable: [503, "provider_endpoint_unavailable"],
+            failed: [502, "provider_discovery_failed"],
+            missing: [404, "reference_not_found"],
+            disabled: [409, "reference_disabled"],
+          };
+          if (failures[outcome]) {
+            const [status, code] = failures[outcome];
+            return json(
+              w,
+              {
+                code,
+                message: "synthetic-provider-secret at http://private/v1",
+                api_key: "synthetic-provider-secret",
+                retryable: status >= 500,
+              },
+              status,
+            );
+          }
+          if (outcome === "empty") return json(w, { models: [] });
+          return json(w, {
+            models: [
+              {
+                model_id: "remote",
+                display_name: "Remote",
+                supports_images: false,
+                context_window: 128000,
+                api_key: "synthetic-provider-secret",
+              },
+            ],
+            credential: { api_key: "synthetic-provider-secret" },
+          });
+        }
         if (path.startsWith("/internal/agent-skill-preparations/")) {
           stats.preparationCalls++;
           const query = new URL(r.url, "http://fixture").searchParams;
