@@ -1,6 +1,7 @@
 {
   "mcp_protocol_version": "2026-07-28",
   "runtime_spec": "runtime-spec.schema.json",
+  "status_schema": "runtime-status.schema.json",
   "transport": {
     "status_path": "/status",
     "mcp_path": "/mcp",
@@ -12,7 +13,8 @@
     "agent_id": "agent-1",
     "generation": 2,
     "execution_id": "execution-1",
-    "status": "ready"
+    "status": "ready",
+    "test_features": []
   },
   "readiness": {
     "scope": "runtime-with-egress-path",
