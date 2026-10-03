@@ -100,7 +100,8 @@ rejects invalid IDs without trimming whitespace.
 | `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`     | paired   | unset               | Key ID of the Ed25519 Runtime Skill maintenance signing key; set together with the key                         |
 | `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`     | paired   | unset               | Canonical base64 Ed25519 PKCS8 DER private key                                                                 |
 | `ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL`     | no       | unset               | Agent Controller origin for learning policy reads. Learning starts only when this and the signing pair are set |
-| `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID`     | no       | unset               | Development only. Forces learning review for one Agent; never set in production                                |
+| `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS`        | no       | `false`             | Accepts exactly `true` or `false`; explicitly permits development-only settings                                |
+| `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID`     | no       | unset               | Development only. Requires the gate; forces review for one Agent and warns at startup; never use in production |
 | `ANTNEST_ACP_SKILL_REGISTRY_URL`                | paired   | unset               | Skill Registry origin. Discovery needs all three discovery settings and the signing pair                       |
 | `ANTNEST_ACP_SKILL_REGISTRY_TOKEN`              | paired   | unset               | Bearer for the Registry private API, at least 32 printable bytes                                               |
 | `ANTNEST_ACP_SKILL_SOURCE_TOKEN`                | paired   | unset               | Distinct bearer that Registry presents to the source routes, at least 32 printable bytes                       |

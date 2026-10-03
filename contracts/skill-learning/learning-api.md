@@ -319,6 +319,15 @@ apply bases, intents, outcomes and immutable changes in ACP persistence.
 ### Development debug learning
 
 ACP may configure `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID` with one Agent ID.
+The ID requires `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true`; an unset or false
+gate rejects configuration before dependency startup. The gate defaults to
+`false`, accepts only the exact strings `true` and `false`, and rejects every
+other configured value, including empty or whitespace-only values. Each startup
+with a configured debug Agent emits one `warn` event,
+`Skill learning debug mode is active`, with `agent_id`; no such warning is emitted
+without a debug Agent. Standard Compose passes neither setting from the host;
+the Skill learning E2E override supplies both explicitly.
+
 It is unset by default and is a development deployment setting, not Agent policy
 or a model-callable command. Newly scanned completed Runs for that Agent enter
 the existing learning queue without an experience cue. Their immutable

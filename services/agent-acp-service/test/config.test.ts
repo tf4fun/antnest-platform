@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { loadConfig } from "../src/config.js";
+import { ConfigError, loadConfig } from "../src/config.js";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
 const MAINTENANCE_KIDS = JSON.parse(
@@ -76,6 +76,7 @@ describe("loadConfig", () => {
     expect(config.skillMaintenanceSigning).toBeUndefined();
     expect(config.skillLearningControllerUrl).toBeUndefined();
     expect(config.skillLearningDebugAgentId).toBeUndefined();
+    expect(config.allowDevelopmentSettings).toBe(false);
     expect(config.runTimeoutMs).toBe(1_800_000);
     expect(config.maxWebSocketPayloadBytes).toBe(16 * 1024 * 1024);
     expect(config.maxConfigurationBytes).toBe(16 * 1024 * 1024);
@@ -112,6 +113,7 @@ describe("loadConfig", () => {
     expect(
       loadConfig({
         ...requiredEnvironment(),
+        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
         ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: " agent-debug ",
       }).skillLearningDebugAgentId,
     ).toBe("agent-debug");
@@ -124,10 +126,49 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({
         ...requiredEnvironment(),
+        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
         ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "agent/other",
       }),
     ).toThrow();
   });
+
+  it.each([undefined, "false"])(
+    "rejects debug learning when the development gate is %j",
+    (gate) => {
+      expect(() =>
+        loadConfig({
+          ...requiredEnvironment(),
+          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+          ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "agent-debug",
+        }),
+      ).toThrow(
+        new ConfigError(
+          "ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID requires ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true",
+        ),
+      );
+    },
+  );
+
+  it.each(["true", "false"])("accepts the exact development gate %j", (gate) => {
+    const config = loadConfig({
+      ...requiredEnvironment(),
+      ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+    });
+    expect(config.allowDevelopmentSettings).toBe(gate === "true");
+    expect(config.skillLearningDebugAgentId).toBeUndefined();
+  });
+
+  it.each(["", " ", "TRUE", "False", " true ", "false ", "yes", "1", "0"])(
+    "rejects malformed development gate %j even without a debug Agent",
+    (gate) => {
+      expect(() =>
+        loadConfig({
+          ...requiredEnvironment(),
+          ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: gate,
+        }),
+      ).toThrow(new ConfigError("ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS must be true or false"));
+    },
+  );
 
   it("parses explicit IPv6, duration and telemetry values", () => {
     const config = loadConfig({

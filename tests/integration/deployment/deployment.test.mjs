@@ -5,6 +5,30 @@ import { parseEnv } from "node:util";
 
 const root = new URL("../../../", import.meta.url);
 
+test("standard Compose cannot inherit Skill learning debug settings", async () => {
+  const compose = await readFile(new URL("compose.yaml", root), "utf8");
+  for (const variable of [
+    "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
+    "ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID",
+  ])
+    assert(
+      !compose.includes(variable),
+      `${variable} belongs only in E2E Compose`,
+    );
+});
+
+test("Skill learning E2E Compose explicitly supplies the development gate and debug Agent", async () => {
+  const compose = await readFile(
+    new URL("tests/e2e/skill-learning/compose.yaml", root),
+    "utf8",
+  );
+  for (const variable of [
+    "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
+    "ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID",
+  ])
+    assert(compose.includes(variable), `missing E2E setting ${variable}`);
+});
+
 test("deployment example names every service-owned database password and encryption key", async () => {
   const env = parseEnv(await readFile(new URL(".env.example", root), "utf8"));
   for (const key of [
