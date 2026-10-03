@@ -92,10 +92,11 @@ func (c *Client) Verify(
 		return deployment.Inspection{}, fmt.Errorf("runtime status returned %s", response.Status)
 	}
 	var status struct {
-		AgentID     string `json:"agent_id"`
-		Generation  uint64 `json:"generation"`
-		ExecutionID string `json:"execution_id"`
-		Status      string `json:"status"`
+		AgentID      string   `json:"agent_id"`
+		Generation   uint64   `json:"generation"`
+		ExecutionID  string   `json:"execution_id"`
+		Status       string   `json:"status"`
+		TestFeatures []string `json:"test_features"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxStatusBytes))
 	decoder.DisallowUnknownFields()
