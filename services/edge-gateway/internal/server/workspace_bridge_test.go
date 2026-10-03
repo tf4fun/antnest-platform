@@ -117,6 +117,7 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" || response.Header.Get("X-Accel-Buffering") != "no" {
 		t.Fatalf("SSE response status=%d headers=%v", response.StatusCode, response.Header)
 	}
+	assertDefaultSecurityHeaders(t, response.Header)
 	seen := <-upstreamRequest
 	if seen.Header.Get("Last-Event-ID") != "resume-1" || seen.URL.RawQuery != "cursor=initial" ||
 		seen.Header.Get(HeaderPrincipalID) != "user-admin" || seen.Header.Get("Cookie") != "" {

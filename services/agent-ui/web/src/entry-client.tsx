@@ -1,3 +1,4 @@
+import "./browser-validation";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import BridgeApp from "./BridgeApp";
 import type { WorkspaceRoute } from "./lib/navigation";

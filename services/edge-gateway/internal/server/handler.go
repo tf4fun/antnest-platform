@@ -238,8 +238,12 @@ func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	for _, name := range trustedHeaders {
 		request.Header.Del(name)
 	}
-	setSecurityHeaders(response)
-	h.mux.ServeHTTP(response, request)
+	writer := &securityHeaderWriter{ResponseWriter: response}
+	h.mux.ServeHTTP(writer, request)
+	if !writer.wroteHeader {
+		// Handlers may return an empty response without explicitly committing it.
+		writer.applyDefaults()
+	}
 }
 
 func (h *handler) status(response http.ResponseWriter, request *http.Request) {
@@ -832,14 +836,6 @@ func setWorkspacePrincipalHeaders(header http.Header, principal identity.Princip
 	} else {
 		header.Set(HeaderAdministrator, "false")
 	}
-}
-
-func setSecurityHeaders(response http.ResponseWriter) {
-	response.Header().Set("X-Content-Type-Options", "nosniff")
-	response.Header().Set("Referrer-Policy", "same-origin")
-	response.Header().Set("X-Frame-Options", "DENY")
-	response.Header().Set("Content-Security-Policy",
-		"default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'")
 }
 
 func stateChanging(method string) bool {

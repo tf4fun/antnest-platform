@@ -4,6 +4,17 @@
 
 ### Fixed
 
+Edge Gateway now supplies security headers only when absent from the final
+response ([#1](https://github.com/tf4fun/antnest-platform/issues/1)). Proxied
+Agent UI documents retain their exact nonce-bearing CSP, allowing streaming
+scripts and `blob:` image/media previews without an additional conflicting
+Gateway policy. Gateway-generated responses and upstream assets without a
+policy retain the existing defaults. SSE flushing and ACP WebSocket upgrades
+remain supported; this change needs no API revision or coordinated rollout.
+Agent UI also initializes browser schema validation in Zod's `jitless` mode
+before constructing schemas, preventing its caught eval probe from emitting a
+CSP violation during hydration or reload. The document CSP remains unchanged.
+
 ACP Workspace Bridge's shared schema now requires the `errorClass` already
 emitted on intent receipts and nested execution observations
 ([#4](https://github.com/tf4fun/antnest-platform/issues/4)). ACP normalizes invalid

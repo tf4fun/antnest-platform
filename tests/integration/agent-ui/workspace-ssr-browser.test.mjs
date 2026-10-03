@@ -63,6 +63,19 @@ test(
           });
           try {
             const page = await context.newPage();
+            if (javaScriptEnabled)
+              await page.addInitScript(() => {
+                window.workspacePolicyViolations = [];
+                document.addEventListener(
+                  "securitypolicyviolation",
+                  (event) => {
+                    window.workspacePolicyViolations.push({
+                      directive: event.effectiveDirective,
+                      blockedURI: event.blockedURI,
+                    });
+                  },
+                );
+              });
             const hydrationErrors = [];
             page.on("console", (message) => {
               if (/hydration|did not match/i.test(message.text()))
@@ -93,6 +106,12 @@ test(
               0,
             );
             assert.deepEqual(hydrationErrors, []);
+            if (javaScriptEnabled)
+              assert.deepEqual(
+                await page.evaluate(() => window.workspacePolicyViolations),
+                [],
+                "Production client must hydrate without CSP violations",
+              );
             assert.equal(await page.locator("#workspace-bootstrap").count(), 1);
             assert.deepEqual(
               JSON.parse(
@@ -111,6 +130,12 @@ test(
               { agentId: "agent-1", sessionId },
             );
             assert.deepEqual(hydrationErrors, []);
+            if (javaScriptEnabled)
+              assert.deepEqual(
+                await page.evaluate(() => window.workspacePolicyViolations),
+                [],
+                "Production client reload must not probe eval under its CSP",
+              );
             if (!javaScriptEnabled) {
               assert.equal(
                 await page.locator("#root[data-ssr]").count(),
