@@ -207,6 +207,17 @@ function bash(port, executionId, command) {
 }
 
 try {
+  const [releaseImage] = JSON.parse(docker("image", "inspect", image));
+  assert.equal(
+    releaseImage.Config.Labels["dev.antnest.runtime.test-features"],
+    "",
+  );
+  assert(
+    !releaseImage.Config.Env.some((value) =>
+      value.startsWith("ANTNEST_RUNTIME_ALLOW_TEST_FEATURES="),
+    ),
+    "release images must not opt in to test features",
+  );
   docker("create", "--name", fixtureSource, buildImage, "/bin/true");
   const managedFixture = join(directory, "managed-mcp-fixture");
   docker("cp", `${fixtureSource}:/tmp/managed-mcp-fixture`, managedFixture);
@@ -309,6 +320,7 @@ try {
   };
   let port = startRuntime(spec);
   const status = await ready(port);
+  assert.deepEqual(status.test_features, []);
   const removedRevert = await fetch(
     `http://127.0.0.1:${port}/internal/skill-maintenance/revert`,
     {

@@ -15,6 +15,7 @@ use crate::spec::RuntimeIdentity;
 struct Contract {
     mcp_protocol_version: String,
     runtime_spec: String,
+    status_schema: String,
     transport: Transport,
     status: serde_json::Value,
     readiness: Readiness,
@@ -226,7 +227,13 @@ fn shared_contract_matches_runtime_http_surface() {
         RuntimeIdentity::new("agent-1", 2).unwrap(),
         "execution-1",
     );
-    assert_eq!(serde_json::to_value(status).unwrap(), contract.status);
+    assert_eq!(contract.status_schema, "runtime-status.schema.json");
+    assert_eq!(contract.status["test_features"], json!([]));
+    let mut expected_status = contract.status;
+    if cfg!(feature = "skill-maintenance-e2e-gate") {
+        expected_status["test_features"] = json!(["skill-maintenance-e2e-gate"]);
+    }
+    assert_eq!(serde_json::to_value(status).unwrap(), expected_status);
     assert_eq!(RuntimeHttp::tool_names(), contract.tools);
 }
 

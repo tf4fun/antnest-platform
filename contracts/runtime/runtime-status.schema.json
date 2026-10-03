@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/runtime-status.schema.json",
+  "title": "Antnest Runtime Status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent_id",
+    "generation",
+    "execution_id",
+    "status",
+    "test_features"
+  ],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "execution_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "status": { "enum": ["ready", "unavailable"] },
+    "test_features": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "description": "Compiled-in test features. Release builds always report an empty array; feature-enabled binaries require an explicit startup opt-in."
+    }
+  }
+}

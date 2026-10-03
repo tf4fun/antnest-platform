@@ -213,6 +213,14 @@ When the platform reports a new Healthy process, the Controller performs one
 bounded `/status` verification and records the returned `execution_id`. A Watch
 disconnect triggers List/Inspect reconciliation followed by Watch resume.
 
+Runtime's [status contract](../../../contracts/runtime/status.md) also reports
+`test_features`, the binary's compiled test-feature names. The strict reader
+recognizes this string array without changing identity/readiness verification
+or imposing image admission policy (#29). Deploy this Runtime Controller version
+before replacing Runtime images with producers of the new required field;
+otherwise the old reader rejects their status as an unknown-field response.
+Previous Runtime responses without the field remain readable during rollout.
+
 The Controller records a service-wide `observation_gap`, reconciles physical
 List/Inspect in both directions against logical provisioned Runtime heads, then
 records service-wide `reconciled`. Missing expected compute is an explicit

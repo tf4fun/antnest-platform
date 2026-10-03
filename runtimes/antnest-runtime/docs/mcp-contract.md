@@ -153,13 +153,23 @@ authority for model-callable tools.
   "agent_id": "agent-123",
   "generation": 8,
   "execution_id": "d83f89db-74f3-49df-a3b8-83d6718a45fd",
-  "status": "ready"
+  "status": "ready",
+  "test_features": []
 }
 ```
 
 `execution_id` is generated once by Runtime PID 1 and changes after every
 process restart, even when Agent ID, generation, endpoint, and container remain
 the same. It is a consistency identity, not a credential.
+
+`test_features` is required and lists the binary's compiled test features.
+Release builds return `[]`; a `skill-maintenance-e2e-gate` build returns
+`["skill-maintenance-e2e-gate"]`. The same identity fields remain present in
+HTTP 503 responses with `status: "unavailable"`. See the
+[status contract](../../../contracts/runtime/status.md) and
+[schema](../../../contracts/runtime/runtime-status.schema.json). Runtime
+Controller must accept this field before these images are deployed; deciding
+which images may run is the separate #29 admission policy.
 
 Every `POST /mcp` request must carry
 `X-Antnest-Expected-Execution-ID: <execution_id>`. Runtime rejects a missing or

@@ -96,7 +96,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs
-	node --test --test-concurrency=1 tests/integration/runtime-tools/contracts.test.mjs
+	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs

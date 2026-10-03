@@ -41,6 +41,10 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 name = "executor_cli"
 path = "../../tests/integration/antnest-runtime/executor_cli.rs"
 
+[[test]]
+name = "runtime_startup"
+path = "../../tests/integration/antnest-runtime/runtime_startup.rs"
+
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["io-std"] }
 tower = { version = "0.5.3", features = ["util"] }

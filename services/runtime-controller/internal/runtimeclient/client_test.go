@@ -58,6 +58,31 @@ func TestVerifyAcceptsExactReadyRuntimeExecution(t *testing.T) {
 	}
 }
 
+func TestVerifyAcceptsCompiledFeatureStatusFromBothRuntimeBuilds(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "release", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":[]}`},
+		{name: "e2e", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":["skill-maintenance-e2e-gate"]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := newTestClient(t, test.body)
+			verified, err := client.Verify(context.Background(), deployment.Inspection{
+				AgentID: "agent-1", Generation: 7, Health: deployment.HealthHealthy,
+				StatusEndpoint: "http://runtime.internal/status",
+			})
+			if err != nil {
+				t.Fatalf("verify Runtime with compiled feature identity: %v", err)
+			}
+			if verified.RuntimeExecutionID != "exec-1" {
+				t.Fatalf("execution identity lost: %+v", verified)
+			}
+		})
+	}
+}
+
 func TestVerifyRejectsMissingOrMismatchedIdentity(t *testing.T) {
 	tests := []struct {
 		name string
@@ -68,6 +93,9 @@ func TestVerifyRejectsMissingOrMismatchedIdentity(t *testing.T) {
 		{name: "generation mismatch", body: `{"agent_id":"agent-1","generation":8,"execution_id":"exec-1","status":"ready"}`},
 		{name: "not ready", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"starting"}`},
 		{name: "unknown field", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","extra":true}`},
+		{name: "feature list is a string", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":"skill-maintenance-e2e-gate"}`},
+		{name: "feature is a number", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":[42]}`},
+		{name: "feature is an object", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":[{}]}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

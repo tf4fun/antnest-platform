@@ -83,6 +83,7 @@ pub(crate) struct RuntimeStatus {
     generation: u64,
     execution_id: String,
     status: &'static str,
+    test_features: &'static [&'static str],
 }
 
 impl RuntimeStatus {
@@ -92,6 +93,7 @@ impl RuntimeStatus {
             generation: identity.generation(),
             execution_id: uuid::Uuid::new_v4().to_string(),
             status: "ready",
+            test_features: crate::build_info::TEST_FEATURES,
         }
     }
 
@@ -105,6 +107,7 @@ impl RuntimeStatus {
             generation: identity.generation(),
             execution_id: execution_id.into(),
             status: "ready",
+            test_features: crate::build_info::TEST_FEATURES,
         }
     }
 

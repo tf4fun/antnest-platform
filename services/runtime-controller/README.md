@@ -67,6 +67,13 @@ service.
 | Outbound | Skill Registry internal API | Resolve and download exact Skill versions for preparation |
 | Persistence | Private PostgreSQL schema `runtime_controller` | Environment heads, operations, generation claims, observation journal, Skill sets and references |
 
+The Runtime status reader recognizes the compiled `test_features` array while
+retaining strict unknown-field decoding. Deploy this reader before upgrading
+Runtime images to the [required-field status contract](../../contracts/runtime/status.md).
+It also accepts the previous status shape during rollout. This change does not
+alter readiness criteria or reject test-feature images; image admission remains
+separate work in #29.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
