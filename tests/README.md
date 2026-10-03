@@ -71,6 +71,16 @@ scenario and remove every resource they own. They are never part of
 | `e2e-skill-learning-*`, `e2e-runtime-tool-usability` | `skill-learning/` | Automatic Skill learning: creation and update, notices, preemption, policy and lifecycle cancellation, commit windows, key rotation, model failure and recovery, restart and browser checks. |
 | `e2e-skill-discovery-*`, `e2e-skill-temporary-*`, `e2e-skill-propagation`, `e2e-skill-deployment`, `e2e-skill-source-lifecycle`, `e2e-skill-registry-trace` | `skill-registry/`, `skill-learning/` | Skill Registry discovery, temporary Runtime use, Console promotion, Template propagation and source lifecycle. |
 
+`e2e-skill-learning-runtime` verifies that the default Runtime image has an empty
+test-feature label, no test-feature startup opt-in, and `test_features: []` on
+its live `/status`. Atomic held-commit variants explicitly build `--target e2e`
+with `skill-maintenance-e2e-gate`, check its image label and startup opt-in, and
+verify the live status and single feature warning before exercising the commit
+pause. The held-commit harness accepts isolated RC/Identity candidates through
+`ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE` / `ANTNEST_E2E_IDENTITY_IMAGE` and the
+Gateway candidate through `ANTNEST_C4_EDGE_GATEWAY_IMAGE`; deploy the new RC
+reader before using the new Runtime status producer.
+
 All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need

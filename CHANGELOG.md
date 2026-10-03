@@ -4,6 +4,15 @@
 
 ### Fixed
 
+Runtime release images now use a feature-free default Docker target, while the
+test-only Skill commit gate requires an explicit `--target e2e` build
+([#12](https://github.com/tf4fun/antnest-platform/issues/12)). Supplying
+`ANTNEST_RUNTIME_FEATURES` to the default target cannot enable test features.
+Test binaries reject `serve` unless `ANTNEST_RUNTIME_ALLOW_TEST_FEATURES` is
+exactly `true`, then emit one startup warning listing the compiled features.
+E2E images carry the `dev.antnest.runtime.test-features` label and set that
+explicit opt-in; release images have an empty label and no opt-in.
+
 ACP's development-only Skill learning debug Agent now requires the explicit
 `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true` gate
 ([#11](https://github.com/tf4fun/antnest-platform/issues/11)). The gate defaults to
@@ -72,6 +81,15 @@ for the Controller. See the
 [recovery and readiness semantics](services/runtime-controller/docs/operations.md#observation-dependency-recovery).
 
 ### Changed
+
+Runtime `/status` now requires `test_features: string[]`, including unavailable
+responses; release binaries report `[]`. Upgrade Runtime Controller's status
+reader before deploying the new Runtime images, because older strict readers
+reject the added field. The updated reader accepts both shapes during rollout
+and retains existing identity/readiness checks. Image admission policy remains
+separate work in [#29](https://github.com/tf4fun/antnest-platform/issues/29).
+Local E2E builds that previously supplied only `ANTNEST_RUNTIME_FEATURES` must
+now select `--target e2e`; the feature argument must be nonempty.
 
 Bridge receipt error classes must be `null` or a 1–128 character ASCII code
 matching `^[a-z][a-z0-9_]*$`; only `failed`, `cancelled` and `unknown` phases may

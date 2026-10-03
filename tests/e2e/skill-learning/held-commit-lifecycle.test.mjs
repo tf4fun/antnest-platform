@@ -12,6 +12,7 @@ import {
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
+import { learningImageOverlay } from "./development-settings.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const dropResponse = process.env.ANTNEST_E2E_DROP_COMMIT_RESPONSE === "true";
@@ -35,6 +36,7 @@ assert(
 const overlay = [
   "-f",
   "tests/e2e/workspace-closeout/c4.compose.yaml",
+  ...learningImageOverlay,
   "-f",
   "tests/e2e/skill-learning/compose.yaml",
   "-f",
@@ -57,15 +59,17 @@ test(
             ? "Agent Disable fences a lost Runtime Skill commit receipt"
             : "Agent Disable waits for a real Runtime Skill commit receipt",
   { timeout: 720_000 },
-  async () => {
+  async (t) => {
     process.chdir(root);
     const abort = new AbortController();
     const interrupt = () =>
       abort.abort(new Error("Held Skill commit E2E interrupted"));
+    t.signal.addEventListener("abort", interrupt, { once: true });
     process.once("SIGINT", interrupt);
     process.once("SIGTERM", interrupt);
     let config;
     let settleGate;
+    const ownedImages = [];
     try {
       config = await configuration(abort.signal);
       const keys = generateKeyPairSync("ed25519");
@@ -73,29 +77,51 @@ test(
         .export({ format: "der", type: "spki" })
         .subarray(-32);
       const image = `antnest/agent-acp-service:skill-learning-${config.project.slice(-8)}`;
+      const ownership = `io.antnest.verification.project=${config.project}`;
       if (atomicHold) {
         const runtimeImage = `antnest/antnest-runtime:skill-learning-gate-${config.project.slice(-8)}`;
         const build = dockerClient(config.env, abort.signal, 720_000);
+        const existing = await build([
+          "image",
+          "ls",
+          "--format",
+          "{{.Repository}}:{{.Tag}}",
+        ]);
+        assert(
+          !existing.split(/\s+/u).includes(runtimeImage),
+          "candidate tag already exists",
+        );
+        ownedImages.push(runtimeImage);
         await build(
           [
             "build",
             "-f",
             "runtimes/antnest-runtime/Dockerfile",
+            "--target",
+            "e2e",
             "--build-arg",
             "ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate",
+            "--label",
+            ownership,
             "-t",
             runtimeImage,
             ".",
           ],
           true,
         );
-        config.image = await build([
-          "image",
-          "inspect",
-          "--format",
-          "{{.Id}}",
-          runtimeImage,
-        ]);
+        const [gatedImage] = JSON.parse(
+          await build(["image", "inspect", runtimeImage]),
+        );
+        assert.equal(
+          gatedImage.Config.Labels["dev.antnest.runtime.test-features"],
+          "skill-maintenance-e2e-gate",
+        );
+        assert(
+          gatedImage.Config.Env.includes(
+            "ANTNEST_RUNTIME_ALLOW_TEST_FEATURES=true",
+          ),
+        );
+        config.image = gatedImage.Id;
         config.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF = config.image;
       }
       Object.assign(config.env, {
@@ -124,13 +150,28 @@ test(
         ANTNEST_E2E_REVIEW_FAILURE: "false",
         ANTNEST_E2E_HOLD_BEFORE_COMMIT: String(holdBeforeDispatch),
         ANTNEST_E2E_HOLD_AFTER_INSTALL: String(atomicHold),
+        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "false",
+        ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "",
       });
       const docker = dockerClient(config.env, abort.signal, 720_000);
+      const existing = await docker([
+        "image",
+        "ls",
+        "--format",
+        "{{.Repository}}:{{.Tag}}",
+      ]);
+      assert(
+        !existing.split(/\s+/u).includes(image),
+        "candidate tag already exists",
+      );
+      ownedImages.push(image);
       await docker(
         [
           "build",
           "-f",
           "services/agent-acp-service/Dockerfile",
+          "--label",
+          ownership,
           "-t",
           image,
           ".",
@@ -151,6 +192,42 @@ test(
       );
       const fixture = await setup(config, abort.signal);
       if (atomicHold) {
+        const runtimeStatus = JSON.parse(
+          await docker([
+            "exec",
+            `antnest-runtime-${fixture.agentID}`,
+            "curl",
+            "--fail",
+            "--silent",
+            "http://127.0.0.1:8093/status",
+          ]),
+        );
+        assert.deepEqual(runtimeStatus.test_features, [
+          "skill-maintenance-e2e-gate",
+        ]);
+        const logs = spawnSync(
+          "docker",
+          ["logs", `antnest-runtime-${fixture.agentID}`],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        assert.equal(logs.status, 0);
+        const warnings = `${logs.stdout}${logs.stderr}`
+          .split("\n")
+          .filter((line) => line.startsWith("{"))
+          .map((line) => JSON.parse(line))
+          .filter(
+            (event) => event["lifecycle.event"] === "test_features_enabled",
+          );
+        assert.equal(warnings.length, 1);
+        assert.equal(warnings[0].level, "WARN");
+        assert.deepEqual(
+          warnings[0].test_features,
+          runtimeStatus.test_features,
+        );
         await docker([
           "exec",
           "-u",
@@ -718,10 +795,37 @@ test(
         { flag: "wx", mode: 0o600 },
       );
     } finally {
-      if (settleGate) await settleGate().catch(() => undefined);
-      process.off("SIGINT", interrupt);
-      process.off("SIGTERM", interrupt);
-      if (config) await cleanup(config);
+      try {
+        if (settleGate) await settleGate().catch(() => undefined);
+        if (config) await cleanup(config);
+        if (config && ownedImages.length) {
+          const cleanImages = dockerClient(config.env, undefined, 120_000);
+          const existing = (
+            await cleanImages([
+              "image",
+              "ls",
+              "--format",
+              "{{.Repository}}:{{.Tag}}",
+            ])
+          ).split(/\s+/u);
+          for (const tag of ownedImages.filter((tag) =>
+            existing.includes(tag),
+          )) {
+            const [candidate] = JSON.parse(
+              await cleanImages(["image", "inspect", tag]),
+            );
+            assert.equal(
+              candidate.Config.Labels["io.antnest.verification.project"],
+              config.project,
+            );
+            await cleanImages(["image", "rm", tag]);
+          }
+        }
+      } finally {
+        process.off("SIGINT", interrupt);
+        process.off("SIGTERM", interrupt);
+        t.signal.removeEventListener("abort", interrupt);
+      }
     }
   },
 );
