@@ -1,0 +1,493 @@
+import assert from "node:assert/strict";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { rmSync, writeFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import { request as httpRequest } from "node:http";
+import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
+import { createFixture, callerContext } from "./auth-fixture.mjs";
+const root = fileURLToPath(new URL("../../../../", import.meta.url));
+const project = "antnest-controller-auth-" + randomUUID();
+const evidence = resolve(
+  root,
+  "artifacts/verification/controller-authentication",
+  project,
+);
+const credentials = resolve(evidence, "credentials");
+const fixture = createFixture(credentials);
+const providerSecret = randomBytes(32).toString("base64url");
+const env = {
+  ...process.env,
+  CONTROLLER_TEST_AUTH_DIRECTORY: credentials,
+  CONTROLLER_TEST_UID: String(process.getuid()),
+  CONTROLLER_TEST_GID: String(process.getgid()),
+  CONTROLLER_TEST_DATABASE_PASSWORD: randomBytes(32).toString("hex"),
+  CONTROLLER_TEST_TEMPORAL_PASSWORD: randomBytes(32).toString("hex"),
+  CONTROLLER_TEST_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+};
+const compose = [
+  "compose",
+  "--env-file",
+  "/dev/null",
+  "--project-name",
+  project,
+  "-f",
+  resolve(root, "tests/e2e/service-authentication/controller/compose.yaml"),
+];
+const abort = new AbortController(),
+  stop = () => abort.abort();
+process.once("SIGINT", stop);
+process.once("SIGTERM", stop);
+const timer = setTimeout(stop, 600000);
+const docker = dockerClient(env, abort.signal, 600000);
+let checks = 0,
+  complete = false,
+  cleaned = false;
+try {
+  await docker(
+    [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "180"],
+    true,
+  );
+  const id = await docker([...compose, "ps", "-q", "agent-controller"]);
+  const [container] = JSON.parse(await docker(["inspect", id]));
+  const binding = container.NetworkSettings.Ports["8120/tcp"][0];
+  assert.equal(binding.HostIp, "127.0.0.1");
+  let base = "http://127.0.0.1:" + binding.HostPort;
+  const request = async (
+    path,
+    {
+      method = "GET",
+      body,
+      service = "admin-console",
+      context = callerContext(fixture),
+      status = 200,
+      code,
+      headers = {},
+    } = {},
+  ) => {
+    const outgoing = { ...headers };
+    if (service !== null)
+      outgoing["Antnest-Service-Authorization"] =
+        "Bearer " + fixture.incoming[service];
+    if (context !== null) outgoing["Antnest-Caller-Context"] = context;
+    const response = await fetch(base + path, {
+      method,
+      body,
+      headers: outgoing,
+      signal: abort.signal,
+    });
+    const text = await response.text();
+    assert.equal(response.status, status, method + " " + path + ": " + text);
+    if (code) assert.equal(JSON.parse(text).code, code);
+    for (const secret of [
+      providerSecret,
+      ...Object.values(fixture.incoming),
+      ...Object.values(fixture.tokens),
+      context,
+    ].filter(Boolean))
+      assert(!text.includes(secret), "response leaked private credential");
+    assert.equal(response.headers.get("Antnest-Caller-Context"), null);
+    checks++;
+    return { response, text, json: text ? JSON.parse(text) : null };
+  };
+  const path = "/internal/agents?organization_id=org-1";
+  await request("/status", { service: null, context: null });
+  await docker([
+    ...compose,
+    "exec",
+    "-T",
+    "agent-controller",
+    "/usr/local/bin/agent-controller",
+    "--healthcheck",
+  ]);
+  checks++;
+  const missing = await request(path, {
+    service: null,
+    context: null,
+    status: 401,
+    code: "service_unauthenticated",
+    headers: { "X-Antnest-System-Role": "admin" },
+  });
+  assert.equal(
+    missing.response.headers.get("www-authenticate"),
+    'Bearer realm="antnest-service"',
+  );
+  checks++;
+  await request(path, {
+    service: "agent-ui",
+    status: 403,
+    code: "caller_not_allowed",
+  });
+  await request(path, {
+    context: null,
+    status: 401,
+    code: "caller_context_required",
+  });
+  await request(path, {
+    context: "forged",
+    status: 401,
+    code: "caller_context_invalid",
+  });
+  const now = Math.floor(Date.now() / 1000);
+  for (const context of [
+    callerContext(fixture, { aud: ["admin-console"] }),
+    callerContext(fixture, { iat: now - 100, exp: now - 40 }),
+    callerContext(fixture, {}, (raw) =>
+      raw.replace('"sub":"user-admin"', '"sub":"user-admin","sub":"evil"'),
+    ),
+    callerContext(fixture, { agt: "agent-1" }),
+  ])
+    await request(path, {
+      context,
+      status: 401,
+      code: "caller_context_invalid",
+    });
+  await request(path, {
+    context: callerContext(fixture, { org_role: "member" }),
+    status: 403,
+    code: "forbidden",
+    headers: { "X-Antnest-Organization-Role": "admin" },
+  });
+  await request("/internal/agents?organization_id=org-2", {
+    status: 403,
+    code: "organization_mismatch",
+  });
+  await request("/internal/agents/agent-1?organization_id=org-1", {
+    context: callerContext(fixture, { agt: "agent-2" }),
+    status: 401,
+    code: "caller_context_invalid",
+  });
+  await request(path, {
+    headers: {
+      "X-Antnest-Organization-ID": "forged",
+      Cookie: "private",
+      Authorization: "Bearer browser-token",
+    },
+  });
+  for (const [name, value] of [
+    [
+      "Antnest-Service-Authorization",
+      "Bearer " + fixture.incoming["admin-console"],
+    ],
+    ["Antnest-Caller-Context", callerContext(fixture)],
+  ]) {
+    const status = await new Promise((resolve, reject) => {
+      const r = httpRequest(
+        base + path,
+        {
+          headers: [
+            "Host",
+            new URL(base).host,
+            "Antnest-Service-Authorization",
+            "Bearer " + fixture.incoming["admin-console"],
+            "Antnest-Caller-Context",
+            callerContext(fixture),
+            name,
+            value,
+          ],
+        },
+        (response) => {
+          response.resume();
+          response.once("end", () => resolve(response.statusCode));
+        },
+      );
+      r.once("error", reject);
+      r.end();
+    });
+    assert.equal(status, 401);
+    checks++;
+  }
+  for (const [media, body, status, code] of [
+    ["text/plain", "{}", 415, "unsupported_media_type"],
+    ["application/json; charset=latin1", "{}", 415, "unsupported_media_type"],
+    [
+      "application/json",
+      '{"organization_id":"org-1","actor_principal_id":"evil"}',
+      403,
+      "actor_mismatch",
+    ],
+    [
+      "application/json",
+      '{"organization_id":"org-1","\\u006frganization_id":"other"}',
+      400,
+      "invalid_request",
+    ],
+    ["application/json", '{"Organization_ID":"org-1"}', 400, "invalid_request"],
+    ["application/json", "{} {}", 400, "invalid_request"],
+    [
+      "application/json",
+      Buffer.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]),
+      400,
+      "invalid_request",
+    ],
+    ["application/json", " ".repeat(2 ** 21 + 1), 413, "request_too_large"],
+  ])
+    await request("/internal/agents", {
+      method: "POST",
+      headers: { "Content-Type": media },
+      body,
+      status,
+      code,
+    });
+  await request("/rpc/agent-controller/list-workspace-agents", {
+    method: "POST",
+    service: "agent-ui",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      request_id: "workspace-auth-1",
+      organization_id: "org-1",
+      principal_id: "user-admin",
+    }),
+  });
+  await request("/rpc/agent-controller/list-workspace-agents", {
+    method: "POST",
+    service: "edge-gateway",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      request_id: "workspace-auth-2",
+      organization_id: "org-1",
+      principal_id: "evil",
+    }),
+    status: 403,
+    code: "actor_mismatch",
+  });
+  const create = async (path, body) =>
+    request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(body),
+      status: 201,
+    });
+  const provider = (
+    await create("/internal/provider-connections", {
+      request_id: "provider-auth-1",
+      organization_id: "org-1",
+      provider_key: "deepseek",
+      display_name: "Fixture",
+      base_url: "https://api.deepseek.com/v1",
+      credential: { method: "api_key", api_key: providerSecret },
+      models: [],
+    })
+  ).json;
+  const model = (
+    await create("/internal/model-profiles", {
+      request_id: "model-auth-1",
+      organization_id: "org-1",
+      profile_key: "fixture",
+      display_name: "Fixture",
+      provider_connection_id: provider.connection_id,
+      model: {
+        model: "deepseek-chat",
+        context_window: 128000,
+        max_output_tokens: 8192,
+        supports_images: false,
+      },
+    })
+  ).json;
+  const context = callerContext(fixture);
+  await request("/internal/agent-templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      request_id: "template-auth-1",
+      organization_id: "org-1",
+      template_key: "fixture",
+      name: "Fixture",
+      model_profile_id: model.model_profile_id,
+      system_prompt: "Fixture",
+      max_model_requests: 4,
+      context_policy_version: "context-v1",
+      runtime: {
+        image_ref: "antnest/antnest-runtime:local",
+        resources: {
+          memory_bytes: 536870912,
+          pids_limit: 256,
+          tmpfs_bytes: 67108864,
+        },
+      },
+      skill_refs: [{ skill_id: fixture.skill.skill_id, version: 1 }],
+    }),
+    context,
+    status: 201,
+  });
+  const stats = async () =>
+    JSON.parse(
+      await docker([
+        ...compose,
+        "exec",
+        "-T",
+        "dependencies",
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:8101/test/state').then(r=>r.text()).then(t=>process.stdout.write(t))",
+      ]),
+    );
+  let state;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    state = await stats();
+    if (
+      [
+        "identity-service",
+        "runtime-controller",
+        "agent-acp-service",
+        "skill-registry",
+      ].every((name) => (state.calls[name] ?? 0) > 0)
+    )
+      break;
+    await delay(250, undefined, { signal: abort.signal });
+  }
+  assert.equal(state.failures, 0);
+  for (const name of [
+    "identity-service",
+    "runtime-controller",
+    "agent-acp-service",
+    "skill-registry",
+  ])
+    assert(
+      state.calls[name] > 0,
+      "missing authenticated production dependency: " + name,
+    );
+  assert(
+    state.registryContexts.includes(
+      createHash("sha256").update(context).digest("hex"),
+    ),
+    "verified CCT was replaced",
+  );
+  checks += 5;
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    await docker(["kill", "--signal", signal, id]);
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const [state] = JSON.parse(await docker(["inspect", id]));
+      if (!state.State.Running) break;
+      await delay(200);
+    }
+    const [stopped] = JSON.parse(await docker(["inspect", id]));
+    assert.equal(stopped.State.Running, false);
+    assert.equal(stopped.State.ExitCode, 0);
+    checks++;
+    await docker([...compose, "start", "agent-controller"], true);
+    const [restarted] = JSON.parse(await docker(["inspect", id]));
+    const rebound = restarted.NetworkSettings.Ports["8120/tcp"][0];
+    assert.equal(rebound.HostIp, "127.0.0.1");
+    base = "http://127.0.0.1:" + rebound.HostPort;
+    let healthy = false;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      try {
+        const r = await fetch(base + "/status", { signal: abort.signal });
+        await r.arrayBuffer();
+        if (r.ok) {
+          healthy = true;
+          break;
+        }
+      } catch {}
+      await delay(200);
+    }
+    assert(healthy, "Controller did not recover after normal stop");
+    await request(path);
+    checks++;
+  }
+  const logs = await docker([
+    ...compose,
+    "logs",
+    "--no-color",
+    "agent-controller",
+  ]);
+  for (const secret of [
+    providerSecret,
+    ...Object.values(fixture.incoming),
+    ...Object.values(fixture.tokens),
+    context,
+  ])
+    assert(!logs.includes(secret), "private credential in logs");
+  for (const [variable, value] of [
+    ["ANTNEST_SERVICE_AUTH_MODE", ""],
+    ["ANTNEST_SKILL_REGISTRY_API_TOKEN", "legacy"],
+    ["ANTNEST_AGENT_ACP_SERVICE_URL", "http://dependencies:8102"],
+  ]) {
+    const probe = "controller-startup-" + randomUUID();
+    try {
+      await docker([
+        ...compose,
+        "run",
+        "--name",
+        probe,
+        "--no-deps",
+        "-d",
+        "-e",
+        variable + "=" + value,
+        "agent-controller",
+      ]);
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const [s] = JSON.parse(await docker(["inspect", probe]));
+        if (!s.State.Running) break;
+        await delay(100);
+      }
+      const [s] = JSON.parse(await docker(["inspect", probe]));
+      assert.equal(s.State.Running, false);
+      assert.notEqual(s.State.ExitCode, 0);
+      checks++;
+    } finally {
+      await docker(["rm", "-f", probe], true);
+    }
+  }
+  complete = true;
+} catch (error) {
+  // Bounded, redacted private diagnostics survive cleanup without retaining the
+  // fixture's credentials or Docker environment values.
+  try {
+    let logs = await docker([
+      ...compose,
+      "logs",
+      "--no-color",
+      "--tail",
+      "100",
+      "agent-controller",
+    ]);
+    for (const secret of [
+      providerSecret,
+      ...Object.values(fixture.incoming),
+      ...Object.values(fixture.tokens),
+    ]) {
+      logs = logs.replaceAll(secret, "[redacted]");
+    }
+    writeFileSync(resolve(evidence, "failure.log"), logs.slice(-65536), {
+      mode: 0o600,
+    });
+  } catch {}
+  throw error;
+} finally {
+  clearTimeout(timer);
+  process.removeListener("SIGINT", stop);
+  process.removeListener("SIGTERM", stop);
+  const cleanup = dockerClient(env, undefined, 180000);
+  try {
+    await cleanup(
+      [...compose, "down", "--volumes", "--remove-orphans", "--timeout", "30"],
+      true,
+    );
+    for (const args of [
+      ["ps", "-aq"],
+      ["volume", "ls", "-q"],
+      ["network", "ls", "-q"],
+    ])
+      assert.equal(
+        await cleanup([
+          ...args,
+          "--filter",
+          "label=com.docker.compose.project=" + project,
+        ]),
+        "",
+        "owned resource leak",
+      );
+    cleaned = true;
+  } finally {
+    rmSync(credentials, { recursive: true, force: true });
+    writeFileSync(
+      resolve(evidence, "result.json"),
+      JSON.stringify({ project, checks, complete, cleaned }, null, 2) + "\n",
+      { mode: 0o600 },
+    );
+    console.log(JSON.stringify({ project, checks, complete, cleaned }));
+  }
+}

@@ -18,6 +18,9 @@ They describe the last observed deployment state, not ACP busy/idle, transport
 connectivity or permission to submit a prompt. No Runtime or ACP request is made
 to populate the list. Runtime available must never unlock chat input by itself.
 
+Only Gateway and Agent UI workloads can call this reader. Controller verifies the
+Organization-scoped CCT and compares the requested Organization and principal
+with its signed claims before querying. Raw identity headers grant nothing.
 Queries require the requested organization and principal, an active access binding,
 and a non-revoked owner authorization watermark. Deleted desired state is excluded
 immediately, including pending or failed deletion. Disabled, starting and unavailable

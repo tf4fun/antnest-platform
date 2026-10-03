@@ -150,8 +150,10 @@ complete these lifecycle paths without any Controller Run table.
 Controller has no Run-admission storage, per-Run ticket, completion receipt,
 Run recovery or additional workflow.
 
-Production composition uses `ANTNEST_AGENT_ACP_SERVICE_URL` as the internal ACP
-origin. `ANTNEST_ACP_MAX_CONFIGURATION_BYTES` must have the same value on both
+Production composition uses `ANTNEST_AGENT_ACP_CONTROL_URL` as the dedicated ACP
+control origin. Both publication and settlement authenticate with Controller's
+own workload credential; they are already accepted service-owned operations and
+do not replay the initiating user's expiring CCT. `ANTNEST_ACP_MAX_CONFIGURATION_BYTES` must have the same value on both
 services (default 16777216, accepted range 1024-67108864). The Controller applies
 that limit transactionally before accepting configuration, not after committing
 an unsendable snapshot. Publication scheduling is configured on Controller:

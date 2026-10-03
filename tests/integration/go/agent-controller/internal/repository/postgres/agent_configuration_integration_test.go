@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/authfixture"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
@@ -32,7 +33,7 @@ func TestAgentConfigurationHTTPCommitsDefaultAuditAndPublication(t *testing.T) {
 		OrganizationID: base.Agent.OrganizationID, MembershipID: "member", Active: true}}
 	service := application.NewAgentConfigurationService(repository, identity, offboardingClock{})
 	unused := &unusedCatalogDependencies{}
-	boundary, err := server.NewHandler(nilCatalog{}, unused, service, unused, unused, unused, repository.Ping)
+	boundary, err := authfixture.NewHandler(t, nilCatalog{}, unused, service, unused, unused, unused, repository.Ping)
 	require.NoError(t, err)
 	before, err := repository.ReadExecutionSource(t.Context(), base.Agent.OrganizationID)
 	require.NoError(t, err)

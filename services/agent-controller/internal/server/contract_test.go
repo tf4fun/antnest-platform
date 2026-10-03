@@ -24,11 +24,12 @@ import (
 )
 
 type machineControlContract struct {
-	Contract   string `json:"contract"`
-	Revision   int    `json:"revision"`
-	Transport  string `json:"transport"`
-	Trust      string `json:"trust"`
-	MediaTypes struct {
+	Contract       string `json:"contract"`
+	Revision       int    `json:"revision"`
+	Transport      string `json:"transport"`
+	Trust          string `json:"trust"`
+	Authentication string `json:"authentication"`
+	MediaTypes     struct {
 		Request  string `json:"request"`
 		Response string `json:"response"`
 	} `json:"media_types"`
@@ -81,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 36 {
+	if contract.Revision != 37 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -89,7 +90,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 		t.Fatalf("control contract media types = %+v", contract.MediaTypes)
 	}
 
-	endpoint, err := NewHandler(
+	endpoint, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -97,10 +98,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
-	mux, ok := endpoint.(*http.ServeMux)
+	boundary, ok := endpoint.(*businessFixture).raw.(*authenticatedMux)
 	if !ok {
-		t.Fatalf("handler type = %T, want *http.ServeMux", endpoint)
+		t.Fatalf("handler type = %T, want authenticated native mux", endpoint)
 	}
+	mux := boundary.mux
 
 	expected := make(map[string]struct{})
 	for _, route := range (&handler{}).routes() {
@@ -337,7 +339,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},
 	}
-	boundary, err := NewHandler(
+	boundary, err := newBusinessHandler(t,
 		catalog, lifecycle, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -496,7 +498,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.code, func(t *testing.T) {
 			lifecycle := &lifecycleServiceStub{err: test.err}
-			boundary, err := NewHandler(
+			boundary, err := newBusinessHandler(t,
 				&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
@@ -538,6 +540,13 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			assertControlResponseSchema(t, compiler, contract.Errors.Response, response.Body.Bytes())
 			seen[test.code] = struct{}{}
 		})
+	}
+	for code, response := range authenticationErrorEvidence(t) {
+		if contract.Errors.StatusByCode[code] != response.status || contract.Errors.RetryableByCode[code] != response.retryable {
+			t.Fatalf("authentication HTTP error %s differs from contract", code)
+		}
+		assertControlResponseSchema(t, compiler, contract.Errors.Response, response.body)
+		seen[code] = struct{}{}
 	}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		t.Fatalf("error boundary coverage=%v contract=%v", seen, contract.Errors.StatusByCode)
@@ -592,7 +601,7 @@ func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
 		events := &agentEventServiceStub{page: application.AgentEventPage{
 			Events: []application.AgentEventView{event}, NextSequence: 1,
 		}}
-		boundary, err := NewHandler(
+		boundary, err := newBusinessHandler(t,
 			&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 			&agentQueryServiceStub{}, events, &networkPolicyServiceStub{},
 			func(context.Context) error { return nil },
@@ -925,6 +934,12 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		t.Fatalf("configuration error differs from management contract: %d %+v", response.Code, payload)
 	}
 	seen[payload.Code] = struct{}{}
+	for code, response := range authenticationErrorEvidence(t) {
+		if contract.Errors.StatusByCode[code] != response.status || contract.Errors.RetryableByCode[code] != response.retryable {
+			t.Fatalf("authentication error %s differs from contract: %+v", code, response)
+		}
+		seen[code] = struct{}{}
+	}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		missing := make([]string, 0)
 		for code := range contract.Errors.StatusByCode {

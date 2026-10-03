@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
@@ -23,6 +25,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
@@ -64,7 +67,7 @@ func serviceFailureDetail(err error) string {
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
-		if err := checkHealth(os.Getenv); err != nil {
+		if err := checkHealth(os.LookupEnv); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -72,7 +75,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Getenv); err != nil {
+	if err := run(ctx, os.LookupEnv); err != nil {
 		attributes := []any{"error_class", serviceFailureClass(err)}
 		if detail := serviceFailureDetail(err); detail != "" {
 			attributes = append(attributes, "detail", detail)
@@ -82,12 +85,21 @@ func main() {
 	}
 }
 
-func checkHealth(lookup func(string) string) (resultErr error) {
-	return checkHealthWithClient(lookup, &http.Client{Timeout: 2 * time.Second})
+func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
+	tlsConfig, err := serviceauth.HealthTLS("agent-controller", lookup)
+	if err != nil {
+		return fmt.Errorf("healthcheck transport configuration is invalid")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy, transport.TLSClientConfig = nil, tlsConfig
+	defer transport.CloseIdleConnections()
+	return checkHealthWithClient(lookup, &http.Client{Timeout: 2 * time.Second, Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
 }
 
-func checkHealthWithClient(lookup func(string) string, client *http.Client) (resultErr error) {
-	listenAddress := strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN"))
+func checkHealthWithClient(lookup serviceauth.LookupEnv, client *http.Client) (resultErr error) {
+	rawAddress, _ := lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")
+	listenAddress := strings.TrimSpace(rawAddress)
 	if listenAddress == "" {
 		listenAddress = ":8080"
 	}
@@ -95,7 +107,11 @@ func checkHealthWithClient(lookup func(string) string, client *http.Client) (res
 	if err != nil {
 		return fmt.Errorf("parse Agent Controller listen address: %w", err)
 	}
-	response, err := client.Get("http://127.0.0.1:" + port + "/status")
+	scheme := "http"
+	if _, present := lookup("ANTNEST_TLS_CA_FILE"); present {
+		scheme = "https"
+	}
+	response, err := client.Get(scheme + "://127.0.0.1:" + port + "/status")
 	if err != nil {
 		return fmt.Errorf("request Agent Controller status: %w", err)
 	}
@@ -110,11 +126,13 @@ func checkHealthWithClient(lookup func(string) string, client *http.Client) (res
 	return nil
 }
 
-func run(ctx context.Context, lookup func(string) string) (resultErr error) {
-	cfg, err := config.Load(lookup)
+func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr error) {
+	cfg, err := config.Load(environment)
 	if err != nil {
 		return classifyFailure("configuration", err)
 	}
+	defer cfg.Authentication.CloseIdleConnections()
+	lookup := func(key string) string { value, _ := environment(key); return value }
 	telemetryRuntime, err := telemetry.Setup(ctx, slog.NewJSONHandler(os.Stdout, nil), telemetry.Config{
 		ServiceVersion: version, Environment: lookup("ANTNEST_ENVIRONMENT"),
 	})
@@ -160,11 +178,11 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, nil)
+	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, cfg.Authentication.HTTPClient())
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	runtime, err := runtimeclient.New(cfg.RuntimeControllerURL, cfg.DependencyTimeout, nil)
+	runtime, err := runtimeclient.New(cfg.RuntimeControllerURL, cfg.DependencyTimeout, cfg.Authentication.HTTPClient())
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
@@ -174,13 +192,13 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	identity, err := identityclient.New(cfg.IdentityServiceURL, cfg.DependencyTimeout, nil)
+	identity, err := identityclient.New(cfg.IdentityServiceURL, cfg.DependencyTimeout, cfg.Authentication.HTTPClient())
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
 	catalogOptions := []application.CatalogOption{application.WithProviderCredentialReader(repository, secretBox)}
 	if cfg.SkillRegistryURL != "" {
-		registry, err := registryclient.New(cfg.SkillRegistryURL, cfg.SkillRegistryAPIToken, cfg.DependencyTimeout, nil)
+		registry, err := registryclient.New(cfg.SkillRegistryURL, cfg.DependencyTimeout, cfg.Authentication)
 		if err != nil {
 			return classifyFailure("service_composition", err)
 		}
@@ -214,14 +232,21 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	jwksClient := cfg.Authentication.HTTPClient()
+	jwksClient.Timeout = 5 * time.Second
+	verifier, err := callercontext.NewVerifier(cfg.IdentityServiceURL, jwksClient, 5*time.Second)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
+	security := server.Security{Authentication: cfg.Authentication.Config.Receiver, CallerContext: verifier}
 	handler, err := server.NewHandler(
 		catalog, commands, application.NewAgentConfigurationService(repository, identity, systemClock{}), queries, events,
-		application.NewNetworkPolicyService(repository, egress), repository.Ping,
+		application.NewNetworkPolicyService(repository, egress), repository.Ping, security,
 	)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	handler, err = server.WithSkillLearningPolicyRoutes(handler, application.NewSkillLearningPolicyService(repository, identity))
+	handler, err = server.WithSkillLearningPolicyRoutes(handler, application.NewSkillLearningPolicyService(repository, identity), security)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
@@ -234,6 +259,9 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
 		return classifyFailure("listener", err)
+	}
+	if cfg.Authentication.Config.ServerTLS != nil {
+		listener = tls.NewListener(listener, cfg.Authentication.Config.ServerTLS)
 	}
 	logger.Info("Agent Controller is ready", "listen_address", cfg.ListenAddress)
 	serverErrors := make(chan error, 1)

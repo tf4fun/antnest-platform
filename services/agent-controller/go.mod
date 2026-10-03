@@ -7,6 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/distribution/reference v0.6.0
 	github.com/exaring/otelpgx v0.12.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1

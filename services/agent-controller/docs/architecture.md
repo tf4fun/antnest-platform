@@ -666,9 +666,13 @@ Execution state, current Session and cancellation belong to ACP.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/agent-controller/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#32](https://github.com/tf4fun/antnest-platform/issues/32) and [#28](https://github.com/tf4fun/antnest-platform/issues/28); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+and this service's [caller catalog](../../../contracts/agent-controller/callers.json)
+define verified workload identity and route-specific caller context. Every
+business route independently verifies the workload, then the required CCT,
+signed scope and strict JSON. Only minimal status probes are unauthenticated;
+ACP's learning-policy read uses a persisted operation and live owner membership.
+[Controller authentication](../../../contracts/agent-controller/service-authentication.md)
+also defines mandatory startup configuration and authenticated dependency clients.
+Provider discovery relocation and destination policy remain a separate #28 batch.
+Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+for remaining receivers, deployment and final cross-service acceptance.

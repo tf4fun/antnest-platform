@@ -69,7 +69,7 @@
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (144 tests, 347 subtests, zero skips/failures); authenticated WebSocket rotation and account-switch CAS regressions passed",
         "docker": "node tests/e2e/service-authentication/gateway/run.mjs (58 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
-        "pending_consumers": ["agent-controller"],
+        "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch"
       }
     },
@@ -85,7 +85,7 @@
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs admin-console -- -race (190 tests, 335 subtests, zero skips/failures)",
         "docker": "node tests/e2e/service-authentication/console/run.mjs (54 authentication, lifecycle-progress and SIGTERM/SIGINT/restart checks; cleaned)",
-        "pending_consumers": ["agent-controller", "skill-registry"],
+        "pending_consumers": ["skill-registry"],
         "cross_service_e2e": "pending final integration batch"
       }
     },
@@ -103,7 +103,7 @@
         "unit_contract_component": "127 unit files / 1386 tests; 22 component files / 183 tests; real token/mTLS URI verification, SDK v1/v2 WebSocket expiry, catalog caller matrix and control listener separation passed",
         "postgres": "37 files / 322 tests; zero skips/failures; isolated database cleaned",
         "docker": "node tests/e2e/agent-acp-service/sdk-regressions-docker.mjs (14 authentication/listener checks and five SDK business scenarios, including restart; cleaned)",
-        "pending_consumers": ["agent-controller", "skill-registry"],
+        "pending_consumers": ["skill-registry"],
         "pending_runtime_client": "#29/#30 must first define and produce the private, instance-specific connection reference; a later ACP-owned batch adopts it. Existing execution fences and maintenance tickets are retained.",
         "pending_provider_policy": "#28 requires a shared destination-policy contract, Controller discovery/creation guard, and a separate ACP model-client batch.",
         "cross_service_e2e": "pending final integration batch"
@@ -121,19 +121,32 @@
       "admission": {
         "unit_contract_component": "430 server unit tests; 162 frontend unit tests; 148 frontend component tests; 43 HTTP/SDK/TLS/memory component tests; browser and dev-entry gates passed; zero skips/failures",
         "docker": "node --test tests/e2e/agent-ui/bridge-container.test.mjs (14 authentication checks, official ACP SDK, SSR, replay, commands, SSE, memory, idle recovery and normal-stop telemetry; cleaned)",
-        "pending_consumers": ["agent-controller"],
+        "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch"
       }
     },
     {
       "owner": "agent-controller",
       "issues": [32, 28],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "workload and delegated context checks",
         "authenticated dependency clients",
         "JSON media-type checks"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs agent-controller; configured native clients for all five dependencies and per-request token rotation passed",
+        "postgres": "19 packages / 627 tests / 1123 subtests; zero skips/failures; isolated PostgreSQL/Temporal and processes cleaned",
+        "docker": "node tests/e2e/service-authentication/controller/run.mjs (44 admission, catalog, unchanged CCT, control publication, custom health, startup rejection and SIGTERM/SIGINT/restart checks; cleaned)",
+        "pending_consumers": [],
+        "pending_dependencies": [
+          "runtime-controller",
+          "runtime-egress",
+          "skill-registry"
+        ],
+        "pending_provider_discovery": "#28 remains a separate shared-policy/Controller discovery batch, then Console thin proxy and ACP model-client consumers. The authenticated temporary /access route is removed in that Controller batch.",
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "runtime-controller",

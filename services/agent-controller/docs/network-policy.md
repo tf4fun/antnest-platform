@@ -13,9 +13,11 @@ RPC. It does not read Egress PostgreSQL tables or copy policies into AgentSpec.
 These commands have no Controller table, migration, lifecycle operation,
 generation, or event journal.
 
-These are trusted internal RPCs. Edge/Console must authenticate administrators
-and derive caller scope before forwarding them. Required organization checks
-remain here even when the external caller has already been authenticated.
+Controller verifies the Console workload and Identity-signed administrator CCT
+before these RPCs. Request Organization and Agent scope must match that CCT;
+raw identity hints grant nothing. Egress calls use Controller's own workload
+credential and the validated scope. See the
+[authentication boundary](../../../contracts/agent-controller/service-authentication.md).
 
 ## Contract
 

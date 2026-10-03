@@ -12,7 +12,7 @@ import (
 )
 
 func configureExecutionPublication(repository *postgres.Repository, cfg config.Config, opener ports.CredentialOpener, logger *slog.Logger) (*application.ExecutionPublisher, *application.ExecutionPublicationWorker, error) {
-	client, err := acpclient.New(cfg.Execution.URL, cfg.DependencyTimeout, nil)
+	client, err := acpclient.New(cfg.Execution.URL, cfg.DependencyTimeout, cfg.Authentication.HTTPClient())
 	if err != nil {
 		return nil, nil, err
 	}

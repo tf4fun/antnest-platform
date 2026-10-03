@@ -42,7 +42,7 @@ func TestIdentityContractMatchesResolvePrincipalConsumer(t *testing.T) {
 		t.Fatalf("decode Identity contract: %v", err)
 	}
 	route, ok := contract.Methods["resolve_principal"]
-	if contract.Revision != 13 || contract.BasePath != "/rpc/identity" || !ok ||
+	if contract.Revision != 14 || contract.BasePath != "/rpc/identity" || !ok ||
 		route.Method != http.MethodPost || route.Path != "/resolve-principal" ||
 		route.Response.Properties.Principal.Reference !=
 			"#/definitions/organization_principal_binding" {

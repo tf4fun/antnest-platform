@@ -38,7 +38,7 @@ const networkMutationJSON = `{"request_id":"request-1","organization_id":"org-1"
 
 func networkHandler(t *testing.T, service NetworkPolicyService) http.Handler {
 	t.Helper()
-	h, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, service, func(context.Context) error { return nil })
+	h, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, service, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestNetworkPolicyHandlerPreservesErrorsWithoutLeakingDependencyText(t *test
 
 func TestNetworkPolicyDependencyIsRequired(t *testing.T) {
 	t.Parallel()
-	_, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, nil, func(context.Context) error { return nil })
+	_, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, nil, func(context.Context) error { return nil })
 	if err == nil {
 		t.Fatal("missing network service accepted")
 	}

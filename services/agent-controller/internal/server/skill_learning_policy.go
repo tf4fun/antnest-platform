@@ -19,12 +19,13 @@ type SkillLearningPolicyService interface {
 
 // The learning routes are composed separately so the existing Controller
 // handler contracts remain stable while this service-owned batch is delivered.
-func WithSkillLearningPolicyRoutes(base http.Handler, service SkillLearningPolicyService) (http.Handler, error) {
-	if base == nil || service == nil {
-		return nil, fmt.Errorf("base handler and Skill learning policy service are required")
+func WithSkillLearningPolicyRoutes(base http.Handler, service SkillLearningPolicyService, authentication ...Security) (http.Handler, error) {
+	if base == nil || service == nil || len(authentication) != 1 || !authentication[0].valid() {
+		return nil, fmt.Errorf("base handler, policy service and verified authentication are required")
 	}
+	security := authentication[0]
 	mux := http.NewServeMux()
-	mux.Handle("GET /internal/agents/{agent_id}/skill-learning-policy", telemetry.RPCHandler("GET /internal/agents/{agent_id}/skill-learning-policy", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /internal/agents/{agent_id}/skill-learning-policy", security.guardRoute("GET /internal/agents/{agent_id}/skill-learning-policy", telemetry.RPCHandler("GET /internal/agents/{agent_id}/skill-learning-policy", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
 		query, ok := strictQuery(response, request, map[string]struct{}{"organization_id": {}, "principal_id": {}})
 		if !ok {
@@ -40,8 +41,8 @@ func WithSkillLearningPolicyRoutes(base http.Handler, service SkillLearningPolic
 			return
 		}
 		writeJSON(response, http.StatusOK, policy)
-	})))
-	mux.Handle("PUT /internal/agents/{agent_id}/skill-learning-policy", telemetry.RPCHandler("PUT /internal/agents/{agent_id}/skill-learning-policy", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	}))))
+	mux.Handle("PUT /internal/agents/{agent_id}/skill-learning-policy", security.guardRoute("PUT /internal/agents/{agent_id}/skill-learning-policy", telemetry.RPCHandler("PUT /internal/agents/{agent_id}/skill-learning-policy", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
 		if _, ok := strictQuery(response, request, map[string]struct{}{}); !ok {
 			return
@@ -57,9 +58,9 @@ func WithSkillLearningPolicyRoutes(base http.Handler, service SkillLearningPolic
 			return
 		}
 		writeJSON(response, http.StatusOK, policy)
-	})))
+	}))))
 	mux.Handle("/", base)
-	return mux, nil
+	return security.guardMux(mux), nil
 }
 
 func writeSkillLearningPolicyError(ctx context.Context, response http.ResponseWriter, err error) {

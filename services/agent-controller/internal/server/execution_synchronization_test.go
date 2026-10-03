@@ -18,7 +18,7 @@ const executionSynchronizationPath = "/internal/execution-synchronization"
 
 func TestExecutionSynchronizationMissingRecordIsExplicit(t *testing.T) {
 	t.Parallel()
-	boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
+	boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
@@ -59,7 +59,7 @@ func TestExecutionSynchronizationHTTPMatchesContract(t *testing.T) {
 		{Revision: 8, AppliedRevision: 8, UpdatedAt: now, AppliedAt: &now},
 	} {
 		configuration := &agentConfigurationServiceStub{synchronization: state}
-		boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, configuration,
+		boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, configuration,
 			&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 		require.NoError(t, err)
 		response := httptest.NewRecorder()
@@ -76,7 +76,7 @@ func TestExecutionSynchronizationHTTPRejectsAmbiguousQuery(t *testing.T) {
 	for _, query := range []string{"organization_id=", "organization_id=a&organization_id=b", "organization_id=a&refresh=true", "organization_id=%zz"} {
 		t.Run(query, func(t *testing.T) {
 			configuration := &agentConfigurationServiceStub{}
-			boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, configuration,
+			boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, configuration,
 				&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
@@ -98,7 +98,7 @@ func TestExecutionSynchronizationHTTPReadErrorsDoNotExposeStorage(t *testing.T) 
 		{errors.New("SELECT private_column FROM execution_configuration_sync"), http.StatusInternalServerError},
 	} {
 		t.Run(test.cause.Error(), func(t *testing.T) {
-			boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{err: test.cause},
+			boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{err: test.cause},
 				&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			require.NoError(t, err)
 			response := httptest.NewRecorder()

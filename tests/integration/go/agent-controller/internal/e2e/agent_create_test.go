@@ -30,6 +30,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/authfixture"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
@@ -37,7 +38,6 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
@@ -445,7 +445,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		application.WithIdentityDirectory(e2eIdentityDirectory{}),
 		application.WithLifecycleExecution(execution),
 	)
-	handler, err := server.NewHandler(
+	handler, err := authfixture.NewHandler(t,
 		application.NewCatalogService(repository, secretBox, clock),
 		lifecycle,
 		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, clock),

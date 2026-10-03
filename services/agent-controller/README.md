@@ -51,10 +51,10 @@ publishes its execution binding.
 
 ## Interfaces
 
-All interfaces are trusted internal JSON-over-HTTP RPC. Edge Gateway
-authenticates external requests through Identity Service. Organization
-ownership, owner binding and Agent access are still enforced here as domain
-rules.
+All interfaces are authenticated internal JSON-over-HTTP RPC. Controller verifies
+each workload and required Identity-signed caller context independently of
+Gateway. Signed Organization/actor/Agent scope, ownership and access rules are
+enforced here; raw identity hints provide no authority.
 
 | Direction | Interface | Purpose |
 | --- | --- | --- |
@@ -85,12 +85,16 @@ and lifecycle, Runtime observation and owner-revocation events use `event_`.
 | --- | --- | --- | --- |
 | `ANTNEST_AGENT_CONTROLLER_DATABASE_URL` | Yes | - | PostgreSQL connection URL for the service-owned database. |
 | `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` | Yes | - | Canonical base64 encoding of exactly 32 bytes; encrypts Provider credentials. |
-| `ANTNEST_AGENT_ACP_SERVICE_URL` | Yes | - | Agent ACP Service HTTP(S) origin, without user info, path, query or fragment. |
+| `ANTNEST_AGENT_ACP_CONTROL_URL` | Yes | - | ACP's dedicated Controller-only HTTP(S) control origin; distinct from the workspace listener. |
 | `ANTNEST_RUNTIME_CONTROLLER_URL` | Yes | - | Runtime Controller base URL. |
 | `ANTNEST_RUNTIME_EGRESS_URL` | Yes | - | Runtime Egress base URL. |
 | `ANTNEST_IDENTITY_SERVICE_URL` | Yes | - | Identity Service base URL. |
-| `ANTNEST_SKILL_REGISTRY_URL` | No | - | Skill Registry base URL. Must be set together with `ANTNEST_SKILL_REGISTRY_API_TOKEN`. |
-| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | No | - | Skill Registry API token. Must be set together with `ANTNEST_SKILL_REGISTRY_URL`. |
+| `ANTNEST_SKILL_REGISTRY_URL` | No | - | Optional pinned Registry origin; requires its own outgoing service credential when enabled. |
+| `ANTNEST_SERVICE_AUTH_MODE` | Yes | - | Exact `token` or `mtls`; no fallback or whitespace trimming. |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | In token mode | - | Private JSON caller-to-SHA256 map, loaded once at startup. |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | In token mode | - | Private receiver-named token files, checked at startup and reread for every outgoing request. |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | No | `false` when absent | Exact Boolean; `true` is an explicit development-only token/HTTP opt-in. |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Except insecure token/HTTP | - | TLS 1.3 chain, DNS name and exact workload URI validation. |
 | `ANTNEST_AGENT_CONTROLLER_LISTEN` | No | `:8080` | HTTP listen address; also used by `--healthcheck`. |
 | `ANTNEST_TEMPORAL_ADDRESS` | No | `127.0.0.1:7233` | Temporal frontend address. |
 | `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` | No | `150s` | Timeout for dependency RPC clients and the HTTP write timeout. |
@@ -112,6 +116,15 @@ and lifecycle, Runtime observation and owner-revocation events use `event_`.
 | `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_PROTOCOL` | No | `http/protobuf` | Only `http/protobuf` is supported. |
 
 Duration values use Go duration syntax and must be positive.
+
+The [authentication contract](../../contracts/agent-controller/service-authentication.md)
+defines route callers, signed user scope, strict JSON and private client forwarding.
+All configured dependency origins must be distinct; redirects and environment proxies
+are disabled. A nonempty legacy `ANTNEST_AGENT_ACP_SERVICE_URL` or
+`ANTNEST_SKILL_REGISTRY_API_TOKEN` now fails startup. Provider discovery relocation
+and destination policy are a separate #28 batch; remaining receiver/deployment
+admission and business E2E remain pending in the
+[rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
 ## Dependencies
 
@@ -138,6 +151,7 @@ Run these commands serially from the repository root unless stated otherwise.
 (cd services/agent-controller && GOWORK=off go test ./...)
 node tests/integration/go/run.mjs agent-controller
 make test-agent-controller-postgres
+node tests/e2e/service-authentication/controller/run.mjs
 make go-lint
 docker compose --profile stage3 build agent-controller
 ```

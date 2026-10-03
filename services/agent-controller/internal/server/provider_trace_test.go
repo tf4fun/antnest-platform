@@ -26,7 +26,7 @@ func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {
 				if outcome == "dependency" {
 					service.getModelErr = application.ErrDependencyUnavailable
 				}
-				handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+				handler, err := newBusinessHandler(t, service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -54,7 +54,7 @@ func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {
 func TestProviderReadRetainsNonSecretRPCDiagnostics(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder := networkPolicyTraceRecorder(t)
-	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestProviderReadRetainsNonSecretRPCDiagnostics(t *testing.T) {
 func TestProviderAccessIsMetadataOnlyEvenWithContentCaptureEnabled(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder := networkPolicyTraceRecorder(t)
-	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

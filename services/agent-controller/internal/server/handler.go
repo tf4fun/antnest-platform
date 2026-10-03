@@ -22,6 +22,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
@@ -113,7 +114,7 @@ type routeDefinition struct {
 func NewHandler(
 	catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
 	queries AgentQueryService, events AgentEventService, network NetworkPolicyService,
-	health HealthCheck,
+	health HealthCheck, authentication ...Security,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -136,6 +137,10 @@ func NewHandler(
 	if network == nil {
 		return nil, fmt.Errorf("network policy service is required")
 	}
+	if len(authentication) != 1 || !authentication[0].valid() {
+		return nil, fmt.Errorf("workload authentication and caller-context verification are required")
+	}
+	security := authentication[0]
 	h := &handler{
 		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, health: health,
 	}
@@ -145,9 +150,9 @@ func NewHandler(
 		if !route.metadataOnly {
 			endpoint = telemetry.RPCHandler(route.pattern, endpoint)
 		}
-		mux.Handle(route.pattern, endpoint)
+		mux.Handle(route.pattern, security.guardRoute(route.pattern, endpoint))
 	}
-	return mux, nil
+	return security.guardMux(mux), nil
 }
 
 func (h *handler) routes() []routeDefinition {
@@ -1124,18 +1129,12 @@ func nonnegativeInt64(response http.ResponseWriter, raw string) (int64, bool) {
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
 	request.Body = http.MaxBytesReader(response, request.Body, maximumRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
-		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
-		return false
+	raw, err := io.ReadAll(request.Body)
+	if err == nil {
+		err = serviceauth.DecodeObject(raw, target)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("request contains trailing JSON")
-		}
-		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON contains trailing or incomplete data", false)
+	if err != nil {
+		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
 		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
 		return false
 	}

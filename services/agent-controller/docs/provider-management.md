@@ -6,7 +6,8 @@ enforced, and where the execution boundary lies.
 
 Model discovery belongs entirely to Console. The internal, organization-scoped
 `GET /internal/provider-connections/{connection_id}/access?organization_id=...`
-returns the enabled connection and its current credential to a trusted service.
+returns the enabled connection and its current credential only to the verified
+Console workload with matching signed administrator/Organization CCT.
 It performs no writes, caching, or provider HTTP calls. This route is metadata-only
 for tracing and returns `Cache-Control: no-store`; it is never a browser API.
 The dedicated `ProviderAccessReader` reads the credential version and ciphertext
@@ -14,6 +15,11 @@ in one database snapshot. Normal connection reads continue selecting metadata
 only. Integration tests cover initial decryption and post-rotation reads.
 Console owns discovery, candidate merging and explicit user selection. See
 [discovery flow](../../../docs/model-discovery.md).
+
+This authenticated credential export is temporary. The separate #28 batch moves
+discovery into Controller, removes `/access` and installs the shared destination
+policy at creation and discovery. This authentication batch does not claim that
+the Provider discovery/SSRF work has been completed.
 
 Provider creation and credential rotation are metadata-only HTTP boundaries,
 including validation and dependency failures. Even when development RPC content

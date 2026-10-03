@@ -1531,7 +1531,17 @@
             "lifecycle_timeout",
             "internal_error",
             "access_denied",
-            "configuration_conflict"
+            "configuration_conflict",
+            "service_unauthenticated",
+            "caller_not_allowed",
+            "caller_context_required",
+            "caller_context_invalid",
+            "identity_dependency_unavailable",
+            "organization_mismatch",
+            "actor_mismatch",
+            "forbidden",
+            "unsupported_media_type",
+            "request_too_large"
           ]
         },
         "message": {

@@ -32,7 +32,7 @@ func (stub *learningPolicyServiceStub) Set(_ context.Context, input application.
 
 func TestSkillLearningPolicyRevisionConflictHasPolicyError(t *testing.T) {
 	stub := &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "agent-1", "owner-1", time.Unix(1, 0)), err: ports.ErrConcurrentChange}
-	boundary, err := WithSkillLearningPolicyRoutes(http.NotFoundHandler(), stub)
+	boundary, err := withBusinessLearningRoutes(t, http.NotFoundHandler(), stub)
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
 	boundary.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1/skill-learning-policy?organization_id=org-1&principal_id=owner-1", nil))
@@ -42,7 +42,7 @@ func TestSkillLearningPolicyRevisionConflictHasPolicyError(t *testing.T) {
 
 func TestSkillLearningPolicyRoutesBindPathAndStrictScope(t *testing.T) {
 	stub := &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "agent-1", "owner-1", time.Unix(1, 0))}
-	boundary, err := WithSkillLearningPolicyRoutes(http.NotFoundHandler(), stub)
+	boundary, err := withBusinessLearningRoutes(t, http.NotFoundHandler(), stub)
 	require.NoError(t, err)
 	read := httptest.NewRecorder()
 	boundary.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1/skill-learning-policy?organization_id=org-1&principal_id=owner-1", nil))

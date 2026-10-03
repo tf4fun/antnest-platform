@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 )
 
 type Config struct {
+	Authentication                 *serviceauth.Clients
 	Execution                      ExecutionConfiguration
 	ListenAddress                  string
 	TemporalAddress                string
@@ -17,7 +20,6 @@ type Config struct {
 	RuntimeControllerURL           string
 	IdentityServiceURL             string
 	SkillRegistryURL               string
-	SkillRegistryAPIToken          string
 	DependencyTimeout              time.Duration
 	DrainTimeout                   time.Duration
 	ObservationPollInterval        time.Duration
@@ -25,9 +27,16 @@ type Config struct {
 	ShutdownTimeout                time.Duration
 }
 
-func Load(lookup func(string) string) (Config, error) {
-	if lookup == nil {
+func Load(environment serviceauth.LookupEnv) (Config, error) {
+	if environment == nil {
 		return Config{}, fmt.Errorf("environment lookup is required")
+	}
+	lookup := func(key string) string { value, _ := environment(key); return value }
+	if lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN") != "" {
+		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN is no longer supported; configure per-receiver service credentials")
+	}
+	if lookup("ANTNEST_AGENT_ACP_SERVICE_URL") != "" {
+		return Config{}, fmt.Errorf("ANTNEST_AGENT_ACP_SERVICE_URL is not a Controller control endpoint; use ANTNEST_AGENT_ACP_CONTROL_URL")
 	}
 	execution, err := loadExecutionConfiguration(lookup)
 	if err != nil {
@@ -81,7 +90,6 @@ func Load(lookup func(string) string) (Config, error) {
 		RuntimeControllerURL:           strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
 		IdentityServiceURL:             strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		SkillRegistryURL:               strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
-		SkillRegistryAPIToken:          strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN")),
 		DependencyTimeout:              dependencyTimeout,
 		DrainTimeout:                   drainTimeout,
 		ObservationPollInterval:        observationPollInterval,
@@ -106,14 +114,20 @@ func Load(lookup func(string) string) (Config, error) {
 	if config.IdentityServiceURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_IDENTITY_SERVICE_URL is required")
 	}
-	if (config.SkillRegistryURL == "") != (config.SkillRegistryAPIToken == "") {
-		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_URL and ANTNEST_SKILL_REGISTRY_API_TOKEN must be configured together")
-	}
 	key, err := decodeEncryptionKey(strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY")))
 	if err != nil {
 		return Config{}, err
 	}
 	config.EncryptionKey = key
+	endpoints := map[string]string{"identity-service": config.IdentityServiceURL, "agent-acp-service": config.Execution.URL,
+		"runtime-controller": config.RuntimeControllerURL, "runtime-egress": config.RuntimeEgressURL}
+	if config.SkillRegistryURL != "" {
+		endpoints["skill-registry"] = config.SkillRegistryURL
+	}
+	config.Authentication, err = serviceauth.LoadOutbound(environment, endpoints)
+	if err != nil {
+		return Config{}, err
+	}
 	return config, nil
 }
 

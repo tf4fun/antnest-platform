@@ -15,7 +15,7 @@ import (
 
 func TestControllerDoesNotExposeRunExecutionRPC(t *testing.T) {
 	t.Parallel()
-	boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{},
+	boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{},
 		&networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	require.NoError(t, err)
 	for _, method := range []string{
@@ -32,7 +32,7 @@ func TestControllerDoesNotExposeRunExecutionRPC(t *testing.T) {
 
 func TestWorkspaceListTimeoutIsDependencyFailure(t *testing.T) {
 	t.Parallel()
-	boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{},
+	boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{},
 		&agentConfigurationServiceStub{}, &agentQueryServiceStub{err: context.DeadlineExceeded},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestManagementRPCRejectsMalformedAuthorization(t *testing.T) {
 	} {
 		t.Run(authorization, func(t *testing.T) {
 			configuration := &agentConfigurationServiceStub{}
-			boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, configuration,
+			boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, configuration,
 				&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
@@ -69,7 +69,7 @@ func TestManagementRPCRejectsMalformedAuthorization(t *testing.T) {
 
 func TestControllerDoesNotExposeWorkspaceExecutionState(t *testing.T) {
 	t.Parallel()
-	boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
+	boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	require.NoError(t, err)
 	for _, suffix := range []string{"state", "state/watch"} {
@@ -99,7 +99,7 @@ func TestWorkspaceListPublishesOnlyManagementMetadata(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			queries := &agentQueryServiceStub{workspacePage: test.page}
-			boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
+			boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 				&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			require.NoError(t, err)
 			response := httptest.NewRecorder()

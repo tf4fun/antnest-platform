@@ -32,7 +32,7 @@ func (service *agentConfigurationServiceStub) SetAgentAuthorization(_ context.Co
 func TestAgentAuthorizationRPCUsesManagementDependency(t *testing.T) {
 	t.Parallel()
 	configuration := &agentConfigurationServiceStub{}
-	boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{},
+	boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{},
 		configuration, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
@@ -46,7 +46,7 @@ func TestAgentAuthorizationRPCUsesManagementDependency(t *testing.T) {
 
 func TestAgentConfigurationDependencyRequired(t *testing.T) {
 	t.Parallel()
-	_, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, nil,
+	_, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, nil,
 		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	require.ErrorContains(t, err, "agent configuration service")
 }
@@ -67,7 +67,7 @@ func TestAgentConfigurationErrorContract(t *testing.T) {
 		{ports.ErrExecutionCapacityExceeded, 409, "execution_configuration_capacity_exceeded"},
 	} {
 		t.Run(test.code, func(t *testing.T) {
-			boundary, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{err: test.cause}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+			boundary, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{err: test.cause}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
 			boundary.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/rpc/agent-controller/set-agent-authorization",

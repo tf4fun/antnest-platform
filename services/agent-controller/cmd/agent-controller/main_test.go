@@ -39,11 +39,11 @@ func TestHealthcheckUsesConfiguredPort(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader("ready")), Header: make(http.Header),
 		}, nil
 	})}
-	if err := checkHealthWithClient(func(key string) string {
+	if err := checkHealthWithClient(func(key string) (string, bool) {
 		if key == "ANTNEST_AGENT_CONTROLLER_LISTEN" {
-			return ":18080"
+			return ":18080", true
 		}
-		return ""
+		return "", false
 	}, client); err != nil {
 		t.Fatalf("healthcheck: %v", err)
 	}

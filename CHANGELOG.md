@@ -4,6 +4,18 @@
 
 ### Fixed
 
+Controller now authenticates every business route and rejects forged Organization,
+actor and Agent scope before effects (#32 / #28 prerequisite). Console management
+requires a signed administrator CCT; Gateway/UI workspace discovery requires the
+signed subject and Organization. ACP learning-policy reads resolve persisted owner
+authorization instead of inventing user delegation. Dependency clients use private
+receiver credentials, pinned origins and no redirects/proxies. Control contract
+revision 37 adds admission errors and strict UTF-8 JSON. Deployments must configure
+the shared exact authentication settings and `ANTNEST_AGENT_ACP_CONTROL_URL`;
+nonempty legacy ACP workspace URL or Registry API token now fails startup.
+Provider discovery relocation/address policy (#28), remaining receivers/deployment
+and final cross-service E2E remain separate batches.
+
 Agent UI now verifies Gateway workload credentials and Identity-signed CCT before
 Workspace handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
 Signed subject, Organization, roles and Agent scope replace authority from raw
