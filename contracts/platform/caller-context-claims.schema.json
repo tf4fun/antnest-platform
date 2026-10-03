@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/platform/caller-context-claims.schema.json",
+  "title": "Antnest Caller Context Token claims v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "iss",
+    "sub",
+    "org",
+    "mbr",
+    "sys_role",
+    "org_role",
+    "sid",
+    "aud",
+    "iat",
+    "exp",
+    "jti"
+  ],
+  "properties": {
+    "iss": {
+      "const": "antnest://service/identity-service"
+    },
+    "sub": {
+      "$ref": "#/$defs/id"
+    },
+    "org": {
+      "$ref": "#/$defs/id"
+    },
+    "mbr": {
+      "$ref": "#/$defs/id"
+    },
+    "sys_role": {
+      "enum": [
+        "user",
+        "admin"
+      ]
+    },
+    "org_role": {
+      "enum": [
+        "member",
+        "admin"
+      ]
+    },
+    "sid": {
+      "$ref": "#/$defs/id"
+    },
+    "aud": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "identity-service",
+          "admin-console",
+          "agent-ui",
+          "agent-acp-service",
+          "agent-controller",
+          "skill-registry"
+        ]
+      }
+    },
+    "iat": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "exp": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "jti": {
+      "$ref": "#/$defs/id"
+    },
+    "agt": {
+      "$ref": "#/$defs/id"
+    },
+    "act": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sub"
+      ],
+      "properties": {
+        "sub": {
+          "type": "string",
+          "pattern": "^antnest://service/[a-z][a-z0-9-]{0,63}$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f]+$"
+    }
+  },
+  "$comment": "Schema checks shape only. Signature, exact issuer/key, audience membership, exp > iat, lifetime <= 60s, clock tolerance <= 30s, Agent scope, session revocation and refusal of act until #77 are mandatory semantic checks."
+}

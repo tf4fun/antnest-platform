@@ -1,0 +1,183 @@
+{
+  "status": "contract-only",
+  "issue": 32,
+  "audience_profiles": {
+    "console": [
+      "admin-console",
+      "identity-service",
+      "agent-controller",
+      "skill-registry",
+      "agent-acp-service"
+    ],
+    "workspace": [
+      "agent-ui",
+      "agent-acp-service",
+      "agent-controller"
+    ],
+    "acp": [
+      "agent-acp-service"
+    ]
+  },
+  "batches": [
+    {
+      "owner": "platform-contracts",
+      "issues": [
+        32
+      ],
+      "status": "foundation",
+      "deliverables": [
+        "shared identity and CCT schemas",
+        "per-service caller catalogs",
+        "route coverage and shared negative test helpers"
+      ]
+    },
+    {
+      "owner": "identity-service",
+      "issues": [
+        25
+      ],
+      "status": "pending",
+      "deliverables": [
+        "workload verification",
+        "CCT issuer and JWKS",
+        "administrative actor and JSON media-type checks"
+      ]
+    },
+    {
+      "owner": "edge-gateway",
+      "issues": [
+        26
+      ],
+      "status": "pending",
+      "deliverables": [
+        "authenticated clients",
+        "server-selected audience profile and Agent scope",
+        "CCT forwarding; strip untrusted identity/context headers"
+      ]
+    },
+    {
+      "owner": "admin-console",
+      "issues": [
+        25,
+        26
+      ],
+      "status": "pending",
+      "deliverables": [
+        "workload and CCT verification",
+        "verified actor forwarding",
+        "JSON media-type checks"
+      ]
+    },
+    {
+      "owner": "agent-acp-service",
+      "issues": [
+        26,
+        27
+      ],
+      "status": "pending",
+      "deliverables": [
+        "workload and CCT verification",
+        "Controller route allowlists",
+        "JSON media-type checks"
+      ]
+    },
+    {
+      "owner": "agent-ui",
+      "issues": [
+        26
+      ],
+      "status": "pending",
+      "deliverables": [
+        "workload and CCT verification",
+        "bridge context forwarding",
+        "JSON media-type checks"
+      ]
+    },
+    {
+      "owner": "agent-controller",
+      "issues": [
+        32,
+        28
+      ],
+      "status": "pending",
+      "deliverables": [
+        "workload and delegated context checks",
+        "authenticated dependency clients",
+        "JSON media-type checks"
+      ]
+    },
+    {
+      "owner": "runtime-controller",
+      "issues": [
+        29
+      ],
+      "status": "pending",
+      "deliverables": [
+        "workload verification and image policy",
+        "management listener isolation",
+        "JSON media-type checks",
+        "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc"
+      ]
+    },
+    {
+      "owner": "skill-registry",
+      "issues": [
+        31
+      ],
+      "status": "pending",
+      "deliverables": [
+        "per-caller credentials and authorization",
+        "JSON media-type checks"
+      ]
+    },
+    {
+      "owner": "antnest-runtime",
+      "issues": [
+        30
+      ],
+      "status": "pending",
+      "deliverables": [
+        "authenticated MCP and status probes",
+        "retain execution fence and maintenance tickets"
+      ]
+    },
+    {
+      "owner": "runtime-egress",
+      "issues": [
+        32,
+        34,
+        36
+      ],
+      "status": "pending",
+      "deliverables": [
+        "authenticated control calls",
+        "management/data-plane isolation"
+      ]
+    },
+    {
+      "owner": "deployment",
+      "issues": [
+        32
+      ],
+      "status": "pending",
+      "deliverables": [
+        "development PKI helper",
+        "purpose-specific internal networks",
+        "Gateway-only base ports and explicit debug overlay"
+      ]
+    },
+    {
+      "owner": "integration",
+      "issues": [
+        32,
+        80
+      ],
+      "status": "pending",
+      "deliverables": [
+        "Docker probes on every service network",
+        "forged context/actor rejection",
+        "normal browser and lifecycle regressions"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,297 @@
+{
+  "service": "agent-acp-service",
+  "status": "planned",
+  "implementation_issues": [
+    26,
+    27
+  ],
+  "routes": {
+    "DELETE /v1/acp": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-status": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /rpc/agent-acp/workspace/sessions/{session_id}/execution": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /rpc/agent-acp/workspace/sessions/{session_id}/intents/{intent_id}": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /status": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "GET /v1/acp": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "POST /internal/skill-sources/artifact": {
+      "callers": [
+        "skill-registry"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "skill-registry": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/skill-sources/inspect": {
+      "callers": [
+        "skill-registry"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "skill-registry": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/apply-execution-snapshot": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/get-agent-execution-state": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/get-execution-audit": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/list-execution-audits": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/list-execution-events": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/settle-agent": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/watch-agent-execution-state": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /v1/acp": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "json"
+    },
+    "UPGRADE /v1/acp": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    },
+    "UPGRADE /v2/acp": {
+      "callers": [
+        "edge-gateway",
+        "agent-ui"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "agent-ui": "required"
+      },
+      "request_body": "none"
+    }
+  },
+  "guarded_sources": {
+    "services/agent-acp-service/src/transport/acp/http-transport.ts": {
+      "sha256": "34b5e707feaeb78a8dbef32bb421902f85628d9a18e7766d30e3b68bdf87567e",
+      "routes": [
+        "POST /v1/acp",
+        "GET /v1/acp",
+        "DELETE /v1/acp"
+      ]
+    },
+    "services/agent-acp-service/src/transport/agent-execution-state.ts": {
+      "sha256": "81d1536b73d07b12565e5810535e6decdc04b88c00940e92486c3de7a24aa736",
+      "routes": [
+        "POST /rpc/agent-acp/get-agent-execution-state",
+        "POST /rpc/agent-acp/watch-agent-execution-state"
+      ]
+    },
+    "services/agent-acp-service/src/transport/agent-settlement.ts": {
+      "sha256": "75bc7fe0abbab8dbf2f59154f5ba5c6f383a7053d8fa778313d8fd510d4d13c6",
+      "routes": [
+        "POST /rpc/agent-acp/settle-agent"
+      ]
+    },
+    "services/agent-acp-service/src/transport/bridge-observation.ts": {
+      "sha256": "5fea78b9f8d76ebe4cf27f89606ab03bcecd7e07282ded385fb815c10310b789",
+      "routes": [
+        "GET /rpc/agent-acp/workspace/sessions/{session_id}/execution",
+        "GET /rpc/agent-acp/workspace/sessions/{session_id}/intents/{intent_id}"
+      ]
+    },
+    "services/agent-acp-service/src/transport/execution-audit.ts": {
+      "sha256": "e36247fa6a6f5f828a435451399fbac9c7caaf49c9603fcdfa8bd5f26416ef4d",
+      "routes": [
+        "POST /rpc/agent-acp/list-execution-audits",
+        "POST /rpc/agent-acp/get-execution-audit",
+        "POST /rpc/agent-acp/list-execution-events"
+      ]
+    },
+    "services/agent-acp-service/src/transport/execution-configuration.ts": {
+      "sha256": "f24b06661d9aa726c8317decfb36e6d5933bbbc1585ead41585b42d16526797b",
+      "routes": [
+        "POST /rpc/agent-acp/apply-execution-snapshot"
+      ]
+    },
+    "services/agent-acp-service/src/transport/http-server.ts": {
+      "sha256": "602676d80438ea7c932db26e869cd738299d37ea71bb8143691f0cfc2d3f9ed5",
+      "routes": [
+        "GET /status",
+        "UPGRADE /v1/acp",
+        "UPGRADE /v2/acp"
+      ]
+    },
+    "services/agent-acp-service/src/transport/learning-changes.ts": {
+      "sha256": "8e0b03c7c680f9ce5676fe25e236ef150ed030769ff8892df9f13e90bab03da1",
+      "routes": [
+        "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes"
+      ]
+    },
+    "services/agent-acp-service/src/transport/learning-status.ts": {
+      "sha256": "19acc090e95e6a7aeff7bd03b9045b42bb1b80ad8d63a1801777ea81668c9ee1",
+      "routes": [
+        "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-status"
+      ]
+    },
+    "services/agent-acp-service/src/transport/rpc-request.ts": {
+      "sha256": "6bd8dc1720e098110f0b64f60fefc683f10756ad5e517c6273ba712ffd390f3f",
+      "routes": []
+    },
+    "services/agent-acp-service/src/transport/skill-sources.ts": {
+      "sha256": "e039811b81480d3c2f54e86a491d91742c645d6a35feef819fd8bb109334ba35",
+      "routes": [
+        "POST /internal/skill-sources/inspect",
+        "POST /internal/skill-sources/artifact"
+      ]
+    }
+  }
+}

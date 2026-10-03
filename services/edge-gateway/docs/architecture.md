@@ -280,3 +280,13 @@ logged or added to span attributes.
 Additional identity protocols require explicit route and credential-boundary
 contracts. Business resource routes, cross-service aggregation, and domain
 retries belong to the owning service or presentation BFF, not this Gateway.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/edge-gateway/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#26](https://github.com/tf4fun/antnest-platform/issues/26); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

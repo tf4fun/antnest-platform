@@ -1,0 +1,695 @@
+{
+  "description": "Public verification fixtures only. Generated private key discarded; all token timestamps are fixed in January 2026. No production credentials.",
+  "jwks": {
+    "keys": [
+      {
+        "kid": "fixture-cct-2026",
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "use": "sig",
+        "alg": "EdDSA",
+        "x": "O72NfaeWCXmCq5OpySF2rHgiu2R6bndBS2rHTA4IgXU"
+      },
+      {
+        "kid": "fixture-duplicate-json",
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "use": "sig",
+        "alg": "EdDSA",
+        "x": "2BXh-sRu2rD4MF9j7L11w9sIyl4SbyB4xc4QWgw0YN0"
+      }
+    ]
+  },
+  "schema_vectors": [
+    {
+      "name": "valid-agent",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": true
+    },
+    {
+      "name": "valid-organization",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture"
+      },
+      "valid": true
+    },
+    {
+      "name": "reserved-act-shape",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture",
+        "act": {
+          "sub": "antnest://service/channel-manager"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-role",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "system_admin",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown-organization-role",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "owner",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "blank-principal",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": " ",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "unicode-blank-organization",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": " ",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "wrong-issuer",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/edge-gateway",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicate-audience",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-ui",
+          "agent-ui"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "wildcard-audience",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "*"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "string-audience",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": "agent-acp-service",
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "empty-audience",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "numeric-date-string",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": "1767225600",
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "fractional-date",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225600.5,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "unsafe-date",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 9007199254740992,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture"
+      },
+      "valid": false
+    },
+    {
+      "name": "extra-claim",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture",
+        "administrator": true
+      },
+      "valid": false
+    },
+    {
+      "name": "blank-agent",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "nested-act",
+      "target": "claims",
+      "value": {
+        "iss": "antnest://service/identity-service",
+        "sub": "user-fixture",
+        "org": "org-fixture",
+        "mbr": "membership-fixture",
+        "sys_role": "user",
+        "org_role": "member",
+        "sid": "session-fixture",
+        "aud": [
+          "agent-acp-service"
+        ],
+        "iat": 1767225600,
+        "exp": 1767225660,
+        "jti": "jti-fixture",
+        "agt": "agent-fixture",
+        "act": {
+          "sub": "antnest://service/channel-manager",
+          "act": {
+            "sub": "x"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "valid-header",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "EdDSA",
+        "kid": "fixture-cct-2026"
+      },
+      "valid": true
+    },
+    {
+      "name": "blank-kid",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "EdDSA",
+        "kid": " "
+      },
+      "valid": false
+    },
+    {
+      "name": "padded-kid",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "EdDSA",
+        "kid": " fixture-cct-2026"
+      },
+      "valid": false
+    },
+    {
+      "name": "unicode-kid",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "EdDSA",
+        "kid": " "
+      },
+      "valid": false
+    },
+    {
+      "name": "wrong-type",
+      "target": "header",
+      "value": {
+        "typ": "JWT",
+        "alg": "EdDSA",
+        "kid": "fixture-cct-2026"
+      },
+      "valid": false
+    },
+    {
+      "name": "wrong-algorithm",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "HS256",
+        "kid": "fixture-cct-2026"
+      },
+      "valid": false
+    },
+    {
+      "name": "unsigned",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "none",
+        "kid": "fixture-cct-2026"
+      },
+      "valid": false
+    },
+    {
+      "name": "key-selection-url",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "EdDSA",
+        "kid": "fixture-cct-2026",
+        "jku": "https://fixture.invalid/keys"
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown-critical-header",
+      "target": "header",
+      "value": {
+        "typ": "antnest-cct+jwt",
+        "alg": "EdDSA",
+        "kid": "fixture-cct-2026",
+        "crit": [
+          "custom"
+        ]
+      },
+      "valid": false
+    }
+  ],
+  "verification_vectors": [
+    {
+      "name": "valid-agent",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.BSE_oDdDGkLdTC9w4UHMKA9sK1vpY1U3zS7LdV906dHWLg21qTa5I8SRUqQ6DlvYSx9wtbr2cGr-EE1y1w_FCg",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": true
+    },
+    {
+      "name": "expiry-within-tolerance",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU1MjUsImV4cCI6MTc2NzIyNTU4NSwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.7iVH6-w2vRIuuryBPZ5U1Q_5Qz9_Uy5x8EQMOelxUj1_lM5wbsAbE3Zo2lnffnZZc_Wdr8u0Jr0RKpdAGiEgAA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": true
+    },
+    {
+      "name": "expired-at-tolerance-boundary",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU1MTAsImV4cCI6MTc2NzIyNTU3MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.5xtjDc6OYzh1vGf_PuGJ3dzAvR0ZLnVF8O0rwuBrQd6BDkYtuDTeD409apcNwjkDT_9jLJrghEmUmcyILuf1CQ",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "wrong-audience",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC11aSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.wzSLxYIoIHeJSngQKPgVZQ9v3CV0WL04I_Z6n3xoOFp1si-Hm3faD0R0wq7Q2-uPXBRtZTAeY7DlTkHPmdPeBQ",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "wrong-agent",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1vdGhlciJ9.80k22jK6ciYbtc6lBt0BkQuUCXWpvJsBHBv4RNalpsZxZOCsVG77V6YOMNc477oHcIPd-7ebbrC-E5fvoyWKAA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "missing-agent",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUifQ.PFxohp9eBV9Mkt7JwhUo9I16_yshdLbPChJog6AW6kQDxi_WNubJfHSTlLgNWy03sLZceeXc8KXu1qSuIcdXBw",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "wrong-organization",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLW90aGVyIiwibWJyIjoibWVtYmVyc2hpcC1maXh0dXJlIiwic3lzX3JvbGUiOiJ1c2VyIiwib3JnX3JvbGUiOiJtZW1iZXIiLCJzaWQiOiJzZXNzaW9uLWZpeHR1cmUiLCJhdWQiOlsiYWdlbnQtYWNwLXNlcnZpY2UiXSwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU2NjAsImp0aSI6Imp0aS1maXh0dXJlIiwiYWd0IjoiYWdlbnQtZml4dHVyZSJ9.-nLLOfdWGzQhJ8tmFZ5OWVNeRwkHoZZ21r0Sf-YDHZlnGaSvLUlHJ9ksM0KWh0qTOuh34Hvz5bjwkuBKHnN6Dw",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "wrong-issuer",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9lZGdlLWdhdGV3YXkiLCJzdWIiOiJ1c2VyLWZpeHR1cmUiLCJvcmciOiJvcmctZml4dHVyZSIsIm1iciI6Im1lbWJlcnNoaXAtZml4dHVyZSIsInN5c19yb2xlIjoidXNlciIsIm9yZ19yb2xlIjoibWVtYmVyIiwic2lkIjoic2Vzc2lvbi1maXh0dXJlIiwiYXVkIjpbImFnZW50LWFjcC1zZXJ2aWNlIl0sImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1NjYwLCJqdGkiOiJqdGktZml4dHVyZSIsImFndCI6ImFnZW50LWZpeHR1cmUifQ.j-BaciHCnRpJeRKCI9Ft33rMUWmzfYB5ml_mmYlQVe3ScT58gWSodxp07zZ3SearNpguKq67FelA4KraWgO3Dw",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "unknown-kid",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6Im90aGVyLWZpeHR1cmUta2V5In0.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.TYFZi-J2bmVj7_cgkNquEWxq5g0feIqBTj9Kxp2ww6fOwoBkt2XRio3BNA1XrdC8b_QJ4WRYmfInDfH7f7_iBA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "wrong-token-type",
+      "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.g7bX9Und7sV7Ymf1t_VJvNEYwBsEDCXqmWUURn-QNEghJ28zpHeIdBbgxT3ZQIFa6OfXCS0882TmG4FaNlSwDw",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "wrong-signing-algorithm",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJIUzI1NiIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.fIf5LUrO9WnXgvWAfHdou3SqzMZHN48GZuiVPgylMMcnbZK0SugbF_fBhTzRZ6JzyjHmawc3eIO83lJSF-bKAA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "lifetime-over-60",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MSwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.ZYPdnMzRs1AZUZxgAJI8S3S0-V386ca_1cIFwgHrKOvMOlCEoTUgo9S23COGK_i9vPdw2RgnM82jt8t7i9nnDQ",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "nonpositive-lifetime",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTYwMCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.lrHZ_U3d9qpaLB38dIOZvKnIApg_5qP65HOQZ73WH48s614M9BAB8mV-tOhWHjaIoAg-7XeNyncz68Wb2AH6Cw",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "future-iat",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MzEsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.7ZEaxbOYjW0J4b9GrqGd9xQJekrw5z85KS5zvn9IqFcGsXj8QkFgramQeKAYBg6vJ8P4ulaorOma_qp1UeqRBA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "delegation-not-implemented",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIiwiYWN0Ijp7InN1YiI6ImFudG5lc3Q6Ly9zZXJ2aWNlL2NoYW5uZWwtbWFuYWdlciJ9fQ.csxtzCBUeWHYcQNzPjFNhuXKi6bGcki_uss0zJ0vsDctCSvoOYB1KoLHqk-Ro_kSiccm7P7fHy7trKtTzeIABg",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "tampered-payload",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1mb3JnZWQiLCJvcmciOiJvcmctZml4dHVyZSIsIm1iciI6Im1lbWJlcnNoaXAtZml4dHVyZSIsInN5c19yb2xlIjoidXNlciIsIm9yZ19yb2xlIjoibWVtYmVyIiwic2lkIjoic2Vzc2lvbi1maXh0dXJlIiwiYXVkIjpbImFnZW50LWFjcC1zZXJ2aWNlIl0sImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1NjYwLCJqdGkiOiJqdGktZml4dHVyZSIsImFndCI6ImFnZW50LWZpeHR1cmUifQ.BSE_oDdDGkLdTC9w4UHMKA9sK1vpY1U3zS7LdV906dHWLg21qTa5I8SRUqQ6DlvYSx9wtbr2cGr-EE1y1w_FCg",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "duplicate-claim-member",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtZHVwbGljYXRlLWpzb24ifQ.eyJzdWIiOiJmb3JnZWQtdXNlciIsImlzcyI6ImFudG5lc3Q6Ly9zZXJ2aWNlL2lkZW50aXR5LXNlcnZpY2UiLCJzdWIiOiJ1c2VyLWZpeHR1cmUiLCJvcmciOiJvcmctZml4dHVyZSIsIm1iciI6Im1lbWJlcnNoaXAtZml4dHVyZSIsInN5c19yb2xlIjoidXNlciIsIm9yZ19yb2xlIjoibWVtYmVyIiwic2lkIjoic2Vzc2lvbi1maXh0dXJlIiwiYXVkIjpbImFnZW50LWFjcC1zZXJ2aWNlIl0sImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1NjYwLCJqdGkiOiJqdGktZml4dHVyZSIsImFndCI6ImFnZW50LWZpeHR1cmUifQ.EktCXYekXspNxBvIoJF8qOjfWjjdG0UcVAeHcDPLfOnvyKaGIHl37UZRgxhxsQZiSLz2H6HAuf-xVQSQb750CA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "duplicate-protected-member",
+      "token": "eyJraWQiOiJ3cm9uZy1rZXkiLCJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtZHVwbGljYXRlLWpzb24ifQ.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.VqeGYqnVCkd0-O7qBVQggkvYvjmHlruj5gUoz7e3muWr8JEJKlq0tSV-1sL7NOsHVLJQlGko5gpIVUSGxPwYBA",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    },
+    {
+      "name": "noncanonical-segment",
+      "token": "eyJ0eXAiOiJhbnRuZXN0LWNjdCtqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6ImZpeHR1cmUtY2N0LTIwMjYifQ=.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci1maXh0dXJlIiwib3JnIjoib3JnLWZpeHR1cmUiLCJtYnIiOiJtZW1iZXJzaGlwLWZpeHR1cmUiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tZml4dHVyZSIsImF1ZCI6WyJhZ2VudC1hY3Atc2VydmljZSJdLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTY2MCwianRpIjoianRpLWZpeHR1cmUiLCJhZ3QiOiJhZ2VudC1maXh0dXJlIn0.BSE_oDdDGkLdTC9w4UHMKA9sK1vpY1U3zS7LdV906dHWLg21qTa5I8SRUqQ6DlvYSx9wtbr2cGr-EE1y1w_FCg",
+      "now": 1767225600,
+      "tolerance": 30,
+      "consumer": "agent-acp-service",
+      "organization": "org-fixture",
+      "agent": "agent-fixture",
+      "valid": false
+    }
+  ]
+}

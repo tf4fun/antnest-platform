@@ -420,3 +420,13 @@ Runtime, the language-neutral contract, and its consumers implement:
 This identity is a stale-execution consistency check, not an authentication
 credential or rollout generation. A stale execution fails before Tool dispatch;
 it is never transparently retargeted to a restarted process.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/runtime/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#30](https://github.com/tf4fun/antnest-platform/issues/30); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

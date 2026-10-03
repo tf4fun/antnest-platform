@@ -82,6 +82,18 @@ for the Controller. See the
 
 ### Changed
 
+Defined the platform service-authentication foundation for
+[#32](https://github.com/tf4fun/antnest-platform/issues/32): workload identity,
+Identity-issued caller-context schemas and public verification vectors,
+per-service route caller catalogs, and repository checks that detect missing
+caller policies or unreviewed custom matchers. Added a shared negative JSON
+media-type probe for later service-owned tests. This is a contract-only batch:
+authentication middleware, network/port changes and Docker security acceptance
+remain pending in the rollout ledger; internal listeners are not yet secured.
+Go route checks include wrapper calls across files in the same package and
+reject unresolved arguments alongside known calls. Runtime Controller's Skill
+preparation routes allow Agent Controller only, matching the actual HTTP client.
+
 Runtime `/status` now requires `test_features: string[]`, including unavailable
 responses; release binaries report `[]`. Upgrade Runtime Controller's status
 reader before deploying the new Runtime images, because older strict readers

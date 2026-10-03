@@ -44,3 +44,16 @@ Registry token and the bootstrap administrator password `antnest-admin-dev`.
 They exist only so a disposable local stack starts without setup. Replace every
 one of them with a unique, randomly generated value before running the platform
 anywhere else, and never commit the resulting `.env` file.
+
+## Service authentication rollout
+
+The [platform authentication contract](contracts/platform/service-authentication.md)
+defines workload mTLS (or explicit per-caller interim tokens), Identity-signed
+Caller Context Tokens, per-route allowlists and JSON media-type checks. Its
+[trust model](docs/architecture/trust-model.md) and
+[rollout ledger](contracts/platform/service-authentication-rollout.json) distinguish
+the delivered foundation from pending service enforcement and network changes.
+Passing the repository catalog/schema checks does not secure the current
+listeners. The unauthenticated surfaces, internal host ports, shared networks
+and development secrets described above remain release blockers under
+[#80](https://github.com/tf4fun/antnest-platform/issues/80).

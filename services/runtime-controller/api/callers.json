@@ -1,0 +1,256 @@
+{
+  "service": "runtime-controller",
+  "status": "planned",
+  "implementation_issues": [
+    29
+  ],
+  "routes": {
+    "* /": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtime-images/resolve": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtime-observations": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtime-observations/watch": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtime-operations/{request_id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/delete": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/disable": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/enable": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/initialize": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/skill-sets/prepare": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/update": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /status": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "GET /internal/runtime-images/resolve": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/runtime-observations": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/runtime-observations/watch": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/runtime-operations/{request_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/runtimes": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/runtimes/{agent_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /status": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "POST /internal/runtimes/{agent_id}/delete": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/runtimes/{agent_id}/disable": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/runtimes/{agent_id}/enable": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/runtimes/{agent_id}/initialize": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/runtimes/{agent_id}/skill-sets/prepare": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/runtimes/{agent_id}/update": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    }
+  },
+  "guarded_sources": {}
+}

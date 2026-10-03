@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/platform/caller-context-header.schema.json",
+  "title": "Antnest CCT protected JWS header",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "typ",
+    "alg",
+    "kid"
+  ],
+  "properties": {
+    "typ": {
+      "const": "antnest-cct+jwt"
+    },
+    "alg": {
+      "const": "EdDSA"
+    },
+    "kid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!-~]+$"
+    }
+  }
+}

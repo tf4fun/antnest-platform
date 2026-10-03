@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/platform/service-authentication-error.schema.json",
+  "title": "Common authentication error classification (not a replacement HTTP envelope)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "http_status",
+    "retryable"
+  ],
+  "properties": {
+    "code": {
+      "enum": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "caller_context_required",
+        "caller_context_invalid"
+      ]
+    },
+    "http_status": {
+      "enum": [
+        401,
+        403
+      ]
+    },
+    "retryable": {
+      "const": false
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "code": {
+          "const": "caller_not_allowed"
+        },
+        "http_status": {
+          "const": 403
+        }
+      }
+    },
+    {
+      "properties": {
+        "code": {
+          "enum": [
+            "service_unauthenticated",
+            "caller_context_required",
+            "caller_context_invalid"
+          ]
+        },
+        "http_status": {
+          "const": 401
+        }
+      }
+    }
+  ]
+}

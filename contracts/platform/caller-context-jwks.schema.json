@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/platform/caller-context-jwks.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "keys"
+  ],
+  "properties": {
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kid",
+          "kty",
+          "crv",
+          "use",
+          "alg",
+          "x"
+        ],
+        "properties": {
+          "kid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[!-~]+$"
+          },
+          "kty": {
+            "const": "OKP"
+          },
+          "crv": {
+            "const": "Ed25519"
+          },
+          "use": {
+            "const": "sig"
+          },
+          "alg": {
+            "const": "EdDSA"
+          },
+          "x": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      }
+    }
+  },
+  "$comment": "kid values must be unique; x must decode to canonical 32-byte Ed25519 public keys. Never publish d."
+}
