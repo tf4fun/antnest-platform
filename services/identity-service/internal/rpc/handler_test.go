@@ -35,7 +35,7 @@ func TestRPCMapsDomainErrorsAndOIDCCallbackDisablesCaching(t *testing.T) {
 	services := &rpcServicesStub{resolveErr: domain.ErrUnauthenticated}
 	handler := newRPCHandler(t, services)
 	request := httptest.NewRequest(http.MethodPost, ContractRoutes["resolve_access_token"],
-		strings.NewReader(`{"access_token":"invalid"}`))
+		strings.NewReader(`{"access_token":"invalid","profile":"console"}`))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "unauthenticated") {
@@ -453,8 +453,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 13 {
-		t.Fatalf("identity contract revision=%d want=13", contract.Revision)
+	if contract.Revision != 14 {
+		t.Fatalf("identity contract revision=%d want=14", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -551,13 +551,9 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 
 func newRPCHandler(t *testing.T, services *rpcServicesStub) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(Dependencies{
+	return authenticatedBusinessHandler(t, Dependencies{
 		Directory: services, LocalAuth: services, OIDC: services, SCIM: services,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return handler
 }
 
 type rpcServicesStub struct {

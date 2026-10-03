@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -32,10 +33,7 @@ func TestLoginDispatcherCapturesActualDTOValuesAndPreservesCredentialWire(t *tes
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()); otel.SetTracerProvider(previous) })
 	stub := &rpcServicesStub{}
-	handler, err := NewHandler(Dependencies{Directory: stub, LocalAuth: observedLoginService{stub}, OIDC: stub, SCIM: stub})
-	if err != nil {
-		t.Fatal(err)
-	}
+	handler := authenticatedBusinessHandler(t, Dependencies{Directory: stub, LocalAuth: observedLoginService{stub}, OIDC: stub, SCIM: stub})
 	request := httptest.NewRequest(http.MethodPost, ContractRoutes["local_login"], strings.NewReader(`{"request_id":"request-42","organization_slug":"engineering","email":"EMAIL-CANARY@example.com","password":"PASSWORD-CANARY"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -66,5 +64,36 @@ func TestLoginDispatcherCapturesActualDTOValuesAndPreservesCredentialWire(t *tes
 	}
 	if !strings.Contains(requestJSON, "PASSWORD-CANARY") || !strings.Contains(responseJSON, "ACCESS-CANARY") {
 		t.Fatal("enabled RPC capture must preserve complete parameters and results")
+	}
+}
+
+func TestIssuedCallerContextIsOmittedFromEnabledRPCCapture(t *testing.T) {
+	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
+	previous := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()); otel.SetTracerProvider(previous) })
+	stub := &rpcServicesStub{}
+	handler := authenticatedBusinessHandler(t, Dependencies{Directory: stub, LocalAuth: stub, OIDC: stub, SCIM: stub})
+	request := httptest.NewRequest("POST", ContractRoutes["resolve_access_token"], strings.NewReader(`{"access_token":"user-access-token","profile":"console"}`))
+	response := httptest.NewRecorder()
+	telemetry.HTTPHandler(handler, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(response, request)
+	var result struct {
+		CallerContext string `json:"caller_context"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.CallerContext == "" {
+		t.Fatal("CCT issuance failed")
+	}
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatal("expected issuance span")
+	}
+	for _, event := range spans[0].Events() {
+		for _, attr := range event.Attributes {
+			if strings.Contains(attr.Value.AsString(), result.CallerContext) || strings.Contains(attr.Value.AsString(), `"caller_context"`) {
+				t.Fatal("CCT leaked into trace")
+			}
+		}
 	}
 }

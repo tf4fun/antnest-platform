@@ -1,5 +1,5 @@
 {
-  "status": "contract-only",
+  "status": "service-batches",
   "issue": 32,
   "delivery": {
     "branch": "feat/service-authentication",
@@ -43,12 +43,19 @@
     {
       "owner": "identity-service",
       "issues": [25],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "workload verification",
         "CCT issuer and JWKS",
         "administrative actor and JSON media-type checks"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs identity-service -- -race",
+        "postgres": "make test-identity-postgres (172 tests, 246 subtests, zero skips/failures)",
+        "docker": "node tests/e2e/service-authentication/identity/run.mjs (40 checks; cleaned)",
+        "pending_consumers": ["edge-gateway", "admin-console"],
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "edge-gateway",

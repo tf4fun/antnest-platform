@@ -36,15 +36,18 @@ identities, and tokens are separate records that point at that subject.
 | Direction | Interface | Purpose |
 | --- | --- | --- |
 | Inbound | `GET /status` | Liveness and readiness |
-| Inbound | `/rpc/identity/*` JSON RPC | Trusted internal identity commands and queries, including current-account capability projection |
+| Inbound | `/rpc/identity/*` JSON RPC | Authenticated internal identity commands and queries, including current-account capability projection |
 | Inbound | `GET /protocol/oidc/callback` | Standard Authorization Code callback |
 | Inbound | `/scim/v2/*` | SCIM 2.0 discovery and directory provisioning |
 | Outbound | OIDC discovery, token, UserInfo, and JWKS endpoints | Federated login |
 | Owned | Private PostgreSQL | Identity facts, credentials, events, and migrations |
 
-Internal transport is trusted. Administrator mutations still carry a
-principal and are authorized against Identity Service's own system or
-organization role facts. The internal RPC schema is
+Internal requests require the configured workload identity and exact route
+caller policy. Administrator bodies carry an audit echo of the Identity-signed
+CCT subject; Identity checks the live session, scope and its own role facts
+before effects. The [authentication contract](../../contracts/identity/service-authentication.md)
+defines token/mTLS, signing keys, JWKS, errors and rotation. Gateway, Console
+and deployment adoption are separate pending batches. The internal RPC schema is
 [`contracts/identity/identity-contract.json`](../../contracts/identity/identity-contract.json).
 
 ### Principal response contract
@@ -58,7 +61,8 @@ authorization inputs.
 
 For [issue #3](https://github.com/tf4fun/antnest-platform/issues/3), the chosen
 resolution is to implement the existing contract (option 1). Contract revision
-13 stays unchanged; no schema or database migration is required.
+13 stayed unchanged in that fix; it required no schema or database migration.
+The authentication batch now advances the RPC envelope to revision 14.
 `resolve_principal` still returns the separate, narrower
 `organization_principal_binding` shape.
 
@@ -87,6 +91,11 @@ for the failure behavior when components are upgraded out of order.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
+| `ANTNEST_SERVICE_AUTH_MODE` | Yes | None | Exact `token` or `mtls`; no fallback. |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | Token mode | None | Receiver hash JSON, read once at startup. |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | No | `false` | Exact `true` only permits disposable development HTTP in token mode. |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Secure transport | None | Complete platform TLS configuration; exact service URI identity and DNS verification. |
+| `ANTNEST_IDENTITY_CCT_SIGNING_KID`, `ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE`, `ANTNEST_IDENTITY_CCT_JWKS_FILE` | Yes | None | Exact signing ID, separate Ed25519 PKCS8 private key, bounded public JWKS. See the signing contract. |
 | `ANTNEST_IDENTITY_DATABASE_URL` | Yes | None | Private PostgreSQL URL. |
 | `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Yes | None | Canonical base64 encoding of exactly 32 bytes; AES key for OIDC client secrets. |
 | `ANTNEST_IDENTITY_PUBLIC_BASE_URL` | Yes | None | Absolute base URL for the OIDC callback and SCIM locations. No credentials, query, or fragment. HTTPS is required unless the host is `localhost`, `127.0.0.1`, or `::1`. A trailing `/` is removed. |
@@ -100,7 +109,7 @@ for the failure behavior when components are upgraded out of order.
 | `ANTNEST_BOOTSTRAP_ADMIN_EMAIL` | Conditional | None | Initial local system administrator email. |
 | `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD` | Conditional | None | Initial administrator password, 12 to 1024 bytes. Not trimmed. |
 | `ANTNEST_ENVIRONMENT` | No | None | Recorded as the `deployment.environment.name` telemetry resource attribute. |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` records complete RPC parameters and results, including credentials. Must be `true` or `false`. |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` records RPC parameters and results, including user credentials; issued CCTs are always omitted. Must be `true` or `false`. |
 | `OTEL_SDK_DISABLED` | No | None | `true` installs propagation only and exports nothing. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | None | OTLP HTTP base endpoint. A signal is exported only when this or its per-signal endpoint is set, or its exporter is `otlp`. |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | No | None | Per-signal OTLP endpoints. |
@@ -144,7 +153,9 @@ Repository and protocol integration tests live in
 The root runner uses a Go overlay to compile them in their original service
 packages, so they can use internal helpers without duplicating test source.
 `make test-identity-postgres` starts an isolated PostgreSQL dependency and runs
-the PostgreSQL suite. The suite covers deterministic login-admission races and
+the PostgreSQL suite. The suite covers workload authentication, CCT issuance/live-session revocation,
+strict JSON/media types, real token-TLS/mTLS handshakes, and deterministic
+login-admission races and
 a local HTTPS OIDC fixture (authorization redirect, PKCE, client
 authentication, signed ID token, and JWKS). It also checks completion
 deadlines, immutable client registration, and secret rotation.
@@ -152,7 +163,9 @@ Real handler responses are validated against the central principal JSON
 Schema. PostgreSQL tests check every principal builder, both OIDC callback
 paths, fresh organization metadata on token resolution, and organization
 renames during local login without weakening password/role/status checks.
-`make e2e-identity-core` additionally checks real Identity login and token
+`node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
+in an isolated Identity/PostgreSQL stack. The broader `make e2e-identity-core`
+remains a final integration gate after Gateway/Console adoption; it checks token
 resolution inside the disposable Docker network, before the Gateway/SCIM/OIDC
 suite.
 

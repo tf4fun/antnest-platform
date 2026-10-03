@@ -159,12 +159,23 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
   );
 });
 
-test("the foundation describes planned adoption without claiming service enforcement", () => {
+test("the rollout records admitted producers while keeping consumer and integration work pending", () => {
   const rollout = read("service-authentication-rollout.json");
-  assert.equal(rollout.status, "contract-only");
+  assert.equal(rollout.status, "service-batches");
   assert.deepEqual(rollout.batches[0].issues, [32, 101]);
   assert.equal(rollout.batches[0].owner, "platform-contracts");
-  assert(rollout.batches.slice(1).every((batch) => batch.status === "pending"));
+  const identity = rollout.batches.find(
+    (batch) => batch.owner === "identity-service",
+  );
+  assert.equal(identity.status, "service-admitted");
+  assert(identity.admission.unit_contract_component);
+  assert(identity.admission.postgres);
+  assert(identity.admission.docker);
+  assert.deepEqual(identity.admission.pending_consumers, [
+    "edge-gateway",
+    "admin-console",
+  ]);
+  assert(rollout.batches.slice(2).every((batch) => batch.status === "pending"));
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));
   assert(rollout.batches.some((batch) => batch.owner === "integration"));

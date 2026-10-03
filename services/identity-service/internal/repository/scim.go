@@ -65,6 +65,9 @@ func (a *SCIMAdapter) RevokeToken(ctx context.Context, actorUserID, tokenID stri
 		).Scan(&organizationID, &revokedAt); err != nil {
 			return err
 		}
+		if err := domain.CheckCallerOrganization(ctx, organizationID); err != nil {
+			return err
+		}
 		if err := a.store.requireOrganizationAdmin(ctx, tx, actorUserID, organizationID); err != nil {
 			return err
 		}

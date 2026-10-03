@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/config"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
@@ -27,6 +28,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/rpc"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/server"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 
@@ -59,7 +61,7 @@ func serviceFailureClass(err error) string {
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
-		if err := checkHealth(os.Getenv); err != nil {
+		if err := checkHealth(os.LookupEnv); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -67,7 +69,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Getenv); err != nil {
+	if err := run(ctx, os.LookupEnv); err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error(
 			"Identity Service stopped with an error",
 			"error_class", serviceFailureClass(err),
@@ -76,8 +78,9 @@ func main() {
 	}
 }
 
-func checkHealth(lookup func(string) string) (resultErr error) {
-	listenAddress := strings.TrimSpace(lookup("ANTNEST_IDENTITY_LISTEN"))
+func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
+	listenValue, _ := lookup("ANTNEST_IDENTITY_LISTEN")
+	listenAddress := strings.TrimSpace(listenValue)
 	if listenAddress == "" {
 		listenAddress = ":8080"
 	}
@@ -85,8 +88,19 @@ func checkHealth(lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("parse Identity listen address: %w", err)
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get("http://127.0.0.1:" + port + "/status")
+	tlsConfig, err := serviceauth.HealthTLS("identity-service", lookup)
+	if err != nil {
+		return err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: 2 * time.Second, Transport: transport}
+	scheme := "http"
+	if tlsConfig != nil {
+		scheme = "https"
+	}
+	response, err := client.Get(scheme + "://127.0.0.1:" + port + "/status")
 	if err != nil {
 		return fmt.Errorf("request Identity status: %w", err)
 	}
@@ -103,13 +117,22 @@ func joinCloseError(resultErr *error, resource string, closeFunc func() error) {
 	}
 }
 
-func run(ctx context.Context, lookup func(string) string) (resultErr error) {
-	cfg, err := config.Load(lookup)
+func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
+	getenv := func(key string) string { value, _ := lookup(key); return value }
+	cfg, err := config.Load(getenv)
+	if err != nil {
+		return classifyFailure("configuration", err)
+	}
+	authentication, err := serviceauth.LoadConfig("identity-service", lookup)
+	if err != nil {
+		return classifyFailure("configuration", err)
+	}
+	signing, err := callercontext.LoadSigning(lookup)
 	if err != nil {
 		return classifyFailure("configuration", err)
 	}
 	telemetryRuntime, err := telemetry.Setup(ctx, slog.NewJSONHandler(os.Stdout, nil), telemetry.Config{
-		ServiceVersion: version, Environment: lookup("ANTNEST_ENVIRONMENT"),
+		ServiceVersion: version, Environment: getenv("ANTNEST_ENVIRONMENT"),
 	})
 	if err != nil {
 		return classifyFailure("telemetry_startup", err)
@@ -182,8 +205,13 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	authority, err := callercontext.NewAuthority(callercontext.Config{KID: signing.KID, PrivateKey: signing.PrivateKey, Keys: signing.Keys, Repository: store.LocalAuth(), Now: time.Now, NewID: func() string { return identityid.MustNew("authtoken") }})
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
+		Authentication: authentication.Receiver, CallerContext: authority,
 	})
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -192,7 +220,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	handler, readiness, err := server.NewHandler(store, rpcHandler, scimHandler)
+	handler, readiness, err := server.NewHandler(store, rpcHandler, scimHandler, authentication.Receiver)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
@@ -201,6 +229,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 2 * time.Minute, IdleTimeout: 90 * time.Second,
 		MaxHeaderBytes: 1 << 20,
+		TLSConfig:      authentication.ServerTLS,
 	}
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
@@ -209,7 +238,13 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	readiness.Set(true)
 	logger.Info("Identity Service is ready", "listen_address", cfg.ListenAddress)
 	serverErrors := make(chan error, 1)
-	go func() { serverErrors <- httpServer.Serve(listener) }()
+	go func() {
+		if authentication.ServerTLS != nil {
+			serverErrors <- httpServer.ServeTLS(listener, "", "")
+		} else {
+			serverErrors <- httpServer.Serve(listener)
+		}
+	}()
 	select {
 	case <-ctx.Done():
 	case serveErr := <-serverErrors:

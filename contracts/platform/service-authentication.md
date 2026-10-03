@@ -3,9 +3,10 @@
 Status: foundation contract for [#32](https://github.com/tf4fun/antnest-platform/issues/32).
 The interim token wire/configuration profile is frozen by
 [#101](https://github.com/tf4fun/antnest-platform/issues/101).
-The schemas, caller catalogs and repository admission checks are delivered in
-this batch. Service enforcement, deployment changes and Docker security E2E
-remain pending in the [rollout ledger](service-authentication-rollout.json).
+The schemas, caller catalogs and repository admission checks are delivered by
+the foundation. Identity now enforces workload/CCT admission and provides the
+issuer/JWKS. Remaining service adoption, deployment changes and Docker security
+E2E are tracked in the [rollout ledger](service-authentication-rollout.json).
 This document does not describe the current unauthenticated listeners as secure.
 
 ## 1. Two independent identities
@@ -23,8 +24,9 @@ No database ownership or business authorization moves into shared middleware.
 
 Each service owns a `callers.json` alongside its wire contract. Every route has
 `callers`, an authentication mode, caller-context requirements **per caller**,
-and a request-body classification. These catalogs describe the required future
-policy; `status: planned` means it is not yet enforced by that listener.
+and a request-body classification. `status: planned` means a listener has not
+yet adopted its policy. `status: enforced` records adoption after the owning
+service gates pass; it does not claim final cross-service integration has passed.
 
 | Authentication mode | Meaning |
 | --- | --- |
@@ -301,9 +303,9 @@ Identity publishes `GET /rpc/identity/jwks` to authenticated, explicitly listed
 consumer services in #25. It needs workload authentication but no CCT, avoiding
 bootstrap recursion. Pin the Identity URL and deployment trust; never follow
 `jku`, `x5u`, arbitrary issuer URLs or unbounded redirects supplied by a token.
-The planned JWKS callers are exactly `edge-gateway`, `admin-console`, `agent-ui`,
+The JWKS callers are exactly `edge-gateway`, `admin-console`, `agent-ui`,
 `agent-acp-service`, `agent-controller` and `skill-registry`, all with workload
-authentication and no CCT. #25 adds that new registration to Identity's catalog
+authentication and no CCT. #25 owns that registration in Identity's catalog
 when it implements the issuer; RC, Runtime and Egress receive no JWKS grant.
 
 The [JWKS schema](caller-context-jwks.schema.json) contains only public

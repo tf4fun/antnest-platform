@@ -6,7 +6,8 @@ recovery, and shutdown.
 
 ## Startup And Readiness
 
-Startup validates configuration, connects to the private database, applies
+Startup validates workload mode/receiver credentials, complete TLS configuration
+and separate CCT signing/public keys before opening a listener. It connects to the private database, applies
 checksummed migrations, validates the encryption key, and idempotently creates
 the bootstrap Organization and local system administrator when bootstrap
 variables are present.
@@ -167,7 +168,7 @@ There is no per-field filtering or bespoke payload size limit. See
 
 ## Revocation Feed Recovery
 
-`list_principal_revocations` is private trusted-network RPC and must not be
+`list_principal_revocations` is a workload-authenticated Controller-only RPC and must not be
 forwarded by Gateway. It uses the same route and automatic driver spans and
 metrics as other RPC queries; completion logs do not contain event payloads.
 The existing RPC content switch still controls complete RPC parameters/results.
@@ -193,3 +194,23 @@ incomplete shutdown exits non-zero for platform replacement.
 OIDC callback failure finalization ignores caller cancellation so it can write
 the terminal fact, but has its own five-second deadline and stores only a
 stable stage summary.
+
+## Workload and CCT keys
+
+The [Identity authentication contract](../../../contracts/identity/service-authentication.md)
+is authoritative for exact environment values, PEM/JWKS bounds and errors. Missing
+mode, receiver hashes or signing material fails startup; no compatibility flag
+restores body-only authorization. Mount credentials read-only and rotate receiver
+hashes by restarting Identity after installing both current and next hashes.
+Clients replace complete token files atomically and never trim token bytes.
+
+Publish both current and next Ed25519 public keys before selecting a new signer.
+Keep the old public key through token lifetime, clock tolerance and bounded
+consumer-cache propagation. TLS, CCT, OIDC encryption and Runtime maintenance keys
+serve different purposes and must remain separate. `--healthcheck` verifies TLS
+even on loopback; in mTLS mode it uses the Identity certificate for the probe.
+
+Deploy this strict Identity producer together with the completed Gateway/Console
+consumer batches and deployment credential mounts. Existing unauthenticated
+consumers cannot call revision 14. The full Docker/browser regression is deferred
+to the final integration batch on `feat/service-authentication`.

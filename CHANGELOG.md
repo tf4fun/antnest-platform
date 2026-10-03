@@ -4,6 +4,18 @@
 
 ### Fixed
 
+Identity now rejects administrative calls based only on a body-selected actor
+([#25](https://github.com/tf4fun/antnest-platform/issues/25)). RPC revision 14
+requires verified workload identity, route allowlists and a signed caller context
+whose live session, subject and organization match the operation. It adds a
+protected public JWKS endpoint and CCT issuance to access-token resolution.
+JSON RPC media types and exact-case/duplicate member rules are enforced before
+effects. Missing workload/TLS/signing configuration fails startup. Deploy only
+after the matching Gateway/Console and credential-provisioning batches; the
+complete coordinated rollout and Docker E2E remain pending on
+`feat/service-authentication`.
+
+
 Runtime release images now use a feature-free default Docker target, while the
 test-only Skill commit gate requires an explicit `--target e2e` build
 ([#12](https://github.com/tf4fun/antnest-platform/issues/12)). Supplying

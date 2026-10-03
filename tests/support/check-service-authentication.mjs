@@ -266,7 +266,7 @@ if (
     const result = await checkRepository();
     for (const error of result.errors) console.error(error);
     console.log(
-      `checked ${result.services} service catalogs and ${result.routes} route caller policies (planned enforcement)`,
+      `checked ${result.services} service catalogs and ${result.routes} route caller policies`,
     );
     globalThis.process.exitCode = result.errors.length ? 1 : 0;
   } catch (error) {

@@ -10,8 +10,8 @@ does not enable Agents; administrators must explicitly enable them afterwards.
 
 ## Producer Contract
 
-`POST /rpc/identity/list-principal-revocations` is trusted internal RPC, not a
-Gateway/public route. Request: `after_sequence` (required, >= 0), `limit`
+`POST /rpc/identity/list-principal-revocations` requires verified Agent Controller workload identity.
+It is not a Gateway/public route and does not require a user CCT. Request: `after_sequence` (required, >= 0), `limit`
 (required, 1..500). Response: `events` ordered by increasing `sequence`, and
 `next_sequence` equal to the last returned sequence, or the requested cursor
 for an empty page. Start at zero; repeat requests safely; an empty page means

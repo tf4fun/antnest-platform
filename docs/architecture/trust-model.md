@@ -9,8 +9,10 @@ the design assumption that a reachable internal peer is trusted.
 ## Current delivery status
 
 The foundation defines schemas, public verification fixtures, planned caller
-catalogs and a repository route-coverage check. It does not install authentication
-middleware. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json)
+catalogs and a repository route-coverage check. The Identity batch now installs
+workload/CCT admission and the signed-context issuer. Gateway/Console forwarding,
+other receivers and coordinated deployment remain pending; producer completion
+does not establish an end-to-end authenticated browser workflow. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json)
 records the pending service/deployment/integration batches. Existing trusted
 headers, body actors, shared Registry tokens, wildcard listeners and published
 internal ports remain release blockers under

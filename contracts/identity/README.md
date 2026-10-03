@@ -4,7 +4,9 @@ Identity Service owns the JSON RPC contract in `identity-contract.json` and
 the standard OIDC/SCIM protocol surfaces described in
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md).
 
-The JSON contract is an internal trusted-network surface, not public OpenAPI.
+The JSON contract requires verified workload identity and route-specific caller
+context, as defined by the [Identity authentication contract](service-authentication.md)
+and the [platform profile](../platform/service-authentication.md). It is not public OpenAPI.
 It records each RPC method, route, request field type, response shape, and the
 stable error codes callers may branch on. `$ref` values address definitions in
 the same JSON document. `error.http_status_by_code` records non-default HTTP

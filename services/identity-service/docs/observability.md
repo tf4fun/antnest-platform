@@ -23,8 +23,9 @@ names a span.
 
 `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is the only content switch.
 When enabled, the RPC dispatcher records complete decoded parameters and
-results as JSON in `antnest.request` / `antnest.response` events. There is no
-field whitelist, content redaction, 16 KiB limit or collection projection.
+results as JSON in `antnest.request` / `antnest.response` events. Issued `caller_context` is always omitted from response capture. Other DTO
+content retains the existing capture behavior; no 16 KiB limit or collection
+projection is added.
 Disabled capture does not serialize DTOs. Standard SDK limits still apply.
 
 This is a development diagnostic capability: login passwords, access tokens

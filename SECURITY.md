@@ -21,8 +21,9 @@ Antnest Platform is designed for a single trusted Docker host or a private
 cluster network. Before exposing a deployment, understand these boundaries:
 
 - **Edge Gateway is the only public entry point.** All other services expose
-  internal HTTP/JSON RPC without service-to-service authentication, mTLS or
-  request signing. They must stay on private networks that browsers, Agent
+  internal HTTP/JSON RPC. Identity now requires workload token/mTLS and signed
+  caller context for administration; other service authentication and coordinated
+  deployment remain pending in the rollout ledger. They must stay on private networks that browsers, Agent
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
   `unix:///var/run/docker.sock`, which is equivalent to root on the host.

@@ -104,8 +104,10 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	authentication, authority, tokens := identityTestAuthentication(t, store)
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
+		Authentication: authentication, CallerContext: authority,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -114,13 +116,16 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, readiness, err := server.NewHandler(store, rpcHandler, scimHandler)
+	handler, readiness, err := server.NewHandler(store, rpcHandler, scimHandler, authentication)
 	if err != nil {
 		t.Fatal(err)
 	}
 	readiness.Set(true)
 	identity.Config.Handler = telemetry.HTTPHandler(handler, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	identity.Start()
+	consoleContext := ""
+	authenticatedIdentityClient(identity.Client(), identity.URL, tokens, &consoleContext)
+	authenticatedIdentityClient(idp.Client(), identity.URL, tokens, &consoleContext)
 
 	var login localauth.LoginResult
 	postJSON(t, identity.Client(), identity.URL+rpc.ContractRoutes["local_login"], map[string]any{
@@ -131,7 +136,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		t.Fatalf("local login = %#v", login)
 	}
 	assertPrincipalOrganization(t, login.Principal, bootstrap.Organization)
-	assertResolvedPrincipal(t, identity.Client(), identity.URL, login.AccessToken, bootstrap.User.ID)
+	consoleContext = assertResolvedPrincipal(t, identity.Client(), identity.URL, login.AccessToken, bootstrap.User.ID)
 
 	var issued scim.IssueTokenResult
 	postJSON(t, identity.Client(), identity.URL+rpc.ContractRoutes["issue_scim_token"], map[string]any{
@@ -328,17 +333,22 @@ func decodeResponse(t *testing.T, response *http.Response, wantStatus int, targe
 	}
 }
 
-func assertResolvedPrincipal(t *testing.T, client *http.Client, serviceURL, token, wantUserID string) {
+func assertResolvedPrincipal(t *testing.T, client *http.Client, serviceURL, token, wantUserID string) string {
 	t.Helper()
 	var response struct {
-		Principal domain.Principal `json:"principal"`
+		Principal     domain.Principal `json:"principal"`
+		CallerContext string           `json:"caller_context"`
 	}
 	postJSON(t, client, serviceURL+rpc.ContractRoutes["resolve_access_token"], map[string]string{
-		"access_token": token,
+		"access_token": token, "profile": "console",
 	}, &response)
 	if response.Principal.UserID != wantUserID || !response.Principal.Active {
 		t.Fatalf("resolved principal = %#v, want user %s", response.Principal, wantUserID)
 	}
+	if response.CallerContext == "" {
+		t.Fatal("Identity did not issue a caller context")
+	}
+	return response.CallerContext
 }
 
 type oidcProvider struct {

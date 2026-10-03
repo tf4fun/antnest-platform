@@ -42,11 +42,17 @@ func TestHealthcheckUsesConfiguredPort(t *testing.T) {
 		_ = server.Close()
 		<-done
 	})
-	if err := checkHealth(func(key string) string {
+	if err := checkHealth(func(key string) (string, bool) {
 		if key == "ANTNEST_IDENTITY_LISTEN" {
-			return listener.Addr().String()
+			return listener.Addr().String(), true
 		}
-		return ""
+		if key == "ANTNEST_SERVICE_AUTH_MODE" {
+			return "token", true
+		}
+		if key == "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT" {
+			return "true", true
+		}
+		return "", false
 	}); err != nil {
 		t.Fatalf("healthcheck: %v", err)
 	}

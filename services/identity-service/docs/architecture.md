@@ -183,7 +183,9 @@ internal/oidcflow/        Provider configuration and login state machine
 internal/oidcclient/      standards-based OIDC discovery and verification adapter
 internal/scim/            SCIM resource semantics and HTTP projection
 internal/repository/      private PostgreSQL adapters and migrations
-internal/rpc/             trusted internal JSON transport
+internal/rpc/             authenticated JSON transport, workload/CCT admission
+internal/serviceauth/     strict workload tokens, TLS/mTLS and JSON parsing
+internal/callercontext/   Identity-owned Ed25519 issuer and live-session verifier
 internal/server/          status and protocol route composition
 internal/telemetry/       OTLP setup and HTTP/application instrumentation
 cmd/identity-service/     composition root only
@@ -340,10 +342,16 @@ fields; the RPC never returns credential material.
 
 ## Service authentication rollout
 
-The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/identity/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#25](https://github.com/tf4fun/antnest-platform/issues/25); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+Identity implements [RPC revision 14 and its authentication profile](../../../contracts/identity/service-authentication.md).
+Its [caller catalog](../../../contracts/identity/callers.json) is enforced before
+application calls: verified workload identity, route allowlist, administrative
+CCT signature/audience/lifetime, live session and actor/scope matching. The issuer
+uses the existing API token ID as `sid`; there is no additional session store.
+Receiver hashes and signing/public keys are validated before listening. Secure
+listeners and local probes verify platform TLS identities; explicit development
+HTTP remains token-authenticated.
+
+Gateway and Console forwarding, other receiver implementations and coordinated
+deployment remain separate owning-service batches in the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json).
+This producer batch alone does not complete the browser or cross-service workflow.

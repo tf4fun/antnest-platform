@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 )
 
 // Messages are service-owned summaries; neither Error() nor database Detail is
@@ -37,9 +38,22 @@ var safeErrorMessages = map[string]string{
 	"oidc_exchange_claim_invalid":       "OIDC callback claim is invalid",
 	"oidc_completed_token_unavailable":  "The completed OIDC credential is no longer available",
 	"scim_protocol_error":               "SCIM rejected the protocol request",
+	"service_unauthenticated":           "Service authentication rejected",
+	"caller_not_allowed":                "Workload caller is not permitted on this route",
+	"caller_context_required":           "Authenticated caller context is required",
+	"caller_context_invalid":            "Caller context verification failed",
+	"actor_mismatch":                    "Body actor does not match authenticated caller",
+	"unsupported_media_type":            "RPC content type is unsupported",
+	"identity_dependency_unavailable":   "Identity authorization dependency is unavailable",
 }
 
 func ErrorSummary(err error) (string, string) {
+	var workload *serviceauth.Failure
+	if errors.As(err, &workload) {
+		if message, ok := safeErrorMessages[workload.Code]; ok {
+			return workload.Code, message
+		}
+	}
 	var business *domain.Error
 	if errors.As(err, &business) {
 		if message, ok := safeErrorMessages[business.Code]; ok {
