@@ -170,6 +170,8 @@ size, stop reason and usage, without prompts, Skill contents or credentials.
 Intentional skips and foreground preemption are not task failures.
 
 `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID` is a development setting. A configured
+ID retains the existing `optional()` normalization: surrounding whitespace is
+trimmed, and empty or whitespace-only values mean unset. The normalized
 Agent ID requires `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true`; otherwise
 configuration fails before opening the database or network. The gate defaults
 to `false` and accepts exactly `true` or `false`, without trimming or case

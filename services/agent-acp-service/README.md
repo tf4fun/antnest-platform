@@ -111,6 +111,11 @@ rejects invalid IDs without trimming whitespace.
 | `OTEL_SERVICE_NAME`                             | no       | `agent-acp-service` | Service name in telemetry                                                                                      |
 | `OTEL_SDK_DISABLED`                             | no       | `false`             | Disable the OpenTelemetry SDK                                                                                  |
 
+The debug Agent ID retains the existing `optional()` normalization: leading and
+trailing whitespace is removed; empty or whitespace-only values mean unset.
+`ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS` is parsed without trimming or case
+conversion: `"true"` is valid, but `" true "` and `"TRUE"` fail configuration.
+
 Durations accept a positive integer followed by `ms`, `s` or `m`. Invalid
 values fail startup before the database or network is used. The all-zero key
 in the repository's `.env.example` is for disposable local data only. See

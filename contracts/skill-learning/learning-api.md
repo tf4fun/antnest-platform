@@ -319,6 +319,9 @@ apply bases, intents, outcomes and immutable changes in ACP persistence.
 ### Development debug learning
 
 ACP may configure `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID` with one Agent ID.
+The ID retains the existing `optional()` normalization: leading and trailing
+whitespace is removed, and empty or whitespace-only values mean unset. The
+development gate is parsed without trimming or case conversion.
 The ID requires `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true`; an unset or false
 gate rejects configuration before dependency startup. The gate defaults to
 `false`, accepts only the exact strings `true` and `false`, and rejects every

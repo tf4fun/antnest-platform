@@ -9,6 +9,10 @@ ACP's development-only Skill learning debug Agent now requires the explicit
 ([#11](https://github.com/tf4fun/antnest-platform/issues/11)). The gate defaults to
 `false` and accepts only exact `true` or `false` values. Existing deployments
 that supply a debug Agent without the gate now fail configuration at startup.
+The debug Agent ID retains its existing normalization: surrounding whitespace is
+trimmed, and empty or whitespace-only values mean unset. The gate performs no
+trimming or case conversion; padded or differently capitalized booleans fail
+configuration.
 Enabled debug learning emits one startup warning identifying the Agent. Standard
 Compose no longer passes either setting from the operator's environment; both
 are confined to the Skill learning E2E override. Normal learning policy, budgets
