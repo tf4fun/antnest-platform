@@ -18,11 +18,10 @@ import (
 
 func TestSkillSourceRealHTTPConsumerScopesPreviewAndPromotion(t *testing.T) {
 	archive, artifactDigest, contentDigest := sourceArchive(t, "---\nname: code-review\ndescription: Review code\n---\nReview a change.\n")
-	token := "console-discovery-component-token-at-least-32-bytes"
 	var mu sync.Mutex
 	var calls []skillCall
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("Cookie") != "" || r.Header.Get(principal.HeaderUserID) != "" {
+		if r.Header.Get("Authorization") != "" || r.Header.Get("Antnest-Caller-Context") == "" || r.Header.Get("Cookie") != "" || r.Header.Get(principal.HeaderUserID) != "" {
 			t.Error("Registry service connection leaked browser authentication or principal headers")
 			w.WriteHeader(401)
 			return
@@ -58,14 +57,11 @@ func TestSkillSourceRealHTTPConsumerScopesPreviewAndPromotion(t *testing.T) {
 		}
 	}))
 	defer registry.Close()
-	client, err := upstream.NewRegistryClient(registry.URL, token, &http.Client{Timeout: 2 * time.Second})
+	client, err := upstream.NewRegistryClient(registry.URL, &http.Client{Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(Config{}, Dependencies{Backend: newBackendStub(), Registry: client, Assets: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newBusinessHandler(t, Config{}, Dependencies{Backend: newBackendStub(), Registry: client, Assets: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	console := httptest.NewServer(h)
 	defer console.Close()
 	for _, step := range []struct {

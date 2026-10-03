@@ -8,26 +8,26 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 )
 
 // RegistryClient is the Console's internal-only connection to Skill Registry.
-// It never forwards browser cookies, Authorization, or principal headers.
+// It forwards verified caller context, never browser credentials or identity hints.
 type RegistryClient struct {
-	base  *url.URL
-	token string
-	http  *http.Client
+	base *url.URL
+	http *http.Client
 }
 
-func NewRegistryClient(rawURL, token string, source *http.Client) (*RegistryClient, error) {
+func NewRegistryClient(rawURL string, source *http.Client) (*RegistryClient, error) {
 	base, err := parseServiceURL("Skill Registry", rawURL)
-	if err != nil || source == nil || len(token) < 32 || strings.TrimSpace(token) != token {
+	if err != nil || source == nil {
 		return nil, fmt.Errorf("skill registry connection is invalid")
 	}
 	client := *source
 	client.Transport = telemetry.NewHTTPTransport(client.Transport)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &RegistryClient{base: base, token: token, http: &client}, nil
+	return &RegistryClient{base: base, http: &client}, nil
 }
 
 func (client *RegistryClient) Do(ctx context.Context, method, path, query, contentType string, body []byte) (*http.Response, error) {
@@ -42,7 +42,7 @@ func (client *RegistryClient) Do(ctx context.Context, method, path, query, conte
 	if err != nil {
 		return nil, fmt.Errorf("create Registry request: %w", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+client.token)
+	callercontext.Forward(ctx, request.Header)
 	request.Header.Set("Accept", "application/json")
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)

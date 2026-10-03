@@ -259,8 +259,8 @@ func TestSkillSourceRequestsAreBoundedAndPromotionHasNoAutomaticRetry(t *testing
 	if w.Code != 400 || len(stub.calls) != 0 {
 		t.Fatalf("oversized status=%d calls=%d", w.Code, len(stub.calls))
 	}
-	h.(*handler).skillUploads <- struct{}{}
-	h.(*handler).skillUploads <- struct{}{}
+	h.(*businessFixture).skillUploads <- struct{}{}
+	h.(*businessFixture).skillUploads <- struct{}{}
 	for _, action := range []string{"preview", "promote"} {
 		w = sourceCall(t, h, action, sourceSelection(sourceDigest), "source-attempt-0001")
 		if w.Code != 429 || len(stub.calls) != 0 {

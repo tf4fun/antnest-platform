@@ -13,7 +13,6 @@ type Config struct {
 	AgentControllerURL     string
 	AgentACPURL            string
 	SkillRegistryURL       string
-	SkillRegistryToken     string
 	DefaultRuntimeImageRef string
 	DependencyTimeout      time.Duration
 	ShutdownTimeout        time.Duration
@@ -37,7 +36,6 @@ func Load(lookup func(string) string) (Config, error) {
 		AgentControllerURL:     strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
 		AgentACPURL:            strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_SERVICE_URL")),
 		SkillRegistryURL:       strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
-		SkillRegistryToken:     lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN"),
 		DefaultRuntimeImageRef: strings.TrimSpace(lookup("ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF")),
 		DependencyTimeout:      dependencyTimeout,
 		ShutdownTimeout:        shutdownTimeout,
@@ -55,11 +53,9 @@ func Load(lookup func(string) string) (Config, error) {
 		if err := serviceURL("ANTNEST_SKILL_REGISTRY_URL", config.SkillRegistryURL); err != nil {
 			return Config{}, err
 		}
-		if len(config.SkillRegistryToken) < 32 || strings.TrimSpace(config.SkillRegistryToken) != config.SkillRegistryToken {
-			return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN must be at least 32 non-whitespace bytes")
-		}
-	} else if config.SkillRegistryToken != "" {
-		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_URL is required when Registry token is configured")
+	}
+	if lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN") != "" {
+		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN is removed; use unified service authentication")
 	}
 	return config, nil
 }
@@ -67,7 +63,7 @@ func Load(lookup func(string) string) (Config, error) {
 func serviceURL(name, raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
+		parsed.User != nil || parsed.Opaque != "" || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("%s must be an absolute HTTP URL", name)
 	}
 	return nil

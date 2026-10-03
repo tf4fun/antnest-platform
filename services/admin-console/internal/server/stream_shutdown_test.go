@@ -123,20 +123,12 @@ func (w *blockedStreamWriter) SetWriteDeadline(deadline time.Time) error {
 
 func (w *blockedStreamWriter) unblock() { w.once.Do(func() { close(w.expired) }) }
 
-func newStoppingHandler(t *testing.T, backend Backend, ctx context.Context, output io.Writer) *handler {
+func newStoppingHandler(t *testing.T, backend Backend, ctx context.Context, output io.Writer) *businessFixture {
 	t.Helper()
-	h, err := NewHandler(Config{}, Dependencies{
+	return newBusinessHandler(t, Config{}, Dependencies{
 		Backend: backend, Assets: fstest.MapFS{"index.html": &fstest.MapFile{}},
 		StreamContext: ctx, Logger: slog.New(slog.NewTextHandler(output, nil)),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, ok := h.(*handler)
-	if !ok {
-		t.Fatal("unexpected handler implementation")
-	}
-	return result
 }
 
 type quietWatchBackend struct {

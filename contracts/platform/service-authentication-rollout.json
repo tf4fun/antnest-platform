@@ -53,7 +53,7 @@
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs identity-service -- -race",
         "postgres": "make test-identity-postgres (172 tests, 246 subtests, zero skips/failures)",
         "docker": "node tests/e2e/service-authentication/identity/run.mjs (40 checks; cleaned)",
-        "pending_consumers": ["admin-console"],
+        "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch"
       }
     },
@@ -70,7 +70,6 @@
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (141 tests, 340 subtests, zero skips/failures); authenticated WebSocket rotation regression passed",
         "docker": "node tests/e2e/service-authentication/gateway/run.mjs (48 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
         "pending_consumers": [
-          "admin-console",
           "agent-ui",
           "agent-acp-service",
           "agent-controller"
@@ -81,12 +80,22 @@
     {
       "owner": "admin-console",
       "issues": [25, 26],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "workload and CCT verification",
         "verified actor forwarding",
         "JSON media-type checks"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs admin-console -- -race (190 tests, 335 subtests, zero skips/failures)",
+        "docker": "node tests/e2e/service-authentication/console/run.mjs (54 authentication, lifecycle-progress and SIGTERM/SIGINT/restart checks; cleaned)",
+        "pending_consumers": [
+          "agent-controller",
+          "agent-acp-service",
+          "skill-registry"
+        ],
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "agent-acp-service",

@@ -26,7 +26,9 @@ server ID/command summaries. All responses are `no-store`. See
 ```text
 web/                         React application and shadcn UI components
 internal/config/             environment configuration
-internal/principal/          trusted Edge Gateway principal parser
+internal/principal/          verified actor request-context types
+internal/serviceauth/        workload admission and authenticated dependency transports
+internal/callercontext/      strict CCT verification and bounded protected JWKS cache
 internal/upstream/           traced Identity, Agent Controller and ACP clients
                              (client.go) and Skill Registry client (registry.go)
 internal/providerdiscovery/  outbound Provider GET /models discovery and pricing decoding
@@ -36,11 +38,14 @@ cmd/admin-console/           composition and shutdown only
 ```
 
 The Skill Registry client is created only when `ANTNEST_SKILL_REGISTRY_URL` is
-set; it authenticates with the configured service token, which never reaches
-the browser. The Provider discovery client calls administrator-supplied
+set; its authenticated transport uses the same per-receiver token/mTLS policy
+as Identity, Controller and ACP. The old `ANTNEST_SKILL_REGISTRY_API_TOKEN` is
+removed and a nonempty setting fails startup. Credentials never reach the browser. The Provider discovery client calls administrator-supplied
 Provider base URLs directly; see [operations](operations.md#outbound-network-access).
 
-The BFF receives a verified principal from Edge Gateway. It generates request
+The BFF authenticates Gateway and verifies Identity-signed caller context against
+the protected Identity JWKS, its own audience, lifetime and actual Agent route.
+Unsigned presentation headers do not grant access. It generates request
 IDs and authority fields, then calls the existing language-neutral internal
 contracts. Browser JSON cannot select another organization or impersonate an
 actor.

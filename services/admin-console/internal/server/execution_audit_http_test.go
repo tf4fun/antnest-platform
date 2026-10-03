@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
@@ -85,7 +86,7 @@ func TestExecutionAuditRealHTTPPreservesIdentityAndTraceWithoutController(t *tes
 		{"/api/admin/execution-audits/run-1/events?stream=permissions", "list-execution-events", `{"run_id":"run-1","stream":"permissions"}`},
 	} {
 		t.Run(item.rpc, func(t *testing.T) {
-			actor := principal.Principal{UserID: "Admin Oncall:+ops@example", OrganizationID: "org-1", MembershipID: "membership/one", SystemRole: "user", OrganizationRole: "admin"}
+			actor := principal.Principal{UserID: "AdminOncall:+ops@example", OrganizationID: "org-1", MembershipID: "membership/one", SystemRole: "user", OrganizationRole: "admin"}
 			request := httptest.NewRequest(http.MethodGet, bff.URL+item.path, nil)
 			request.RequestURI = ""
 			request.Header, err = actor.Headers()
@@ -110,9 +111,10 @@ func TestExecutionAuditRealHTTPPreservesIdentityAndTraceWithoutController(t *tes
 			require.JSONEq(t, item.body, string(call.Body))
 			expectedHeaders, err := actor.Headers()
 			require.NoError(t, err)
-			for name, values := range expectedHeaders {
-				require.Equal(t, values, call.Header.Values(name))
+			for name := range expectedHeaders {
+				require.Empty(t, call.Header.Values(name))
 			}
+			require.NotEmpty(t, call.Header.Get(callercontext.Header))
 			for _, name := range []string{"Cookie", "Authorization", "X-Antnest-Agent-ID", "X-Antnest-Principal-ID"} {
 				require.Empty(t, call.Header.Get(name))
 			}

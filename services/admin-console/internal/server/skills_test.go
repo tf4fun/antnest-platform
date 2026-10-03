@@ -52,12 +52,9 @@ func (stub *skillStub) Do(_ context.Context, method, path, query, contentType st
 
 func skillHandler(t *testing.T, stub *skillStub) http.Handler {
 	t.Helper()
-	h, err := NewHandler(Config{}, Dependencies{Backend: newBackendStub(), Registry: stub,
+	h := newBusinessHandler(t, Config{}, Dependencies{Backend: newBackendStub(), Registry: stub,
 		Assets: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if err != nil {
-		t.Fatal(err)
-	}
 	return h
 }
 
@@ -258,7 +255,7 @@ func TestSkillRegistryErrorsAndInvalidUploads(t *testing.T) {
 
 func TestSkillUploadCapacityRejectsBeforeReadingArtifact(t *testing.T) {
 	stub := &skillStub{body: `{}`}
-	h := skillHandler(t, stub).(*handler)
+	h := skillHandler(t, stub).(*businessFixture)
 	h.skillUploads <- struct{}{}
 	h.skillUploads <- struct{}{}
 	w := httptest.NewRecorder()
@@ -291,9 +288,8 @@ func TestSkillArtifactDownloadChecksDigestAndScope(t *testing.T) {
 }
 
 func TestSkillConsoleBoundaryCallsRegistryWithServiceTokenAndTrustedScope(t *testing.T) {
-	const token = "local-skill-registry-token-000000000000"
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("Cookie") != "" || r.Header.Get(principal.HeaderUserID) != "" {
+		if r.Header.Get("Authorization") != "" || r.Header.Get("Antnest-Caller-Context") == "" || r.Header.Get("Cookie") != "" || r.Header.Get(principal.HeaderUserID) != "" {
 			t.Errorf("unsafe Registry headers: %v", r.Header)
 		}
 		if r.URL.Path != "/internal/skills" || r.URL.Query().Get("organization_id") != "org-1" || r.URL.Query().Has("actor_id") {
@@ -302,16 +298,13 @@ func TestSkillConsoleBoundaryCallsRegistryWithServiceTokenAndTrustedScope(t *tes
 		_, _ = io.WriteString(w, `{"items":[],"next_after_id":null}`)
 	}))
 	defer registry.Close()
-	client, err := upstream.NewRegistryClient(registry.URL, token, registry.Client())
+	client, err := upstream.NewRegistryClient(registry.URL, registry.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(Config{}, Dependencies{Backend: newBackendStub(), Registry: client,
+	h := newBusinessHandler(t, Config{}, Dependencies{Backend: newBackendStub(), Registry: client,
 		Assets: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if err != nil {
-		t.Fatal(err)
-	}
 	r := skillRequest("GET", "/api/admin/skills", nil, "", "")
 	r.Header.Set("Cookie", "session=browser-secret")
 	w := httptest.NewRecorder()

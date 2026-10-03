@@ -13,7 +13,7 @@ operator's point of view.
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL |
 | `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | trusted ACP execution-audit base URL |
 | `ANTNEST_SKILL_REGISTRY_URL` | no | empty | Skill Registry base URL; when empty, Skill routes return `503 dependency_unavailable` |
-| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | with Registry URL | - | Registry service token, at least 32 bytes without surrounding whitespace; must be set together with the URL and rejected without it |
+| `ANTNEST_SERVICE_AUTH_MODE` | yes | - | Exact `token` or `mtls`; shared workload configuration described below |
 | `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | empty | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
 | `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | `15s` | bounded non-streaming dependency timeout, including Provider model discovery |
 | `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | `15s` | graceful HTTP drain budget |
@@ -113,7 +113,7 @@ before running it. The
 controlled upstream container itself uses only Node built-ins.
 
 The regression uses two disposable containers on its own labelled network,
-synthetic trusted headers and a quiet controlled upstream. It tests SIGTERM,
+temporary workload credentials, signed CCTs and a quiet authenticated upstream. It tests SIGTERM,
 restart and SIGINT with an open Watch, exit codes and stream cancellation. It
 does not start PostgreSQL, call model providers or inspect integration secrets.
 Success, failure and interruption clean only its own labelled resources. It
@@ -179,7 +179,7 @@ disposes the stream and retry timer; late replay responses must not reopen it.
 For EventSource reconnect requests the BFF translates `Last-Event-ID` to the
 upstream Watch cursor, taking precedence over a stale `after_sequence` URL.
 Malformed or repeated header values must fail instead of silently replaying
-from zero. Organization scope always comes from the trusted Gateway principal.
+from zero. Organization scope always comes from the verified Identity-signed principal.
 
 Console Go tests and `npm --prefix services/admin-console/web test` cover the
 BFF and components with controlled upstreams and events. Docker startup,
@@ -209,3 +209,27 @@ policy internals and packet data are not logged as trace attributes. Real
 HTTP component tests validate parentage without a Collector; deployed
 Gateway-rooted traces and live packet enforcement are verified by the platform
 Docker end-to-end suite.
+
+## Workload and caller-context configuration
+
+Follow the [exact authentication contract](../../../contracts/admin-console/service-authentication.md).
+Set `ANTNEST_SERVICE_AUTH_MODE` explicitly. Token deployments require read-only
+`ANTNEST_SERVICE_AUTH_CALLERS_FILE` and `ANTNEST_SERVICE_AUTH_TOKEN_DIR` files.
+TLS uses `ANTNEST_SERVICE_AUTH_TLS_CA_FILE`, `ANTNEST_SERVICE_AUTH_TLS_CERT_FILE`,
+`ANTNEST_SERVICE_AUTH_TLS_KEY_FILE` and `ANTNEST_SERVICE_AUTH_TLS_SERVER_NAME`;
+mTLS is TLS 1.3 with exact peer DNS and service URI checks. Plain HTTP needs the
+explicit disposable-development flag; partial TLS or missing credentials fail
+startup. `--healthcheck` verifies the loopback server certificate as well.
+
+All configured internal dependencies use the shared policy. A nonempty
+`ANTNEST_SKILL_REGISTRY_API_TOKEN` now fails startup. Rotate sender token files
+atomically; the next request reads the replacement and malformed or absent files
+fail closed. Receivers reload caller hashes on restart. Do not mount token files
+into browsers, Runtime workspaces or Provider-discovery clients.
+
+CCT trust expires after 30 seconds, and unknown-key refreshes are serialized and
+limited to one per five seconds. An expired trust cache never survives an Identity
+outage. Authentication rejection uses stable 401/403 codes; expired CCT cannot
+admit a new operation, while an accepted stream is not cancelled by token expiry.
+The final coordinated deployment and E2E remain pending until all consumers pass
+their owning-service gates.

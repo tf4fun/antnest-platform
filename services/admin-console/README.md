@@ -9,7 +9,7 @@ application.
 
 Every write is one command to one owning service, and every read is projected
 through an explicit browser DTO allowlist. Organization scope and actor always
-come from Edge Gateway's trusted principal, never from browser input.
+come from verified Identity-signed caller context, never from browser input.
 
 ## Responsibilities
 
@@ -17,7 +17,7 @@ come from Edge Gateway's trusted principal, never from browser input.
 - Page-oriented request shaping and response aggregation (Overview,
   inventories, Agent detail).
 - Explicit browser DTO allowlists that keep control-plane fields internal.
-- Organization scoping from Edge Gateway's trusted principal.
+- Organization scoping from verified Identity-signed caller context.
 - Builtin Provider and model catalog defaults (`internal/server/builtin_catalog.go`).
 - Provider model discovery against administrator-supplied Provider base URLs.
 - Skill inventory, upload, discovery and promotion through Skill Registry.
@@ -60,7 +60,11 @@ Console directly.
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | Agent Controller base URL |
 | `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | Agent ACP Service base URL for execution audit |
 | `ANTNEST_SKILL_REGISTRY_URL` | no | empty | Skill Registry base URL; without it Skill routes return `503 dependency_unavailable` |
-| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | with Registry URL | - | Registry service token, at least 32 bytes with no surrounding whitespace; must be configured together with the URL |
+| `ANTNEST_SERVICE_AUTH_MODE` | yes | - | Exactly `token` or `mtls`; see the [authentication contract](../../contracts/admin-console/service-authentication.md) |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | token mode | - | Read-only Gateway caller hashes, loaded at startup |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | token mode | - | Per-receiver credentials, validated at startup and read on every new request |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | no | `false` | Exact `true` only for disposable token-mode development HTTP |
+| `ANTNEST_SERVICE_AUTH_TLS_*` | TLS | - | CA, certificate, key and server DNS identity; required in mTLS mode |
 | `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | empty | Default Runtime image reference offered when creating a Template |
 | `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | `15s` | Timeout for non-streaming dependency calls, including Provider discovery |
 | `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | `15s` | Graceful HTTP drain budget |
@@ -75,7 +79,7 @@ origin, so there is no Console variable for them. See
 
 ## Dependencies
 
-- Edge Gateway: the only external caller; supplies the trusted principal.
+- Edge Gateway: the only external caller; forwards signed caller context; Console verifies it.
 - Identity Service: required for Directory, Provisioning and account pages.
 - Agent Controller: required for catalog, Template and Agent pages. Agent
   inventory is the only required Overview section; other sections degrade.
@@ -113,6 +117,9 @@ node tests/integration/go/run.mjs admin-console
 
 # Docker image (build context is the repository root)
 docker build -f services/admin-console/Dockerfile -t antnest/admin-console:local .
+
+# Authenticated owning-service Docker acceptance
+node tests/e2e/service-authentication/console/run.mjs
 
 # Docker signal regression
 node tests/e2e/admin-console/shutdown-docker.mjs
@@ -154,3 +161,20 @@ the web application; `make test-integration-node` runs the browser tests;
 - [Agent workspace navigation](docs/agent-workspace-navigation.md) - links into Agent UI.
 - [Admin contract](../../contracts/admin-console/README.md) and [skill discovery contract](../../contracts/admin-console/skill-discovery.md).
 - [Stage 3 admin control plane](../../docs/stage-3-admin-control-plane.md), [model discovery](../../docs/model-discovery.md), [Provider credentials and models](../../docs/provider-credentials-and-models.md), [product surfaces](../../docs/product-surfaces.md).
+
+## Authentication rollout
+
+The [Console authentication contract](../../contracts/admin-console/service-authentication.md)
+requires workload identity on application and API routes. Only Gateway may call
+these routes; unknown API registrations remain denied. Administrative requests
+also require a signed CCT. The signing keys are fetched only from authenticated
+Identity and cached for 30 seconds, with one unknown-key refresh per five seconds.
+Expired cache or unavailable Identity fails closed. JSON request bodies reject
+non-UTF-8 charsets, duplicate members, case aliases and extra documents.
+
+Dependency origins must identify distinct services. Registry shares this policy;
+its previous `ANTNEST_SKILL_REGISTRY_API_TOKEN` configuration is removed. External
+Provider discovery uses a separate client without workload or CCT credentials.
+Identity and Gateway must deploy before Console. Controller, ACP and Registry
+consumption, deployment provisioning and complete cross-service Docker acceptance
+remain separate batches on `feat/service-authentication`.

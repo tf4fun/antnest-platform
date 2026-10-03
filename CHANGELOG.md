@@ -4,6 +4,21 @@
 
 ### Fixed
 
+Admin Console now authenticates Gateway and verifies Identity-signed caller
+context before administrative effects ([#25](https://github.com/tf4fun/antnest-platform/issues/25),
+[#26](https://github.com/tf4fun/antnest-platform/issues/26)). BFF revision 49 uses
+signed actor, organization, roles and actual Agent scope; unsigned identity
+headers cannot grant access. Protected JWKS trust expires after 30 seconds,
+unknown-key refreshes are limited, and unavailable expired trust fails closed.
+Every internal dependency uses exact per-receiver token/mTLS credentials, with
+unchanged CCT forwarding and no browser credentials or legacy audit identity
+headers. JSON parsing rejects ambiguous media types, duplicate members and case
+aliases. Console's old `ANTNEST_SKILL_REGISTRY_API_TOKEN` setting is removed;
+a nonempty value fails startup. Deploy Identity, Gateway, then Console with the
+new credentials. Controller/ACP/Registry consumers, deployment and final
+cross-service acceptance remain pending on `feat/service-authentication`.
+
+
 Gateway now authenticates each internal dependency with the exact token/mTLS
 contract and forwards Identity revision-14 signed caller context selected by
 the actual route ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
@@ -14,7 +29,7 @@ WebSocket connection; invalid replacements fail closed without stale fallback.
 Internal origins, TLS DNS/service identities and redirects are constrained.
 Gateway session contract revision 15 keeps browser JSON unchanged and rejects
 new direct WebSocket messages after the handshake CCT expires; reconnect does
-not cancel accepted Runs. Identity must upgrade first; Console/UI/ACP/Controller
+not cancel accepted Runs. Identity must upgrade first; UI/ACP/Controller
 consumers, deployment credentials and final integration remain pending on
 `feat/service-authentication`. #58 separately owns long-lived renewal.
 

@@ -28,7 +28,7 @@ func (l *modelListerStub) ListModels(_ context.Context, connection providerdisco
 func TestProviderDiscoveryUsesCurrentScopedCredentialWithoutWrites(t *testing.T) {
 	backend := newBackendStub()
 	backend.enqueue(http.StatusOK, `{"connection":{"connection_id":"c1","provider_key":"openrouter","base_url":"https://openrouter.ai/api/v1","enabled":true},"credential":{"method":"api_key","api_key":"synthetic-secret"}}`)
-	h := newTestHandler(t, backend).(*handler)
+	h := newTestHandler(t, backend).(*businessFixture)
 	lister := &modelListerStub{}
 	h.modelLister = lister
 	response := requestAdmin(t, h, http.MethodGet, "/api/admin/provider-connections/c1/models/discovery", "")
@@ -48,7 +48,7 @@ func TestProviderDiscoveryUsesCurrentScopedCredentialWithoutWrites(t *testing.T)
 
 func TestDraftDiscoveryDoesNotCreateProviderOrExposeCredential(t *testing.T) {
 	backend := newBackendStub()
-	h := newTestHandler(t, backend).(*handler)
+	h := newTestHandler(t, backend).(*businessFixture)
 	lister := &modelListerStub{}
 	h.modelLister = lister
 	body := `{"provider_key":"deepseek","base_url":"https://api.deepseek.com","credential":{"method":"api_key","api_key":"synthetic-secret"}}`
@@ -71,7 +71,7 @@ func TestDiscoveryRejectsInvalidAccessBeforeCallingProvider(t *testing.T) {
 	} {
 		backend := newBackendStub()
 		backend.enqueue(http.StatusOK, body)
-		h := newTestHandler(t, backend).(*handler)
+		h := newTestHandler(t, backend).(*businessFixture)
 		lister := &modelListerStub{}
 		h.modelLister = lister
 		response := requestAdmin(t, h, http.MethodGet, "/api/admin/provider-connections/c1/models/discovery", "")
@@ -88,7 +88,7 @@ func TestDiscoveryRequiresAdministratorBeforeReadingCredentials(t *testing.T) {
 	} {
 		for _, member := range []bool{false, true} {
 			backend := newBackendStub()
-			h := newTestHandler(t, backend).(*handler)
+			h := newTestHandler(t, backend).(*businessFixture)
 			lister := &modelListerStub{}
 			h.modelLister = lister
 			request := httptest.NewRequest(route.method, route.path, nil)

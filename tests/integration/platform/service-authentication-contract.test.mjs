@@ -171,7 +171,7 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(identity.admission.unit_contract_component);
   assert(identity.admission.postgres);
   assert(identity.admission.docker);
-  assert.deepEqual(identity.admission.pending_consumers, ["admin-console"]);
+  assert.deepEqual(identity.admission.pending_consumers, []);
   const gateway = rollout.batches.find(
     (batch) => batch.owner === "edge-gateway",
   );
@@ -179,12 +179,22 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(gateway.admission.unit_contract_component);
   assert(gateway.admission.docker);
   assert.deepEqual(gateway.admission.pending_consumers, [
-    "admin-console",
     "agent-ui",
     "agent-acp-service",
     "agent-controller",
   ]);
-  assert(rollout.batches.slice(3).every((batch) => batch.status === "pending"));
+  const consoleBatch = rollout.batches.find(
+    (batch) => batch.owner === "admin-console",
+  );
+  assert.equal(consoleBatch.status, "service-admitted");
+  assert(consoleBatch.admission.unit_contract_component);
+  assert(consoleBatch.admission.docker);
+  assert.deepEqual(consoleBatch.admission.pending_consumers, [
+    "agent-controller",
+    "agent-acp-service",
+    "skill-registry",
+  ]);
+  assert(rollout.batches.slice(4).every((batch) => batch.status === "pending"));
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));
   assert(rollout.batches.some((batch) => batch.owner === "integration"));
