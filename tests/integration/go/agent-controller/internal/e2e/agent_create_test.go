@@ -446,7 +446,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		application.WithLifecycleExecution(execution),
 	)
 	handler, err := authfixture.NewHandler(t,
-		application.NewCatalogService(repository, secretBox, clock),
+		fixtureCatalogService(repository, secretBox, clock),
 		lifecycle,
 		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, clock),
 		application.NewAgentQueryService(repository),

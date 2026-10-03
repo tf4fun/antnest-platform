@@ -5,10 +5,19 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func (service *catalogServiceStub) ResolveProviderAccess(context.Context, string, string) (application.ProviderAccess, error) {
-	return application.ProviderAccess{Connection: sampleProviderConnection(), Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}}, service.getModelErr
+func sampleProviderDiscovery() application.ProviderDiscoveryResult {
+	return application.ProviderDiscoveryResult{Models: []ports.DiscoveredModel{{ModelID: "synthetic-model", DisplayName: "Synthetic"}}}
+}
+
+func (service *catalogServiceStub) DiscoverProviderModels(context.Context, string, string) (application.ProviderDiscoveryResult, error) {
+	return sampleProviderDiscovery(), service.getModelErr
+}
+
+func (service *catalogServiceStub) DiscoverDraftProviderModels(context.Context, application.DraftProviderDiscoveryInput) (application.ProviderDiscoveryResult, error) {
+	return sampleProviderDiscovery(), service.getModelErr
 }
 
 func sampleProviderConnection() application.ProviderConnectionView {

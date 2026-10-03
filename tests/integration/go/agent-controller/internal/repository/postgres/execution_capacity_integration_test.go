@@ -23,7 +23,7 @@ func TestExecutionCapacityRejectsWholeCatalogTransaction(t *testing.T) {
 	guard, err := application.NewExecutionCapacity(box, 1)
 	require.NoError(t, err)
 	WithExecutionCapacityGuard(guard)(repository)
-	catalog := application.NewCatalogService(repository, box, providerTestClock{})
+	catalog := fixtureCatalogService(repository, box, providerTestClock{})
 	_, err = catalog.CreateProviderConnection(t.Context(), providerTestInput("capacity-reject", "org1"))
 	require.ErrorIs(t, err, ports.ErrExecutionCapacityExceeded)
 	for _, table := range []string{"provider_connections", "model_profiles", "catalog_requests", "execution_configuration_sync"} {
@@ -47,7 +47,7 @@ func testConcurrentExecutionCapacity(t *testing.T, mixed bool) {
 	repository := providerTestRepository(t)
 	box, err := credentials.NewSecretBox(make([]byte, 32))
 	require.NoError(t, err)
-	catalog := application.NewCatalogService(repository, box, providerTestClock{})
+	catalog := fixtureCatalogService(repository, box, providerTestClock{})
 	input := providerTestInput("capacity-first", "org1")
 	input.Models = []application.ProviderModelInput{}
 	provider, err := catalog.CreateProviderConnection(t.Context(), input)
@@ -129,7 +129,7 @@ func TestExecutionCapacityRejectsRotationAndModelWriteWithoutChangingCurrent(t *
 	repository := providerTestRepository(t)
 	box, err := credentials.NewSecretBox(make([]byte, 32))
 	require.NoError(t, err)
-	catalog := application.NewCatalogService(repository, box, providerTestClock{})
+	catalog := fixtureCatalogService(repository, box, providerTestClock{})
 	input := providerTestInput("capacity-seed", "org1")
 	provider, err := catalog.CreateProviderConnection(t.Context(), input)
 	require.NoError(t, err)

@@ -1,6 +1,6 @@
 # Controller service authentication
 
-Control contract revision 37 implements the exact
+Control contract revision 38 implements the exact
 [platform token/mTLS and CCT profile](../platform/service-authentication.md).
 There is no network-trust, shared bearer, raw identity-header or mode fallback.
 
@@ -8,12 +8,12 @@ There is no network-trust, shared bearer, raw identity-header or mode fallback.
 
 The [caller catalog](callers.json) is the complete route policy:
 
-| Routes | Verified workload | User context |
-| --- | --- | --- |
-| Management/catalog, authorization defaults, lifecycle, events and policy writes | `admin-console` | CCT for `agent-controller`; signed system or Organization administrator; requested Organization/actor must match signed `org`/`sub` |
-| `POST /rpc/agent-controller/list-workspace-agents` | `edge-gateway`, `agent-ui` | Organization-scoped CCT; body Organization/principal match signed claims |
-| `GET /internal/agents/{agent_id}/skill-learning-policy` | `agent-acp-service` | Accepted service operation: persisted Agent, exact owner/access revision and live Identity membership; request hints cannot manufacture delegation |
-| `GET /status`, `GET /rpc/agent-controller/status` (also HTTP HEAD) | Minimal health exception | No CCT; only `status` is returned |
+| Routes                                                                          | Verified workload          | User context                                                                                                                                       |
+| ------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Management/catalog, authorization defaults, lifecycle, events and policy writes | `admin-console`            | CCT for `agent-controller`; signed system or Organization administrator; requested Organization/actor must match signed `org`/`sub`                |
+| `POST /rpc/agent-controller/list-workspace-agents`                              | `edge-gateway`, `agent-ui` | Organization-scoped CCT; body Organization/principal match signed claims                                                                           |
+| `GET /internal/agents/{agent_id}/skill-learning-policy`                         | `agent-acp-service`        | Accepted service operation: persisted Agent, exact owner/access revision and live Identity membership; request hints cannot manufacture delegation |
+| `GET /status`, `GET /rpc/agent-controller/status` (also HTTP HEAD)              | Minimal health exception   | No CCT; only `status` is returned                                                                                                                  |
 
 Agent routes require the exact signed `agt`, including body-scoped
 `set-agent-authorization`. Catalog/workspace discovery has no Agent scope.
@@ -59,9 +59,9 @@ receiver token or mTLS identity, with verified CCT for Template resolution.
 
 ## Delivery boundary
 
-This batch changes Controller alone with its unit, contract, component, storage
-and isolated Docker evidence. Provider credential export through the authenticated
-`/access` route is still temporary: #28 separately moves discovery into Controller,
-deletes that export and installs the shared destination policy. RC, Registry and
-Egress receiver adoption, deployment wiring and final business/security E2E are
+Controller has passed its owning authentication and Provider discovery gates.
+Revision 38 removes `/access`, adds saved/draft model-only discovery, and enforces
+the shared [Provider destination policy](../platform/provider-destination-policy.md)
+at creation and discovery. Console and ACP consumer adoption, RC/Registry/Egress
+receiver adoption, deployment wiring and final business/security E2E remain
 tracked in the [rollout ledger](../platform/service-authentication-rollout.json).

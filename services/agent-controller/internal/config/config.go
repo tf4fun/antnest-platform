@@ -20,6 +20,7 @@ type Config struct {
 	RuntimeControllerURL           string
 	IdentityServiceURL             string
 	SkillRegistryURL               string
+	ProviderAllowPrivateEndpoints  bool
 	DependencyTimeout              time.Duration
 	DrainTimeout                   time.Duration
 	ObservationPollInterval        time.Duration
@@ -32,6 +33,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("environment lookup is required")
 	}
 	lookup := func(key string) string { value, _ := environment(key); return value }
+	privateValue, privatePresent := environment("ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS")
+	if privatePresent && privateValue != "true" && privateValue != "false" {
+		return Config{}, fmt.Errorf("ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS must be exactly true or false")
+	}
 	if lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN") != "" {
 		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN is no longer supported; configure per-receiver service credentials")
 	}
@@ -90,6 +95,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		RuntimeControllerURL:           strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
 		IdentityServiceURL:             strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		SkillRegistryURL:               strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
+		ProviderAllowPrivateEndpoints:  privateValue == "true",
 		DependencyTimeout:              dependencyTimeout,
 		DrainTimeout:                   drainTimeout,
 		ObservationPollInterval:        observationPollInterval,

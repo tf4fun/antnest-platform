@@ -121,8 +121,8 @@ The [authentication contract](../../contracts/agent-controller/service-authentic
 defines route callers, signed user scope, strict JSON and private client forwarding.
 All configured dependency origins must be distinct; redirects and environment proxies
 are disabled. A nonempty legacy `ANTNEST_AGENT_ACP_SERVICE_URL` or
-`ANTNEST_SKILL_REGISTRY_API_TOKEN` now fails startup. Provider discovery relocation
-and destination policy are a separate #28 batch; remaining receiver/deployment
+`ANTNEST_SKILL_REGISTRY_API_TOKEN` now fails startup. Controller discovery and creation enforce the shared Provider destination policy
+and no longer export keys through `/access`. Console/ACP consumer batches and final
 admission and business E2E remain pending in the
 [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
@@ -205,3 +205,9 @@ Docker and Jaeger verification procedures are described in
 - [Skill Registry design](../../docs/skill-registry-minimal-design.md)
 - [Agent lifecycle state model](../../docs/agent-lifecycle-state-model.md)
 - [Docker single-node operations](../../docs/docker-single-node-operations.md)
+
+Provider endpoints default to public unicast only. The exact operator option
+`ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS=true` enables private/local LLM endpoints
+and is unsafe for multi-tenant use; empty, padded or other values fail startup.
+See [Provider management](docs/provider-management.md) for DNS pinning, error
+classes, model-only saved/draft discovery and pending consumer work.

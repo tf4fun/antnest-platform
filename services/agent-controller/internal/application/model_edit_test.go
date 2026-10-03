@@ -12,7 +12,7 @@ import (
 
 func TestModelEditRejectsStaleFormWithoutOverwritingCurrentModel(t *testing.T) {
 	store := &catalogStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{})
+	service := providerTestCatalog(store, &sealerStub{}, fixedClock{})
 	created, err := service.CreateModelProfile(context.Background(), editableModelInput("Original"))
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestModelEditRejectsStaleFormWithoutOverwritingCurrentModel(t *testing.T) {
 func TestModelEditRequiresPositiveExpectedVersion(t *testing.T) {
 	for _, version := range []int64{0, -1} {
 		store := &catalogStoreStub{}
-		service := NewCatalogService(store, &sealerStub{}, fixedClock{})
+		service := providerTestCatalog(store, &sealerStub{}, fixedClock{})
 		created, err := service.CreateModelProfile(context.Background(), editableModelInput("Original"))
 		if err != nil {
 			t.Fatal(err)
@@ -81,7 +81,7 @@ func TestModelDisplayNameLimitsApplyToEveryWritePath(t *testing.T) {
 func assertModelDisplayNameWrites(t *testing.T, name string, valid bool) {
 	t.Helper()
 	store := &catalogStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{})
+	service := providerTestCatalog(store, &sealerStub{}, fixedClock{})
 	_, err := service.CreateModelProfile(context.Background(), editableModelInput(name))
 	assertModelNameResult(t, "create", valid, err)
 	created, err := service.CreateModelProfile(context.Background(), editableModelInput("Original"))
@@ -97,7 +97,7 @@ func assertModelDisplayNameWrites(t *testing.T, name string, valid bool) {
 	sealer := &sealerStub{}
 	input := providerCreateInput()
 	input.Models[0].DisplayName = name
-	_, err = NewCatalogService(providerStore, sealer, fixedClock{}).CreateProviderConnection(context.Background(), input)
+	_, err = providerTestCatalog(providerStore, sealer, fixedClock{}).CreateProviderConnection(context.Background(), input)
 	assertModelNameResult(t, "initial model", valid, err)
 	if !valid && (providerStore.writes != 0 || sealer.calls != 0) {
 		t.Fatal("invalid initial model caused side effects")

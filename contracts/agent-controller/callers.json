@@ -163,13 +163,21 @@
       },
       "request_body": "none"
     },
-    "GET /internal/provider-connections/{connection_id}/access": {
+    "POST /internal/provider-connections/{connection_id}/discover-models": {
       "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
       },
-      "request_body": "none"
+      "request_body": "json"
+    },
+    "POST /internal/provider-discovery/draft": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
     },
     "GET /rpc/agent-controller/status": {
       "callers": ["local-healthcheck"],

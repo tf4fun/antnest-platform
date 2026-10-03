@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 This contract is owned by Agent Controller and transported as authenticated internal
-JSON over HTTP. This document describes control contract revision 37, the
+JSON over HTTP. This document describes control contract revision 38, the
 `revision` value in [`control-contract.json`](control-contract.json).
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
@@ -504,3 +504,28 @@ The machine-readable route catalog is in
 [`control-contract.json`](control-contract.json), and message definitions are
 in [`control-api.schema.json`](control-api.schema.json). It includes the retained
 Agent-default and workspace-list RPCs; there is no Controller Run admission API.
+
+## Provider discovery and destination admission (revision 38)
+
+The former `GET /internal/provider-connections/{connection_id}/access` is removed,
+including its credential response schema. The saved
+`POST /internal/provider-connections/{connection_id}/discover-models` takes
+`{"organization_id":"..."}`. The draft `POST /internal/provider-discovery/draft`
+takes `organization_id`, `provider_key`, `base_url` and write-only
+`credential:{"method":"api_key","api_key":"..."}`. Draft supports DeepSeek,
+OpenRouter and OpenAI-compatible discovery; persisted connections retain their
+existing supported Provider set. Both routes require Console workload and signed
+administrator CCT, return only `{models:[...]}` with `Cache-Control: no-store`,
+and never capture RPC payloads even when development capture is enabled.
+
+Creation validates the destination before sealing/persistence; committed replays
+need no DNS. Saved discovery validates before decryption and rereads the current
+credential each time. Draft discovery neither reads nor stores credentials.
+Both use the shared [destination policy](../platform/provider-destination-policy.md):
+all DNS answers checked, verified literal-IP dial with original TLS/Host, no
+redirects/proxy, bounded deadline and 8 MiB discovery body limit. The exact
+operator-only private-endpoint flag defaults false and never permits permanently
+denied ranges. Static policy rejection is 422 `provider_endpoint_forbidden`;
+DNS unavailability is retryable 503 `provider_endpoint_unavailable`; discovery
+transport/status/body failure is retryable 502 `provider_discovery_failed`.
+Console thin-proxy and ACP model-call adoption remain later service batches.

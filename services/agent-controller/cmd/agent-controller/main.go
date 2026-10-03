@@ -21,6 +21,8 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/identityclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/orchestration"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/outbound"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/providerdiscovery"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/registryclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
@@ -196,7 +198,11 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	catalogOptions := []application.CatalogOption{application.WithProviderCredentialReader(repository, secretBox)}
+	providerPolicy := outbound.NewPolicy(cfg.ProviderAllowPrivateEndpoints)
+	providerDiscovery := providerdiscovery.New(cfg.DependencyTimeout, providerPolicy)
+	defer providerDiscovery.CloseIdleConnections()
+	catalogOptions := []application.CatalogOption{application.WithProviderCredentialReader(repository, secretBox),
+		application.WithProviderDiscovery(providerPolicy, providerDiscovery), application.WithProviderRequestTimeout(cfg.DependencyTimeout)}
 	if cfg.SkillRegistryURL != "" {
 		registry, err := registryclient.New(cfg.SkillRegistryURL, cfg.DependencyTimeout, cfg.Authentication)
 		if err != nil {

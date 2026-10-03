@@ -15,8 +15,8 @@ const evidence = resolve(
   project,
 );
 const credentials = resolve(evidence, "credentials");
-const fixture = createFixture(credentials);
 const providerSecret = randomBytes(32).toString("base64url");
+const fixture = createFixture(credentials, providerSecret);
 const env = {
   ...process.env,
   CONTROLLER_TEST_AUTH_DIRECTORY: credentials,
@@ -25,6 +25,12 @@ const env = {
   CONTROLLER_TEST_DATABASE_PASSWORD: randomBytes(32).toString("hex"),
   CONTROLLER_TEST_TEMPORAL_PASSWORD: randomBytes(32).toString("hex"),
   CONTROLLER_TEST_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+  CONTROLLER_TEST_PROVIDER_SUBNET:
+    "100." +
+    (128 + (randomBytes(1)[0] % 128)) +
+    "." +
+    randomBytes(1)[0] +
+    ".0/24",
 };
 const compose = [
   "compose",
@@ -89,7 +95,15 @@ try {
       assert(!text.includes(secret), "response leaked private credential");
     assert.equal(response.headers.get("Antnest-Caller-Context"), null);
     checks++;
-    return { response, text, json: text ? JSON.parse(text) : null };
+    return {
+      response,
+      text,
+      json:
+        text &&
+        response.headers.get("content-type")?.includes("application/json")
+          ? JSON.parse(text)
+          : null,
+    };
   };
   const path = "/internal/agents?organization_id=org-1";
   await request("/status", { service: null, context: null });
@@ -265,11 +279,117 @@ try {
       organization_id: "org-1",
       provider_key: "deepseek",
       display_name: "Fixture",
-      base_url: "https://api.deepseek.com/v1",
+      base_url: "http://provider:8110/v1",
       credential: { method: "api_key", api_key: providerSecret },
       models: [],
     })
   ).json;
+  const providerState = async () =>
+    JSON.parse(
+      await docker([
+        ...compose,
+        "exec",
+        "-T",
+        "provider",
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:8110/test/state').then(r=>r.text()).then(t=>process.stdout.write(t))",
+      ]),
+    );
+  assert.equal(
+    (await providerState()).calls,
+    0,
+    "creation sent a credential or Provider request",
+  );
+  checks++;
+  await request(
+    "/internal/provider-connections/" +
+      provider.connection_id +
+      "/access?organization_id=org-1",
+    { status: 404 },
+  );
+  const discover = async (path, body, status = 200, code) =>
+    request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      status,
+      code,
+    });
+  const saved = await discover(
+    "/internal/provider-connections/" +
+      provider.connection_id +
+      "/discover-models",
+    { organization_id: "org-1" },
+  );
+  assert.equal(saved.response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(saved.json, {
+    models: [
+      {
+        model_id: "fixture-model",
+        display_name: "Fixture",
+        context_window: 128000,
+        max_output_tokens: 8192,
+        pricing: {
+          currency: "USD",
+          input_per_million: 1,
+          output_per_million: 2,
+        },
+      },
+    ],
+  });
+  checks++;
+  const draft = {
+    organization_id: "org-1",
+    provider_key: "deepseek",
+    base_url: "http://provider:8110/v1",
+    credential: { method: "api_key", api_key: providerSecret },
+  };
+  await discover("/internal/provider-discovery/draft", draft);
+  await discover(
+    "/internal/provider-discovery/draft",
+    { ...draft, base_url: "http://provider:8110/redirect" },
+    502,
+    "provider_discovery_failed",
+  );
+  for (const endpoint of [
+    "http://dependencies:8101/rpc/identity/jwks",
+    "http://127.0.0.1:8120",
+    "http://10.1.2.3",
+    "http://169.254.169.254",
+    "http://100.100.100.200",
+    "http://[::ffff:127.0.0.1]",
+  ]) {
+    await discover(
+      "/internal/provider-discovery/draft",
+      { ...draft, base_url: endpoint },
+      422,
+      "provider_endpoint_forbidden",
+    );
+  }
+  await discover(
+    "/internal/provider-discovery/draft",
+    { ...draft, base_url: "http://missing-provider.invalid" },
+    503,
+    "provider_endpoint_unavailable",
+  );
+  await discover(
+    "/internal/provider-connections",
+    {
+      request_id: "private-create",
+      organization_id: "org-1",
+      provider_key: "deepseek",
+      display_name: "Blocked",
+      base_url: "http://dependencies:8101",
+      credential: draft.credential,
+      models: [],
+    },
+    422,
+    "provider_endpoint_forbidden",
+  );
+  const providerStats = await providerState();
+  assert.deepEqual(providerStats, { calls: 3, failures: 0, redirects: 0 });
+  checks++;
   const model = (
     await create("/internal/model-profiles", {
       request_id: "model-auth-1",
@@ -404,6 +524,8 @@ try {
     ["ANTNEST_SERVICE_AUTH_MODE", ""],
     ["ANTNEST_SKILL_REGISTRY_API_TOKEN", "legacy"],
     ["ANTNEST_AGENT_ACP_SERVICE_URL", "http://dependencies:8102"],
+    ["ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS", ""],
+    ["ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS", "true "],
   ]) {
     const probe = "controller-startup-" + randomUUID();
     try {

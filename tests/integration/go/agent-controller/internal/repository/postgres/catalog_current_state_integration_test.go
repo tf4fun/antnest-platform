@@ -36,7 +36,7 @@ func TestCredentialRotationReplaysRequestCommittedAfterInitialLookup(t *testing.
 		t.Fatal(err)
 	}
 	clock := &catalogStateClock{now: time.Unix(100, 0).UTC()}
-	service := application.NewCatalogService(repository, box, clock)
+	service := fixtureCatalogService(repository, box, clock)
 	ctx := context.Background()
 	created, err := service.CreateProviderConnection(ctx, providerTestInput("provider", "org"))
 	if err != nil {
@@ -54,7 +54,7 @@ func TestCredentialRotationReplaysRequestCommittedAfterInitialLookup(t *testing.
 			t.Fatal(err)
 		}
 	}}
-	replayed, err := application.NewCatalogService(store, box, clock).RotateProviderCredential(ctx, input)
+	replayed, err := fixtureCatalogService(store, box, clock).RotateProviderCredential(ctx, input)
 	if err != nil || !reflect.DeepEqual(committed, replayed) {
 		t.Fatalf("committed duplicate did not replay: got=%+v error=%v", replayed, err)
 	}
@@ -71,7 +71,7 @@ func TestProviderKeepsOnlyCurrentSecretAndOriginalRotationReceipts(t *testing.T)
 		t.Fatal(err)
 	}
 	clock := &catalogStateClock{now: time.Unix(100, 0).UTC()}
-	service := application.NewCatalogService(repository, box, clock)
+	service := fixtureCatalogService(repository, box, clock)
 	ctx := context.Background()
 	input := providerTestInput("current-state", "org")
 	third := input.Models[0]
@@ -134,7 +134,7 @@ func TestModelCommandsReplaySnapshotsWithoutRollingBackCurrentParameters(t *test
 		t.Fatal(err)
 	}
 	clock := &catalogStateClock{now: time.Unix(100, 0).UTC()}
-	service := application.NewCatalogService(repository, box, clock)
+	service := fixtureCatalogService(repository, box, clock)
 	ctx := context.Background()
 	provider, err := service.CreateProviderConnection(ctx, providerTestInput("provider", "org"))
 	if err != nil {

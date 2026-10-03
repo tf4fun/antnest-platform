@@ -132,20 +132,22 @@
       "deliverables": [
         "workload and delegated context checks",
         "authenticated dependency clients",
-        "JSON media-type checks"
+        "JSON media-type checks",
+        "model-only saved/draft discovery; creation/discovery destination guard; remove credential export"
       ],
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs agent-controller; configured native clients for all five dependencies and per-request token rotation passed",
-        "postgres": "19 packages / 627 tests / 1123 subtests; zero skips/failures; isolated PostgreSQL/Temporal and processes cleaned",
-        "docker": "node tests/e2e/service-authentication/controller/run.mjs (44 admission, catalog, unchanged CCT, control publication, custom health, startup rejection and SIGTERM/SIGINT/restart checks; cleaned)",
+        "postgres": "21 packages / 644 tests / 1245 subtests; zero skips/failures; current credential rotation plus response/log/span privacy; isolated PostgreSQL/Temporal cleaned",
+        "docker": "node tests/e2e/service-authentication/controller/run.mjs (61 authentication, discovery/SSRF, catalog, unchanged CCT, control publication, custom health, startup rejection and SIGTERM/SIGINT/restart checks; cleaned)",
         "pending_consumers": [],
         "pending_dependencies": [
           "runtime-controller",
           "runtime-egress",
           "skill-registry"
         ],
-        "pending_provider_discovery": "#28 remains a separate shared-policy/Controller discovery batch, then Console thin proxy and ACP model-client consumers. The authenticated temporary /access route is removed in that Controller batch.",
-        "cross_service_e2e": "pending final integration batch"
+        "pending_provider_discovery": "Controller revision 38 is admitted. Console thin proxy and ACP actual-model transport remain separate #28 consumer batches.",
+        "cross_service_e2e": "pending final integration batch",
+        "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed."
       }
     },
     {
@@ -213,12 +215,8 @@
     "version": 1,
     "contract": "provider-destination-policy.md",
     "fixtures": "provider-destination-fixtures.json",
-    "status": "contract-frozen",
-    "pending_service_batches": [
-      "agent-controller",
-      "admin-console",
-      "agent-acp-service"
-    ],
+    "status": "service-batches",
+    "pending_service_batches": ["admin-console", "agent-acp-service"],
     "cross_service_e2e": "pending final integration batch"
   }
 }

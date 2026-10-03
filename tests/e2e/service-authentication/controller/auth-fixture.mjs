@@ -7,7 +7,7 @@ import {
 } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-export function createFixture(directory) {
+export function createFixture(directory, providerSecret) {
   mkdirSync(resolve(directory, "outgoing"), { recursive: true, mode: 0o700 });
   const ports = {
     "identity-service": 8101,
@@ -72,6 +72,7 @@ export function createFixture(directory) {
       ports,
       jwks,
       skill,
+      providerSecret,
       hashes: Object.fromEntries(
         Object.entries(tokens).map(([name, token]) => [name, [hash(token)]]),
       ),

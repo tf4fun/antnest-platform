@@ -4,10 +4,22 @@
 
 ### Fixed
 
+Controller model discovery now runs next to encrypted credentials (#28).
+Control contract revision 38 removes the plaintext `/access` export and adds
+saved/draft model-only discovery. Creation and discovery enforce the shared
+destination policy: all DNS answers checked, literal-IP dial with original
+TLS/Host, disabled redirects/proxies, bounded deadlines and response sizes.
+The exact operator-only `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS` option defaults
+false; present empty, padded or other spellings fail startup. Explicit true permits
+local/private LLM endpoints and metadata ranges and is unsafe for multi-tenant use.
+Console thin-proxy and ACP model-call adoption remain later service batches;
+Controller and Console discovery changes must be deployed together after final
+integration. No intermediate business E2E completion is claimed.
+
 The shared Provider destination policy and IPv4/IPv6/DNS fixtures are frozen for
 #28 before Controller, Console and ACP adoption. The policy specifies private
 endpoint opt-in, checked literal-IP dialing, disabled proxies/redirects and
-bounded errors that exclude credentials. Production adoption and final E2E remain pending.
+bounded errors that exclude credentials. Controller adoption is recorded above; Console/ACP adoption and final E2E remain pending.
 
 Controller now authenticates every business route and rejects forged Organization,
 actor and Agent scope before effects (#32 / #28 prerequisite). Console management
@@ -18,8 +30,8 @@ receiver credentials, pinned origins and no redirects/proxies. Control contract
 revision 37 adds admission errors and strict UTF-8 JSON. Deployments must configure
 the shared exact authentication settings and `ANTNEST_AGENT_ACP_CONTROL_URL`;
 nonempty legacy ACP workspace URL or Registry API token now fails startup.
-Provider discovery relocation/address policy (#28), remaining receivers/deployment
-and final cross-service E2E remain separate batches.
+Controller discovery/address policy is delivered in revision 38 above; Console/ACP
+consumers, remaining receivers/deployment and final cross-service E2E remain separate batches.
 
 Agent UI now verifies Gateway workload credentials and Identity-signed CCT before
 Workspace handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).

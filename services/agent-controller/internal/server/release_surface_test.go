@@ -25,3 +25,15 @@ func TestReleasedHandlerDoesNotExposeLegacySkillMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestReleasedHandlerDoesNotExposeProviderCredentialAccess(t *testing.T) {
+	handler, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/provider-connections/provider-1/access?organization_id=org-1", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("credential export returned %d, want 404", response.Code)
+	}
+}

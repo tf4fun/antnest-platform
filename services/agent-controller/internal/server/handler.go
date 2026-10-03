@@ -168,7 +168,8 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "PUT /internal/agent-templates/{template_id}/availability", handler: h.setTemplateAvailability},
 		{pattern: "GET /internal/provider-connections", handler: h.listProviderConnections},
 		{pattern: "GET /internal/provider-connections/{connection_id}", handler: h.getProviderConnection},
-		{pattern: "GET /internal/provider-connections/{connection_id}/access", handler: h.resolveProviderAccess, metadataOnly: true},
+		{pattern: "POST /internal/provider-connections/{connection_id}/discover-models", handler: h.discoverProviderModels, metadataOnly: true},
+		{pattern: "POST /internal/provider-discovery/draft", handler: h.discoverDraftProviderModels, metadataOnly: true},
 		{pattern: "POST /internal/provider-connections/{connection_id}/credentials", handler: h.rotateProviderCredential, metadataOnly: true},
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
@@ -1313,6 +1314,12 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusServiceUnavailable, errorResponse{
 			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
 		}
+	case errors.Is(err, ports.ErrProviderEndpointForbidden):
+		return http.StatusUnprocessableEntity, errorResponse{Code: "provider_endpoint_forbidden", Message: "Provider endpoint is forbidden"}
+	case errors.Is(err, ports.ErrProviderEndpointUnavailable):
+		return http.StatusServiceUnavailable, errorResponse{Code: "provider_endpoint_unavailable", Message: "Provider endpoint is unavailable", Retryable: true}
+	case errors.Is(err, ports.ErrProviderDiscoveryFailed):
+		return http.StatusBadGateway, errorResponse{Code: "provider_discovery_failed", Message: "Provider model discovery failed", Retryable: true}
 	default:
 		return http.StatusInternalServerError, errorResponse{
 			Code: "internal_error", Message: "internal service error", Retryable: true,

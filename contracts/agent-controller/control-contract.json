@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 37,
+  "revision": 38,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -27,12 +27,12 @@
       }
     },
     "provider_connections": {
-      "resolve_access": {
-        "method": "GET",
-        "path": "/internal/provider-connections/{connection_id}/access",
-        "query": ["organization_id"],
+      "discover_models": {
+        "method": "POST",
+        "path": "/internal/provider-connections/{connection_id}/discover-models",
+        "request": "control-api.schema.json#/$defs/discover_provider_models_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/provider_access"
+        "response": "control-api.schema.json#/$defs/provider_discovery_result"
       },
       "availability": {
         "method": "PUT",
@@ -68,6 +68,15 @@
         "query": ["organization_id", "after_id", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/provider_connection_list"
+      }
+    },
+    "provider_discovery": {
+      "draft": {
+        "method": "POST",
+        "path": "/internal/provider-discovery/draft",
+        "request": "control-api.schema.json#/$defs/discover_draft_provider_models_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/provider_discovery_result"
       }
     },
     "agent_network_policy": {
@@ -374,7 +383,10 @@
       "actor_mismatch": 403,
       "forbidden": 403,
       "unsupported_media_type": 415,
-      "request_too_large": 413
+      "request_too_large": 413,
+      "provider_endpoint_forbidden": 422,
+      "provider_endpoint_unavailable": 503,
+      "provider_discovery_failed": 502
     },
     "retryable_by_code": {
       "resource_version_conflict": false,
@@ -408,7 +420,10 @@
       "actor_mismatch": false,
       "forbidden": false,
       "unsupported_media_type": false,
-      "request_too_large": false
+      "request_too_large": false,
+      "provider_endpoint_forbidden": false,
+      "provider_endpoint_unavailable": true,
+      "provider_discovery_failed": true
     }
   },
   "compatibility": {

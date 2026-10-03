@@ -75,9 +75,8 @@ test("Provider policy records every consumer as pending until its own gate passe
   const policy = ledger.provider_destination_policy;
   assert.equal(policy.issue, 28);
   assert.equal(policy.version, 1);
-  assert.equal(policy.status, "contract-frozen");
+  assert.equal(policy.status, "service-batches");
   assert.deepEqual(policy.pending_service_batches, [
-    "agent-controller",
     "admin-console",
     "agent-acp-service",
   ]);

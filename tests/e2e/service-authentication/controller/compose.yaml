@@ -92,6 +92,7 @@ services:
       context: ../../../..
       dockerfile: services/agent-controller/Dockerfile
     user: "${CONTROLLER_TEST_UID:?}:${CONTROLLER_TEST_GID:?}"
+    networks: [default, provider]
     environment:
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_test_admin:${CONTROLLER_TEST_DATABASE_PASSWORD:?}@postgres:5432/controller_auth_test?sslmode=disable
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${CONTROLLER_TEST_ENCRYPTION_KEY:?}
@@ -124,8 +125,35 @@ services:
         condition: service_completed_successfully
       dependencies:
         condition: service_healthy
+      provider:
+        condition: service_healthy
     healthcheck:
       test: [CMD, /usr/local/bin/agent-controller, --healthcheck]
       interval: 1s
       timeout: 3s
       retries: 60
+  provider:
+    image: node:24.21.0-bookworm-slim
+    user: "${CONTROLLER_TEST_UID:?}:${CONTROLLER_TEST_GID:?}"
+    command: [node, /fixture/provider.mjs]
+    networks: [provider]
+    volumes:
+      - ./provider.mjs:/fixture/provider.mjs:ro
+      - ${CONTROLLER_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8110/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+networks:
+  provider:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${CONTROLLER_TEST_PROVIDER_SUBNET:?}

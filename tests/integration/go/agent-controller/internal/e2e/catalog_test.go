@@ -42,7 +42,7 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 		t.Fatalf("create SecretBox: %v", err)
 	}
 	handler, err := authfixture.NewHandler(t,
-		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
+		fixtureCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
 		catalogOnlyLifecycle{},
 		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, fixedClock{now: time.Unix(1, 0).UTC()}),
 		application.NewAgentQueryService(repository),

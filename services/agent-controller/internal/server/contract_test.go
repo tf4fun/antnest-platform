@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 37 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 38 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -225,19 +225,24 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	}
 
 	values := map[string]any{
-		"model_parameters":                   model.Parameters(),
-		"provider_credential_input":          application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
-		"provider_model_input":               application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
-		"set_agent_authorization_request":    application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
-		"set_agent_authorization_response":   map[string]int64{"authorization_revision": 2},
-		"list_workspace_agents_request":      listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
-		"list_workspace_agents_response":     workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
-		"create_provider_connection_request": sampleCreateProviderRequest(),
-		"rotate_provider_credential_request": sampleRotateProviderRequest(),
-		"provider_connection":                sampleProviderConnection(),
-		"provider_connection_list":           application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
-		"model_input":                        model,
-		"runtime_input":                      runtimeInput,
+		"model_parameters":                       model.Parameters(),
+		"provider_credential_input":              application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
+		"provider_model_input":                   application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
+		"set_agent_authorization_request":        application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
+		"set_agent_authorization_response":       map[string]int64{"authorization_revision": 2},
+		"list_workspace_agents_request":          listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
+		"list_workspace_agents_response":         workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
+		"discover_provider_models_request":       discoverProviderModelsRequest{OrganizationID: "org-1"},
+		"discover_draft_provider_models_request": application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
+		"provider_discovery_result":              sampleProviderDiscovery(),
+		"discovered_model":                       sampleProviderDiscovery().Models[0],
+		"discovered_pricing":                     ports.DiscoveredPricing{Currency: "USD"},
+		"create_provider_connection_request":     sampleCreateProviderRequest(),
+		"rotate_provider_credential_request":     sampleRotateProviderRequest(),
+		"provider_connection":                    sampleProviderConnection(),
+		"provider_connection_list":               application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
+		"model_input":                            model,
+		"runtime_input":                          runtimeInput,
 		"create_model_profile_request": createModelProfileRequest{ProviderConnectionID: "provider-1",
 			RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "example",
 			DisplayName: "Example", Model: model.Parameters(),
@@ -348,13 +353,15 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
-		"POST /rpc/agent-controller/set-agent-authorization":              application.SetAgentAuthorizationInput{RequestID: "set-defaults", AgentID: "agent-1", PrincipalID: "user-1", ExpectedAccessRevision: "access-1", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationApprove, ToolRules: []domain.ToolRule{}}},
-		"POST /rpc/agent-controller/list-workspace-agents":                listWorkspaceAgentsRequest{RequestID: "list-workspace", OrganizationID: "org-1", PrincipalID: "user-1"},
-		"PUT /internal/provider-connections/{connection_id}/availability": map[string]any{"request_id": "provider-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
-		"PUT /internal/model-profiles/{model_profile_id}/availability":    map[string]any{"request_id": "model-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
-		"PUT /internal/agent-templates/{template_id}/availability":        map[string]any{"request_id": "template-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
-		"POST /internal/provider-connections":                             sampleCreateProviderRequest(),
-		"POST /internal/provider-connections/{connection_id}/credentials": sampleRotateProviderRequest(),
+		"POST /internal/provider-connections/{connection_id}/discover-models": discoverProviderModelsRequest{OrganizationID: "org-1"},
+		"POST /internal/provider-discovery/draft":                             application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
+		"POST /rpc/agent-controller/set-agent-authorization":                  application.SetAgentAuthorizationInput{RequestID: "set-defaults", AgentID: "agent-1", PrincipalID: "user-1", ExpectedAccessRevision: "access-1", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationApprove, ToolRules: []domain.ToolRule{}}},
+		"POST /rpc/agent-controller/list-workspace-agents":                    listWorkspaceAgentsRequest{RequestID: "list-workspace", OrganizationID: "org-1", PrincipalID: "user-1"},
+		"PUT /internal/provider-connections/{connection_id}/availability":     map[string]any{"request_id": "provider-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"PUT /internal/model-profiles/{model_profile_id}/availability":        map[string]any{"request_id": "model-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"PUT /internal/agent-templates/{template_id}/availability":            map[string]any{"request_id": "template-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"POST /internal/provider-connections":                                 sampleCreateProviderRequest(),
+		"POST /internal/provider-connections/{connection_id}/credentials":     sampleRotateProviderRequest(),
 		"PUT /internal/agents/{agent_id}/network-policy": application.SetAgentNetworkPolicyInput{
 			RequestID: "request-network", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
 			SetNetworkPolicy: ports.SetNetworkPolicy{NetworkPolicyReference: ports.NetworkPolicyReference{PolicyID: "builtin/allow-all", Revision: 1}, ExpectedResourceVersion: 7},
@@ -490,6 +497,10 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			path:   "/internal/agent-operations/missing-operation?organization_id=org-1",
 		},
 		{code: "dependency_unavailable", err: application.ErrDependencyUnavailable},
+		{code: "provider_endpoint_forbidden", err: ports.ErrProviderEndpointForbidden, method: http.MethodPost, path: "/internal/provider-connections/provider-1/discover-models", body: `{"organization_id":"org-1"}`},
+		{code: "provider_endpoint_unavailable", err: ports.ErrProviderEndpointUnavailable, method: http.MethodPost, path: "/internal/provider-connections/provider-1/discover-models", body: `{"organization_id":"org-1"}`},
+		{code: "provider_discovery_failed", err: ports.ErrProviderDiscoveryFailed, method: http.MethodPost, path: "/internal/provider-connections/provider-1/discover-models", body: `{"organization_id":"org-1"}`},
+
 		{code: "runtime_image_invalid", err: domain.ErrInvalidImageReference},
 		{code: "lifecycle_timeout", err: context.DeadlineExceeded},
 		{code: "internal_error", err: errors.New("unexpected failure")},
@@ -499,7 +510,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		t.Run(test.code, func(t *testing.T) {
 			lifecycle := &lifecycleServiceStub{err: test.err}
 			boundary, err := newBusinessHandler(t,
-				&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
+				&catalogServiceStub{getModelErr: test.err}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
 				func(context.Context) error { return nil })
@@ -894,6 +905,9 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		application.ErrAgentNotReady,
 		application.ErrLifecycleConflict,
 		application.ErrDependencyUnavailable,
+		ports.ErrProviderEndpointForbidden,
+		ports.ErrProviderEndpointUnavailable,
+		ports.ErrProviderDiscoveryFailed,
 		context.DeadlineExceeded,
 		errors.New("unexpected failure"),
 	}

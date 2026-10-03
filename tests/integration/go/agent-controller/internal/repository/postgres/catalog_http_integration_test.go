@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/authfixture"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
@@ -27,7 +26,7 @@ type unusedCatalogDependencies struct {
 func TestCatalogHTTPRetirementPreservesHistoryAndOrganizationFence(t *testing.T) {
 	repository := providerTestRepository(t)
 	base, seed := seedAvailableAgentForRebuild(t, t.Context(), repository)
-	catalog := application.NewCatalogService(repository, nil, providerTestClock{})
+	catalog := fixtureCatalogService(repository, nil, providerTestClock{})
 	unused := &unusedCatalogDependencies{}
 	boundary, err := authfixture.NewHandler(t, catalog, unused, unused, unused, unused, unused, func(context.Context) error { return nil })
 	require.NoError(t, err)

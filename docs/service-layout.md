@@ -123,7 +123,7 @@ The implemented management and execution paths are separate:
 
 ```text
 Browser -> Edge Gateway -> Console BFF -> Identity / Agent Controller / ACP audit
-Console BFF -> Provider model discovery (current credentials from Controller)
+Console BFF -> Controller model-only discovery -> Provider API (Console consumer adoption pending #28)
 Agent Controller -> Runtime Controller -> Docker (Kubernetes planned)
 Agent Controller -> Runtime Egress control -> Egress PostgreSQL
 Agent Controller -> ACP configuration publication / Agent settlement

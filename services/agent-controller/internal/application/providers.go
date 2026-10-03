@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -71,6 +70,14 @@ func (service *CatalogService) CreateProviderConnection(ctx context.Context, inp
 	replayed, found, err := service.store.ReplayProviderRequest(ctx, ports.CreateProviderConnectionRequest, input.RequestID, fingerprint)
 	if err != nil || found {
 		return providerConnectionView(replayed), err
+	}
+	if service.providerValidator == nil {
+		return ProviderConnectionView{}, ErrDependencyUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, service.providerTimeout)
+	defer cancel()
+	if err := service.providerValidator.ValidateEndpoint(ctx, input.BaseURL); err != nil {
+		return ProviderConnectionView{}, err
 	}
 	now := service.clock.Now()
 	connection := ports.ProviderConnectionRecord{
@@ -163,9 +170,7 @@ func validateProviderInput(input CreateProviderConnectionInput) error {
 	if !supported || support.credentialMethod != input.Credential.Method || !validAPIKey(input.Credential) {
 		return fmt.Errorf("%w: unsupported Provider or credential method", ErrInvalidInput)
 	}
-	endpoint, err := url.Parse(input.BaseURL)
-	if err != nil || endpoint == nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") ||
-		endpoint.Hostname() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+	if strings.TrimSpace(input.BaseURL) == "" {
 		return fmt.Errorf("%w: Provider endpoint", ErrInvalidInput)
 	}
 	if input.Models == nil || len(input.Models) > maximumCatalogPageSize {

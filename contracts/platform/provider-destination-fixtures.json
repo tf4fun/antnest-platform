@@ -426,6 +426,21 @@
       "name": "scoped-ipv6",
       "url": "http://[fe80::1%25en0]/v1",
       "syntax_allowed": false
+    },
+    {
+      "name": "empty-query",
+      "url": "https://provider.example/v1?",
+      "syntax_allowed": false
+    },
+    {
+      "name": "empty-fragment",
+      "url": "https://provider.example/v1#",
+      "syntax_allowed": false
+    },
+    {
+      "name": "empty-explicit-port",
+      "url": "https://provider.example:/v1",
+      "syntax_allowed": false
     }
   ],
   "dns_vectors": [
