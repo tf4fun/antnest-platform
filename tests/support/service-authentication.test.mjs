@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 async function checker() {
@@ -188,4 +188,109 @@ test("an exact business route cannot replace authentication with mux delegation"
         error.includes("create-local-user") && error.includes("delegate"),
     ),
   );
+});
+
+test("RC Skill preparation routes authorize only the actual Controller client", () => {
+  const policy = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../services/runtime-controller/api/callers.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  for (const route of [
+    "POST /internal/runtimes/{agent_id}/skill-sets/prepare",
+    "GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}",
+    "POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release",
+  ]) {
+    assert.deepEqual(policy.routes[route].callers, ["agent-controller"], route);
+    assert.deepEqual(
+      policy.routes[route].caller_context,
+      { "agent-controller": "operation" },
+      route,
+    );
+  }
+});
+
+function crossFileWrapper(pattern) {
+  return {
+    "services/runtime-controller/internal/rpc/review-a.go": {
+      service: "runtime-controller",
+      source: `package rpc
+import "net/http"
+func reg(mux *http.ServeMux, pattern string) { mux.Handle(pattern, http.NotFoundHandler()) }
+func registerKnown(mux *http.ServeMux) { reg(mux, "POST /internal/runtimes/{agent_id}/skill-sets/prepare") }
+`,
+    },
+    "services/runtime-controller/internal/rpc/review-b.go": {
+      service: "runtime-controller",
+      source: `package rpc
+import "net/http"
+func registerOther(mux *http.ServeMux) { reg(mux, ${pattern}) }
+`,
+    },
+  };
+}
+
+test("a cross-file wrapper call without Handle cannot hide a newly registered route", async () => {
+  const { checkRepository } = await checker();
+  const result = await checkRepository({
+    additionalSources: crossFileWrapper('"POST /internal/unlisted-new-route"'),
+  });
+  assert(
+    result.errors.some(
+      (error) =>
+        error.includes("unlisted-new-route") && error.includes("missing"),
+    ),
+    JSON.stringify(result.errors),
+  );
+});
+
+test("an unresolved cross-file wrapper argument cannot borrow a known route", async () => {
+  const { checkRepository } = await checker();
+  const result = await checkRepository({
+    additionalSources: crossFileWrapper("unknownRoute()"),
+  });
+  assert(
+    result.errors.some((error) => error.includes("unresolved registration")),
+    JSON.stringify(result.errors),
+  );
+});
+
+test("an unresolved cross-file wrapper prefix cannot disappear from a known route", async () => {
+  const { checkRepository } = await checker();
+  const sources = crossFileWrapper("unknownPrefix()");
+  sources["services/runtime-controller/internal/rpc/review-a.go"].source =
+    `package rpc
+import "net/http"
+func reg(mux *http.ServeMux, prefix string) { mux.Handle(prefix + "/internal/runtimes/{agent_id}/skill-sets/prepare", http.NotFoundHandler()) }
+func registerKnown(mux *http.ServeMux) { reg(mux, "POST ") }
+`;
+  const result = await checkRepository({ additionalSources: sources });
+  assert(
+    result.errors.some((error) => error.includes("unresolved registration")),
+    JSON.stringify(result.errors),
+  );
+});
+
+test("same-named wrappers in different Go packages do not share route arguments", async () => {
+  const { checkRepository } = await checker();
+  const result = await checkRepository({
+    additionalSources: {
+      ...crossFileWrapper(
+        '"POST /internal/runtimes/{agent_id}/skill-sets/prepare"',
+      ),
+      "services/runtime-controller/internal/other-rpc/review-c.go": {
+        service: "runtime-controller",
+        source: `package rpc
+import "net/http"
+func reg(_ *http.ServeMux, _ string) {}
+func unrelated(mux *http.ServeMux) { reg(mux, "POST /internal/not-a-route") }
+`,
+      },
+    },
+  });
+  assert.deepEqual(result.errors, []);
 });

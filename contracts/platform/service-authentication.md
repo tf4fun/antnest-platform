@@ -292,9 +292,12 @@ current shared network and loopback ports remain an open release blocker.
 ## 6. Admission and ownership
 
 Run `make test-service-authentication` for schema/vector tests and route coverage.
-The Go scanner uses the standard AST to expand static tables, loops and wrappers;
-unresolved registrations fail. TypeScript custom path matchers and Rust routers
-have reviewed route catalogs plus SHA-256 source guards: changes/new matcher
+The Go scanner parses all non-test Go files in each directory/package and uses
+the standard AST to expand static tables, loops and wrappers. Wrapper calls in
+other files are included even if those files have no direct mux registration.
+Unresolved arguments fail even when the same wrapper has other known calls;
+different packages do not share argument lists. TypeScript custom path matchers
+and Rust routers have reviewed route catalogs plus SHA-256 source guards: changes/new matcher
 files require catalog review. These conservative guards are verification
 metadata, not copies of service source or a production authorization library.
 Replacing a custom matcher with a declarative registration in its owning batch

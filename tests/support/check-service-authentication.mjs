@@ -70,16 +70,14 @@ export function collectSources(transform = (_path, source) => source) {
   return sources;
 }
 
-// Go is parsed with its standard AST, including table/loop registrations. TS
+// All Go files are parsed by package, including wrapper calls in files with no
+// direct mux registration. This covers static tables/loops and wrappers. TS
 // custom matchers and Rust routers use explicit reviewed catalogs plus source
 // guards until their service batches provide declarative route registration.
 export function discoverRoutes(sources) {
   const go = Object.fromEntries(
     Object.entries(sources)
-      .filter(
-        ([path, { source }]) =>
-          path.endsWith(".go") && /\.Handle(?:Func)?\s*\(/u.test(source),
-      )
+      .filter(([path]) => path.endsWith(".go"))
       .map(([path, { source }]) => [path, source]),
   );
   // go run caches a named executable on newer Go releases. Build an explicit

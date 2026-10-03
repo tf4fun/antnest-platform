@@ -11,6 +11,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 type values []any
 type environment map[string]values
 type contextArgument struct{}
+type unresolvedArgument struct{}
 
 type result struct {
 	Routes []string `json:"routes"`
@@ -27,6 +29,7 @@ type result struct {
 
 type scanner struct {
 	file   *ast.File
+	files  []*ast.File
 	set    *token.FileSet
 	path   string
 	routes map[string]bool
@@ -62,6 +65,8 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 		for _, base := range s.evaluate(value.X, env) {
 			if row, ok := base.(map[string]values); ok {
 				output = append(output, row[value.Sel.Name]...)
+			} else {
+				output = append(output, unresolvedArgument{})
 			}
 		}
 		return output
@@ -76,6 +81,8 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 				b, bOK := right.(string)
 				if aOK && bOK {
 					output = append(output, a+b)
+				} else {
+					output = append(output, unresolvedArgument{})
 				}
 			}
 		}
@@ -127,16 +134,18 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 	case *ast.CallExpr:
 		// The Controller stores routes in a literal-returning routes() method.
 		name := functionName(value.Fun)
-		for _, declaration := range s.file.Decls {
-			fn, ok := declaration.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != name || len(value.Args) != 0 {
-				continue
-			}
-			for _, statement := range fn.Body.List {
-				returned, ok := statement.(*ast.ReturnStmt)
-				if ok && len(returned.Results) == 1 {
-					if _, literal := returned.Results[0].(*ast.CompositeLit); literal {
-						return s.evaluate(returned.Results[0], env)
+		for _, file := range s.files {
+			for _, declaration := range file.Decls {
+				fn, ok := declaration.(*ast.FuncDecl)
+				if !ok || fn.Name.Name != name || len(value.Args) != 0 || fn.Body == nil {
+					continue
+				}
+				for _, statement := range fn.Body.List {
+					returned, ok := statement.(*ast.ReturnStmt)
+					if ok && len(returned.Results) == 1 {
+						if _, literal := returned.Results[0].(*ast.CompositeLit); literal {
+							return s.evaluate(returned.Results[0], env)
+						}
 					}
 				}
 			}
@@ -183,7 +192,8 @@ func (v visitor) Visit(node ast.Node) ast.Visitor {
 				}
 				return true
 			})
-			env["pattern"] = s.callArguments(name, 0)
+			// A local closure is not a package-level function.
+			env["pattern"] = s.callArguments(name, 0, []*ast.File{s.file})
 			ast.Walk(visitor{s, env}, value.Body)
 			return nil
 		}
@@ -192,7 +202,7 @@ func (v visitor) Visit(node ast.Node) ast.Visitor {
 		index := 0
 		for _, parameter := range value.Type.Params.List {
 			for _, name := range parameter.Names {
-				env[name.Name] = s.callArguments(value.Name.Name, index)
+				env[name.Name] = s.callArguments(value.Name.Name, index, s.files)
 				if selector, ok := parameter.Type.(*ast.SelectorExpr); ok && selector.Sel.Name == "Context" {
 					if qualifier, ok := selector.X.(*ast.Ident); ok && qualifier.Name == "context" {
 						env[name.Name] = values{contextArgument{}}
@@ -273,15 +283,27 @@ func (v visitor) Visit(node ast.Node) ast.Visitor {
 	return v
 }
 
-func (s *scanner) callArguments(name string, index int) values {
+func (s *scanner) callArguments(name string, index int, files []*ast.File) values {
 	var output values
-	ast.Inspect(s.file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if ok && functionName(call.Fun) == name && index < len(call.Args) {
-			output = append(output, s.evaluate(call.Args[index], environment{})...)
-		}
-		return true
-	})
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || functionName(call.Fun) != name {
+				return true
+			}
+			var arguments values
+			if index < len(call.Args) {
+				arguments = s.evaluate(call.Args[index], environment{})
+			}
+			if len(arguments) == 0 {
+				// Keep an unresolved invocation even when another call is static.
+				// Otherwise the known call would silently cover the unknown one.
+				arguments = values{unresolvedArgument{}}
+			}
+			output = append(output, arguments...)
+			return true
+		})
+	}
 	return output
 }
 
@@ -292,14 +314,36 @@ func main() {
 		os.Exit(1)
 	}
 	output := map[string]result{}
-	for path, source := range sources {
-		set := token.NewFileSet()
-		file, err := parser.ParseFile(set, path, source, 0)
+	set := token.NewFileSet()
+	packages := map[string][]*ast.File{}
+	files := map[string]*ast.File{}
+	var paths []string
+	for path := range sources {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	packageKey := func(path string, file *ast.File) string {
+		return filepath.Dir(path) + "\x00" + file.Name.Name
+	}
+	for _, path := range paths {
+		file, err := parser.ParseFile(set, path, sources[path], 0)
 		if err != nil {
 			output[path] = result{Routes: []string{}, Errors: []string{path + ": Go parse failed"}}
 			continue
 		}
-		s := &scanner{file: file, set: set, path: path, routes: map[string]bool{}, errors: []string{}}
+		files[path] = file
+		key := packageKey(path, file)
+		packages[key] = append(packages[key], file)
+	}
+	for _, path := range paths {
+		file := files[path]
+		if file == nil {
+			continue
+		}
+		s := &scanner{
+			file: file, files: packages[packageKey(path, file)], set: set, path: path,
+			routes: map[string]bool{}, errors: []string{},
+		}
 		ast.Walk(visitor{s, environment{}}, file)
 		routes := []string{}
 		for route := range s.routes {

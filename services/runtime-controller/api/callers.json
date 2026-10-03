@@ -163,13 +163,11 @@
     },
     "GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}": {
       "callers": [
-        "agent-controller",
-        "runtime-controller"
+        "agent-controller"
       ],
       "authentication": "workload",
       "caller_context": {
-        "agent-controller": "operation",
-        "runtime-controller": "operation"
+        "agent-controller": "operation"
       },
       "request_body": "none"
     },
@@ -225,25 +223,21 @@
     },
     "POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release": {
       "callers": [
-        "agent-controller",
-        "runtime-controller"
+        "agent-controller"
       ],
       "authentication": "workload",
       "caller_context": {
-        "agent-controller": "operation",
-        "runtime-controller": "operation"
+        "agent-controller": "operation"
       },
       "request_body": "json"
     },
     "POST /internal/runtimes/{agent_id}/skill-sets/prepare": {
       "callers": [
-        "agent-controller",
-        "runtime-controller"
+        "agent-controller"
       ],
       "authentication": "workload",
       "caller_context": {
-        "agent-controller": "operation",
-        "runtime-controller": "operation"
+        "agent-controller": "operation"
       },
       "request_body": "json"
     },
