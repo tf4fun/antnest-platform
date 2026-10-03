@@ -1,0 +1,544 @@
+{
+  "service": "identity-service",
+  "status": "planned",
+  "implementation_issues": [
+    25
+  ],
+  "routes": {
+    "* /protocol/oidc/callback": {
+      "callers": [
+        "edge-gateway",
+        "admin-console",
+        "agent-controller"
+      ],
+      "authentication": "delegate",
+      "caller_context": {
+        "edge-gateway": "none",
+        "admin-console": "none",
+        "agent-controller": "none"
+      },
+      "request_body": "none",
+      "notes": "Dispatch only; the exact inner route policy is authoritative."
+    },
+    "* /rpc/identity/": {
+      "callers": [
+        "edge-gateway",
+        "admin-console",
+        "agent-controller"
+      ],
+      "authentication": "delegate",
+      "caller_context": {
+        "edge-gateway": "none",
+        "admin-console": "none",
+        "agent-controller": "none"
+      },
+      "request_body": "none",
+      "notes": "Dispatch only; the exact inner route policy is authoritative."
+    },
+    "* /scim/v2/": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "delegate",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "* /scim/v2/{path...}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/Groups": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/Groups/{id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/ResourceTypes": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/ResourceTypes/{id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/Schemas": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/Schemas/{id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/ServiceProviderConfig": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/Users": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /scim/v2/Users/{id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "DELETE /scim/v2/Groups/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "DELETE /scim/v2/Users/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /protocol/oidc/callback": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "none",
+      "notes": "OIDC state and browser binding remain required."
+    },
+    "GET /scim/v2/Groups": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/Groups/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/ResourceTypes": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/ResourceTypes/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/Schemas": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/Schemas/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/ServiceProviderConfig": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/Users": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /scim/v2/Users/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "none",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /status": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "PATCH /scim/v2/Groups/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "json",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "PATCH /scim/v2/Users/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "json",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "POST /rpc/identity/add-organization-membership": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/change-local-password": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/create-local-user": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/create-organization": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/get-current-account": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/issue-scim-token": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-directory": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-login-methods": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "json",
+      "notes": "Verify the route-specific user/session/login evidence; body actors are not credentials."
+    },
+    "POST /rpc/identity/list-oidc-providers": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-principal-revocations": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-scim-tokens": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/local-login": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "json",
+      "notes": "Verify the route-specific user/session/login evidence; body actors are not credentials."
+    },
+    "POST /rpc/identity/resolve-access-token": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "json",
+      "notes": "Verify the route-specific user/session/login evidence; body actors are not credentials."
+    },
+    "POST /rpc/identity/resolve-owner-authorization": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/resolve-principal": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/revoke-access-token": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "json",
+      "notes": "Verify the route-specific user/session/login evidence; body actors are not credentials."
+    },
+    "POST /rpc/identity/revoke-scim-token": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/set-oidc-provider-enabled": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/set-user-active": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/start-oidc-login": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "json",
+      "notes": "Verify the route-specific user/session/login evidence; body actors are not credentials."
+    },
+    "POST /rpc/identity/update-membership": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/upsert-oidc-provider": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /scim/v2/Groups": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "json",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "POST /scim/v2/Users": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "json",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "PUT /scim/v2/Groups/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "json",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "PUT /scim/v2/Users/{id}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "scim-token"
+      },
+      "request_body": "json",
+      "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    }
+  },
+  "guarded_sources": {}
+}

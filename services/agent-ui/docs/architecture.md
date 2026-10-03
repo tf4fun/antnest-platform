@@ -340,3 +340,13 @@ There is no browser ACP or Nginx compatibility mode.
 
 Screen-reader/keyboard review and capacity beyond these fixed loads are not
 covered by automated tests.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/agent-ui/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#26](https://github.com/tf4fun/antnest-platform/issues/26); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

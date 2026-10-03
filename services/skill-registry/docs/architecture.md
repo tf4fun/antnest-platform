@@ -202,3 +202,13 @@ exported over OTLP. See the
   different metadata.
 - Source bytes are validated on every load and promotion and are stored only
   when a promotion commits.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/skill-registry/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#31](https://github.com/tf4fun/antnest-platform/issues/31); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

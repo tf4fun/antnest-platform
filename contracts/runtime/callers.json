@@ -1,0 +1,82 @@
+{
+  "service": "antnest-runtime",
+  "status": "planned",
+  "implementation_issues": [
+    30
+  ],
+  "routes": {
+    "* /mcp": {
+      "callers": [
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "request_body": "protocol",
+      "notes": "The mounted MCP service dispatches POST JSON RPC (application/json), GET observation and DELETE session requests. Authenticate the complete mount and retain the execution fence; unsupported methods/paths must fail."
+    },
+    "GET /status": {
+      "callers": [
+        "runtime-controller",
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "runtime-controller": "none",
+        "agent-acp-service": "none"
+      },
+      "request_body": "none"
+    },
+    "POST /internal/skill-maintenance/{action}": {
+      "callers": [
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "request_body": "json",
+      "notes": "Workload proof supplements the existing signed ticket and execution fence; it never replaces them."
+    },
+    "POST /internal/skill-temporary/{action}": {
+      "callers": [
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "request_body": "json",
+      "notes": "Workload proof supplements the existing signed ticket and execution fence; it never replaces them."
+    },
+    "* /mcp/{path...}": {
+      "callers": [
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "request_body": "protocol",
+      "notes": "The mounted MCP service dispatches POST JSON RPC (application/json), GET observation and DELETE session requests. Authenticate the complete mount and retain the execution fence; unsupported methods/paths must fail."
+    }
+  },
+  "guarded_sources": {
+    "runtimes/antnest-runtime/src/mcp.rs": {
+      "sha256": "cd31b5b346ba8bd12a0a0d5e9bb37fcdba8b4266e6a727cc82dd7896b8dcdc1a",
+      "routes": [
+        "GET /status",
+        "* /mcp",
+        "POST /internal/skill-maintenance/{action}",
+        "* /mcp/{path...}"
+      ]
+    },
+    "runtimes/antnest-runtime/src/skill_temporary_http.rs": {
+      "sha256": "cf5df0292e65cec6d652fb12aaa5fd1a8d1e8c16386c78b8c52a6c06ea71093d",
+      "routes": [
+        "POST /internal/skill-temporary/{action}"
+      ]
+    }
+  }
+}

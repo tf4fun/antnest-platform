@@ -337,3 +337,13 @@ organization profile, Organization name and slug, and an authoritative boolean
 that indicates whether a local password credential exists. Internal consumers
 use its identity IDs for binding but must explicitly project browser-safe
 fields; the RPC never returns credential material.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/identity/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#25](https://github.com/tf4fun/antnest-platform/issues/25); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

@@ -1,0 +1,126 @@
+{
+  "service": "skill-registry",
+  "status": "planned",
+  "implementation_issues": [
+    31
+  ],
+  "routes": {
+    "GET /internal/skills": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/skills/{skill_id}/versions": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/skills/{skill_id}/versions/{version}/artifact": {
+      "callers": [
+        "admin-console",
+        "runtime-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required",
+        "runtime-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /status": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "POST /internal/skill-discovery/load": {
+      "callers": [
+        "admin-console",
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required",
+        "agent-acp-service": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/skill-discovery/search": {
+      "callers": [
+        "admin-console",
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required",
+        "agent-acp-service": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/skill-projections/promote": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/skill-versions/resolve": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /internal/skills": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "multipart"
+    },
+    "POST /internal/skills/{skill_id}/versions": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "multipart"
+    },
+    "PUT /internal/skill-projections": {
+      "callers": [
+        "agent-acp-service"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "request_body": "json"
+    }
+  },
+  "guarded_sources": {}
+}

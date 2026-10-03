@@ -627,3 +627,13 @@ HTTP concerns into the domain. The Runtime MCP adapter rejects a binding whose
 execution ID cannot be represented unchanged in its outbound header before any
 connection or Tool dispatch. PostgreSQL representation errors fail configuration
 application without publishing or acknowledging the failed revision.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/agent-acp/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#26](https://github.com/tf4fun/antnest-platform/issues/26), [#27](https://github.com/tf4fun/antnest-platform/issues/27); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

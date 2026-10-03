@@ -1,0 +1,117 @@
+{
+  "service": "runtime-egress",
+  "status": "planned",
+  "implementation_issues": [
+    32,
+    34,
+    36
+  ],
+  "routes": {
+    "GET /internal/agent-networks/{agent_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/agent-policy-assignments/{agent_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/policies/{policy_id}/revisions/{revision}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "none"
+    },
+    "GET /status": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "POST /internal/agent-networks/{agent_id}/release": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "PUT /internal/agent-network-attachments/{agent_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "PUT /internal/agent-networks/{agent_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "PUT /internal/agent-policy-assignments/{agent_id}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "PUT /internal/policies/{policy_id}/revisions/{revision}": {
+      "callers": [
+        "agent-controller"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    }
+  },
+  "guarded_sources": {
+    "services/runtime-egress/src/control.rs": {
+      "sha256": "47dd151298fabda6a6a182115e3d8c41d0b98d18ad5cf82e01f415b1bfcc4a29",
+      "routes": [
+        "GET /status",
+        "GET /internal/agent-networks/{agent_id}",
+        "PUT /internal/agent-networks/{agent_id}",
+        "PUT /internal/agent-network-attachments/{agent_id}",
+        "POST /internal/agent-networks/{agent_id}/release",
+        "GET /internal/policies/{policy_id}/revisions/{revision}",
+        "PUT /internal/policies/{policy_id}/revisions/{revision}",
+        "GET /internal/agent-policy-assignments/{agent_id}",
+        "PUT /internal/agent-policy-assignments/{agent_id}"
+      ]
+    }
+  }
+}

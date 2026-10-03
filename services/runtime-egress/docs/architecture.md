@@ -445,3 +445,13 @@ flow, reaching an upstream, or adding a session protocol to the data plane.
    approximated with a stateless load balancer.
 6. Dependency updates, in particular to hashing libraries, must preserve
    persisted policy digests and migration checksums.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/egress/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#32](https://github.com/tf4fun/antnest-platform/issues/32), [#34](https://github.com/tf4fun/antnest-platform/issues/34), [#36](https://github.com/tf4fun/antnest-platform/issues/36); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

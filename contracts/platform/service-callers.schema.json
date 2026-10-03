@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/platform/service-callers.schema.json",
+  "title": "Per-route planned caller policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "service",
+    "status",
+    "implementation_issues",
+    "routes",
+    "guarded_sources"
+  ],
+  "properties": {
+    "service": {
+      "enum": [
+        "identity-service",
+        "edge-gateway",
+        "admin-console",
+        "agent-ui",
+        "agent-controller",
+        "agent-acp-service",
+        "runtime-controller",
+        "skill-registry",
+        "runtime-egress",
+        "antnest-runtime"
+      ]
+    },
+    "status": {
+      "const": "planned"
+    },
+    "implementation_issues": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "routes": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|UPGRADE|\\*) /"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/route"
+      }
+    },
+    "guarded_sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha256",
+          "routes"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "routes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "callers",
+        "authentication",
+        "caller_context",
+        "request_body"
+      ],
+      "properties": {
+        "callers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "identity-service",
+              "edge-gateway",
+              "admin-console",
+              "agent-ui",
+              "agent-controller",
+              "agent-acp-service",
+              "runtime-controller",
+              "skill-registry",
+              "runtime-egress",
+              "antnest-runtime",
+              "browser",
+              "scim-client",
+              "local-healthcheck"
+            ]
+          }
+        },
+        "authentication": {
+          "enum": [
+            "workload",
+            "public",
+            "health",
+            "deny",
+            "delegate"
+          ]
+        },
+        "caller_context": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "identity-service",
+              "edge-gateway",
+              "admin-console",
+              "agent-ui",
+              "agent-controller",
+              "agent-acp-service",
+              "runtime-controller",
+              "skill-registry",
+              "runtime-egress",
+              "antnest-runtime",
+              "browser",
+              "scim-client",
+              "local-healthcheck"
+            ]
+          },
+          "additionalProperties": {
+            "enum": [
+              "required",
+              "operation",
+              "none",
+              "session",
+              "scim-token"
+            ]
+          }
+        },
+        "request_body": {
+          "enum": [
+            "none",
+            "json",
+            "multipart",
+            "zip",
+            "protocol"
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

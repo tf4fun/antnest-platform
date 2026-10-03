@@ -658,3 +658,13 @@ capture, and forwarding to Runtimes.
   with the endpoint and expected execution identity frozen by Run admission.
 - Change Runtime status or execution fencing only through a lockstep update to
   contracts, Runtime, Controller, tests, and Stage 1 documentation.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../api/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#29](https://github.com/tf4fun/antnest-platform/issues/29); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

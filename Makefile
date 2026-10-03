@@ -97,6 +97,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
+	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
@@ -121,6 +122,11 @@ test-repo:
 	$(MAKE) test-workspace-fixtures
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
+
+.PHONY: test-service-authentication
+test-service-authentication:
+	node --test --test-concurrency=1 tests/support/service-authentication.test.mjs tests/support/json-rpc-security.test.mjs tests/integration/platform/service-authentication-contract.test.mjs
+	node tests/support/check-service-authentication.mjs
 
 test-managed-mcp-fixtures:
 	node --test --test-concurrency=1 tests/e2e/managed-mcp/*.test.mjs

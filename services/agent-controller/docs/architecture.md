@@ -662,3 +662,13 @@ Controller lists Agent IDs and names for the requested organization and principa
 The list is management metadata, not execution admission: disabled or unavailable Agents remain discoverable while authorized; deleted Agents do not.
 List items carry no availability or opaque access subjects, and Controller provides no workspace state get/watch.
 Execution state, current Session and cancellation belong to ACP.
+
+## Service authentication rollout
+
+The [platform authentication contract](../../../contracts/platform/service-authentication.md)
+and this service's [planned caller catalog](../../../contracts/agent-controller/callers.json) define verified
+workload identity and route-specific caller context. Listener enforcement is
+pending in [#32](https://github.com/tf4fun/antnest-platform/issues/32) and [#28](https://github.com/tf4fun/antnest-platform/issues/28); this foundation does not change the current HTTP
+authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and run the shared route/media-type checks in the owning-service batch before
+the cross-service Docker security acceptance.

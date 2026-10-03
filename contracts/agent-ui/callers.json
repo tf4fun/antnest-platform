@@ -1,0 +1,360 @@
+{
+  "service": "agent-ui",
+  "status": "planned",
+  "implementation_issues": [
+    26
+  ],
+  "routes": {
+    "GET /api/app/workspace/v1/agents/{agentId}/events": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/content": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process/{itemId}/content": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/view": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/agents/{agentId}/view": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /api/app/workspace/v1/bootstrap": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /live": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "GET /status": {
+      "callers": [
+        "local-healthcheck"
+      ],
+      "authentication": "health",
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none"
+    },
+    "GET /workspace/": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /workspace/{agentId}/": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /workspace/{agentId}/sessions/{sessionId}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "POST /api/app/workspace/v1/agents/{agentId}/commands": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /api/app/workspace/v1/agents/{agentId}/sessions": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/configuration": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}/cancel": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "HEAD /workspace/": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "HEAD /workspace/{agentId}/": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "HEAD /workspace/{agentId}/sessions/{sessionId}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /workspace/assets/{asset_name}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "none"
+    },
+    "HEAD /workspace/assets/{asset_name}": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none"
+      },
+      "request_body": "none"
+    }
+  },
+  "guarded_sources": {
+    "services/agent-ui/web/server/src/http/agent-view-routes.ts": {
+      "sha256": "5c8373bd13dd66ff50c1e3cf1f8f27abb7043687dd02a08e6d24af70f0324670",
+      "routes": [
+        "GET /api/app/workspace/v1/agents/{agentId}/view"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/bootstrap-routes.ts": {
+      "sha256": "01d47c5659a9fccebf09ce96a42b0feb4ccf1a66b4c6cd91211f186385ebf8c4",
+      "routes": [
+        "GET /api/app/workspace/v1/bootstrap"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/command-routes.ts": {
+      "sha256": "3aa69d326b61a864c84cdfa3a682b60f8096c9ef6906c45d85e2a3f9453afb4a",
+      "routes": [
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}/cancel"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/configuration-routes.ts": {
+      "sha256": "12ad29e762d16ae03de83dc45ac60b98ef8171e31c0f59c4cfa859d86642ca19",
+      "routes": [
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/configuration"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/control-routes.ts": {
+      "sha256": "e281907b30ada34595fe047e81042d185d2096921551ff6ca16e71d6f32c6d01",
+      "routes": [
+        "POST /api/app/workspace/v1/agents/{agentId}/commands"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/event-routes.ts": {
+      "sha256": "ea8ab4f13d5bfb5814d9169128422b453e04884becdc2502b8be2b982fd23be9",
+      "routes": [
+        "GET /api/app/workspace/v1/agents/{agentId}/events"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/history-routes.ts": {
+      "sha256": "0dacd292ca2747f03dfa22197272612b79e419939b7637bbc1587e240bc6f7ca",
+      "routes": [
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/content",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process",
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process/{itemId}/content"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/node-server.ts": {
+      "sha256": "cb243ec523291d7b8445492f1458a7f4f7e5da4f721691a56866a424cca067f1",
+      "routes": [
+        "GET /status",
+        "GET /live",
+        "GET /workspace/assets/{asset_name}",
+        "GET /workspace/",
+        "GET /workspace/{agentId}/",
+        "GET /workspace/{agentId}/sessions/{sessionId}",
+        "HEAD /workspace/assets/{asset_name}",
+        "HEAD /workspace/",
+        "HEAD /workspace/{agentId}/",
+        "HEAD /workspace/{agentId}/sessions/{sessionId}"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/permission-routes.ts": {
+      "sha256": "ac92ed87c4d8ccf0b62e357acc8627b4b7637b8f32e8efeb06c21c6ca348fe90",
+      "routes": [
+        "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/session-routes.ts": {
+      "sha256": "5ce91333ad669e119ce1e47ea77b00acc493ae04c12fb2ebae7609d75ca9b8e1",
+      "routes": [
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions",
+        "POST /api/app/workspace/v1/agents/{agentId}/sessions"
+      ]
+    },
+    "services/agent-ui/web/server/src/http/view-routes.ts": {
+      "sha256": "f163cfc5ed19af55332ad97d48f055c996d99872db3015bb25855ca14b80a655",
+      "routes": [
+        "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/view"
+      ]
+    },
+    "services/agent-ui/web/server/src/protocol/workspace-route.ts": {
+      "sha256": "68b9fbf374cc5a3026cceb1e3968c345c77a48e35bb12e2e66a20a01ef723509",
+      "routes": []
+    },
+    "services/agent-ui/web/server/src/workspace-runtime.ts": {
+      "sha256": "1ca15a5219e6958fc4e2da4c543a5df5ac6715802cd6837c8f237c7ffa622ab2",
+      "routes": []
+    }
+  }
+}
