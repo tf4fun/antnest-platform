@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -13,81 +15,124 @@ const routes = [
   "/api/app/workspace/v1/agents/agent-1/events",
 ];
 
+const dependencyPorts = {
+  "identity-service": 8080,
+  "agent-controller": 8081,
+  "agent-acp-service": 8082,
+  "admin-console": 8083,
+  "agent-ui": 8084,
+};
+
 function upstream() {
+  const hashes = JSON.parse(readFileSync("/run/auth/hashes.json", "utf8"));
+  const context = () => {
+    const now = Math.floor(Date.now() / 1000);
+    return (
+      Buffer.from(
+        `{"typ":"antnest-cct+jwt","alg":"EdDSA","kid":"test"}`,
+      ).toString("base64url") +
+      "." +
+      Buffer.from(JSON.stringify({ iat: now, exp: now + 60 })).toString(
+        "base64url",
+      ) +
+      "." +
+      Buffer.alloc(64).toString("base64url")
+    );
+  };
   let opened = 0;
   let closed = 0;
   const unexpected = [];
   const watches = new Set();
-  const server = createServer((request, response) => {
-    const path = new URL(request.url, "http://upstream").pathname;
-    const json = (value) => {
-      response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify(value));
-    };
-    if (path === "/status" || path === "/test/state") {
-      json({ opened, closed, active: watches.size, unexpected });
-      return;
-    }
-    if (path === "/rpc/identity/resolve-access-token") {
-      json({
-        principal: {
-          user_id: "user-admin",
-          organization_id: "org-1",
-          membership_id: "member-1",
-          system_role: "admin",
-          active: true,
-        },
+  const servers = Object.entries(dependencyPorts).map(([service, port]) => {
+    const server = createServer((request, response) => {
+      const path = new URL(request.url, "http://upstream").pathname;
+      const json = (value) => {
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify(value));
+      };
+      if (path === "/status" || path === "/test/state") {
+        json({ opened, closed, active: watches.size, unexpected });
+        return;
+      }
+      const authorization =
+        request.headers["antnest-service-authorization"] ?? "";
+      if (
+        !authorization.startsWith("Bearer ") ||
+        createHash("sha256").update(authorization.slice(7)).digest("hex") !==
+          hashes[service]
+      ) {
+        response.writeHead(401).end();
+        return;
+      }
+      if (path === "/rpc/identity/resolve-access-token") {
+        json({
+          caller_context: context(),
+          principal: {
+            user_id: "user-admin",
+            organization_id: "org-1",
+            organization_slug: "auth-test",
+            organization_name: "Authentication Test",
+            organization_role: "admin",
+            membership_id: "member-1",
+            system_role: "admin",
+            active: true,
+          },
+        });
+        return;
+      }
+      const statePath = "/rpc/agent-acp/watch-agent-execution-state";
+      if (
+        request.method !== (path === statePath ? "POST" : "GET") ||
+        ![statePath, "/v1/acp", routes[3], routes[4]].includes(path)
+      ) {
+        unexpected.push({ method: request.method, path });
+        response.writeHead(404).end();
+        return;
+      }
+      if ([statePath, "/v1/acp", routes[4]].includes(path)) {
+        assert.equal(request.headers["x-antnest-organization-id"], "org-1");
+        assert.equal(request.headers["x-antnest-principal-id"], "user-admin");
+        assert.equal(request.headers["x-antnest-agent-id"], "agent-1");
+        assert.equal(
+          request.headers["x-antnest-agent-access-subject"],
+          undefined,
+        );
+        assert.equal(request.headers.cookie, undefined);
+      }
+      assert(request.headers["antnest-caller-context"], "missing trusted CCT");
+      opened++;
+      watches.add(response);
+      response.once("close", () => {
+        closed++;
+        watches.delete(response);
       });
-      return;
-    }
-    const statePath = "/rpc/agent-acp/watch-agent-execution-state";
-    if (
-      request.method !== (path === statePath ? "POST" : "GET") ||
-      ![statePath, "/v1/acp", routes[3], routes[4]].includes(path)
-    ) {
-      unexpected.push({ method: request.method, path });
-      response.writeHead(404).end();
-      return;
-    }
-    if ([statePath, "/v1/acp", routes[4]].includes(path)) {
-      assert.equal(request.headers["x-antnest-organization-id"], "org-1");
-      assert.equal(request.headers["x-antnest-principal-id"], "user-admin");
-      assert.equal(request.headers["x-antnest-agent-id"], "agent-1");
-      assert.equal(
-        request.headers["x-antnest-agent-access-subject"],
-        undefined,
-      );
-      assert.equal(request.headers.cookie, undefined);
-    }
-    opened++;
-    watches.add(response);
-    response.once("close", () => {
-      closed++;
-      watches.delete(response);
+      response.setHeader("Content-Type", "text/event-stream");
+      response.flushHeaders();
+      if (path === statePath) {
+        response.write(
+          `event: workspace_state\ndata: ${JSON.stringify({
+            agent_id: "agent-1",
+            availability: "ready",
+            access_allowed: true,
+            configuration_revision: "a".repeat(64),
+            unavailable_reason: null,
+            active_session_id: null,
+          })}\n\n`,
+        );
+      }
     });
-    response.setHeader("Content-Type", "text/event-stream");
-    response.flushHeaders();
-    if (path === statePath) {
-      response.write(
-        `event: workspace_state\ndata: ${JSON.stringify({
-          agent_id: "agent-1",
-          availability: "ready",
-          access_allowed: true,
-          configuration_revision: "a".repeat(64),
-          unavailable_reason: null,
-          active_session_id: null,
-        })}\n\n`,
-      );
-    }
+    server.listen(port, "0.0.0.0");
+    return server;
   });
   const stop = () => {
     for (const response of watches) response.end();
-    server.close();
-    server.closeAllConnections();
+    for (const server of servers) {
+      server.close();
+      server.closeAllConnections();
+    }
   };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
-  server.listen(8080, "0.0.0.0");
 }
 
 async function cleanup(project, docker) {
@@ -137,7 +182,7 @@ async function ready(url, signal) {
   throw new Error("Gateway readiness deadline exceeded");
 }
 
-async function exercise(project, docker, signal, gatewayImage) {
+async function exercise(project, docker, signal, gatewayImage, credentials) {
   const backend = `${project}-upstream`;
   const gateway = `${project}-edge`;
   const fixture = fileURLToPath(import.meta.url);
@@ -174,11 +219,13 @@ async function exercise(project, docker, signal, gatewayImage) {
     "--name",
     backend,
     "--user",
-    "1000:1000",
+    `${process.getuid()}:${process.getgid()}`,
     "--network-alias",
     "upstream",
     "--mount",
     `type=bind,source=${fixture},target=/fixture.mjs,readonly`,
+    "--mount",
+    `type=bind,source=${credentials},target=/run/auth,readonly`,
     "node:24.21.0-bookworm-slim",
     "node",
     "/fixture.mjs",
@@ -188,16 +235,26 @@ async function exercise(project, docker, signal, gatewayImage) {
     ...options,
     "--name",
     gateway,
-    ...[
-      "IDENTITY_SERVICE",
-      "AGENT_CONTROLLER",
-      "AGENT_ACP",
-      "ADMIN_CONSOLE",
-      "AGENT_UI",
-    ].flatMap((service) => [
+    "--user",
+    `${process.getuid()}:${process.getgid()}`,
+    "--mount",
+    `type=bind,source=${credentials},target=/run/auth,readonly`,
+    ...Object.entries({
+      IDENTITY_SERVICE: 8080,
+      AGENT_CONTROLLER: 8081,
+      AGENT_ACP: 8082,
+      ADMIN_CONSOLE: 8083,
+      AGENT_UI: 8084,
+    }).flatMap(([service, port]) => [
       "-e",
-      `ANTNEST_${service}_URL=http://upstream:8080`,
+      `ANTNEST_${service}_URL=http://upstream:${port}`,
     ]),
+    ...Object.entries({
+      ANTNEST_SERVICE_AUTH_MODE: "token",
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true",
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: "/run/auth/callers.json",
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: "/run/auth/outgoing",
+    }).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
     "-e",
     "ANTNEST_EDGE_COOKIE_SECURE=false",
     "-e",
@@ -295,7 +352,28 @@ async function run() {
   const { dockerClient } = await import("../lifecycle-closeout/docker.mjs");
   const project = `antnest-gateway-stop-${randomUUID().slice(0, 8)}`;
   const gatewayImage =
-    process.env.ANTNEST_GATEWAY_TEST_IMAGE ?? "antnest/edge-gateway:local";
+    process.env.ANTNEST_GATEWAY_TEST_IMAGE ??
+    `antnest/gateway-shutdown:${project}`;
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  const credentials = resolve(
+    root,
+    "artifacts/verification/gateway-shutdown",
+    project,
+    "credentials",
+  );
+  mkdirSync(resolve(credentials, "outgoing"), { recursive: true, mode: 0o700 });
+  const hashes = {};
+  for (const service of Object.keys(dependencyPorts)) {
+    const token = randomBytes(32).toString("base64url");
+    writeFileSync(resolve(credentials, "outgoing", service), token, {
+      mode: 0o600,
+    });
+    hashes[service] = createHash("sha256").update(token).digest("hex");
+  }
+  writeFileSync(resolve(credentials, "hashes.json"), JSON.stringify(hashes), {
+    mode: 0o600,
+  });
+  writeFileSync(resolve(credentials, "callers.json"), "{}", { mode: 0o600 });
   const abort = new AbortController();
   const interrupt = () =>
     abort.abort(new Error("Gateway shutdown regression interrupted"));
@@ -305,11 +383,25 @@ async function run() {
   let failure, result;
   console.error(`Disposable Gateway shutdown project: ${project}`);
   try {
+    if (!process.env.ANTNEST_GATEWAY_TEST_IMAGE)
+      await dockerClient(
+        process.env,
+        abort.signal,
+        180000,
+      )([
+        "build",
+        "-f",
+        resolve(root, "services/edge-gateway/Dockerfile"),
+        "-t",
+        gatewayImage,
+        root,
+      ]);
     result = await exercise(
       project,
       dockerClient(process.env, abort.signal, 180000),
       abort.signal,
       gatewayImage,
+      credentials,
     );
   } catch (error) {
     failure = error;
@@ -329,6 +421,18 @@ async function run() {
       await cleanup(project, dockerClient(process.env, undefined, 60000));
     } catch (error) {
       failure = failure ? new AggregateError([failure, error]) : error;
+    }
+    rmSync(credentials, { recursive: true, force: true });
+    if (!process.env.ANTNEST_GATEWAY_TEST_IMAGE) {
+      try {
+        await dockerClient(
+          process.env,
+          undefined,
+          60000,
+        )(["image", "rm", "--no-prune", gatewayImage]);
+      } catch (error) {
+        failure = failure ? new AggregateError([failure, error]) : error;
+      }
     }
     clearTimeout(timer);
     process.removeListener("SIGINT", interrupt);

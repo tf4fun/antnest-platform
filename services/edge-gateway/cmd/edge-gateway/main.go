@@ -18,6 +18,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/server"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
@@ -34,7 +35,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Getenv); err != nil {
+	if err := run(ctx, os.LookupEnv); err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error(
 			"Edge Gateway stopped with an error", "error_class", "service_failure",
 		)
@@ -42,13 +43,22 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, lookup func(string) string) (resultErr error) {
-	cfg, err := config.Load(lookup)
+func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
+	getenv := func(name string) string { value, _ := lookup(name); return value }
+	cfg, err := config.Load(getenv)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	internal, err := serviceauth.LoadOutbound(lookup, map[string]string{
+		"identity-service": cfg.IdentityURL, "admin-console": cfg.AdminConsoleURL,
+		"agent-ui": cfg.AgentUIURL, "agent-controller": cfg.AgentControllerURL, "agent-acp-service": cfg.AgentACPURL,
+	})
+	if err != nil {
+		return fmt.Errorf("load internal authentication: %w", err)
+	}
+	defer internal.CloseIdleConnections()
 	telemetryRuntime, err := telemetry.Setup(ctx, slog.NewJSONHandler(os.Stdout, nil), telemetry.Config{
-		ServiceVersion: version, Environment: lookup("ANTNEST_ENVIRONMENT"),
+		ServiceVersion: version, Environment: getenv("ANTNEST_ENVIRONMENT"),
 	})
 	if err != nil {
 		return fmt.Errorf("start telemetry: %w", err)
@@ -58,7 +68,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	}()
 	logger := telemetryRuntime.Logger()
 
-	httpClient := &http.Client{Transport: telemetry.NewHTTPTransport(http.DefaultTransport)}
+	httpClient := internal.HTTPClient()
+	httpClient.Transport = telemetry.NewHTTPTransport(httpClient.Transport)
 	identityClient, err := identity.NewClient(cfg.IdentityURL, httpClient)
 	if err != nil {
 		return fmt.Errorf("create Identity client: %w", err)

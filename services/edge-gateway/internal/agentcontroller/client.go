@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"io"
 	"net/http"
 	"net/url"
@@ -118,6 +119,7 @@ func (client *Client) doJSON(
 		return fmt.Errorf("create Agent Controller request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
+	identity.ForwardCallerContext(ctx, request.Header)
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

@@ -1,14 +1,10 @@
 {
   "service": "edge-gateway",
-  "status": "planned",
-  "implementation_issues": [
-    26
-  ],
+  "status": "enforced",
+  "implementation_issues": [26],
   "routes": {
     "* /{path...}": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "none"
@@ -28,9 +24,7 @@
       "request_body": "none"
     },
     "* /api/admin/{path...}": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -44,9 +38,7 @@
       "request_body": "none"
     },
     "* /api/app/workspace/v1/{path...}": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -66,9 +58,7 @@
       "request_body": "none"
     },
     "* /scim/v2": {
-      "callers": [
-        "scim-client"
-      ],
+      "callers": ["scim-client"],
       "authentication": "public",
       "caller_context": {
         "scim-client": "scim-token"
@@ -76,9 +66,7 @@
       "request_body": "protocol"
     },
     "* /scim/v2/{path...}": {
-      "callers": [
-        "scim-client"
-      ],
+      "callers": ["scim-client"],
       "authentication": "public",
       "caller_context": {
         "scim-client": "scim-token"
@@ -86,9 +74,7 @@
       "request_body": "protocol"
     },
     "* /workspace": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -96,9 +82,7 @@
       "request_body": "none"
     },
     "* /workspace/{path...}": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -106,9 +90,7 @@
       "request_body": "none"
     },
     "DELETE /api/app/agents/{agent_id}/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -116,9 +98,7 @@
       "request_body": "none"
     },
     "DELETE /api/app/agents/{agent_id}/v1/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -126,9 +106,7 @@
       "request_body": "none"
     },
     "DELETE /api/session": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -136,9 +114,7 @@
       "request_body": "none"
     },
     "GET /api/app/agents/{agent_id}/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -146,9 +122,7 @@
       "request_body": "none"
     },
     "GET /api/app/agents/{agent_id}/state": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -156,9 +130,7 @@
       "request_body": "none"
     },
     "GET /api/app/agents/{agent_id}/state/watch": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -166,9 +138,7 @@
       "request_body": "none"
     },
     "GET /api/app/agents/{agent_id}/v1/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -176,9 +146,7 @@
       "request_body": "none"
     },
     "GET /api/app/agents/{agent_id}/v2/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -186,9 +154,7 @@
       "request_body": "none"
     },
     "GET /api/app/bootstrap": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -196,9 +162,7 @@
       "request_body": "none"
     },
     "GET /api/session": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -206,9 +170,7 @@
       "request_body": "none"
     },
     "GET /protocol/oidc/callback": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "none"
@@ -216,9 +178,7 @@
       "request_body": "none"
     },
     "GET /status": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -226,9 +186,7 @@
       "request_body": "none"
     },
     "POST /api/app/agents/{agent_id}/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -236,9 +194,7 @@
       "request_body": "json"
     },
     "POST /api/app/agents/{agent_id}/v1/acp": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "session"
@@ -246,9 +202,7 @@
       "request_body": "json"
     },
     "POST /api/session/login": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "none"
@@ -256,9 +210,7 @@
       "request_body": "json"
     },
     "POST /api/session/login-methods": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "none"
@@ -266,9 +218,7 @@
       "request_body": "json"
     },
     "POST /api/session/oidc/start": {
-      "callers": [
-        "browser"
-      ],
+      "callers": ["browser"],
       "authentication": "public",
       "caller_context": {
         "browser": "none"

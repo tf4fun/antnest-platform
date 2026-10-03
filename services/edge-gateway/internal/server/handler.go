@@ -46,12 +46,6 @@ const (
 	defaultLoginMaxKeys      = 4096
 )
 
-var trustedHeaders = []string{
-	HeaderUserID, HeaderOrganizationID, HeaderMembershipID,
-	HeaderOrganizationSlug, HeaderOrganizationName,
-	HeaderSystemRole, HeaderOrganizationRole, HeaderAgentAccessSubject, HeaderPrincipalID, HeaderAgentID,
-}
-
 var errInvalidSession = errors.New("browser session is invalid or missing")
 
 type IdentityService interface {
@@ -235,9 +229,7 @@ func (*handler) unknownIdentityProtocol(response http.ResponseWriter, _ *http.Re
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	for _, name := range trustedHeaders {
-		request.Header.Del(name)
-	}
+	stripBrowserCredentials(request)
 	writer := &securityHeaderWriter{ResponseWriter: response}
 	h.mux.ServeHTTP(writer, request)
 	if !writer.wroteHeader {
@@ -417,7 +409,7 @@ func (h *handler) logout(response http.ResponseWriter, request *http.Request) er
 		response.WriteHeader(http.StatusNoContent)
 		return nil
 	}
-	if !h.sessions.ValidCSRF(request, values) {
+	if !h.validCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -504,7 +496,7 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 	if err != nil {
 		return err
 	}
-	if !upgrade && stateChanging(request.Method) && !h.sessions.ValidCSRF(request, values) {
+	if !upgrade && stateChanging(request.Method) && !h.validCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -573,7 +565,8 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	principal, err := h.identity.Resolve(ctx, values.AccessToken)
+	profile, agent := callerSelection(request)
+	principal, err := h.identity.Resolve(identity.WithResolution(ctx, profile, agent), values.AccessToken)
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return identity.Principal{}, false
@@ -583,6 +576,11 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 		redirectWorkspaceLogin(response, request)
 		return identity.Principal{}, false
 	}
+	if principal.CallerContext == "" {
+		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		return identity.Principal{}, false
+	}
+	*request = *request.WithContext(identity.WithPrincipal(request.Context(), principal))
 	return principal, true
 }
 
@@ -668,7 +666,7 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
 		return nil
 	}
-	if stateChanging(request.Method) && !h.sessions.ValidCSRF(request, values) {
+	if stateChanging(request.Method) && !h.validCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -708,7 +706,8 @@ func (h *handler) authenticate(
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	principal, err := h.identity.Resolve(ctx, values.AccessToken)
+	profile, agent := callerSelection(request)
+	principal, err := h.identity.Resolve(identity.WithResolution(ctx, profile, agent), values.AccessToken)
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return session.Values{}, identity.Principal{}, err
@@ -718,6 +717,11 @@ func (h *handler) authenticate(
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
+	if principal.CallerContext == "" {
+		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		return session.Values{}, identity.Principal{}, errors.New("identity omitted caller context")
+	}
+	*request = *request.WithContext(identity.WithPrincipal(request.Context(), principal))
 	return values, principal, nil
 }
 
@@ -736,7 +740,9 @@ func (h *handler) newProxy(
 		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
 		request.Out.Header.Del("Authorization")
+		identity.ForwardCallerContext(request.In.Context(), request.Out.Header)
 	}
+	proxy.ModifyResponse = stripCredentialResponse
 	proxy.Transport = h.httpClient.Transport
 	if proxy.Transport == nil {
 		proxy.Transport = http.DefaultTransport
@@ -756,6 +762,7 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
 	}
+	proxy.ModifyResponse = stripCredentialResponse
 	proxy.Transport = h.httpClient.Transport
 	if proxy.Transport == nil {
 		proxy.Transport = http.DefaultTransport
@@ -776,7 +783,7 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 
 func parseServiceURL(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("invalid service URL")
 	}

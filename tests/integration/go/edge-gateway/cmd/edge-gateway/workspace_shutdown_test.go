@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -46,7 +48,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 	upstreamStopped := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/rpc/identity/resolve-access-token" {
-			if _, err := io.WriteString(w, `{"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","active":true}}`); err != nil {
+			if _, err := io.WriteString(w, `{"caller_context":"`+testIssuerContext(t)+`","principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","active":true}}`); err != nil {
 				t.Error(err)
 			}
 			return
@@ -149,4 +151,11 @@ func testReceiveShutdown(t *testing.T, path string) {
 	case <-time.After(time.Second):
 		t.Fatal("ACP receive not cancelled")
 	}
+}
+
+func testIssuerContext(t *testing.T) string {
+	t.Helper()
+	now := time.Now().Unix()
+	body, _ := json.Marshal(map[string]any{"iat": now, "exp": now + 60})
+	return base64.RawURLEncoding.EncodeToString([]byte(`{"typ":"antnest-cct+jwt","alg":"EdDSA","kid":"test"}`)) + "." + base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 64))
 }

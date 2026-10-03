@@ -6,9 +6,11 @@ and routes the request to the owning service without owning the requested
 business operation. It is written in Go.
 
 The Gateway owns the browser credential boundary: cookies, CSRF, same-origin
-checks and identity revalidation. Every other service receives only trusted
-identity headers that the Gateway sets after verification; browser-supplied
-identity headers, cookies and access tokens never reach internal services.
+checks and identity revalidation. Internal dependencies receive verified
+workload authentication and the unchanged Identity-signed caller context.
+Browser-supplied authentication/identity headers and cookies are removed;
+presentation hints are regenerated from the verified principal. User access
+tokens reach only Identity's authenticated credential RPCs.
 
 ## Responsibilities
 
@@ -26,7 +28,8 @@ identity headers, cookies and access tokens never reach internal services.
   authentication.
 - Scoped Agent UI proxy through `ANTNEST_AGENT_UI_URL`: `/workspace/` HTML,
   hashed assets, and the Workspace HTTP/SSE API with leased SSE observation.
-- Trusted principal headers, security headers, request limits and tracing.
+- Per-dependency workload credentials, route-selected caller context, verified
+  presentation headers, security headers, request limits and tracing.
 - Proxy availability and external error projection.
 
 ## Non-responsibilities
@@ -65,14 +68,22 @@ slug/name. Gateway projects these display facts to the active Node Workspace
 API and SSR as verified UTF-8 Base64URL headers; see
 [Organization projection](../../contracts/agent-ui/organization-projection.md).
 Every authenticated request re-resolves Identity, so re-bootstrap observes a
-rename without changing authorization scope. Gateway delivery
-[#92](https://github.com/tf4fun/antnest-platform/issues/92) precedes the pending
-Agent UI consumer and full integration
-[#93](https://github.com/tf4fun/antnest-platform/issues/93). The unused legacy
+rename without changing authorization scope. Organization display delivery
+[#92](https://github.com/tf4fun/antnest-platform/issues/92) and
+[#93](https://github.com/tf4fun/antnest-platform/issues/93) are complete. CCT
+consumer enforcement is a separate pending #26 service batch. The unused legacy
 `/api/app/bootstrap` projection is unchanged, pending
 [#64](https://github.com/tf4fun/antnest-platform/issues/64).
 
 ## Configuration
+
+Internal dependencies additionally require the exact shared
+[service-authentication configuration](../../contracts/edge-gateway/service-authentication.md).
+Token mode requires Gateway's read-only callers file (normally `{}`) and five
+separate outgoing credential files. No mode is selected by default, and an
+invalid or missing credential prevents startup. HTTPS pins each dependency's
+DNS name and service URI; HTTP requires the explicit disposable-development
+opt-in. Public Gateway readiness remains a local HTTP check.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -128,6 +139,9 @@ make go-lint
 # HTTP/TCP stream shutdown integration tests
 node tests/integration/go/run.mjs edge-gateway
 
+# Isolated authenticated forwarding against dependency doubles
+node tests/e2e/service-authentication/gateway/run.mjs
+
 # Docker image (build context is the repository root)
 docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 
@@ -153,5 +167,6 @@ recovery, and durable Run completion after logout or disconnect.
 - [Workspace state](docs/workspace-state.md) - bootstrap and execution-state observation contract.
 - [Execution boundary](docs/execution-boundary.md) - Controller and ACP ownership split.
 - [Session contract](../../contracts/edge-gateway/session-contract.json) - public browser session interface.
+- [Service admission](../../contracts/edge-gateway/service-authentication.md) - exact internal credentials, CCT scope, and pending consumers.
 - [Platform observability contract](../../docs/observability-contract.md).
 - [Stage 3 admin control plane](../../docs/stage-3-admin-control-plane.md) - cross-service behavior.

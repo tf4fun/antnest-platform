@@ -1,0 +1,49 @@
+services:
+  dependencies:
+    image: node:24.21.0-bookworm-slim
+    user: "${GATEWAY_TEST_UID:?}:${GATEWAY_TEST_GID:?}"
+    command: [node, /fixture/dependencies.mjs]
+    volumes:
+      - ./dependencies.mjs:/fixture/dependencies.mjs:ro
+      - ${GATEWAY_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8101/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  edge-gateway:
+    build:
+      context: ../../../..
+      dockerfile: services/edge-gateway/Dockerfile
+    user: "${GATEWAY_TEST_UID:?}:${GATEWAY_TEST_GID:?}"
+    environment:
+      ANTNEST_IDENTITY_SERVICE_URL: http://dependencies:8101
+      ANTNEST_ADMIN_CONSOLE_URL: http://dependencies:8102
+      ANTNEST_AGENT_UI_URL: http://dependencies:8103
+      ANTNEST_AGENT_CONTROLLER_URL: http://dependencies:8104
+      ANTNEST_AGENT_ACP_URL: http://dependencies:8105
+      ANTNEST_EDGE_COOKIE_SECURE: "false"
+      ANTNEST_EDGE_STREAM_LEASE: 2s
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /run/auth/outgoing
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ${GATEWAY_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    ports:
+      - "127.0.0.1::8080"
+    depends_on:
+      dependencies:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /usr/local/bin/edge-gateway, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 60

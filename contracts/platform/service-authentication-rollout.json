@@ -53,19 +53,30 @@
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs identity-service -- -race",
         "postgres": "make test-identity-postgres (172 tests, 246 subtests, zero skips/failures)",
         "docker": "node tests/e2e/service-authentication/identity/run.mjs (40 checks; cleaned)",
-        "pending_consumers": ["edge-gateway", "admin-console"],
+        "pending_consumers": ["admin-console"],
         "cross_service_e2e": "pending final integration batch"
       }
     },
     {
       "owner": "edge-gateway",
       "issues": [26],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "authenticated clients",
         "server-selected audience profile and Agent scope",
         "CCT forwarding; strip untrusted identity/context headers"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (141 tests, 340 subtests, zero skips/failures); authenticated WebSocket rotation regression passed",
+        "docker": "node tests/e2e/service-authentication/gateway/run.mjs (48 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
+        "pending_consumers": [
+          "admin-console",
+          "agent-ui",
+          "agent-acp-service",
+          "agent-controller"
+        ],
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "admin-console",

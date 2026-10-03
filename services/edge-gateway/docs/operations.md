@@ -5,6 +5,23 @@ diagnostics, shutdown behavior for long-lived streams, and capacity bounds.
 
 ## Configuration
 
+Internal connection configuration is mandatory in the
+[Gateway authentication contract](../../../contracts/edge-gateway/service-authentication.md).
+Supply the exact shared `ANTNEST_SERVICE_AUTH_MODE`, receiver hash file and
+outgoing token directory in token mode; supply complete trusted TLS material
+unless explicitly opting into disposable-development HTTP. Token files are
+read at startup and again for every request/connection; replacements with
+whitespace, malformed bytes or missing files fail closed with the existing
+dependency-unavailable projection, without clearing browser cookies.
+Rotate by first installing current/next hashes at the receiver, then atomically
+replacing the caller file, and finally removing the previous receiver hash.
+Do not restart into an intermediate configuration or change receiver origins
+through browser inputs. Gateway's own public listener/health check remains HTTP.
+
+Deploy Identity revision 14 before this Gateway batch. Console, UI, ACP and
+Controller workload/CCT consumers and deployment mounts are separate pending
+batches; use the coordinated branch only after the final integration acceptance.
+
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP listen address |

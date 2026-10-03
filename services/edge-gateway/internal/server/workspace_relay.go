@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
@@ -37,13 +38,28 @@ func (h *handler) relayWorkspaceACP(
 	}
 	defer func() { _ = client.Close() }()
 	result := relayMessages(request.Context(), client, upstream, h.requestTimeout, maximumACPMessageBytes, h.acpMessages,
-		func(ctx context.Context) *relayEnd { return h.checkRelaySession(ctx, token, principal) })
+		func(ctx context.Context) *relayEnd {
+			if !principal.ContextExpiresAt.IsZero() && !time.Now().Before(principal.ContextExpiresAt) {
+				return &relayEnd{websocket.ClosePolicyViolation, "caller_context_expired"}
+			}
+			return h.checkRelaySession(ctx, token, principal)
+		})
 	h.logger.InfoContext(request.Context(), "ACP connection closed",
 		"close_code", result.code, "reason", result.reason)
 }
 
 func (h *handler) dialWorkspaceACP(request *http.Request, principal identity.Principal) (*websocket.Conn, int, error) {
 	transport := telemetry.BaseHTTPTransport(h.httpClient.Transport)
+	headers := make(http.Header)
+	setACPIdentity(headers, principal, request.PathValue("agent_id"))
+	identity.ForwardCallerContext(request.Context(), headers)
+	if authenticated, ok := transport.(*serviceauth.Clients); ok {
+		configured, err := authenticated.SocketConfig("agent-acp-service", headers)
+		if err != nil {
+			return nil, http.StatusServiceUnavailable, err
+		}
+		transport = configured
+	}
 	configured, ok := transport.(*http.Transport)
 	if !ok {
 		return nil, http.StatusServiceUnavailable, fmt.Errorf("ACP requires an HTTP transport with socket configuration")
@@ -59,8 +75,6 @@ func (h *handler) dialWorkspaceACP(request *http.Request, principal identity.Pri
 		target.Scheme = "wss"
 	}
 	target.Path, target.RawPath, target.RawQuery = "/"+request.PathValue("acp_version")+"/acp", "", ""
-	headers := make(http.Header)
-	setACPIdentity(headers, principal, request.PathValue("agent_id"))
 	connection, response, err := telemetry.DialWebSocket(request.Context(), &dialer, target.String(), headers)
 	status := http.StatusServiceUnavailable
 	if response != nil && response.StatusCode >= 400 && response.StatusCode < 500 {
@@ -76,6 +90,9 @@ func (h *handler) checkRelaySession(ctx context.Context, token string, original 
 	ctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
 	defer cancel()
 	current, err := h.identity.Resolve(ctx, token)
+	if !original.ContextExpiresAt.IsZero() && !time.Now().Before(original.ContextExpiresAt) {
+		return &relayEnd{websocket.ClosePolicyViolation, "caller_context_expired"}
+	}
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
 		return &relayEnd{websocket.CloseTryAgainLater, "identity_unavailable"}
 	}

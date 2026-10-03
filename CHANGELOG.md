@@ -4,6 +4,20 @@
 
 ### Fixed
 
+Gateway now authenticates each internal dependency with the exact token/mTLS
+contract and forwards Identity revision-14 signed caller context selected by
+the actual route ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
+It removes browser service/CCT credentials and all `X-Antnest-*` headers,
+validates CSRF privately, and regenerates only verified presentation hints.
+Token files are validated before startup and re-read per HTTP request or
+WebSocket connection; invalid replacements fail closed without stale fallback.
+Internal origins, TLS DNS/service identities and redirects are constrained.
+Gateway session contract revision 15 keeps browser JSON unchanged and rejects
+new direct WebSocket messages after the handshake CCT expires; reconnect does
+not cancel accepted Runs. Identity must upgrade first; Console/UI/ACP/Controller
+consumers, deployment credentials and final integration remain pending on
+`feat/service-authentication`. #58 separately owns long-lived renewal.
+
 Identity now rejects administrative calls based only on a body-selected actor
 ([#25](https://github.com/tf4fun/antnest-platform/issues/25)). RPC revision 14
 requires verified workload identity, route allowlists and a signed caller context

@@ -54,12 +54,12 @@ session. A retry must revalidate with Identity; unavailable never means admitted
 ```text
 HTTP limits/security header defaults wrapper
   -> W3C trace extraction/root span
-  -> remove known trusted identity/access-subject headers
+  -> remove browser service/context credentials and all X-Antnest-* headers
   -> route match
   -> cookie token resolution (protected routes)
   -> route-specific admission
        -> administrator + CSRF -> Admin Console
-       -> trusted identity -> Agent ACP Service local authorization
+       -> signed caller context + workload identity -> ACP local authorization
        -> authenticated bootstrap -> Controller ID/name metadata
        -> scoped state observation -> Agent ACP snapshot/watch
   -> Admin Console or Agent UI application proxy
@@ -284,9 +284,19 @@ retries belong to the owning service or presentation BFF, not this Gateway.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/edge-gateway/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#26](https://github.com/tf4fun/antnest-platform/issues/26); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+and [Gateway forwarding contract](../../../contracts/edge-gateway/service-authentication.md)
+define the implemented internal connection boundary. Each dependency origin
+has a distinct token file or verified mTLS service identity. Tokens are re-read
+for HTTP requests and WebSocket handshakes. Browser-supplied service/CCT headers
+and the complete X-Antnest namespace are removed; CSRF is kept privately for
+local comparison. Identity revision 14 resolves the session with a fixed
+server-selected audience profile and target Agent; Gateway forwards its CCT
+unchanged from private request context. Internal credential response headers
+are removed, and principal JSON never serializes the CCT.
+
+Direct WebSocket messages require the original session and an unexpired
+handshake CCT. Expiry rejects the next client message and requires reconnect;
+it does not cancel previously accepted ACP work. #58 owns in-place renewal.
+Console, UI, ACP and Controller consumer enforcement remains pending in their
+own batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+for local admissions and the final cross-service Docker acceptance.

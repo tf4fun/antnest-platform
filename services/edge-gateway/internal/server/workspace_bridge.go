@@ -46,7 +46,7 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 		}
 		return h.workspaceBridgeEvents(response, request, values.AccessToken, principal)
 	}
-	if request.Method == http.MethodPost && !h.sessions.ValidCSRF(request, values) {
+	if request.Method == http.MethodPost && !h.validCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -132,9 +132,11 @@ func (h *handler) newWorkspaceBridgeProxy(target *url.URL) *httputil.ReverseProx
 				}
 			}
 			proxyRequest.Out.Header = headers
+			identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
 			proxyRequest.SetXForwarded()
 		},
 		ModifyResponse: func(upstream *http.Response) error {
+			_ = stripCredentialResponse(upstream)
 			upstream.Header.Del("Set-Cookie")
 			if upstream.Request == nil || !strings.HasPrefix(upstream.Request.URL.Path, "/workspace/assets/") {
 				upstream.Header.Set("Cache-Control", "no-store")

@@ -764,6 +764,7 @@ func administratorPrincipal() identity.Principal {
 		UserID: "user-admin", OrganizationID: "org-1", MembershipID: "membership-1",
 		OrganizationSlug: "engineering", OrganizationName: "Engineering",
 		SystemRole: "admin", OrganizationRole: "admin", Active: true,
+		CallerContext: "trusted-issuer-context",
 	}
 }
 

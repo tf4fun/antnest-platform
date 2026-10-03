@@ -10,6 +10,7 @@ import (
 func organizationResponse(t *testing.T) map[string]any {
 	t.Helper()
 	return map[string]any{
+		"caller_context": testIssuerContext(t),
 		"principal": map[string]any{
 			"user_id": "user-1", "organization_id": "org-1", "membership_id": "member-1",
 			"organization_slug": "engineering", "organization_name": "研发 · Équipe 🚀",
