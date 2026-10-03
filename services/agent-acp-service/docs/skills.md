@@ -169,8 +169,18 @@ Rejected results record bounded failure categories and schema paths, response
 size, stop reason and usage, without prompts, Skill contents or credentials.
 Intentional skips and foreground preemption are not task failures.
 
-`ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID` is a development setting. For the
-named Agent, newly scanned Runs skip the experience cue and cooldown, and review
+`ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID` is a development setting. A configured
+ID retains the existing `optional()` normalization: surrounding whitespace is
+trimmed, and empty or whitespace-only values mean unset. The normalized
+Agent ID requires `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true`; otherwise
+configuration fails before opening the database or network. The gate defaults
+to `false` and accepts exactly `true` or `false`, without trimming or case
+conversion. Every startup with a debug Agent emits one warning,
+`Skill learning debug mode is active`, with `agent_id`; no warning is emitted
+when no debug Agent is configured. Standard Compose does not pass either setting
+from the host environment. Only the Skill learning E2E override supplies them.
+
+For the named Agent, newly scanned Runs skip the experience cue and cooldown, and review
 uses prompt version 2, which requires a minimal proposal instead of `skip`.
 Authorization, policy, budgets, foreground priority and candidate checks still
 apply. The mode is frozen per task and visible as `antnest.learning.debug` and

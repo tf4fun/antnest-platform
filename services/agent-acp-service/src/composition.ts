@@ -123,6 +123,10 @@ export async function startAgentAcpService(
   telemetry: TelemetryPort,
   reportOwnershipLoss: (error: WorkerOwnershipLostError) => void,
 ): Promise<RunningAgentAcpService> {
+  if (config.skillLearningDebugAgentId !== undefined)
+    telemetry.log("warn", "Skill learning debug mode is active", {
+      agent_id: config.skillLearningDebugAgentId,
+    });
   const pool = new Pool(postgresPoolOptions(config.databaseUrl, config.databaseTimeoutMs));
   pool.on("error", (error) => telemetry.log("error", "postgres_pool_error", {}, error));
   let workerLock: PostgresWorkerLock | undefined;

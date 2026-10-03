@@ -24,6 +24,11 @@ import { callerAcpFlow } from "./caller-flow.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
 import { assertMaintenanceKidStartupRejected } from "./maintenance-kid.mjs";
+import {
+  learningImageOverlay,
+  assertLearningDebugWarning,
+  assertStandardComposeIgnoresDebugSettings,
+} from "./development-settings.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -86,6 +91,7 @@ assert(
 const overlay = [
   "-f",
   "tests/e2e/workspace-closeout/c4.compose.yaml",
+  ...learningImageOverlay,
   "-f",
   deployment
     ? "tests/e2e/skill-learning/deployment.compose.yaml"
@@ -159,6 +165,7 @@ test(
     let propagationEvidence;
     let callerEvidence;
     let resourceBaseline;
+    let developmentSettings;
     const propagationOutput = () =>
       `${root}/artifacts/verification/${callerDiscovery ? "skill-discovery-caller-di3-20261001" : sourceLifecycle ? "skill-source-lifecycle-di2-20261001" : deployment ? "skill-deployment-20261001" : "skill-propagation-di1-20261001"}/${config.project}`;
     const resources = async (docker) => {
@@ -209,6 +216,8 @@ test(
         });
       }
       Object.assign(config.env, {
+        ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "false",
+        ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "",
         ANTNEST_E2E_HOLD_RELEASE: String(cleanupLostResponse),
         ANTNEST_E2E_SKILL_LEARNING_DEBUG: String(debugLearning),
         ANTNEST_E2E_TOOL_USABILITY: String(toolUsability),
@@ -362,6 +371,11 @@ test(
           { mode: 0o600, flag: "wx" },
         );
       }
+      if (!debugLearning && !discovery)
+        developmentSettings = await assertStandardComposeIgnoresDebugSettings(
+          config,
+          abort.signal,
+        );
       await docker(
         composeArgs(config.project, [
           ...overlay,
@@ -415,6 +429,7 @@ test(
           query,
         ]);
       if (debugLearning) {
+        config.env.ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS = "true";
         config.env.ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID = fixture.agentID;
         await docker(
           composeArgs(config.project, [
@@ -429,6 +444,19 @@ test(
           true,
         );
       }
+      const acpContainer = await docker(
+        composeArgs(config.project, [
+          ...overlay,
+          "ps",
+          "-q",
+          "agent-acp-service",
+        ]),
+      );
+      await assertLearningDebugWarning({
+        docker,
+        container: acpContainer,
+        agentId: debugLearning ? fixture.agentID : undefined,
+      });
       if (browserAcceptance) {
         const { openLearningBrowser } = await import("./browser-learning.mjs");
         learningBrowser = await openLearningBrowser({
@@ -1468,7 +1496,13 @@ test(
           ),
           "2",
         );
+        await assertLearningDebugWarning({
+          docker,
+          container: acpContainer,
+          agentId: fixture.agentID,
+        });
         config.env.ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID = "";
+        config.env.ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS = "false";
         await docker(
           composeArgs(config.project, [
             ...overlay,
@@ -1529,6 +1563,7 @@ test(
         `${evidence}${config.project}.json`,
         JSON.stringify({
           ...result,
+          ...(developmentSettings ? { developmentSettings } : {}),
           ...(toolEvidence ? { toolEvidence } : {}),
           ...(learningTrace ? { learningTrace } : {}),
           ...(debugRead ? { debugRead } : {}),
@@ -1603,7 +1638,7 @@ test(
         process.off("SIGTERM", interrupt);
         if (config) {
           await cleanup(config);
-          if (discovery) {
+          {
             const cleanImages = dockerClient(config.env, undefined, 120000);
             const existingImages = new Set(
               (
@@ -1620,7 +1655,8 @@ test(
               uiImage,
               discoveryImage,
               temporaryRuntimeImage,
-              ...(propagation ? [controllerImage, consoleImage, rcImage] : []),
+              ...(pinned || propagation ? [controllerImage] : []),
+              ...(propagation ? [consoleImage, rcImage] : []),
             ].filter((tag) => tag && existingImages.has(tag)))
               await cleanImages(["image", "rm", ownedImage]);
             if (propagation && resourceBaseline) {

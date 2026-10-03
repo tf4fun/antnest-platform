@@ -9,6 +9,7 @@ export type AgentAcpConfig = {
   databaseTimeoutMs: number;
   stateDeliveryTimeoutMs: number;
   clientMcpKey: Buffer;
+  allowDevelopmentSettings: boolean;
   skillMaintenanceSigning?: { kid: string; privateKey: KeyObject };
   skillLearningControllerUrl?: string;
   skillLearningDebugAgentId?: string;
@@ -37,6 +38,10 @@ export class ConfigError extends Error {
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentAcpConfig {
   const databaseUrl = required(environment, "ANTNEST_ACP_DATABASE_URL");
   assertUrlScheme(databaseUrl, "ANTNEST_ACP_DATABASE_URL", ["postgres:", "postgresql:"]);
+  const allowDevelopmentSettings = parseBoolean(
+    environment.ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS ?? "false",
+    "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
+  );
 
   return {
     listen: parseListen(environment.ANTNEST_ACP_LISTEN ?? ":8080"),
@@ -50,9 +55,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
       "ANTNEST_ACP_STATE_DELIVERY_TIMEOUT",
     ),
     clientMcpKey: parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY")),
+    allowDevelopmentSettings,
     ...parseSkillMaintenanceSigning(environment),
     ...parseSkillLearningControllerUrl(environment),
-    ...parseSkillLearningDebugAgentId(environment),
+    ...parseSkillLearningDebugAgentId(environment, allowDevelopmentSettings),
     ...parseSkillDiscovery(environment),
     runTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_RUN_TIMEOUT ?? "30m",
@@ -106,9 +112,14 @@ function parseSkillDiscovery(
 
 function parseSkillLearningDebugAgentId(
   environment: NodeJS.ProcessEnv,
+  allowDevelopmentSettings: boolean,
 ): Pick<AgentAcpConfig, "skillLearningDebugAgentId"> {
   const value = optional(environment.ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID);
   if (value === undefined) return {};
+  if (!allowDevelopmentSettings)
+    throw new ConfigError(
+      "ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID requires ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS=true",
+    );
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/u.test(value))
     throw new ConfigError("Invalid Skill learning debug Agent ID");
   return { skillLearningDebugAgentId: value };
