@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
@@ -12,19 +14,54 @@ import (
 )
 
 type csrfKey struct{}
+type principalPreconditionKey struct{}
+
+const principalPreconditionHeader = "X-Antnest-Expected-Principal"
 
 func stripBrowserCredentials(request *http.Request) {
-	var csrf []string
+	var csrf, principalPrecondition []string
 	for name, values := range request.Header {
 		if strings.EqualFold(name, session.CSRFHeaderName) {
 			csrf = append(csrf, values...)
+		}
+		if strings.EqualFold(name, principalPreconditionHeader) {
+			principalPrecondition = append(principalPrecondition, values...)
 		}
 		if strings.HasPrefix(strings.ToLower(name), "x-antnest-") ||
 			strings.EqualFold(name, serviceauth.Header) || strings.EqualFold(name, identity.CallerContextHeader) {
 			delete(request.Header, name)
 		}
 	}
-	*request = *request.WithContext(context.WithValue(request.Context(), csrfKey{}, csrf))
+	ctx := context.WithValue(request.Context(), csrfKey{}, csrf)
+	ctx = context.WithValue(ctx, principalPreconditionKey{}, principalPrecondition)
+	*request = *request.WithContext(ctx)
+}
+
+// The browser's account-switch guard is compared with authenticated Identity
+// facts. Only this operation receives a regenerated, canonical precondition.
+func restoreNetworkPrincipalPrecondition(request *http.Request, principal identity.Principal) bool {
+	parts := strings.Split(request.URL.EscapedPath(), "/")
+	if request.Method != http.MethodPut || len(parts) != 6 || parts[1] != "api" || parts[2] != "admin" || parts[3] != "agents" || parts[5] != "network-policy" {
+		return true
+	}
+	values, _ := request.Context().Value(principalPreconditionKey{}).([]string)
+	if len(values) != 1 || len(values[0]) > 8192 {
+		return false
+	}
+	raw, err := url.PathUnescape(values[0])
+	if err != nil || !utf8.ValidString(raw) {
+		return false
+	}
+	var expected []string
+	if json.Unmarshal([]byte(raw), &expected) != nil || len(expected) != 2 || expected[0] != principal.OrganizationID || expected[1] != principal.UserID {
+		return false
+	}
+	canonical, err := json.Marshal([]string{principal.OrganizationID, principal.UserID})
+	if err != nil {
+		return false
+	}
+	request.Header.Set(principalPreconditionHeader, url.PathEscape(string(canonical)))
+	return true
 }
 
 func (h *handler) validCSRF(request *http.Request, values session.Values) bool {

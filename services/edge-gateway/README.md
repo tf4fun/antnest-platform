@@ -45,20 +45,20 @@ tokens reach only Identity's authenticated credential RPCs.
 
 ## Interfaces
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback` | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
-| Inbound | `/scim/v2/*` | Protocol-preserving SCIM proxy to Identity |
-| Inbound | `/api/admin/*` and Console application | Administrator-only BFF routes forwarded to Admin Console with CSRF checks |
-| Inbound | `GET /api/app/bootstrap` | Principal display facts and accessible Agent IDs and names |
-| Inbound | `/api/app/agents/{agent_id}/state`, `/state/watch` | [Workspace state](docs/workspace-state.md) snapshot and SSE watch |
-| Inbound | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias) | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay |
-| Inbound | `/workspace/*`, `/api/app/workspace/v1/*` | Agent UI HTML, assets and Workspace HTTP/SSE API |
-| Inbound | `GET /status` | Local readiness only; it never probes another service |
-| Outbound | Identity Service RPC | Login, token resolution, revocation, OIDC |
-| Outbound | Agent Controller RPC | Principal-scoped Agent ID/name discovery only |
-| Outbound | Agent ACP Service | ACP protocol traffic and execution-state reads/watches |
-| Outbound | Admin Console, Agent UI | Reverse-proxied application traffic |
+| Direction | Interface                                                                                                                    | Purpose                                                                                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound   | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback` | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
+| Inbound   | `/scim/v2/*`                                                                                                                 | Protocol-preserving SCIM proxy to Identity                                                                                                           |
+| Inbound   | `/api/admin/*` and Console application                                                                                       | Administrator-only BFF routes forwarded to Admin Console with CSRF checks                                                                            |
+| Inbound   | `GET /api/app/bootstrap`                                                                                                     | Principal display facts and accessible Agent IDs and names                                                                                           |
+| Inbound   | `/api/app/agents/{agent_id}/state`, `/state/watch`                                                                           | [Workspace state](docs/workspace-state.md) snapshot and SSE watch                                                                                    |
+| Inbound   | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias)                                                            | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay                                                                                               |
+| Inbound   | `/workspace/*`, `/api/app/workspace/v1/*`                                                                                    | Agent UI HTML, assets and Workspace HTTP/SSE API                                                                                                     |
+| Inbound   | `GET /status`                                                                                                                | Local readiness only; it never probes another service                                                                                                |
+| Outbound  | Identity Service RPC                                                                                                         | Login, token resolution, revocation, OIDC                                                                                                            |
+| Outbound  | Agent Controller RPC                                                                                                         | Principal-scoped Agent ID/name discovery only                                                                                                        |
+| Outbound  | Agent ACP Service                                                                                                            | ACP protocol traffic and execution-state reads/watches                                                                                               |
+| Outbound  | Admin Console, Agent UI                                                                                                      | Reverse-proxied application traffic                                                                                                                  |
 
 All other service interfaces are private deployment details. ACP HTTP and
 WebSocket behavior is described in [Architecture](docs/architecture.md).
@@ -85,23 +85,23 @@ invalid or missing credential prevents startup. HTTPS pins each dependency's
 DNS name and service URI; HTTP requires the explicit disposable-development
 opt-in. Public Gateway readiness remains a local HTTP check.
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP listen address; the container health check uses its port |
-| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | Identity Service base URL (absolute HTTP(S), no query or fragment) |
-| `ANTNEST_ADMIN_CONSOLE_URL` | yes | - | Admin Console base URL |
-| `ANTNEST_AGENT_UI_URL` | yes | - | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | Agent Controller base URL, used for ID/name discovery only |
-| `ANTNEST_AGENT_ACP_URL` | yes | - | Agent ACP Service base URL |
-| `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | Issue `Secure` cookies; set `false` only for plain-HTTP development |
-| `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | Deadline for non-streaming dependency calls and forwarded admin requests |
-| `ANTNEST_EDGE_STREAM_LEASE` | no | `5m` | Maximum lifetime of an authenticated SSE observation |
-| `ANTNEST_EDGE_LOGIN_WINDOW` | no | `5m` | In-memory login admission window |
-| `ANTNEST_EDGE_LOGIN_SOURCE_MAX` | no | `30` | Login attempts per source per window |
-| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no | `10` | Login attempts per normalized account per window |
-| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | Graceful drain budget for ordinary HTTP requests |
-| `ANTNEST_ENVIRONMENT` | no | empty | Deployment environment resource attribute for telemetry |
-| `OTEL_*` | no | - | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+| Variable                         | Required | Default | Description                                                                                                                                                                 |
+| -------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP listen address; the container health check uses its port                                                                                                               |
+| `ANTNEST_IDENTITY_SERVICE_URL`   | yes      | -       | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
+| `ANTNEST_ADMIN_CONSOLE_URL`      | yes      | -       | Admin Console base URL                                                                                                                                                      |
+| `ANTNEST_AGENT_UI_URL`           | yes      | -       | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API                                                                         |
+| `ANTNEST_AGENT_CONTROLLER_URL`   | yes      | -       | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
+| `ANTNEST_AGENT_ACP_URL`          | yes      | -       | Agent ACP Service base URL                                                                                                                                                  |
+| `ANTNEST_EDGE_COOKIE_SECURE`     | no       | `true`  | Issue `Secure` cookies; set `false` only for plain-HTTP development                                                                                                         |
+| `ANTNEST_EDGE_REQUEST_TIMEOUT`   | no       | `10s`   | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
+| `ANTNEST_EDGE_STREAM_LEASE`      | no       | `5m`    | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
+| `ANTNEST_EDGE_LOGIN_WINDOW`      | no       | `5m`    | In-memory login admission window                                                                                                                                            |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`  | no       | `30`    | Login attempts per source per window                                                                                                                                        |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no       | `10`    | Login attempts per normalized account per window                                                                                                                            |
+| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`  | no       | `15s`   | Graceful drain budget for ordinary HTTP requests                                                                                                                            |
+| `ANTNEST_ENVIRONMENT`            | no       | empty   | Deployment environment resource attribute for telemetry                                                                                                                     |
+| `OTEL_*`                         | no       | -       | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
 
 Durations use Go duration syntax and must be positive. The 10-second request
 timeout bounds forwarded admin requests and is shorter than Admin Console's
@@ -170,3 +170,9 @@ recovery, and durable Run completion after logout or disconnect.
 - [Service admission](../../contracts/edge-gateway/service-authentication.md) - exact internal credentials, CCT scope, and pending consumers.
 - [Platform observability contract](../../docs/observability-contract.md).
 - [Stage 3 admin control plane](../../docs/stage-3-admin-control-plane.md) - cross-service behavior.
+
+For administrator network-policy writes, Gateway validates the existing
+`X-Antnest-Expected-Principal` account-switch guard privately and forwards one
+canonical match to Console. It rejects stale or ambiguous guards before proxying;
+this check preserves the browser contract without accepting unsigned identity
+as authorization. See the [authentication contract](../../contracts/edge-gateway/service-authentication.md).

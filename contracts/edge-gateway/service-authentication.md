@@ -25,14 +25,14 @@ limited to the explicit disposable-development token opt-in.
 The session cookie is resolved over the authenticated Identity connection for
 each initial operation. The actual server route selects the fixed profile:
 
-| Route | Profile | Agent scope |
-| --- | --- | --- |
-| `/api/admin/{path...}` | `console` | Agent from `/agents/{agent}/...`; other administration is organization-scoped |
-| Workspace bootstrap and `/api/session` | `workspace` | None |
+| Route                                   | Profile     | Agent scope                                                                                         |
+| --------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
+| `/api/admin/{path...}`                  | `console`   | Agent from `/agents/{agent}/...`; other administration is organization-scoped                       |
+| Workspace bootstrap and `/api/session`  | `workspace` | None                                                                                                |
 | Workspace HTML `/workspace/{agent}/...` | `workspace` | None: SSR renders the organization discovery shell; Agent operations use separate scoped API routes |
-| Workspace bridge `agents/{agent}/...` | `workspace` | Agent from the bridge path |
-| Workspace execution state/watch | `workspace` | Agent from the route |
-| Direct ACP HTTP/WebSocket | `acp` | Agent from the route |
+| Workspace bridge `agents/{agent}/...`   | `workspace` | Agent from the bridge path                                                                          |
+| Workspace execution state/watch         | `workspace` | Agent from the route                                                                                |
+| Direct ACP HTTP/WebSocket               | `acp`       | Agent from the route                                                                                |
 
 Gateway requires Identity revision 14's nonempty bounded `caller_context`, keeps
 it in a private request context and forwards it unchanged in exactly one
@@ -44,6 +44,13 @@ checks. No profile or Agent scope comes from a browser header, query or body.
 Incoming `Antnest-Service-Authorization`, `Antnest-Caller-Context` and the entire
 case-insensitive `X-Antnest-*` namespace are removed. The one Gateway-owned CSRF
 value is retained privately for local cookie comparison and never forwarded.
+`X-Antnest-Expected-Principal` is also retained privately as an account-switch
+CAS precondition. Only `PUT /api/admin/agents/{agent}/network-policy` compares
+its single URI-encoded organization/user pair with authenticated Identity facts.
+Missing, duplicate, malformed or mismatched values return `409 principal_changed`
+before proxying; a match regenerates one canonical header for Console's own
+comparison against signed claims. It cannot select authority and is removed from
+all other routes.
 Only verified principal presentation hints are regenerated where the existing
 UI contract requires them; receivers must not use these hints as authentication.
 Public assets and SCIM requests receive workload authentication but no CCT;

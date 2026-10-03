@@ -208,6 +208,36 @@ try {
     body: "{}",
   });
   await request("/api/admin/agents", { anonymous: true, status: 401 });
+  const precondition = encodeURIComponent(
+    JSON.stringify(["organization-1", "user-admin"]),
+  );
+  await request("/api/admin/agents/agent-1/network-policy", {
+    method: "PUT",
+    headers: {
+      "X-Antnest-CSRF-Token": csrf,
+      "X-Antnest-Expected-Principal": precondition,
+      "content-type": "application/json",
+    },
+    body: "{}",
+  });
+  for (const value of [
+    undefined,
+    encodeURIComponent(JSON.stringify(["organization-old", "user-admin"])),
+    precondition + ", " + precondition,
+  ])
+    await request("/api/admin/agents/agent-1/network-policy", {
+      method: "PUT",
+      status: 409,
+      headers: {
+        "X-Antnest-CSRF-Token": csrf,
+        ...(value ? { "X-Antnest-Expected-Principal": value } : {}),
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+  await request("/api/admin/agents", {
+    headers: { "X-Antnest-Expected-Principal": precondition },
+  });
   const consoleFile = resolve(outgoing, "admin-console");
   writeFileSync(consoleFile + ".next", next, { mode: 0o600 });
   renameSync(consoleFile + ".next", consoleFile);

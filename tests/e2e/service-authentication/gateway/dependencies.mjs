@@ -176,6 +176,19 @@ for (const [service, port] of Object.entries(fixture.ports)) {
       if (service === "agent-acp-service")
         agent = request.headers["x-antnest-agent-id"];
       const claims = context(request, service, agent);
+      const expectedPrincipal = request.headers["x-antnest-expected-principal"];
+      if (
+        service === "admin-console" &&
+        request.method === "PUT" &&
+        path.endsWith("/network-policy")
+      ) {
+        if (
+          expectedPrincipal !==
+          encodeURIComponent(JSON.stringify([claims.org, claims.sub]))
+        )
+          throw Error("CAS_guard_was_lost");
+      } else if (expectedPrincipal !== undefined)
+        throw Error("CAS_guard_escaped_its_operation");
       response.setHeader("Antnest-Service-Authorization", "upstream-secret");
       response.setHeader("Antnest-Caller-Context", "upstream-context");
       if (service === "agent-controller")

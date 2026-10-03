@@ -4,6 +4,13 @@
 
 ### Fixed
 
+Gateway preserves the existing account-switch CAS guard for network-policy
+writes while stripping browser identity headers ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
+It validates the one expected organization/user pair against authenticated
+Identity facts and regenerates it only for the specific Console operation;
+stale, duplicate or malformed guards return `409 principal_changed` before
+forwarding. Signed CCT remains the delegated authority.
+
 Admin Console now authenticates Gateway and verifies Identity-signed caller
 context before administrative effects ([#25](https://github.com/tf4fun/antnest-platform/issues/25),
 [#26](https://github.com/tf4fun/antnest-platform/issues/26)). BFF revision 49 uses
@@ -17,7 +24,6 @@ aliases. Console's old `ANTNEST_SKILL_REGISTRY_API_TOKEN` setting is removed;
 a nonempty value fails startup. Deploy Identity, Gateway, then Console with the
 new credentials. Controller/ACP/Registry consumers, deployment and final
 cross-service acceptance remain pending on `feat/service-authentication`.
-
 
 Gateway now authenticates each internal dependency with the exact token/mTLS
 contract and forwards Identity revision-14 signed caller context selected by
@@ -43,7 +49,6 @@ effects. Missing workload/TLS/signing configuration fails startup. Deploy only
 after the matching Gateway/Console and credential-provisioning batches; the
 complete coordinated rollout and Docker E2E remain pending on
 `feat/service-authentication`.
-
 
 Runtime release images now use a feature-free default Docker target, while the
 test-only Skill commit gate requires an explicit `--target e2e` build

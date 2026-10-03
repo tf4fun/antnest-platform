@@ -140,8 +140,6 @@ ACP retains durable execution authority.
 
 ## Routing
 
-
-
 Login and logout call Identity Service directly because the Gateway owns the
 browser credential boundary. Every administrative command goes to Admin
 Console. Only workspace discovery calls Agent Controller's principal-scoped
@@ -300,3 +298,10 @@ it does not cancel previously accepted ACP work. #58 owns in-place renewal.
 Console, UI, ACP and Controller consumer enforcement remains pending in their
 own batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
 for local admissions and the final cross-service Docker acceptance.
+
+The browser's `X-Antnest-Expected-Principal` is a private account-switch CAS
+guard. After session, administrator and CSRF checks, only the network-policy PUT
+compares its one decoded organization/user pair with verified Identity facts.
+Gateway rejects a missing/duplicate/mismatched guard with `409 principal_changed`
+and regenerates a canonical matching header for Console. Other routes never
+receive it. Delegated authorization continues to use the unchanged signed CCT.

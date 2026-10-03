@@ -67,8 +67,8 @@
         "CCT forwarding; strip untrusted identity/context headers"
       ],
       "admission": {
-        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (141 tests, 340 subtests, zero skips/failures); authenticated WebSocket rotation regression passed",
-        "docker": "node tests/e2e/service-authentication/gateway/run.mjs (48 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
+        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (144 tests, 347 subtests, zero skips/failures); authenticated WebSocket rotation and account-switch CAS regressions passed",
+        "docker": "node tests/e2e/service-authentication/gateway/run.mjs (58 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
         "pending_consumers": [
           "agent-ui",
           "agent-acp-service",

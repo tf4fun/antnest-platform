@@ -670,6 +670,10 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
+	if !restoreNetworkPrincipalPrecondition(request, principal) {
+		writeError(response, http.StatusConflict, "principal_changed", "Account changed. Reload this page before updating network policy.")
+		return nil
+	}
 	setPrincipalHeaders(request.Header, principal)
 	request.Header.Del("Cookie")
 	request.Header.Del("Authorization")
