@@ -1,6 +1,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 #![allow(clippy::large_enum_variant)]
 
+mod build_info;
 mod command;
 mod config;
 mod diagnostics;
@@ -82,7 +83,7 @@ fn main() {
         }
     };
     match command {
-        command::Command::Serve => report_server_exit(run()),
+        command::Command::Serve => report_server_exit(serve()),
         command::Command::McpStdio => {
             if let Err(error) = managed_mcp::entry::run() {
                 eprintln!("{error}");
@@ -100,6 +101,32 @@ fn main() {
             }
         }
     }
+}
+
+fn serve() -> Result<(), ExitError> {
+    build_info::validate_test_features(
+        std::env::var_os("ANTNEST_RUNTIME_ALLOW_TEST_FEATURES").as_deref(),
+    )
+    .map_err(|error| {
+        ExitError::Bootstrap(bootstrap_failure(
+            BootstrapStage::Entry,
+            BootstrapErrorCode::InvalidConfig,
+            None,
+            error,
+        ))
+    })?;
+    if !build_info::TEST_FEATURES.is_empty() {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "level": "WARN",
+                "service.name": telemetry::SERVICE_NAME,
+                "lifecycle.event": "test_features_enabled",
+                "test_features": build_info::TEST_FEATURES,
+            })
+        );
+    }
+    run()
 }
 
 fn report_server_exit(result: Result<(), ExitError>) {

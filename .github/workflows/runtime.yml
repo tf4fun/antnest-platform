@@ -39,10 +39,19 @@ jobs:
       apt-packages: libnftables-dev pkg-config
       extra-test-args: --example managed-mcp-fixture
 
-  # Published images are always built without ANTNEST_RUNTIME_FEATURES; the
-  # test-only feature gates must never reach a released runtime.
-  image:
+  check-test-features:
     needs: check
+    uses: ./.github/workflows/_rust-crate.yml
+    with:
+      crate-path: runtimes/antnest-runtime
+      integration-path: tests/integration/antnest-runtime
+      apt-packages: libnftables-dev pkg-config
+      extra-test-args: --features skill-maintenance-e2e-gate
+
+  # The default, last Docker target is release. Its build never reads the
+  # feature argument; only explicitly selected E2E targets can enable it.
+  image:
+    needs: [check, check-test-features]
     permissions:
       contents: read
       packages: write

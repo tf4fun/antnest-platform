@@ -42,7 +42,12 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
             "agent_id": "agent-1",
             "generation": 2,
             "execution_id": "execution-1",
-            "status": "ready"
+            "status": "ready",
+            "test_features": if cfg!(feature = "skill-maintenance-e2e-gate") {
+                vec!["skill-maintenance-e2e-gate"]
+            } else {
+                vec![]
+            }
         })
     );
 

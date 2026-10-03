@@ -6,6 +6,65 @@ use crate::executor_protocol::{ExecutorFailure, ExecutorReply, Outcome};
 use crate::tool_error::ToolErrorCode;
 
 #[test]
+fn release_dockerfile_stage_has_no_features() {
+    let dockerfile = include_str!("../Dockerfile");
+    let stages = dockerfile.split("\nFROM ").collect::<Vec<_>>();
+    assert!(
+        stages
+            .last()
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with(" AS release"),
+        "default Docker target must be release"
+    );
+    let build = stages
+        .iter()
+        .find(|stage| stage.lines().next().unwrap().ends_with(" AS build"))
+        .expect("release build stage");
+    assert!(build.contains("cargo build --locked --release"));
+    assert!(
+        !build.contains("--features"),
+        "release build may not enable Cargo features"
+    );
+    assert!(
+        !build.contains("ANTNEST_RUNTIME_FEATURES"),
+        "release build may not consume the E2E argument"
+    );
+    let release = stages.last().unwrap();
+    assert!(release.contains("COPY --from=build /tmp/antnest-runtime "));
+    assert!(release.contains("LABEL dev.antnest.runtime.test-features=\"\""));
+    assert!(!release.contains("ALLOW_TEST_FEATURES"));
+}
+
+#[test]
+fn e2e_dockerfile_target_is_explicit_and_identifiable() {
+    let dockerfile = include_str!("../Dockerfile");
+    let stages = dockerfile.split("\nFROM ").collect::<Vec<_>>();
+    let build = stages
+        .iter()
+        .find(|stage| stage.lines().next().unwrap() == "build AS build-e2e")
+        .expect("separate E2E build stage");
+    assert!(build.contains("ARG ANTNEST_RUNTIME_FEATURES\n"));
+    assert!(build.contains("cargo test --locked --features"));
+    let e2e = stages
+        .iter()
+        .find(|stage| stage.lines().next().unwrap() == "runtime-base AS e2e")
+        .expect("explicit E2E image target");
+    assert!(e2e.contains("COPY --from=build-e2e /tmp/antnest-runtime-e2e "));
+    assert!(
+        e2e.contains("LABEL dev.antnest.runtime.test-features=\"${ANTNEST_RUNTIME_FEATURES}\"")
+    );
+    assert!(e2e.contains("ENV ANTNEST_RUNTIME_ALLOW_TEST_FEATURES=true"));
+    let base = stages
+        .iter()
+        .find(|stage| stage.lines().next().unwrap().ends_with(" AS runtime-base"))
+        .expect("common image base");
+    assert!(!base.contains("ALLOW_TEST_FEATURES"));
+}
+
+#[test]
 fn process_execution_core_does_not_import_mcp_transport_types() {
     for (name, source) in [
         ("execution_actor", include_str!("execution_actor.rs")),

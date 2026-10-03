@@ -66,7 +66,16 @@ antnest-runtime mcp-stdio
 
 `serve` is the long-lived Supervisor; `mcp-stdio` replaces itself with one
 configured non-root server. The Supervisor does not listen until its execution
-boundary and all required managed servers are ready:
+boundary and all required managed servers are ready.
+
+Before this bootstrap, `serve` rejects compiled test features unless
+`ANTNEST_RUNTIME_ALLOW_TEST_FEATURES` is exactly `true`. An admitted test binary
+logs one `test_features_enabled` warning. Release binaries contain no test
+features; this variable cannot enable them. Docker's default `release` target
+builds without features, while the explicitly selected `e2e` target labels and
+opts in its separate test binary.
+
+Bootstrap then proceeds as follows:
 
 1. Require container PID 1 and root, then load the immutable RuntimeSpec.
 2. Set the Agent home and XDG locations beneath `/workspace`.
@@ -126,9 +135,15 @@ process exits. The ready body is:
   "agent_id": "agent-123",
   "generation": 8,
   "execution_id": "d83f89db-74f3-49df-a3b8-83d6718a45fd",
-  "status": "ready"
+  "status": "ready",
+  "test_features": []
 }
 ```
+
+The required `test_features` array reports compiled identity in both ready and
+unavailable responses; it is empty for release binaries. See the
+[status contract](../../../contracts/runtime/status.md). The RC reader must
+be upgraded first; image admission is deferred to #29.
 
 Runtime Controller performs one bounded `/status` request, verifies
 `(agent_id, generation)`, and returns the ready endpoint to Agent Controller.

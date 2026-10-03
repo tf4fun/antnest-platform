@@ -149,8 +149,35 @@ The Docker build must use the repository root as context because it copies
 producing the release binary, so it is also the Linux compile and test gate.
 Host checks cover portable logic; Linux-only cases require the Docker build.
 
+Release images must use the default, last Docker target, `release`. Its `build`
+stage never reads `ANTNEST_RUNTIME_FEATURES` or enables Cargo features, even if a
+caller supplies that build argument. The release image has the label
+`dev.antnest.runtime.test-features=""` and `/status` reports `test_features: []`.
+CI checks both default and test-feature binaries, but publishes only this
+default target.
+
+Test-feature images require an explicit target and a nonempty feature argument:
+
+```sh
+docker build --target e2e --build-arg ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-e2e .
+```
+
+The `build-e2e` stage runs feature-enabled checks and produces a separate binary.
+The `e2e` image records the supplied feature names in
+`dev.antnest.runtime.test-features` and sets
+`ANTNEST_RUNTIME_ALLOW_TEST_FEATURES=true`. `serve` rejects a binary containing
+test features before ordinary bootstrap unless this variable is exactly `true`
+(no whitespace trimming or case folding). When allowed, it logs one
+`test_features_enabled` warning listing the compiled features. The status field
+always comes from the binary; setting the variable cannot enable features in a
+release binary. These images must never be published as releases.
+
+Upgrade Runtime Controller's status reader before deploying images with the
+new required field; see the [status contract](../../contracts/runtime/status.md).
+Image admission policy remains separate work in #29.
+
 - Unit and component tests live in `src/`.
-- The `executor_cli` integration test and SDK, wire, network, and process
+- The `executor_cli` and `runtime_startup` integration tests and SDK, wire, network, and process
   integration sources live in
   [`tests/integration/antnest-runtime`](../../tests/integration/antnest-runtime).
 - `make e2e-stage1` starts the real PID 1 binary with TUN and container
@@ -173,8 +200,8 @@ python3 tests/e2e/antnest-runtime/e2e_managed_mcp.py
 
 Test-only build options and variables:
 
-- Cargo feature `skill-maintenance-e2e-gate` (Docker build argument
-  `ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate`) holds Skill commits
+- Cargo feature `skill-maintenance-e2e-gate` (explicit Docker target `e2e` and
+  build argument `ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate`) holds Skill commits
   while `/workspace/.antnest/skill-learning/e2e-commit-gate/hold` exists, so
   E2E tests can observe the in-progress commit window. It must never be
   enabled in published images.
@@ -204,6 +231,8 @@ Runtime Controller, and Runtime Egress before an image is promoted.
   transport, tool names, and error code contract.
 - [runtime-spec.schema.json](../../contracts/runtime/runtime-spec.schema.json) -
   RuntimeSpec input contract.
+- [runtime-status.schema.json](../../contracts/runtime/runtime-status.schema.json) -
+  readiness and compiled test-feature identity.
 - [builtin-tools.schema.json](../../contracts/runtime/builtin-tools.schema.json) -
   built-in tool input contract.
 - [temporary-skills.md](../../contracts/runtime/temporary-skills.md) - temporary
