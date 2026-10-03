@@ -1,6 +1,8 @@
 # Service authentication and caller context
 
 Status: foundation contract for [#32](https://github.com/tf4fun/antnest-platform/issues/32).
+The interim token wire/configuration profile is frozen by
+[#101](https://github.com/tf4fun/antnest-platform/issues/101).
 The schemas, caller catalogs and repository admission checks are delivered in
 this batch. Service enforcement, deployment changes and Docker security E2E
 remain pending in the [rollout ledger](service-authentication-rollout.json).
@@ -76,28 +78,166 @@ deployment-owned; cert-manager/SPIRE are options, not mandatory dependencies.
 
 ### Allowed interim: a distinct token for each caller/receiver pair
 
-A service may explicitly choose token mode before its mTLS batch. Its receiver
-configuration `ANTNEST_<SVC>_CALLERS` maps allowed service names to at most two
-SHA-256 token hashes (current and next); receivers do not store raw tokens.
-Callers read their outgoing token from a read-only mounted secret file. Each
-caller/receiver pair has a different random token with at least
-256 bits of entropy, no working default and no trim/case normalization.
+#### Startup configuration
 
-Send exactly one `Antnest-Service-Authorization: Bearer <token>` header. The
-receiver hashes the presented token, compares digests in constant time and derives the caller from its own
-configuration. A name in a body or another header cannot select the identity.
-Reject duplicate credentials, shared hashes mapped to multiple callers, empty
-tokens and partial configuration. Publish the next hash before changing the
-caller's secret; remove the prior hash after the bounded rollout overlap.
-A configured but non-allowlisted caller gets
-`caller_not_allowed`; an unknown/missing credential gets `service_unauthenticated`.
+Each process uses the following exact, shared environment names. There are no
+service-specific prefix substitutions or inline caller/token values.
 
-This dedicated header leaves `Authorization` available for end-user access
-tokens, SCIM tokens and signed Runtime maintenance tickets. Token and TLS modes
-are selected at startup; neither is an automatic fallback from the other.
-Bearer tokens require TLS in non-development deployments. Disposable Compose
-HTTP, if explicitly enabled as development mode, is a temporary limitation and
-is not evidence of production confidentiality.
+| Variable | Contract |
+| --- | --- |
+| `ANTNEST_SERVICE_AUTH_MODE` | Required, exactly `token` or `mtls`, with no default. Unknown, empty, differently cased or whitespace-padded values fail startup. An unimplemented selected mode also fails startup. |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | Absent means `false`; only the exact values `false` and `true` are valid. `true` permits token mode over HTTP only in an explicitly opted-in disposable development deployment. It is invalid in `mtls` mode. Production deployment policy must reject this opt-in. |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | Required in token mode: a nonempty path to this receiver's read-only UTF-8 JSON hash file. Read and validate once at startup; replacing it requires receiver restart. No inline JSON or environment secret fallback. |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | Required when token mode has configured outbound business dependencies: a nonempty path to this caller's read-only secret directory. Validate every configured dependency's file before opening the listener. A receiver with no outbound dependencies may omit it. |
+
+Do not trim or case-normalize these values. File paths are used as supplied,
+without shell expansion. Missing/unreadable files, malformed credentials and
+partial selected-mode configuration fail startup without exposing their contents.
+Token mode over HTTPS still verifies the server trust chain, DNS/expected
+identity and validity using the TLS configuration above; it does not require a
+client certificate. Plain HTTP requires the separate exact opt-in. Neither
+mode falls back to the other, to plaintext or to the legacy service-wide tokens.
+Public/health routes retain their explicit catalog policy; the opt-in never
+turns an internal business route into a public route.
+
+#### Receiver file
+
+The [receiver schema](service-token-callers.schema.json) defines one JSON
+object keyed by the exact service names in the caller catalogs. Each value is
+an array of one or two strings, each exactly `sha256:` followed by 64 lowercase
+hexadecimal characters. Hash the outgoing token's **ASCII file bytes**, not its
+decoded random bytes, including no newline. A one-element array is the current
+hash; during rotation, two elements are current and next. Both authenticate the
+same caller; array order never changes authorization.
+
+Reject non-object roots, unknown service/member names, non-array values,
+empty/oversized arrays, malformed hashes, duplicate hashes within or across
+callers, duplicate JSON member names (including escaped equivalents), BOM and
+multiple JSON documents. Normal JSON framing whitespace is allowed. Schema
+validation alone cannot detect duplicate JSON members or hashes across callers:
+owning services MUST also perform those semantic checks before constructing an
+identity map. Do not decode directly into a map and silently keep the last
+duplicate member. Reject the receiver's own service name unless an exact
+workload route in its caller catalog explicitly permits that self-call. The
+shared self-grant vector is synthetic; it adds no grant to the current catalogs.
+
+An empty object grants no workload identities. It is valid for an outbound-only
+process such as Gateway; internal requests to such a receiver still fail
+authentication. Configuring a peer's hash establishes its identity only: every
+request must still pass the selected route's separate caller allowlist. Raw
+tokens never appear in a receiver file.
+
+#### Outgoing files, token bytes and rotation
+
+For static dependencies the layout is
+`ANTNEST_SERVICE_AUTH_TOKEN_DIR/<receiver-service-name>`. Each file is named
+exactly by the receiver catalog's service name, without an extension. The
+directory belongs to one calling service; tokens differ for every
+caller/receiver pair and deployment. A caller with several dependencies has
+several files, not a shared token. Resolve the file from a server-owned
+dependency identity, never from a URL, request header or body supplied by a user.
+Send it only to the configured receiver origin; do not forward it across origins
+on redirects. Keep these mounts outside workspace and Skill volumes.
+
+Managed Runtimes are distinct receiver instances, not one platform-wide
+`antnest-runtime` identity. #29/#30 must provision a separate instance-scoped
+secret directory and receiver hash file for each Agent/generation. A Runtime
+client uses the same `antnest-runtime` filename **inside that instance's
+directory**, selected by trusted RC-owned connection metadata. It must never
+use a process-wide token shared by all Runtimes. Dynamic instances are validated
+when their connection is installed, rather than pretending they exist at ACP
+startup. The owning Runtime connection contract must define delivery of that
+private reference before RC/ACP consumers adopt it; the execution ID fence and
+signed maintenance/temporary tickets remain independent requirements.
+
+A token is canonical unpadded base64url of **32–64 cryptographically random
+bytes**: 43–86 ASCII characters from `[A-Za-z0-9_-]`. Decode and re-encode to
+prove canonical spelling and unused bits; the alphabet/length check alone is
+insufficient. Padding, impossible base64url lengths, `+`, `/`, quotes, Unicode,
+NUL, spaces, BOM, LF and CRLF are invalid. A file contains only those bytes;
+trailing newline is **rejected**, never stripped. Generation uses a CSPRNG and
+emits 32 random bytes (256 bits) as 43 characters with no newline. Parsers cannot
+prove entropy; generators and provisioning must not reuse constants or the
+public synthetic fixture credentials. There is no working default.
+
+Read and validate the applicable file at startup and **again for every new
+outbound request/connection**. No watcher, permanent raw-token cache or repair
+logic is required. Replace a whole file atomically, preserving the read-only
+service mount; in-place partial writes are prohibited. A later unreadable,
+missing or malformed file blocks that outbound call with the owning service's
+dependency/configuration error; never reuse a previous token or make an
+unauthenticated call. An already authenticated stream need not reread a file on
+every frame; renewal/new connections reauthenticate, with #58 owning long-lived
+connection policy.
+
+Rotation order is fixed: publish current+next in the receiver file and restart
+the receiver, atomically replace the caller file, then remove current and
+restart the receiver after the deployment's explicitly bounded overlap and any
+admitted request drain. The overlap deadline is deployment-owned, not an
+unbounded retention policy. Receiver restart reloads hashes; caller restart is
+not needed to notice the new token. After removal the old token returns 401.
+
+#### Header grammar and outcomes
+
+Send exactly one field line:
+`Antnest-Service-Authorization: Bearer <token>`. Header names and the `Bearer`
+scheme are ASCII case-insensitive; token bytes are case-sensitive. The sender
+uses the shown casing and exactly one ASCII space between scheme and token.
+On the uncombined field values supplied to authentication, require exactly one
+value with this grammar. Do not trim it, split comma lists, accept quoted tokens
+or coerce whitespace. Reject duplicate field lines, including identical values
+and differently cased field names, before an accessor drops or comma-joins them.
+Use Go `Header.Values`, Node `rawHeaders` (not only `headers`/`Headers.get`) and
+Rust `HeaderMap::get_all`, or an equivalent adapter preserving all occurrences.
+Apply the same rule to HTTP upgrade/SSE establishment where applicable.
+
+HTTP parsing removes framing optional whitespace at field edges; this is
+separate from application-level token normalization. Leading/trailing whitespace
+still present in an adapter-supplied value is rejected. The shared vectors use
+these supplied values, not raw HTTP framing. Service HTTP adapter tests must
+exercise real duplicate field lines and comma-joined values; this contract does
+not require a second HTTP parser to recover whitespace already removed by the
+transport. Scheme matching and framing follow
+[RFC 9110 §§5.5 and 11.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-11.1).
+The canonical token profile is deliberately narrower than generic `token68`.
+
+Hash the accepted token bytes and compare every configured digest in constant
+time. Derive the caller only from the receiver's hash map, then check the exact
+route allowlist. A name in another header/body cannot select or change it.
+
+| Result | HTTP/classification | Challenge |
+| --- | --- | --- |
+| Missing, empty, duplicate, malformed, unknown or removed token | `401 service_unauthenticated`, `retryable: false` | Exactly `WWW-Authenticate: Bearer realm="antnest-service"` |
+| Verified caller absent from the selected route's allowlist | `403 caller_not_allowed`, `retryable: false` | No workload challenge |
+| Verified and allowlisted caller | Continue to CCT/business authorization; no new response envelope | None from workload authentication |
+
+The realm identifies the dedicated service header; a client must not respond by
+moving this credential into `Authorization`. That existing header remains
+available for end-user access, SCIM and signed Runtime tickets, and never serves
+as a fallback workload credential. Gateway strips browser-supplied service
+credentials and sends its own. A BFF similarly supplies its own immediate-hop
+credential instead of forwarding the incoming peer's token. Never capture the
+raw token in logs, traces, RPC content or errors.
+
+The [shared token fixtures](service-token-fixtures.json) cover receiver schema
+and semantic rejection, canonical file bytes, uncombined headers, rotation and
+mode/transport selection. A fixture's success status 200 means workload
+admission only; real handlers retain their existing response statuses. Every
+owning service batch consumes applicable vectors through its production parser
+and authenticating handler. These repository oracles freeze the format; passing
+them alone does not prove deployed listener authentication.
+
+#### Development provisioning ownership
+
+The deployment batch owns `scripts/dev-service-tokens.mjs`, per-pair generation,
+receiver hash files and Compose secret mounts. Output belongs in
+`artifacts/service-authentication/`; add its Git ignore rule before generation
+(Docker already excludes `artifacts/`). No provisioning helper or real secret
+is introduced by #101. Before deployment wiring lands, each owning service's
+isolated test harness generates temporary CSPRNG credentials/hash files in its
+private test directory and cleans them up. It uses the same profile and never
+installs shared public fixture values as a running service's secrets. Such local
+tests do not substitute for the final cross-service Docker acceptance.
 
 ## 3. Caller Context Token
 
@@ -330,10 +470,21 @@ acceptance. The final `tests/e2e/security/` suite must probe every joined networ
 reject missing credentials/forged headers/body actors and prove normal browser,
 Agent lifecycle and Skill flows still work before #80 can close.
 
+Work for #101 and the service adoption batches is committed and pushed to
+`feat/service-authentication`. Each service implementation commit changes only
+one owning service, its contracts/documentation and tests, and passes that
+service's unit/contract/component and applicable isolated Docker gates before
+commit. Do not create intermediate PRs. Current CI triggers on `main` pushes or
+PRs, so a push to this branch without a PR does not run it; local gates are
+mandatory. Run cross-service Docker E2E only in the explicit final integration
+batch, after all service/deployment batches pass, and before the final PR/merge
+to `main`. Record partial progress without claiming a secured complete workflow.
+
 This is the code-review/delivery order, not permission to deploy a strict issuer
 before its clients can authenticate. Deploy the coordinated credential/header
 changes after the integration batch; a partially upgraded chain must fail
-closed. Do not add body-only/header-only compatibility fallback outside an
-explicit disposable development configuration. Controller's general route
+closed. Do not add body-only/header-only identity fallback. The disposable
+development HTTP opt-in relaxes transport only; workload credentials, required
+CCTs and actor checks remain mandatory. Controller's general route
 authentication and Egress control authentication remain #32-owned follow-ups;
 #28's discovery fix and #34/#36's network work alone do not complete them.

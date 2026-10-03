@@ -1,6 +1,22 @@
 {
   "status": "contract-only",
   "issue": 32,
+  "delivery": {
+    "branch": "feat/service-authentication",
+    "service_owners_per_commit": 1,
+    "pull_requests": "final-integration-only",
+    "service_gates": "before-each-service-commit",
+    "cross_service_e2e": "final-integration-before-main-merge"
+  },
+  "token_provisioning": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "pending",
+    "helper": "scripts/dev-service-tokens.mjs",
+    "output_directory": "artifacts/service-authentication/",
+    "ignore_before_generation": true,
+    "service_test_credentials": "Owning-service isolated harnesses generate and clean up temporary CSPRNG credentials before deployment wiring exists; never install public conformance tokens."
+  },
   "audience_profiles": {
     "console": [
       "admin-console",
@@ -9,33 +25,24 @@
       "skill-registry",
       "agent-acp-service"
     ],
-    "workspace": [
-      "agent-ui",
-      "agent-acp-service",
-      "agent-controller"
-    ],
-    "acp": [
-      "agent-acp-service"
-    ]
+    "workspace": ["agent-ui", "agent-acp-service", "agent-controller"],
+    "acp": ["agent-acp-service"]
   },
   "batches": [
     {
       "owner": "platform-contracts",
-      "issues": [
-        32
-      ],
+      "issues": [32, 101],
       "status": "foundation",
       "deliverables": [
         "shared identity and CCT schemas",
         "per-service caller catalogs",
-        "route coverage and shared negative test helpers"
+        "route coverage and shared negative test helpers",
+        "exact interim service-token configuration, wire profile and shared conformance vectors"
       ]
     },
     {
       "owner": "identity-service",
-      "issues": [
-        25
-      ],
+      "issues": [25],
       "status": "pending",
       "deliverables": [
         "workload verification",
@@ -45,9 +52,7 @@
     },
     {
       "owner": "edge-gateway",
-      "issues": [
-        26
-      ],
+      "issues": [26],
       "status": "pending",
       "deliverables": [
         "authenticated clients",
@@ -57,10 +62,7 @@
     },
     {
       "owner": "admin-console",
-      "issues": [
-        25,
-        26
-      ],
+      "issues": [25, 26],
       "status": "pending",
       "deliverables": [
         "workload and CCT verification",
@@ -70,10 +72,7 @@
     },
     {
       "owner": "agent-acp-service",
-      "issues": [
-        26,
-        27
-      ],
+      "issues": [26, 27],
       "status": "pending",
       "deliverables": [
         "workload and CCT verification",
@@ -83,9 +82,7 @@
     },
     {
       "owner": "agent-ui",
-      "issues": [
-        26
-      ],
+      "issues": [26],
       "status": "pending",
       "deliverables": [
         "workload and CCT verification",
@@ -95,10 +92,7 @@
     },
     {
       "owner": "agent-controller",
-      "issues": [
-        32,
-        28
-      ],
+      "issues": [32, 28],
       "status": "pending",
       "deliverables": [
         "workload and delegated context checks",
@@ -108,9 +102,7 @@
     },
     {
       "owner": "runtime-controller",
-      "issues": [
-        29
-      ],
+      "issues": [29],
       "status": "pending",
       "deliverables": [
         "workload verification and image policy",
@@ -121,9 +113,7 @@
     },
     {
       "owner": "skill-registry",
-      "issues": [
-        31
-      ],
+      "issues": [31],
       "status": "pending",
       "deliverables": [
         "per-caller credentials and authorization",
@@ -132,9 +122,7 @@
     },
     {
       "owner": "antnest-runtime",
-      "issues": [
-        30
-      ],
+      "issues": [30],
       "status": "pending",
       "deliverables": [
         "authenticated MCP and status probes",
@@ -143,11 +131,7 @@
     },
     {
       "owner": "runtime-egress",
-      "issues": [
-        32,
-        34,
-        36
-      ],
+      "issues": [32, 34, 36],
       "status": "pending",
       "deliverables": [
         "authenticated control calls",
@@ -156,22 +140,18 @@
     },
     {
       "owner": "deployment",
-      "issues": [
-        32
-      ],
+      "issues": [32],
       "status": "pending",
       "deliverables": [
         "development PKI helper",
+        "development service-token provisioning helper",
         "purpose-specific internal networks",
         "Gateway-only base ports and explicit debug overlay"
       ]
     },
     {
       "owner": "integration",
-      "issues": [
-        32,
-        80
-      ],
+      "issues": [32, 80],
       "status": "pending",
       "deliverables": [
         "Docker probes on every service network",

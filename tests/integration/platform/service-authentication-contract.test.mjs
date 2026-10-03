@@ -162,7 +162,7 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
 test("the foundation describes planned adoption without claiming service enforcement", () => {
   const rollout = read("service-authentication-rollout.json");
   assert.equal(rollout.status, "contract-only");
-  assert.deepEqual(rollout.batches[0].issues, [32]);
+  assert.deepEqual(rollout.batches[0].issues, [32, 101]);
   assert.equal(rollout.batches[0].owner, "platform-contracts");
   assert(rollout.batches.slice(1).every((batch) => batch.status === "pending"));
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));

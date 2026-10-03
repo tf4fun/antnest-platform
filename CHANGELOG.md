@@ -82,6 +82,15 @@ for the Controller. See the
 
 ### Changed
 
+Froze the interim service-token configuration and wire profile for
+[#101](https://github.com/tf4fun/antnest-platform/issues/101): explicit shared
+mode/file variables, canonical per-pair credentials, receiver SHA-256 hash
+arrays, strict duplicate-header handling, outcomes and file rotation. Added
+public synthetic conformance vectors for Go/TypeScript/Rust adoption. Service
+implementations remain pending; batches commit to `feat/service-authentication`
+with local service gates and one final cross-service Docker acceptance before
+the branch merges into `main`.
+
 Defined the platform service-authentication foundation for
 [#32](https://github.com/tf4fun/antnest-platform/issues/32): workload identity,
 Identity-issued caller-context schemas and public verification vectors,
