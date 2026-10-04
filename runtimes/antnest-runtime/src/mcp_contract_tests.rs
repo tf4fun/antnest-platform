@@ -76,6 +76,9 @@ struct Transport {
     mcp_path: String,
     kind: String,
     trusted_internal_hosts: bool,
+    host_policy: String,
+    instance_connection_contract: String,
+    live_status_path: String,
     expected_execution_header: String,
 }
 
@@ -129,7 +132,19 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.transport.status_path, STATUS_PATH);
     assert_eq!(contract.transport.mcp_path, MCP_PATH);
     assert_eq!(contract.transport.kind, "streamable-http");
-    assert!(contract.transport.trusted_internal_hosts);
+    assert!(!contract.transport.trusted_internal_hosts);
+    assert_eq!(
+        contract.transport.host_policy,
+        "owned-alias-and-loopback-with-exact-port"
+    );
+    assert_eq!(
+        contract.transport.instance_connection_contract,
+        "instance-connection-contract.json"
+    );
+    assert_eq!(
+        contract.transport.live_status_path,
+        crate::mcp::STATUS_LIVE_PATH
+    );
     assert_eq!(
         contract.transport.expected_execution_header,
         EXPECTED_EXECUTION_HEADER
@@ -239,6 +254,11 @@ fn shared_contract_matches_runtime_http_surface() {
 
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
     let input = RuntimeSpecInput {
+        authentication: Some(crate::service_auth::BootstrapDescriptor {
+            connection_id: "rci_00000000000000000000000000000001".into(),
+            callers_file: crate::service_auth::CALLERS_FILE.into(),
+            receiver_digest: format!("sha256:{}", "0".repeat(64)),
+        }),
         mcp_servers: Vec::new(),
         skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
         agent_id: "agent-1".into(),
@@ -340,6 +360,7 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
 
 fn valid_input() -> RuntimeSpecInput {
     RuntimeSpecInput {
+        authentication: None,
         mcp_servers: Vec::new(),
         skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
         agent_id: "agent-1".into(),

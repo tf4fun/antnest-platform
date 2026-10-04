@@ -224,7 +224,36 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(rc.admission.docker);
   assert(rc.admission.pending_runtime_client.includes("#30"));
   assert.deepEqual(rc.admission.pending_dependencies, ["skill-registry"]);
-  assert(rollout.batches.slice(8).every((batch) => batch.status === "pending"));
+  const runtime = rollout.batches.find(
+    (batch) => batch.owner === "antnest-runtime",
+  );
+  assert.equal(runtime.status, "service-admitted");
+  assert(runtime.admission.unit_contract_component);
+  assert(runtime.admission.docker);
+  assert.deepEqual(runtime.admission.pending_consumers, [
+    "agent-controller",
+    "agent-acp-service",
+  ]);
+  for (const owner of [
+    "skill-registry",
+    "runtime-egress",
+    "deployment",
+    "integration",
+  ]) {
+    assert.equal(
+      rollout.batches.find((batch) => batch.owner === owner).status,
+      "pending",
+      owner,
+    );
+  }
+  assert.equal(
+    rollout.runtime_instance_connection.status,
+    "rc-runtime-admitted-consumers-pending",
+  );
+  assert.deepEqual(
+    rollout.runtime_instance_connection.pending_service_batches,
+    ["agent-controller", "agent-acp-service"],
+  );
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));
   assert(rollout.batches.some((batch) => batch.owner === "integration"));

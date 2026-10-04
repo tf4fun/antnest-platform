@@ -238,9 +238,11 @@ export async function checkRepository({
         );
       if (
         access.authentication === "health" &&
-        (!/^GET \/(?:status|live|rpc\/agent-controller\/status)$/u.test(
-          route,
-        ) ||
+        (!(service === "antnest-runtime"
+          ? /^(?:GET|HEAD) \/status\/live$/u.test(route)
+          : /^GET \/(?:status|live|rpc\/agent-controller\/status)$/u.test(
+              route,
+            )) ||
           JSON.stringify(callers) !== '["local-healthcheck"]')
       )
         errors.push(`${service}: ${route} invalid health exception`);

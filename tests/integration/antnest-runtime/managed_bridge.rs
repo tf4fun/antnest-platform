@@ -89,6 +89,7 @@ async fn managed_schema_drives_http_parameter_header_validation() {
     let stop = CancellationToken::new();
     let task = tokio::spawn(http.serve(listener, stop.clone()));
     let response = reqwest::Client::new().post(format!("http://{address}/mcp"))
+        .header(crate::service_auth::SERVICE_HEADER, crate::service_auth::test_header())
         .header("accept", "application/json, text/event-stream")
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", "tools/call")

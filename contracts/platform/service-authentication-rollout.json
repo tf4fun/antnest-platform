@@ -165,7 +165,7 @@
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs runtime-controller; real HTTP route matrix, strict JSON, local readiness, native Registry credential rotation/redirect/proxy isolation; shared 115 token/TLS vectors and exported Go wrapper regressions passed",
         "postgres": "16 packages / 327 tests / 504 subtests; zero skips/failures; atomic credential/operation/generation rollback and exact replay; isolated database/resources cleaned",
         "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (130 authentication, image, private connection, root-only actual receiver mount, restart/replay, new-generation authority, Disable/Delete cleanup and normal shutdown checks; cleaned). Uses an explicitly RC-owned Runtime protocol double; native receiver is a separate batch.",
-        "pending_runtime_client": "#30 RC issuer, private resolver and status client are admitted. Native Runtime receiver, Controller relay and ACP instance clients remain separate owning-service batches. Execution fences and signed tickets are retained.",
+        "pending_runtime_client": "#30 RC issuer/resolver/status client and native Runtime receiver are admitted. Controller relay and ACP instance clients remain separate owning-service batches. Execution fences and signed tickets are retained.",
         "pending_dependencies": ["skill-registry"],
         "cross_service_e2e": "pending final integration batch",
         "runtime_volume_component": "Direct Docker archive preparation into a never-started helper: directory UID/GID 0 mode 0700, file 0600, idempotent readback and auto-created empty-volume race rejection; zero skips/failures; resources cleaned."
@@ -183,11 +183,19 @@
     {
       "owner": "antnest-runtime",
       "issues": [30],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
-        "authenticated MCP and status probes",
-        "retain execution fence and maintenance tickets"
-      ]
+        "strict root-only receiver bootstrap and exact HTTP token opt-in",
+        "authenticated whole MCP/private Skill mounts and full status; identity-free liveness",
+        "exact owned Host/port policy and strict JSON controls with retained multipart uploads",
+        "retain execution fences, signed tickets and executor isolation"
+      ],
+      "admission": {
+        "unit_contract_component": "151 portable tests; shared token/JSON/route-catalog conformance; real HTTP ordering and multipart/header privacy; native Clippy passed. Linux release: 200 unit/component, five executor, one startup and one managed fixture tests; feature build: 200 unit/component, five executor and two startup tests; zero failures/ignored.",
+        "docker": "node tests/e2e/service-authentication/runtime/run.mjs (349 native admission, official MCP tools/info, signed learning/temporary uploads, restart, receiver owner/mode/missing/extra/link/FIFO/digest and unsupported configuration checks; complete; owned resources and credentials cleaned)",
+        "pending_consumers": ["agent-controller", "agent-acp-service"],
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "runtime-egress",
@@ -236,13 +244,9 @@
     "machine_contract": "../runtime/instance-connection-contract.json",
     "schema": "../runtime/instance-connection.schema.json",
     "fixtures": "../runtime/instance-connection-fixtures.json",
-    "status": "rc-producer-admitted-consumers-pending",
+    "status": "rc-runtime-admitted-consumers-pending",
     "issuer": "runtime-controller",
-    "pending_service_batches": [
-      "antnest-runtime",
-      "agent-controller",
-      "agent-acp-service"
-    ],
+    "pending_service_batches": ["agent-controller", "agent-acp-service"],
     "cross_service_e2e": "pending final integration batch"
   }
 }

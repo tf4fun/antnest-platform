@@ -1,6 +1,11 @@
 # Runtime status and test features
 
 `GET /status` follows [runtime-status.schema.json](runtime-status.schema.json).
+It requires RC-issued Runtime workload authority and permits only RC and ACP.
+Anonymous Docker health uses `GET/HEAD /status/live`, which returns only `status`
+with 200/503 and never exposes Agent, generation, execution or tool identity.
+See the [instance connection contract](instance-connection.md). Full identity
+verification must not use the reduced liveness response.
 The `test_features` array is mandatory in Runtime responses, including unavailable
 responses. Its values come from the binary's compiled features, never from an
 HTTP parameter or an environment-provided list. Release builds report `[]`.

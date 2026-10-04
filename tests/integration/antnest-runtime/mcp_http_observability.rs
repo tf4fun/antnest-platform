@@ -49,12 +49,14 @@ async fn successful_mcp_result_then_client_close_before_eof_is_not_an_error() {
         state.managed.clone(),
     );
     let shutdown = CancellationToken::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
     let service: StreamableHttpService<ObservedRuntime, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(ObservedRuntime(tools.clone())),
             Default::default(),
             StreamableHttpServerConfig::default()
-                .disable_allowed_hosts()
+                .with_allowed_hosts([address.to_string(), format!("localhost:{}", address.port())])
                 .with_legacy_session_mode(false)
                 .with_stateless_protocol_metadata_required(true)
                 .with_cancellation_token(shutdown.child_token()),
@@ -72,8 +74,6 @@ async fn successful_mcp_result_then_client_close_before_eof_is_not_an_error() {
                 })
             },
         ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
     let stopped = shutdown.clone();
     let task = tokio::spawn(async move {
         axum::serve(listener, router)
@@ -173,6 +173,10 @@ async fn real_http_health_and_mcp_keep_exact_client_parent_and_rpc_values() {
     );
     let response = client
         .get(format!("http://{address}/status?token=QUERY_CANARY"))
+        .header(
+            crate::service_auth::SERVICE_HEADER,
+            crate::service_auth::test_header(),
+        )
         .header("traceparent", &traceparent)
         .header("cookie", "COOKIE_CANARY")
         .send()
@@ -184,6 +188,7 @@ async fn real_http_health_and_mcp_keep_exact_client_parent_and_rpc_values() {
         "execution-7"
     );
     let response = client.post(format!("http://{address}/mcp"))
+        .header(crate::service_auth::SERVICE_HEADER, crate::service_auth::test_header())
         .header("traceparent", &traceparent)
         .header("accept", "application/json, text/event-stream")
         .header("mcp-protocol-version", "2026-07-28")
@@ -259,6 +264,10 @@ async fn real_http_health_and_mcp_keep_exact_client_parent_and_rpc_values() {
         1
     );
     assert!(!format!("{spans:?}").contains("CANARY"));
+    assert!(
+        !format!("{spans:?}").contains(crate::service_auth::test_token()),
+        "instance bearer must stay absent even when RPC content capture is enabled"
+    );
     assert!(
         !http
             .events

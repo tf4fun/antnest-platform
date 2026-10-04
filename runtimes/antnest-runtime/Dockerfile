@@ -12,6 +12,7 @@ COPY runtimes/antnest-runtime ./runtimes/antnest-runtime
 COPY tests/integration/antnest-runtime ./tests/integration/antnest-runtime
 COPY tests/integration/skill-registry/package-rules-v1.json ./tests/integration/skill-registry/package-rules-v1.json
 COPY contracts/runtime ./contracts/runtime
+COPY contracts/platform/service-token-fixtures.json ./contracts/platform/service-token-fixtures.json
 WORKDIR /src/runtimes/antnest-runtime
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/runtimes/antnest-runtime/target,sharing=locked \

@@ -28,7 +28,13 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
     let running_shutdown = shutdown.clone();
     let running = tokio::spawn(async move { server.serve(listener, running_shutdown).await });
 
-    let status: serde_json::Value = reqwest::get(format!("http://{address}{STATUS_PATH}"))
+    let status: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{address}{STATUS_PATH}"))
+        .header(
+            crate::service_auth::SERVICE_HEADER,
+            crate::service_auth::test_header(),
+        )
+        .send()
         .await
         .expect("GET Runtime status")
         .error_for_status()
@@ -54,7 +60,12 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
     let mut headers = std::collections::HashMap::new();
     headers.insert(
         axum::http::header::HOST,
-        axum::http::HeaderValue::from_static("antnest-runtime:8093"),
+        axum::http::HeaderValue::from_str(&format!("antnest-runtime-agent-1:{}", address.port()))
+            .unwrap(),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static(crate::service_auth::SERVICE_HEADER),
+        axum::http::HeaderValue::from_str(&crate::service_auth::test_header()).unwrap(),
     );
     headers.insert(
         axum::http::HeaderName::from_static("x-antnest-expected-execution-id"),

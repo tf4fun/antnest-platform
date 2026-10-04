@@ -176,6 +176,40 @@ test("a public bypass cannot be declared for an internal business route", async 
   );
 });
 
+test("only Runtime reduced GET/HEAD liveness can use its health exception", async () => {
+  const { checkRepository } = await checker();
+  for (const [service, route, valid] of [
+    ["antnest-runtime", "GET /status/live", true],
+    ["antnest-runtime", "HEAD /status/live", true],
+    ["antnest-runtime", "GET /status", false],
+    ["antnest-runtime", "POST /status/live", false],
+    ["identity-service", "HEAD /status/live", false],
+  ]) {
+    const result = await checkRepository({
+      transformPolicy(owner, policy) {
+        if (owner === service)
+          policy.routes[route] = {
+            callers: ["local-healthcheck"],
+            authentication: "health",
+            caller_context: { "local-healthcheck": "none" },
+            request_body: "none",
+          };
+        return policy;
+      },
+    });
+    assert.equal(
+      result.errors.some(
+        (error) =>
+          error.includes(service) &&
+          error.includes(route) &&
+          error.includes("invalid health exception"),
+      ),
+      !valid,
+      route,
+    );
+  }
+});
+
 test("a second named registration wrapper cannot borrow another wrapper's policies", async () => {
   const { checkRepository } = await checker();
   const result = await checkRepository({

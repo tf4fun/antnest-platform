@@ -5,8 +5,10 @@ service batches. The [machine contract](instance-connection-contract.json),
 [schema](instance-connection.schema.json) and
 [fixtures](instance-connection-fixtures.json) are normative alongside the
 [exact workload profile](../platform/service-authentication.md). Service
-implementations and coordinated deployment are pending; this document does not
-claim that the current Runtime listener enforces the new boundary.
+implementations are delivered as owning-service batches: RC's issuer/volume/client
+and native Runtime's receiver are implemented. Controller relay, ACP consumption
+and coordinated deployment/integration remain pending; no completed platform
+workflow is claimed.
 
 ## Ownership and credential identity
 
@@ -58,8 +60,9 @@ unexpected Docker-created empty volume is an error, never an empty-authority
 fallback. Raw bearer material is not written into Runtime environment,
 RuntimeSpec, container create payloads or executor inputs.
 
-RuntimeSpec's upcoming bootstrap descriptor carries only the connection ID and
-fixed private file location. The exact service auth mode and transport opt-in
+RuntimeSpec's bootstrap descriptor carries only the connection ID, fixed private
+file location and complete receiver digest. Production `serve` requires it.
+The exact service auth mode and transport opt-in
 retain #101 semantics. HTTP requires explicit
 `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true`; absence is false. Unsupported
 TLS/mTLS capability fails startup and must be documented by the Runtime batch.
@@ -67,7 +70,7 @@ There is no silent downgrade from mTLS to token or from HTTPS to HTTP.
 
 ## Private resolve and Controller relay
 
-RC's upcoming revision adds:
+RC revision 16 adds:
 
 ```text
 POST /internal/runtimes/{agent_id}/connection
