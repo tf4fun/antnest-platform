@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/identityid"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 )
 
 // Public synthetic test tokens. Real deployments generate random credentials.

@@ -13,8 +13,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 )
 
 // Messages are service-owned summaries; neither Error() nor database Detail is

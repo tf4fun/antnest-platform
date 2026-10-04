@@ -1,6 +1,7 @@
 FROM golang:1.27.1-bookworm AS build
 
 WORKDIR /workspace
+COPY modules/service-authentication ./modules/service-authentication
 COPY services/identity-service/go.mod services/identity-service/go.sum ./services/identity-service/
 RUN cd services/identity-service && go mod download
 

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/identityid"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/repository"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/rpc"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 )
 
 type identityAuthenticatedTransport struct {

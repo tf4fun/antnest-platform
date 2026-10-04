@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/config"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
@@ -28,7 +29,6 @@ import (
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/rpc"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/server"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 

@@ -6,9 +6,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	protocol "github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"slices"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 type Signing struct {
@@ -22,7 +23,7 @@ func LoadSigning(lookup serviceauth.LookupEnv) (Signing, error) {
 		return Signing{}, fmt.Errorf("CCT signing environment lookup is required")
 	}
 	kid, _ := lookup("ANTNEST_IDENTITY_CCT_SIGNING_KID")
-	if !validKID(kid) {
+	if !protocol.ValidKID(kid) {
 		return Signing{}, fmt.Errorf("ANTNEST_IDENTITY_CCT_SIGNING_KID must be exact printable non-space ASCII")
 	}
 	path, _ := lookup("ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE")
@@ -47,7 +48,7 @@ func LoadSigning(lookup serviceauth.LookupEnv) (Signing, error) {
 	if err != nil {
 		return Signing{}, fmt.Errorf("CCT public JWKS file cannot be read")
 	}
-	keys, err := ParseKeys(publicJSON)
+	keys, err := protocol.ParseKeys(publicJSON)
 	if err != nil || !slices.Equal(keys[kid], private.Public().(ed25519.PublicKey)) {
 		return Signing{}, fmt.Errorf("CCT signing identity must match its configured public JWKS")
 	}

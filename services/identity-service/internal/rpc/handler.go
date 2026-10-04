@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 )
 

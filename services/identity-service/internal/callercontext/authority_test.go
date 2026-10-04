@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	protocol "github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestIssueUsesServerOwnedProfileAndDurableSession(t *testing.T) {
 	if err != nil || principal != store.session.Principal {
 		t.Fatalf("issuance failed: %v", err)
 	}
-	claims, err := Verify(token, authority.keys, Expected{Consumer: "identity-service", Organization: "org-1", Now: now, Tolerance: 30})
+	claims, err := protocol.Verify(token, authority.keys, protocol.Expected{Consumer: "identity-service", Organization: "org-1", Now: now, Tolerance: 30})
 	if err != nil || claims.Session != "session-1" || claims.Subject != "admin" || claims.ExpiresAt-claims.IssuedAt != 60 {
 		t.Fatalf("invalid issued claims: %#v error=%v", claims, err)
 	}
@@ -104,7 +105,7 @@ func TestCCTLifetimeCannotOutliveAccessCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := Verify(token, authority.keys, Expected{Consumer: "identity-service", Organization: "org-1", Now: now, Tolerance: 30})
+	claims, err := protocol.Verify(token, authority.keys, protocol.Expected{Consumer: "identity-service", Organization: "org-1", Now: now, Tolerance: 30})
 	if err != nil || claims.ExpiresAt != store.session.ExpiresAt.Unix() {
 		t.Fatalf("CCT exceeds access expiry: %#v error=%v", claims, err)
 	}

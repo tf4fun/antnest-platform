@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"errors"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"net/http"
 	"net/http/httptest"
 	"strings"

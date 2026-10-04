@@ -5,6 +5,7 @@ go 1.27.0
 toolchain go1.27.1
 
 require (
+	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/exaring/otelpgx v0.12.0
 	github.com/go-jose/go-jose/v4 v4.1.4
@@ -47,3 +48,5 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication

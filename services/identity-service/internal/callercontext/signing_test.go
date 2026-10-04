@@ -7,11 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	protocol "github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 func TestSigningFilesRequireExactKIDAndMatchingPublicKey(t *testing.T) {
@@ -29,7 +30,7 @@ func TestSigningFilesRequireExactKIDAndMatchingPublicKey(t *testing.T) {
 	if err := os.WriteFile(privatePath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	publicJSON, err := json.Marshal(publicKeys{Keys: []publicKey{{KID: "signer", Kty: "OKP", Crv: "Ed25519", Use: "sig", Alg: "EdDSA", X: base64.RawURLEncoding.EncodeToString(public)}}})
+	publicJSON, err := json.Marshal(protocol.PublicKeys{Keys: []protocol.PublicKey{{KID: "signer", Kty: "OKP", Crv: "Ed25519", Use: "sig", Alg: "EdDSA", X: base64.RawURLEncoding.EncodeToString(public)}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,10 +13,10 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 )
 
 func TestPrincipalResponsesValidateAgainstContract(t *testing.T) {

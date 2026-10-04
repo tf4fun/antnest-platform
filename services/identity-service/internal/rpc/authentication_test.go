@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/serviceauth"
 )
 
 func TestRPCAdmissionPoliciesMatchTheOwningCallerCatalog(t *testing.T) {

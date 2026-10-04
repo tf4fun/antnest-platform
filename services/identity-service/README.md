@@ -9,6 +9,11 @@ The global User is a stable subject with no profile or credential attributes.
 Organization-scoped profiles, group edges, local passwords, external OIDC
 identities, and tokens are separate records that point at that subject.
 
+Workload authentication and CCT parsing/verification use the
+[shared Go module](../../modules/service-authentication/README.md). Identity owns
+signing keys, issuance, live-session authorization and revocation; library
+verification failures are mapped to Identity domain errors.
+
 ## Responsibilities
 
 - Users, Organizations, OrganizationMemberships, Groups, and GroupMemberships.

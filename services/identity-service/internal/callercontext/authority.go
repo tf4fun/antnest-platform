@@ -11,10 +11,21 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
+	protocol "github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
+
+// Protocol types are shared; issuance and live-session policy remain Identity-owned.
+type Keys = protocol.Keys
+type Claims = protocol.Claims
+
+const Header = protocol.Header
+const Issuer = protocol.Issuer
+
+var ErrInvalid = domain.NewError("caller_context_invalid", "Caller context verification failed", false)
+var ErrDependency = domain.NewError("identity_dependency_unavailable", "Identity authorization dependency is unavailable", true)
 
 type Session struct {
 	ID        string
@@ -45,7 +56,7 @@ type Authority struct {
 }
 
 func NewAuthority(config Config) (*Authority, error) {
-	if !validKID(config.KID) || len(config.PrivateKey) != ed25519.PrivateKeySize || config.Repository == nil || config.Now == nil || config.NewID == nil {
+	if !protocol.ValidKID(config.KID) || len(config.PrivateKey) != ed25519.PrivateKeySize || config.Repository == nil || config.Now == nil || config.NewID == nil {
 		return nil, fmt.Errorf("CCT authority requires valid signing material, session repository, clock and ID generator")
 	}
 	if !slices.Equal(config.Keys[config.KID], config.PrivateKey.Public().(ed25519.PublicKey)) || len(config.Keys) > 8 {
@@ -53,7 +64,7 @@ func NewAuthority(config Config) (*Authority, error) {
 	}
 	keys := make(Keys, len(config.Keys))
 	for id, public := range config.Keys {
-		if !validKID(id) || len(public) != ed25519.PublicKeySize {
+		if !protocol.ValidKID(id) || len(public) != ed25519.PublicKeySize {
 			return nil, fmt.Errorf("CCT verification key set is invalid")
 		}
 		keys[id] = slices.Clone(public)
@@ -68,7 +79,7 @@ func NewAuthority(config Config) (*Authority, error) {
 
 func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent string) (domain.Principal, string, error) {
 	audience := profileAudience(profile)
-	if len(audience) == 0 || agent != "" && !validID(agent) {
+	if len(audience) == 0 || agent != "" && !protocol.ValidID(agent) {
 		return domain.Principal{}, "", domain.InvalidArgument("Caller context profile or Agent scope is invalid")
 	}
 	if accessToken == "" {
@@ -82,7 +93,7 @@ func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent strin
 		}
 		return domain.Principal{}, "", ErrDependency
 	}
-	if !session.Principal.Active || !session.ExpiresAt.After(now) || !validID(session.ID) {
+	if !session.Principal.Active || !session.ExpiresAt.After(now) || !protocol.ValidID(session.ID) {
 		return domain.Principal{}, "", domain.ErrUnauthenticated
 	}
 	principal := session.Principal
@@ -97,7 +108,7 @@ func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent strin
 		return domain.Principal{}, "", domain.ErrUnauthenticated
 	}
 	raw, err := json.Marshal(claims)
-	if err != nil || !validClaims(raw, claims) {
+	if err != nil || !protocol.ValidClaims(raw, claims) {
 		return domain.Principal{}, "", ErrDependency
 	}
 	signed, err := a.signer.Sign(raw)
@@ -113,7 +124,7 @@ func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent strin
 
 func (a *Authority) VerifySession(ctx context.Context, token string) (Claims, error) {
 	now := a.now().UTC()
-	claims, err := Verify(token, a.keys, Expected{Consumer: "identity-service", Now: now, Tolerance: 30})
+	claims, err := protocol.Verify(token, a.keys, protocol.Expected{Consumer: "identity-service", Now: now, Tolerance: 30})
 	if err != nil {
 		return Claims{}, ErrInvalid
 	}
@@ -139,9 +150,9 @@ func (a *Authority) PublicJWKS() any {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	result := publicKeys{Keys: make([]publicKey, 0, len(ids))}
+	result := protocol.PublicKeys{Keys: make([]protocol.PublicKey, 0, len(ids))}
 	for _, id := range ids {
-		result.Keys = append(result.Keys, publicKey{KID: id, Kty: "OKP", Crv: "Ed25519", Use: "sig", Alg: "EdDSA", X: base64.RawURLEncoding.EncodeToString(a.keys[id])})
+		result.Keys = append(result.Keys, protocol.PublicKey{KID: id, Kty: "OKP", Crv: "Ed25519", Use: "sig", Alg: "EdDSA", X: base64.RawURLEncoding.EncodeToString(a.keys[id])})
 	}
 	return result
 }
