@@ -74,6 +74,7 @@ if (
         "golangci-lint",
         "run",
         ...services.map((service) => `./services/${service}/...`),
+        ...(requested.length ? [] : ["./modules/service-authentication/..."]),
       ],
       cwd: root,
       output,

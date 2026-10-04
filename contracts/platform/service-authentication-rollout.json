@@ -367,5 +367,30 @@
       "docker": "node tests/integration/deployment/transports-docker.mjs: 21 isolated production-helper/fixture boundary checks pass. Nonroot/read-only containers, host-loopback diagnostics, purpose interface rejection, no injected authority, fixed management OTLP-only forwarding, actual 8 MiB CLI cap and SIGINT/SIGTERM exit zero. Owned resources removed; retained container/network/volume identities unchanged.",
       "scope": "Standalone transport checks, actual Compose/Jaeger/normal-stop admission and complete route authorization/business integration passed."
     }
+  },
+  "go_authentication_module": {
+    "owner": "platform-authentication",
+    "pull_request": 102,
+    "status": "integration-admitted",
+    "module": "../../modules/service-authentication",
+    "implementation": "../../docs/go-authentication-module.md",
+    "consumers": [
+      "identity-service",
+      "edge-gateway",
+      "admin-console",
+      "agent-controller",
+      "runtime-controller",
+      "skill-registry"
+    ],
+    "admission": {
+      "date": "2026-10-05",
+      "unit_contract_component": "Each consumer passed standalone GOWORK=off race/unit, vet and build; owning-service component and lint gates passed. Shared unit/token/CCT vectors, actual HTTP/socket header and proxy regressions, all five outbound identities in token/TLS and mTLS, and 13 repository ownership/build checks passed. ACP has 1,620 unit and 201 component tests; Agent UI missing/invalid-context HTTP regressions passed.",
+      "repository": "make test-service-authentication; make test-repo; root format/lint/type/link checks passed. Shared module CI and all six consumer workflows are wired.",
+      "docker": "make e2e-service-authentication-integration: 560 network checks on 24 networks and 30 real issuer/context/permission/Runtime checks; normal login, automatic learning/notices, discovery, temporary use, publication, frozen Templates, two-Agent rebuild and complete learning/business Trace topology passed.",
+      "deployment": "make e2e-deployment-wiring: all 51 actual production Compose checks passed, including Jaeger ingestion and normal exit zero.",
+      "external_provider_requests": 0,
+      "cleanup": "both runs cleaned owned resources, candidate images and credentials; retained Docker identities unchanged",
+      "scope": "Disposable token/HTTP development deployment; common and owning-service TLS/mTLS evidence does not claim full-platform mTLS acceptance."
+    }
   }
 }

@@ -1,7 +1,8 @@
 # Shared Go authentication module
 
-Status: planned review follow-up for PR #102. Service adoption and integration
-must pass before this document describes the extraction as delivered.
+Status: integration-admitted for PR #102 on 2026-10-05. All six Go service
+batches, ACP/Agent UI regression batches, repository gates and final Docker
+authentication/business and production deployment regression passed.
 
 ## Scope and ownership
 
@@ -61,3 +62,36 @@ verification, missing standalone dependency declarations and missing shared
 Docker/CI inputs. A module change must run all six Go consumer workflows. Final
 Docker authentication/business regression runs only after each owning batch
 passes. This extraction adds no full-platform mTLS acceptance claim.
+
+## Admission commands
+
+`make test-go-authentication` runs the shared Go protocol suite independently
+of the workspace. `make test-service-authentication` enforces route ownership
+and the shared module's build/ownership guard. `make test-repo` includes its
+13 positive/negative repository checks. The guard checks every service's Go
+sources for restored private authentication packages, preserves Identity's
+owned authority, and checks the six current consumers' direct dependencies,
+relative replaces, Docker layouts, outbound policy and CI coverage.
+
+Each consumer passed `GOWORK=off go vet/test/build`, its root Go component
+suite and lint before its own commit. Common TLS/mTLS tests cover all five
+outbound callers; real HTTP and socket tests check unchanged verified CCT,
+credential replacement and each forwarding policy. ACP and Agent UI have
+catalog and real HTTP tests distinguishing absent, duplicate, empty and invalid
+CCT before business effects.
+
+A shared-module change runs `.github/workflows/shared-go-authentication.yml`
+and all six consumer workflows. The service CI cache key includes the shared
+`go.sum`; root formatting, lint and Go test entry points include the module.
+Final Docker commands are `make e2e-service-authentication-integration` and
+`make e2e-deployment-wiring`, run serially after the service batches.
+
+The final Docker authentication/business run passed 560 checks on 24 networks
+and 30 actual issuer/context/permission/Runtime checks. Login, automatic Skill
+learning and notice delivery, discovery, temporary use, publication, frozen
+Templates, two-Agent rebuild and learning/business Trace topology passed.
+The production deployment run passed all 51 checks, including actual Jaeger
+ingestion and normal shutdown. Both runs cleaned their candidate images,
+credentials and owned resources and preserved retained Docker identities.
+The full deployment profile remains disposable token/HTTP; common TLS/mTLS
+tests are independent module evidence.

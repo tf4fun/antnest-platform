@@ -4,6 +4,14 @@
 
 ### Changed
 
+Go workload authentication and CCT verification are consolidated in
+`modules/service-authentication`, consumed by Identity, Gateway, Console,
+Controller, RC and Registry. Services retain route and business authorization;
+Identity retains issuance and live-session/revocation policy. Standalone and
+container builds include the shared module; its changes run all six consumers'
+CI and the module's own vector/TLS/mTLS suite. Repository checks reject restored
+private copies and missing dependency, Docker or CI inputs.
+
 The #101 / #25–#32 authentication rollout is integration-admitted. All ten
 owning-service batches passed their local gates. The final token/HTTP Docker gate
 passes 560 network checks on all 24 created networks and 30 actual issuer/context,
@@ -56,6 +64,17 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Gateway and Console private authenticated HTTP requests now bypass environment
+and default-transport proxies, including Gateway's ACP WebSocket handshakes.
+Console removes unrelated `X-Antnest-*`, Cookie and Authorization headers while
+preserving verified CCT and replacing workload credentials. Gateway preserves
+its own verified presentation hints and SCIM protocol bearer; Registry's
+workload-only source requests remove CCT.
+
+ACP and Agent UI now return `401 caller_context_required` when CCT is absent.
+Empty, duplicate and invalid CCT still return `401 caller_context_invalid`
+before dispatch.
 
 Development credential generation includes the mandatory `use: sig` and
 `alg: EdDSA` Identity JWKS fields (#32). The previous public key could verify

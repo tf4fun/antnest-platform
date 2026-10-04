@@ -7,7 +7,7 @@ POSTGRES_ADMIN_USER := antnest_test_admin
 
 
 fmt:
-	gofmt -w $$(find services tests -name '*.go' -type f)
+	gofmt -w $$(find modules services tests -name '*.go' -type f)
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
 	npm --prefix services/agent-acp-service run format
@@ -15,7 +15,7 @@ fmt:
 	services/agent-acp-service/node_modules/.bin/prettier --write 'tests/**/*.mjs' 'tests/**/*.ts'
 
 fmt-check:
-	@unformatted="$$(gofmt -l $$(find services tests -name '*.go' -type f))" || exit $$?; \
+	@unformatted="$$(gofmt -l $$(find modules services tests -name '*.go' -type f))" || exit $$?; \
 		test -z "$$unformatted"
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
@@ -52,7 +52,7 @@ test-storage-policy:
 	node tests/support/check-storage.mjs
 	python3 -B tests/support/verification/configuration_test.py
 
-test-go:
+test-go: test-go-authentication
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs runtime-controller
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs identity-service
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs agent-controller
@@ -61,13 +61,17 @@ test-go:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs skill-registry
 
 .PHONY: test-go-unit
-test-go-unit:
+test-go-unit: test-go-authentication
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/runtime-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/identity-service/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/admin-console/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/edge-gateway/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/skill-registry/...
+
+.PHONY: test-go-authentication
+test-go-authentication:
+	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/service-authentication test -race -count=1 ./...
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
@@ -143,6 +147,7 @@ test-repo:
 test-service-authentication:
 	node --test --test-concurrency=1 tests/support/service-authentication.test.mjs tests/support/json-rpc-security.test.mjs tests/integration/platform/service-authentication-contract.test.mjs tests/integration/platform/service-token-contract.test.mjs tests/integration/platform/runtime-instance-connection-contract.test.mjs tests/integration/platform/development-authentication-contract.test.mjs tests/integration/platform/development-network-contract.test.mjs tests/integration/platform/development-authentication.test.mjs tests/integration/platform/development-pki.test.mjs
 	node tests/support/check-service-authentication.mjs
+	node tests/support/check-go-authentication-module.mjs
 
 .PHONY: test-deployment-transports e2e-deployment-transports
 test-deployment-transports:
