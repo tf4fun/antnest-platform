@@ -18,13 +18,13 @@ import (
 // Lifecycle component tests use a synthetic idle ACP, but the real publisher,
 // configuration source, projection validation and acknowledgement persistence.
 func testLifecycleExecution(repository *Repository) ports.LifecycleExecution {
-	return application.NewExecutionPublisher(repository, mutationCredentialOpener{}, &lifecycleACPStub{})
+	return application.NewExecutionPublisher(repository, mutationCredentialOpener{}, &lifecycleACPStub{}, application.WithRuntimeConnectionResolver(fixtureRuntimeConnectionResolver{repository}))
 }
 
 func publishedAgentForTest(t *testing.T, repository *Repository, agent ports.AgentRecord) ports.ExecutionAgent {
 	t.Helper()
 	peer := &lifecycleACPStub{}
-	publisher := application.NewExecutionPublisher(repository, mutationCredentialOpener{}, peer)
+	publisher := application.NewExecutionPublisher(repository, mutationCredentialOpener{}, peer, application.WithRuntimeConnectionResolver(fixtureRuntimeConnectionResolver{repository}))
 	_, err := publisher.Publish(t.Context(), agent.OrganizationID)
 	require.NoError(t, err)
 	for _, published := range peer.snapshot.Agents {

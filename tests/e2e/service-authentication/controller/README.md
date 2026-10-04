@@ -15,6 +15,15 @@ startup rejection, normal SIGTERM/SIGINT and restart. The separate Go component
 gate exercises all five concrete dependency clients, including Egress and token
 rotation. These owning-service checks do not claim cross-service acceptance.
 
+The real Controller also creates an Agent against RC/Egress/ACP protocol peers.
+It prepares Skills, completes asynchronous provisioning, resolves exact private
+Runtime authority and publishes it through the production composition. Each normal
+restart must resolve again while retaining that instance identity. Wrong-endpoint
+responses must never reach ACP; disabling with an unavailable resolver must still
+publish closure, settle and finish. Peer statistics retain only credential hashes
+and non-secret bindings, and public responses/logs are checked for the private token.
+These peers are Controller-owned doubles, not implementations of downstream services.
+
 The project, volumes, networks and private credentials are cleaned in finally;
 only bounded results and redacted failure diagnostics remain under ignored
 artifacts/verification/.

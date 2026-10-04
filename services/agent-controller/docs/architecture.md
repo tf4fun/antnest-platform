@@ -673,6 +673,13 @@ signed scope and strict JSON. Only minimal status probes are unauthenticated;
 ACP's learning-policy read uses a persisted operation and live owner membership.
 [Controller authentication](../../../contracts/agent-controller/service-authentication.md)
 also defines mandatory startup configuration and authenticated dependency clients.
-Controller now owns saved/draft model discovery and creation/destination guards under the shared Provider policy. Console thin-proxy and ACP actual-model transport adoption remain separate #28 consumer batches.
+Controller owns saved/draft model discovery and creation/destination guards under
+the shared Provider policy; Console and ACP consumers are admitted separately.
+The execution publisher resolves current-instance authority from RC outside the
+database transaction, checks its persisted execution binding and relays it only
+to ACP's private control origin. Neither management projections nor Controller
+tables contain Runtime credentials. Closed publications do not resolve authority.
+See [private Runtime publication](execution-publication.md#private-runtime-authority).
+ACP instance-client adoption remains a separate #30 owning-service batch.
 Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
 for remaining receivers, deployment and final cross-service acceptance.

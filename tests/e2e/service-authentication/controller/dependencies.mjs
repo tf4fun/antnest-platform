@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { executionPeers } from "./execution-fixture.mjs";
 const fixture = JSON.parse(readFileSync("/run/auth/fixture.json", "utf8"));
 const key = createPublicKey({ key: fixture.jwks.keys[0], format: "jwk" });
 const stats = { calls: {}, failures: 0, registryContexts: [] };
@@ -10,11 +11,18 @@ const json = (w, value, status = 200) => {
   w.writeHead(status, { "content-type": "application/json" });
   w.end(JSON.stringify(value));
 };
+const peers = executionPeers(fixture, stats, json);
 for (const [service, port] of Object.entries(fixture.ports)) {
   const server = createServer(async (r, w) => {
     try {
       const path = new URL(r.url, "http://fixture").pathname;
       if (path === "/status" || path === "/test/state") return json(w, stats);
+      if (path === "/test/connection-mode") {
+        peers.setConnectionMode(
+          new URL(r.url, "http://fixture").searchParams.get("mode"),
+        );
+        return json(w, stats);
+      }
       const credential = r.headers["antnest-service-authorization"];
       if (
         !credential?.startsWith("Bearer ") ||
@@ -36,6 +44,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         if (raw.length > 2 ** 24) throw Error("body_limit");
       }
       const body = raw ? JSON.parse(raw) : {};
+      if (peers.handle(service, r, w, path, body)) return;
       if (service === "identity-service") {
         if (path === "/rpc/identity/jwks") return json(w, fixture.jwks);
         if (path === "/rpc/identity/list-principal-revocations")
@@ -50,27 +59,6 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               last_revocation_sequence: 0,
             },
           });
-      }
-      if (service === "runtime-controller") {
-        if (path === "/internal/runtimes") return json(w, { runtimes: [] });
-        if (path === "/internal/runtime-observations")
-          return json(w, {
-            observations: [],
-            oldest_sequence: 0,
-            latest_sequence: 0,
-            next_sequence: 0,
-          });
-      }
-      if (
-        service === "agent-acp-service" &&
-        path === "/rpc/agent-acp/apply-execution-snapshot"
-      ) {
-        if (r.headers["antnest-caller-context"])
-          throw Error("user_context_replayed_into_operation");
-        return json(w, {
-          organization_id: body.organization_id,
-          applied_revision: body.revision,
-        });
       }
       if (
         service === "skill-registry" &&

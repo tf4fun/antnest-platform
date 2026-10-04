@@ -90,6 +90,7 @@ try {
       providerSecret,
       ...Object.values(fixture.incoming),
       ...Object.values(fixture.tokens),
+      fixture.runtimeAuthority.token,
       context,
     ].filter(Boolean))
       assert(!text.includes(secret), "response leaked private credential");
@@ -406,31 +407,33 @@ try {
     })
   ).json;
   const context = callerContext(fixture);
-  await request("/internal/agent-templates", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      request_id: "template-auth-1",
-      organization_id: "org-1",
-      template_key: "fixture",
-      name: "Fixture",
-      model_profile_id: model.model_profile_id,
-      system_prompt: "Fixture",
-      max_model_requests: 4,
-      context_policy_version: "context-v1",
-      runtime: {
-        image_ref: "antnest/antnest-runtime:local",
-        resources: {
-          memory_bytes: 536870912,
-          pids_limit: 256,
-          tmpfs_bytes: 67108864,
+  const template = (
+    await request("/internal/agent-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_id: "template-auth-1",
+        organization_id: "org-1",
+        template_key: "fixture",
+        name: "Fixture",
+        model_profile_id: model.model_profile_id,
+        system_prompt: "Fixture",
+        max_model_requests: 4,
+        context_policy_version: "context-v1",
+        runtime: {
+          image_ref: "antnest/antnest-runtime:local",
+          resources: {
+            memory_bytes: 536870912,
+            pids_limit: 256,
+            tmpfs_bytes: 67108864,
+          },
         },
-      },
-      skill_refs: [{ skill_id: fixture.skill.skill_id, version: 1 }],
-    }),
-    context,
-    status: 201,
-  });
+        skill_refs: [{ skill_id: fixture.skill.skill_id, version: 1 }],
+      }),
+      context,
+      status: 201,
+    })
+  ).json;
   const stats = async () =>
     JSON.parse(
       await docker([
@@ -475,7 +478,60 @@ try {
     "verified CCT was replaced",
   );
   checks += 5;
+  const eventually = async (read, accept, label) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const value = await read();
+      if (accept(value)) return value;
+      await delay(200, undefined, { signal: abort.signal });
+    }
+    throw Error("Controller fixture deadline: " + label);
+  };
+  const created = (
+    await request("/internal/agents", {
+      method: "POST",
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_id: "agent-private-runtime",
+        organization_id: "org-1",
+        actor_principal_id: "user-admin",
+        owner_user_id: "user-admin",
+        name: "Private runtime fixture",
+        template_id: template.template_id,
+        template_revision: template.revision,
+      }),
+    })
+  ).json;
+  const agentID = created.agent.agent_id;
+  const getAgent = async () =>
+    (
+      await request("/internal/agents/" + agentID + "?organization_id=org-1", {
+        context: callerContext(fixture, { agt: agentID }),
+      })
+    ).json;
+  await eventually(
+    getAgent,
+    (value) => value.runtime_state === "available",
+    "ready Agent",
+  );
+  const privateHash = createHash("sha256")
+    .update(fixture.runtimeAuthority.token)
+    .digest("hex");
+  const published = await eventually(
+    stats,
+    (value) => value.lastAgent?.accepting_runs === true,
+    "private publication",
+  );
+  assert.equal(published.lastAgent.agent_id, agentID);
+  assert.equal(
+    published.lastAgent.connection_id,
+    fixture.runtimeAuthority.connection_id,
+  );
+  assert.equal(published.lastAgent.token_hash, privateHash);
+  assert.equal(published.failures, 0);
+  checks += 4;
   for (const signal of ["SIGTERM", "SIGINT"]) {
+    const beforeRestart = (await stats()).resolves;
     await docker(["kill", "--signal", signal, id]);
     for (let attempt = 0; attempt < 50; attempt++) {
       const [state] = JSON.parse(await docker(["inspect", id]));
@@ -505,8 +561,77 @@ try {
     }
     assert(healthy, "Controller did not recover after normal stop");
     await request(path);
+    const restored = await eventually(
+      stats,
+      (value) =>
+        value.resolves > beforeRestart &&
+        value.lastAgent?.accepting_runs === true,
+      "fresh restart resolution",
+    );
+    assert.equal(
+      restored.lastAgent.connection_id,
+      fixture.runtimeAuthority.connection_id,
+    );
+    assert.equal(restored.lastAgent.token_hash, privateHash);
+    assert.equal(restored.failures, 0);
+    checks += 3;
     checks++;
   }
+  const connectionMode = async (mode) => {
+    await docker([
+      ...compose,
+      "exec",
+      "-T",
+      "dependencies",
+      "node",
+      "-e",
+      "fetch('http://127.0.0.1:8101/test/connection-mode?mode=" +
+        mode +
+        "').then(r=>{if(!r.ok)process.exit(1);return r.arrayBuffer()})",
+    ]);
+  };
+  await connectionMode("wrong-endpoint");
+  const firstFault = await eventually(
+    stats,
+    (value) => value.rejectedResolves > 0,
+    "mismatch rejection",
+  );
+  const afterFault = await eventually(
+    stats,
+    (value) => value.rejectedResolves >= firstFault.rejectedResolves + 2,
+    "repeated mismatch rejection",
+  );
+  assert.equal(
+    afterFault.privateApplies,
+    firstFault.privateApplies,
+    "mismatched authority reached ACP",
+  );
+  assert.equal(afterFault.failures, 0);
+  checks += 2;
+  await connectionMode("unavailable");
+  const closedBefore = (await stats()).closedApplies;
+  await request("/internal/agents/" + agentID + "/disable", {
+    context: callerContext(fixture, { agt: agentID }),
+    method: "POST",
+    status: 202,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      request_id: "disable-without-resolver",
+      organization_id: "org-1",
+      actor_principal_id: "user-admin",
+    }),
+  });
+  await eventually(
+    getAgent,
+    (value) => value.activation_state === "disabled",
+    "disable without Runtime authority",
+  );
+  const closedState = await stats();
+  assert(closedState.closedApplies > closedBefore);
+  assert.equal(closedState.lastAgent.accepting_runs, false);
+  assert.equal(closedState.lastAgent.token_hash, null);
+  assert.equal(closedState.failures, 0);
+  checks += 4;
   const logs = await docker([
     ...compose,
     "logs",
@@ -517,6 +642,7 @@ try {
     providerSecret,
     ...Object.values(fixture.incoming),
     ...Object.values(fixture.tokens),
+    fixture.runtimeAuthority.token,
     context,
   ])
     assert(!logs.includes(secret), "private credential in logs");
@@ -570,6 +696,7 @@ try {
       providerSecret,
       ...Object.values(fixture.incoming),
       ...Object.values(fixture.tokens),
+      fixture.runtimeAuthority.token,
     ]) {
       logs = logs.replaceAll(secret, "[redacted]");
     }

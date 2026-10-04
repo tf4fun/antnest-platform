@@ -75,6 +75,7 @@ services:
     command: [node, /fixture/dependencies.mjs]
     volumes:
       - ./dependencies.mjs:/fixture/dependencies.mjs:ro
+      - ./execution-fixture.mjs:/fixture/execution-fixture.mjs:ro
       - ${CONTROLLER_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
     healthcheck:
       test:

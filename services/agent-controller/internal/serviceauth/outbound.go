@@ -54,6 +54,7 @@ func LoadOutbound(lookup LookupEnv, endpoints map[string]string) (*Clients, erro
 			return nil, fmt.Errorf("dependency origins must identify exactly one service")
 		}
 		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
 		if target.Scheme == "https" {
 			if config.ClientTLS == nil {
 				return nil, fmt.Errorf("HTTPS dependency requires complete trusted TLS configuration")

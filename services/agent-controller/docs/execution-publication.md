@@ -71,6 +71,31 @@ write is lost, the next attempt sends the latest current state. The publisher
 does not retry internally or manufacture rollback of a remote application.
 Post-commit, periodic and lifecycle callers share this same publisher instance.
 
+### Private Runtime Authority
+
+For each accepting Agent, the publisher calls RC's Controller-only
+`POST /internal/runtimes/{agent_id}/connection` after closing the source
+transaction. It checks the returned Agent, Runtime revision, execution ID and MCP
+endpoint against that source binding, plus the exact connection ID and canonical
+ACP credential profile. This happens on every publication, including an equal
+revision and process restart. Missing or mismatched authority aborts the whole
+publication before ACP receives it; no acknowledgement advances.
+
+The private response is limited to 8192 bytes and strict UTF-8 JSON, requires
+`Cache-Control: no-store`, and cannot redirect or use environment proxies.
+Dependency errors preserve only known classifications and cancellation sentinels,
+never remote messages or credentials. The existing HTTP instrumentation records
+metadata, not the private response or relay body, even with debug capture enabled.
+The publisher passes the credential only to the dedicated ACP control client.
+Controller stores neither the credential nor a second instance-authority record.
+
+Closed Agents carry only retained execution fences or a null Runtime, without
+credentials. Drain, revocation, disable and deletion do not resolve that Agent's
+authority and remain publishable when its Runtime is unavailable. A later reopen
+requires fresh resolution. These rules follow the
+[private instance contract](../../../contracts/runtime/instance-connection.md);
+ACP private/public separation is a subsequent owning-service batch.
+
 ### Commit Hints And Resynchronization
 
 The revision writer registers a transaction completion callback. Only a
@@ -251,6 +276,9 @@ binding. Runtime MCP endpoints produced by Controller are limited to 2048 UTF-8
 bytes; the budget allows JSON escaping for every byte. This is a producer
 constraint, not a new ACP field or endpoint. Variable target prompts and model
 selections are checked when registering the target, before creating a Runtime.
+The closure envelope also reserves the connection ID and the maximum canonical
+ACP token; this local measurement never resolves RC authority. The private
+instance handoff additionally limits executable endpoints to 1024 bytes.
 
 The application owns this calculation behind a narrow capacity guard. A
 configuration transaction holds the organization lock, writes its candidate,
@@ -374,6 +402,10 @@ acknowledgement persistence, closed database transactions before network I/O,
 and trace propagation without secret payloads. It is not a Docker/real-ACP
 integration claim. The general source tests separately cover a repeatable-read
 MVCC snapshot during concurrent rotation and exactly four source SELECTs.
+`runtime_connection_component_test.go` uses real PostgreSQL and authenticated RC
+and ACP HTTP peers to cover exact binding, restart resolution, mismatch/outage
+rejection, unchanged acknowledgement, closed publication and database/Trace
+privacy. It does not substitute for final cross-service acceptance.
 
 ## Owner Binding And Persistence Boundary
 

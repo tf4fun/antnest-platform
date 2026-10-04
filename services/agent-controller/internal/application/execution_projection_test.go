@@ -35,7 +35,7 @@ func executionSource(t *testing.T) ports.ExecutionSource {
 		Agents: []ports.ExecutionAgentSource{{OwnerAccessGranted: true, Agent: ports.AgentRecord{
 			AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "owner-1", AccessRevision: "access-1",
 			DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable,
-			AgentSpecRevisionID: "spec-1", ExecutionRevisionID: "execution-1", RuntimeRevision: "runtime-1", RuntimeExecutionID: "boot-1", RuntimeMCPEndpoint: "http://runtime:8093/mcp",
+			AgentSpecRevisionID: "spec-1", ExecutionRevisionID: "execution-1", RuntimeRevision: "rtv_11111111111111111111111111111111", RuntimeExecutionID: "boot-1", RuntimeMCPEndpoint: "http://antnest-runtime-agent-1:8093/mcp",
 		}, Spec: ports.AgentSpecRecord{ID: "spec-1", AgentID: "agent-1", Revision: 1, Snapshot: domain.AgentSpecSnapshot{ModelProfileID: "model-1", SystemPrompt: "Organization assistant", ContextPolicyVersion: domain.ContextPolicyV1, MaxModelRequests: 8,
 			Model: domain.ModelSpec{Model: "obsolete-frozen-model"}}}, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}, AuthorizationRevision: 1}},
 	}
@@ -51,7 +51,7 @@ func TestExecutionProjectionUsesCurrentCatalogAndCredentials(t *testing.T) {
 	require.Equal(t, []ports.CredentialIdentity{{OrganizationID: "org-1", CredentialRef: "provider-1", CredentialVersion: "credential-current"}}, opener.calls)
 	require.True(t, value.Agents[0].AcceptingRuns)
 	require.Equal(t, []string{"owner-1"}, value.Agents[0].PrincipalIDs)
-	require.Equal(t, "runtime-1", value.Agents[0].Runtime.RuntimeRevision)
+	require.Equal(t, "rtv_11111111111111111111111111111111", value.Agents[0].Runtime.RuntimeRevision)
 }
 
 func TestExecutionProjectionDisabledProviderStillCarriesCurrentCredential(t *testing.T) {
@@ -261,6 +261,6 @@ func TestExecutionProjectionKeepsDeploymentMCPConfigurationOutOfAgentPayload(t *
 	require.NoError(t, err)
 	require.NotContains(t, string(agentPayload), "synthetic-current-secret")
 	require.Equal(t, "synthetic-current-secret", value.Providers[0].Credential.Secret, "only the internal Provider section carries decrypted credentials")
-	require.Equal(t, "http://runtime:8093/mcp", value.Agents[0].Runtime.MCPEndpoint)
+	require.Equal(t, "http://antnest-runtime-agent-1:8093/mcp", value.Agents[0].Runtime.MCPEndpoint)
 	require.Empty(t, value.Agents[0].SkillInstructions, "Runtime owns dynamic Skill discovery")
 }

@@ -106,7 +106,7 @@
         "postgres": "38 files / 326 tests; zero skips/failures; durable v1/v2 destination failures and explicit later Run admission; isolated database cleaned",
         "docker": "node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs (14 authentication/listener checks, 23 Provider destination/opt-in/privacy checks and five SDK business scenarios, including restart; cleaned)",
         "pending_consumers": ["skill-registry"],
-        "pending_runtime_client": "#29/#30 must first define and produce the private, instance-specific connection reference; a later ACP-owned batch adopts it. Existing execution fences and maintenance tickets are retained.",
+        "pending_runtime_client": "#29/#30 RC issuer/native receiver/Controller relay are admitted; the ACP-owned batch must split private/public configuration, install volatile per-instance sender files and adopt every Runtime client. Existing execution fences and maintenance tickets are retained.",
         "pending_provider_policy": "Controller, Console and ACP #28 owning-service batches are admitted; coordinated deployment and cross-service acceptance remain in the final integration batch.",
         "cross_service_e2e": "pending final integration batch"
       }
@@ -129,23 +129,26 @@
     },
     {
       "owner": "agent-controller",
-      "issues": [32, 28],
+      "issues": [32, 28, 30],
       "status": "service-admitted",
       "deliverables": [
         "workload and delegated context checks",
         "authenticated dependency clients",
         "JSON media-type checks",
-        "model-only saved/draft discovery; creation/discovery destination guard; remove credential export"
+        "model-only saved/draft discovery; creation/discovery destination guard; remove credential export",
+        "resolve and verify private current-instance Runtime authority outside source transactions; relay only to ACP control",
+        "closed Agent publications omit credentials and require no resolver; safe Runtime connection Trace classifications"
       ],
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs agent-controller; configured native clients for all five dependencies and per-request token rotation passed",
-        "postgres": "21 packages / 644 tests / 1245 subtests; zero skips/failures; current credential rotation plus response/log/span privacy; isolated PostgreSQL/Temporal cleaned",
-        "docker": "node tests/e2e/service-authentication/controller/run.mjs (61 authentication, discovery/SSRF, catalog, unchanged CCT, control publication, custom health, startup rejection and SIGTERM/SIGINT/restart checks; cleaned)",
-        "pending_consumers": [],
+        "postgres": "21 packages / 662 tests / 1310 subtests; zero skips/failures; private Runtime HTTP relay, binding mismatch/outage rejection, ACK integrity, closure and database/Trace privacy; later targeted private Trace revalidation passed; isolated PostgreSQL/Temporal and PostgreSQL resources cleaned",
+        "docker": "node tests/e2e/service-authentication/controller/run.mjs (83 native authentication, discovery/SSRF, catalog, unchanged CCT, actual production Runtime handoff, mismatch rejection, disable during resolver outage, private/public privacy, custom health, startup rejection and SIGTERM/SIGINT/fresh-resolution restart checks; complete; owned resources and credentials cleaned). RC/ACP/Egress are explicitly Controller-owned protocol peers.",
+        "pending_consumers": ["agent-acp-service"],
         "pending_dependencies": ["runtime-egress", "skill-registry"],
         "pending_provider_discovery": "#28 Controller revision 38, Console thin proxy and ACP model destination guard are admitted; coordinated deployment and cross-service acceptance remain in the final integration batch.",
         "cross_service_e2e": "pending final integration batch",
-        "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed."
+        "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed.",
+        "runtime_instance_relay": "Native race/vet/lint, shared private/public publication and canonical token/endpoint vectors, strict duplicate/UTF-8/8KiB/cache/encoding checks, exact persisted binding, origin/no-proxy/no-redirect isolation and known safe dependency classifications passed. Receiver adoption and cross-service acceptance remain separate batches."
       }
     },
     {
@@ -165,7 +168,7 @@
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs runtime-controller; real HTTP route matrix, strict JSON, local readiness, native Registry credential rotation/redirect/proxy isolation; shared 115 token/TLS vectors and exported Go wrapper regressions passed",
         "postgres": "16 packages / 327 tests / 504 subtests; zero skips/failures; atomic credential/operation/generation rollback and exact replay; isolated database/resources cleaned",
         "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (130 authentication, image, private connection, root-only actual receiver mount, restart/replay, new-generation authority, Disable/Delete cleanup and normal shutdown checks; cleaned). Uses an explicitly RC-owned Runtime protocol double; native receiver is a separate batch.",
-        "pending_runtime_client": "#30 RC issuer/resolver/status client and native Runtime receiver are admitted. Controller relay and ACP instance clients remain separate owning-service batches. Execution fences and signed tickets are retained.",
+        "pending_runtime_client": "#30 RC issuer/resolver/status client, native Runtime receiver and Controller private relay are admitted. ACP instance clients remain a separate owning-service batch. Execution fences and signed tickets are retained.",
         "pending_dependencies": ["skill-registry"],
         "cross_service_e2e": "pending final integration batch",
         "runtime_volume_component": "Direct Docker archive preparation into a never-started helper: directory UID/GID 0 mode 0700, file 0600, idempotent readback and auto-created empty-volume race rejection; zero skips/failures; resources cleaned."
@@ -193,7 +196,7 @@
       "admission": {
         "unit_contract_component": "151 portable tests; shared token/JSON/route-catalog conformance; real HTTP ordering and multipart/header privacy; native Clippy passed. Linux release: 200 unit/component, five executor, one startup and one managed fixture tests; feature build: 200 unit/component, five executor and two startup tests; zero failures/ignored.",
         "docker": "node tests/e2e/service-authentication/runtime/run.mjs (349 native admission, official MCP tools/info, signed learning/temporary uploads, restart, receiver owner/mode/missing/extra/link/FIFO/digest and unsupported configuration checks; complete; owned resources and credentials cleaned)",
-        "pending_consumers": ["agent-controller", "agent-acp-service"],
+        "pending_consumers": ["agent-acp-service"],
         "cross_service_e2e": "pending final integration batch"
       }
     },
@@ -246,7 +249,7 @@
     "fixtures": "../runtime/instance-connection-fixtures.json",
     "status": "rc-runtime-admitted-consumers-pending",
     "issuer": "runtime-controller",
-    "pending_service_batches": ["agent-controller", "agent-acp-service"],
+    "pending_service_batches": ["agent-acp-service"],
     "cross_service_e2e": "pending final integration batch"
   }
 }

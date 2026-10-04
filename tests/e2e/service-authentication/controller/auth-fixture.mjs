@@ -54,6 +54,10 @@ export function createFixture(directory, providerSecret) {
     unpacked_size: 256,
     package_rules_version: 1,
   };
+  const runtimeAuthority = {
+    connection_id: "rci_" + randomBytes(16).toString("hex"),
+    token: randomBytes(32).toString("base64url"),
+  };
   writeFileSync(
     resolve(directory, "callers.json"),
     JSON.stringify(
@@ -73,6 +77,7 @@ export function createFixture(directory, providerSecret) {
       jwks,
       skill,
       providerSecret,
+      runtimeAuthority,
       hashes: Object.fromEntries(
         Object.entries(tokens).map(([name, token]) => [name, [hash(token)]]),
       ),
@@ -81,7 +86,7 @@ export function createFixture(directory, providerSecret) {
   );
   for (const [name, token] of Object.entries(tokens))
     writeFileSync(resolve(directory, "outgoing", name), token, { mode: 0o600 });
-  return { incoming, tokens, ports, jwks, skill, privateKey };
+  return { incoming, tokens, ports, jwks, skill, privateKey, runtimeAuthority };
 }
 export function callerContext(
   fixture,

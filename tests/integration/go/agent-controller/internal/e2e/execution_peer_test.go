@@ -23,7 +23,7 @@ type peerExecutionSnapshot struct {
 	Agents         []ports.ExecutionAgent    `json:"agents"`
 }
 
-func executionPublicationPeer(t *testing.T, store ports.ExecutionPublicationStore, opener ports.CredentialOpener) (*application.ExecutionPublisher, func() peerExecutionSnapshot) {
+func executionPublicationPeer(t *testing.T, store ports.ExecutionPublicationStore, opener ports.CredentialOpener, runtime ports.RuntimeConnectionResolver) (*application.ExecutionPublisher, func() peerExecutionSnapshot) {
 	t.Helper()
 	var mu sync.Mutex
 	var snapshot peerExecutionSnapshot
@@ -71,7 +71,7 @@ func executionPublicationPeer(t *testing.T, store ports.ExecutionPublicationStor
 	t.Cleanup(peer.Close)
 	client, err := acpclient.New(peer.URL, time.Second, peer.Client())
 	require.NoError(t, err)
-	return application.NewExecutionPublisher(store, opener, client), func() peerExecutionSnapshot { mu.Lock(); defer mu.Unlock(); return snapshot }
+	return application.NewExecutionPublisher(store, opener, client, application.WithRuntimeConnectionResolver(runtime)), func() peerExecutionSnapshot { mu.Lock(); defer mu.Unlock(); return snapshot }
 }
 
 func closedPeerAgent(snapshot peerExecutionSnapshot, request ports.AgentSettlementRequest) bool {

@@ -211,6 +211,11 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(controller.admission.postgres);
   assert(controller.admission.docker);
   assert(controller.admission.pending_provider_discovery.includes("#28"));
+  assert(controller.issues.includes(30));
+  assert(controller.admission.runtime_instance_relay);
+  assert.deepEqual(controller.admission.pending_consumers, [
+    "agent-acp-service",
+  ]);
   assert.deepEqual(controller.admission.pending_dependencies, [
     "runtime-egress",
     "skill-registry",
@@ -230,10 +235,7 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert.equal(runtime.status, "service-admitted");
   assert(runtime.admission.unit_contract_component);
   assert(runtime.admission.docker);
-  assert.deepEqual(runtime.admission.pending_consumers, [
-    "agent-controller",
-    "agent-acp-service",
-  ]);
+  assert.deepEqual(runtime.admission.pending_consumers, ["agent-acp-service"]);
   for (const owner of [
     "skill-registry",
     "runtime-egress",
@@ -252,7 +254,7 @@ test("the rollout records admitted producers while keeping consumer and integrat
   );
   assert.deepEqual(
     rollout.runtime_instance_connection.pending_service_batches,
-    ["agent-controller", "agent-acp-service"],
+    ["agent-acp-service"],
   );
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));

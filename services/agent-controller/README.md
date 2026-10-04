@@ -56,23 +56,23 @@ each workload and required Identity-signed caller context independently of
 Gateway. Signed Organization/actor/Agent scope, ownership and access rules are
 enforced here; raw identity hints provide no authority.
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | `/internal/provider-connections`, `/internal/model-profiles`, `/internal/agent-templates` | Provider, model and Template catalog management ([control API](../../contracts/agent-controller/control-api.md)) |
-| Inbound | `POST /internal/agents`, `POST /internal/agents/{agent_id}/{rebuild,disable,enable,delete}` | Lifecycle commands; return `202` after durable admission |
-| Inbound | `GET /internal/agents`, `GET /internal/agent-operations/{request_id}` | Agent projections and lifecycle operation status |
-| Inbound | `GET /internal/agent-events`, `GET /internal/agents/{agent_id}/events` and their `/watch` routes | Authoritative event replay and best-effort SSE wake-up |
-| Inbound | `GET /internal/agent-skill-preparations/{request_id}` | Skill preparation progress before the Agent row exists |
-| Inbound | `GET`/`PUT /internal/agents/{agent_id}/network-policy` | Organization-scoped network policy read and CAS ([network policy](docs/network-policy.md)) |
-| Inbound | `GET`/`PUT /internal/agents/{agent_id}/skill-learning-policy` | Owner-scoped Skill learning policy ([learning API](../../contracts/skill-learning/learning-api.md)) |
-| Inbound | `GET /internal/execution-synchronization` | Stored configuration revision and ACP acknowledgement; not a health check |
-| Inbound | `POST /rpc/agent-controller/list-workspace-agents`, `POST /rpc/agent-controller/set-agent-authorization` | [Workspace metadata](docs/workspace-state.md) and [Agent default authorization](docs/agent-configuration.md) |
-| Inbound | `GET /status` | Readiness probe |
-| Outbound | Runtime Controller internal control API | Runtime create, update, disable, enable, delete, inspection, observation journal and Skill preparation |
-| Outbound | Runtime Egress control API | Network allocation, attachment open/close and policy reads/CAS |
-| Outbound | Identity Service internal RPC | `resolve_principal`, owner authorization and revocation receipt |
-| Outbound | Agent ACP Service | [Execution configuration publication](docs/execution-publication.md) and lifecycle settlement |
-| Outbound | Skill Registry | Resolve exact Skill versions for Template revisions (optional) |
+| Direction | Interface                                                                                                | Purpose                                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Inbound   | `/internal/provider-connections`, `/internal/model-profiles`, `/internal/agent-templates`                | Provider, model and Template catalog management ([control API](../../contracts/agent-controller/control-api.md)) |
+| Inbound   | `POST /internal/agents`, `POST /internal/agents/{agent_id}/{rebuild,disable,enable,delete}`              | Lifecycle commands; return `202` after durable admission                                                         |
+| Inbound   | `GET /internal/agents`, `GET /internal/agent-operations/{request_id}`                                    | Agent projections and lifecycle operation status                                                                 |
+| Inbound   | `GET /internal/agent-events`, `GET /internal/agents/{agent_id}/events` and their `/watch` routes         | Authoritative event replay and best-effort SSE wake-up                                                           |
+| Inbound   | `GET /internal/agent-skill-preparations/{request_id}`                                                    | Skill preparation progress before the Agent row exists                                                           |
+| Inbound   | `GET`/`PUT /internal/agents/{agent_id}/network-policy`                                                   | Organization-scoped network policy read and CAS ([network policy](docs/network-policy.md))                       |
+| Inbound   | `GET`/`PUT /internal/agents/{agent_id}/skill-learning-policy`                                            | Owner-scoped Skill learning policy ([learning API](../../contracts/skill-learning/learning-api.md))              |
+| Inbound   | `GET /internal/execution-synchronization`                                                                | Stored configuration revision and ACP acknowledgement; not a health check                                        |
+| Inbound   | `POST /rpc/agent-controller/list-workspace-agents`, `POST /rpc/agent-controller/set-agent-authorization` | [Workspace metadata](docs/workspace-state.md) and [Agent default authorization](docs/agent-configuration.md)     |
+| Inbound   | `GET /status`                                                                                            | Readiness probe                                                                                                  |
+| Outbound  | Runtime Controller internal control API                                                                  | Runtime lifecycle, inspection, observation, Skill preparation and private current-instance connection resolution |
+| Outbound  | Runtime Egress control API                                                                               | Network allocation, attachment open/close and policy reads/CAS                                                   |
+| Outbound  | Identity Service internal RPC                                                                            | `resolve_principal`, owner authorization and revocation receipt                                                  |
+| Outbound  | Agent ACP Service                                                                                        | [Execution configuration publication](docs/execution-publication.md) and lifecycle settlement                    |
+| Outbound  | Skill Registry                                                                                           | Resolve exact Skill versions for Template revisions (optional)                                                   |
 
 Resource identifiers follow the
 [platform resource ID contract](../../contracts/resource-identifiers.md). Create
@@ -81,39 +81,39 @@ and lifecycle, Runtime observation and owner-revocation events use `event_`.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_AGENT_CONTROLLER_DATABASE_URL` | Yes | - | PostgreSQL connection URL for the service-owned database. |
-| `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` | Yes | - | Canonical base64 encoding of exactly 32 bytes; encrypts Provider credentials. |
-| `ANTNEST_AGENT_ACP_CONTROL_URL` | Yes | - | ACP's dedicated Controller-only HTTP(S) control origin; distinct from the workspace listener. |
-| `ANTNEST_RUNTIME_CONTROLLER_URL` | Yes | - | Runtime Controller base URL. |
-| `ANTNEST_RUNTIME_EGRESS_URL` | Yes | - | Runtime Egress base URL. |
-| `ANTNEST_IDENTITY_SERVICE_URL` | Yes | - | Identity Service base URL. |
-| `ANTNEST_SKILL_REGISTRY_URL` | No | - | Optional pinned Registry origin; requires its own outgoing service credential when enabled. |
-| `ANTNEST_SERVICE_AUTH_MODE` | Yes | - | Exact `token` or `mtls`; no fallback or whitespace trimming. |
-| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | In token mode | - | Private JSON caller-to-SHA256 map, loaded once at startup. |
-| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | In token mode | - | Private receiver-named token files, checked at startup and reread for every outgoing request. |
-| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | No | `false` when absent | Exact Boolean; `true` is an explicit development-only token/HTTP opt-in. |
-| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Except insecure token/HTTP | - | TLS 1.3 chain, DNS name and exact workload URI validation. |
-| `ANTNEST_AGENT_CONTROLLER_LISTEN` | No | `:8080` | HTTP listen address; also used by `--healthcheck`. |
-| `ANTNEST_TEMPORAL_ADDRESS` | No | `127.0.0.1:7233` | Temporal frontend address. |
-| `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` | No | `150s` | Timeout for dependency RPC clients and the HTTP write timeout. |
-| `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` | No | `5m` | Lifecycle drain timeout. |
-| `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` | No | `15s` | Graceful shutdown timeout for the server and Temporal worker. |
-| `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL` | No | `2s` | Runtime Controller observation journal poll interval. |
-| `ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL` | No | `2s` | Identity Service revocation poll interval. |
-| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES` | No | `16777216` | Maximum published configuration size, between `1024` and `67108864`. |
-| `ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL` | No | `30s` | Periodic configuration resynchronization interval. |
-| `ANTNEST_AGENT_CONTROLLER_EXECUTION_RETRY_INTERVAL` | No | `1s` | Initial publication retry interval. |
-| `ANTNEST_AGENT_CONTROLLER_EXECUTION_MAX_RETRY_INTERVAL` | No | `30s` | Maximum publication retry interval; must not be lower than the initial interval. |
-| `ANTNEST_AGENT_CONTROLLER_EXECUTION_REQUEST_TIMEOUT` | No | `15s` | Timeout for one publication request to ACP. |
-| `ANTNEST_ENVIRONMENT` | No | - | Deployment environment recorded in telemetry resource attributes. |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` or `false`; development-only RPC payload capture. Provider and credential routes stay metadata-only. |
-| `OTEL_SDK_DISABLED` | No | - | `true` disables all OpenTelemetry export. |
-| `OTEL_SERVICE_NAME` | No | `agent-controller` | Telemetry service name. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` | No | - | OTLP endpoints. A signal exports only when an endpoint is set or its exporter is `otlp`. |
-| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` | No | - | `otlp` or `none` per signal. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_PROTOCOL` | No | `http/protobuf` | Only `http/protobuf` is supported. |
+| Variable                                                                                          | Required                   | Default             | Description                                                                                                 |
+| ------------------------------------------------------------------------------------------------- | -------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_AGENT_CONTROLLER_DATABASE_URL`                                                           | Yes                        | -                   | PostgreSQL connection URL for the service-owned database.                                                   |
+| `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`                                                         | Yes                        | -                   | Canonical base64 encoding of exactly 32 bytes; encrypts Provider credentials.                               |
+| `ANTNEST_AGENT_ACP_CONTROL_URL`                                                                   | Yes                        | -                   | ACP's dedicated Controller-only HTTP(S) control origin; distinct from the workspace listener.               |
+| `ANTNEST_RUNTIME_CONTROLLER_URL`                                                                  | Yes                        | -                   | Runtime Controller base URL.                                                                                |
+| `ANTNEST_RUNTIME_EGRESS_URL`                                                                      | Yes                        | -                   | Runtime Egress base URL.                                                                                    |
+| `ANTNEST_IDENTITY_SERVICE_URL`                                                                    | Yes                        | -                   | Identity Service base URL.                                                                                  |
+| `ANTNEST_SKILL_REGISTRY_URL`                                                                      | No                         | -                   | Optional pinned Registry origin; requires its own outgoing service credential when enabled.                 |
+| `ANTNEST_SERVICE_AUTH_MODE`                                                                       | Yes                        | -                   | Exact `token` or `mtls`; no fallback or whitespace trimming.                                                |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                                                               | In token mode              | -                   | Private JSON caller-to-SHA256 map, loaded once at startup.                                                  |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                                                                  | In token mode              | -                   | Private receiver-named token files, checked at startup and reread for every outgoing request.               |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | No                         | `false` when absent | Exact Boolean; `true` is an explicit development-only token/HTTP opt-in.                                    |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Except insecure token/HTTP | -                   | TLS 1.3 chain, DNS name and exact workload URI validation.                                                  |
+| `ANTNEST_AGENT_CONTROLLER_LISTEN`                                                                 | No                         | `:8080`             | HTTP listen address; also used by `--healthcheck`.                                                          |
+| `ANTNEST_TEMPORAL_ADDRESS`                                                                        | No                         | `127.0.0.1:7233`    | Temporal frontend address.                                                                                  |
+| `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT`                                                     | No                         | `150s`              | Timeout for dependency RPC clients and the HTTP write timeout.                                              |
+| `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT`                                                          | No                         | `5m`                | Lifecycle drain timeout.                                                                                    |
+| `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT`                                                       | No                         | `15s`               | Graceful shutdown timeout for the server and Temporal worker.                                               |
+| `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL`                                      | No                         | `2s`                | Runtime Controller observation journal poll interval.                                                       |
+| `ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL`                                      | No                         | `2s`                | Identity Service revocation poll interval.                                                                  |
+| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`                                                             | No                         | `16777216`          | Maximum published configuration size, between `1024` and `67108864`.                                        |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL`                                              | No                         | `30s`               | Periodic configuration resynchronization interval.                                                          |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_RETRY_INTERVAL`                                               | No                         | `1s`                | Initial publication retry interval.                                                                         |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_MAX_RETRY_INTERVAL`                                           | No                         | `30s`               | Maximum publication retry interval; must not be lower than the initial interval.                            |
+| `ANTNEST_AGENT_CONTROLLER_EXECUTION_REQUEST_TIMEOUT`                                              | No                         | `15s`               | Timeout for one publication request to ACP.                                                                 |
+| `ANTNEST_ENVIRONMENT`                                                                             | No                         | -                   | Deployment environment recorded in telemetry resource attributes.                                           |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`                                                           | No                         | `false`             | `true` or `false`; development-only RPC payload capture. Provider and credential routes stay metadata-only. |
+| `OTEL_SDK_DISABLED`                                                                               | No                         | -                   | `true` disables all OpenTelemetry export.                                                                   |
+| `OTEL_SERVICE_NAME`                                                                               | No                         | `agent-controller`  | Telemetry service name.                                                                                     |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT`                | No                         | -                   | OTLP endpoints. A signal exports only when an endpoint is set or its exporter is `otlp`.                    |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`                                                             | No                         | -                   | `otlp` or `none` per signal.                                                                                |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_PROTOCOL`                | No                         | `http/protobuf`     | Only `http/protobuf` is supported.                                                                          |
 
 Duration values use Go duration syntax and must be positive.
 
@@ -122,8 +122,13 @@ defines route callers, signed user scope, strict JSON and private client forward
 All configured dependency origins must be distinct; redirects and environment proxies
 are disabled. A nonempty legacy `ANTNEST_AGENT_ACP_SERVICE_URL` or
 `ANTNEST_SKILL_REGISTRY_API_TOKEN` now fails startup. Controller discovery and creation enforce the shared Provider destination policy
-and no longer export keys through `/access`. Console/ACP consumer batches and final
-admission and business E2E remain pending in the
+and no longer export keys through `/access`. The publisher now verifies and
+privately relays RC-issued instance authority for accepting Agents; closed
+Agents carry only execution fences and do not require resolution. Tokens are
+never persisted in Controller or exposed through its management projection.
+See [execution publication](docs/execution-publication.md#private-runtime-authority).
+ACP instance-client adoption, remaining receivers, coordinated deployment and
+final business E2E remain pending in the
 [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
 ## Dependencies

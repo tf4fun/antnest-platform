@@ -211,7 +211,7 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 		catalogOptions = append(catalogOptions, application.WithSkillVersionResolver(registry))
 	}
 	catalog := application.NewCatalogService(repository, secretBox, systemClock{}, catalogOptions...)
-	execution, executionWorker, err := configureExecutionPublication(repository, cfg, secretBox, logger)
+	execution, executionWorker, err := configureExecutionPublication(repository, cfg, secretBox, runtime, logger)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

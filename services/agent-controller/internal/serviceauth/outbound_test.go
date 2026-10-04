@@ -5,10 +5,49 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
+
+func TestOutboundPrivateCallsIgnoreDefaultTransportProxy(t *testing.T) {
+	var proxied, reached atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxied.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	original := http.DefaultTransport
+	base := original.(*http.Transport).Clone()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Proxy = http.ProxyURL(proxyURL)
+	http.DefaultTransport = base
+	defer func() { http.DefaultTransport = original; base.CloseIdleConnections() }()
+	env := outboundEnvironment(t, "runtime-controller", testToken(t))
+	clients, err := LoadOutbound(lookupEnvironment(env), map[string]string{"runtime-controller": upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clients.CloseIdleConnections()
+	response, err := clients.HTTPClient().Get(upstream.URL + "/internal/runtimes/agent-1/connection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if proxied.Load() != 0 || reached.Load() != 1 || response.StatusCode != http.StatusNoContent {
+		t.Fatal("private service authority reached a configured environment proxy")
+	}
+}
 
 func testToken(t *testing.T) string {
 	t.Helper()

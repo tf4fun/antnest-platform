@@ -56,7 +56,7 @@ func TestExecutionPublisherRereadsCurrentConfigurationAndResendsEqualRevision(t 
 		return ports.ExecutionAcknowledgement{OrganizationID: snapshot.OrganizationID, AppliedRevision: snapshot.Revision}, nil
 	}}
 	opener := &executionCredentialOpener{}
-	publisher := NewExecutionPublisher(store, opener, client)
+	publisher := NewExecutionPublisher(store, opener, client, WithRuntimeConnectionResolver(fixtureExecutionRuntimeResolver()))
 	for range 2 {
 		_, err := publisher.Publish(t.Context(), "org-1")
 		require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestExecutionPublisherFailureDoesNotRecordSuccess(t *testing.T) {
 			if scenario == "credential" {
 				opener.err = failure
 			}
-			result, err := NewExecutionPublisher(store, opener, client).Publish(t.Context(), "org-1")
+			result, err := NewExecutionPublisher(store, opener, client, WithRuntimeConnectionResolver(fixtureExecutionRuntimeResolver())).Publish(t.Context(), "org-1")
 			require.Error(t, err)
 			require.Empty(t, result)
 			if scenario == "record" {

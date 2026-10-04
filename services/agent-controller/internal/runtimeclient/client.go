@@ -51,7 +51,19 @@ func New(baseURL string, timeout time.Duration, httpClient *http.Client) (*Clien
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	return &Client{baseURL: endpoint, httpClient: telemetry.HTTPClient(httpClient, "runtime-controller"), timeout: timeout}, nil
+	configured := *httpClient
+	base := configured.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if transport, ok := base.(*http.Transport); ok {
+		private := transport.Clone()
+		private.Proxy = nil
+		configured.Transport = private
+	}
+	// Private connection replies carry raw ACP authority and must never redirect.
+	configured.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Client{baseURL: endpoint, httpClient: telemetry.HTTPClient(&configured, "runtime-controller"), timeout: timeout}, nil
 }
 
 func (client *Client) InitializeRuntime(

@@ -819,6 +819,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
+	var instanceConnectionContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.schema.json"), &instanceConnectionContract)
+	if err := compiler.AddResource("https://antnest.local/contracts/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
+		t.Fatalf("load Runtime instance connection contract: %v", err)
+	}
 	var runtimeContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)
 	if err := compiler.AddResource("https://antnest.local/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
