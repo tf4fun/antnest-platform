@@ -73,6 +73,10 @@ method against the locally applied snapshot. It advertises no ACP `authMethods`.
 Controller publication and settlement use a separate control listener; see the
 [authentication contract](../../contracts/agent-acp/service-authentication.md).
 
+After workload admission, a required but absent CCT returns
+`401 caller_context_required`; an empty, duplicate or invalid CCT returns
+`401 caller_context_invalid`. Both are rejected before business effects.
+
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
 defines how Controller publishes into ACP. Normal ACP operation makes no
 reverse access, admission, credential or finish requests to Controller. The

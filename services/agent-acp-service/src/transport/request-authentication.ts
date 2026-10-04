@@ -48,6 +48,7 @@ export class RequestAuthentication {
     const tokens = fields(request).filter(
       (field) => field.name.toLowerCase() === CALLER_CONTEXT_HEADER.toLowerCase(),
     );
+    if (tokens.length === 0) return { status: 401, code: "caller_context_required" };
     if (tokens.length !== 1) return { status: 401, code: "caller_context_invalid" };
     try {
       const claims = await this.verifier.verify(

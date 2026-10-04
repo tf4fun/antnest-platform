@@ -92,7 +92,7 @@ const workspace = () => testHeaders({ "x-antnest-agent-id": "agent-1" });
 it.each([
   ["no workload", {}, 401, "service_unauthenticated"],
   ["wrong workload", workloadHeaders("agent-controller"), 403, "caller_not_allowed"],
-  ["no context", workloadHeaders("edge-gateway"), 401, "caller_context_invalid"],
+  ["no context", workloadHeaders("edge-gateway"), 401, "caller_context_required"],
   [
     "wrong audience",
     {

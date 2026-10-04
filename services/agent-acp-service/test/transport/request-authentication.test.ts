@@ -47,7 +47,7 @@ it.each(Object.entries(catalog.routes))(
           request.rawHeaders = Object.entries(workloadHeaders(caller)).flat();
           expect(await authentication.admit(request, method === "UPGRADE")).toMatchObject({
             status: 401,
-            code: "caller_context_invalid",
+            code: "caller_context_required",
           });
         }
       } finally {
@@ -56,3 +56,41 @@ it.each(Object.entries(catalog.routes))(
     }
   },
 );
+
+it.each([
+  ["empty", [CALLER_CONTEXT_HEADER, ""]],
+  ["malformed", [CALLER_CONTEXT_HEADER, "bad"]],
+  [
+    "duplicate case-insensitive fields",
+    [
+      CALLER_CONTEXT_HEADER,
+      signContext({ agt: "agent-1" }),
+      "antnest-caller-context",
+      signContext({ agt: "agent-1" }),
+    ],
+  ],
+  [
+    "comma joined",
+    [
+      CALLER_CONTEXT_HEADER,
+      `${signContext({ agt: "agent-1" })},${signContext({ agt: "agent-1" })}`,
+    ],
+  ],
+])("rejects %s caller context as invalid", async (_, contextFields) => {
+  const socket = new Socket();
+  const request = new IncomingMessage(socket);
+  request.method = "POST";
+  request.url = "/v1/acp";
+  request.rawHeaders = [
+    ...Object.entries(workloadHeaders("edge-gateway")).flat(),
+    ...contextFields,
+  ];
+  try {
+    expect(await authentication.admit(request)).toMatchObject({
+      status: 401,
+      code: "caller_context_invalid",
+    });
+  } finally {
+    socket.destroy();
+  }
+});
