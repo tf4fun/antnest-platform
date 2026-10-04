@@ -11,10 +11,10 @@ import (
 
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 

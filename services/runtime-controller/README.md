@@ -12,6 +12,12 @@ private to this service. Docker is the only implemented platform adapter; a
 Kubernetes adapter is planned and would be added in-process, not as a separate
 service.
 
+
+Workload authentication and configured Registry transport use the
+[shared Go module](../../modules/service-authentication/README.md), with the
+caller-context forwarding policy. RC retains its Controller-only route grants,
+Docker boundary and separate Runtime instance credential lifecycle.
+
 ## Responsibilities
 
 - Issue and atomically seal distinct RC/ACP Runtime tokens with each private

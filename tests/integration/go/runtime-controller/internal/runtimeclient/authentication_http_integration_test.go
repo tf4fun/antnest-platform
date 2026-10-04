@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 )
 
 func TestNativeStatusClientNeverProxiesRedirectsOrFallsBack(t *testing.T) {

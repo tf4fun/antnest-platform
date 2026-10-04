@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 type Security struct{ Authentication *serviceauth.Receiver }

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 )
 
 const MonitorRetryDelay = time.Second
@@ -155,7 +155,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if config.SkillRegistryURL != "" {
 		endpoints["skill-registry"] = config.SkillRegistryURL
 	}
-	config.Authentication, err = serviceauth.LoadOutbound(environment, endpoints)
+	config.Authentication, err = serviceauth.LoadOutbound("runtime-controller", serviceauth.CallerContextHeaders, environment, endpoints)
 	if err != nil {
 		return Config{}, err
 	}

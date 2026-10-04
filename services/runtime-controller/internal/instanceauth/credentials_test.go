@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 func TestSealedCredentialsAreInstanceBoundAndRestartStable(t *testing.T) {

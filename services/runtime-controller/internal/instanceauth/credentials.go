@@ -16,7 +16,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 const Directory = "/run/antnest-auth"

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 )
 
 const controllerTestToken = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"

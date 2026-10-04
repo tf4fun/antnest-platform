@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
@@ -29,7 +30,6 @@ import (
 	postgresrepository "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository/postgres"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/rpc"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/runtimeclient"
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 

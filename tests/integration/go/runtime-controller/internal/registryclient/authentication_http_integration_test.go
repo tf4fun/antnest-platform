@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
@@ -80,7 +80,7 @@ func TestNativeRegistryClientReloadsCredentialsWithoutProxyOrRedirect(t *testing
 		t.Fatal(err)
 	}
 	values := map[string]string{"ANTNEST_SERVICE_AUTH_MODE": "token", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": "true", "ANTNEST_SERVICE_AUTH_CALLERS_FILE": callers, "ANTNEST_SERVICE_AUTH_TOKEN_DIR": dir}
-	auth, err := serviceauth.LoadOutbound(func(key string) (string, bool) { value, present := values[key]; return value, present }, map[string]string{"skill-registry": server.URL})
+	auth, err := serviceauth.LoadOutbound("runtime-controller", serviceauth.CallerContextHeaders, func(key string) (string, bool) { value, present := values[key]; return value, present }, map[string]string{"skill-registry": server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

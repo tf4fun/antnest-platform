@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 func testEnvironment(t *testing.T, values map[string]string) serviceauth.LookupEnv {
