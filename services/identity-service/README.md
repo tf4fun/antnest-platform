@@ -99,7 +99,7 @@ for the failure behavior when components are upgraded out of order.
 | `ANTNEST_IDENTITY_DATABASE_URL` | Yes | None | Private PostgreSQL URL. |
 | `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Yes | None | Canonical base64 encoding of exactly 32 bytes; AES key for OIDC client secrets. |
 | `ANTNEST_IDENTITY_PUBLIC_BASE_URL` | Yes | None | Absolute base URL for the OIDC callback and SCIM locations. No credentials, query, or fragment. HTTPS is required unless the host is `localhost`, `127.0.0.1`, or `::1`. A trailing `/` is removed. |
-| `ANTNEST_IDENTITY_LISTEN` | No | `:8080` | Listen address. The `--healthcheck` mode reads the same port. |
+| `ANTNEST_IDENTITY_LISTEN` | No | `:8080` | Listen address. `--healthcheck` follows its configured host and port; missing/wildcard hosts use `127.0.0.1`. |
 | `ANTNEST_IDENTITY_TOKEN_TTL` | No | `12h` | Local and OIDC access-token lifetime. Positive Go duration. |
 | `ANTNEST_IDENTITY_OIDC_SESSION_TTL` | No | `10m` | OIDC login state lifetime. Positive Go duration. |
 | `ANTNEST_IDENTITY_HTTP_TIMEOUT` | No | `10s` | Outbound OIDC request deadline. Positive Go duration. |
@@ -116,6 +116,12 @@ for the failure behavior when components are upgraded out of order.
 | `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | No | None | `otlp` or `none` per signal. |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` and per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL` | No | `http/protobuf` | Only `http/protobuf` is supported. |
 | `OTEL_SERVICE_NAME` | No | `identity-service` | Telemetry service name. Other resource attributes are read from the standard OpenTelemetry resource environment. |
+
+`--healthcheck` uses the same configured IPv4/IPv6 address as the primary
+listener, with the existing token HTTP opt-in or pinned TLS service identity.
+It disables environment proxies and refuses redirects; only the local `/status`
+response can report health. This follows the
+[purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
 
 Bootstrap is enabled when the bootstrap variables are set. Repeated startup
 verifies the same identity and never resets an existing password. See

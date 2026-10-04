@@ -69,7 +69,8 @@
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs identity-service -- -race",
         "postgres": "make test-identity-postgres (172 tests, 246 subtests, zero skips/failures)",
-        "docker": "node tests/e2e/service-authentication/identity/run.mjs (40 checks; cleaned)",
+        "docker": "node tests/e2e/service-authentication/identity/run.mjs (43 checks; configured non-loopback health with unreachable environment proxies, rejected loopback substitution and normal shutdown; deterministic 3-second PostgreSQL initialization window waits for TCP readiness; owned containers/volumes/network and test credentials cleaned)",
+        "purpose_listener_health": "go test -race -count=1 ./...; go vet ./...; go-lint; real IPv4/IPv6 and redirect rejection through the root cmd overlay (one package / five tests / 11 subtests; zero skips/failures). Existing TLS server identity remains required; wildcard listeners retain loopback probing. Docker reproduces the socket-only PostgreSQL readiness race before the fixture TCP-health fix and passes afterward. Gateway/Console/Controller/Registry remain owning-service follow-ups before Compose unicast bindings.",
         "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch"
       }

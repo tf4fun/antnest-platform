@@ -10,8 +10,10 @@ import {
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { assertJsonRpcContentTypeRejection } from "../../../support/json-rpc-security.mjs";
+import { runCommand } from "../../../support/run-command.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-identity-auth-${randomUUID()}`;
@@ -85,12 +87,14 @@ const timer = setTimeout(stop, 600000);
 const docker = dockerClient(env, controller.signal, 600000);
 let checks = 0,
   complete = false,
-  cleaned = false;
+  cleaned = false,
+  stage = "starting";
 try {
   await docker(
     [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "120"],
     true,
   );
+  stage = "authentication";
   const id = await docker([...compose, "ps", "-q", "identity-service"]);
   const [identity] = JSON.parse(await docker(["inspect", id]));
   const binding = identity.NetworkSettings.Ports["8080/tcp"][0];
@@ -255,7 +259,139 @@ try {
     "rejected administrative calls changed business facts",
   );
   checks++;
+
+  // A second instance binds only its own Docker address, not loopback. An
+  // unreachable environment proxy must not replace the actual health target.
+  stage = "purpose-health";
+  const networks = Object.keys(identity.NetworkSettings.Networks);
+  assert.equal(networks.length, 1);
+  const [network] = JSON.parse(
+    await docker(["network", "inspect", networks[0]]),
+  );
+  assert.equal(network.Labels["com.docker.compose.project"], project);
+  const healthName = `${project}-purpose-health`;
+  await docker([
+    "create",
+    "--name",
+    healthName,
+    "--label",
+    `com.docker.compose.project=${project}`,
+    "--label",
+    "com.docker.compose.service=purpose-health",
+    "--network",
+    networks[0],
+    "--network-alias",
+    "purpose-health",
+    "--user",
+    identity.Config.User,
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--mount",
+    `type=bind,source=${credentials},target=/run/auth,readonly`,
+    ...identity.Config.Env.filter(
+      (value) =>
+        !/^(ANTNEST_IDENTITY_LISTEN|HTTP_PROXY|HTTPS_PROXY|http_proxy|https_proxy)=/u.test(
+          value,
+        ),
+    ).flatMap((value) => ["--env", value]),
+    "--env",
+    "ANTNEST_IDENTITY_LISTEN=purpose-health:8080",
+    "--env",
+    "HTTP_PROXY=http://127.0.0.1:9",
+    "--env",
+    "HTTPS_PROXY=http://127.0.0.1:9",
+    identity.Config.Image,
+  ]);
+  await docker(["start", healthName]);
+  const deadline = Date.now() + 30000;
+  let healthy = false;
+  while (Date.now() < deadline) {
+    try {
+      await docker([
+        "exec",
+        healthName,
+        "/usr/local/bin/identity-service",
+        "--healthcheck",
+      ]);
+      healthy = true;
+      break;
+    } catch {
+      controller.signal.throwIfAborted();
+      await delay(100);
+    }
+  }
+  assert(healthy, "configured Docker-address health probe never became ready");
+  checks++;
+  await assert.rejects(
+    docker([
+      "exec",
+      "--env",
+      "ANTNEST_IDENTITY_LISTEN=127.0.0.1:8080",
+      healthName,
+      "/usr/local/bin/identity-service",
+      "--healthcheck",
+    ]),
+  );
+  checks++;
+  await docker(["stop", "--time", "10", healthName], true);
+  const [stopped] = JSON.parse(await docker(["inspect", healthName]));
+  assert.equal(stopped.Config.Labels["com.docker.compose.project"], project);
+  assert.equal(stopped.State.ExitCode, 0);
+  checks++;
+  await docker(["rm", healthName]);
   complete = true;
+} catch (error) {
+  // Preserve only this disposable project's diagnostics before removing it.
+  // Never capture the complete container environment or print private logs.
+  const diagnostics = dockerClient(env, undefined, 30000);
+  try {
+    const ids = (
+      await diagnostics([
+        "ps",
+        "-aq",
+        "--filter",
+        `label=com.docker.compose.project=${project}`,
+      ])
+    )
+      .split(/\s+/u)
+      .filter(Boolean);
+    for (const id of ids) {
+      const [row] = JSON.parse(await diagnostics(["inspect", id]));
+      assert.equal(row.Config.Labels["com.docker.compose.project"], project);
+      const service = row.Config.Labels["com.docker.compose.service"];
+      assert(
+        ["identity-service", "postgres", "purpose-health"].includes(service),
+      );
+      writeFileSync(
+        resolve(evidence, `${service}.state.json`),
+        JSON.stringify({
+          status: row.State.Status,
+          exit_code: row.State.ExitCode,
+          health: row.State.Health,
+        }),
+        { flag: "wx", mode: 0o600 },
+      );
+      await runCommand({
+        command: ["docker", "logs", id],
+        name: `${service}-container`,
+        output: evidence,
+        env,
+        cwd: root,
+        timeoutMs: 10000,
+        graceMs: 5000,
+      });
+    }
+  } catch {
+    writeFileSync(
+      resolve(evidence, "diagnostics-unavailable.json"),
+      JSON.stringify({ stage }),
+      { flag: "wx", mode: 0o600 },
+    );
+  }
+  throw error;
 } finally {
   clearTimeout(timer);
   controller.abort();
@@ -278,7 +414,7 @@ try {
     rmSync(credentials, { recursive: true, force: true });
     writeFileSync(
       resolve(evidence, "result.json"),
-      JSON.stringify({ project, complete, cleaned, checks }) + "\n",
+      JSON.stringify({ project, stage, complete, cleaned, checks }) + "\n",
       { mode: 0o600 },
     );
   }

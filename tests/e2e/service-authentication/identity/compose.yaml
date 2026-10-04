@@ -5,8 +5,15 @@ services:
       POSTGRES_USER: antnest_identity
       POSTGRES_PASSWORD: ${IDENTITY_TEST_DATABASE_PASSWORD:?}
       POSTGRES_DB: identity_auth_test
+    volumes:
+      - ./hold-initialization.sh:/docker-entrypoint-initdb.d/99-hold-initialization.sh:ro
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U antnest_identity -d identity_auth_test"]
+      # The entrypoint's temporary initialization server only accepts sockets.
+      test:
+        [
+          CMD-SHELL,
+          "pg_isready -h 127.0.0.1 -U antnest_identity -d identity_auth_test",
+        ]
       interval: 1s
       timeout: 3s
       retries: 60

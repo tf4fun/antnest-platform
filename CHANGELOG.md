@@ -6,7 +6,7 @@
 
 The deployment contract now requires primary-listener health probes to follow
 configured purpose addresses, preserve TLS identity checks, and bypass proxies
-and redirects (#32). Identity, Gateway, Console, Controller and Registry need
+and redirects (#32). Gateway, Console, Controller and Registry need
 separate owning-service health follow-ups before the unicast Compose wiring.
 RC/Egress keep their existing separate loopback health listeners.
 
@@ -28,6 +28,11 @@ batches are admitted; network/Compose wiring and full cross-service acceptance
 remain deployment/integration work. No live stack is reconfigured by the helper.
 
 ### Fixed
+
+Identity's `--healthcheck` now probes its configured IPv4/IPv6 listener rather
+than an unrelated loopback address (#32 deployment follow-up). Wildcard listeners
+keep their existing loopback probe. Environment proxies and redirects cannot
+report a different endpoint healthy; existing TLS identity checks remain required.
 
 Runtime Egress now authenticates all eight control method/route combinations
 and fallbacks before parsing or effects (#32). Only verified Controller token

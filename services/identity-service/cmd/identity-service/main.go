@@ -80,11 +80,7 @@ func main() {
 
 func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
 	listenValue, _ := lookup("ANTNEST_IDENTITY_LISTEN")
-	listenAddress := strings.TrimSpace(listenValue)
-	if listenAddress == "" {
-		listenAddress = ":8080"
-	}
-	_, port, err := net.SplitHostPort(listenAddress)
+	address, err := healthProbeAddress(listenValue)
 	if err != nil {
 		return fmt.Errorf("parse Identity listen address: %w", err)
 	}
@@ -93,14 +89,17 @@ func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
 		return err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	transport.TLSClientConfig = tlsConfig
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Timeout: 2 * time.Second, Transport: transport}
+	client := &http.Client{Timeout: 2 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
 	scheme := "http"
 	if tlsConfig != nil {
 		scheme = "https"
 	}
-	response, err := client.Get(scheme + "://127.0.0.1:" + port + "/status")
+	response, err := client.Get(scheme + "://" + address + "/status")
 	if err != nil {
 		return fmt.Errorf("request Identity status: %w", err)
 	}
@@ -109,6 +108,21 @@ func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
 		return fmt.Errorf("identity status returned %s", response.Status)
 	}
 	return nil
+}
+
+func healthProbeAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	if address == "" {
+		address = ":8080"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", err
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func joinCloseError(resultErr *error, resource string, closeFunc func() error) {
