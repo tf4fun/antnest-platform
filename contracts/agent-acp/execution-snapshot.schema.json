@@ -26,10 +26,7 @@
               },
               "provider_key": {
                 "type": "string",
-                "enum": [
-                  "deepseek",
-                  "openrouter"
-                ]
+                "enum": ["deepseek", "openrouter"]
               },
               "request_protocol": {
                 "type": "string",
@@ -60,10 +57,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "method",
-                  "secret"
-                ],
+                "required": ["method", "secret"],
                 "additionalProperties": false
               }
             },
@@ -88,10 +82,7 @@
               },
               "provider_key": {
                 "type": "string",
-                "enum": [
-                  "deepseek",
-                  "openrouter"
-                ]
+                "enum": ["deepseek", "openrouter"]
               },
               "request_protocol": {
                 "type": "string",
@@ -122,10 +113,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "method",
-                  "secret"
-                ],
+                "required": ["method", "secret"],
                 "additionalProperties": false
               }
             },
@@ -150,10 +138,7 @@
               },
               "provider_key": {
                 "type": "string",
-                "enum": [
-                  "deepseek",
-                  "openrouter"
-                ]
+                "enum": ["deepseek", "openrouter"]
               },
               "request_protocol": {
                 "type": "string",
@@ -256,11 +241,7 @@
                 "minimum": 0
               }
             },
-            "required": [
-              "currency",
-              "input_per_million",
-              "output_per_million"
-            ],
+            "required": ["currency", "input_per_million", "output_per_million"],
             "additionalProperties": false
           }
         },
@@ -346,12 +327,7 @@
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": [
-                  "auto",
-                  "approve",
-                  "smart_approve",
-                  "chat"
-                ]
+                "enum": ["auto", "approve", "smart_approve", "chat"]
               },
               "tool_rules": {
                 "maxItems": 128,
@@ -361,10 +337,7 @@
                   "properties": {
                     "source": {
                       "type": "string",
-                      "enum": [
-                        "runtime",
-                        "agent"
-                      ]
+                      "enum": ["runtime", "agent"]
                     },
                     "source_id": {
                       "type": "string",
@@ -378,26 +351,15 @@
                     },
                     "decision": {
                       "type": "string",
-                      "enum": [
-                        "allow",
-                        "deny"
-                      ]
+                      "enum": ["allow", "deny"]
                     }
                   },
-                  "required": [
-                    "source",
-                    "source_id",
-                    "tool_name",
-                    "decision"
-                  ],
+                  "required": ["source", "source_id", "tool_name", "decision"],
                   "additionalProperties": false
                 }
               }
             },
-            "required": [
-              "mode",
-              "tool_rules"
-            ],
+            "required": ["mode", "tool_rules"],
             "additionalProperties": false
           },
           "authorization_revision": {
@@ -456,11 +418,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "skill_key",
-                "version",
-                "instructions"
-              ],
+              "required": ["skill_key", "version", "instructions"],
               "additionalProperties": false
             },
             "description": "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime."
@@ -488,6 +446,27 @@
                   "mcp_endpoint": {
                     "type": "string",
                     "format": "uri"
+                  },
+                  "connection_id": {
+                    "type": "string",
+                    "pattern": "^rci_[0-9a-f]{32}$"
+                  },
+                  "credential": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["caller", "token"],
+                    "properties": {
+                      "caller": {
+                        "const": "agent-acp-service"
+                      },
+                      "token": {
+                        "type": "string",
+                        "minLength": 43,
+                        "maxLength": 86,
+                        "pattern": "^[A-Za-z0-9_-]+$",
+                        "writeOnly": true
+                      }
+                    }
                   }
                 },
                 "required": [
@@ -521,17 +500,44 @@
           "max_model_requests",
           "runtime"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "accepting_runs": { "const": true }
+              },
+              "required": ["accepting_runs"]
+            },
+            "then": {
+              "properties": {
+                "runtime": {
+                  "type": "object",
+                  "properties": {
+                    "connection_id": {},
+                    "credential": {}
+                  },
+                  "required": ["connection_id", "credential"]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "runtime": {
+                  "not": {
+                    "type": "object",
+                    "properties": { "credential": {} },
+                    "required": ["credential"]
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   },
-  "required": [
-    "organization_id",
-    "revision",
-    "providers",
-    "models",
-    "agents"
-  ],
+  "required": ["organization_id", "revision", "providers", "models", "agents"],
   "additionalProperties": false,
   "$id": "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json",
   "title": "Organization execution configuration",

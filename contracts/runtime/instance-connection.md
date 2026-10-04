@@ -93,13 +93,33 @@ disabled even when RPC debug capture is enabled; only bounded route, status and
 logical identities may enter telemetry. Normal Inspect/List, observation,
 operation receipts and Console projections never gain a credential field.
 
-Controller resolves the connection from its persisted binding while building
-the authenticated private execution publication. It compares every returned
+For each Agent accepting new Runs, Controller resolves the connection from its
+persisted binding while building the authenticated private execution publication.
+The resolve response is at most 8192 bytes of strict, unique UTF-8 JSON.
+It compares every returned
 identity/endpoint to that binding before relaying it. A mismatch closes
 publication/admission; it cannot be repaired by a user-supplied endpoint or
 token. Controller needs no second token database: after restart it re-resolves
 from the owning RC. The relay stays on Controller -> ACP's dedicated control
 listener and is excluded from telemetry content capture.
+
+The [execution snapshot schema](../agent-acp/execution-snapshot.schema.json) and
+[shared publication fixtures](../agent-acp/runtime-publication-fixtures.json)
+distinguish executable references from closure. An accepting Agent's `runtime`
+contains the four public reference fields plus `credential`. A closed Agent must
+not transfer a credential and Controller does not resolve its Runtime: revocation,
+Drain and settlement must remain publishable while RC/Runtime is unhealthy or
+has already removed compute. Its retained revision/execution/endpoint is only
+a fence for existing operations, with an optional already-known connection ID;
+it does not establish a usable connection or bypass current admission.
+
+ACP retains previously installed authority only for already accepted operations
+under their original binding and normal stopping/settlement rules. The closed
+publication cannot manufacture or rehydrate authority after ACP restart, clear
+protection, or silently retarget a Run. An unavailable cleanup connection retains
+the existing barrier outcome. On re-opening, Controller must resolve the current
+verified private connection again. These closed semantics are deliberate
+lifecycle behavior, not an anonymous fallback for executable Agents.
 
 ACP separates the private credential from the public configuration before
 persistence, audit or Run snapshot construction. The public reference contains

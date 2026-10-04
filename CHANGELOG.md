@@ -4,6 +4,12 @@
 
 ### Fixed
 
+The #30 private execution publication contract now requires verified Runtime
+connection identity and ACP authority for accepting Agents. Closed publications
+carry only execution fences and never depend on a healthy resolver; revocation,
+Drain and settlement cannot be blocked by missing Runtime credentials. Controller
+relay and ACP private/public separation remain separate owning-service batches.
+
 Native Runtime now enforces the RC-issued instance authority before the entire
 MCP/private Skill mount and full status (#30). Anonymous Docker liveness moves
 to identity-free `GET/HEAD /status/live`. Only the owned alias and loopback with

@@ -76,6 +76,31 @@ current access and new execution; it does not purge history.
   not prove that uncertain commands stopped. Platform replacement confirms
   removal of the old binding before the new one is published as executable.
 
+The [instance connection profile](../runtime/instance-connection.md) refines the
+private Runtime handoff for #30. Each accepting Agent's `runtime` additionally
+requires `connection_id` and `credential: {caller: "agent-acp-service", token}`.
+Controller obtains it only from RC's authenticated private resolver, compares
+Agent/revision/execution/endpoint against the persisted binding, and relays it
+on this dedicated control route. The token uses the canonical platform file
+profile; it is neither a public reference nor a Run snapshot field.
+
+A closed Agent's `runtime` has no `credential`. It may retain the old
+revision/execution/endpoint and an already-known connection ID as fence-only
+metadata, or be null for unbuilt/removed compute. Controller does not call the
+resolver for closed Agents; a Runtime outage cannot block revocation, Drain or
+settlement. Closure grants no new connection and does not clear old protection.
+Already accepted operations retain only their original volatile authority; after
+ACP restart, a closed public snapshot cannot reconstruct credentials. Re-opening
+requires fresh authenticated resolution and publication.
+
+ACP removes Runtime credentials before public persistence, audit and Run
+construction, installs only the trusted instance's volatile sender file, and
+rejects different token bytes for an existing connection identity. Schema
+conformance is shared through
+[runtime-publication-fixtures.json](runtime-publication-fixtures.json).
+Controller and ACP adopt this contract in separate owning-service batches;
+freezing it does not claim that the consumers or cross-service workflow are complete.
+
 ACP rejects malformed, unsupported, duplicate, or dangling configuration as a
 whole. It must never interpret validation or transport failure as an empty
 snapshot. Provider absence stops new acquisition for that connection; model

@@ -46,6 +46,21 @@
     "cache_control": "no-store",
     "capture_payload": false
   },
+  "controller_relay": {
+    "schema": "../agent-acp/execution-snapshot.schema.json",
+    "fixtures": "../agent-acp/runtime-publication-fixtures.json",
+    "executable_binding": "verified-private-connection-required",
+    "closed_binding": "fence-only-no-resolve-no-credential",
+    "capture_payload": false,
+    "persist_token": false,
+    "resolve_response_limit_bytes": 8192,
+    "exact_binding_fields": [
+      "agent_id",
+      "runtime_revision",
+      "runtime_execution_id",
+      "mcp_endpoint"
+    ]
+  },
   "delivery_batches": [
     "runtime-controller",
     "antnest-runtime",
