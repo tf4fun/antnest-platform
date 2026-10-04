@@ -9,8 +9,9 @@ JSON requests and responses use `application/json`; Ensure and GET requests
 have no body. Unknown and duplicate fields are rejected. Exact workload grants,
 token/TLS configuration, strict request limits and listener placement follow the
 [revision 5 authentication profile](service-authentication.md). The caller catalog
-remains planned until the owning-service gates pass; this contract is not a
-claim that the old listener is authenticated.
+is enforced and the Egress owning-service gates have passed. Coordinated
+deployment and actual Controller-to-Egress acceptance remain a separate final
+integration batch.
 Agent identifiers and policy identifiers are opaque strings containing 1-255
 visible ASCII bytes. IPv4 addresses are serialized in canonical
 dotted-decimal form. IPv4 endpoints are objects containing `ipv4` and `port`,

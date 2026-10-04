@@ -43,9 +43,9 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 4);
+    assert_eq!(contract.revision, 5);
     assert_eq!(contract.transport, "json-over-http");
-    assert_eq!(contract.trust_boundary, "internal-network");
+    assert_eq!(contract.trust_boundary, "verified-controller-workload");
     assert_eq!(contract.status_values, ["ready", "degraded"]);
     assert_eq!(
         contract.builtin_policies["deny_all"].policy_id,
@@ -119,9 +119,14 @@ fn machine_contract_matches_the_complete_control_surface() {
 
 #[tokio::test]
 async fn status_exposes_data_and_control_readiness() {
-    let response = app()
+    let response = support::health_app()
         .await
-        .oneshot(Request::get("/status").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/status")
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -140,6 +145,7 @@ async fn ensure_endpoint_returns_runtime_attachment() {
         .await
         .oneshot(
             Request::put("/internal/agent-networks/agent-1")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -185,6 +191,7 @@ async fn attachment_endpoint_opens_with_a_versioned_cas() {
         .clone()
         .oneshot(
             Request::put("/internal/agent-networks/agent-attachment")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -196,6 +203,7 @@ async fn attachment_endpoint_opens_with_a_versioned_cas() {
         .oneshot(
             Request::put("/internal/agent-network-attachments/agent-attachment")
                 .header("content-type", "application/json")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::from(
                     r#"{"state":"open","expected_resource_version":1}"#,
                 ))
@@ -217,6 +225,7 @@ async fn unknown_routes_and_methods_use_the_stable_error_shape() {
         .await
         .oneshot(
             Request::get("/internal/missing")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -228,6 +237,7 @@ async fn unknown_routes_and_methods_use_the_stable_error_shape() {
         .await
         .oneshot(
             Request::post("/internal/agent-networks/agent-1")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -242,6 +252,7 @@ async fn malformed_identifiers_use_the_stable_error_shape() {
         .await
         .oneshot(
             Request::put("/internal/agent-networks/%20")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -262,6 +273,7 @@ async fn malformed_path_numbers_use_the_stable_error_shape() {
         .oneshot(
             Request::put("/internal/policies/internet/revisions/not-a-number")
                 .header("content-type", "application/json")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::from(
                     r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#,
                 ))
@@ -276,7 +288,12 @@ async fn malformed_path_numbers_use_the_stable_error_shape() {
 async fn policy_document(app: &axum::Router, path: &str) -> serde_json::Value {
     let response = app
         .clone()
-        .oneshot(Request::get(path).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get(path)
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -285,8 +302,8 @@ async fn policy_document(app: &axum::Router, path: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn policy_reads_expose_builtin_specs_without_creating_agent_state() {
-    let app = app().await;
-    let before = policy_document(&app, "/status").await;
+    let (app, health_app) = support::app_and_health().await;
+    let before = policy_document(&health_app, "/status").await;
     for (id, action) in [("allow-all", "allow_all"), ("deny-all", "deny_all")] {
         let path = format!("/internal/policies/builtin%2F{id}/revisions/1");
         let first = policy_document(&app, &path).await;
@@ -301,10 +318,11 @@ async fn policy_reads_expose_builtin_specs_without_creating_agent_state() {
         assert!(digest.starts_with("sha256:") && digest.len() == 71);
         assert_eq!(policy_document(&app, &path).await, first);
     }
-    assert_eq!(policy_document(&app, "/status").await, before);
+    assert_eq!(policy_document(&health_app, "/status").await, before);
     let missing = app
         .oneshot(
             Request::get("/internal/agent-networks/not-created")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -324,6 +342,7 @@ async fn policy_reads_resolve_exact_revision_not_name_or_latest_content() {
                     "/internal/policies/called-allow/revisions/{revision}"
                 ))
                 .header("content-type", "application/json")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::from(
                     serde_json::json!({"spec": {"schema_version": 1, "action": action}})
                         .to_string(),
@@ -354,6 +373,7 @@ async fn policy_reads_resolve_exact_revision_not_name_or_latest_content() {
         .oneshot(
             Request::put("/internal/policies/called-allow/revisions/1")
                 .header("content-type", "application/json")
+                .header("antnest-service-authorization", support::workload_header())
                 .body(Body::from(
                     r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#,
                 ))
@@ -422,6 +442,7 @@ async fn policy_read_errors_do_not_create_or_guess_revisions() {
             .clone()
             .oneshot(
                 Request::get(format!("/internal/policies/{path}"))
+                    .header("antnest-service-authorization", support::workload_header())
                     .body(Body::empty())
                     .unwrap(),
             )

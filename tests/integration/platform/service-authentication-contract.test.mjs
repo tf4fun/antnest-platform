@@ -158,7 +158,7 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
   );
 });
 
-test("the rollout records admitted services while keeping Egress, deployment and final integration pending", () => {
+test("the rollout records ten admitted services while keeping deployment and final integration pending", () => {
   const rollout = read("service-authentication-rollout.json");
   assert.equal(rollout.status, "service-batches");
   assert.deepEqual(rollout.batches[0].issues, [32, 101]);
@@ -211,9 +211,7 @@ test("the rollout records admitted services while keeping Egress, deployment and
   assert(controller.issues.includes(30));
   assert(controller.admission.runtime_instance_relay);
   assert.deepEqual(controller.admission.pending_consumers, []);
-  assert.deepEqual(controller.admission.pending_dependencies, [
-    "runtime-egress",
-  ]);
+  assert.deepEqual(controller.admission.pending_dependencies, []);
   const rc = rollout.batches.find(
     (batch) => batch.owner === "runtime-controller",
   );
@@ -240,7 +238,18 @@ test("the rollout records admitted services while keeping Egress, deployment and
   assert.deepEqual(registry.admission.pending_consumers, []);
   assert(registry.admission.cross_service_e2e.includes("pending"));
   assert(registry.admission.deployment.includes("Legacy Compose"));
-  for (const owner of ["runtime-egress", "deployment", "integration"]) {
+  const egress = rollout.batches.find(
+    (batch) => batch.owner === "runtime-egress",
+  );
+  assert.equal(egress.status, "service-admitted");
+  assert(egress.admission.unit_contract_component);
+  assert(egress.admission.postgres);
+  assert(egress.admission.docker);
+  assert.equal(egress.control_contract_revision, 5);
+  assert.deepEqual(egress.independent_packet_dns_issues, [34, 36]);
+  assert.deepEqual(egress.admission.pending_consumers, []);
+  assert(egress.admission.cross_service_e2e.includes("pending"));
+  for (const owner of ["deployment", "integration"]) {
     assert.equal(
       rollout.batches.find((batch) => batch.owner === owner).status,
       "pending",

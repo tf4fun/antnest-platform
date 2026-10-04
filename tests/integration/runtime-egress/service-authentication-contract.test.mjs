@@ -27,6 +27,7 @@ test("Egress revision 5 freezes Controller workload admission without changing p
 
 test("all Egress business routes use Controller-owned operations and Ensure has no JSON body", () => {
   const catalog = read("callers.json");
+  assert.equal(catalog.status, "enforced");
   assert.deepEqual(catalog.implementation_issues, [32]);
   for (const [route, policy] of Object.entries(catalog.routes)) {
     if (route === "GET /status") {

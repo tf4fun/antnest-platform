@@ -43,6 +43,7 @@ async fn policy_read_trace_preserves_the_incoming_parent_and_error_outcome() {
                         "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                     )
                     .header("tracestate", "antnest=c3")
+                    .header("antnest-service-authorization", support::workload_header())
                     .body(Body::empty())
                     .unwrap(),
                 )

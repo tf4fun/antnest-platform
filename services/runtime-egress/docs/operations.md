@@ -26,6 +26,31 @@ the [service README](../README.md#configuration). Configuration is immutable
 after startup. Agent policy changes use the control API and PostgreSQL rather
 than environment variables.
 
+Control contract revision 5 requires exact `ANTNEST_SERVICE_AUTH_MODE=token`
+or `mtls`; missing mode fails startup. Token mode reads a bounded receiver hash
+file from `ANTNEST_SERVICE_AUTH_CALLERS_FILE`, never a shared plaintext API key.
+The file may contain current and next hashes per caller for overlap rotation.
+Replace it atomically, restart Egress to adopt it, switch Controller's sender,
+then remove the old hash and restart again. Keep all credentials outside Agent
+workspaces and mount receiver/TLS files read-only.
+
+Plain token HTTP requires exact
+`ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true` for isolated development.
+Otherwise supply all of `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`,
+`ANTNEST_TLS_KEY_FILE` and `ANTNEST_TLS_SERVER_NAME`. Selecting any TLS field
+requires the complete validated profile and enables TLS, even with HTTP opt-in.
+mTLS requires TLS, valid client usage and the Controller workload URI SAN;
+headers, common names and source addresses cannot substitute for that identity.
+The Egress server certificate must validate against its trust roots and DNS
+name, with exactly one workload URI `antnest://service/runtime-egress` and a
+matching key. Configuration failures precede database, kernel and listener
+effects and are reported without credentials or file paths.
+
+Use the [exact authentication profile](../../../contracts/egress/service-authentication.md)
+when provisioning hashes and certificates. TLS handshakes expire after five
+seconds, with at most 16 pending handshakes; slow peers do not serialize normal
+control calls or the independent health listener.
+
 The OTLP collector must be reachable from the Runtime Egress service network.
 The development Compose topology attaches Runtime Egress and Jaeger to a
 dedicated internal `observability` network for this purpose. That network is
@@ -72,6 +97,12 @@ connections arriving from the Runtime-facing interface. Compose therefore
 assigns the control interface a stable private address and binds only that
 address. Kubernetes must provide the equivalent fixed Pod address or bind and
 filter the control port with NetworkPolicy before the service becomes ready.
+The control IP must differ from the advertised Runtime UDP IP. Bind health to
+`ANTNEST_EGRESS_HEALTH_LISTEN` on IPv4 loopback, with a nonzero port and an
+endpoint different from control. Publish neither health nor control as host
+ports. This service-owned change does not by itself rewire an existing platform
+deployment; coordinated purpose networks and sender provisioning are the next
+deployment batch.
 
 Egress runs exactly one active replica. Do not place multiple replicas behind a
 generic TCP/UDP load balancer: packet flows, UDP return peers, TUN, conntrack,
@@ -91,6 +122,7 @@ docker run --rm \
   --memory 512m \
   --cpus 1 \
   --stop-timeout 10 \
+  --mount type=bind,src=/managed/egress-auth,dst=/run/antnest-auth,readonly \
   --env-file runtime-egress.env \
   antnest/runtime-egress:<immutable-tag>
 ```
@@ -105,12 +137,21 @@ Runtime UDP, the DNS upstream, OTLP when enabled, and intended external egress.
 
 ## 4. Status
 
-`GET /status` returns one document with:
+`GET/HEAD /status` on the separate loopback health listener returns one document
+with:
 
 - process status;
 - data-plane readiness;
 - control mutation availability;
 - applied snapshot revision.
+
+Use `/usr/local/bin/runtime-egress --healthcheck` for local process liveness;
+it reads the custom health endpoint without auth or database configuration.
+Both ready and degraded documents retain HTTP 200. To inspect mutation
+availability, read `control_plane_ready` in that document. The authenticated
+control listener has no status route: anonymous requests receive 401, while a
+verified Controller receives 404. The health listener rejects business routes,
+queries and request bodies.
 
 The listener opens only after PostgreSQL snapshot loading, UDP bind, TUN, DNS,
 and kernel reconciliation succeed, so `data_plane_ready=true` summarizes those
@@ -284,7 +325,7 @@ cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
 cargo clippy --manifest-path services/runtime-egress/Cargo.toml --locked --all-targets -- -D warnings
 cargo test --manifest-path services/runtime-egress/Cargo.toml --locked
 make test-egress-postgres
-docker build -f services/runtime-egress/Dockerfile -t antnest/runtime-egress:local .
+node tests/e2e/service-authentication/egress/run.mjs
 ```
 
 The policy-read HTTP tests cover exact revisions, built-in opaque IDs, stable
@@ -296,6 +337,24 @@ additionally checks persisted revisions through the HTTP router after database
 reconnection. It provisions an isolated test database; use a test-owned
 Compose project and port for this destructive profile, then remove its
 resources.
+
+Authentication tests cover all business routes, fallback ordering, caller
+substitution, duplicate authority, JSON/media limits, real HTTP/TLS certificate
+and handshake behavior, and the credential-free health CLI. The PostgreSQL
+admission regression compares complete persisted control rows, allocator
+cursors, snapshot publication, packet fencing and cleanup counts before and
+after rejected requests. These local gates precede coordinated deployment and
+actual Controller-to-Egress integration; they do not complete #34 packet binding
+or #36 DNS restrictions.
+
+The isolated authentication Docker harness uses the production image with real
+TUN, nftables and PostgreSQL, purpose-specific internal networks and no host
+ports. It checks the full route/caller matrix, request carriers, no-effect
+refusals, accepted policy/attachment CAS and replay, current/next rotation,
+loopback health, database loss, startup rejection before effects and normal
+SIGTERM/SIGINT restart. Its temporary credentials and labeled Docker resources
+are removed on completion or interruption; evidence is kept privately under
+`artifacts/verification/egress-authentication/`.
 
 Linux container tests must cover real TUN creation, real PostgreSQL
 migrations, policy allow/deny traffic, flow reset, restart recovery, and

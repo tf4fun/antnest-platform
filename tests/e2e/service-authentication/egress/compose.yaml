@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: egress_auth
+      POSTGRES_PASSWORD: ${EGRESS_AUTH_DATABASE_PASSWORD:?}
+      POSTGRES_DB: egress_auth_test
+    volumes:
+      - database:/var/lib/postgresql/data
+    networks: [control]
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          "pg_isready -h 127.0.0.1 -U egress_auth -d egress_auth_test",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  runtime-egress:
+    image: ${EGRESS_AUTH_IMAGE:?}
+    build:
+      context: ../../../..
+      dockerfile: services/runtime-egress/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    pids_limit: 256
+    mem_limit: 512m
+    environment:
+      ANTNEST_EGRESS_DATABASE_URL: postgres://egress_auth:${EGRESS_AUTH_DATABASE_PASSWORD:?}@postgres:5432/egress_auth_test
+      ANTNEST_EGRESS_DATABASE_TLS_MODE: disable
+      ANTNEST_EGRESS_CONTROL_LISTEN: ${EGRESS_AUTH_CONTROL_IP:?}:8181
+      ANTNEST_EGRESS_HEALTH_LISTEN: 127.0.0.1:8087
+      ANTNEST_EGRESS_UDP_ADVERTISE: ${EGRESS_AUTH_PACKET_IP:?}:8092
+      ANTNEST_EGRESS_TUNNEL_CIDR: 100.64.0.0/29
+      ANTNEST_EGRESS_RESOLVER_IPV4: 100.64.0.1
+      ANTNEST_EGRESS_DNS_UPSTREAM: 127.0.0.11:53
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "true"
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ${EGRESS_AUTH_DIRECTORY:?}:/run/auth:ro
+    networks:
+      control:
+        ipv4_address: ${EGRESS_AUTH_CONTROL_IP:?}
+      packet:
+        ipv4_address: ${EGRESS_AUTH_PACKET_IP:?}
+      external:
+        gw_priority: 1
+    healthcheck:
+      test: [CMD, /usr/local/bin/runtime-egress, --healthcheck]
+      interval: 1s
+      timeout: 5s
+      retries: 90
+    stop_grace_period: 15s
+  control-probe:
+    image: node:24.21.0-bookworm-slim
+    command: [node, -e, "setInterval(()=>{},60000)"]
+    environment:
+      EGRESS_AUTH_CONTROL_ADDRESS: ${EGRESS_AUTH_CONTROL_IP:?}:8181
+    volumes:
+      - ./probe.mjs:/fixture/probe.mjs:ro
+      - ../../../../contracts/egress/control-contract.json:/fixture/control-contract.json:ro
+      - ${EGRESS_AUTH_DIRECTORY:?}:/run/auth:ro
+    networks: [control]
+  packet-probe:
+    image: node:24.21.0-bookworm-slim
+    command: [node, -e, "setInterval(()=>{},60000)"]
+    volumes:
+      - ./probe.mjs:/fixture/probe.mjs:ro
+    environment:
+      EGRESS_AUTH_CONTROL_IP: ${EGRESS_AUTH_CONTROL_IP:?}
+      EGRESS_AUTH_PACKET_IP: ${EGRESS_AUTH_PACKET_IP:?}
+    networks: [packet]
+networks:
+  control:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${EGRESS_AUTH_CONTROL_SUBNET:?}
+  packet:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${EGRESS_AUTH_PACKET_SUBNET:?}
+  external: {}
+volumes:
+  database: {}

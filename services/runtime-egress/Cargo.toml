@@ -8,9 +8,12 @@ publish = false
 [dependencies]
 async-trait = "0.1.92"
 axum = "0.8.9"
+base64 = "0.23.1"
 http-body = "1.1.0"
+http-body-util = "0.1.5"
 ipnet = { version = "2.12.2", features = ["serde"] }
 libc = "0.2.189"
+mime = "0.3.17"
 opentelemetry = { version = "0.33.0", default-features = false, features = ["metrics", "trace"] }
 opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["http-proto", "metrics", "reqwest-blocking-client", "trace"] }
 opentelemetry_sdk = { version = "0.33.0", default-features = false, features = ["metrics", "trace"] }
@@ -19,15 +22,18 @@ rustls-native-certs = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
+subtle = "2.6.1"
 thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-postgres = { version = "0.7.18", features = ["with-serde_json-1"] }
 tokio-postgres-rustls = "0.14.0"
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
 tokio-util = { version = "0.7.19", features = ["rt"] }
 tower = "0.5.3"
 tracing = "0.1.44"
 tracing-opentelemetry = { version = "0.34.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+x509-parser = "0.18.1"
 
 [[test]]
 name = "dns_proxy"
@@ -41,9 +47,14 @@ path = "../../tests/integration/runtime-egress/packet_loop.rs"
 name = "postgres_repository"
 path = "../../tests/integration/runtime-egress/postgres_repository.rs"
 
+[[test]]
+name = "control_auth"
+path = "../../tests/integration/runtime-egress/control_auth.rs"
+
 [dev-dependencies]
-http-body-util = "0.1.5"
 opentelemetry_sdk = { version = "0.33.0", features = ["metrics", "testing", "trace"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+tempfile = "3.27.0"
 
 [profile.release]
 codegen-units = 1

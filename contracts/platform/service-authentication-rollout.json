@@ -146,7 +146,7 @@
         "postgres": "21 packages / 662 tests / 1310 subtests; zero skips/failures; private Runtime HTTP relay, binding mismatch/outage rejection, ACK integrity, closure and database/Trace privacy; later targeted private Trace revalidation passed; isolated PostgreSQL/Temporal and PostgreSQL resources cleaned",
         "docker": "node tests/e2e/service-authentication/controller/run.mjs (83 native authentication, discovery/SSRF, catalog, unchanged CCT, actual production Runtime handoff, mismatch rejection, disable during resolver outage, private/public privacy, custom health, startup rejection and SIGTERM/SIGINT/fresh-resolution restart checks; complete; owned resources and credentials cleaned). RC/ACP/Egress are explicitly Controller-owned protocol peers.",
         "pending_consumers": [],
-        "pending_dependencies": ["runtime-egress"],
+        "pending_dependencies": [],
         "pending_provider_discovery": "#28 Controller revision 38, Console thin proxy and ACP model destination guard are admitted; coordinated deployment and cross-service acceptance remain in the final integration batch.",
         "cross_service_e2e": "pending final integration batch",
         "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed.",
@@ -216,7 +216,7 @@
     {
       "owner": "runtime-egress",
       "issues": [32],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "authenticated Controller-only control calls using the exact token/mTLS profile",
         "separate purpose-address control and loopback health listeners",
@@ -225,7 +225,15 @@
       ],
       "authentication_contract": "../egress/service-authentication.md",
       "control_contract_revision": 5,
-      "independent_packet_dns_issues": [34, 36]
+      "independent_packet_dns_issues": [34, 36],
+      "admission": {
+        "unit_contract_component": "143 native and 144 Linux tests; real HTTP/TLS/mTLS, field multiplicity, strict carriers, startup/health/shutdown and no-effect admission; full fmt/Clippy and frozen token/TLS/media/route gates passed. Database-dependent cases are executed separately below.",
+        "postgres": "Full isolated suite: three library and eight PostgreSQL HTTP/repository tests; zero skips/failures. Rejected requests preserve complete rows, allocator cursors, snapshot revision, packet gates and kernel cleanup counts; owned database resources cleaned.",
+        "docker": "node tests/e2e/service-authentication/egress/run.mjs (173 authentication, purpose-listener, request carrier, actual policy/attachment CAS and replay, current/next rotation, database-loss health, startup-before-effects and normal SIGTERM/SIGINT recovery checks; production image, real TUN/nftables/PostgreSQL; temporary credentials and owned resources cleaned). Controller requests are explicitly Egress-owned protocol probes.",
+        "pending_consumers": [],
+        "cross_service_e2e": "pending final integration batch",
+        "deployment": "Legacy Compose senders, purpose networks and health probes still require coordinated authentication wiring."
+      }
     },
     {
       "owner": "deployment",

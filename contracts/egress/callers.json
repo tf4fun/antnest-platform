@@ -1,6 +1,6 @@
 {
   "service": "runtime-egress",
-  "status": "planned",
+  "status": "enforced",
   "implementation_issues": [32],
   "routes": {
     "GET /internal/agent-networks/{agent_id}": {
@@ -78,7 +78,7 @@
   },
   "guarded_sources": {
     "services/runtime-egress/src/control.rs": {
-      "sha256": "47dd151298fabda6a6a182115e3d8c41d0b98d18ad5cf82e01f415b1bfcc4a29",
+      "sha256": "efd95318e64c67cf209a4fb89c55fbf0bb10101ec9f8a3ca123b273a3f12de91",
       "routes": [
         "GET /status",
         "GET /internal/agent-networks/{agent_id}",

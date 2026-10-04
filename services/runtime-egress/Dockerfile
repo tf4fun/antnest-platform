@@ -3,8 +3,10 @@ ARG CARGO_BUILD_JOBS=2
 WORKDIR /src
 COPY services/runtime-egress ./services/runtime-egress
 COPY tests/integration/runtime-egress ./tests/integration/runtime-egress
+COPY tests/support/egress-auth.rs ./tests/support/egress-auth.rs
 COPY contracts/runtime ./contracts/runtime
 COPY contracts/egress ./contracts/egress
+COPY contracts/platform ./contracts/platform
 WORKDIR /src/services/runtime-egress
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/services/runtime-egress/target \

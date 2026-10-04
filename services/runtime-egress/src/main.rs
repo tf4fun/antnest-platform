@@ -7,14 +7,15 @@ use std::{
 
 use antnest_runtime_egress::{
     application::{ControlConfig, ControlService},
-    config::Config,
-    control::router,
+    config::{Config, health_listen_from_env},
+    control::{health_router, router},
     dns::{DnsMetrics, run_dns_proxy},
     kernel::{KernelPlan, LinuxKernel},
     network::run_packet_loop,
     packet::INNER_MTU,
     repository::{PostgresRepository, RepositoryConfig},
     telemetry::{EgressMetrics, Telemetry},
+    transport::{SecurityConfig, VerifiedPeer, healthcheck},
 };
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -28,8 +29,19 @@ const DNS_MAX_CONNECTIONS_PER_SOURCE: usize = 8;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let args = std::env::args_os().collect::<Vec<_>>();
+    if args.len() == 2 && args[1] == "--healthcheck" {
+        return healthcheck(health_listen_from_env()?)
+            .await
+            .map_err(Into::into);
+    }
+    if args.len() != 1 {
+        return Err("invalid Egress command-line arguments".into());
+    }
+    let security = SecurityConfig::from_env()?;
+    let config = Config::from_env()?;
     let telemetry = Telemetry::init()?;
-    let result = run(telemetry.metrics()).await;
+    let result = run(config, security, telemetry.metrics()).await;
     if let Err(error) = &result {
         tracing::error!(%error, "Runtime Egress stopped with an error");
     }
@@ -37,8 +49,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     result
 }
 
-async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
-    let config = Config::from_env()?;
+async fn run(
+    config: Config,
+    security: SecurityConfig,
+    metrics: EgressMetrics,
+) -> Result<(), Box<dyn Error>> {
     let repository = Arc::new(
         PostgresRepository::connect_with_retry(
             &config.database_url,
@@ -78,13 +93,17 @@ async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
 
     let udp = UdpSocket::bind(config.udp_advertise).await?;
     let control_listener = TcpListener::bind(config.control_listen).await?;
+    let health_listener = TcpListener::bind(config.health_listen).await?;
     let dns_listener =
         TcpListener::bind(SocketAddr::new(IpAddr::V4(config.resolver_ipv4), 53)).await?;
     let dns_metrics = Arc::new(DnsMetrics::default());
     let cancellation = CancellationToken::new();
-    let app = router(service.clone(), metrics.clone());
+    let app = router(service.clone(), metrics.clone(), security.admission());
+    let health_app = health_router(service.clone(), metrics.clone());
+    let control_listener = security.listener(control_listener);
     tracing::info!(
         control = %config.control_listen,
+        health = %config.health_listen,
         udp = %config.udp_advertise,
         advertised_udp = %config.udp_advertise,
         recovered_agent_networks = recovered,
@@ -131,8 +150,20 @@ async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
     tasks.spawn(async move {
         task_result(
             "control HTTP",
-            axum::serve(control_listener, app)
-                .with_graceful_shutdown(http_cancellation.cancelled_owned())
+            axum::serve(
+                control_listener,
+                app.into_make_service_with_connect_info::<VerifiedPeer>(),
+            )
+            .with_graceful_shutdown(http_cancellation.cancelled_owned())
+            .await,
+        )
+    });
+    let probe_cancellation = cancellation.clone();
+    tasks.spawn(async move {
+        task_result(
+            "health HTTP",
+            axum::serve(health_listener, health_app)
+                .with_graceful_shutdown(probe_cancellation.cancelled_owned())
                 .await,
         )
     });

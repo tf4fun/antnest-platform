@@ -208,3 +208,43 @@ fn resolver_must_be_a_usable_address_inside_the_pool() {
         Err(ConfigError::InvalidAddressPool)
     );
 }
+
+#[test]
+fn health_is_loopback_only_and_control_never_uses_the_packet_address() {
+    let base = HashMap::from([
+        (
+            "ANTNEST_EGRESS_DATABASE_URL".to_owned(),
+            "postgres://localhost/egress".to_owned(),
+        ),
+        (
+            "ANTNEST_EGRESS_UDP_ADVERTISE".to_owned(),
+            "10.20.0.8:8092".to_owned(),
+        ),
+        (
+            "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
+            "10.20.0.53:53".to_owned(),
+        ),
+    ]);
+    for endpoint in ["10.20.0.8:8081", "10.20.0.8:8092"] {
+        let mut values = base.clone();
+        values.insert("ANTNEST_EGRESS_CONTROL_LISTEN".into(), endpoint.into());
+        assert_eq!(
+            Config::from_values(values),
+            Err(ConfigError::Invalid("ANTNEST_EGRESS_CONTROL_LISTEN"))
+        );
+    }
+    for endpoint in [
+        "0.0.0.0:8082",
+        "10.20.0.8:8082",
+        "[::1]:8082",
+        "127.0.0.1:0",
+        "127.0.0.1:8081",
+    ] {
+        let mut values = base.clone();
+        values.insert("ANTNEST_EGRESS_HEALTH_LISTEN".into(), endpoint.into());
+        assert_eq!(
+            Config::from_values(values),
+            Err(ConfigError::Invalid("ANTNEST_EGRESS_HEALTH_LISTEN"))
+        );
+    }
+}

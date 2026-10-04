@@ -4,6 +4,17 @@
 
 ### Fixed
 
+Runtime Egress now authenticates all eight control method/route combinations
+and fallbacks before parsing or effects (#32). Only verified Controller token
+or mTLS authority is admitted; user/context headers cannot grant permission or
+enter content capture. Control, Runtime UDP and loopback health use distinct
+purpose addresses. Strict JSON/media/query/no-body checks retain CAS, replay,
+allocation and flow/conntrack semantics. Native and Linux HTTP/TLS, isolated
+PostgreSQL and production Docker gates passed, including current/next rotation,
+database-loss health and normal SIGTERM/SIGINT recovery. Coordinated deployment
+and actual Controller-to-Egress/full-platform E2E remain pending; packet/DNS
+issues #34/#36 are independent.
+
 Skill Registry now verifies per-caller token/mTLS authority and exact route
 grants (#31). Console operations require a Registry-audience administrator CCT;
 organization and actor are taken from verified claims, with forged echoes
@@ -277,13 +288,17 @@ for the Controller. See the
 
 ### Changed
 
-The Egress control authentication profile is frozen at revision 5 for #32.
-Business routes require verified Controller authority; local status moves to a
-separate loopback health listener. Ensure retains its empty request, and JSON
-routes receive explicit media, uniqueness and size checks. Packet/DNS issues
-#34/#36 remain independent. Service enforcement and coordinated deployment are
-pending in the rollout ledger; this contract-only batch does not secure the old
-listener.
+**Egress deployment change (#32):** control contract revision 5 requires exact
+`ANTNEST_SERVICE_AUTH_MODE=token|mtls`. Provision a read-only receiver hash file
+and TLS profile; isolated development HTTP needs exact insecure-transport opt-in.
+Missing, ambiguous or invalid authority/transport configuration fails before
+database/kernel/listener startup. Bind control to a private IP different from
+Runtime UDP. Move local status probes to `ANTNEST_EGRESS_HEALTH_LISTEN`
+(default `127.0.0.1:8082`) or `runtime-egress --healthcheck`; control `/status`
+is no longer a health route. JSON mutations are bounded to 4 KiB and five
+seconds; Ensure retains its empty request. Receiver rotation requires restart.
+Deploy together with Controller's admitted sender and the final purpose-network
+configuration; local service admission does not update an existing deployment.
 
 **Registry deployment change (#31):** `ANTNEST_IDENTITY_URL` and the shared
 service authentication profile are mandatory. Nonempty

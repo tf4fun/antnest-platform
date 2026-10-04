@@ -1,7 +1,8 @@
 # Runtime Egress control authentication (#32)
 
-Status: frozen revision 5 profile; service enforcement and deployment admission
-are pending in the [rollout ledger](../platform/service-authentication-rollout.json).
+Status: frozen revision 5 profile; Egress owning-service admission is complete.
+Coordinated deployment and final cross-service acceptance remain pending in the
+[rollout ledger](../platform/service-authentication-rollout.json).
 The [platform workload/token contract](../platform/service-authentication.md)
 and [caller catalog](callers.json) are authoritative. Network placement, packet
 source addresses and unsigned identity headers grant no control permission.
