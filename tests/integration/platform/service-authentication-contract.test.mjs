@@ -158,9 +158,9 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
   );
 });
 
-test("the rollout records ten admitted services while keeping deployment and final integration pending", () => {
+test("the rollout records ten admitted services and deployment while keeping final integration pending", () => {
   const rollout = read("service-authentication-rollout.json");
-  assert.equal(rollout.status, "service-batches");
+  assert.equal(rollout.status, "integration-pending");
   assert.deepEqual(rollout.batches[0].issues, [32, 101]);
   assert.equal(rollout.batches[0].owner, "platform-contracts");
   const identity = rollout.batches.find(
@@ -237,7 +237,7 @@ test("the rollout records ten admitted services while keeping deployment and fin
   assert(registry.admission.docker);
   assert.deepEqual(registry.admission.pending_consumers, []);
   assert(registry.admission.cross_service_e2e.includes("pending"));
-  assert(registry.admission.deployment.includes("Legacy Compose"));
+  assert(registry.admission.deployment.includes("deployment-admitted"));
   const egress = rollout.batches.find(
     (batch) => batch.owner === "runtime-egress",
   );
@@ -252,10 +252,13 @@ test("the rollout records ten admitted services while keeping deployment and fin
   assert.equal(rollout.token_provisioning.status, "admitted");
   assert(rollout.token_provisioning.admission.unit_contract_component);
   assert(rollout.token_provisioning.admission.docker);
-  for (const owner of ["deployment", "integration"]) {
+  for (const [owner, status] of [
+    ["deployment", "deployment-admitted"],
+    ["integration", "pending"],
+  ]) {
     assert.equal(
       rollout.batches.find((batch) => batch.owner === owner).status,
-      "pending",
+      status,
       owner,
     );
   }

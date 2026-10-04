@@ -8,14 +8,13 @@ the design assumption that a reachable internal peer is trusted.
 
 ## Current delivery status
 
-The foundation defines schemas, public verification fixtures, planned caller
-catalogs and a repository route-coverage check. The Identity batch now installs
-workload/CCT admission and the signed-context issuer. Gateway/Console forwarding,
-other receivers and coordinated deployment remain pending; producer completion
-does not establish an end-to-end authenticated browser workflow. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json)
-records the pending service/deployment/integration batches. Existing trusted
-headers, body actors, shared Registry tokens, wildcard listeners and published
-internal ports remain release blockers under
+The foundation defines schemas, public verification fixtures, caller catalogs
+and a repository route-coverage check. All ten owning-service authentication
+batches have passed their local gates. Compose now wires private per-pair keys,
+purpose listeners and bounded diagnostic/OTLP transports. Actual deployment
+admission has passed; full cross-service security and business acceptance
+remains pending. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json)
+records those separate gates under
 [#80](https://github.com/tf4fun/antnest-platform/issues/80).
 
 ## Request boundaries
@@ -25,7 +24,7 @@ session and requests an Identity CCT for a server-selected consumer profile and,
 when applicable, a specific Agent. BFFs forward the signed context unchanged;
 each receiver authenticates its immediate workload peer and verifies the CCT's
 audience, lifetime and target scope before existing business authorization.
-`X-Antnest-*` and body actors are not substitute credentials in the target model.
+`X-Antnest-*` and body actors are not substitute credentials.
 
 Controller-owned lifecycle actions and ACP-owned accepted Runs use their owned
 operation/snapshot context on separately allowlisted routes. They do not retain
@@ -48,7 +47,7 @@ to Runtimes, never incoming administration from Runtimes. The Docker socket is
 host-root authority; RC's authenticated control API and image policy remain
 essential even on an internal network.
 
-The deployment batch moves diagnostic host ports into an explicit debug overlay,
+The deployment batch moves diagnostic host ports into an explicit relay overlay,
 keeps Gateway as the sole base published port and provides an explicit outbound
 path for model inference. The [security policy](../../SECURITY.md) continues to
 describe current limitations until the service and Docker security E2E batches

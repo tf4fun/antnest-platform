@@ -6,10 +6,11 @@ The interim token wire/configuration profile is frozen by
 The schemas, caller catalogs and repository admission checks are delivered by
 the foundation. Identity provides the issuer/JWKS; Identity, Gateway, Console,
 Agent UI, Controller, ACP, RC, Registry, native Runtime and Egress have passed their
-owning-service admission gates. Remaining deployment changes
+owning-service admission gates. Actual Compose deployment admission
 and full Docker security E2E are tracked in the
 [rollout ledger](service-authentication-rollout.json).
-The legacy Compose wiring is not yet an admitted secured deployment.
+Compose wires private credentials and purpose networks; full integration is
+still pending.
 
 Provider URLs use the separate [destination policy](provider-destination-policy.md)
 for #28. Workload authentication authorizes internal callers; it does not authorize
@@ -424,7 +425,7 @@ classification describes the mixed methods on the SDK mount, not a JSON bypass.
 
 ## 5. Network/deployment batch
 
-Authentication is the primary control. The later deployment batch replaces
+Authentication is the primary control. The deployment batch replaces
 `development` with purpose-specific **internal** networks, based on actual
 caller edges: `edge`, `controller-clients`, `controller-acp`, `controller-runtime`,
 `identity-clients`, `registry-clients` and the Controller/Egress control
@@ -458,17 +459,17 @@ overlay; owned dependency/E2E tooling selects it explicitly. Debug publication
 never bypasses credentials. The
 [port contract](development-authentication.md#host-ports-and-explicit-diagnostics)
 passed rendered all-profile/overlay checks and isolated dependency host-protocol
-acceptance. The current shared network and unwired authentication mounts remain
-an open release blocker; application unicast/debug reachability still belongs
-to the coordinated deployment and final integration batch.
+acceptance. Compose now wires private credential mounts and purpose-only
+listeners; actual production-service admission has passed and complete
+network authorization belongs to final integration.
 
 The [machine network contract](development-network-contract.json) freezes the
-next cutover's address/membership/DNS rules, dedicated Gateway ingress and opaque
+cutover's address/membership/DNS rules, dedicated Gateway ingress and opaque
 diagnostic relay. Its isolated Docker probe verified why direct publication
 cannot reach purpose-bound listeners on internal/multihomed containers. Contract
-and probe evidence do not admit the pending Compose/network deployment.
+and probe evidence do not admit the actual Compose/network deployment.
 The two [standalone transports](../../scripts/deployment/README.md) have component
-admission; actual service wiring and final integration remain pending.
+admission; actual deployment admission has passed and final integration remains pending.
 
 ## 6. Admission and ownership
 

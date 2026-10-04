@@ -12,11 +12,15 @@ mount/replacement checks. PKI passed eight native/CLI/TLS tests and 18 isolated
 Docker mount/TLS checks. Generated mounts remain read-only and private under
 the generating user's numeric UID/GID. Host-port publication/tooling passed 24
 rendered configuration and related fixture tests and three real PostgreSQL/Temporal
-host-protocol checks, with owned Docker resource cleanup. Credential mounts and
-purpose-network admission remain pending.
+host-protocol checks, with owned Docker resource cleanup. The subsequent
+Compose cutover is deployment-admitted: 43 wiring/port/dependency/v3 HTTP checks
+and 51 actual production-service checks pass without skips/failures. All 14
+resident services/helpers start healthy and stop normally; private keys, unique
+image tags and owned project resources are cleaned, with retained Docker
+container/network/volume identities unchanged.
 
 The subsequent [network contract](development-networks.md) is frozen with
-Compose/transport implementation pending. It defines dedicated Gateway ingress,
+Compose deployment admitted. It defines dedicated Gateway ingress,
 opaque diagnostic forwarding and a restricted Runtime OTLP destination. The
 port evidence below applies to the intermediate direct-publication overlay;
 actual unicast reachability must be admitted again at network cutover.
@@ -104,7 +108,8 @@ not enable a debug learning mode or use Provider credentials.
 ## Mounting and startup
 
 Use `docker compose --env-file artifacts/service-authentication/deployment.env`
-after preparing credentials. Compose wiring is a subsequent deployment batch.
+after preparing credentials, or source that private file before the documented
+Make/Compose commands. Use the same credential directory for subsequent starts.
 The base development profile selects exactly `token` and the explicit
 `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true` HTTP opt-in. These generated
 credentials are for disposable development, not a production transport policy.
@@ -140,11 +145,12 @@ Debug publication neither disables workload/CCT verification nor publishes
 ACP's Controller-only control listener. It does not change Identity's public
 callback URL or enable Skill learning debug settings.
 
-Compose overlays are applied in order. `compose.stage3.yaml` after the debug
-overlay suppresses the four application diagnostic mappings (RC, ACP, Identity
-and Controller), retaining only Gateway and dependency/Jaeger diagnostics.
-Loading debug after stage3 deliberately enables all seven diagnostics. Startup
-and shutdown must use the same ordered files, profiles, project and environment.
+`host_ports.revision` is 2 after purpose-network cutover. The sole diagnostic
+publisher is `diagnostic-relay`: its fixed listener forwards opaque bytes to the
+logical backend `target` in the machine contract. It has no credentials and
+does not relax the receiver's route or context checks. `compose.stage3.yaml`
+does not suppress explicitly selected diagnostics by file order. Startup and
+shutdown must use the same ordered files, profiles, project and environment.
 
 The disposable dependency harness must load debug explicitly, bind dependency
 ports to loopback with Docker-assigned port numbers and query those published
@@ -156,9 +162,47 @@ This does not waive the final Gateway-only/security regression.
 The contract was frozen before Compose/tooling implementation. Admission passed
 rendered Compose checks for all profiles and overlay orders, a real PostgreSQL
 query and Temporal's `GetSystemInfo`/`DescribeNamespace` through the dependency
-harness, and cleanup of the harness's own containers, networks and volumes. Full
+harness, and cleanup of the harness's own containers, networks and volumes. At
+cutover, the dependency harness also loads `tests/support/compose.dependencies.yaml`,
+starts the relay alongside PostgreSQL or PostgreSQL/Temporal, discovers a free
+purpose-network prefix and retrieves only the relay's assigned loopback ports.
+Inactive workload declarations use inert paths that are never mounted;
+no application or placeholder credential files are created. Full
 cross-service authentication/network/browser acceptance remains a separate
 integration batch.
+
+## Current Compose cutover
+
+The base file explicitly selects the disposable token/HTTP profile for all nine
+static workloads. Each receiver JSON and outgoing directory is a separate
+read-only bind with `create_host_path: false`; Identity signing/JWKS and RC's
+instance master are separate owner mounts. Seven ordinary services use the
+generating numeric UID/GID; RC/Egress retain their documented privileges.
+Missing prepared files fail startup instead of becoming empty directories.
+
+Identity's generated JWKS includes the issuer-required `use: sig` and
+`alg: EdDSA` metadata, validated against the actual CCT JWKS schema. Merely
+checking Ed25519 signature round trips does not establish issuer compatibility.
+
+The optional maintenance signer activates learning/discovery origins. Static
+source and Registry clients use their distinct receiver-specific sender files;
+the four retired shared token channels are absent. Controller publication uses
+the ACP control alias, while user/bridge/source reads use its workspace alias.
+Provider private endpoints remain disabled by default. Exporters use Jaeger's
+observation address; Runtime OTLP uses the restricted management ingress.
+
+Run `make test-deployment-wiring` and `make e2e-deployment-wiring` for this batch.
+The latter builds isolated production image tags and prepares temporary keys,
+then checks actual health, owner mounts, fixed addresses, diagnostic authority,
+management OTLP admission into Jaeger and normal shutdown. It removes only its
+project, tags and credentials and compares retained Docker resource identities.
+It performs no Provider call and is deployment evidence; final per-network
+security and browser/lifecycle/Skill acceptance remain a separate integration batch.
+
+Jaeger 2.21 removed the legacy service-list endpoint; deployment probes use v3
+services and OTLP trace responses. Exporter dependencies retain the collector
+until normal SDK shutdown completes. The gate reproduces the former ACP exit 1
+when the collector stopped concurrently, and now verifies every exit is zero.
 
 ## Development PKI
 

@@ -5,10 +5,9 @@ dynamic Skill source discovery in the standard Docker deployment.
 
 Service authentication is being rolled out on `feat/service-authentication`.
 The owning-service gates have passed for Registry and its consumers, but the
-standard `compose.yaml` and `compose.stage3.yaml` still contain legacy bearer
-wiring. Do not use them unchanged with the new binaries. Random provisioning,
-secret mounts and the complete workflow E2E belong to the separate deployment
-and final integration batches in the
+standard `compose.yaml` now uses per-pair private file mounts and purpose-address
+listeners. Actual deployment admission has passed; complete workflow E2E
+belongs to the final integration batch in the
 [rollout ledger](../contracts/platform/service-authentication-rollout.json).
 The required interfaces and permissions are defined by the
 [deployment contract](../contracts/skill-registry/deployment.md).
@@ -64,7 +63,22 @@ off, W3C context propagation is retained. HTTP spans do not capture bodies,
 query strings or credentials. See the
 [trace boundaries contract](../contracts/skill-registry/trace-boundaries.md).
 
-Use existing keys if you have them. For a first, empty development deployment
+For a first, empty development deployment, use the standard provisioning helper:
+
+```sh
+node scripts/dev-service-tokens.mjs --with-skill-learning
+set -a
+. artifacts/service-authentication/deployment.env
+set +a
+```
+
+It generates independent per-pair workload authority, Identity/RC bootstrap keys
+and the separate maintenance signer/verifiers. It refuses existing output and
+does not rotate a retained deployment. Its private signer enables the configured
+Controller policy reader and both pinned discovery origins in standard Compose;
+a public verifier alone does not activate learning or discovery.
+
+Use existing maintenance keys if you have them. When preparing a separate signer,
 you can generate a `.env.skills` file with a local Node installation. Keep the
 file out of Git and Docker build contexts. The command does not print the
 private key and does not overwrite an existing file:
@@ -94,15 +108,12 @@ credentials; it does not read, decrypt or replay model Provider credentials.
 
 ## Start And Apply
 
-After the pending deployment batch supplies service credentials, private mounts
-and purpose networks, prepare `.env` and images as described in the
-[single-node operations runbook](docker-single-node-operations.md). The following
-is the intended start command after that wiring is admitted; it is not an
-acceptance claim for today's legacy Compose profile. The second env file only
-adds maintenance signing/verifier options:
+Prepare `.env`, private deployment credentials and images as described in the
+[single-node operations runbook](docker-single-node-operations.md). After sourcing
+the helper's private `deployment.env`, start with:
 
 ```sh
-docker compose --env-file .env --env-file .env.skills \
+docker compose \
   -f compose.yaml -f compose.stage3.yaml --profile stage3 up -d --build --wait
 ```
 
@@ -112,9 +123,12 @@ Agents pick it up only through the normal Template and explicit rebuild flow.
 Do not change the verifier set while a lifecycle operation is in flight.
 Rotation and compromise handling follow the
 [learning key contract](../contracts/skill-learning/learning-api.md).
-To enable only personal automatic learning, leave the discovery origins unset
-and configure the signing key and public verifier set. Mandatory service and
-Runtime instance authentication still applies.
+To enable only personal automatic learning, use an explicit Compose override
+that sets ACP's Registry origin and Registry's source origin to empty strings;
+standard Compose supplies both when the signer is configured. Mandatory service
+and Runtime instance authentication still applies. If using a separate
+`.env.skills`, supply it as an additional env file while retaining the sourced
+deployment credentials.
 
 ## Verification
 
@@ -125,8 +139,9 @@ Its Identity and source peers implement the required protocols but are not the
 actual cross-service implementations. Temporary CSPRNG credentials and Docker
 resources are cleaned after the run.
 
-`make test-skill-deployment` and `make e2e-skill-deployment` need their legacy
-bearer fixtures replaced in the deployment/integration batches. The final gate
+`make test-skill-deployment` covers the new configuration and key/source separation.
+`make e2e-skill-deployment` still needs its legacy fixtures replaced in the
+integration batch. The final gate
 must exercise actual learning, projection, temporary use, browser promotion and
 Template create/rebuild/Run with the admitted service authentication profile.
 Until then, those complete workflows remain pending; no real Provider credential

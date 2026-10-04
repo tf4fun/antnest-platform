@@ -157,7 +157,7 @@ export function provisionTokens({
     );
     write(
       join(path, contract.bootstrap_keys.identity_cct.public_file),
-      json({ keys: [{ ...cctPublic, kid: cctKid }] }),
+      json({ keys: [{ ...cctPublic, kid: cctKid, use: "sig", alg: "EdDSA" }] }),
     );
     write(
       join(path, contract.bootstrap_keys.runtime_instance_master.file),

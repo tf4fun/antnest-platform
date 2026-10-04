@@ -24,7 +24,8 @@ cluster network. Before exposing a deployment, understand these boundaries:
   internal HTTP/JSON RPC. Identity, Gateway, Console, Agent UI, Controller, ACP,
   RC, Registry and native Runtime have passed their owning-service authentication
   gates. Egress has also passed its owning-service authentication gates;
-  coordinated network/credential deployment and full integration remain pending in
+  Compose now wires private credentials and purpose networks; actual deployment
+  admission has passed; full cross-service integration remains pending in
   the rollout ledger. Services must stay on private networks that browsers, Agent
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
@@ -37,8 +38,8 @@ cluster network. Before exposing a deployment, understand these boundaries:
   broad method/path filtering alone is insufficient. See the
   [RC assessment](services/runtime-controller/api/service-authentication.md#docker-socket-assessment).
   RC-issued Runtime instance credentials, native admission and private Controller
-  to ACP relay are implemented; purpose-network deployment and cross-service
-  acceptance remain later batches.
+  to ACP relay are implemented. Compose uses separate control and management
+  interfaces; cross-service acceptance remains pending.
 - **Runtime Egress is privileged.** It owns a TUN device, routes and nftables
   rules. Its control listener admits only authenticated Controller calls on its
   configured purpose address; readiness uses a separate loopback listener.
@@ -46,10 +47,11 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.
-- **The frozen network cutover has one OTLP infrastructure exception.** A bounded
-  ingestion-only transport will preserve Runtime telemetry while moving Jaeger
+- **The network cutover has one OTLP infrastructure exception.** A bounded
+  ingestion-only transport preserves Runtime telemetry while moving Jaeger
   entirely off management. It has no business credentials, query/control API or
-  arbitrary destination. Compose/network admission is still pending; see the
+  arbitrary destination. Actual Compose deployment admission has passed; full
+  per-network authorization probes remain pending. See the
   [deployment network contract](contracts/platform/development-networks.md#runtime-telemetry-exception).
 - **TLS is not terminated by the platform.** Put a TLS-terminating reverse proxy
   in front of Edge Gateway and keep `ANTNEST_EDGE_COOKIE_SECURE=true`.
@@ -57,19 +59,20 @@ cluster network. Before exposing a deployment, understand these boundaries:
   `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` outside local debugging.
 - **Host diagnostics require an explicit overlay.** Base Compose publishes
   only Gateway. `compose.debug.yaml` is for disposable local diagnostics and
-  binds every publication to loopback, preserving workload/CCT verification.
+  enables an opaque credential-free relay and binds every publication to
+  loopback, preserving receiver workload/CCT verification.
   Keep it out of public deployments; see the
   [development port contract](contracts/platform/development-authentication.md#host-ports-and-explicit-diagnostics).
 
 ## Development defaults are not secrets
 
 `.env.example` and `compose.yaml` contain public, synthetic development values:
-database passwords ending in `-dev`, all-zero encryption keys, a fixed Skill
-Registry token and the bootstrap administrator password `antnest-admin-dev`.
-These are historical disposable-development settings. The authenticated services
+database passwords ending in `-dev`, all-zero encryption keys and the bootstrap
+administrator password `antnest-admin-dev`.
+These are disposable-development settings. The authenticated services
 reject missing service credentials, and Registry rejects its nonempty legacy
-API/source tokens. The existing Compose defaults cannot start the new rollout
-unchanged; provisioning and wiring are a pending deployment batch. Replace
+API/source tokens. Compose requires a fresh private credential directory prepared
+by `scripts/dev-service-tokens.mjs`; it has no shared workload-token fallback. Replace
 public defaults with unique randomly generated values, keep per-pair secrets in
 protected files, and never commit the resulting configuration.
 
@@ -80,8 +83,8 @@ defines workload mTLS (or explicit per-caller interim tokens), Identity-signed
 Caller Context Tokens, per-route allowlists and JSON media-type checks. Its
 [trust model](docs/architecture/trust-model.md) and
 [rollout ledger](contracts/platform/service-authentication-rollout.json) distinguish
-the delivered foundation from pending service enforcement and network changes.
+the admitted service batches from deployment and integration acceptance.
 Repository catalog/schema checks and admitted service batches do not complete
-deployment security. The remaining Egress surface, internal host ports, shared
-networks and development provisioning described above remain release blockers under
+deployment security. Actual network authorization and browser/lifecycle/Skill
+integration remain pending under
 [#80](https://github.com/tf4fun/antnest-platform/issues/80).

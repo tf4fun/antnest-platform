@@ -14,6 +14,8 @@
   },
   "dynamic_receivers": ["antnest-runtime"],
   "host_ports": {
+    "revision": 2,
+    "debug_publisher": "diagnostic-relay",
     "base_file": "compose.yaml",
     "debug_file": "compose.debug.yaml",
     "host_ip": "127.0.0.1",
@@ -62,12 +64,7 @@
       }
     },
     "authentication": "unchanged",
-    "stage3_suppressed_debug_services": [
-      "runtime-controller",
-      "agent-acp-service",
-      "identity-service",
-      "agent-controller"
-    ],
+    "stage3_port_suppression": "explicit-test-override",
     "runtime_management_publications": false,
     "health_listener_publications": false
   },

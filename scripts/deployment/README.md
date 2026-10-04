@@ -3,8 +3,11 @@
 These two small Node built-in transports implement the infrastructure decisions
 in the [purpose-network contract](../../contracts/platform/development-networks.md).
 They have passed 17 native component tests and 21 isolated Docker protocol,
-interface and shutdown checks. Compose wiring and final platform integration
-remain pending in the [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
+interface and shutdown checks. Compose wiring passed 43 local configuration/HTTP
+checks and 51 actual production-service startup/mount/diagnostic/OTLP/normal-stop
+checks, with owned resources cleaned and retained Docker identities unchanged.
+Final platform integration remains pending in the
+[rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 They are deployment plumbing with no domain service identity or credentials.
 
 `diagnostic-relay.mjs` derives its seven immutable routes from the machine
@@ -42,6 +45,8 @@ Run the owning component gates from the repository root with the selected Node:
 ```sh
 make test-deployment-transports
 make e2e-deployment-transports
+make test-deployment-wiring
+make e2e-deployment-wiring
 ```
 
 The Docker gate uses temporary source-mounted Node containers and protocol peers

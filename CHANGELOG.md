@@ -4,50 +4,50 @@
 
 ### Changed
 
-The #32 diagnostic TCP and Runtime OTLP transports now pass standalone native
-and Docker component admission. They have no business authority or credential
-mounts, bounded connections/exchanges and normal signal cleanup. Actual Compose
-address/key wiring and full platform integration are still pending.
+The #32 Compose deployment batch is admitted: 43 wiring/port/dependency/v3 HTTP
+checks and 51 actual production-service checks pass, including 14 healthy
+resident services/helpers, diagnostic authentication, management isolation,
+actual Jaeger ingestion and every normal exit zero. Owned resources, candidate
+tags and keys are cleaned; retained Docker identities remain unchanged.
+All ten service batches have passed their local gates. Full per-network security
+and browser/lifecycle/Skill acceptance remain in the final integration batch.
 
-The next #32 purpose-network cutover is frozen in the deployment contract;
-implementation and full integration remain pending. Docker observations require
-dedicated Gateway ingress and explicit opaque TCP diagnostics for purpose-bound
-listeners. Runtime telemetry will use a bounded OTLP-only management destination
-while Jaeger leaves that network. No business credential or route rule changes.
+Fresh development deployments must prepare private per-pair workload credentials,
+Identity CCT keys and an RC instance master with `scripts/dev-service-tokens.mjs`,
+then load its private `deployment.env` before Make/Compose. Read-only owner mounts
+and generating UID/GID replace shared bearer defaults. Existing issuer/master
+material is never overwritten; retain it with the corresponding deployment data.
+The optional `--with-skill-learning` profile generates a separate signer/verifier
+pair and activates pinned learning/discovery origins. No Provider key is generated.
 
-Base Compose now publishes only Gateway (#32). PostgreSQL, Temporal, RC, ACP,
-Identity, Controller and Jaeger host ports require the explicit loopback-only
-`compose.debug.yaml`; authentication remains enabled. Loading stage3 after debug
-suppresses application diagnostics. Dependency and full-stack test entry points
-now select diagnostics explicitly. Use the same ordered files for startup and
-shutdown. Purpose-network/credential wiring and final cross-service acceptance
-remain separate pending batches.
+Purpose-only listeners, canonical client addresses, owner database/outbound
+networks and a separate ACP Controller control listener replace the shared
+development network. Jaeger is outside Runtime management; bounded OTLP ingress
+supplies its fixed Runtime destination. Health follows the configured listener
+and bypasses proxies/redirects, with RC/Egress's separate loopback probes retained.
 
-The deployment contract now requires primary-listener health probes to follow
-configured purpose addresses, preserve TLS identity checks, and bypass proxies
-and redirects (#32). Identity, Gateway, Console, Controller and Registry have
-passed their separate owning-service health gates; unicast Compose wiring and
-cross-service network acceptance remain deployment/integration work.
-RC/Egress keep their existing separate loopback health listeners.
+Base Compose publishes only Gateway. Host-port contract revision 2 selects an
+opaque diagnostic relay for explicit loopback diagnostics, retaining the existing
+port defaults. Product stage3 overlay order no longer suppresses a selected debug
+overlay. Dependency-only tooling uses its own relay-port override. Startup and
+shutdown must retain the same files, profiles, environment and project.
 
-The development PKI helper now generates a private fresh CA, independent
-per-service P-256 leaves, exact URI/DNS identities and both TLS usages (#32).
-Existing issuers are never overwritten; normal cancellation reaps OpenSSL before
-cleaning candidate output. Native OpenSSL/TLS and isolated nonroot Docker
-read-only mount/TLS checks passed. Native Runtime remains on its separate
-per-instance token profile. Purpose-network wiring and full acceptance remain
-tracked deployment/integration batches; generation does not reconfigure a stack.
-
-Development authentication provisioning now generates catalog-derived per-caller
-credentials, separate Identity CCT and RC instance sealing keys, and optional
-independent Skill maintenance keys (#32). Output is private and ignored; existing
-credentials are never overwritten. Generating UID/GID metadata lets nonroot Node
-services read 0700/0600 bind mounts without granting root or world access. Native
-contract/CLI and isolated Docker read-only/rotation checks passed. All ten service
-batches are admitted; network/Compose wiring and full cross-service acceptance
-remain deployment/integration work. No live stack is reconfigured by the helper.
+The development PKI helper generates a fresh private CA and independent P-256
+leaves with exact service identities and both TLS usages. Native/TLS and isolated
+read-only Docker mount checks pass. It does not reconfigure a running stack;
+native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Development credential generation includes the mandatory `use: sig` and
+`alg: EdDSA` Identity JWKS fields (#32). The previous public key could verify
+Ed25519 signatures but failed the actual issuer's startup contract. A schema
+regression reproduces that mismatch; service verification remains strict.
+
+Compose exporters now declare an optional Jaeger dependency, so normal shutdown
+keeps the collector alive until exporter flushes finish (#32). The Runtime OTLP
+ingress likewise stops before its collector. Jaeger v3 deployment probes replace
+the service-list endpoint removed in Jaeger 2.21.
 
 Skill Registry's health probe follows its configured IPv4/IPv6 listener
 (#32 deployment follow-up), preserving wildcard loopback behavior and the

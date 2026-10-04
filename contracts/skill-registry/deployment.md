@@ -5,10 +5,9 @@ learning, source, discovery and temporary-package contracts. It introduces no
 service API; the [operator guide](../../docs/skill-deployment.md) covers
 configuration in practice.
 
-Status: required deployment profile; coordinated Compose wiring and complete
-workflow E2E are pending in the
-[rollout ledger](../platform/service-authentication-rollout.json). The current
-Compose legacy bearer defaults cannot start the authenticated services unchanged.
+Status: Compose wiring and actual deployment admission have passed;
+complete workflow E2E remains pending in the
+[rollout ledger](../platform/service-authentication-rollout.json).
 Owning-service protocol peers do not accept the complete propagation workflow.
 The deployment batch must provide the following operator-owned configuration:
 
@@ -43,8 +42,9 @@ Signing and verifier key IDs follow the exact `maintenanceKid` definition in
 without dots or whitespace normalization. All four validators use the
 [shared key ID fixtures](../runtime/maintenance-kid-fixtures.json).
 
-Registry must stay outside Runtime management and Egress networks and expose no
-host port. ACP has no direct host port in the target deployment. Agent UI receives
+Registry stays outside Runtime management and Egress networks and exposes no
+host port. ACP has no direct host publication; explicit debug relays only its
+authenticated workspace listener. Agent UI receives
 neither Registry/source sender credentials nor signing material; the browser still uses Gateway and
 the existing Node Bridge HTTP/SSE path.
 
@@ -63,7 +63,8 @@ HTTP Trace wiring. Registry's span behavior is defined in the
 
 `make e2e-skill-discovery-registry` admits only Registry, using temporary CSPRNG
 files, signed Console context and explicit Identity/source protocol peers.
-`make test-skill-deployment` and `make e2e-skill-deployment` still need coordinated
-authentication updates. Final integration must use actual services, the standard
+`make test-skill-deployment` covers credential, key/source and network configuration.
+`make e2e-skill-deployment` still needs its integration fixtures updated.
+Final integration must use actual services, the standard
 environment names and production credential/network wiring. Test overlays may
 choose isolated images, ranges and a local model, but may not bypass admission.

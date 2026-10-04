@@ -29,7 +29,7 @@ const credentials = JSON.parse(
 test("every current workload pair shares the receiver's explicitly bound purpose network", () => {
   const contract = readContract();
   assert.equal(contract.version, 1);
-  assert.equal(contract.status, "contract-frozen-implementation-pending");
+  assert.equal(contract.status, "deployment-admitted-integration-pending");
   assert.equal(
     contract.service_prefix_environment,
     "ANTNEST_SERVICE_NETWORK_PREFIX",

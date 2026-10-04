@@ -90,6 +90,13 @@ test-deployment-ports:
 e2e-deployment-ports:
 	node tests/e2e/service-authentication/deployment-ports/run.mjs
 
+.PHONY: test-deployment-wiring e2e-deployment-wiring
+test-deployment-wiring:
+	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
+
+e2e-deployment-wiring:
+	node tests/integration/deployment/compose-runtime-docker.mjs
+
 test-node: test-repo
 	npm --prefix services/agent-acp-service test
 	npm --prefix services/agent-acp-service run test:integration

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { composeConfig } from "../../support/compose-config.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const require = createRequire(
@@ -25,7 +26,17 @@ const profiles = [
   "stage2-e2e",
   "stage3-e2e",
   "observability",
+  "diagnostics",
 ];
+const topology = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../contracts/platform/development-network-contract.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
 
 function render(files, overrides = {}) {
   // Never resolve a retained .env file or inherited deployment credentials.
@@ -78,15 +89,28 @@ function publications(config) {
 
 function assertPublications(config, expected, overrides = {}) {
   const ports = publications(config);
-  assert.deepEqual(Object.keys(ports).sort(), Object.keys(expected).sort());
+  const diagnostics = Object.keys(expected).filter(
+    (name) => name in contract.debug_publications,
+  );
+  const publishers = Object.keys(expected).filter(
+    (name) => name in contract.base_publications,
+  );
+  if (diagnostics.length) publishers.push(contract.debug_publisher);
+  assert.deepEqual(Object.keys(ports).sort(), publishers.sort());
   for (const [
     name,
     { target, environment, default: defaultPort },
   ] of Object.entries(expected)) {
-    assert.equal(ports[name].length, 1, name);
-    const [port] = ports[name];
+    const diagnostic = diagnostics.includes(name);
+    const owner = diagnostic ? contract.debug_publisher : name;
+    const wanted = diagnostic
+      ? topology.infrastructure.diagnostics.listener_ports[name]
+      : target;
+    const selected = ports[owner].filter((item) => item.target === wanted);
+    assert.equal(selected.length, 1, name);
+    const [port] = selected;
     assert.equal(port.host_ip, contract.host_ip, name);
-    assert.equal(port.target, target, name);
+    assert.equal(port.target, wanted, name);
     assert.equal(
       port.published,
       overrides[environment] ?? String(defaultPort),
@@ -94,6 +118,8 @@ function assertPublications(config, expected, overrides = {}) {
     );
     assert.equal(port.protocol, "tcp", name);
   }
+  if (diagnostics.length)
+    assert.equal(ports[contract.debug_publisher].length, diagnostics.length);
 }
 
 test("base Compose publishes only Gateway even when every profile is enabled", () => {
@@ -124,10 +150,14 @@ test("debug Compose publishes exactly its declared diagnostics on loopback", () 
   for (const [name, service] of Object.entries(base.services)) {
     const { ports: basePorts, ...baseRest } = service;
     const { ports: debugPorts, ...debugRest } = debug.services[name];
+    if (name === contract.debug_publisher) {
+      delete baseRest.profiles;
+      delete debugRest.profiles;
+    }
     assert.deepEqual(
       debugRest,
       baseRest,
-      `${name} diagnostic overlay changes only ports`,
+      `${name} diagnostic overlay changes only relay activation/publication`,
     );
     void basePorts;
     void debugPorts;
@@ -137,10 +167,14 @@ test("debug Compose publishes exactly its declared diagnostics on loopback", () 
       new URL("../../../compose.debug.yaml", import.meta.url),
       "utf8",
     ),
+    { logLevel: "silent" },
   );
   assert.deepEqual(Object.keys(source), ["services"]);
-  for (const service of Object.values(source.services))
-    assert.deepEqual(Object.keys(service), ["ports"]);
+  assert.deepEqual(Object.keys(source.services), [contract.debug_publisher]);
+  assert.deepEqual(Object.keys(source.services[contract.debug_publisher]), [
+    "profiles",
+    "ports",
+  ]);
 });
 
 test("debug overrides allow isolated assigned ports without publishing health or MCP", () => {
@@ -160,25 +194,34 @@ test("debug overrides allow isolated assigned ports without publishing health or
   );
 });
 
-test("stage3 suppresses application diagnostics when applied after debug", () => {
-  const expected = {
-    ...contract.base_publications,
-    ...contract.debug_publications,
-  };
-  for (const service of contract.stage3_suppressed_debug_services)
-    delete expected[service];
+test("product stage3 does not silently change an explicitly selected diagnostic relay", () => {
   assertPublications(
     render([contract.base_file, contract.debug_file, "compose.stage3.yaml"]),
-    expected,
+    { ...contract.base_publications, ...contract.debug_publications },
   );
 });
 
-test("debug applied last is an explicit choice to expose application diagnostics", () => {
+test("debug explicitly exposes the same diagnostics in either product overlay order", () => {
   assertPublications(
     render([contract.base_file, "compose.stage3.yaml", contract.debug_file]),
     {
       ...contract.base_publications,
       ...contract.debug_publications,
+    },
+  );
+});
+
+test("dependency-only test override publishes only PostgreSQL and Temporal relay ports", () => {
+  assertPublications(
+    composeConfig([
+      contract.base_file,
+      contract.debug_file,
+      "tests/support/compose.dependencies.yaml",
+    ]),
+    {
+      ...contract.base_publications,
+      postgres: contract.debug_publications.postgres,
+      temporal: contract.debug_publications.temporal,
     },
   );
 });

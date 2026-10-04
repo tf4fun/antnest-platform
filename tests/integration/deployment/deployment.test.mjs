@@ -5,6 +5,24 @@ import { parseEnv } from "node:util";
 
 const root = new URL("../../../", import.meta.url);
 
+test("deployment example uses generated authentication and separated purpose addresses", async () => {
+  const env = parseEnv(await readFile(new URL(".env.example", root), "utf8"));
+  for (const field of [
+    "ANTNEST_SKILL_REGISTRY_API_TOKEN",
+    "ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN",
+    "ANTNEST_JAEGER_RUNTIME_IPV4",
+    "ANTNEST_AGENT_ACP_SERVICE_URL",
+  ])
+    assert.equal(env[field], undefined, `retired deployment channel ${field}`);
+  assert.equal(env.ANTNEST_SERVICE_NETWORK_PREFIX, "10.241.0");
+  assert.equal(env.ANTNEST_RUNTIME_OTLP_INGRESS_IPV4, "172.30.255.4");
+  assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_MANAGEMENT_IPV4, "172.30.255.5");
+  assert.equal(env.ANTNEST_ACP_MANAGEMENT_IPV4, "172.30.255.6");
+  assert.equal(env.ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE, "172.30.255.128/25");
+  assert.equal(env.ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4, "172.31.255.4");
+  assert.equal(env.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS, "false");
+});
+
 test("standard Compose cannot inherit Skill learning debug settings", async () => {
   const compose = await readFile(new URL("compose.yaml", root), "utf8");
   for (const variable of [

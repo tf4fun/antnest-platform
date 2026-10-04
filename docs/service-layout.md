@@ -201,9 +201,12 @@ in a separate deployment service.
 ## Trust Rules
 
 Docker or Kubernetes is trusted infrastructure. Internal control services
-trust the deployment network and do not add service JWT, mTLS, or request
-signatures during the Docker-first stages. Domain authorization remains the
-owner service's responsibility.
+authenticate workloads and, where required, Identity-signed caller context
+under the [platform authentication contract](../contracts/platform/service-authentication.md).
+Purpose-network reachability does not establish identity. Domain authorization
+remains the owner service's responsibility; the
+[rollout ledger](../contracts/platform/service-authentication-rollout.json)
+separates service admission from complete integration acceptance.
 
 The Runtime Supervisor is trusted platform code; Agent-selected operations run
 as a separate UID/GID 1000 Executor with no capabilities.

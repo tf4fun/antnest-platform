@@ -1,5 +1,5 @@
 {
-  "status": "service-batches",
+  "status": "integration-pending",
   "issue": 32,
   "delivery": {
     "branch": "feat/service-authentication",
@@ -18,7 +18,7 @@
     "service_test_credentials": "Owning-service isolated harnesses generate and clean up temporary CSPRNG credentials before deployment wiring exists; never install public conformance tokens.",
     "contract": "development-authentication.md",
     "admission": {
-      "unit_contract_component": "20 contract, catalog-derived token/key, private permission/ownership, CLI privacy, fresh-deployment, overwrite/alias rejection and failure cleanup tests; zero skips/failures.",
+      "unit_contract_component": "22 contract, catalog-derived token/key, issuer JWKS schema, private permission/ownership, CLI privacy, fresh-deployment, overwrite/alias rejection and failure cleanup tests; zero skips/failures. Actual Identity startup accepts the generated issuer metadata.",
       "docker": "node tests/e2e/service-authentication/deployment-credentials/run.mjs (13 private read-only mount and atomic sender-replacement checks; nonroot generating UID/GID; no container network or published ports; owned containers and credentials cleaned). This is credential preparation evidence, not platform business/security E2E."
     }
   },
@@ -40,12 +40,11 @@
     "status": "admitted",
     "contract": "development-authentication.md#host-ports-and-explicit-diagnostics",
     "admission": {
-      "unit_contract_component": "24 rendered Compose, dependency-planner/hygiene and related deployment/foundation checks; all profiles, both overlay orders, exact loopback/default/assigned ports and diagnostics-only overlay verified; zero skips/failures.",
+      "unit_contract_component": "43 rendered Compose/wiring, v3 HTTP query, dependency planner, diagnostic-port, bootstrap/source and related deployment checks pass without skips/failures; revision 2 uses one bounded relay and explicit dependency overrides.",
       "docker": "node tests/e2e/service-authentication/deployment-ports/run.mjs (three real PostgreSQL query / Temporal GetSystemInfo / DescribeNamespace checks through assigned loopback ports; isolated project initialization and owned container/network/volume cleanup passed).",
-      "scope": "Host-port publication and dependency tooling only. Authentication credential mounts, purpose-network/unicast binding and actual full-platform browser/lifecycle/security/Skill acceptance remain pending. No service protocol peers or business flows were substituted for that final integration."
+      "scope": "Purpose-network relay and actual production-service diagnostic admission passed. Complete per-network route authorization and browser/lifecycle/Skill acceptance remain in final integration."
     },
-    "topology": "intermediate-shared-network-direct-publication",
-    "admitted_commit": "35750f0"
+    "topology": "purpose-network-diagnostic-relay"
   },
   "audience_profiles": {
     "console": [
@@ -227,7 +226,7 @@
         "docker": "node tests/e2e/skill-registry/discovery-docker.mjs (66 authentication and two configured-listener/proxy/loopback health checks plus metadata-only mapping, owner/organization scope, drift/offline/revocation, promotion/provenance/CAS, restart and source-removal cases; production image; owned resources and credentials cleaned). Identity and ACP source are explicitly Registry-owned protocol peers.",
         "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch",
-        "deployment": "Legacy Compose bearer fixtures and complete Skill delivery/propagation harnesses still require coordinated file/TLS authentication wiring.",
+        "deployment": "Private Compose credential and purpose-network wiring is deployment-admitted; complete security and business integration remains pending.",
         "purpose_listener_health": "Native race/vet/lint, targeted cmd HTTP/TCP overlay (one package / five tests / 11 subtests; zero skips/failures) and owning-service PostgreSQL/Docker acceptance cover configured IPv4/IPv6 while retaining TLS identity, proxy isolation, redirect rejection and wildcard loopback behavior. Compose binding and cross-service network acceptance remain deployment/integration work."
       }
     },
@@ -267,13 +266,13 @@
         "docker": "node tests/e2e/service-authentication/egress/run.mjs (173 authentication, purpose-listener, request carrier, actual policy/attachment CAS and replay, current/next rotation, database-loss health, startup-before-effects and normal SIGTERM/SIGINT recovery checks; production image, real TUN/nftables/PostgreSQL; temporary credentials and owned resources cleaned). Controller requests are explicitly Egress-owned protocol probes.",
         "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch",
-        "deployment": "Legacy Compose senders, purpose networks and health probes still require coordinated authentication wiring."
+        "deployment": "Private Compose credential and purpose-network wiring is deployment-admitted; complete security and business integration remains pending."
       }
     },
     {
       "owner": "deployment",
       "issues": [32],
-      "status": "pending",
+      "status": "deployment-admitted",
       "deliverables": [
         "development PKI helper",
         "development service-token provisioning helper",
@@ -284,12 +283,18 @@
         "development service-token provisioning helper",
         "development PKI helper",
         "owning-service purpose-listener health prerequisites (Identity, Gateway, Console, Controller, Registry)",
-        "Gateway-only base ports, explicit loopback debug overlay and dependency/E2E diagnostic selection"
+        "Gateway-only base ports, explicit loopback debug overlay and dependency/E2E diagnostic selection",
+        "native/Docker bounded diagnostic and OTLP transports",
+        "purpose-specific internal networks and exact listener/health/client destinations",
+        "per-workload credentials, CCT and Runtime instance master mounts with generating UID/GID",
+        "actual production Compose health/authentication/OTLP and ordered normal shutdown"
       ],
-      "pending_substeps": [
-        "purpose-specific internal networks and explicit listener/health bindings",
-        "per-workload credential, CCT and Runtime instance master mounts and coordinated client configuration"
-      ]
+      "pending_substeps": [],
+      "admission": {
+        "unit_contract_component": "43 rendered Compose/wiring, v3 HTTP query, dependency planner, diagnostic-port, bootstrap/source and related deployment checks pass without skips/failures; revision 2 uses one bounded relay and explicit dependency overrides.",
+        "docker": "node tests/integration/deployment/compose-runtime-docker.mjs: 51 checks across 14 actual production services/helpers. Startup/health, separate read-only credentials, fixed interfaces, unauthenticated diagnostic rejection, genuine issuer JWKS, management business/query isolation, actual Jaeger OTLP persistence and every normal exit zero pass. Unique candidate images, keys and owned project resources cleaned; retained container/network/volume identities unchanged. No Provider calls.",
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "integration",
@@ -326,13 +331,14 @@
   "purpose_network_deployment": {
     "owner": "deployment",
     "issue": 32,
-    "status": "contract-frozen-implementation-pending",
+    "status": "deployment-admitted-integration-pending",
     "contract": "development-networks.md",
     "machine_contract": "development-network-contract.json",
     "admission": {
       "contract": "Seven catalog/Compose-derived topology/destination, address, management/OTLP, diagnostics, outbound/database and peer-name checks pass; the four existing provisioning-contract checks also pass. No skipped tests. Peer names use the existing temporal-namespace service.",
       "docker_observation": "node tests/integration/deployment/purpose-listener-docker.mjs: three isolated internal/unicast/multihomed observations reproduce unpublished, unreachable and outbound-targeted host ports. Primary health and normal exit pass; own labelled resources are cleaned and retained container/network/volume IDs remain unchanged.",
-      "scope": "Contract and infrastructure-decision evidence only. Diagnostic/OTLP transports, Compose unicast/address/DNS/key wiring, dependency-tooling cutover and final actual platform security/browser/lifecycle/Skill integration remain pending."
+      "scope": "Actual Compose address/DNS/key/user wiring and production-service startup/diagnostics/OTLP/normal-stop admission passed. Full per-network authorization and login/workspace/lifecycle/Skill flows remain pending in explicit integration.",
+      "docker": "node tests/integration/deployment/compose-runtime-docker.mjs: 51 checks across 14 actual production services/helpers. Startup/health, separate read-only credentials, fixed interfaces, unauthenticated diagnostic rejection, genuine issuer JWKS, management business/query isolation, actual Jaeger OTLP persistence and every normal exit zero pass. Unique candidate images, keys and owned project resources cleaned; retained container/network/volume identities unchanged. No Provider calls."
     }
   },
   "deployment_transports": {
@@ -344,7 +350,7 @@
     "admission": {
       "unit_contract_component": "17 native TCP/HTTP/CLI tests pass without skips: exact fixed routes, binary/half-close/backpressure preservation, global budgets, selected-target failure, privacy, partial-listen rollback, OTLP path/method/query/CONNECT/upgrade rejection, authority-header removal, declared/chunked wire limits, response limit, timeout and normal cancellation.",
       "docker": "node tests/integration/deployment/transports-docker.mjs: 21 isolated production-helper/fixture boundary checks pass. Nonroot/read-only containers, host-loopback diagnostics, purpose interface rejection, no injected authority, fixed management OTLP-only forwarding, actual 8 MiB CLI cap and SIGINT/SIGTERM exit zero. Owned resources removed; retained container/network/volume identities unchanged.",
-      "scope": "Standalone deployment transports with explicit protocol fixtures only. Actual Compose mount/address/DNS and publication cutover, real Jaeger acceptance and full platform service authorization/browser/lifecycle/Skill integration remain pending."
+      "scope": "Standalone transport checks and actual Compose/Jaeger/normal-stop admission passed. Complete platform route authorization and business integration remain pending."
     }
   }
 }

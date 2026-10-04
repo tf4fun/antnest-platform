@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "status": "contract-frozen-implementation-pending",
+  "status": "deployment-admitted-integration-pending",
   "profile": "disposable-development-token-http",
   "service_prefix_environment": "ANTNEST_SERVICE_NETWORK_PREFIX",
   "default_service_prefix": "10.241.0",

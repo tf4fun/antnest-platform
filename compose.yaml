@@ -13,10 +13,10 @@ services:
       ANTNEST_IDENTITY_POSTGRES_PASSWORD: ${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}
       ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}
     healthcheck:
-      test:
-        [
+      test: [
           "CMD-SHELL",
-          'test -f "$$PGDATA/.antnest-init-complete" && pg_isready -h 127.0.0.1 -U antnest_test_admin -d postgres',
+          'test -f "$$PGDATA/.antnest-init-complete" && pg_isready -h 127.0.0.1 -U
+          antnest_test_admin -d postgres',
         ]
       interval: 30s
       timeout: 3s
@@ -27,15 +27,15 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/postgres-init.sh:/docker-entrypoint-initdb.d/10-antnest-services.sh:ro
     networks:
-      [
-        egress-database,
-        runtime-controller-database,
-        agent-acp-database,
-        identity-database,
-        agent-controller-database,
-        skill-registry-database,
-        temporal-database,
-      ]
+      postgres-diagnostics:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.162
+      egress-database: {}
+      runtime-controller-database: {}
+      agent-acp-database: {}
+      identity-database: {}
+      agent-controller-database: {}
+      skill-registry-database: {}
+      temporal-database: {}
 
   temporal-databases:
     profiles: [stage2, stage3]
@@ -51,7 +51,8 @@ services:
     entrypoint: [sh, /scripts/init-databases.sh]
     volumes:
       - ./scripts/temporal/init-databases.sh:/scripts/init-databases.sh:ro
-    networks: [temporal-database]
+    networks:
+      temporal-database: {}
 
   temporal-schema:
     profiles: [stage2, stage3]
@@ -64,7 +65,8 @@ services:
     entrypoint: [sh, /scripts/setup-schema.sh]
     volumes:
       - ./scripts/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
-    networks: [temporal-database]
+    networks:
+      temporal-database: {}
 
   temporal:
     profiles: [stage2, stage3]
@@ -98,7 +100,10 @@ services:
       retries: 5
       start_period: 60s
       start_interval: 2s
-    networks: [temporal-database, development]
+    networks:
+      temporal-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.98
+      temporal-database: {}
     stop_grace_period: 30s
 
   temporal-namespace:
@@ -112,7 +117,11 @@ services:
     entrypoint: [sh, /scripts/setup-namespace.sh]
     volumes:
       - ./scripts/temporal/setup-namespace.sh:/scripts/setup-namespace.sh:ro
-    networks: [development]
+    networks:
+      temporal-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.100
+    extra_hosts:
+      temporal: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.98
 
   runtime-egress:
     image: antnest/runtime-egress:local
@@ -120,6 +129,9 @@ services:
       context: .
       dockerfile: services/runtime-egress/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       postgres:
         condition: service_healthy
     environment:
@@ -132,7 +144,12 @@ services:
       ANTNEST_EGRESS_DNS_UPSTREAM: ${ANTNEST_EGRESS_DNS_UPSTREAM:-127.0.0.11:53}
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_EGRESS_HEALTH_LISTEN: 127.0.0.1:8082
     cap_add: [NET_ADMIN]
     sysctls:
       net.ipv4.ip_forward: "1"
@@ -140,25 +157,44 @@ services:
       - /dev/net/tun:/dev/net/tun
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          'curl --fail --silent http://${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081/status | grep -q ''"status":"ready"''',
-        ]
+        - CMD
+        - /usr/local/bin/runtime-egress
+        - --healthcheck
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 30s
       start_interval: 2s
     networks:
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.123
       control:
         ipv4_address: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
       egress-database: {}
       egress:
         gw_priority: 1
-      observability: {}
       runtime-management:
         ipv4_address: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}
     stop_grace_period: 10s
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/runtime-egress/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/runtime-egress/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   runtime-controller:
     image: antnest/runtime-controller:local
@@ -167,25 +203,27 @@ services:
       context: .
       dockerfile: services/runtime-controller/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       postgres:
         condition: service_healthy
     environment:
       ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL: postgres://antnest_runtime_controller:${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}@postgres:5432/antnest_runtime_controller
-      ANTNEST_RUNTIME_CONTROLLER_LISTEN: :8080
+      ANTNEST_RUNTIME_CONTROLLER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50:8080
       ANTNEST_RUNTIME_PLATFORM: docker
       ANTNEST_DOCKER_HOST: unix:///var/run/docker.sock
       ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${ANTNEST_RUNTIME_CONTROLLER_SCOPE:-antnest-platform}
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
       ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
       ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY: ${ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY:-30s}
       ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: ${ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:-}
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
@@ -193,11 +231,42 @@ services:
       ANTNEST_RUNTIME_OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       ANTNEST_RUNTIME_OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       ANTNEST_RUNTIME_OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
-      ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT: ${ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT: ${ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT:-http://${ANTNEST_RUNTIME_OTLP_INGRESS_IPV4:-172.30.255.4}:4318}
       ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_RUNTIME_INSTANCE_KEY_FILE: /etc/antnest/runtime-instance/master.key
+      ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN: 127.0.0.1:8082
+      ANTNEST_RUNTIME_ALLOWED_IMAGES: ${ANTNEST_RUNTIME_ALLOWED_IMAGES:-["antnest/antnest-runtime"]}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runtime-system-skills:/system-skills-volume:ro
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/runtime-controller/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/runtime-controller/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/runtime-controller/instance-master.key
+        target: /etc/antnest/runtime-instance/master.key
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "/usr/local/bin/runtime-controller", "--healthcheck"]
       interval: 30s
@@ -206,13 +275,19 @@ services:
       start_period: 30s
       start_interval: 2s
     networks:
-      [
-        runtime-controller-database,
-        runtime-management,
-        development,
-        observability,
-      ]
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50
+      registry-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.85
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.121
+      runtime-controller-database: {}
+      runtime-management:
+        ipv4_address: ${ANTNEST_RUNTIME_CONTROLLER_MANAGEMENT_IPV4:-172.30.255.5}
     stop_grace_period: 30s
+    extra_hosts:
+      skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   agent-acp-service:
     profiles: [stage2, stage3]
@@ -221,37 +296,89 @@ services:
       context: .
       dockerfile: services/agent-acp-service/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       postgres:
         condition: service_healthy
     environment:
       ANTNEST_ACP_DATABASE_URL: postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp
       ANTNEST_ACP_CLIENT_MCP_KEY: ${ANTNEST_ACP_CLIENT_MCP_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-      ANTNEST_ACP_LISTEN: :8080
+      ANTNEST_ACP_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5:8080
       ANTNEST_ACP_RUN_TIMEOUT: ${ANTNEST_ACP_RUN_TIMEOUT:-30m}
       ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:+http://agent-controller:8080}
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID:-}
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:-}
-      ANTNEST_ACP_SKILL_REGISTRY_URL: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:+http://skill-registry:8080}
-      ANTNEST_ACP_SKILL_REGISTRY_TOKEN: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:+${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}}
-      ANTNEST_ACP_SKILL_SOURCE_TOKEN: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:-}
+      ANTNEST_ACP_SKILL_REGISTRY_URL: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:+http://skill-registry:8080}
       ANTNEST_ACP_MAX_CONFIGURATION_BYTES: ${ANTNEST_ACP_MAX_CONFIGURATION_BYTES:-16777216}
       ANTNEST_ACP_MAX_PROMPT_BYTES: ${ANTNEST_ACP_MAX_PROMPT_BYTES:-16777216}
       ANTNEST_ACP_SHUTDOWN_TIMEOUT: ${ANTNEST_ACP_SHUTDOWN_TIMEOUT:-15s}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_SERVICE_NAME: agent-acp-service
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_ACP_CONTROL_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.34:8081
+      ANTNEST_ACP_IDENTITY_URL: http://identity-service:8080
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: ${ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS:-false}
     healthcheck:
       test:
-        ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/status"]
+        - CMD
+        - node
+        - -e
+        - fetch('http://'+process.env.ANTNEST_ACP_LISTEN+'/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 30s
       start_interval: 2s
     networks:
-      [agent-acp-database, runtime-management, development, observability]
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.22
+      controller-acp:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.34
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.71
+      registry-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.86
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.120
+      agent-acp-database: {}
+      acp-provider:
+        gw_priority: 1
+      runtime-management:
+        ipv4_address: ${ANTNEST_ACP_MANAGEMENT_IPV4:-172.30.255.6}
     stop_grace_period: 20s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/agent-acp-service/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/agent-acp-service/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
+      skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   stage2-model:
     profiles: [stage2-e2e]
@@ -275,7 +402,9 @@ services:
       retries: 3
       start_period: 20s
       start_interval: 1s
-    networks: [development]
+    networks:
+      controller-provider: {}
+      acp-provider: {}
 
   stage3-model:
     profiles: [stage3-e2e]
@@ -299,7 +428,9 @@ services:
       retries: 3
       start_period: 20s
       start_interval: 1s
-    networks: [development]
+    networks:
+      controller-provider: {}
+      acp-provider: {}
 
   identity-service:
     profiles: [stage2, stage3]
@@ -308,25 +439,35 @@ services:
       context: .
       dockerfile: services/identity-service/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       postgres:
         condition: service_healthy
     environment:
       ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}@postgres:5432/antnest_identity
       ANTNEST_IDENTITY_ENCRYPTION_KEY: ${ANTNEST_IDENTITY_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-      ANTNEST_IDENTITY_PUBLIC_BASE_URL: http://127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT:-58082}
-      ANTNEST_IDENTITY_LISTEN: :8080
+      ANTNEST_IDENTITY_PUBLIC_BASE_URL: ${ANTNEST_EDGE_PUBLIC_BASE_URL:-http://127.0.0.1:8090}
+      ANTNEST_IDENTITY_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66:8080
       ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: ${ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG:-engineering}
       ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: ${ANTNEST_BOOTSTRAP_ORGANIZATION_NAME:-Engineering}
       ANTNEST_BOOTSTRAP_ADMIN_EMAIL: ${ANTNEST_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
       ANTNEST_BOOTSTRAP_ADMIN_PASSWORD: ${ANTNEST_BOOTSTRAP_ADMIN_PASSWORD:-antnest-admin-dev}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
       OTEL_SERVICE_NAME: identity-service
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_IDENTITY_CCT_SIGNING_KID: ${ANTNEST_IDENTITY_CCT_SIGNING_KID:?required generated Identity key id}
+      ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE: /etc/antnest/cct/signing.pem
+      ANTNEST_IDENTITY_CCT_JWKS_FILE: /etc/antnest/cct/jwks.json
     healthcheck:
       test: ["CMD", "/usr/local/bin/identity-service", "--healthcheck"]
       interval: 30s
@@ -334,8 +475,53 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
-    networks: [identity-database, development]
+    networks:
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.115
+      identity-database: {}
+      identity-outbound:
+        gw_priority: 1
     stop_grace_period: 20s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/identity-service/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/identity-service/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/identity-service/cct-signing.pem
+        target: /etc/antnest/cct/signing.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/identity-service/cct-jwks.json
+        target: /etc/antnest/cct/jwks.json
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   agent-controller:
     profiles: [stage2, stage3]
@@ -344,6 +530,9 @@ services:
       context: .
       dockerfile: services/agent-controller/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       temporal:
         condition: service_healthy
       temporal-namespace:
@@ -360,10 +549,9 @@ services:
       ANTNEST_TEMPORAL_ADDRESS: temporal:7233
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@postgres:5432/antnest_agent_controller
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-      ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
+      ANTNEST_AGENT_CONTROLLER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18:8080
       ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT:-5m}
-      ANTNEST_AGENT_ACP_SERVICE_URL: ${ANTNEST_AGENT_ACP_SERVICE_URL:-http://agent-acp-service:8080}
       ANTNEST_ACP_MAX_CONFIGURATION_BYTES: ${ANTNEST_ACP_MAX_CONFIGURATION_BYTES:-16777216}
       ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL: ${ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL:-30s}
       ANTNEST_AGENT_CONTROLLER_EXECUTION_RETRY_INTERVAL: ${ANTNEST_AGENT_CONTROLLER_EXECUTION_RETRY_INTERVAL:-1s}
@@ -374,15 +562,20 @@ services:
       ANTNEST_RUNTIME_CONTROLLER_URL: http://runtime-controller:8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
       ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
       OTEL_SERVICE_NAME: agent-controller
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_AGENT_ACP_CONTROL_URL: http://agent-acp-control:8081
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: ${ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS:-false}
     healthcheck:
       test: ["CMD", "/usr/local/bin/agent-controller", "--healthcheck"]
       interval: 30s
@@ -390,8 +583,55 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
-    networks: [agent-controller-database, control, development, observability]
+    networks:
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
+      controller-acp:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.35
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.51
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.70
+      registry-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.84
+      temporal-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.99
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.119
+      control:
+        ipv4_address: ${ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4:-172.31.255.4}
+      agent-controller-database: {}
+      controller-provider:
+        gw_priority: 1
     stop_grace_period: 20s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/agent-controller/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/agent-controller/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      agent-acp-control: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.34
+      runtime-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50
+      skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
+      runtime-egress: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
+      temporal: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.98
 
   skill-registry-database-init:
     profiles: [stage3]
@@ -407,7 +647,8 @@ services:
     entrypoint: [sh, /scripts/init-database.sh]
     volumes:
       - ./scripts/skill-registry/init-database.sh:/scripts/init-database.sh:ro
-    networks: [skill-registry-database]
+    networks:
+      skill-registry-database: {}
 
   skill-registry:
     profiles: [stage3]
@@ -416,21 +657,27 @@ services:
       context: .
       dockerfile: services/skill-registry/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       skill-registry-database-init:
         condition: service_completed_successfully
     environment:
-      ANTNEST_SKILL_REGISTRY_LISTEN: :8080
+      ANTNEST_SKILL_REGISTRY_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82:8080
       ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://antnest_skill_registry:${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:-antnest-skill-registry-dev}@postgres:5432/antnest_skill_registry
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
-      ANTNEST_SKILL_REGISTRY_SOURCE_URL: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:+http://agent-acp-service:8080}
-      ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: ${ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:-}
+      ANTNEST_SKILL_REGISTRY_SOURCE_URL: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:+http://agent-acp-workspace:8080}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: ${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:-}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_SERVICE_NAME: skill-registry
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_IDENTITY_URL: http://identity-service:8080
     healthcheck:
       test: [CMD, /usr/local/bin/skill-registry, --healthcheck]
       interval: 30s
@@ -438,8 +685,41 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
-    networks: [skill-registry-database, development]
+    networks:
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.6
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.72
+      registry-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.122
+      skill-registry-database: {}
     stop_grace_period: 15s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/skill-registry/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/skill-registry/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      agent-acp-workspace: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   admin-console:
     profiles: [stage3]
@@ -448,6 +728,9 @@ services:
       context: .
       dockerfile: services/admin-console/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       identity-service:
         condition: service_healthy
       agent-controller:
@@ -455,21 +738,24 @@ services:
       skill-registry:
         condition: service_healthy
     environment:
-      ANTNEST_ADMIN_CONSOLE_LISTEN: :8080
+      ANTNEST_ADMIN_CONSOLE_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.3:8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
       ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
-      ANTNEST_AGENT_ACP_SERVICE_URL: ${ANTNEST_AGENT_ACP_SERVICE_URL:-http://agent-acp-service:8080}
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://agent-acp-workspace:8080
       ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_SKILL_REGISTRY_API_TOKEN:-antnest-skill-registry-local-development-token}
       ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: ${ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:-}
       ANTNEST_ADMIN_DEPENDENCY_TIMEOUT: ${ANTNEST_ADMIN_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_ADMIN_SHUTDOWN_TIMEOUT: ${ANTNEST_ADMIN_SHUTDOWN_TIMEOUT:-15s}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_SERVICE_NAME: admin-console
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
     healthcheck:
       test: ["CMD", "/usr/local/bin/admin-console", "--healthcheck"]
       interval: 30s
@@ -477,8 +763,44 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
-    networks: [development, observability]
+    networks:
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.3
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.20
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.68
+      registry-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.83
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.117
     stop_grace_period: 20s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/admin-console/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/admin-console/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
+      agent-acp-workspace: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5
+      skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   agent-ui:
     profiles: [stage3]
@@ -487,32 +809,73 @@ services:
       context: .
       dockerfile: services/agent-ui/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       agent-acp-service:
         condition: service_healthy
       agent-controller:
         condition: service_healthy
     environment:
-      ANTNEST_AGENT_ACP_SERVICE_URL: http://agent-acp-service:8080
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://agent-acp-workspace:8080
       ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES: ${ANTNEST_ACP_MAX_PROMPT_BYTES:-16777216}
       ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_SERVICE_NAME: agent-ui
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
+      ANTNEST_AGENT_UI_BRIDGE_HOST: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.4
+      ANTNEST_AGENT_UI_BRIDGE_PORT: "8080"
+      ANTNEST_AGENT_UI_IDENTITY_URL: http://identity-service:8080
     healthcheck:
       test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
+        - CMD
+        - node
+        - -e
+        - fetch('http://'+process.env.ANTNEST_AGENT_UI_BRIDGE_HOST+':'+process.env.ANTNEST_AGENT_UI_BRIDGE_PORT+'/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 20s
       start_interval: 1s
-    networks: [development, observability]
+    networks:
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.4
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.21
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.69
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.118
     stop_grace_period: 30s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/agent-ui/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/agent-ui/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
+      agent-acp-workspace: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   edge-gateway:
     profiles: [stage3]
@@ -521,6 +884,9 @@ services:
       context: .
       dockerfile: services/edge-gateway/Dockerfile
     depends_on:
+      jaeger:
+        condition: service_started
+        required: false
       identity-service:
         condition: service_healthy
       admin-console:
@@ -532,21 +898,25 @@ services:
       agent-controller:
         condition: service_healthy
     environment:
-      ANTNEST_EDGE_LISTEN: :8080
+      ANTNEST_EDGE_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.130:8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
       ANTNEST_ADMIN_CONSOLE_URL: http://admin-console:8080
       ANTNEST_AGENT_UI_URL: http://agent-ui:8080
-      ANTNEST_AGENT_ACP_URL: http://agent-acp-service:8080
+      ANTNEST_AGENT_ACP_URL: http://agent-acp-workspace:8080
       ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       ANTNEST_EDGE_COOKIE_SECURE: ${ANTNEST_EDGE_COOKIE_SECURE:-false}
       ANTNEST_EDGE_REQUEST_TIMEOUT: ${ANTNEST_EDGE_REQUEST_TIMEOUT:-150s}
       ANTNEST_EDGE_SHUTDOWN_TIMEOUT: ${ANTNEST_EDGE_SHUTDOWN_TIMEOUT:-15s}
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_SERVICE_NAME: edge-gateway
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
     ports:
       - 127.0.0.1:${ANTNEST_EDGE_HOST_PORT:-8090}:8080
     healthcheck:
@@ -556,43 +926,252 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
-    networks: [development, observability]
+    networks:
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.2
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.19
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.67
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.116
+      gateway-ingress:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.130
+        gw_priority: 1
     stop_grace_period: 30s
+    user:
+      ${ANTNEST_SERVICE_AUTH_UID:?required generated UID}:${ANTNEST_SERVICE_AUTH_GID:?required
+      generated GID}
+    volumes:
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/edge-gateway/callers.json
+        target: /etc/antnest/service-auth/callers.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/edge-gateway/tokens
+        target: /etc/antnest/service-auth/tokens
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
+      admin-console: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.3
+      agent-ui: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.4
+      agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
+      agent-acp-workspace: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5
+      jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   jaeger:
     profiles: [observability]
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.21.0
     networks:
-      development: {}
-      observability: {}
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
+  diagnostic-relay:
+    profiles:
+      - diagnostics
+    image: node:24.21.0-bookworm-slim
+    user: 65532:65532
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - node
+      - /opt/antnest/scripts/deployment/diagnostic-relay.mjs
+    environment:
+      ANTNEST_SERVICE_NETWORK_PREFIX: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}
+    volumes:
+      - type: bind
+        source: ./scripts/deployment
+        target: /opt/antnest/scripts/deployment
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./contracts/platform/development-network-contract.json
+        target: /opt/antnest/contracts/platform/development-network-contract.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - const
+          n=require('node:net').connect(5432,process.env.ANTNEST_SERVICE_NETWORK_PREFIX+'.146',()=>n.end());n.on('error',()=>process.exit(1))
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    networks:
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.7
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.23
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.52
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.73
+      temporal-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.101
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.125
+      diagnostic-ingress:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.146
+        gw_priority: 1
+      postgres-diagnostics:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.163
+    stop_grace_period: 10s
+  runtime-telemetry-ingress:
+    profiles:
+      - observability
+    depends_on:
+      jaeger:
+        condition: service_started
+    image: node:24.21.0-bookworm-slim
+    user: 65532:65532
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - node
+      - /opt/antnest/scripts/deployment/runtime-telemetry-ingress.mjs
+    environment:
+      ANTNEST_SERVICE_NETWORK_PREFIX: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}
+      ANTNEST_RUNTIME_OTLP_INGRESS_IPV4: ${ANTNEST_RUNTIME_OTLP_INGRESS_IPV4:-172.30.255.4}
+    volumes:
+      - type: bind
+        source: ./scripts/deployment
+        target: /opt/antnest/scripts/deployment
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./contracts/platform/development-network-contract.json
+        target: /opt/antnest/contracts/platform/development-network-contract.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://'+process.env.ANTNEST_RUNTIME_OTLP_INGRESS_IPV4+':4318/v1/traces').then(r=>{if(r.status!==405)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    networks:
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.124
       runtime-management:
-        ipv4_address: ${ANTNEST_JAEGER_RUNTIME_IPV4:-172.30.255.4}
+        ipv4_address: ${ANTNEST_RUNTIME_OTLP_INGRESS_IPV4:-172.30.255.4}
+    stop_grace_period: 10s
 
 networks:
+  edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.0/28
+  controller-clients:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.16/28
+  controller-acp:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.32/28
+  controller-runtime:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.48/28
+  identity-clients:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.64/28
+  registry-clients:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.80/28
+  temporal-clients:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.96/28
+  observability:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.112/28
+  gateway-ingress:
+    internal: false
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.128/28
+  diagnostic-ingress:
+    internal: false
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.144/28
+  postgres-diagnostics:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.160/28
   control:
     internal: true
     ipam:
       config:
         - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET:-172.31.255.0/24}
-  development: {}
-  observability:
+  egress-database:
     internal: true
-  egress: {}
+  runtime-controller-database:
+    internal: true
+  agent-acp-database:
+    internal: true
+  identity-database:
+    internal: true
+  agent-controller-database:
+    internal: true
+  skill-registry-database:
+    internal: true
+  temporal-database:
+    internal: true
+  identity-outbound:
+    internal: false
+  controller-provider:
+    internal: false
+  acp-provider:
+    internal: false
+  egress:
+    internal: false
   runtime-management:
     name: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
     internal: true
     ipam:
       config:
         - subnet: ${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-172.30.255.0/24}
-  egress-database: {}
-  runtime-controller-database: {}
-  agent-acp-database: {}
-  identity-database: {}
-  agent-controller-database: {}
-  skill-registry-database:
-    internal: true
-  temporal-database:
-    internal: true
+          ip_range: ${ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE:-172.30.255.128/25}
 
 volumes:
   postgres-data:

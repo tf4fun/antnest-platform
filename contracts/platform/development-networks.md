@@ -2,7 +2,8 @@
 
 This deployment contract belongs to [#32](https://github.com/tf4fun/antnest-platform/issues/32).
 The [machine contract](development-network-contract.json) is frozen at version 1;
-Compose wiring and full-platform admission remain **pending**. The
+Compose wiring and actual deployment admission have passed;
+full cross-service acceptance remains **pending**. The
 [deployment transports](../../scripts/deployment/README.md) separately passed
 17 native and 21 isolated Docker component checks; those do not admit the full
 deployment topology or actual business flows.
@@ -79,6 +80,11 @@ outside its dynamic allocation range, default `172.30.255.128/25` within
 and dynamic-range settings. Health follows the configured purpose address;
 RC/Egress keep their separate loopback readiness listeners.
 
+Each static exporter declares Jaeger as an optional startup dependency. When
+observability is selected, Compose stops those exporters and the Runtime OTLP
+ingress before stopping Jaeger, so normal SDK shutdown can finish its flush.
+The optional dependency does not enable observability in a profile that omits it.
+
 ## Runtime telemetry exception
 
 Jaeger leaves Runtime management completely: neither its query/UI nor its
@@ -125,8 +131,8 @@ logging or protocol interpretation. Backpressure and normal shutdown bound
 buffers and close all owned sockets. A failed backend fails that connection;
 it must not select a different target.
 
-This contract supersedes the intermediate debug overlay's direct backend
-publications **when network cutover is implemented**. At that point product
+This cutover supersedes the intermediate debug overlay's direct backend
+publications. Product
 `compose.stage3.yaml` no longer selects diagnostic exposure by file order;
 debug is always an explicit opt-in. Test entry points requiring only dependency
 diagnostics must use an explicit test override of the relay's publications.
@@ -147,5 +153,10 @@ generate/mount placeholder credentials.
 
 The [rollout ledger](service-authentication-rollout.json) retains intermediate
 port and standalone transport evidence separately. Contract tests and fixture
-listeners do not complete
-steps 2 or 3, and this document does not claim they have passed.
+listeners do not complete steps 2 or 3. Actual deployment admission is
+complete: 43 wiring/port/dependency/v3 HTTP checks and 51 actual Compose checks
+pass without skips/failures. The latter verifies 14 healthy production
+services/helpers, private mounts, fixed addresses, diagnostic authentication,
+management business/query isolation, actual Jaeger ingestion and every normal
+exit zero. It cleans owned resources/keys/tags and preserves retained identities.
+Final security and business integration follow it.

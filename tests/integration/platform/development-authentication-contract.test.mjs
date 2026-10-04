@@ -75,6 +75,8 @@ test("the bootstrap contract retains independent issuer and instance master form
 test("the development port contract makes diagnostics an explicit loopback-only overlay", () => {
   const ports = contract.host_ports;
   assert(ports, "missing deployment host-port contract");
+  assert.equal(ports.revision, 2);
+  assert.equal(ports.debug_publisher, "diagnostic-relay");
   assert.equal(ports.base_file, "compose.yaml");
   assert.equal(ports.debug_file, "compose.debug.yaml");
   assert.equal(ports.host_ip, "127.0.0.1");
@@ -105,12 +107,7 @@ test("the development port contract makes diagnostics an explicit loopback-only 
     assert.match(publication.environment, /^ANTNEST_[A-Z_]+_HOST_PORT$/u);
   }
   assert.equal(ports.authentication, "unchanged");
-  assert.deepEqual(ports.stage3_suppressed_debug_services, [
-    "runtime-controller",
-    "agent-acp-service",
-    "identity-service",
-    "agent-controller",
-  ]);
+  assert.equal(ports.stage3_port_suppression, "explicit-test-override");
   assert.equal(ports.runtime_management_publications, false);
   assert.equal(ports.health_listener_publications, false);
 });

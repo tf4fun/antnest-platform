@@ -1,0 +1,54 @@
+# Isolated production-image admission; no service listener or authority is relaxed.
+services:
+  runtime-egress:
+    image: antnest/runtime-egress:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  runtime-controller:
+    image: antnest/runtime-controller:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+    environment:
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+  agent-acp-service:
+    image: antnest/agent-acp-service:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  identity-service:
+    image: antnest/identity-service:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  agent-controller:
+    image: antnest/agent-controller:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  skill-registry:
+    image: antnest/skill-registry:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  admin-console:
+    image: antnest/admin-console:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  agent-ui:
+    image: antnest/agent-ui:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  edge-gateway:
+    image: antnest/edge-gateway:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}
+  temporal:
+    image: antnest/temporal:${ANTNEST_ADMISSION_TAG:?required isolated tag}
+    build:
+      labels:
+        io.antnest.deployment-admission: ${COMPOSE_PROJECT_NAME:?required isolated project}

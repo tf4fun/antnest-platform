@@ -21,12 +21,25 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const script = resolve(root, "scripts/dev-service-tokens.mjs");
+const require = createRequire(
+  new URL("../../../services/agent-acp-service/package.json", import.meta.url),
+);
+const Ajv = require("ajv/dist/2020.js").default;
+const validateJWKS = new Ajv({ strict: true }).compile(
+  JSON.parse(
+    readFileSync(
+      resolve(root, "contracts/platform/caller-context-jwks.schema.json"),
+      "utf8",
+    ),
+  ),
+);
 const contract = JSON.parse(
   readFileSync(
     resolve(
@@ -207,9 +220,11 @@ test("Identity keys sign valid Ed25519 CCTs and RC retains a separate raw master
   assert.equal(jwks.keys[0].kid, env.ANTNEST_IDENTITY_CCT_SIGNING_KID);
   assert.equal(jwks.keys[0].kid, manifest.cct_kid);
   assert.deepEqual(Object.keys(jwks.keys[0]).sort(), [
+    "alg",
     "crv",
     "kid",
     "kty",
+    "use",
     "x",
   ]);
   const claims = Buffer.from("independent-deployment-cct-verification");
@@ -229,6 +244,18 @@ test("Identity keys sign valid Ed25519 CCTs and RC retains a separate raw master
   assert(!master.equals(Buffer.alloc(32)));
   assert(!pem.includes(master));
   assert(!bytes(output, "manifest.json").includes(Buffer.from("PRIVATE KEY")));
+});
+
+test("generated Identity public keys satisfy the actual issuer JWKS contract", async (t) => {
+  const { provisionTokens } = await helper();
+  const output = join(fixture(t), "issuer-format");
+  provisionTokens({ output });
+  const jwks = JSON.parse(
+    bytes(output, contract.bootstrap_keys.identity_cct.public_file),
+  );
+  assert.equal(validateJWKS(jwks), true, JSON.stringify(validateJWKS.errors));
+  assert.equal(jwks.keys[0].use, "sig");
+  assert.equal(jwks.keys[0].alg, "EdDSA");
 });
 
 test("every new deployment gets independent tokens and bootstrap keys", async (t) => {

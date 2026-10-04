@@ -11,12 +11,15 @@ test("dependency plans explicitly select loopback diagnostics", () => {
     const files = plan.compose.flatMap((arg, index, args) =>
       arg === "-f" ? [args[index + 1]] : [],
     );
-    assert.equal(files.length, 2);
+    assert.equal(files.length, 3);
     assert(files[0].endsWith("/compose.yaml"));
     assert(files[1].endsWith("/compose.debug.yaml"));
+    assert(files[2].endsWith("/tests/support/compose.dependencies.yaml"));
     assert.deepEqual(
       plan.services,
-      profile === "postgres" ? ["postgres"] : ["postgres", "temporal"],
+      profile === "postgres"
+        ? ["postgres", "diagnostic-relay"]
+        : ["postgres", "temporal", "diagnostic-relay"],
     );
   }
 });
@@ -26,17 +29,37 @@ test("dependency plans isolate projects and override retained ports and credenti
     COMPOSE_PROJECT_NAME: "retained",
     ANTNEST_POSTGRES_HOST_PORT: "55432",
     ANTNEST_POSTGRES_ADMIN_PASSWORD: "private-canary",
+    ANTNEST_SERVICE_AUTH_DIRECTORY: "/retained-private-credentials",
+    ANTNEST_SERVICE_AUTH_UID: "1000",
+    ANTNEST_SERVICE_AUTH_GID: "1000",
+    ANTNEST_IDENTITY_CCT_SIGNING_KID: "retained-kid",
+    ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: "retained-key",
+    ANTNEST_SERVICE_NETWORK_PREFIX: "10.241.0",
+    OTEL_SDK_DISABLED: "false",
   });
   assert.match(plan.project, /^antnest-dependencies-[a-f0-9-]+$/);
   assert.equal(plan.env.ANTNEST_POSTGRES_HOST_PORT, "0");
   assert.equal(plan.env.ANTNEST_TEMPORAL_HOST_PORT, "0");
   assert.equal(plan.env.ANTNEST_POSTGRES_ADMIN_PASSWORD, "integration-admin");
-  assert.deepEqual(plan.services, ["postgres", "temporal"]);
+  assert.deepEqual(plan.services, ["postgres", "temporal", "diagnostic-relay"]);
+  assert.equal(
+    plan.env.ANTNEST_SERVICE_AUTH_DIRECTORY,
+    "/never-mounted-dependency-credentials",
+  );
+  assert.equal(plan.env.ANTNEST_SERVICE_AUTH_UID, "65532");
+  assert.equal(plan.env.ANTNEST_SERVICE_AUTH_GID, "65532");
+  assert.equal(plan.env.ANTNEST_IDENTITY_CCT_SIGNING_KID, "dependency-unused");
+  assert.equal(plan.env.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY, undefined);
+  assert.equal(plan.env.ANTNEST_SERVICE_NETWORK_PREFIX, undefined);
+  assert.equal(plan.env.OTEL_SDK_DISABLED, undefined);
   assert(plan.compose.includes("/dev/null"));
   assert(plan.compose.includes(plan.project));
 });
 test("Postgres plans omit Temporal and reject unknown profiles", () => {
-  assert.deepEqual(dependencyPlan("postgres", {}).services, ["postgres"]);
+  assert.deepEqual(dependencyPlan("postgres", {}).services, [
+    "postgres",
+    "diagnostic-relay",
+  ]);
   assert.throws(() => dependencyPlan("retained", {}));
 });
 test("dependency children use explicit cwd and the disposable ACP database instead of inherited input", async (t) => {
@@ -54,7 +77,9 @@ test("dependency children use explicit cwd and the disposable ACP database inste
     if (args[0] === "inspect")
       return JSON.stringify([
         {
-          Config: { Labels: { "com.docker.compose.service": "postgres" } },
+          Config: {
+            Labels: { "com.docker.compose.service": "diagnostic-relay" },
+          },
           NetworkSettings: {
             Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "15432" }] },
           },
@@ -115,19 +140,26 @@ test("dependency setup and cleanup failures retain both causes and private evide
   assert.equal(report.cleanup_error_type, "RangeError");
   assert(!JSON.stringify(report).includes("private"));
 });
-test("dependency profiles preserve explicit startup, command and cleanup limits", async (t) => {
+test("dependency profiles preserve startup, command and cleanup limits and a discovered network prefix", async (t) => {
   const output = mkdtempSync(join(tmpdir(), "antnest-dependency-timeout-"));
   t.after(() => rmSync(output, { recursive: true, force: true }));
   let startupWait;
-  const dockerFactory = () => async (args) => {
-    if (args.includes("up"))
+  let startedPrefix, cleanupPrefix;
+  const dockerFactory = (env) => async (args) => {
+    if (args.includes("up")) {
       startupWait = args[args.indexOf("--wait-timeout") + 1];
+      startedPrefix = env.ANTNEST_SERVICE_NETWORK_PREFIX;
+    }
+    if (args.includes("down"))
+      cleanupPrefix = env.ANTNEST_SERVICE_NETWORK_PREFIX;
     if (args.includes("compose") && args.includes("ps"))
       return "postgres-probe";
     if (args[0] === "inspect")
       return JSON.stringify([
         {
-          Config: { Labels: { "com.docker.compose.service": "postgres" } },
+          Config: {
+            Labels: { "com.docker.compose.service": "diagnostic-relay" },
+          },
           NetworkSettings: {
             Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "15432" }] },
           },
@@ -146,6 +178,8 @@ test("dependency profiles preserve explicit startup, command and cleanup limits"
     command: [process.execPath, "-e", "setTimeout(()=>{},500)"],
   });
   assert.equal(startupWait, "30");
+  assert.match(startedPrefix, /^10\.242\.[0-9]{1,3}$/);
+  assert.equal(cleanupPrefix, startedPrefix);
   assert.equal(result.exit_code, 124);
   assert.equal(result.complete, false);
   assert.equal(
