@@ -113,6 +113,43 @@ hash and restart after a deployment-defined bounded overlap/drain. The fresh
 generator intentionally has no live rotation command. Do not regenerate tokens
 against a retained journal or install public conformance fixture credentials.
 
+## Host ports and explicit diagnostics
+
+The machine contract's `host_ports` section freezes deployment publications.
+The base `compose.yaml`, with every profile enabled, publishes only Edge
+Gateway's browser port, bound to `127.0.0.1:8090` by default. Ports on container
+networks do not imply host publication. Runtime MCP, the management network
+and separate health listeners have no host-port mapping.
+
+`compose.debug.yaml` is an explicit development-only overlay. It publishes
+PostgreSQL (55432), Temporal (7233), Runtime Controller (58080), ACP's workspace
+listener (58081), Identity (58082), Agent Controller (58083) and Jaeger's query
+UI (16686). Every mapping is fixed to host loopback. The existing service-specific
+`ANTNEST_*_HOST_PORT` setting may select a different port, including `0` for
+Docker-assigned isolated-test ports; it cannot select a different host address.
+Debug publication neither disables workload/CCT verification nor publishes
+ACP's Controller-only control listener. It does not change Identity's public
+callback URL or enable Skill learning debug settings.
+
+Compose overlays are applied in order. `compose.stage3.yaml` after the debug
+overlay suppresses the four application diagnostic mappings (RC, ACP, Identity
+and Controller), retaining only Gateway and dependency/Jaeger diagnostics.
+Loading debug after stage3 deliberately enables all seven diagnostics. Startup
+and shutdown must use the same ordered files, profiles, project and environment.
+
+The disposable dependency harness must load debug explicitly, bind dependency
+ports to loopback with Docker-assigned port numbers and query those published
+ports. Its plans start only PostgreSQL or PostgreSQL/Temporal, never a retained
+stack or an application workload. Full-stack test entry points must likewise
+select their diagnostic overlay explicitly rather than relying on base ports.
+This does not waive the final Gateway-only/security regression.
+
+The port contract is frozen before Compose/tooling implementation. Admission
+requires rendered Compose checks for all profiles and overlay orders, actual
+isolated PostgreSQL/Temporal connectivity through the dependency harness, and
+cleanup of the harness's own containers, networks and volumes. Full cross-service
+authentication/network/browser acceptance remains a separate integration batch.
+
 ## Development PKI
 
 `scripts/dev-pki.sh` delegates to `scripts/dev-pki.mjs` using the selected Node

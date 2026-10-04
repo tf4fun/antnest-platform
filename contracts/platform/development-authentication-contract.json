@@ -13,6 +13,64 @@
     "runtime-egress": "contracts/egress/callers.json"
   },
   "dynamic_receivers": ["antnest-runtime"],
+  "host_ports": {
+    "base_file": "compose.yaml",
+    "debug_file": "compose.debug.yaml",
+    "host_ip": "127.0.0.1",
+    "base_publications": {
+      "edge-gateway": {
+        "target": 8080,
+        "environment": "ANTNEST_EDGE_HOST_PORT",
+        "default": 8090
+      }
+    },
+    "debug_publications": {
+      "postgres": {
+        "target": 5432,
+        "environment": "ANTNEST_POSTGRES_HOST_PORT",
+        "default": 55432
+      },
+      "temporal": {
+        "target": 7233,
+        "environment": "ANTNEST_TEMPORAL_HOST_PORT",
+        "default": 7233
+      },
+      "runtime-controller": {
+        "target": 8080,
+        "environment": "ANTNEST_RUNTIME_CONTROLLER_HOST_PORT",
+        "default": 58080
+      },
+      "agent-acp-service": {
+        "target": 8080,
+        "environment": "ANTNEST_ACP_HOST_PORT",
+        "default": 58081
+      },
+      "identity-service": {
+        "target": 8080,
+        "environment": "ANTNEST_IDENTITY_HOST_PORT",
+        "default": 58082
+      },
+      "agent-controller": {
+        "target": 8080,
+        "environment": "ANTNEST_AGENT_CONTROLLER_HOST_PORT",
+        "default": 58083
+      },
+      "jaeger": {
+        "target": 16686,
+        "environment": "ANTNEST_JAEGER_UI_HOST_PORT",
+        "default": 16686
+      }
+    },
+    "authentication": "unchanged",
+    "stage3_suppressed_debug_services": [
+      "runtime-controller",
+      "agent-acp-service",
+      "identity-service",
+      "agent-controller"
+    ],
+    "runtime_management_publications": false,
+    "health_listener_publications": false
+  },
   "token_provisioning": {
     "helper": "scripts/dev-service-tokens.mjs",
     "output_directory": "artifacts/service-authentication/",

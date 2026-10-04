@@ -72,6 +72,49 @@ test("the bootstrap contract retains independent issuer and instance master form
   ]);
 });
 
+test("the development port contract makes diagnostics an explicit loopback-only overlay", () => {
+  const ports = contract.host_ports;
+  assert(ports, "missing deployment host-port contract");
+  assert.equal(ports.base_file, "compose.yaml");
+  assert.equal(ports.debug_file, "compose.debug.yaml");
+  assert.equal(ports.host_ip, "127.0.0.1");
+  assert.deepEqual(ports.base_publications, {
+    "edge-gateway": {
+      target: 8080,
+      environment: "ANTNEST_EDGE_HOST_PORT",
+      default: 8090,
+    },
+  });
+  assert.deepEqual(Object.keys(ports.debug_publications).sort(), [
+    "agent-acp-service",
+    "agent-controller",
+    "identity-service",
+    "jaeger",
+    "postgres",
+    "runtime-controller",
+    "temporal",
+  ]);
+  for (const [service, publication] of Object.entries(
+    ports.debug_publications,
+  )) {
+    assert.equal(Object.keys(publication).length, 3, service);
+    assert(Number.isSafeInteger(publication.target), service);
+    assert(publication.target > 0 && publication.target <= 65535, service);
+    assert(Number.isSafeInteger(publication.default), service);
+    assert(publication.default > 0 && publication.default <= 65535, service);
+    assert.match(publication.environment, /^ANTNEST_[A-Z_]+_HOST_PORT$/u);
+  }
+  assert.equal(ports.authentication, "unchanged");
+  assert.deepEqual(ports.stage3_suppressed_debug_services, [
+    "runtime-controller",
+    "agent-acp-service",
+    "identity-service",
+    "agent-controller",
+  ]);
+  assert.equal(ports.runtime_management_publications, false);
+  assert.equal(ports.health_listener_publications, false);
+});
+
 test("credentials and private verification output are ignored before generation", () => {
   const paths = [
     `${contract.token_provisioning.output_directory}identity-service/cct-signing.pem`,
