@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "purpose": "Public synthetic conformance fixtures; never install as deployment credentials.",
+  "schema_vectors": [
+    {
+      "name": "public-reference",
+      "target": "public_reference",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp"
+      },
+      "valid": true
+    },
+    {
+      "name": "private-handoff",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "resolve-bound-current-process",
+      "target": "resolve_request",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "expected_execution_id": "execution-1"
+      },
+      "valid": true
+    },
+    {
+      "name": "ready-liveness",
+      "target": "live_status",
+      "value": {
+        "status": "ready"
+      },
+      "valid": true
+    },
+    {
+      "name": "unavailable-liveness",
+      "target": "live_status",
+      "value": {
+        "status": "unavailable"
+      },
+      "valid": true
+    },
+    {
+      "name": "public-reference-rejects-token",
+      "target": "public_reference",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+      },
+      "valid": false
+    },
+    {
+      "name": "public-reference-rejects-directory",
+      "target": "public_reference",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential_directory": "/tmp/other"
+      },
+      "valid": false
+    },
+    {
+      "name": "public-reference-rejects-generation",
+      "target": "public_reference",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "generation": 2
+      },
+      "valid": false
+    },
+    {
+      "name": "live-status-rejects-execution-id",
+      "target": "live_status",
+      "value": {
+        "status": "ready",
+        "execution_id": "execution-1"
+      },
+      "valid": false
+    },
+    {
+      "name": "live-status-rejects-agent",
+      "target": "live_status",
+      "value": {
+        "status": "ready",
+        "agent_id": "agent-1"
+      },
+      "valid": false
+    },
+    {
+      "name": "resolve-rejects-actor",
+      "target": "resolve_request",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "expected_execution_id": "execution-1",
+        "actor_principal_id": "pretend-admin"
+      },
+      "valid": false
+    },
+    {
+      "name": "resolve-requires-process-fence",
+      "target": "resolve_request",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111"
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-rejects-rc-token",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "runtime-controller",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-rejects-padded-token",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-rejects-path-reference",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "../token",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-rejects-userinfo",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://user:secret@runtime:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-rejects-query",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp?token=other",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-rejects-other-path",
+      "target": "private_connection",
+      "value": {
+        "agent_id": "agent-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://runtime:8093/status",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "private-handoff-requires-agent",
+      "target": "private_connection",
+      "value": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    }
+  ],
+  "token_vectors": [
+    {
+      "name": "canonical-32",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "valid": true
+    },
+    {
+      "name": "canonical-64",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-Pw",
+      "valid": true
+    },
+    {
+      "name": "short-31",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg",
+      "valid": false
+    },
+    {
+      "name": "long-65",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A",
+      "valid": false
+    },
+    {
+      "name": "padding",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "valid": false
+    },
+    {
+      "name": "newline",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n",
+      "valid": false
+    },
+    {
+      "name": "unused-bits",
+      "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB",
+      "valid": false
+    }
+  ]
+}

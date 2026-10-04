@@ -224,5 +224,22 @@
     "status": "service-batches",
     "pending_service_batches": [],
     "cross_service_e2e": "pending final integration batch"
+  },
+  "runtime_instance_connection": {
+    "issue": 30,
+    "version": 1,
+    "contract": "../runtime/instance-connection.md",
+    "machine_contract": "../runtime/instance-connection-contract.json",
+    "schema": "../runtime/instance-connection.schema.json",
+    "fixtures": "../runtime/instance-connection-fixtures.json",
+    "status": "contract-frozen-service-batches-pending",
+    "issuer": "runtime-controller",
+    "pending_service_batches": [
+      "runtime-controller",
+      "antnest-runtime",
+      "agent-controller",
+      "agent-acp-service"
+    ],
+    "cross_service_e2e": "pending final integration batch"
   }
 }

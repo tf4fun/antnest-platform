@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/instance-connection.schema.json",
+  "title": "Private Runtime instance connection, version 1",
+  "$comment": "Raw credentials are a private service handoff, never a public binding or Run snapshot. Canonical token decoding, binding equality and endpoint ownership require semantic checks.",
+  "$defs": {
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "runtime_revision": {
+      "type": "string",
+      "pattern": "^rtv_[0-9a-f]{32}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "connection_id": {
+      "type": "string",
+      "pattern": "^rci_[0-9a-f]{32}$"
+    },
+    "mcp_endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^https?://(?:[A-Za-z0-9][A-Za-z0-9_.-]*|\\[[0-9a-fA-F:]+\\])(?::[0-9]{1,5})?/mcp$"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 43,
+      "maxLength": 86,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "writeOnly": true
+    },
+    "credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caller", "token"],
+      "properties": {
+        "caller": {
+          "const": "agent-acp-service"
+        },
+        "token": {
+          "$ref": "#/$defs/token"
+        }
+      }
+    },
+    "resolve_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_revision", "expected_execution_id"],
+      "properties": {
+        "runtime_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "expected_execution_id": {
+          "$ref": "#/$defs/execution_id"
+        }
+      }
+    },
+    "live_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["ready", "unavailable"]
+        }
+      }
+    },
+    "public_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_revision",
+        "runtime_execution_id",
+        "connection_id",
+        "mcp_endpoint"
+      ],
+      "properties": {
+        "runtime_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "runtime_execution_id": {
+          "$ref": "#/$defs/execution_id"
+        },
+        "connection_id": {
+          "$ref": "#/$defs/connection_id"
+        },
+        "mcp_endpoint": {
+          "$ref": "#/$defs/mcp_endpoint"
+        }
+      }
+    },
+    "private_connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_id",
+        "runtime_revision",
+        "runtime_execution_id",
+        "connection_id",
+        "mcp_endpoint",
+        "credential"
+      ],
+      "properties": {
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "runtime_execution_id": {
+          "$ref": "#/$defs/execution_id"
+        },
+        "connection_id": {
+          "$ref": "#/$defs/connection_id"
+        },
+        "mcp_endpoint": {
+          "$ref": "#/$defs/mcp_endpoint"
+        },
+        "credential": {
+          "$ref": "#/$defs/credential"
+        }
+      }
+    }
+  }
+}

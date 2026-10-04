@@ -32,13 +32,13 @@ and a request-body classification. `status: planned` means a listener has not
 yet adopted its policy. `status: enforced` records adoption after the owning
 service gates pass; it does not claim final cross-service integration has passed.
 
-| Authentication mode | Meaning |
-| --- | --- |
-| `workload` | Verify the peer and require membership in `callers`. |
-| `public` | External Gateway route. The route still requires its documented session, OIDC state or SCIM credential. |
-| `health` | Explicit minimal `/status` or `/live` probe; no credentials, configuration, user content or business actions. Restrict deployment exposure. |
-| `deny` | Unknown-route or method fallback; always reject, with no business effects. |
-| `delegate` | Outer mux forwarding only. Enforce the inner exact route policy; this is not a wildcard authorization grant. |
+| Authentication mode | Meaning                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workload`          | Verify the peer and require membership in `callers`.                                                                                        |
+| `public`            | External Gateway route. The route still requires its documented session, OIDC state or SCIM credential.                                     |
+| `health`            | Explicit minimal `/status` or `/live` probe; no credentials, configuration, user content or business actions. Restrict deployment exposure. |
+| `deny`              | Unknown-route or method fallback; always reject, with no business effects.                                                                  |
+| `delegate`          | Outer mux forwarding only. Enforce the inner exact route policy; this is not a wildcard authorization grant.                                |
 
 Go `GET` registrations also accept `HEAD` by Go ServeMux semantics. `*` records
 a real method-independent mux registration, not permission for arbitrary new
@@ -89,12 +89,12 @@ deployment-owned; cert-manager/SPIRE are options, not mandatory dependencies.
 Each process uses the following exact, shared environment names. There are no
 service-specific prefix substitutions or inline caller/token values.
 
-| Variable | Contract |
-| --- | --- |
-| `ANTNEST_SERVICE_AUTH_MODE` | Required, exactly `token` or `mtls`, with no default. Unknown, empty, differently cased or whitespace-padded values fail startup. An unimplemented selected mode also fails startup. |
+| Variable                                        | Contract                                                                                                                                                                                                                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_SERVICE_AUTH_MODE`                     | Required, exactly `token` or `mtls`, with no default. Unknown, empty, differently cased or whitespace-padded values fail startup. An unimplemented selected mode also fails startup.                                                                                |
 | `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | Absent means `false`; only the exact values `false` and `true` are valid. `true` permits token mode over HTTP only in an explicitly opted-in disposable development deployment. It is invalid in `mtls` mode. Production deployment policy must reject this opt-in. |
-| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | Required in token mode: a nonempty path to this receiver's read-only UTF-8 JSON hash file. Read and validate once at startup; replacing it requires receiver restart. No inline JSON or environment secret fallback. |
-| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | Required when token mode has configured outbound business dependencies: a nonempty path to this caller's read-only secret directory. Validate every configured dependency's file before opening the listener. A receiver with no outbound dependencies may omit it. |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`             | Required in token mode: a nonempty path to this receiver's read-only UTF-8 JSON hash file. Read and validate once at startup; replacing it requires receiver restart. No inline JSON or environment secret fallback.                                                |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                | Required when token mode has configured outbound business dependencies: a nonempty path to this caller's read-only secret directory. Validate every configured dependency's file before opening the listener. A receiver with no outbound dependencies may omit it. |
 
 Do not trim or case-normalize these values. File paths are used as supplied,
 without shell expansion. Missing/unreadable files, malformed credentials and
@@ -154,7 +154,12 @@ use a process-wide token shared by all Runtimes. Dynamic instances are validated
 when their connection is installed, rather than pretending they exist at ACP
 startup. The owning Runtime connection contract must define delivery of that
 private reference before RC/ACP consumers adopt it; the execution ID fence and
-signed maintenance/temporary tickets remain independent requirements.
+signed maintenance/temporary tickets remain independent requirements. The frozen
+[Runtime instance connection v1](../runtime/instance-connection.md) chooses RC
+as generation-scoped token issuer and Controller as its private ACP relay;
+service-owned producer/consumer implementation is still pending. Runtime's
+specific missing/malformed-token wire code is `runtime_unauthorized` (401), with
+the same dedicated bearer challenge and all other exact token-profile checks.
 
 A token is canonical unpadded base64url of **32–64 cryptographically random
 bytes**: 43–86 ASCII characters from `[A-Za-z0-9_-]`. Decode and re-encode to
@@ -211,11 +216,11 @@ Hash the accepted token bytes and compare every configured digest in constant
 time. Derive the caller only from the receiver's hash map, then check the exact
 route allowlist. A name in another header/body cannot select or change it.
 
-| Result | HTTP/classification | Challenge |
-| --- | --- | --- |
-| Missing, empty, duplicate, malformed, unknown or removed token | `401 service_unauthenticated`, `retryable: false` | Exactly `WWW-Authenticate: Bearer realm="antnest-service"` |
-| Verified caller absent from the selected route's allowlist | `403 caller_not_allowed`, `retryable: false` | No workload challenge |
-| Verified and allowlisted caller | Continue to CCT/business authorization; no new response envelope | None from workload authentication |
+| Result                                                         | HTTP/classification                                              | Challenge                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| Missing, empty, duplicate, malformed, unknown or removed token | `401 service_unauthenticated`, `retryable: false`                | Exactly `WWW-Authenticate: Bearer realm="antnest-service"` |
+| Verified caller absent from the selected route's allowlist     | `403 caller_not_allowed`, `retryable: false`                     | No workload challenge                                      |
+| Verified and allowlisted caller                                | Continue to CCT/business authorization; no new response envelope | None from workload authentication                          |
 
 The realm identifies the dedicated service header; a client must not respond by
 moving this credential into `Authorization`. That existing header remains
@@ -282,11 +287,11 @@ Gateway selects a server-owned profile based on the actual route. Identity
 permits only the [listed profiles](service-authentication-rollout.json), after
 verifying the Gateway and user session:
 
-| Profile | Audience chain |
-| --- | --- |
-| `console` | Console → Identity/Controller/Registry/ACP |
-| `workspace` | Agent UI → ACP/Controller |
-| `acp` | ACP direct transport |
+| Profile     | Audience chain                             |
+| ----------- | ------------------------------------------ |
+| `console`   | Console → Identity/Controller/Registry/ACP |
+| `workspace` | Agent UI → ACP/Controller                  |
+| `acp`       | ACP direct transport                       |
 
 The console profile includes only its five named consumers; workspace includes
 only its three. Every hop authenticates its **immediate** calling service as
@@ -384,12 +389,12 @@ issues. In particular:
 
 [Error classification schema](service-authentication-error.schema.json):
 
-| Code | HTTP | Meaning |
-| --- | --- | --- |
-| `service_unauthenticated` | 401 | Missing, duplicate, malformed or unverified workload credential. |
-| `caller_not_allowed` | 403 | Verified workload is not listed for the exact route. |
-| `caller_context_required` | 401 | Required CCT is absent. |
-| `caller_context_invalid` | 401 | CCT is malformed, expired, unverified, out of scope or unsupported. |
+| Code                      | HTTP | Meaning                                                             |
+| ------------------------- | ---- | ------------------------------------------------------------------- |
+| `service_unauthenticated` | 401  | Missing, duplicate, malformed or unverified workload credential.    |
+| `caller_not_allowed`      | 403  | Verified workload is not listed for the exact route.                |
+| `caller_context_required` | 401  | Required CCT is absent.                                             |
+| `caller_context_invalid`  | 401  | CCT is malformed, expired, unverified, out of scope or unsupported. |
 
 All four have `retryable: false`; transport/JWKS outages use the owning service's
 503 dependency error and fail closed. The schema describes the classification,
