@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/serviceauth"
 )
 
 // businessFixture supplies authenticated requests to existing business tests.

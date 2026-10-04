@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 )

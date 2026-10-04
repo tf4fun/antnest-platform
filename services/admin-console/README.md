@@ -11,6 +11,13 @@ Every write is one command to one owning service, and every read is projected
 through an explicit browser DTO allowlist. Organization scope and actor always
 come from verified Identity-signed caller context, never from browser input.
 
+
+Token/mTLS clients and signed CCT verification use the
+[shared Go module](../../modules/service-authentication/README.md). Console uses
+the caller-context forwarding policy: private requests retain verified CCT and
+replace workload credentials while removing browser and legacy identity headers.
+Route authorization and management projections remain Console-owned.
+
 ## Responsibilities
 
 - React/shadcn administrator UI and page-local state.

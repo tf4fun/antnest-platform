@@ -2,7 +2,7 @@ package upstream
 
 import (
 	"context"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"io"
 	"net/http"
 	"strings"

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"

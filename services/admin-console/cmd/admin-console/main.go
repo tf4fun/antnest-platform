@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/config"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/server"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 	"github.com/tf4fun/antnest-platform/services/admin-console/web"
@@ -52,7 +52,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if cfg.SkillRegistryURL != "" {
 		endpoints["skill-registry"] = cfg.SkillRegistryURL
 	}
-	clients, err := serviceauth.LoadOutbound(lookup, endpoints)
+	clients, err := serviceauth.LoadOutbound("admin-console", serviceauth.CallerContextHeaders, lookup, endpoints)
 	if err != nil {
 		return fmt.Errorf("load service authentication: %w", err)
 	}

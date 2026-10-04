@@ -15,9 +15,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
 
@@ -78,7 +78,7 @@ func TestProviderDiscoveryRealHTTPUsesPrivateControllerAndUnchangedSignedScope(t
 		t.Fatal(err)
 	}
 	values := map[string]string{"ANTNEST_SERVICE_AUTH_MODE": "token", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": "true", "ANTNEST_SERVICE_AUTH_CALLERS_FILE": callersFile, "ANTNEST_SERVICE_AUTH_TOKEN_DIR": dir}
-	clients, err := serviceauth.LoadOutbound(func(name string) (string, bool) { value, ok := values[name]; return value, ok }, map[string]string{"agent-controller": controller.URL})
+	clients, err := serviceauth.LoadOutbound("admin-console", serviceauth.CallerContextHeaders, func(name string) (string, bool) { value, ok := values[name]; return value, ok }, map[string]string{"agent-controller": controller.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
