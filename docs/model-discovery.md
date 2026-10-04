@@ -38,10 +38,18 @@ ciphertext together, validates the endpoint, and opens the key inside Controller
 Draft discovery forwards the submitted credential once and does not persist it.
 The former plaintext `/access` export and its response schema are removed.
 
-Controller discovery and the Console thin proxy are admitted on
-`feat/service-authentication`. ACP's independent model-call policy remains a
-separate service batch in the [rollout ledger](../contracts/platform/service-authentication-rollout.json).
+Controller discovery, the Console thin proxy and ACP's model-call destination
+policy are admitted as separate owning-service batches on
+`feat/service-authentication`, recorded in the
+[rollout ledger](../contracts/platform/service-authentication-rollout.json).
 Complete cross-service acceptance follows all service and deployment batches.
+
+ACP checks every DNS answer before sending the Provider credential, pins the
+socket to a verified literal address, preserves the original TLS/Host identity,
+and disables redirects and environment proxies. Foreground, permission-judge
+and Skill-learning calls use the same policy. Private endpoints require the exact
+operator-only opt-in in Controller and ACP; policy failures remain bounded Run
+errors and do not prevent a later explicitly submitted Run.
 
 Console exposes `GET /api/admin/provider-connections/{connection_id}/models/discovery`
 for saved connections, and `POST /api/admin/provider-models/discovery` for drafts

@@ -21,6 +21,7 @@ import {
 } from "../service-authentication/acp/auth-fixture.mjs";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { providerPolicyChecks } from "../service-authentication/acp/provider-policy-docker.mjs";
 
 // Service-owned Docker E2E: the production image and its migrations execute
 // against isolated PostgreSQL, with controlled HTTP model/MCP dependencies.
@@ -283,6 +284,8 @@ try {
     "ANTNEST_ACP_CLIENT_MCP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "-e",
     "OTEL_SDK_DISABLED=true",
+    "-e",
+    "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS=true",
     image,
   ]);
   let origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
@@ -294,8 +297,17 @@ try {
       return false;
     }
   });
+  const provider = await providerPolicyChecks({
+    docker,
+    service,
+    prefix,
+    cleanup,
+    signal: stop.signal,
+    fixtureOrigin,
+  });
   const config = executionConfiguration();
-  config.providers[0].base_url = `${fixtureOrigin}/v1`;
+  config.providers[0].base_url = provider.baseUrl;
+  config.providers[0].credential.secret = "synthetic-provider-secret";
   config.agents[0].default_authorization.mode = "auto";
   config.agents[0].runtime.mcp_endpoint = `${fixtureOrigin}/mcp`;
   let authenticationChecks = 0;
@@ -721,6 +733,7 @@ try {
     modelRequests: modelRequests.length,
     toolCalls,
     authenticationChecks,
+    providerChecks: provider.checks,
   };
 } catch (error) {
   failures.push(error);

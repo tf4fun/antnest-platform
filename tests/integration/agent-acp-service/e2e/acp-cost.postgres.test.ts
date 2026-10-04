@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../../../services/agent-acp-service/test/support/model-network.js";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -41,6 +42,7 @@ describe.skipIf(databaseUrl === undefined)(
       };
       await app.publishConfiguration();
       const model = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
         fetchFn: () =>
           Promise.resolve(
             Response.json({

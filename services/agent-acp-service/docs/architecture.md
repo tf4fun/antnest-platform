@@ -189,6 +189,11 @@ stored context reconstruction; see [Model reasoning history](model-reasoning-his
    See [Runtime context](runtime-context.md) and [Structured plans](structured-plan.md).
 3. Use the logical Provider handle acquired before Runtime setup. The model
    transport, not the Run or Tool loop, receives current volatile authentication.
+   It applies the shared destination policy to each request, checks all DNS
+   answers and pins the socket with the original TLS/Host identity. Its bounded
+   dispatcher lives through streaming body consumption and is destroyed in
+   `finally`; it has no service credentials, redirects or environment proxy.
+   Foreground, permission-judge and learning calls use this same adapter.
 4. Check the complete model-input budget before each model request.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
    calls are retained as one assistant response. Before persistence, derive each
@@ -322,7 +327,7 @@ src/domain/               pure state and value rules
 src/application/          Session commands, prompt admission, Tool loop
 src/ports/                execution configuration, repository, model, MCP, telemetry
 src/adapters/postgres/    private migrations and repository
-src/adapters/model/       OpenAI-compatible model adapter
+src/adapters/model/       OpenAI-compatible model adapter, destination policy and pinned transport
 src/adapters/mcp/         platform Runtime MCP client and network helpers
 src/adapters/*.ts         Controller policy, Registry, Skill source and Runtime
                           Skill maintenance/temporary-Skill HTTP clients
@@ -422,7 +427,8 @@ are listed in the [Bridge contract](../../../contracts/agent-acp/workspace-bridg
 The emitted classifications include:
 
 - Model/provider: `model_unsupported_content`, `model_unavailable`,
-  `model_http_error`, `model_invalid_response`, `provider_unavailable`.
+  `model_http_error`, `model_invalid_response`, `provider_unavailable`,
+  `provider_endpoint_forbidden`, `provider_endpoint_unavailable`.
 - Execution/budget: `run_deadline_exceeded`, `run_failed`, `run_setup_failed`,
   `context_budget_exhausted`.
 - Tool/recovery: `tool_outcome_unknown`, `cancelled_tool_outcome_unknown`,

@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../../../services/agent-acp-service/test/support/model-network.js";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -42,6 +43,7 @@ describe.skipIf(databaseUrl === undefined)(
       async (reconnect) => {
         const source = controlledResponse();
         const model = new OpenAICompatibleModel({
+          destination: syntheticProviderDestination,
           fetchFn: () => Promise.resolve(source.response),
         });
         app.model.complete
@@ -125,6 +127,7 @@ describe.skipIf(databaseUrl === undefined)(
     it("uses v2 chunks with stable message identities instead of separate message upserts", async () => {
       const source = controlledResponse();
       const model = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
         fetchFn: () => Promise.resolve(source.response),
       });
       app.model.complete
@@ -188,6 +191,7 @@ describe.skipIf(databaseUrl === undefined)(
       async (reasoning) => {
         const source = controlledResponse();
         const model = new OpenAICompatibleModel({
+          destination: syntheticProviderDestination,
           fetchFn: () => Promise.resolve(source.response),
         });
         app.model.complete
@@ -266,6 +270,7 @@ describe.skipIf(databaseUrl === undefined)(
       async (ending) => {
         const source = controlledResponse();
         const model = new OpenAICompatibleModel({
+          destination: syntheticProviderDestination,
           fetchFn: () => Promise.resolve(source.response),
         });
         app.model.complete

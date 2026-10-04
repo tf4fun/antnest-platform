@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../support/model-network.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,6 +25,7 @@ describe("OpenAICompatibleModel", () => {
       },
     });
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: () =>
         Promise.resolve(new Response(body, { headers: { "content-type": "application/json" } })),
     });
@@ -46,6 +48,7 @@ describe("OpenAICompatibleModel", () => {
       },
     });
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: () =>
         Promise.resolve(
           new Response(body, {
@@ -105,7 +108,10 @@ describe("OpenAICompatibleModel", () => {
     const input = request();
     input.snapshot.executionSpec.model.baseUrl = "https://openrouter.ai/api/v1";
     input.snapshot.executionSpec.model.model = "openai/gpt-4o-mini";
-    const result = await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    const result = await new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
+      fetchFn,
+    }).complete(input);
     expect(fetchFn.mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(new Headers(fetchFn.mock.calls[0]?.[1].headers).get("authorization")).toBe(
       `Bearer ${input.credential}`,
@@ -131,7 +137,10 @@ describe("OpenAICompatibleModel", () => {
       input.snapshot.executionSpec.model.temperature = 0.7;
       if (effort !== undefined)
         input.snapshot.executionSpec.model.thinking = { protocol: "deepseek", effort };
-      await new OpenAICompatibleModel({ fetchFn }).complete(input);
+      await new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
+        fetchFn,
+      }).complete(input);
       const payload = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as Record<string, unknown>;
       expect(payload.thinking).toEqual(
         effort === undefined ? undefined : { type: effort === "off" ? "disabled" : "enabled" },
@@ -163,7 +172,7 @@ describe("OpenAICompatibleModel", () => {
         }),
       ),
     );
-    const model = new OpenAICompatibleModel({ fetchFn });
+    const model = new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn });
     const result = await model.complete(request());
     expect(result.thought).toEqual(
       reasoning === undefined ? undefined : [{ type: "text", text: "" }],
@@ -208,7 +217,10 @@ describe("OpenAICompatibleModel", () => {
       },
       { role: "user", content: [{ type: "text", text: "continue" }] },
     ];
-    await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    await new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
+      fetchFn,
+    }).complete(input);
     const payload = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as {
       messages: Record<string, unknown>[];
     };
@@ -246,7 +258,10 @@ describe("OpenAICompatibleModel", () => {
       },
       { role: "tool", toolCallId: "b", content: [{ type: "text", text: "file" }] },
     ];
-    await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    await new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
+      fetchFn,
+    }).complete(input);
     const body = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as {
       messages: { role: string }[];
     };
@@ -278,7 +293,11 @@ describe("OpenAICompatibleModel", () => {
           { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
         ],
       });
-      await expect(new OpenAICompatibleModel({ fetchFn }).complete(input)).resolves.toMatchObject({
+      await expect(
+        new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn }).complete(
+          input,
+        ),
+      ).resolves.toMatchObject({
         kind: "message",
       });
       const payload = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as {
@@ -322,7 +341,10 @@ describe("OpenAICompatibleModel", () => {
         ],
       },
     ];
-    await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    await new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
+      fetchFn,
+    }).complete(input);
     expect(bodyText(fetchFn.mock.calls[0]?.[1])).toContain("中文笔记");
     expect(bodyText(fetchFn.mock.calls[0]?.[1])).not.toContain("Base64:");
   });
@@ -333,7 +355,11 @@ describe("OpenAICompatibleModel", () => {
     input.messages = [
       { role: "user", content: [{ type: "audio", data: "aGVsbG8=", mimeType: "audio/wav" }] },
     ];
-    await expect(new OpenAICompatibleModel({ fetchFn }).complete(input)).rejects.toMatchObject({
+    await expect(
+      new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn }).complete(
+        input,
+      ),
+    ).rejects.toMatchObject({
       code: "model_unsupported_content",
       retryable: false,
     });
@@ -363,7 +389,7 @@ describe("OpenAICompatibleModel", () => {
         usage: { prompt_tokens: 11, completion_tokens: 3 },
       }),
     );
-    const model = new OpenAICompatibleModel({ fetchFn });
+    const model = new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn });
 
     await expect(model.complete(request())).resolves.toEqual({
       kind: "tool_calls",
@@ -419,6 +445,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("preserves mixed assistant text and reasoning alongside complete Tool calls", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -453,6 +480,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("never executes Tool calls from a length-truncated model response", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -487,6 +515,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("records content filtering as refusal instead of successful completion", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -510,6 +539,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("rejects unknown Provider finish reasons", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -531,6 +561,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("maps a terminal text response", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -557,7 +588,7 @@ describe("OpenAICompatibleModel", () => {
         }),
       ),
     );
-    const model = new OpenAICompatibleModel({ fetchFn });
+    const model = new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn });
     const input = request();
     input.messages = [
       {
@@ -598,7 +629,7 @@ describe("OpenAICompatibleModel", () => {
         }),
       ),
     );
-    const model = new OpenAICompatibleModel({ fetchFn });
+    const model = new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn });
     const input = request();
     input.snapshot.executionSpec.model.supportsImages = true;
     input.messages = [
@@ -651,6 +682,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("rejects a Tool finish reason without a Tool call", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -672,6 +704,7 @@ describe("OpenAICompatibleModel", () => {
 
   it("rejects malformed Tool arguments instead of guessing", async () => {
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: vi.fn(() =>
         Promise.resolve(
           Response.json({
@@ -706,7 +739,7 @@ describe("OpenAICompatibleModel", () => {
     const fetchFn = vi.fn(() =>
       Promise.resolve(Response.json({ error: { message: "rate limited" } }, { status: 429 })),
     );
-    const model = new OpenAICompatibleModel({ fetchFn });
+    const model = new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn });
 
     const error = await model.complete(request()).catch((caught: unknown) => caught);
 

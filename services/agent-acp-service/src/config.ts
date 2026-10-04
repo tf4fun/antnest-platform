@@ -21,6 +21,7 @@ export type AgentAcpConfig = {
   skillLearningDebugAgentId?: string;
   skillDiscovery?: { registryUrl: string };
   runTimeoutMs: number;
+  providerAllowPrivateEndpoints: boolean;
   maxWebSocketPayloadBytes: number;
   maxConfigurationBytes: number;
   shutdownTimeoutMs: number;
@@ -83,6 +84,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
   return {
     authentication,
     dependencyFetchers,
+    providerAllowPrivateEndpoints: parseBoolean(
+      environment.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS ?? "false",
+      "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS",
+    ),
     listen: parseListen(environment.ANTNEST_ACP_LISTEN ?? ":8080"),
     controlListen: parseListen(environment.ANTNEST_ACP_CONTROL_LISTEN ?? ":8081"),
     databaseUrl,

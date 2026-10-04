@@ -4,7 +4,10 @@ import tseslint from "../../../services/agent-acp-service/node_modules/typescrip
 export default [
   ...serviceConfiguration,
   {
-    files: ["tests/e2e/agent-acp-service/**/*.mjs"],
+    files: [
+      "tests/e2e/agent-acp-service/**/*.mjs",
+      "tests/e2e/service-authentication/acp/**/*.mjs",
+    ],
     ...tseslint.configs.disableTypeChecked,
   },
 ];

@@ -125,6 +125,8 @@ export async function startAgentAcpService(
   telemetry: TelemetryPort,
   reportOwnershipLoss: (error: WorkerOwnershipLostError) => void,
 ): Promise<RunningAgentAcpService> {
+  if (config.providerAllowPrivateEndpoints)
+    telemetry.log("warn", "provider_private_endpoints_enabled");
   if (config.skillLearningDebugAgentId !== undefined)
     telemetry.log("warn", "Skill learning debug mode is active", {
       agent_id: config.skillLearningDebugAgentId,
@@ -306,7 +308,12 @@ export function buildComponents(
   const executions = new PostgresExecutionRepository(kernel);
   const events = new PostgresRunEventRepository(kernel);
 
-  const model = new InstrumentedModel(new OpenAICompatibleModel(), telemetry);
+  const model = new InstrumentedModel(
+    new OpenAICompatibleModel({
+      destination: { allowPrivateEndpoints: config.providerAllowPrivateEndpoints },
+    }),
+    telemetry,
+  );
   const providers = new ProviderClients(model);
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();

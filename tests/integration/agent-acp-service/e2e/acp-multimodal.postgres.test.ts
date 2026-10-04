@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../../../services/agent-acp-service/test/support/model-network.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Pool } from "pg";
@@ -43,7 +44,10 @@ describe.skipIf(databaseUrl === undefined)(
       app.configuration.models[0]!.supports_audio = nativeEnabled;
       app.configuration.models[0]!.supports_pdf = nativeEnabled;
       await app.publishConfiguration();
-      const provider = new OpenAICompatibleModel({ fetchFn });
+      const provider = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
+        fetchFn,
+      });
       app.model.complete
         .mockReset()
         .mockImplementation((request) => provider.complete(request));

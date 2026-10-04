@@ -51,3 +51,14 @@ schemas are checked before effects; malformed JSON returns 400, oversized bodies
 message routing, SSE and DELETE closure. Rejected DELETE bodies cannot close an
 accepted SDK connection. Credentials and CCTs are not persisted or captured in
 logs, trace attributes or RPC content.
+
+## Provider destinations (#28)
+
+Actual model calls use the [shared destination policy](../platform/provider-destination-policy.md)
+independently of private workload transports. All DNS answers are rechecked per
+completion and sockets are pinned to approved literal IPs with original TLS/Host
+identity. Redirects, environment proxies and private credentials are excluded.
+Only exact operator configuration can opt into private endpoints; snapshots,
+Templates and caller context cannot. Existing Run receipt classifications add
+`provider_endpoint_forbidden` and `provider_endpoint_unavailable` within their
+existing string contract; ACP messages and browser DTOs do not change.

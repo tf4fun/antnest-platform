@@ -20,6 +20,30 @@ const SIGNING_KEY = generateKeyPairSync("ed25519")
   .toString("base64");
 
 describe("loadConfig", () => {
+  it("defaults private Provider access off and accepts only exact operator values", () => {
+    const env = { ...testSecurityEnvironment(), ...requiredEnvironment() };
+    expect(loadConfig(env).providerAllowPrivateEndpoints).toBe(false);
+    expect(
+      loadConfig({ ...env, ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "false" })
+        .providerAllowPrivateEndpoints,
+    ).toBe(false);
+    expect(
+      loadConfig({ ...env, ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true" })
+        .providerAllowPrivateEndpoints,
+    ).toBe(true);
+  });
+  it.each(["", " true", "true ", "TRUE", "False", "1"])(
+    "rejects non-exact private Provider opt-in %j at startup",
+    (value) => {
+      expect(() =>
+        loadConfig({
+          ...testSecurityEnvironment(),
+          ...requiredEnvironment(),
+          ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: value,
+        }),
+      ).toThrow();
+    },
+  );
   it.each(MAINTENANCE_KIDS.valid)("accepts shared maintenance kid %j unchanged", (kid) => {
     const config = loadConfig({
       ...testSecurityEnvironment(),

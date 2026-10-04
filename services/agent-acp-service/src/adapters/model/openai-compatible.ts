@@ -13,6 +13,11 @@ import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
 import { readStream } from "./openai-stream.js";
 import { extractUsage, modelUsage } from "./openai-usage.js";
 import type { ModelUsage } from "../../domain/usage.js";
+import {
+  ProviderDestinationPolicy,
+  type ProviderDestinationOptions,
+} from "./destination-policy.js";
+import { PinnedProviderTransport } from "./provider-transport.js";
 
 export { OpenAICompatibleModelError } from "./errors.js";
 
@@ -20,6 +25,7 @@ type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
 export type OpenAICompatibleModelOptions = {
   fetchFn?: FetchFn;
+  destination?: ProviderDestinationOptions;
 };
 
 const functionCallSchema = z.object({
@@ -49,13 +55,12 @@ const responseSchema = z.object({
 });
 
 export class OpenAICompatibleModel implements AuthenticatedModelTransport {
-  private readonly fetchFn: FetchFn;
+  private readonly fetchFn: FetchFn | undefined;
+  private readonly destination: ProviderDestinationPolicy;
 
   public constructor(options: OpenAICompatibleModelOptions = {}) {
-    this.fetchFn = tracedFetch(
-      options.fetchFn ?? ((input: string, init: RequestInit) => fetch(input, init)),
-      "model",
-    );
+    this.fetchFn = options.fetchFn;
+    this.destination = new ProviderDestinationPolicy(options.destination);
   }
 
   public async complete(request: AuthenticatedModelRequest): Promise<ModelResult> {
@@ -64,55 +69,65 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
       "content-type": "application/json",
     };
     const body = JSON.stringify(toRequestBody(request));
-
-    let response: Response;
+    const endpoint = await this.destination.prepare(
+      request.snapshot.executionSpec.model.baseUrl,
+      request.signal,
+    );
+    endpoint.url.pathname = `${endpoint.url.pathname.replace(/\/+$/u, "")}/chat/completions`;
+    const transport =
+      this.fetchFn === undefined ? new PinnedProviderTransport(endpoint) : undefined;
+    const send = tracedFetch(this.fetchFn ?? transport!.fetch, "model");
     try {
-      response = await this.fetchFn(completionUrl(request), {
-        method: "POST",
-        headers,
-        body,
-        signal: request.signal,
-      });
-    } catch (error) {
-      throw new OpenAICompatibleModelError(
-        "model_unavailable",
-        "Model request did not produce a response",
-        true,
-        undefined,
-        { cause: error },
-      );
-    }
+      let response: Response;
+      try {
+        response = await send(endpoint.url.toString(), {
+          method: "POST",
+          headers,
+          body,
+          signal: request.signal,
+          redirect: "manual",
+          credentials: "omit",
+        });
+      } catch (error) {
+        if (error instanceof OpenAICompatibleModelError) throw error;
+        throw new OpenAICompatibleModelError(
+          "model_unavailable",
+          "Model request did not produce a response",
+          true,
+          undefined,
+          { cause: error },
+        );
+      }
 
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new OpenAICompatibleModelError(
-        "model_http_error",
-        `Model API returned HTTP ${response.status}`,
-        isRetryableStatus(response.status),
-        response.status,
-      );
-    }
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new OpenAICompatibleModelError(
+          "model_http_error",
+          `Model API returned HTTP ${response.status}`,
+          isRetryableStatus(response.status),
+          response.status,
+        );
+      }
 
-    const payload =
-      response.headers.get("content-type")?.split(";")[0]?.trim() === "text/event-stream"
-        ? await readStream(response, request)
-        : await readPayload(response);
-    const usage = modelUsage(extractUsage(payload), request.snapshot.executionSpec.model.pricing);
-    try {
-      const parsed = responseSchema.safeParse(payload);
-      if (!parsed.success)
-        throw invalidResponse("Model API returned an invalid completion", parsed.error);
-      return toModelResult(parsed.data, usage);
-    } catch (error) {
-      if (error instanceof OpenAICompatibleModelError && Object.keys(usage).length > 0)
-        error.usage = usage;
-      throw error;
+      const payload =
+        response.headers.get("content-type")?.split(";")[0]?.trim() === "text/event-stream"
+          ? await readStream(response, request)
+          : await readPayload(response);
+      const usage = modelUsage(extractUsage(payload), request.snapshot.executionSpec.model.pricing);
+      try {
+        const parsed = responseSchema.safeParse(payload);
+        if (!parsed.success)
+          throw invalidResponse("Model API returned an invalid completion", parsed.error);
+        return toModelResult(parsed.data, usage);
+      } catch (error) {
+        if (error instanceof OpenAICompatibleModelError && Object.keys(usage).length > 0)
+          error.usage = usage;
+        throw error;
+      }
+    } finally {
+      await transport?.close();
     }
   }
-}
-
-function completionUrl(request: ModelRequest): string {
-  return `${request.snapshot.executionSpec.model.baseUrl.replace(/\/+$/u, "")}/chat/completions`;
 }
 
 function toRequestBody(request: ModelRequest): Record<string, unknown> {

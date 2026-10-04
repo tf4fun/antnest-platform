@@ -98,6 +98,35 @@ Controller calls `POST /rpc/agent-acp/apply-execution-snapshot`; its
 organization snapshots, applied revision and failure semantics. A stored snapshot
 alone cannot initialize a restarted process's credentials.
 
+## Provider Model Egress
+
+Every foreground response, permission judge and background learning completion
+uses the same [Provider destination policy](../../../contracts/platform/provider-destination-policy.md).
+ACP revalidates the base URL and all A/AAAA answers before sending credentials,
+normalizes mapped IPv4 and rejects any forbidden answer. DNS is bounded by the
+Run/learning cancellation signal and a 10-second lookup deadline. The connection
+dials a checked literal IP while retaining the original TLS hostname, SNI and
+HTTP Host. Redirects and environment proxies are disabled.
+
+Each completion owns one bounded dispatcher through the entire response body,
+then destroys it on completion, failure or cancellation. It cannot use a private
+service transport, service credential, CCT, cookie or baggage. Existing response
+limits and execution deadlines still apply; successful output and usage semantics
+are unchanged. No Provider HTTP response body enters an error.
+
+`ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS` defaults false. Only exact `true`
+or `false` is accepted; empty, padded or differently capitalized values fail
+startup. Explicit true permits private/local LLM and metadata ranges and emits
+`provider_private_endpoints_enabled`. It is unsafe for multi-tenant deployment;
+only the operator can set it, and Controller must use the same policy. Neither a
+browser request, Template, published snapshot nor Run can opt in.
+
+Policy rejection records non-retryable `provider_endpoint_forbidden`; DNS failure
+records retryable `provider_endpoint_unavailable`. These bounded classifications
+are preserved in Run receipts and model/learning telemetry without the key,
+raw resolver details or upstream body. They do not create a Tool side effect or
+prevent a later explicit Run after the configuration/network is corrected.
+
 ## ACP Endpoint
 
 Both `/v1/acp` and `/v2/acp` accept WebSocket upgrades. `/v1/acp` additionally

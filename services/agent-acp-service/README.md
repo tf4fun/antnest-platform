@@ -102,6 +102,7 @@ rejects invalid IDs without trimming whitespace.
 | `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS      | -                   | Complete trust, service identity and DNS configuration; TLS 1.3, no partial configuration                      |
 | `ANTNEST_ACP_DATABASE_TIMEOUT`                                                                    | no       | `10s`               | Connection, statement and read timeout for PostgreSQL                                                          |
 | `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`                                                              | no       | `10000ms`           | Bound for delivering execution state to watchers                                                               |
+| `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS`                                                        | no       | `false`             | Exact operator-only boolean; unsafe private/local LLM and metadata access; malformed values fail startup       |
 | `ANTNEST_ACP_RUN_TIMEOUT`                                                                         | no       | `30m`               | Maximum Run duration                                                                                           |
 | `ANTNEST_ACP_MAX_PROMPT_BYTES`                                                                    | no       | `16777216`          | Maximum WebSocket and prompt payload size (1024 to 67108864)                                                   |
 | `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`                                                             | no       | `16777216`          | Maximum execution snapshot body size (1024 to 67108864)                                                        |
@@ -135,7 +136,9 @@ in the repository's `.env.example` is for disposable local data only. See
 - Agent Controller publishes execution snapshots. Until a current snapshot is
   applied, resource methods return an ACP error.
 - The Agent's Runtime MCP endpoint is required for every Run.
-- A model Provider reachable through the published Provider connections.
+- A model Provider reachable through published connections and the shared
+  destination policy. ACP checks all DNS answers and pins the socket; private
+  endpoints require explicit operator opt-in. See [operations](docs/operations.md#provider-model-egress).
 - Optional: Agent Controller for learning policy and Skill Registry for
   discovery. Their outages pause learning or discovery and never fail a
   completed Run.

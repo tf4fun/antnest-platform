@@ -4,13 +4,26 @@
 
 ### Fixed
 
+ACP now enforces the shared Provider destination policy for foreground,
+permission-judge and Skill-learning model calls (#28). All DNS answers are
+checked before sending the key; connections use a verified literal IP with the
+original TLS/SNI/Host identity. Redirects, environment proxies and private service
+credentials are excluded. Streamed bodies retain cancellation and size limits,
+and each completion closes its bounded transport. Destination failures use
+`provider_endpoint_forbidden` or `provider_endpoint_unavailable` in Run receipts
+and Trace, without keys, rejected URLs or raw DNS details. Operators must set the
+same exact `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS` policy in Controller and ACP
+when explicitly enabling private/local model endpoints. Controller, Console and
+ACP service gates have passed; coordinated deployment and full E2E remain the
+final integration batch.
+
 Admin Console model discovery is now a thin, authenticated Controller proxy (#28).
 Saved keys never leave Controller; draft keys are forwarded once. The Provider
 HTTP client and plaintext `/access` consumer are removed. Browser revision 49
 remains unchanged: model metadata is allowlisted and upstream failures use static
 safe messages without private addresses or credentials. Controller revision 38
 and this Console update must deploy together after final integration. ACP's
-actual-model destination guard remains a separate consumer batch.
+actual-model destination guard is delivered above.
 
 Controller model discovery now runs next to encrypted credentials (#28).
 Control contract revision 38 removes the plaintext `/access` export and adds
@@ -20,14 +33,15 @@ TLS/Host, disabled redirects/proxies, bounded deadlines and response sizes.
 The exact operator-only `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS` option defaults
 false; present empty, padded or other spellings fail startup. Explicit true permits
 local/private LLM endpoints and metadata ranges and is unsafe for multi-tenant use.
-Console thin-proxy adoption is delivered above; ACP model-call adoption remains a later service batch;
+Console thin-proxy and ACP model-call adoption are delivered above;
 Controller and Console discovery changes must be deployed together after final
 integration. No intermediate business E2E completion is claimed.
 
 The shared Provider destination policy and IPv4/IPv6/DNS fixtures are frozen for
 #28 before Controller, Console and ACP adoption. The policy specifies private
 endpoint opt-in, checked literal-IP dialing, disabled proxies/redirects and
-bounded errors that exclude credentials. Controller adoption is recorded above; Console/ACP adoption and final E2E remain pending.
+bounded errors that exclude credentials. Controller, Console and ACP adoption is
+recorded above; final cross-service E2E remains pending.
 
 Controller now authenticates every business route and rejects forged Organization,
 actor and Agent scope before effects (#32 / #28 prerequisite). Console management
@@ -39,8 +53,8 @@ revision 37 adds admission errors and strict UTF-8 JSON. Deployments must config
 the shared exact authentication settings and `ANTNEST_AGENT_ACP_CONTROL_URL`;
 nonempty legacy ACP workspace URL or Registry API token now fails startup.
 Controller discovery/address policy and Console adoption are delivered above;
-ACP destination policy, remaining receivers/deployment and final cross-service
-E2E remain separate batches.
+ACP destination policy is delivered above; remaining receivers/deployment and
+final cross-service E2E remain separate batches.
 
 Agent UI now verifies Gateway workload credentials and Identity-signed CCT before
 Workspace handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).

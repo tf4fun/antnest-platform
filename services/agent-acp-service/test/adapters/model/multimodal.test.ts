@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../support/model-network.js";
 import { describe, expect, it, vi } from "vitest";
 import { OpenAICompatibleModel } from "../../../src/adapters/model/openai-compatible.js";
 import type { AuthenticatedModelRequest } from "../../../src/ports/model.js";
@@ -25,7 +26,7 @@ function harness() {
     supportsAudio: true,
     supportsPdf: true,
   };
-  const model = new OpenAICompatibleModel({ fetchFn });
+  const model = new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn });
   const body = () => {
     const value = fetchFn.mock.calls[0]?.[1].body;
     if (typeof value !== "string") throw new Error("No model request");

@@ -76,7 +76,7 @@ test("Provider policy records every consumer as pending until its own gate passe
   assert.equal(policy.issue, 28);
   assert.equal(policy.version, 1);
   assert.equal(policy.status, "service-batches");
-  assert.deepEqual(policy.pending_service_batches, ["agent-acp-service"]);
+  assert.deepEqual(policy.pending_service_batches, []);
   for (const name of [policy.contract, policy.fixtures])
     assert(readFileSync(new URL(name, root)).length);
   assert.equal(policy.cross_service_e2e, "pending final integration batch");
