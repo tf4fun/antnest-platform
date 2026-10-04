@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { runCommand } from "../../support/run-command.mjs";
 import { skillArtifact } from "./stage3-fixture.mjs";
+import {
+  createFixture,
+  callerContext,
+} from "../service-authentication/registry/auth-fixture.mjs";
+import { authenticationProbes } from "../service-authentication/registry/probes.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const id = randomUUID().slice(0, 8);
@@ -15,10 +21,18 @@ const callerAware = process.env.ANTNEST_E2E_DISCOVERY_CALLER === "true";
 const traceBatch = process.env.ANTNEST_E2E_REGISTRY_TRACE === "true";
 const output = resolve(
   root,
-  `artifacts/verification/${traceBatch ? "skill-registry-trace-d1t-20261001" : callerAware ? "skill-discovery-caller-d1a-20261001" : "skill-discovery-d1-20261001"}/docker-${id}`,
+  `artifacts/verification/issue-31-registry-auth-20261004/docker-${id}`,
 );
 mkdirSync(output, { recursive: true, mode: 0o700 });
-const env = { ...process.env, ANTNEST_DISCOVERY_TEST_IMAGE: image };
+const authDirectory = mkdtempSync(resolve(tmpdir(), "antnest-registry-auth-"));
+const auth = createFixture(authDirectory);
+const env = {
+  ...process.env,
+  ANTNEST_DISCOVERY_TEST_IMAGE: image,
+  ANTNEST_DISCOVERY_AUTH_DIRECTORY: authDirectory,
+  ANTNEST_DISCOVERY_UID: String(process.getuid()),
+  ANTNEST_DISCOVERY_GID: String(process.getgid()),
+};
 const controller = new AbortController();
 const stop = () => controller.abort();
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stop);
@@ -32,7 +46,20 @@ const compose = [
   "-f",
   resolve(root, "tests/e2e/skill-registry/discovery.compose.yaml"),
 ];
-const token = "discovery-registry-control-token-at-least-32-bytes";
+const credentialHeaders = (caller, changes = {}) => ({
+  "Antnest-Service-Authorization": "Bearer " + auth.incoming[caller],
+  ...(caller === "admin-console"
+    ? { "Antnest-Caller-Context": callerContext(auth, changes) }
+    : {}),
+});
+const callerFor = (path) =>
+  path.includes("/skill-projections/promote")
+    ? "admin-console"
+    : path.includes("/skill-versions/resolve")
+      ? "agent-controller"
+      : path.startsWith("/internal/skills")
+        ? "admin-console"
+        : "agent-acp-service";
 const org = `org_${"a".repeat(32)}`;
 const owner = `user_${"c".repeat(32)}`;
 const otherOwner = `user_${"d".repeat(32)}`;
@@ -109,8 +136,6 @@ try {
       process.execPath,
       "tests/integration/go/run.mjs",
       "skill-registry",
-      "--package",
-      "internal/registry",
       "--output",
       output,
       "--",
@@ -137,7 +162,7 @@ try {
     const response = await fetch(registry + path, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...credentialHeaders(callerFor(path)),
         "Content-Type": "application/json",
         Connection: "close",
       },
@@ -165,8 +190,12 @@ try {
     assert.equal(response.status, 200);
     return response.json();
   }
-  const asProjection = ({ artifact_reads, inspections, ...projection }) =>
-    projection;
+  const asProjection = (value) => {
+    const projection = { ...value };
+    delete projection.artifact_reads;
+    delete projection.inspections;
+    return projection;
+  };
   let projection = asProjection(await sourceState());
   const update = (value) =>
     call("/internal/skill-projections", value, 200, "PUT");
@@ -204,6 +233,29 @@ try {
         `SELECT count(*) FROM skill_versions v JOIN skills s USING(skill_id) WHERE s.organization_id='${org}'`,
       ]),
     );
+  const authentication = await authenticationProbes({
+    registry,
+    credentialHeaders,
+    archive: skillArtifact(1),
+    owner,
+    organization: org,
+    check: (name) => checks.push(name),
+  });
+  const createdBy = await docker([
+    ...compose,
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "postgres",
+    "-d",
+    "registry",
+    "-At",
+    "-c",
+    `SELECT created_by FROM skills WHERE skill_id='${authentication.published.skill_id}'`,
+  ]);
+  assert.equal(createdBy, owner);
   assert.equal((await update(projection)).result.outcome, "applied");
   assert.equal((await update(projection)).result.outcome, "replayed");
   const oldItem = (await search()).result.items[0];
@@ -435,7 +487,7 @@ try {
   const badBody = await fetch(registry + "/internal/skill-projections", {
     method: "PUT",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...credentialHeaders("agent-acp-service"),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ ...projection, active: null }),
@@ -446,6 +498,7 @@ try {
     project,
     image,
     checks,
+    authentication_checks: authentication.count,
     source:
       "explicit deterministic HTTP fixture; actual ACP source integration is a separate gate",
     scope: traceBatch
@@ -491,6 +544,7 @@ try {
     cleanupError = error;
     save("cleanup-failure.json", { project, error: String(error) });
   }
+  rmSync(authDirectory, { recursive: true, force: true });
   for (const signal of ["SIGINT", "SIGTERM"])
     process.removeListener(signal, stop);
   if (cleanupError) {

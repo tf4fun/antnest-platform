@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { skillArtifact } from "./stage3-fixture.mjs";
 const org = `org_${"a".repeat(32)}`;
 const agent = `agent_${"b".repeat(32)}`;
 const owner = `user_${"c".repeat(32)}`;
-const token = process.env.SOURCE_TOKEN;
+const credentials = process.argv.includes("--healthcheck")
+  ? undefined
+  : JSON.parse(readFileSync("/run/auth/peers.json", "utf8"));
 let version = 1,
   sequence = 1,
   active = true,
@@ -56,7 +59,7 @@ if (process.argv.includes("--healthcheck")) {
   });
   assert.equal(response.status, 200);
 } else {
-  assert(token?.length >= 32);
+  assert(credentials.hashes["agent-acp-service"]);
   const server = createServer(async (req, res) => {
     try {
       if (req.url === "/status") return json(res, 200, { status: "ok" });
@@ -77,7 +80,23 @@ if (process.argv.includes("--healthcheck")) {
           inspections,
         });
       }
-      if (req.headers.authorization !== `Bearer ${token}`)
+      if (
+        req.headers.authorization !== undefined ||
+        req.headers.cookie !== undefined ||
+        req.headers["antnest-caller-context"] !== undefined ||
+        req.rawHeaders.filter(
+          (v, i) =>
+            i % 2 === 0 && v.toLowerCase() === "antnest-service-authorization",
+        ).length !== 1 ||
+        "sha256:" +
+          createHash("sha256")
+            .update(
+              (req.headers["antnest-service-authorization"] ?? "").slice(7),
+              "ascii",
+            )
+            .digest("hex") !==
+          credentials.hashes["agent-acp-service"]
+      )
         return json(res, 401, {
           error: {
             code: "unauthorized",

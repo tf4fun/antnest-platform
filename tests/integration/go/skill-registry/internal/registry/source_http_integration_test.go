@@ -24,10 +24,11 @@ func TestHTTPAgentSourceChecksSelectedBytesAndRefusesRedirects(t *testing.T) {
 	var state atomic.Value
 	state.Store("ok")
 	var called atomic.Int64
+	sourceToken := randomToken(t)
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called.Add(1)
 		mode := state.Load().(string)
-		if r.Header.Get("Authorization") != "Bearer "+testToken {
+		if r.Header.Get("Antnest-Service-Authorization") != "Bearer "+sourceToken || r.Header.Get("Authorization") != "" || r.Header.Get("Antnest-Caller-Context") != "" {
 			t.Error("source token missing")
 		}
 		switch mode {
@@ -74,7 +75,7 @@ func TestHTTPAgentSourceChecksSelectedBytesAndRefusesRedirects(t *testing.T) {
 		_, _ = w.Write(archive)
 	}))
 	defer peer.Close()
-	source, err := NewHTTPAgentSource(peer.URL, testToken)
+	source, err := newTestSource(t, peer.URL, sourceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +103,7 @@ func TestHTTPAgentSourceChecksSelectedBytesAndRefusesRedirects(t *testing.T) {
 func TestHTTPAgentSourceCancellationClosesInFlightRequest(t *testing.T) {
 	entered := make(chan struct{})
 	stopped := make(chan struct{})
+	sourceToken := randomToken(t)
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		close(entered)
@@ -109,7 +111,7 @@ func TestHTTPAgentSourceCancellationClosesInFlightRequest(t *testing.T) {
 		close(stopped)
 	}))
 	defer peer.Close()
-	source, err := NewHTTPAgentSource(peer.URL, testToken)
+	source, err := newTestSource(t, peer.URL, sourceToken)
 	if err != nil {
 		t.Fatal(err)
 	}

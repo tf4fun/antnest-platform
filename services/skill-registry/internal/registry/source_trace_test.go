@@ -38,13 +38,12 @@ func sourceSpans(t *testing.T) (*tracetest.SpanRecorder, context.Context, trace.
 func TestSourceHTTPPropagatesActualClientSpanWithoutCapturingContent(t *testing.T) {
 	recorder, ctx, caller := sourceSpans(t)
 	// Preserve the production transport wrapper and replace its network boundary.
-	previous := http.DefaultTransport
-	http.DefaultTransport = sourceRoundTrip(func(request *http.Request) (*http.Response, error) {
+	transport := sourceRoundTrip(func(request *http.Request) (*http.Response, error) {
 		remote := trace.SpanContextFromContext(propagation.TraceContext{}.Extract(t.Context(), propagation.HeaderCarrier(request.Header)))
 		if remote.TraceID() != caller.SpanContext().TraceID() || remote.SpanID() == caller.SpanContext().SpanID() || !remote.IsValid() {
 			t.Fatalf("source request did not inject an actual CLIENT child: %v", remote)
 		}
-		if request.Header.Get("Authorization") != "Bearer "+testToken {
+		if request.Header.Get("Authorization") != "" {
 			t.Fatal("instrumentation changed service authentication")
 		}
 		if len(recorder.Ended()) != 0 {
@@ -52,9 +51,9 @@ func TestSourceHTTPPropagatesActualClientSpanWithoutCapturingContent(t *testing.
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"items":[]}`))}, nil
 	})
-	t.Cleanup(func() { http.DefaultTransport = previous })
+
 	// Construct after the replacement, as the adapter captures its own transport.
-	source, err := NewHTTPAgentSource("http://source.invalid", testToken)
+	source, err := NewHTTPAgentSource("http://source.invalid", &http.Client{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,12 +78,11 @@ func TestSourceHTTPPropagatesActualClientSpanWithoutCapturingContent(t *testing.
 
 func TestSourceHTTPTransportFailureKeepsSanitizedBusinessError(t *testing.T) {
 	recorder, ctx, _ := sourceSpans(t)
-	previous := http.DefaultTransport
-	http.DefaultTransport = sourceRoundTrip(func(*http.Request) (*http.Response, error) {
+	transport := sourceRoundTrip(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("private upstream password and query")
 	})
-	t.Cleanup(func() { http.DefaultTransport = previous })
-	source, err := NewHTTPAgentSource("http://source.invalid", testToken)
+
+	source, err := NewHTTPAgentSource("http://source.invalid", &http.Client{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}

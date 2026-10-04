@@ -22,9 +22,10 @@ func TestRegistryRealHTTPSourceSearchAndLoadKeepCompleteNativeParents(t *testing
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder, ctx, caller := sourceSpans(t)
 	_, store, index, fixture, selected := discoveryFixture(t)
+	sourceToken := randomToken(t)
 	sourceMux := http.NewServeMux()
 	observe := func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Header.Get("Authorization") != "Bearer "+testToken {
+		if r.Header.Get("Antnest-Service-Authorization") != "Bearer "+sourceToken || r.Header.Get("Authorization") != "" || r.Header.Get("Antnest-Caller-Context") != "" {
 			t.Error("source authentication changed")
 			w.WriteHeader(401)
 			return false
@@ -69,12 +70,13 @@ func TestRegistryRealHTTPSourceSearchAndLoadKeepCompleteNativeParents(t *testing
 	})
 	sourceServer := httptest.NewServer(telemetry.HTTPHandler(sourceMux))
 	defer sourceServer.Close()
-	source, err := NewHTTPAgentSource(sourceServer.URL, testToken)
+	source, err := newTestSource(t, sourceServer.URL, sourceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := NewDiscovery(NewService(store), index, source)
-	server := httptest.NewServer(NewHandler(NewService(store), testToken, nil, d))
+	handler := newTestHandler(t, NewService(store), d)
+	server := httptest.NewServer(handler)
 	defer server.Close()
 	client := server.Client()
 	defer client.CloseIdleConnections()
@@ -89,7 +91,7 @@ func TestRegistryRealHTTPSourceSearchAndLoadKeepCompleteNativeParents(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set("Authorization", "Bearer "+testToken)
+		handler.Authenticate(request)
 		request.Header.Set("Content-Type", "application/json")
 		propagation.TraceContext{}.Inject(ctx, propagation.HeaderCarrier(request.Header))
 		response, err := client.Do(request)

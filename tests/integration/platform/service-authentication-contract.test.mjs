@@ -54,8 +54,7 @@ test("CCT public keys exclude private material and use an explicit Ed25519 curve
 // principal boundary and run these vectors in their owning delivery batches.
 function parseObject(raw) {
   const value = JSON.parse(raw);
-  const tokens =
-    raw.match(/"(?:\\.|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+/gu) ?? [];
+  const tokens = raw.match(/"(?:\\.|[^"\\])*"|[{}[\]:,]|[^\s{}[\]:,]+/gu) ?? [];
   const stack = [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
@@ -159,7 +158,7 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
   );
 });
 
-test("the rollout records admitted producers while keeping consumer and integration work pending", () => {
+test("the rollout records admitted services while keeping Egress, deployment and final integration pending", () => {
   const rollout = read("service-authentication-rollout.json");
   assert.equal(rollout.status, "service-batches");
   assert.deepEqual(rollout.batches[0].issues, [32, 101]);
@@ -185,9 +184,7 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert.equal(consoleBatch.status, "service-admitted");
   assert(consoleBatch.admission.unit_contract_component);
   assert(consoleBatch.admission.docker);
-  assert.deepEqual(consoleBatch.admission.pending_consumers, [
-    "skill-registry",
-  ]);
+  assert.deepEqual(consoleBatch.admission.pending_consumers, []);
   const acp = rollout.batches.find(
     (batch) => batch.owner === "agent-acp-service",
   );
@@ -195,8 +192,8 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(acp.admission.unit_contract_component);
   assert(acp.admission.postgres);
   assert(acp.admission.docker);
-  assert.deepEqual(acp.admission.pending_consumers, ["skill-registry"]);
-  assert(acp.admission.pending_runtime_client.includes("#29/#30"));
+  assert.deepEqual(acp.admission.pending_consumers, []);
+  assert(acp.admission.runtime_instance_client.includes("#30"));
   assert(acp.admission.pending_provider_policy.includes("#28"));
   const ui = rollout.batches.find((batch) => batch.owner === "agent-ui");
   assert.equal(ui.status, "service-admitted");
@@ -213,12 +210,9 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(controller.admission.pending_provider_discovery.includes("#28"));
   assert(controller.issues.includes(30));
   assert(controller.admission.runtime_instance_relay);
-  assert.deepEqual(controller.admission.pending_consumers, [
-    "agent-acp-service",
-  ]);
+  assert.deepEqual(controller.admission.pending_consumers, []);
   assert.deepEqual(controller.admission.pending_dependencies, [
     "runtime-egress",
-    "skill-registry",
   ]);
   const rc = rollout.batches.find(
     (batch) => batch.owner === "runtime-controller",
@@ -227,21 +221,26 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(rc.admission.unit_contract_component);
   assert(rc.admission.postgres);
   assert(rc.admission.docker);
-  assert(rc.admission.pending_runtime_client.includes("#30"));
-  assert.deepEqual(rc.admission.pending_dependencies, ["skill-registry"]);
+  assert(rc.admission.runtime_instance_clients.includes("#30"));
+  assert.deepEqual(rc.admission.pending_dependencies, []);
   const runtime = rollout.batches.find(
     (batch) => batch.owner === "antnest-runtime",
   );
   assert.equal(runtime.status, "service-admitted");
   assert(runtime.admission.unit_contract_component);
   assert(runtime.admission.docker);
-  assert.deepEqual(runtime.admission.pending_consumers, ["agent-acp-service"]);
-  for (const owner of [
-    "skill-registry",
-    "runtime-egress",
-    "deployment",
-    "integration",
-  ]) {
+  assert.deepEqual(runtime.admission.pending_consumers, []);
+  const registry = rollout.batches.find(
+    (batch) => batch.owner === "skill-registry",
+  );
+  assert.equal(registry.status, "service-admitted");
+  assert(registry.admission.unit_contract_component);
+  assert(registry.admission.postgres);
+  assert(registry.admission.docker);
+  assert.deepEqual(registry.admission.pending_consumers, []);
+  assert(registry.admission.cross_service_e2e.includes("pending"));
+  assert(registry.admission.deployment.includes("Legacy Compose"));
+  for (const owner of ["runtime-egress", "deployment", "integration"]) {
     assert.equal(
       rollout.batches.find((batch) => batch.owner === owner).status,
       "pending",
@@ -250,11 +249,11 @@ test("the rollout records admitted producers while keeping consumer and integrat
   }
   assert.equal(
     rollout.runtime_instance_connection.status,
-    "rc-runtime-admitted-consumers-pending",
+    "service-batches-admitted",
   );
   assert.deepEqual(
     rollout.runtime_instance_connection.pending_service_batches,
-    ["agent-acp-service"],
+    [],
   );
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));

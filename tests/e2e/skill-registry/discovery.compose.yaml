@@ -15,26 +15,44 @@ services:
   source:
     image: node:24.21.0-bookworm-slim
     command: [node, /fixtures/discovery-source.mjs]
-    environment:
-      SOURCE_TOKEN: discovery-source-read-token-at-least-32-bytes
     volumes:
       - .:/fixtures:ro
+      - ${ANTNEST_DISCOVERY_AUTH_DIRECTORY:?}:/run/auth:ro
     ports: ["127.0.0.1::8080"]
     healthcheck:
       test: [CMD, node, /fixtures/discovery-source.mjs, --healthcheck]
       interval: 1s
       timeout: 3s
       retries: 30
+  identity:
+    image: node:24.21.0-bookworm-slim
+    command: [node, /fixtures/identity-peer.mjs]
+    volumes:
+      - ../service-authentication/registry:/fixtures:ro
+      - ${ANTNEST_DISCOVERY_AUTH_DIRECTORY:?}:/run/auth:ro
+    healthcheck:
+      test: [CMD, node, /fixtures/identity-peer.mjs, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 30
   registry:
     image: ${ANTNEST_DISCOVERY_TEST_IMAGE}
+    user: "${ANTNEST_DISCOVERY_UID:?}:${ANTNEST_DISCOVERY_GID:?}"
     depends_on:
-      postgres: {condition: service_healthy}
-      source: {condition: service_healthy}
+      postgres: { condition: service_healthy }
+      source: { condition: service_healthy }
+      identity: { condition: service_healthy }
     environment:
       ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://registry_service:discovery-fixture-registry@postgres:5432/registry
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: discovery-registry-control-token-at-least-32-bytes
+      ANTNEST_IDENTITY_URL: http://identity:8080
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /run/auth/outgoing
+      OTEL_SDK_DISABLED: "true"
       ANTNEST_SKILL_REGISTRY_SOURCE_URL: http://source:8080
-      ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: discovery-source-read-token-at-least-32-bytes
+    volumes:
+      - ${ANTNEST_DISCOVERY_AUTH_DIRECTORY:?}:/run/auth:ro
     ports: ["127.0.0.1::8080"]
     healthcheck:
       test: [CMD, /usr/local/bin/skill-registry, --healthcheck]

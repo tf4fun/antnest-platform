@@ -4,6 +4,17 @@
 
 ### Fixed
 
+Skill Registry now verifies per-caller token/mTLS authority and exact route
+grants (#31). Console operations require a Registry-audience administrator CCT;
+organization and actor are taken from verified claims, with forged echoes
+rejected before publication, replay or source reads. Controller resolves fixed
+references, RC downloads artifacts, and ACP updates projections or searches/loads
+without gaining Console publication authority. Strict JSON/multipart carriers
+reject ambiguous media and duplicate metadata. JWKS and ACP source transports
+use receiver-specific credentials with no proxies, redirects or forwarded user
+authority. Unit, contract, real HTTP/PostgreSQL and isolated Docker gates passed;
+coordinated deployment and complete business/security E2E remain pending.
+
 ACP now uses RC-issued per-instance authority for all Runtime MCP, status and
 private Skill clients (#30). Private publications stage verified 0700/0600
 sender files before database CAS; database, Run, audit, model and Trace
@@ -265,6 +276,14 @@ for the Controller. See the
 [recovery and readiness semantics](services/runtime-controller/docs/operations.md#observation-dependency-recovery).
 
 ### Changed
+
+**Registry deployment change (#31):** `ANTNEST_IDENTITY_URL` and the shared
+service authentication profile are mandatory. Nonempty
+`ANTNEST_SKILL_REGISTRY_API_TOKEN` or `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` now
+fails startup. Replace shared bearers with read-only receiver hash and per-pair
+sender files (or the complete mTLS profile) before deploying the new service.
+The existing Compose defaults are being replaced in the deployment batch;
+upgrading only Registry with those defaults is unsupported.
 
 Froze the interim service-token configuration and wire profile for
 [#101](https://github.com/tf4fun/antnest-platform/issues/101): explicit shared

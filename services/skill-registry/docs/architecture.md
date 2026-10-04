@@ -8,18 +8,20 @@ and the [Discovery API](../../../contracts/skill-registry/discovery-api.md).
 
 ## Components
 
-| Path | Role |
-| --- | --- |
-| `cmd/skill-registry/main.go` | Configuration, telemetry setup, database pool (8 connections), startup migrations, HTTP server, signal handling and the `--healthcheck` probe |
-| `internal/registry/package.go` | Package rules version 1: ZIP and `SKILL.md` validation and digest computation |
-| `internal/registry/service.go` | Formal Skill publication, listing, resolution and artifact reads |
-| `internal/registry/discovery.go` | Source mappings, search, load and promotion |
-| `internal/registry/postgres.go`, `discovery_postgres.go` | PostgreSQL store |
-| `internal/registry/migrations.go`, `migrations/*.sql` | Embedded, checksum-checked schema migrations |
-| `internal/registry/http.go`, `discovery_http.go` | HTTP routing, bearer authentication, admission slots and error mapping |
-| `internal/registry/source_http.go` | Client for the Agent ACP Service source routes |
-| `internal/registry/errors.go` | Typed error kinds; untyped errors map to `temporarily_unavailable` |
-| `internal/telemetry/` | OpenTelemetry setup, inbound server spans and outbound client spans |
+| Path                                                                  | Role                                                                                                                                          |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/skill-registry/main.go`                                          | Configuration, telemetry setup, database pool (8 connections), startup migrations, HTTP server, signal handling and the `--healthcheck` probe |
+| `internal/registry/package.go`                                        | Package rules version 1: ZIP and `SKILL.md` validation and digest computation                                                                 |
+| `internal/registry/service.go`                                        | Formal Skill publication, listing, resolution and artifact reads                                                                              |
+| `internal/registry/discovery.go`                                      | Source mappings, search, load and promotion                                                                                                   |
+| `internal/registry/postgres.go`, `discovery_postgres.go`              | PostgreSQL store                                                                                                                              |
+| `internal/registry/migrations.go`, `migrations/*.sql`                 | Embedded, checksum-checked schema migrations                                                                                                  |
+| `internal/registry/http.go`, `discovery_http.go`, `authentication.go` | HTTP routing, exact workload/CCT admission, verified scope, slots and error mapping                                                           |
+| `internal/serviceauth/`                                               | Startup token/mTLS configuration, receiver verification, strict JSON and authenticated pinned dependency transports                           |
+| `internal/callercontext/`                                             | Strict JOSE/CCT verification and bounded authenticated Identity JWKS cache                                                                    |
+| `internal/registry/source_http.go`                                    | Client for the Agent ACP Service source routes                                                                                                |
+| `internal/registry/errors.go`                                         | Typed error kinds; untyped errors map to `temporarily_unavailable`                                                                            |
+| `internal/telemetry/`                                                 | OpenTelemetry setup, inbound server spans and outbound client spans                                                                           |
 
 ## Data Model
 
@@ -27,13 +29,13 @@ Migrations run at startup inside one transaction that holds
 `pg_advisory_xact_lock`. The `schema_migrations` table records each applied
 file with its checksum. A changed checksum stops startup.
 
-| Table | Key | Content |
-| --- | --- | --- |
-| `skills` | `skill_id` | Organization, `name`, `current_version`, creator. `UNIQUE (organization_id, name)` |
-| `skill_versions` | `(skill_id, version)` | `metadata` and `file_manifest` JSON, exact ZIP bytes in `artifact` (1 byte to 8 MiB), creator |
-| `command_receipts` | `(organization_id, request_id)` | Request fingerprint and the committed result |
-| `skill_projections` | `(organization_id, agent_id, name)` | Source mapping: owner, description, `sequence`, `content_digest`, `active` |
-| `skill_version_sources` | `(skill_id, version)` | Source provenance for promoted versions |
+| Table                   | Key                                 | Content                                                                                       |
+| ----------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| `skills`                | `skill_id`                          | Organization, `name`, `current_version`, creator. `UNIQUE (organization_id, name)`            |
+| `skill_versions`        | `(skill_id, version)`               | `metadata` and `file_manifest` JSON, exact ZIP bytes in `artifact` (1 byte to 8 MiB), creator |
+| `command_receipts`      | `(organization_id, request_id)`     | Request fingerprint and the committed result                                                  |
+| `skill_projections`     | `(organization_id, agent_id, name)` | Source mapping: owner, description, `sequence`, `content_digest`, `active`                    |
+| `skill_version_sources` | `(skill_id, version)`               | Source provenance for promoted versions                                                       |
 
 Versions reference their Skill with `ON DELETE RESTRICT`, and no route updates
 or deletes a committed version. Identifier formats are enforced by `CHECK`
@@ -73,7 +75,9 @@ when their bytes differ.
 appends a version and requires `expected_version`. Both take a multipart body
 of at most 9 MiB.
 
-1. The service validates the request ID (1 to 128 printable ASCII bytes), the
+1. The HTTP boundary authenticates Console and its signed administrator CCT,
+   rejects mismatched organization/actor echoes and passes verified claims to
+   the application. The service validates the request ID (1 to 128 printable ASCII bytes), the
    organization and actor IDs and the target.
 2. It computes a fingerprint from the action, organization, actor, target,
    expected version and `artifact_digest`, and looks up the receipt for
@@ -144,8 +148,12 @@ selected reference and an expected `content_digest`.
 - The bytes are validated as a package. A digest or name mismatch returns
   `content_changed`. An invalid package returns `source_invalid`.
 
-The source client has a 10-second timeout, does not follow redirects and sends
-`ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` as its bearer. Source 403 and 404 on
+The source client has a 10-second timeout, pins its configured ACP origin,
+ignores environment proxies and refuses redirects. Token mode rereads the
+Registry-to-ACP sender file for each request and uses only the dedicated
+`Antnest-Service-Authorization` field; mTLS uses the pinned service identity.
+User Authorization, Cookie, incoming workload credentials and CCT never reach
+source or JWKS calls. Source 403 and 404 on
 artifact reads map to `not_found`, and 409 maps to `content_changed`. Any other
 failure maps to `source_unavailable`. Without source configuration, a search
 with mapping candidates and every source load return `source_unavailable`.
@@ -163,20 +171,30 @@ bytes, and later source changes do not affect the version.
 
 Uploads and promotions share 2 concurrent slots. Downloads, searches and loads
 share 4 slots. A request that finds no free slot fails immediately with `busy`.
+Workload verification runs before mux redirects. Route permission, Console CCT
+and media checks run before slot use. Bounded body decoding and signed-scope
+echo checks run before application, receipt or source effects.
+Only exact `GET/HEAD /status` bypasses identity for minimal database readiness.
 
-| Error code | HTTP status | Meaning |
-| --- | --- | --- |
-| `invalid_request`, `invalid_package` | 400 | Malformed input or a package that breaks the rules |
-| `unauthorized` | 401 | Missing or wrong service bearer |
-| `not_found` | 404 | Skill, version or source does not exist for this caller |
-| `name_conflict`, `request_conflict`, `revision_conflict`, `content_changed` | 409 | Conflicting state; the caller must choose again or reread |
-| `limit_exceeded` | 413 | A size, count or total limit is exceeded |
-| `busy` | 429 | No admission slot is free; retry later |
-| `source_invalid` | 502 | The Agent source returned invalid data |
-| `source_unavailable`, `temporarily_unavailable` | 503 | Database, source or configuration is unavailable; retry later |
+| Error code                                                                   | HTTP status | Meaning                                                                                |
+| ---------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------- |
+| `invalid_request`, `invalid_package`                                         | 400         | Malformed input or a package that breaks the rules                                     |
+| `service_unauthenticated`                                                    | 401         | Missing, ambiguous, malformed or unknown workload credentials; exact service challenge |
+| `caller_context_required`, `caller_context_invalid`                          | 401         | Missing or invalid Console CCT                                                         |
+| `caller_not_allowed`, `forbidden`, `organization_mismatch`, `actor_mismatch` | 403         | Route, role or signed-scope denial before effects                                      |
+| `not_found`                                                                  | 404         | Skill, version or source does not exist for this caller                                |
+| `name_conflict`, `request_conflict`, `revision_conflict`, `content_changed`  | 409         | Conflicting state; the caller must choose again or reread                              |
+| `limit_exceeded`                                                             | 413         | A size, count or total limit is exceeded                                               |
+| `unsupported_media_type`                                                     | 415         | JSON or multipart carrier is missing, ambiguous or unsupported                         |
+| `busy`                                                                       | 429         | No admission slot is free; retry later                                                 |
+| `source_invalid`                                                             | 502         | The Agent source returned invalid data                                                 |
+| `source_unavailable`, `temporarily_unavailable`                              | 503         | Database, source or configuration is unavailable; retry later                          |
+| `identity_dependency_unavailable`                                            | 503         | Console trust cannot refresh after the bounded JWKS cache expires                      |
 
-Error bodies have the form `{"error": {"code": ..., "message": ...}}`. Storage
-errors never expose driver details.
+Error bodies have the form `{"error": {"code": ..., "message": ...}}`.
+Authentication/scope/media errors additionally have `retryable:false`; Identity
+dependency failure has `retryable:true`. Storage errors never expose driver
+details, and authentication errors expose no keys, claims or upstream body.
 
 ## Observability
 
@@ -205,10 +223,12 @@ exported over OTLP. See the
 
 ## Service authentication rollout
 
-The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/skill-registry/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#31](https://github.com/tf4fun/antnest-platform/issues/31); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+The [authentication profile](../../../contracts/skill-registry/service-authentication.md)
+and [enforced caller catalog](../../../contracts/skill-registry/callers.json)
+define the verified workload grants and Console context. The #31 owning-service
+batch passes unit/contract, real HTTP, PostgreSQL and isolated Docker gates.
+Registry requires authenticated Identity JWKS and rejects the old shared bearer
+settings at startup. Follow the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+for remaining deployment wiring and final cross-service Docker acceptance.
+Neither local protocol peers nor producer admission accept the full workflow.

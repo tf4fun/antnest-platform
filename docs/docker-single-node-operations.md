@@ -96,10 +96,14 @@ derived from the port/subnet variables.
 
 Optional automatic Skill maintenance and dynamic source discovery are configured
 as described in the [Skill deployment guide](skill-deployment.md). Standard
-Compose forwards the ACP private signer, the Runtime Controller public verifier
-set and a separate shared source bearer; no test configuration override is
-needed. Existing Runtimes acquire new verifier configuration only through
-explicit rebuild.
+The ACP private signer and Runtime Controller public verifier set are separate
+from workload credentials. Registry/ACP now reject the old shared source/API
+bearer settings; discovery uses pinned origins and per-pair file/TLS authority.
+The current Compose defaults still need the coordinated deployment batch in the
+[authentication rollout ledger](../contracts/platform/service-authentication-rollout.json)
+before they can start these binaries unchanged. Isolated Registry service gates
+have passed; complete deployment and workflow E2E remain pending. Existing
+Runtimes acquire new verifier configuration only through explicit rebuild.
 
 ## 3. Build And Start
 

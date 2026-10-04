@@ -86,7 +86,7 @@
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs admin-console; node tests/integration/go/run.mjs admin-console -- -race (188 tests, 336 subtests, zero skips/failures); real HTTP signed-scope and model-only proxy checks passed",
         "docker": "node tests/e2e/service-authentication/console/run.mjs (74 authentication, model-only discovery, safe error/projection, unchanged CCT, lifecycle-progress and SIGTERM/SIGINT/restart checks; cleaned)",
-        "pending_consumers": ["skill-registry"],
+        "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch"
       }
     },
@@ -107,7 +107,7 @@
         "unit_contract_component": "132 unit files / 1616 tests; 25 component files / 201 tests; zero skips/failures; regenerated frozen publication fixtures, real HTTP/TLS/SSE/cancellation, instance file/privacy/retention and learning checks passed; TypeScript, lint, schema and route catalog gates passed",
         "postgres": "38 files / 330 tests; zero skips/failures; full-reference maintenance replay/settlement and temporary scope substitution guards; isolated database cleaned",
         "docker": "node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs (14 authentication/listener, 23 Provider, 18 Runtime-instance checks, 56 authenticated official-MCP requests and five SDK business scenarios; closure, unknown effects, cold republishing and normal shutdown/restart verified; cleaned). Runtime/Identity/model are explicitly ACP-owned protocol peers.",
-        "pending_consumers": ["skill-registry"],
+        "pending_consumers": [],
         "pending_provider_policy": "Controller, Console and ACP #28 owning-service batches are admitted; coordinated deployment and cross-service acceptance remain in the final integration batch.",
         "cross_service_e2e": "pending final integration batch",
         "runtime_instance_client": "#30 private/public separation, volatile per-instance sender files and all Runtime clients are admitted. Execution fences, independent signed tickets and unknown-effect barriers remain enforced; deployment/cross-service E2E is pending."
@@ -146,7 +146,7 @@
         "postgres": "21 packages / 662 tests / 1310 subtests; zero skips/failures; private Runtime HTTP relay, binding mismatch/outage rejection, ACK integrity, closure and database/Trace privacy; later targeted private Trace revalidation passed; isolated PostgreSQL/Temporal and PostgreSQL resources cleaned",
         "docker": "node tests/e2e/service-authentication/controller/run.mjs (83 native authentication, discovery/SSRF, catalog, unchanged CCT, actual production Runtime handoff, mismatch rejection, disable during resolver outage, private/public privacy, custom health, startup rejection and SIGTERM/SIGINT/fresh-resolution restart checks; complete; owned resources and credentials cleaned). RC/ACP/Egress are explicitly Controller-owned protocol peers.",
         "pending_consumers": [],
-        "pending_dependencies": ["runtime-egress", "skill-registry"],
+        "pending_dependencies": ["runtime-egress"],
         "pending_provider_discovery": "#28 Controller revision 38, Console thin proxy and ACP model destination guard are admitted; coordinated deployment and cross-service acceptance remain in the final integration batch.",
         "cross_service_e2e": "pending final integration batch",
         "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed.",
@@ -170,7 +170,7 @@
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs runtime-controller; real HTTP route matrix, strict JSON, local readiness, native Registry credential rotation/redirect/proxy isolation; shared 115 token/TLS vectors and exported Go wrapper regressions passed",
         "postgres": "16 packages / 327 tests / 504 subtests; zero skips/failures; atomic credential/operation/generation rollback and exact replay; isolated database/resources cleaned",
         "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (130 authentication, image, private connection, root-only actual receiver mount, restart/replay, new-generation authority, Disable/Delete cleanup and normal shutdown checks; cleaned). Uses an explicitly RC-owned Runtime protocol double; native receiver is a separate batch.",
-        "pending_dependencies": ["skill-registry"],
+        "pending_dependencies": [],
         "cross_service_e2e": "pending final integration batch",
         "runtime_volume_component": "Direct Docker archive preparation into a never-started helper: directory UID/GID 0 mode 0700, file 0600, idempotent readback and auto-created empty-volume race rejection; zero skips/failures; resources cleaned.",
         "runtime_instance_clients": "#30 RC issuer/resolver/status client, native Runtime receiver, Controller private relay and ACP consumers are admitted. Coordinated deployment and complete business/security E2E remain in final integration."
@@ -179,11 +179,22 @@
     {
       "owner": "skill-registry",
       "issues": [31],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
-        "per-caller credentials and authorization",
-        "JSON media-type checks"
-      ]
+        "exact workload token/mTLS admission and per-route caller grants",
+        "Identity-signed administrator CCT; derive Console organization/actor before effects and replay",
+        "strict JSON/query/multipart carriers and duplicate/unknown-field rejection",
+        "authenticated pinned Identity JWKS and ACP source clients; per-request credential rotation",
+        "reject legacy shared API/source bearer settings at startup"
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs skill-registry; frozen Registry/token/CCT and route catalog gates; real HTTP ambiguity, Console signed scope, JSON/multipart and source/TLS/proxy/redirect checks passed",
+        "postgres": "Full isolated suite: five packages / 72 tests / 359 subtests; zero skips/failures. Verified Console upload/promotion persist signed actor; forged replay cannot add receipts.",
+        "docker": "node tests/e2e/skill-registry/discovery-docker.mjs (66 authentication checks plus metadata-only mapping, owner/organization scope, drift/offline/revocation, promotion/provenance/CAS, restart and source-removal cases; production image; owned resources and credentials cleaned). Identity and ACP source are explicitly Registry-owned protocol peers.",
+        "pending_consumers": [],
+        "cross_service_e2e": "pending final integration batch",
+        "deployment": "Legacy Compose bearer fixtures and complete Skill delivery/propagation harnesses still require coordinated file/TLS authentication wiring."
+      }
     },
     {
       "owner": "antnest-runtime",

@@ -65,6 +65,10 @@ func (h *Handler) searchSkills(w http.ResponseWriter, r *http.Request) {
 		writeError(w, failure("invalid_request", "invalid requesting Agent identity"))
 		return
 	}
+	if err := verifiedScope(r, &in.OrganizationID, &in.ActorID); err != nil {
+		writeError(w, err)
+		return
+	}
 	items, err := h.discovery.Search(r.Context(), in)
 	if err != nil {
 		writeError(w, err)
@@ -81,6 +85,10 @@ func (h *Handler) loadSkill(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	var in LoadInput
 	if _, ok := h.readDiscovery(w, r, &in); !ok {
+		return
+	}
+	if err := verifiedScope(r, &in.OrganizationID, &in.ActorID); err != nil {
+		writeError(w, err)
 		return
 	}
 	out, err := h.discovery.Load(r.Context(), in)
@@ -113,6 +121,10 @@ func (h *Handler) promoteSkill(w http.ResponseWriter, r *http.Request) {
 	_, hasVersion := fields["expected_version"]
 	if hasSkill != hasVersion || hasSkill && (in.SkillID == "" || in.ExpectedVersion < 1) {
 		writeError(w, failure("invalid_request", "append requires both Skill and expected version"))
+		return
+	}
+	if err := verifiedScope(r, &in.OrganizationID, &in.ActorID); err != nil {
+		writeError(w, err)
 		return
 	}
 	out, err := h.discovery.Promote(r.Context(), in)

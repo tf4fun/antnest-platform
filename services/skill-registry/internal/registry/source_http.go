@@ -17,19 +17,20 @@ import (
 
 type HTTPAgentSource struct {
 	origin string
-	token  string
 	client *http.Client
 }
 
-func NewHTTPAgentSource(origin, token string) (*HTTPAgentSource, error) {
+func NewHTTPAgentSource(origin string, client *http.Client) (*HTTPAgentSource, error) {
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") ||
-		len(token) < 32 || strings.TrimSpace(token) != token || strings.ContainsAny(token, "\r\n") {
+		client == nil {
 		return nil, failure("invalid_request", "invalid private Skill source configuration")
 	}
-	return &HTTPAgentSource{origin: strings.TrimRight(origin, "/"), token: token, client: telemetry.HTTPClient(&http.Client{
-		Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-	}, "agent-acp-service")}, nil
+	copyClient := *client
+	copyClient.Jar = nil
+	copyClient.Timeout = 10 * time.Second
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &HTTPAgentSource{origin: strings.TrimRight(origin, "/"), client: telemetry.HTTPClient(&copyClient, "agent-acp-service")}, nil
 }
 func (s *HTTPAgentSource) post(ctx context.Context, path string, in any, max int64) ([]byte, http.Header, error) {
 	data, err := json.Marshal(in)
@@ -40,7 +41,6 @@ func (s *HTTPAgentSource) post(ctx context.Context, path string, in any, max int
 	if err != nil {
 		return nil, nil, failure("source_unavailable", "Agent Skill source is unavailable")
 	}
-	request.Header.Set("Authorization", "Bearer "+s.token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := s.client.Do(request)
 	if err != nil {

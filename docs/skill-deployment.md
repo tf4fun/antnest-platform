@@ -3,25 +3,28 @@
 This document describes how to enable automatic personal Skill maintenance and
 dynamic Skill source discovery in the standard Docker deployment.
 
-The standard `compose.yaml` and `compose.stage3.yaml` already wire signed
-maintenance, learning policy reads, automatic source projection and dynamic
-discovery. No configuration override from the test directories is needed. The
-interfaces and permissions are defined by the
+Service authentication is being rolled out on `feat/service-authentication`.
+The owning-service gates have passed for Registry and its consumers, but the
+standard `compose.yaml` and `compose.stage3.yaml` still contain legacy bearer
+wiring. Do not use them unchanged with the new binaries. Random provisioning,
+secret mounts and the complete workflow E2E belong to the separate deployment
+and final integration batches in the
+[rollout ledger](../contracts/platform/service-authentication-rollout.json).
+The required interfaces and permissions are defined by the
 [deployment contract](../contracts/skill-registry/deployment.md).
 
 ## Configuration
 
-When all of the following values are empty, personal Skill maintenance and
-dynamic source discovery stay off. Registry package hosting, Template references
-and read-only preset delivery remain available. The operator provides stable
-values explicitly:
+The following values configure automatic personal Skill maintenance. Without
+the signing/verifier profile, maintenance stays off. Registry hosting and
+Template delivery require their own service authentication regardless of whether
+maintenance or discovery is enabled. The operator provides stable values:
 
-| Variable                                      | Used by                                                                                   |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`   | ACP signing key ID                                                                        |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`   | ACP Ed25519 PKCS8 DER private key, standard base64                                        |
+| Variable                                      | Used by                                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`   | ACP signing key ID                                                                           |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`   | ACP Ed25519 PKCS8 DER private key, standard base64                                           |
 | `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` | Runtime Controller public current/next verifier set; frozen into a Runtime on create/rebuild |
-| `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`         | Separate source-read bearer shared by ACP and Registry; at least 32 printable characters  |
 
 The signing and verifier `kid` use one exact ASCII identity:
 `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` (1–64 characters, letter or digit first,
@@ -37,10 +40,19 @@ Before upgrading an existing deployment, check the
 rejects signing key IDs with leading or trailing whitespace, as well as
 whitespace-only values, at startup; previous versions trimmed them.
 
-The Registry API bearer remains the existing `ANTNEST_SKILL_REGISTRY_API_TOKEN`
-and must differ from the source bearer. From the source bearer, Compose sets the
-private addresses and tokens on both sides. Setting the signing private key also
-connects ACP to the existing Controller learning policy endpoint. Each Agent's
+Dynamic discovery uses ACP's `ANTNEST_ACP_SKILL_REGISTRY_URL` and Registry's
+`ANTNEST_SKILL_REGISTRY_SOURCE_URL`, with separate credentials for ACP → Registry
+and Registry → ACP. Registry also requires `ANTNEST_IDENTITY_URL` and its own
+Identity sender credential for Console CCT verification. All services use the
+shared [file/TLS profile](../contracts/platform/service-authentication.md):
+receiver files hold hashes, sender files hold per-pair credentials, and token
+files are validated at startup and reread per request. Nonempty legacy
+`ANTNEST_SKILL_REGISTRY_API_TOKEN`, `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`,
+`ANTNEST_ACP_SKILL_REGISTRY_TOKEN` or `ANTNEST_ACP_SKILL_SOURCE_TOKEN` fails the
+corresponding service startup. No shared bearer enables discovery.
+
+Setting the signing private key also enables ACP's configured Controller
+learning policy reader. Each Agent's
 maintenance policy still decides whether automatic learning is on, when it
 triggers and its budget; there is no separate user learning command.
 
@@ -59,7 +71,7 @@ private key and does not overwrite an existing file:
 
 ```sh
 node --input-type=module <<'JS'
-import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 const kid = 'development-1';
 const pair = generateKeyPairSync('ed25519');
@@ -70,7 +82,6 @@ const values = {
   ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: kid,
   ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: signing,
   ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: verifiers,
-  ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: randomBytes(32).toString('base64url'),
 };
 writeFileSync('.env.skills', Object.entries(values).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600, flag: 'wx' });
 JS
@@ -83,10 +94,12 @@ credentials; it does not read, decrypt or replay model Provider credentials.
 
 ## Start And Apply
 
-Prepare `.env`, images and networks as described in the
-[single-node operations runbook](docker-single-node-operations.md), then start
-with the standard configuration. The two env files are read in order; the
-second only adds the Skill options:
+After the pending deployment batch supplies service credentials, private mounts
+and purpose networks, prepare `.env` and images as described in the
+[single-node operations runbook](docker-single-node-operations.md). The following
+is the intended start command after that wiring is admitted; it is not an
+acceptance claim for today's legacy Compose profile. The second env file only
+adds maintenance signing/verifier options:
 
 ```sh
 docker compose --env-file .env --env-file .env.skills \
@@ -99,19 +112,22 @@ Agents pick it up only through the normal Template and explicit rebuild flow.
 Do not change the verifier set while a lifecycle operation is in flight.
 Rotation and compromise handling follow the
 [learning key contract](../contracts/skill-learning/learning-api.md).
-To enable only personal automatic learning, leave the source bearer unset and
-configure the signing key and public verifier set.
+To enable only personal automatic learning, leave the discovery origins unset
+and configure the signing key and public verifier set. Mandatory service and
+Runtime instance authentication still applies.
 
 ## Verification
 
-`make test-skill-deployment` renders the standard configuration with synthetic
-temporary keys and checks the independent switches, the bearers on both sides,
-consistent private addresses, private-key isolation, and that the standard build
-includes Registry.
+`make e2e-skill-discovery-registry` is the current Registry-owned gate. It builds
+the production image, runs unit/contract/real HTTP/PostgreSQL checks and validates
+workload grants, signed Console scope, live discovery, promotion and restart.
+Its Identity and source peers implement the required protocols but are not the
+actual cross-service implementations. Temporary CSPRNG credentials and Docker
+resources are cleaned after the run.
 
-`make e2e-skill-deployment` builds isolated candidate services and, using these
-standard environment variables, runs real learning, source projection,
-temporary use, browser promotion, and Template create/rebuild/Run. Its
-configuration override selects only candidate images, network ranges and a
-local model. It does not use the real `.env`, consumes no real model quota, and
-removes all of its resources when it finishes.
+`make test-skill-deployment` and `make e2e-skill-deployment` need their legacy
+bearer fixtures replaced in the deployment/integration batches. The final gate
+must exercise actual learning, projection, temporary use, browser promotion and
+Template create/rebuild/Run with the admitted service authentication profile.
+Until then, those complete workflows remain pending; no real Provider credential
+or model quota is needed for the isolated model fixture.

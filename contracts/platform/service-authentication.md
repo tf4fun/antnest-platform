@@ -4,9 +4,11 @@ Status: foundation contract for [#32](https://github.com/tf4fun/antnest-platform
 The interim token wire/configuration profile is frozen by
 [#101](https://github.com/tf4fun/antnest-platform/issues/101).
 The schemas, caller catalogs and repository admission checks are delivered by
-the foundation. Identity now enforces workload/CCT admission and provides the
-issuer/JWKS. Remaining service adoption, deployment changes and Docker security
-E2E are tracked in the [rollout ledger](service-authentication-rollout.json).
+the foundation. Identity provides the issuer/JWKS; Identity, Gateway, Console,
+Agent UI, Controller, ACP, RC, Registry and native Runtime have passed their
+owning-service admission gates. Remaining Egress adoption, deployment changes
+and full Docker security E2E are tracked in the
+[rollout ledger](service-authentication-rollout.json).
 This document does not describe the current unauthenticated listeners as secure.
 
 Provider URLs use the separate [destination policy](provider-destination-policy.md)

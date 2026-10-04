@@ -6,6 +6,10 @@ export default [
   {
     files: [
       "tests/e2e/service-authentication/**/*.mjs",
+      "tests/e2e/skill-registry/discovery-docker.mjs",
+      "tests/e2e/skill-registry/discovery-source.mjs",
+      "tests/integration/platform/service-authentication-contract.test.mjs",
+      "tests/support/service-authentication-eslint.config.mjs",
       "tests/support/service-authentication.test.mjs",
     ],
     ...tseslint.configs.disableTypeChecked,

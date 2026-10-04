@@ -14,16 +14,16 @@ stopping every writer for the whole backup window.
 
 Keep one protected recovery set, with a timestamp and checksums:
 
-| Owner | Database | Additional state |
-| --- | --- | --- |
-| Identity | `antnest_identity` | `ANTNEST_IDENTITY_ENCRYPTION_KEY`, IdP configuration, database role/DSN |
-| Agent Controller | `antnest_agent_controller` | `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`, provider credentials/configuration, deployment identity |
-| ACP | `antnest_agent_acp` | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context, Skill maintenance signing keys |
-| Runtime Controller | `antnest_runtime_controller` | Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration |
-| Egress | `antnest_egress` | Tunnel CIDR/resolver and deployment network configuration |
-| Skill Registry | `antnest_skill_registry` | Registry API token and source configuration |
-| Temporal | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data |
-| Runtime filesystem | none | Every retained `antnest-workspace-<agent-id>` volume, every referenced per-Agent Skill volume and the configured system Skills volume, including ownership, modes and symlinks |
+| Owner              | Database                                          | Additional state                                                                                                                                                               |
+| ------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Identity           | `antnest_identity`                                | `ANTNEST_IDENTITY_ENCRYPTION_KEY`, IdP configuration, database role/DSN                                                                                                        |
+| Agent Controller   | `antnest_agent_controller`                        | `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`, provider credentials/configuration, deployment identity                                                                             |
+| ACP                | `antnest_agent_acp`                               | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context, Skill maintenance signing keys                                                                                 |
+| Runtime Controller | `antnest_runtime_controller`                      | Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration                                                              |
+| Egress             | `antnest_egress`                                  | Tunnel CIDR/resolver and deployment network configuration                                                                                                                      |
+| Skill Registry     | `antnest_skill_registry`                          | Receiver hash file, per-pair Identity/ACP sender files or TLS material, and pinned Identity/source configuration                                                               |
+| Temporal           | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data                                                                            |
+| Runtime filesystem | none                                              | Every retained `antnest-workspace-<agent-id>` volume, every referenced per-Agent Skill volume and the configured system Skills volume, including ownership, modes and symlinks |
 
 The three encryption keys are independent of database login passwords. Preserve
 the keys and working connection configuration, plus the exact Compose files and
@@ -87,7 +87,7 @@ materializations.
    flushed; stop it afterward. Leave only PostgreSQL running for logical export.
    No privileged maintenance client may mutate the databases during this window.
 4. For each database above, execute `pg_dump --format=custom --file=<private-file>
-   --username=<backup-role> --dbname=<database>`. Do not omit ownership or ACLs.
+--username=<backup-role> --dbname=<database>`. Do not omit ownership or ACLs.
    Inspect errors/warnings and verify every archive before declaring success.
 5. With no mounted writer, archive each whole persistent volume using a temporary
    trusted container. Preserve numeric UID/GID, file modes, symlink targets and
@@ -106,7 +106,7 @@ materializations.
 2. Restore into empty databases owned by their original roles. With the same
    initialized database names and owners, including both Temporal databases, use
    `pg_restore --exit-on-error --single-transaction --username=<backup-role>
-   --dbname=<database> <archive>` for each database. Do not suppress errors or
+--dbname=<database> <archive>` for each database. Do not suppress errors or
    treat a partially restored set as usable. Run only role/database creation
    before restore; defer Temporal schema initialization and all writers until
    every restored database has been verified. See the
