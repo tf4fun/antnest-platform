@@ -30,7 +30,6 @@ export async function startProgressFixture(
   const outcome = Promise.withResolvers<boolean>();
   const executionIds: string[] = [];
   const receivedArguments: Record<string, unknown>[] = [];
-  let authority: ReturnType<typeof runtimeAuthority>;
   const handler = createMcpHandler(
     () => {
       const mcp = new McpServer({ name: "progress-fixture", version: "1.0.0" });
@@ -88,7 +87,7 @@ export async function startProgressFixture(
   if (address === null || typeof address === "string")
     throw new Error("Missing MCP address");
   const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
-  authority = runtimeAuthority(endpoint, "runtime-execution-1");
+  const authority = runtimeAuthority(endpoint, "runtime-execution-1");
   return {
     endpoint,
     authority,

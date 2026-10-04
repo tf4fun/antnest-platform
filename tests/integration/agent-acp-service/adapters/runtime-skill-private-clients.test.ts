@@ -175,7 +175,10 @@ async function withPeer(
       { organizationId, agentId },
     );
     await work({ authority, signer, paths });
-    if (peerFailure) throw peerFailure;
+    if (peerFailure)
+      throw peerFailure instanceof Error
+        ? peerFailure
+        : new Error("Runtime skill peer failed", { cause: peerFailure });
   } finally {
     await authority?.connections.close();
     if (authority)

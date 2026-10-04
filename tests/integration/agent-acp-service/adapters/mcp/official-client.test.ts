@@ -160,7 +160,6 @@ async function startMcpFixture(): Promise<{
 }> {
   const executionIds: string[] = [];
   const requests: string[] = [];
-  let authority: ReturnType<typeof runtimeAuthority>;
   let resourceReads = 0;
   const handler = createMcpHandler(
     (context) => {
@@ -221,7 +220,7 @@ async function startMcpFixture(): Promise<{
     throw new Error("MCP fixture has no TCP address");
   }
   const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
-  authority = runtimeAuthority(endpoint);
+  const authority = runtimeAuthority(endpoint);
   return {
     endpoint,
     authority,
