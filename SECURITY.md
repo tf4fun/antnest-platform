@@ -26,7 +26,15 @@ cluster network. Before exposing a deployment, understand these boundaries:
   deployment remain pending in the rollout ledger. They must stay on private networks that browsers, Agent
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
-  `unix:///var/run/docker.sock`, which is equivalent to root on the host.
+  `unix:///var/run/docker.sock`, which is equivalent to root on the host. Its
+  revision 15 control boundary admits only verified Controller workloads and
+  enforces an operator image repository/digest policy before new Docker effects.
+  Control uses an explicit purpose-network IP and readiness a separate loopback
+  listener. These limits do not contain a compromised RC process. A useful
+  socket proxy needs resource-scope, create-payload and archive-target checks;
+  broad method/path filtering alone is insufficient. See the
+  [RC assessment](services/runtime-controller/api/service-authentication.md#docker-socket-assessment).
+  Purpose-network deployment and Runtime instance credentials remain later batches.
 - **Runtime Egress is privileged.** It owns a TUN device, routes and nftables
   rules, and its control listener is unauthenticated.
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an

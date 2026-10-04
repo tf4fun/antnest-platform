@@ -31,6 +31,9 @@ func (d *Driver) ResolveImage(ctx context.Context, value string) (platform.Image
 	if _, err := reference.ParseAnyReference(value); err != nil {
 		return platform.ImageResolution{}, platform.ErrInvalidImageReference
 	}
+	if !d.images.Allows(value) {
+		return platform.ImageResolution{}, platform.ErrImageNotAllowed
+	}
 	imageID, err := d.engine.InspectImage(ctx, value)
 	if errors.Is(err, ErrNotFound) {
 		return platform.ImageResolution{}, platform.ErrImageNotFound

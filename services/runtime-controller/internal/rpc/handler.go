@@ -24,6 +24,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
@@ -59,6 +60,7 @@ type Service interface {
 }
 
 type Handler struct {
+	security         Security
 	service          Service
 	skillPreparation SkillPreparationService
 	hub              *observation.Hub
@@ -74,11 +76,14 @@ type SkillPreparationService interface {
 }
 
 func NewHandler(
-	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration,
+	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration, security Security,
 	skillPreparations ...SkillPreparationService,
 ) (*Handler, error) {
 	if service == nil || hub == nil {
 		return nil, fmt.Errorf("service and observation hub are required")
+	}
+	if security.Authentication == nil {
+		return nil, fmt.Errorf("controller workload authentication is required")
 	}
 	if heartbeat <= 0 {
 		return nil, fmt.Errorf("SSE heartbeat must be positive")
@@ -88,6 +93,7 @@ func NewHandler(
 	}
 	handler := &Handler{
 		service: service, hub: hub, heartbeat: heartbeat, requestTimeout: requestTimeout,
+		security: security,
 	}
 	if len(skillPreparations) > 1 {
 		return nil, fmt.Errorf("only one Skill preparation service is supported")
@@ -133,6 +139,9 @@ func NewHandler(
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if !h.authenticate(response, request) {
+		return
+	}
 	if request.URL.Path == "/internal/runtime-observations/watch" {
 		h.mux.ServeHTTP(response, request)
 		return
@@ -508,16 +517,9 @@ func nextSequence(after uint64, values []deployment.Observation) uint64 {
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
 	request.Body = http.MaxBytesReader(response, request.Body, maxRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("%w: invalid JSON body: %w", control.ErrInvalidRequest, err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return fmt.Errorf("%w: request body must contain one JSON value", control.ErrInvalidRequest)
-		}
-		return fmt.Errorf("%w: request body must contain one JSON value: %w", control.ErrInvalidRequest, err)
+	raw, err := io.ReadAll(request.Body)
+	if err != nil || serviceauth.DecodeObject(raw, target) != nil {
+		return control.ErrInvalidRequest
 	}
 	observeRequest(request, target)
 	return nil

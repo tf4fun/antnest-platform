@@ -1,8 +1,7 @@
 # Runtime Controller Control API
 
 Runtime Controller exposes a small JSON-over-HTTP RPC surface to Agent
-Controller on a trusted internal network. It performs no end-user
-authentication. The cross-service aggregate is one Runtime Environment per
+Controller with verified workload identity on its purpose-specific private listener. Revision 15 requires the [exact workload profile](service-authentication.md), adds admission errors and operator image allowlists, and separates loopback readiness from the control surface. It performs no end-user authentication. The cross-service aggregate is one Runtime Environment per
 Agent. Docker containers, Kubernetes Pods, workspace volumes, physical
 generation numbers, deployment digests, and platform resource identifiers are
 private implementation details.
@@ -98,7 +97,7 @@ Initialize, Update, and Enable carry a Runtime configuration:
     "image_ref": "antnest/antnest-runtime@sha256:...",
     "network": {
       "packet_contract_revision": 1,
-      "egress_endpoint": {"ipv4": "10.20.0.8", "port": 8092},
+      "egress_endpoint": { "ipv4": "10.20.0.8", "port": 8092 },
       "tunnel_ipv4": "100.64.0.2",
       "resolver_ipv4": "100.64.0.1"
     },
@@ -305,7 +304,15 @@ readiness. Control contract revision 14 adds the required `monitor_ready`
 boolean on both HTTP 200 and HTTP 503 responses:
 
 ```json
-{"status":"ready","live":true,"ready":true,"database_ready":true,"platform_ready":true,"observation_ready":true,"monitor_ready":true}
+{
+  "status": "ready",
+  "live": true,
+  "ready": true,
+  "database_ready": true,
+  "platform_ready": true,
+  "observation_ready": true,
+  "monitor_ready": true
+}
 ```
 
 `ready` requires all four component flags. `platform_ready` denotes local
@@ -319,7 +326,15 @@ Monitor retries and Watch reconnection report HTTP 503 while the process
 continues running. For a monitor-only outage:
 
 ```json
-{"status":"not_ready","live":true,"ready":false,"database_ready":true,"platform_ready":true,"observation_ready":true,"monitor_ready":false}
+{
+  "status": "not_ready",
+  "live": true,
+  "ready": false,
+  "database_ready": true,
+  "platform_ready": true,
+  "observation_ready": true,
+  "monitor_ready": false
+}
 ```
 
 One unhealthy Runtime does not make the Controller unready. A Watch-only
@@ -332,15 +347,15 @@ HTTP status code.
 
 ## Failure Semantics
 
-| Condition | Result | Caller behavior |
-| --- | --- | --- |
-| Invalid command or lifecycle transition | failed / not_started | Correct request |
-| Stale expected revision | failed / not_started | Reload Runtime and decide again |
-| Definite platform rejection before mutation | failed / not_started | Correct input or platform state |
-| Lost response after possible mutation | unknown / unknown | Retry the same request ID |
-| Platform effect cannot be determined | unknown / unknown | Inspect and retry the same request ID |
+| Condition                                                | Result                | Caller behavior                                           |
+| -------------------------------------------------------- | --------------------- | --------------------------------------------------------- |
+| Invalid command or lifecycle transition                  | failed / not_started  | Correct request                                           |
+| Stale expected revision                                  | failed / not_started  | Reload Runtime and decide again                           |
+| Definite platform rejection before mutation              | failed / not_started  | Correct input or platform state                           |
+| Lost response after possible mutation                    | unknown / unknown     | Retry the same request ID                                 |
+| Platform effect cannot be determined                     | unknown / unknown     | Inspect and retry the same request ID                     |
 | Runtime starting/unhealthy after successful create/start | completed / completed | Observe current state; do not retry the completed command |
-| Confirmed complete deletion | completed / completed | Agent deletion may finish |
+| Confirmed complete deletion                              | completed / completed | Agent deletion may finish                                 |
 
 Historical operations recorded before creation/readiness separation retain
 their original `runtime_not_ready` diagnosis when queried or replayed. New
@@ -354,5 +369,9 @@ Errors use one stable JSON shape and never expose SQL, Docker socket paths,
 credentials, environment values, Runtime output, or physical resource names:
 
 ```json
-{"code":"runtime_revision_conflict","message":"Runtime revision is stale","retryable":false}
+{
+  "code": "runtime_revision_conflict",
+  "message": "Runtime revision is stale",
+  "retryable": false
+}
 ```

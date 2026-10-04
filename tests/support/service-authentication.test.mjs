@@ -8,6 +8,62 @@ async function checker() {
   return import(file.href);
 }
 
+test("exported Go wrappers cannot hide external package registrations behind known local calls", async () => {
+  const { checkRepository } = await checker();
+  const result = await checkRepository({
+    additionalSources: {
+      "services/runtime-controller/probe/routes.go": {
+        service: "runtime-controller",
+        source:
+          'package probe\nimport "net/http"\nfunc Reg(mux *http.ServeMux, pattern string) { mux.Handle(pattern, http.NotFoundHandler()) }\nfunc local(mux *http.ServeMux) { Reg(mux, "GET /status") }',
+      },
+      "services/runtime-controller/consumer/routes.go": {
+        service: "runtime-controller",
+        source:
+          'package consumer\nimport ("net/http"; "example.com/probe")\nfunc register(mux *http.ServeMux) { probe.Reg(mux, "POST /internal/unlisted-external") }',
+      },
+    },
+  });
+  assert(
+    result.errors.some((error) => error.includes("exported route wrapper")),
+  );
+});
+
+test("exported Go methods and derived route parameters fail closed", async () => {
+  const { checkRepository } = await checker();
+  for (const source of [
+    'package probe\nimport "net/http"\nfunc Reg(mux *http.ServeMux, pattern string) { route := "POST " + pattern; mux.Handle(route, http.NotFoundHandler()) }',
+    'package probe\nimport "net/http"\nfunc Reg(mux *http.ServeMux, pattern string) { var route = pattern; mux.Handle(route, http.NotFoundHandler()) }',
+    'package probe\nimport "net/http"\ntype Routes struct{ mux *http.ServeMux }; func (r *Routes) Reg(pattern string) { r.mux.HandleFunc(pattern, func(http.ResponseWriter,*http.Request){}) }',
+  ]) {
+    const result = await checkRepository({
+      additionalSources: {
+        "services/runtime-controller/probe/routes.go": {
+          service: "runtime-controller",
+          source,
+        },
+      },
+    });
+    assert(
+      result.errors.some((error) => error.includes("exported route wrapper")),
+    );
+  }
+});
+
+test("an exported Go constructor may still register literal routes", async () => {
+  const { checkRepository } = await checker();
+  const result = await checkRepository({
+    additionalSources: {
+      "services/runtime-controller/probe/routes.go": {
+        service: "runtime-controller",
+        source:
+          'package probe\nimport "net/http"\nfunc NewHandler(mux *http.ServeMux) { mux.Handle("GET /status", http.NotFoundHandler()) }',
+      },
+    },
+  });
+  assert.deepEqual(result.errors, []);
+});
+
 test("every currently registered service route has an explicit caller policy", async () => {
   const { checkRepository } = await checker();
   const result = await checkRepository();

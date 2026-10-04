@@ -212,11 +212,19 @@ test("the rollout records admitted producers while keeping consumer and integrat
   assert(controller.admission.docker);
   assert(controller.admission.pending_provider_discovery.includes("#28"));
   assert.deepEqual(controller.admission.pending_dependencies, [
-    "runtime-controller",
     "runtime-egress",
     "skill-registry",
   ]);
-  assert(rollout.batches.slice(7).every((batch) => batch.status === "pending"));
+  const rc = rollout.batches.find(
+    (batch) => batch.owner === "runtime-controller",
+  );
+  assert.equal(rc.status, "service-admitted");
+  assert(rc.admission.unit_contract_component);
+  assert(rc.admission.postgres);
+  assert(rc.admission.docker);
+  assert(rc.admission.pending_runtime_client.includes("#30"));
+  assert.deepEqual(rc.admission.pending_dependencies, ["skill-registry"]);
+  assert(rollout.batches.slice(8).every((batch) => batch.status === "pending"));
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));
   assert(rollout.batches.some((batch) => batch.owner === "integration"));

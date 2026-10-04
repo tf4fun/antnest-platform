@@ -262,7 +262,7 @@ observation time, plus `reason`, `diagnostic_summary`, MCP endpoint, and
 execution identity when known. It never returns generation, digest,
 container/Pod ID, or volume ID.
 
-Runtime Controller does not resolve Egress configuration or choose an image.
+Runtime Controller does not resolve Egress configuration or choose an image. It enforces the operator repository/manifest allowlist on every newly admitted image selection before Docker inspection or journal acceptance; accepted recovery retains its frozen image identity.
 Agent Controller and Runtime Egress provide that policy input. Runtime
 Controller alone injects physical RuntimeSpec and platform invariants.
 
@@ -456,9 +456,9 @@ Rules:
 9. Candidate and active semantics do not exist here. Agent Controller owns Run
    admission around lifecycle commands; physical generations stay private.
 10. A resource selected by the Antnest managed-resource filter but carrying
-   malformed or incomplete identity labels is explicit drift. List or Watch
-   fails reconciliation and keeps observation readiness false; it is never
-   silently skipped before a `reconciled` fact.
+    malformed or incomplete identity labels is explicit drift. List or Watch
+    fails reconciliation and keeps observation readiness false; it is never
+    silently skipped before a `reconciled` fact.
 11. Every Runtime-scoped platform event carries the observed deployment digest
     and must match the private generation claim before it enters the journal.
 
@@ -534,22 +534,22 @@ No other service reads these tables. Agent Controller consumes RPCs.
 
 ## Module Map
 
-| Module | Responsibility | Must not absorb |
-| --- | --- | --- |
-| `deployment` | Private generation, physical deployment, inspection, observation, and operation outcomes | HTTP DTOs, SQL records, Docker types |
-| `control` | Initialize, Update, Disable, Enable, Delete, Inspect, List, and observation use cases over narrow ports | Agent admission and Tool dispatch |
-| `observation` | In-process Watch wake-up hub and repository notification decorator | Durable history or platform semantics |
-| `platform` | Platform-neutral adapter ports and normalized event model | Docker/Kubernetes branching outside adapters |
-| `platform/docker` | Docker resource mapping, health, List/Watch, and deterministic labels | Agent or Egress logic |
-| `platform/monitor` | Initial List reconciliation, Watch reconnect, gap records, and healthy-status verification | Agent event interpretation |
-| `runtimeclient` | Bounded `/status` verification | MCP Tool execution |
-| `repository` | Platform-neutral Store, Agent lock, observation leadership, and notification ports | SQL records and queries |
-| `repository/postgres` | Private Environment heads, operations, generation claims, observation journal, and Skill set records | Cross-service tables |
-| `skillset` | Frozen Skill set identity, artifact validation, checkpoints, and collection manifest | Docker calls and HTTP DTOs |
-| `registryclient` | Authenticated, non-redirecting exact-version Skill Registry downloads | Skill selection policy |
-| `rpc` | Internal request/response DTO mapping and Watch transport | Public OpenAPI and domain branching |
-| `telemetry` | Structured logs, traces, metrics | Control flow |
-| `cmd/runtime-controller` | Composition and process lifecycle | Domain decisions |
+| Module                   | Responsibility                                                                                          | Must not absorb                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `deployment`             | Private generation, physical deployment, inspection, observation, and operation outcomes                | HTTP DTOs, SQL records, Docker types         |
+| `control`                | Initialize, Update, Disable, Enable, Delete, Inspect, List, and observation use cases over narrow ports | Agent admission and Tool dispatch            |
+| `observation`            | In-process Watch wake-up hub and repository notification decorator                                      | Durable history or platform semantics        |
+| `platform`               | Platform-neutral adapter ports and normalized event model                                               | Docker/Kubernetes branching outside adapters |
+| `platform/docker`        | Docker resource mapping, health, List/Watch, and deterministic labels                                   | Agent or Egress logic                        |
+| `platform/monitor`       | Initial List reconciliation, Watch reconnect, gap records, and healthy-status verification              | Agent event interpretation                   |
+| `runtimeclient`          | Bounded `/status` verification                                                                          | MCP Tool execution                           |
+| `repository`             | Platform-neutral Store, Agent lock, observation leadership, and notification ports                      | SQL records and queries                      |
+| `repository/postgres`    | Private Environment heads, operations, generation claims, observation journal, and Skill set records    | Cross-service tables                         |
+| `skillset`               | Frozen Skill set identity, artifact validation, checkpoints, and collection manifest                    | Docker calls and HTTP DTOs                   |
+| `registryclient`         | Authenticated, non-redirecting exact-version Skill Registry downloads                                   | Skill selection policy                       |
+| `rpc`                    | Internal request/response DTO mapping and Watch transport                                               | Public OpenAPI and domain branching          |
+| `telemetry`              | Structured logs, traces, metrics                                                                        | Control flow                                 |
+| `cmd/runtime-controller` | Composition and process lifecycle                                                                       | Domain decisions                             |
 
 ## Failure Semantics
 
@@ -662,9 +662,6 @@ capture, and forwarding to Runtimes.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../api/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#29](https://github.com/tf4fun/antnest-platform/issues/29); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and this service's [caller catalog](../api/callers.json) require verified Controller workload identity on every control route. Missing/malformed/duplicate authority gets 401 and a known different workload gets 403 before decoding, journal writes or Docker effects. RC acts on Controller-owned accepted operations and strips unsigned user/CCT hints. It never authorizes itself on Skill preparation routes. The [RC profile](../api/service-authentication.md) also requires strict UTF-8 JSON, an explicit Controller-purpose listen IP, a separate loopback health port, and authenticated Registry downloads without proxies or redirects. This owning-service batch leaves deployment topology and #30 Runtime instance credentials to their designated batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
 and run the shared route/media-type checks in the owning-service batch before
 the cross-service Docker security acceptance.

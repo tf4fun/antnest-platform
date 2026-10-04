@@ -142,11 +142,7 @@
         "postgres": "21 packages / 644 tests / 1245 subtests; zero skips/failures; current credential rotation plus response/log/span privacy; isolated PostgreSQL/Temporal cleaned",
         "docker": "node tests/e2e/service-authentication/controller/run.mjs (61 authentication, discovery/SSRF, catalog, unchanged CCT, control publication, custom health, startup rejection and SIGTERM/SIGINT/restart checks; cleaned)",
         "pending_consumers": [],
-        "pending_dependencies": [
-          "runtime-controller",
-          "runtime-egress",
-          "skill-registry"
-        ],
+        "pending_dependencies": ["runtime-egress", "skill-registry"],
         "pending_provider_discovery": "#28 Controller revision 38, Console thin proxy and ACP model destination guard are admitted; coordinated deployment and cross-service acceptance remain in the final integration batch.",
         "cross_service_e2e": "pending final integration batch",
         "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed."
@@ -155,13 +151,21 @@
     {
       "owner": "runtime-controller",
       "issues": [29],
-      "status": "pending",
+      "status": "service-admitted",
       "deliverables": [
         "workload verification and image policy",
         "management listener isolation",
         "JSON media-type checks",
         "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs runtime-controller; real HTTP route matrix, strict JSON, local readiness, native Registry credential rotation/redirect/proxy isolation; shared 115 token/TLS vectors and exported Go wrapper regressions passed",
+        "postgres": "15 packages / 311 tests / 498 subtests; zero skips/failures; installed-image and tag-move Docker adapter checks; isolated database/resources cleaned",
+        "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (89 route authentication, management-interface isolation, local health, image policy/nonacceptance, frozen image ID, credential rotation/replay, direct lifecycle, startup rejection and SIGTERM/SIGINT checks; cleaned)",
+        "pending_runtime_client": "#30 private instance connection contract, producer and consumers remain separate service-owned batches. Existing execution fences and signed maintenance tickets are retained.",
+        "pending_dependencies": ["skill-registry"],
+        "cross_service_e2e": "pending final integration batch"
+      }
     },
     {
       "owner": "skill-registry",

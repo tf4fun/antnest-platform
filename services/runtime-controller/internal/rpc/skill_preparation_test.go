@@ -31,7 +31,7 @@ func (s *preparationStub) Release(context.Context, string, string, string, strin
 
 func TestSkillPreparationRoutes(t *testing.T) {
 	stub := &preparationStub{}
-	handler, err := NewHandler(&fakeService{}, observation.NewHub(), time.Second, time.Minute, stub)
+	handler, err := newAuthenticatedHandler(&fakeService{}, observation.NewHub(), time.Second, time.Minute, stub)
 	if err != nil {
 		t.Fatal(err)
 	}

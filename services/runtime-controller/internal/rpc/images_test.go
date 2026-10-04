@@ -35,7 +35,7 @@ func TestResolveImageRPCIsReadOnlyAndDoesNotRequireLifecycleIdentity(t *testing.
 		}
 		return platform.ImageResolution{Reference: want["reference"], ImageRef: want["image_ref"]}, nil
 	}}
-	handler, err := NewHandler(service, observation.NewHub(), time.Second, time.Second)
+	handler, err := newAuthenticatedHandler(service, observation.NewHub(), time.Second, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestResolveImageRPCRejectsMalformedQueriesBeforeService(t *testing.T) {
 		t.Fatal("invalid query reached the service")
 		return platform.ImageResolution{}, nil
 	}}
-	handler, err := NewHandler(service, observation.NewHub(), time.Second, time.Second)
+	handler, err := newAuthenticatedHandler(service, observation.NewHub(), time.Second, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestResolveImageRPCHidesPlatformDetailsAndMapsFailures(t *testing.T) {
 			service := imageService{fakeService: &fakeService{}, resolve: func(context.Context, string) (platform.ImageResolution, error) {
 				return platform.ImageResolution{}, errors.Join(test.cause, errors.New("private platform diagnostics"))
 			}}
-			handler, err := NewHandler(service, observation.NewHub(), time.Second, time.Second)
+			handler, err := newAuthenticatedHandler(service, observation.NewHub(), time.Second, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}

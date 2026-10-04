@@ -11,11 +11,11 @@ func TestLoadUsesThinDockerAdapterDefaults(t *testing.T) {
 		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
 		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
 	}
-	config, err := Load(func(key string) string { return values[key] })
+	config, err := Load(testEnvironment(t, values))
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if config.ListenAddress != ":8080" || config.Platform != "docker" ||
+	if config.ListenAddress != "127.0.0.1:8080" || config.Platform != "docker" ||
 		config.DockerSocketPath != "/var/run/docker.sock" {
 		t.Fatalf("unexpected platform defaults: %+v", config)
 	}
@@ -38,7 +38,7 @@ func TestLoadAllowsAnExplicitControllerScope(t *testing.T) {
 		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
 		"ANTNEST_RUNTIME_CONTROLLER_SCOPE":        "deployment-a",
 	}
-	config, err := Load(func(key string) string { return values[key] })
+	config, err := Load(testEnvironment(t, values))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestLoadRejectsInvalidMonitorRetryLimit(t *testing.T) {
 				"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":                 "antnest-runtime-management",
 				"ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY": raw,
 			}
-			_, err := Load(func(key string) string { return values[key] })
+			_, err := Load(testEnvironment(t, values))
 			if err == nil || !strings.Contains(err.Error(), "ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY") {
 				t.Fatalf("invalid monitor retry limit %q was not rejected: %v", raw, err)
 			}
@@ -74,7 +74,7 @@ func TestLoadMonitorRetryLimit(t *testing.T) {
 				"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":                 "antnest-runtime-management",
 				"ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY": test.raw,
 			}
-			loaded, err := Load(func(key string) string { return values[key] })
+			loaded, err := Load(testEnvironment(t, values))
 			if err != nil || loaded.MonitorMaxRetryDelay != test.want {
 				t.Fatalf("monitor retry limit = %s, want %s: %v", loaded.MonitorMaxRetryDelay, test.want, err)
 			}
@@ -87,22 +87,22 @@ func TestLoadMaintenanceVerifierBootstrap(t *testing.T) {
 		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
 		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
 	}
-	loaded, err := Load(func(key string) string { return values[key] })
+	loaded, err := Load(testEnvironment(t, values))
 	if err != nil || len(loaded.MaintenanceVerifiers.Keys) != 0 {
 		t.Fatalf("maintenance must default closed: %+v %v", loaded.MaintenanceVerifiers, err)
 	}
 	values["ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"] = `{"keys":[{"kid":"next","algorithm":"Ed25519","public_key_base64url":"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},{"kid":"current","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`
-	loaded, err = Load(func(key string) string { return values[key] })
+	loaded, err = Load(testEnvironment(t, values))
 	if err != nil || len(loaded.MaintenanceVerifiers.Keys) != 2 || loaded.MaintenanceVerifiers.Keys[0].KID != "current" {
 		t.Fatalf("maintenance bootstrap not normalized: %+v %v", loaded.MaintenanceVerifiers, err)
 	}
 	values["ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"] = `{"keys":[{"kid":"bad key","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := Load(testEnvironment(t, values)); err == nil {
 		t.Fatal("invalid maintenance key configuration accepted")
 	}
 	for _, malformed := range []string{`null`, `{}`, `{"keys":null}`, `[]`} {
 		values["ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"] = malformed
-		if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		if _, err := Load(testEnvironment(t, values)); err == nil {
 			t.Fatalf("non-object maintenance verifier set accepted: %s", malformed)
 		}
 	}
@@ -116,7 +116,7 @@ func TestLoadMaintenanceVerifierRejectionNamesEnvironmentVariable(t *testing.T) 
 				"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":          "antnest-runtime-management",
 				"ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS": `{"keys":[{"kid":"` + kid + `","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`,
 			}
-			_, err := Load(func(key string) string { return values[key] })
+			_, err := Load(testEnvironment(t, values))
 			if err == nil || !strings.Contains(err.Error(), "ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS") {
 				t.Fatalf("rejection does not identify the configured variable: %v", err)
 			}
@@ -124,23 +124,15 @@ func TestLoadMaintenanceVerifierRejectionNamesEnvironmentVariable(t *testing.T) 
 	}
 }
 
-func TestLoadSkillPreparationRequiresRegistryPair(t *testing.T) {
-	base := map[string]string{"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime", "ANTNEST_RUNTIME_MANAGEMENT_NETWORK": "antnest-runtime-management"}
-	for _, key := range []string{"ANTNEST_SKILL_REGISTRY_URL", "ANTNEST_SKILL_REGISTRY_API_TOKEN"} {
-		values := map[string]string{}
-		for k, v := range base {
-			values[k] = v
-		}
-		values[key] = "configured"
-		if _, err := Load(func(name string) string { return values[name] }); err == nil {
-			t.Fatalf("accepted partial Skill Registry configuration: %s", key)
-		}
+func TestLoadSkillPreparationUsesAuthenticatedRegistry(t *testing.T) {
+	base := map[string]string{"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime", "ANTNEST_RUNTIME_MANAGEMENT_NETWORK": "antnest-runtime-management", "ANTNEST_SKILL_REGISTRY_URL": "http://skill-registry:8080"}
+	configuration, err := Load(testEnvironment(t, base))
+	if err != nil || configuration.SkillRegistryURL != "http://skill-registry:8080" {
+		t.Fatalf("authenticated Registry configuration: %v", err)
 	}
-	base["ANTNEST_SKILL_REGISTRY_URL"] = "http://skill-registry:8080"
 	base["ANTNEST_SKILL_REGISTRY_API_TOKEN"] = "test-token"
-	configuration, err := Load(func(name string) string { return base[name] })
-	if err != nil || configuration.SkillRegistryURL != "http://skill-registry:8080" || configuration.SkillRegistryToken != "test-token" {
-		t.Fatalf("Skill Registry configuration: %+v %v", configuration, err)
+	if _, err := Load(testEnvironment(t, base)); err == nil {
+		t.Fatal("retired Registry token was accepted")
 	}
 }
 
@@ -178,7 +170,7 @@ func TestLoadRejectsInvalidDeploymentBoundary(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := Load(func(key string) string { return test.values[key] }); err == nil {
+			if _, err := Load(testEnvironment(t, test.values)); err == nil {
 				t.Fatal("invalid configuration accepted")
 			}
 		})
@@ -193,7 +185,7 @@ func TestLoadPassesOnlyRuntimeSupportedOTELConfiguration(t *testing.T) {
 		"OTEL_EXPORTER_OTLP_ENDPOINT":             "http://collector:4318",
 		"OTEL_EXPORTER_OTLP_HEADERS":              "must-not-be-forwarded",
 	}
-	config, err := Load(func(key string) string { return values[key] })
+	config, err := Load(testEnvironment(t, values))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +204,7 @@ func TestLoadUsesRuntimeSpecificOTELOverrides(t *testing.T) {
 		"ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT": "http://172.30.255.4:4318",
 		"ANTNEST_RUNTIME_OTEL_METRICS_EXPORTER":       "none",
 	}
-	config, err := Load(func(key string) string { return values[key] })
+	config, err := Load(testEnvironment(t, values))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +224,7 @@ func TestRuntimeRPCContentSwitchUsesSharedEnvironment(t *testing.T) {
 			"ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT":      test.mode,
 			"ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_HEADERS": "CREDENTIAL_CANARY",
 		}
-		configuration, err := Load(func(key string) string { return values[key] })
+		configuration, err := Load(testEnvironment(t, values))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +232,7 @@ func TestRuntimeRPCContentSwitchUsesSharedEnvironment(t *testing.T) {
 			t.Fatal("shared capture switch or credential allowlist changed")
 		}
 		values["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"] = "invalid"
-		if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		if _, err := Load(testEnvironment(t, values)); err == nil {
 			t.Fatal("invalid switch accepted")
 		}
 	}

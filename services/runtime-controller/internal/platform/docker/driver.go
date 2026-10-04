@@ -31,6 +31,7 @@ var (
 )
 
 type Config struct {
+	AllowedImages      []string
 	ControllerScope    string
 	ManagementNetwork  string
 	SystemSkillsVolume string
@@ -132,6 +133,7 @@ type ContainerSpec struct {
 type Driver struct {
 	engine Engine
 	config Config
+	images *ImagePolicy
 }
 
 func NewDriver(engine Engine, config Config) (*Driver, error) {
@@ -144,7 +146,11 @@ func NewDriver(engine Engine, config Config) (*Driver, error) {
 	if config.ControllerScope == "" || config.ManagementNetwork == "" || config.SystemSkillsVolume == "" {
 		return nil, fmt.Errorf("controller scope, management network, and system Skills volume are required")
 	}
-	return &Driver{engine: engine, config: config}, nil
+	images, err := ParseImagePolicy(config.AllowedImages)
+	if err != nil {
+		return nil, err
+	}
+	return &Driver{engine: engine, config: config, images: images}, nil
 }
 
 func (d *Driver) Ready(ctx context.Context) error {

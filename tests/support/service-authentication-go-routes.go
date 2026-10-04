@@ -21,6 +21,7 @@ type values []any
 type environment map[string]values
 type contextArgument struct{}
 type unresolvedArgument struct{}
+type exportedParameter struct{}
 
 type result struct {
 	Routes []string `json:"routes"`
@@ -65,6 +66,8 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 		for _, base := range s.evaluate(value.X, env) {
 			if row, ok := base.(map[string]values); ok {
 				output = append(output, row[value.Sel.Name]...)
+			} else if _, exported := base.(exportedParameter); exported {
+				output = append(output, exportedParameter{})
 			} else {
 				output = append(output, unresolvedArgument{})
 			}
@@ -79,7 +82,11 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 			for _, right := range s.evaluate(value.Y, env) {
 				a, aOK := left.(string)
 				b, bOK := right.(string)
-				if aOK && bOK {
+				_, leftExported := left.(exportedParameter)
+				_, rightExported := right.(exportedParameter)
+				if leftExported || rightExported {
+					output = append(output, exportedParameter{})
+				} else if aOK && bOK {
 					output = append(output, a+b)
 				} else {
 					output = append(output, unresolvedArgument{})
@@ -173,6 +180,28 @@ func (v visitor) Visit(node ast.Node) ast.Visitor {
 	}
 	s := v.scanner
 	switch value := node.(type) {
+	case *ast.AssignStmt:
+		for index, left := range value.Lhs {
+			if index < len(value.Rhs) {
+				if name, ok := left.(*ast.Ident); ok {
+					for _, evaluated := range s.evaluate(value.Rhs[index], v.env) {
+						if _, exported := evaluated.(exportedParameter); exported {
+							v.env[name.Name] = values{exportedParameter{}}
+						}
+					}
+				}
+			}
+		}
+	case *ast.ValueSpec:
+		for index, name := range value.Names {
+			if index < len(value.Values) {
+				for _, evaluated := range s.evaluate(value.Values[index], v.env) {
+					if _, exported := evaluated.(exportedParameter); exported {
+						v.env[name.Name] = values{exportedParameter{}}
+					}
+				}
+			}
+		}
 	case *ast.FuncLit:
 		// Resolve a locally named pattern wrapper through its own call sites.
 		// Never accidentally substitute another wrapper's registration list.
@@ -203,6 +232,12 @@ func (v visitor) Visit(node ast.Node) ast.Visitor {
 		for _, parameter := range value.Type.Params.List {
 			for _, name := range parameter.Names {
 				env[name.Name] = s.callArguments(value.Name.Name, index, s.files)
+				// Known calls in this package cannot cover external callers of an
+				// exported wrapper. Track its own parameters instead of substituting
+				// local literals; fixed registrations and local closures still work.
+				if token.IsExported(value.Name.Name) {
+					env[name.Name] = values{exportedParameter{}}
+				}
 				if selector, ok := parameter.Type.(*ast.SelectorExpr); ok && selector.Sel.Name == "Context" {
 					if qualifier, ok := selector.X.(*ast.Ident); ok && qualifier.Name == "context" {
 						env[name.Name] = values{contextArgument{}}
@@ -269,6 +304,10 @@ func (v visitor) Visit(node ast.Node) ast.Visitor {
 			s.errors = append(s.errors, fmt.Sprintf("%s:%d unresolved registration", s.path, s.set.Position(value.Pos()).Line))
 		}
 		for _, pattern := range patterns {
+			if _, exported := pattern.(exportedParameter); exported {
+				s.errors = append(s.errors, fmt.Sprintf("%s:%d exported route wrapper forwards a route-pattern parameter", s.path, s.set.Position(value.Pos()).Line))
+				continue
+			}
 			text, ok := pattern.(string)
 			if !ok || (!strings.HasPrefix(text, "/") && !strings.Contains(text, " /")) {
 				s.errors = append(s.errors, fmt.Sprintf("%s:%d unresolved registration", s.path, s.set.Position(value.Pos()).Line))

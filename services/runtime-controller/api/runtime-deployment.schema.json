@@ -7,16 +7,43 @@
   "additionalProperties": false,
   "required": ["image_ref", "network", "resources"],
   "dependentRequired": {
-    "organization_id": ["system_skills", "prepared_skill_set", "prepared_reference_id"],
-    "system_skills": ["organization_id", "prepared_skill_set", "prepared_reference_id"],
-    "prepared_skill_set": ["organization_id", "system_skills", "prepared_reference_id"],
-    "prepared_reference_id": ["organization_id", "system_skills", "prepared_skill_set"]
+    "organization_id": [
+      "system_skills",
+      "prepared_skill_set",
+      "prepared_reference_id"
+    ],
+    "system_skills": [
+      "organization_id",
+      "prepared_skill_set",
+      "prepared_reference_id"
+    ],
+    "prepared_skill_set": [
+      "organization_id",
+      "system_skills",
+      "prepared_reference_id"
+    ],
+    "prepared_reference_id": [
+      "organization_id",
+      "system_skills",
+      "prepared_skill_set"
+    ]
   },
   "properties": {
-    "organization_id": {"type": "string", "pattern": "^org_[0-9a-f]{32}$"},
-    "system_skills": {"type": "array", "maxItems": 32, "items": {"$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/frozen_skill"}},
-    "prepared_skill_set": {"$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepared_skill_set"},
-    "prepared_reference_id": {"type": "string", "pattern": "^psr_[0-9a-f]{32}$"},
+    "organization_id": { "type": "string", "pattern": "^org_[0-9a-f]{32}$" },
+    "system_skills": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/frozen_skill"
+      }
+    },
+    "prepared_skill_set": {
+      "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepared_skill_set"
+    },
+    "prepared_reference_id": {
+      "type": "string",
+      "pattern": "^psr_[0-9a-f]{32}$"
+    },
     "mcp_servers": {
       "$ref": "../../../contracts/runtime/runtime-spec.schema.json#/properties/mcp_servers"
     },
@@ -25,25 +52,30 @@
       "minLength": 1,
       "maxLength": 512,
       "pattern": "^\\S+$",
-      "description": "Caller-selected image name, tag or digest; validated using the image reference parser and passed unchanged to container creation."
+      "description": "Caller-selected repository tag or SHA256 manifest; subject to the operator allowlist before Docker inspection. New lifecycle operations freeze its installed immutable image ID and create from that ID. Bare image IDs and tag+digest combinations are denied."
     },
     "network": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["packet_contract_revision", "egress_endpoint", "tunnel_ipv4", "resolver_ipv4"],
+      "required": [
+        "packet_contract_revision",
+        "egress_endpoint",
+        "tunnel_ipv4",
+        "resolver_ipv4"
+      ],
       "properties": {
-        "packet_contract_revision": {"type": "integer", "const": 1},
+        "packet_contract_revision": { "type": "integer", "const": 1 },
         "egress_endpoint": {
           "type": "object",
           "additionalProperties": false,
           "required": ["ipv4", "port"],
           "properties": {
-            "ipv4": {"type": "string", "format": "ipv4"},
-            "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+            "ipv4": { "type": "string", "format": "ipv4" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
           }
         },
-        "tunnel_ipv4": {"type": "string", "format": "ipv4"},
-        "resolver_ipv4": {"type": "string", "format": "ipv4"}
+        "tunnel_ipv4": { "type": "string", "format": "ipv4" },
+        "resolver_ipv4": { "type": "string", "format": "ipv4" }
       }
     },
     "resources": {
@@ -51,9 +83,17 @@
       "additionalProperties": false,
       "required": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
       "properties": {
-        "memory_bytes": {"type": "integer", "minimum": 134217728, "maximum": 9223372036854775807},
-        "pids_limit": {"type": "integer", "minimum": 16, "maximum": 32768},
-        "tmpfs_bytes": {"type": "integer", "minimum": 16777216, "maximum": 9223372036854775807}
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 134217728,
+          "maximum": 9223372036854775807
+        },
+        "pids_limit": { "type": "integer", "minimum": 16, "maximum": 32768 },
+        "tmpfs_bytes": {
+          "type": "integer",
+          "minimum": 16777216,
+          "maximum": 9223372036854775807
+        }
       }
     }
   }

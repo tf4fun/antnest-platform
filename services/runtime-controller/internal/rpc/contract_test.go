@@ -232,7 +232,7 @@ func TestMachineSSEContractMatchesWireFraming(t *testing.T) {
 		Sequence: 11, Kind: deployment.ObservationReconciled,
 		Source: "contract_test", ObservedAt: time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
 	}}}
-	handler := newTestHandler(t, service).(*Handler)
+	handler := newTestHandler(t, service).(*authenticatedFixture).Handler
 	request := httptest.NewRequest(http.MethodGet, "/internal/runtime-observations/watch?after_sequence=10", nil)
 	response := httptest.NewRecorder()
 	cursor, err := handler.writeAvailable(response, request, http.NewResponseController(response), 10)

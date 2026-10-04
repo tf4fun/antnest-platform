@@ -4,6 +4,7 @@ This directory is owned and versioned by Runtime Controller. It contains the
 complete internal JSON-over-HTTP contract consumed by Agent Controller:
 
 - `control-api.md`: lifecycle and recovery semantics;
+- `service-authentication.md`: revision 15 workload/JSON/listener/image boundary and Docker socket assessment;
 - `control-contract.json`: machine-readable routes, headers, errors, and
   response mappings;
 - `control-api.schema.json`: request and response JSON schemas;

@@ -20,22 +20,30 @@ identity or physical generation.
 
 ## Configuration
 
-| Variable | Required | Meaning |
-| --- | --- | --- |
-| `ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL` | yes | Controller-private PostgreSQL DSN |
-| `ANTNEST_RUNTIME_CONTROLLER_LISTEN` | no | Go listen address; default `:8080` |
-| `ANTNEST_RUNTIME_PLATFORM` | no | `docker`; default and only current adapter |
-| `ANTNEST_DOCKER_HOST` | no | Unix Docker Engine URL; default `unix:///var/run/docker.sock`; TCP is rejected |
-| `ANTNEST_RUNTIME_CONTROLLER_SCOPE` | no | Stable ownership scope written to every managed Runtime and workspace; defaults to the management-network name |
-| `ANTNEST_RUNTIME_MANAGEMENT_NETWORK` | yes | Existing private Docker network shared with Runtime and internal callers |
-| `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME` | no | Existing read-only system-Skill volume name; defaults to `antnest-system-skills` |
-| `ANTNEST_RUNTIME_STATUS_TIMEOUT` | no | Go duration; one `/status` bound; default `5s` |
-| `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | Go duration; complete mutation bound including lock wait; default `2m` |
-| `ANTNEST_RUNTIME_RPC_TIMEOUT` | no | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout |
-| `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT` | no | Go duration; complete physical/logical inventory reconciliation bound; default `2m` |
-| `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no | Go duration; observation retry cap including jitter; default `30s`, minimum `1s` |
-| `ANTNEST_OBSERVATION_RETENTION` | no | Go duration; journal retention; default `168h` |
-| `ANTNEST_RUNTIME_SSE_HEARTBEAT` | no | Go duration; internal SSE heartbeat; default `15s` |
+| Variable                                             | Required | Meaning                                                                                                        |
+| ---------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL`            | yes      | Controller-private PostgreSQL DSN                                                                              |
+| `ANTNEST_RUNTIME_CONTROLLER_LISTEN`                  | no       | Explicit unicast IP and port; default `127.0.0.1:8080`. Bind the Controller-purpose network, never wildcard    |
+| `ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN`           | no       | Separate loopback health IP and port; default `127.0.0.1:8082`                                                 |
+| `ANTNEST_RUNTIME_ALLOWED_IMAGES`                     | no       | JSON array of repositories or repository@sha256 manifests; empty defaults to `antnest/antnest-runtime`         |
+| `ANTNEST_RUNTIME_PLATFORM`                           | no       | `docker`; default and only current adapter                                                                     |
+| `ANTNEST_DOCKER_HOST`                                | no       | Unix Docker Engine URL; default `unix:///var/run/docker.sock`; TCP is rejected                                 |
+| `ANTNEST_RUNTIME_CONTROLLER_SCOPE`                   | no       | Stable ownership scope written to every managed Runtime and workspace; defaults to the management-network name |
+| `ANTNEST_RUNTIME_MANAGEMENT_NETWORK`                 | yes      | Existing outbound private Docker network shared with Runtime; control binds a separate purpose address         |
+| `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME`               | no       | Existing read-only system-Skill volume name; defaults to `antnest-system-skills`                               |
+| `ANTNEST_RUNTIME_STATUS_TIMEOUT`                     | no       | Go duration; one `/status` bound; default `5s`                                                                 |
+| `ANTNEST_RUNTIME_MUTATION_TIMEOUT`                   | no       | Go duration; complete mutation bound including lock wait; default `2m`                                         |
+| `ANTNEST_RUNTIME_RPC_TIMEOUT`                        | no       | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout                |
+| `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT`             | no       | Go duration; complete physical/logical inventory reconciliation bound; default `2m`                            |
+| `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no       | Go duration; observation retry cap including jitter; default `30s`, minimum `1s`                               |
+| `ANTNEST_OBSERVATION_RETENTION`                      | no       | Go duration; journal retention; default `168h`                                                                 |
+| `ANTNEST_RUNTIME_SSE_HEARTBEAT`                      | no       | Go duration; internal SSE heartbeat; default `15s`                                                             |
+
+Workload configuration is mandatory: follow the [exact authentication and listening profile](../api/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Only Controller workload identity may reach control routes, including all three Skill preparation routes; raw user/CCT headers do not authorize them. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
+
+Readiness and `--healthcheck` use the separate loopback port. It exposes no control API, requires trusted TLS/mTLS when configured, and needs no application token. Remote `/status` access is not admitted. The final deployment batch removes the default host-published control port; attaching multiple networks alone does not isolate a listener.
+
+The image allowlist is operator configuration, never a lifecycle request field. Future Resolve/Initialize/Update/Enable selections outside the exact repository or manifest get `422 image_not_allowed` before Docker inspection and operation acceptance. Accepted recovery keeps its frozen immutable image ID. RC never pulls. Raw Docker-socket access remains host-equivalent authority; the workload boundary explains why a generic method/path proxy is insufficient.
 
 Runtime Controller supports OTLP `http/protobuf` for traces, metrics, and logs.
 Export is selected with `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=otlp|none` or by
@@ -138,8 +146,7 @@ instead of terminating the process. Local dependency failures retain their
 startup failure semantics.
 
 After startup, monitor retries and Watch reconnection return HTTP 503 with
-`live: true`, `ready: false` and `monitor_ready: false`; recovery returns HTTP
-200. Followers mirror the shared lease within their normal one-second poll.
+`live: true`, `ready: false` and `monitor_ready: false`; recovery returns HTTP 200. Followers mirror the shared lease within their normal one-second poll.
 The control API and retry loop keep running. A Watch-only disconnect leaves
 other Docker APIs reachable, so lifecycle calls can still succeed. A missing
 socket, daemon outage or permission failure also makes actual Docker-dependent
