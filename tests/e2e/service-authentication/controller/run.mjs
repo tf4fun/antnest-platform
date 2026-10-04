@@ -109,12 +109,43 @@ try {
   const path = "/internal/agents?organization_id=org-1";
   await request("/status", { service: null, context: null });
   await docker([
-    ...compose,
     "exec",
-    "-T",
-    "agent-controller",
+    "--env",
+    "HTTP_PROXY=http://127.0.0.1:9",
+    "--env",
+    "HTTPS_PROXY=http://127.0.0.1:9",
+    "--env",
+    "ANTNEST_TLS_CA_FILE=",
+    id,
     "/usr/local/bin/agent-controller",
     "--healthcheck",
+  ]);
+  checks++;
+  await assert.rejects(
+    docker([
+      "exec",
+      "--env",
+      "ANTNEST_AGENT_CONTROLLER_LISTEN=127.0.0.1:8120",
+      id,
+      "/usr/local/bin/agent-controller",
+      "--healthcheck",
+    ]),
+  );
+  checks++;
+  const providerNetwork = `${project}_provider`;
+  const [network] = JSON.parse(
+    await docker(["network", "inspect", providerNetwork]),
+  );
+  assert.equal(network.Labels["com.docker.compose.project"], project);
+  const providerAddress =
+    container.NetworkSettings.Networks[providerNetwork].IPAddress;
+  const providerID = await docker([...compose, "ps", "-q", "provider"]);
+  await docker([
+    "exec",
+    providerID,
+    "node",
+    "-e",
+    `fetch(${JSON.stringify(`http://${providerAddress}:8120/status`)}, {signal: AbortSignal.timeout(1000)}).then(()=>process.exit(1)).catch(error=>process.exit(error.cause?.code === 'ECONNREFUSED' ? 0 : 1))`,
   ]);
   checks++;
   const missing = await request(path, {
@@ -556,7 +587,10 @@ try {
           healthy = true;
           break;
         }
-      } catch {}
+      } catch {
+        // Retry startup transport failures, but let interruption reach cleanup.
+        abort.signal.throwIfAborted();
+      }
       await delay(200);
     }
     assert(healthy, "Controller did not recover after normal stop");
@@ -663,6 +697,8 @@ try {
         "--no-deps",
         "-d",
         "-e",
+        "ANTNEST_AGENT_CONTROLLER_LISTEN=:8120",
+        "-e",
         variable + "=" + value,
         "agent-controller",
       ]);
@@ -703,7 +739,9 @@ try {
     writeFileSync(resolve(evidence, "failure.log"), logs.slice(-65536), {
       mode: 0o600,
     });
-  } catch {}
+  } catch {
+    // Preserve the original failure if bounded diagnostic capture is unavailable.
+  }
   throw error;
 } finally {
   clearTimeout(timer);
@@ -729,6 +767,27 @@ try {
         "",
         "owned resource leak",
       );
+    const image = `${project}-agent-controller:latest`;
+    if (
+      await cleanup(["image", "ls", "-q", "--filter", `reference=${image}`])
+    ) {
+      const [candidate] = JSON.parse(
+        await cleanup(["image", "inspect", image]),
+      );
+      assert.equal(
+        candidate.Config.Labels["com.docker.compose.project"],
+        project,
+      );
+      assert.equal(
+        candidate.Config.Labels["com.docker.compose.service"],
+        "agent-controller",
+      );
+      assert.equal(
+        await cleanup(["ps", "-aq", "--filter", `ancestor=${image}`]),
+        "",
+      );
+      await cleanup(["image", "rm", image]);
+    }
     cleaned = true;
   } finally {
     rmSync(credentials, { recursive: true, force: true });

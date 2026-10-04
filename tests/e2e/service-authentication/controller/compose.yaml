@@ -7,7 +7,10 @@ services:
       POSTGRES_DB: controller_auth_test
     healthcheck:
       test:
-        [CMD-SHELL, "pg_isready -U antnest_test_admin -d controller_auth_test"]
+        [
+          CMD-SHELL,
+          "pg_isready -h 127.0.0.1 -U antnest_test_admin -d controller_auth_test",
+        ]
       interval: 1s
       timeout: 3s
       retries: 90
@@ -93,7 +96,11 @@ services:
       context: ../../../..
       dockerfile: services/agent-controller/Dockerfile
     user: "${CONTROLLER_TEST_UID:?}:${CONTROLLER_TEST_GID:?}"
-    networks: [default, provider]
+    networks:
+      default:
+        gw_priority: 1
+        aliases: [controller-primary]
+      provider: {}
     environment:
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_test_admin:${CONTROLLER_TEST_DATABASE_PASSWORD:?}@postgres:5432/controller_auth_test?sslmode=disable
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${CONTROLLER_TEST_ENCRYPTION_KEY:?}
@@ -111,7 +118,7 @@ services:
       ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL: 200ms
       ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL: 200ms
       ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT: 5s
-      ANTNEST_AGENT_CONTROLLER_LISTEN: :8120
+      ANTNEST_AGENT_CONTROLLER_LISTEN: controller-primary:8120
       OTEL_SDK_DISABLED: "true"
     volumes:
       - ${CONTROLLER_TEST_AUTH_DIRECTORY:?}:/run/auth:ro

@@ -101,19 +101,15 @@ func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
 
 func checkHealthWithClient(lookup serviceauth.LookupEnv, client *http.Client) (resultErr error) {
 	rawAddress, _ := lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")
-	listenAddress := strings.TrimSpace(rawAddress)
-	if listenAddress == "" {
-		listenAddress = ":8080"
-	}
-	_, port, err := net.SplitHostPort(listenAddress)
+	address, err := healthProbeAddress(rawAddress)
 	if err != nil {
 		return fmt.Errorf("parse Agent Controller listen address: %w", err)
 	}
 	scheme := "http"
-	if _, present := lookup("ANTNEST_TLS_CA_FILE"); present {
+	if caFile, _ := lookup("ANTNEST_TLS_CA_FILE"); caFile != "" {
 		scheme = "https"
 	}
-	response, err := client.Get(scheme + "://127.0.0.1:" + port + "/status")
+	response, err := client.Get(scheme + "://" + address + "/status")
 	if err != nil {
 		return fmt.Errorf("request Agent Controller status: %w", err)
 	}
@@ -126,6 +122,21 @@ func checkHealthWithClient(lookup serviceauth.LookupEnv, client *http.Client) (r
 		return fmt.Errorf("agent controller status returned %s", response.Status)
 	}
 	return nil
+}
+
+func healthProbeAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	if address == "" {
+		address = ":8080"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", err
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr error) {

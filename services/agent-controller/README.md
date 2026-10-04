@@ -95,7 +95,7 @@ and lifecycle, Runtime observation and owner-revocation events use `event_`.
 | `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                                                                  | In token mode              | -                   | Private receiver-named token files, checked at startup and reread for every outgoing request.               |
 | `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | No                         | `false` when absent | Exact Boolean; `true` is an explicit development-only token/HTTP opt-in.                                    |
 | `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Except insecure token/HTTP | -                   | TLS 1.3 chain, DNS name and exact workload URI validation.                                                  |
-| `ANTNEST_AGENT_CONTROLLER_LISTEN`                                                                 | No                         | `:8080`             | HTTP listen address; also used by `--healthcheck`.                                                          |
+| `ANTNEST_AGENT_CONTROLLER_LISTEN`                                                                 | No                         | `:8080`             | Listen address; `--healthcheck` follows the configured host and port. Missing/wildcard hosts use `127.0.0.1`. |
 | `ANTNEST_TEMPORAL_ADDRESS`                                                                        | No                         | `127.0.0.1:7233`    | Temporal frontend address.                                                                                  |
 | `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT`                                                     | No                         | `150s`              | Timeout for dependency RPC clients and the HTTP write timeout.                                              |
 | `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT`                                                          | No                         | `5m`                | Lifecycle drain timeout.                                                                                    |
@@ -117,6 +117,12 @@ and lifecycle, Runtime observation and owner-revocation events use `event_`.
 
 Duration values use Go duration syntax and must be positive.
 
+`--healthcheck` probes the configured IPv4/IPv6 `/status` directly, bypassing
+environment proxies and refusing redirects while preserving TLS service identity.
+An empty TLS CA setting does not switch opted-in token/HTTP development probes
+to HTTPS. See the
+[purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
+
 The [authentication contract](../../contracts/agent-controller/service-authentication.md)
 defines route callers, signed user scope, strict JSON and private client forwarding.
 All configured dependency origins must be distinct; redirects and environment proxies
@@ -127,8 +133,8 @@ privately relays RC-issued instance authority for accepting Agents; closed
 Agents carry only execution fences and do not require resolution. Tokens are
 never persisted in Controller or exposed through its management projection.
 See [execution publication](docs/execution-publication.md#private-runtime-authority).
-ACP instance-client adoption, remaining receivers, coordinated deployment and
-final business E2E remain pending in the
+Instance issuer, receiver and client service batches have passed their own gates;
+coordinated deployment and final business E2E remain pending in the
 [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
 ## Dependencies
