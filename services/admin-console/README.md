@@ -96,6 +96,11 @@ origin, so there is no Console variable for them. See
 `GET /status` never probes a dependency; failures are reported by the affected
 business request.
 
+Authenticated dependency clients disable environment/default-transport proxies
+and redirects. They remove legacy `X-Antnest-*`, Cookie and Authorization
+headers from an outbound clone, preserve verified caller context and attach
+Console's own per-receiver workload credential.
+
 ## Build and test
 
 Commands run from the repository root unless stated.

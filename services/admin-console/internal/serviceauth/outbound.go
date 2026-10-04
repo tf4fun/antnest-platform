@@ -54,6 +54,7 @@ func LoadOutbound(lookup LookupEnv, endpoints map[string]string) (*Clients, erro
 			return nil, fmt.Errorf("dependency origins must identify exactly one service")
 		}
 		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
 		if target.Scheme == "https" {
 			if config.ClientTLS == nil {
 				return nil, fmt.Errorf("HTTPS dependency requires complete trusted TLS configuration")
@@ -91,6 +92,11 @@ func (c *Clients) RoundTrip(original *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("unconfigured service origin")
 	}
 	request := original.Clone(original.Context())
+	for name := range request.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-antnest-") || strings.EqualFold(name, "Cookie") || strings.EqualFold(name, "Authorization") {
+			delete(request.Header, name)
+		}
+	}
 	if err := c.authenticate(peer.service, request.Header); err != nil {
 		return nil, err
 	}
