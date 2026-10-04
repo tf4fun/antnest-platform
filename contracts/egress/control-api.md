@@ -1,10 +1,16 @@
 # Runtime Egress Control API
 
 Runtime Egress exposes a small JSON-over-HTTP RPC API to Agent Controller on a
-trusted internal network. It performs no end-user authentication and carries no
+private Controller-purpose network with verified Controller workload authority.
+It performs no end-user authentication and carries no
 Runtime generation, deployment-provider, Run, Tool, or Channel state.
 
-All requests and responses use `application/json`. Unknown fields are rejected.
+JSON requests and responses use `application/json`; Ensure and GET requests
+have no body. Unknown and duplicate fields are rejected. Exact workload grants,
+token/TLS configuration, strict request limits and listener placement follow the
+[revision 5 authentication profile](service-authentication.md). The caller catalog
+remains planned until the owning-service gates pass; this contract is not a
+claim that the old listener is authenticated.
 Agent identifiers and policy identifiers are opaque strings containing 1-255
 visible ASCII bytes. IPv4 addresses are serialized in canonical
 dotted-decimal form. IPv4 endpoints are objects containing `ipv4` and `port`,
@@ -17,11 +23,15 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 4.
+This document describes control contract revision 5.
 
 ## Status
 
 `GET /status`
+
+This minimal probe exists only on the separate loopback health listener,
+`ANTNEST_EGRESS_HEALTH_LISTEN` (default `127.0.0.1:8082`). It is not a business
+route on the authenticated control listener.
 
 ```json
 {
@@ -57,7 +67,7 @@ lifecycle traffic changes only through the attachment CAS operation.
   "tunnel_ipv4": "100.64.0.2",
   "resolver_ipv4": "100.64.0.1",
   "packet_contract_revision": 1,
-  "egress_endpoint": {"ipv4": "10.20.0.8", "port": 8092},
+  "egress_endpoint": { "ipv4": "10.20.0.8", "port": 8092 },
   "state": "active",
   "network_resource_version": 1,
   "attachment_state": "closed",
@@ -82,7 +92,7 @@ Agent returns `agent_network_not_found`.
 `PUT /internal/agent-network-attachments/{agent_id}`
 
 ```json
-{"state":"closed","expected_resource_version":7}
+{ "state": "closed", "expected_resource_version": 7 }
 ```
 
 Attachment state is `closed` or `open` and has its own monotonic resource
@@ -109,7 +119,7 @@ The response is the complete Agent network document shown above.
 `POST /internal/agent-networks/{agent_id}/release`
 
 ```json
-{"expected_resource_version": 8}
+{ "expected_resource_version": 8 }
 ```
 
 Release requires the current **network** resource version and a closed
@@ -125,7 +135,7 @@ cleanup check.
 `PUT /internal/policies/{policy_id}/revisions/{revision}`
 
 ```json
-{"spec":{"schema_version":1,"action":"allow_all"}}
+{ "spec": { "schema_version": 1, "action": "allow_all" } }
 ```
 
 `revision` is a positive integer. A new revision is immutable. Repeating the
@@ -151,7 +161,7 @@ immutable revision, including its policy document:
 {
   "policy_id": "internet-enabled",
   "revision": 3,
-  "spec": {"schema_version": 1, "action": "allow_all"},
+  "spec": { "schema_version": 1, "action": "allow_all" },
   "digest": "sha256:..."
 }
 ```
@@ -239,20 +249,23 @@ Errors have one stable shape:
 }
 ```
 
-| Code | HTTP | Meaning |
-| --- | ---: | --- |
-| `invalid_request` | 400 | JSON, identifier, address, revision, or policy validation failed |
-| `route_not_found` | 404 | The control route does not exist |
-| `agent_network_not_found` | 404 | No durable Agent network exists |
-| `policy_revision_not_found` | 404 | Referenced immutable policy revision does not exist |
-| `method_not_allowed` | 405 | The route does not support this HTTP method |
-| `agent_network_unavailable` | 409 | Existing Agent network is quarantined or otherwise unavailable |
-| `policy_revision_conflict` | 409 | Existing revision key has different canonical content |
-| `resource_version_conflict` | 409 | Compare-and-swap precondition failed |
-| `address_pool_exhausted` | 409 | No usable non-quarantined address is available |
-| `cleanup_failed` | 503 | Flow or conntrack barrier did not complete |
-| `operation_failed` | 503 | This bounded database/control operation failed; shared readiness may remain healthy and retry is allowed |
-| `control_plane_unavailable` | 503 | Database or control mutation path is unavailable |
+| Code                        |    HTTP | Meaning                                                                                                  |
+| --------------------------- | ------: | -------------------------------------------------------------------------------------------------------- |
+| `service_unauthenticated`   |     401 | Missing or invalid workload authority; nonretryable, exact service challenge                             |
+| `caller_not_allowed`        |     403 | Verified workload is not Controller; nonretryable, no challenge                                          |
+| `unsupported_media_type`    |     415 | JSON carrier is missing, ambiguous or unsupported; nonretryable                                          |
+| `invalid_request`           | 400/413 | JSON, body size, query, identifier, address, revision, or policy validation failed                       |
+| `route_not_found`           |     404 | The control route does not exist                                                                         |
+| `agent_network_not_found`   |     404 | No durable Agent network exists                                                                          |
+| `policy_revision_not_found` |     404 | Referenced immutable policy revision does not exist                                                      |
+| `method_not_allowed`        |     405 | The route does not support this HTTP method                                                              |
+| `agent_network_unavailable` |     409 | Existing Agent network is quarantined or otherwise unavailable                                           |
+| `policy_revision_conflict`  |     409 | Existing revision key has different canonical content                                                    |
+| `resource_version_conflict` |     409 | Compare-and-swap precondition failed                                                                     |
+| `address_pool_exhausted`    |     409 | No usable non-quarantined address is available                                                           |
+| `cleanup_failed`            |     503 | Flow or conntrack barrier did not complete                                                               |
+| `operation_failed`          |     503 | This bounded database/control operation failed; shared readiness may remain healthy and retry is allowed |
+| `control_plane_unavailable` |     503 | Database or control mutation path is unavailable                                                         |
 
 Internal failures never expose SQL, credentials, packet payloads, or command
 stderr in the response.

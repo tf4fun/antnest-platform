@@ -9,6 +9,7 @@ export default [
       "tests/e2e/skill-registry/discovery-docker.mjs",
       "tests/e2e/skill-registry/discovery-source.mjs",
       "tests/integration/platform/service-authentication-contract.test.mjs",
+      "tests/integration/runtime-egress/service-authentication-contract.test.mjs",
       "tests/support/service-authentication-eslint.config.mjs",
       "tests/support/service-authentication.test.mjs",
     ],

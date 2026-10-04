@@ -215,12 +215,17 @@
     },
     {
       "owner": "runtime-egress",
-      "issues": [32, 34, 36],
+      "issues": [32],
       "status": "pending",
       "deliverables": [
-        "authenticated control calls",
-        "management/data-plane isolation"
-      ]
+        "authenticated Controller-only control calls using the exact token/mTLS profile",
+        "separate purpose-address control and loopback health listeners",
+        "strict JSON/media/no-body/query hygiene without changing packet format",
+        "native, real HTTP/PostgreSQL and isolated production Docker admission"
+      ],
+      "authentication_contract": "../egress/service-authentication.md",
+      "control_contract_revision": 5,
+      "independent_packet_dns_issues": [34, 36]
     },
     {
       "owner": "deployment",

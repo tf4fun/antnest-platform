@@ -277,6 +277,14 @@ for the Controller. See the
 
 ### Changed
 
+The Egress control authentication profile is frozen at revision 5 for #32.
+Business routes require verified Controller authority; local status moves to a
+separate loopback health listener. Ensure retains its empty request, and JSON
+routes receive explicit media, uniqueness and size checks. Packet/DNS issues
+#34/#36 remain independent. Service enforcement and coordinated deployment are
+pending in the rollout ledger; this contract-only batch does not secure the old
+listener.
+
 **Registry deployment change (#31):** `ANTNEST_IDENTITY_URL` and the shared
 service authentication profile are mandatory. Nonempty
 `ANTNEST_SKILL_REGISTRY_API_TOKEN` or `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` now
