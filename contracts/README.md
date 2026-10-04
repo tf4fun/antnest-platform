@@ -28,7 +28,8 @@ The deployment credential layout is defined by the
 and its [machine contract](platform/development-authentication-contract.json).
 The subsequent [purpose-network contract](platform/development-networks.md) and
 [machine topology](platform/development-network-contract.json) are frozen;
-Compose/transport implementation and final integration remain pending.
+Compose deployment and final integration remain pending; standalone transports
+have separate [component evidence](../scripts/deployment/README.md).
 All ten service batches are admitted; deployment and final cross-service
 acceptance remain pending in the rollout ledger.
 

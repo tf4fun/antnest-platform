@@ -4,6 +4,11 @@
 
 ### Changed
 
+The #32 diagnostic TCP and Runtime OTLP transports now pass standalone native
+and Docker component admission. They have no business authority or credential
+mounts, bounded connections/exchanges and normal signal cleanup. Actual Compose
+address/key wiring and full platform integration are still pending.
+
 The next #32 purpose-network cutover is frozen in the deployment contract;
 implementation and full integration remain pending. Docker observations require
 dedicated Gateway ingress and explicit opaque TCP diagnostics for purpose-bound

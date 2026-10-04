@@ -334,5 +334,17 @@
       "docker_observation": "node tests/integration/deployment/purpose-listener-docker.mjs: three isolated internal/unicast/multihomed observations reproduce unpublished, unreachable and outbound-targeted host ports. Primary health and normal exit pass; own labelled resources are cleaned and retained container/network/volume IDs remain unchanged.",
       "scope": "Contract and infrastructure-decision evidence only. Diagnostic/OTLP transports, Compose unicast/address/DNS/key wiring, dependency-tooling cutover and final actual platform security/browser/lifecycle/Skill integration remain pending."
     }
+  },
+  "deployment_transports": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "component-admitted",
+    "contract": "development-networks.md",
+    "implementation": "../../scripts/deployment/README.md",
+    "admission": {
+      "unit_contract_component": "17 native TCP/HTTP/CLI tests pass without skips: exact fixed routes, binary/half-close/backpressure preservation, global budgets, selected-target failure, privacy, partial-listen rollback, OTLP path/method/query/CONNECT/upgrade rejection, authority-header removal, declared/chunked wire limits, response limit, timeout and normal cancellation.",
+      "docker": "node tests/integration/deployment/transports-docker.mjs: 21 isolated production-helper/fixture boundary checks pass. Nonroot/read-only containers, host-loopback diagnostics, purpose interface rejection, no injected authority, fixed management OTLP-only forwarding, actual 8 MiB CLI cap and SIGINT/SIGTERM exit zero. Owned resources removed; retained container/network/volume identities unchanged.",
+      "scope": "Standalone deployment transports with explicit protocol fixtures only. Actual Compose mount/address/DNS and publication cutover, real Jaeger acceptance and full platform service authorization/browser/lifecycle/Skill integration remain pending."
+    }
   }
 }

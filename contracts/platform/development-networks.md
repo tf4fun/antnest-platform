@@ -2,7 +2,10 @@
 
 This deployment contract belongs to [#32](https://github.com/tf4fun/antnest-platform/issues/32).
 The [machine contract](development-network-contract.json) is frozen at version 1;
-Compose wiring and transport admission are **not implemented or admitted yet**.
+Compose wiring and full-platform admission remain **pending**. The
+[deployment transports](../../scripts/deployment/README.md) separately passed
+17 native and 21 isolated Docker component checks; those do not admit the full
+deployment topology or actual business flows.
 It complements the [credential contract](development-authentication.md) and
 [platform authentication rules](service-authentication.md). Token/CCT identity,
 route allowlists and business ownership remain unchanged.
@@ -143,5 +146,6 @@ generate/mount placeholder credentials.
    shutdown and retained Docker resources.
 
 The [rollout ledger](service-authentication-rollout.json) retains intermediate
-port evidence separately. Contract tests and a fixture listener do not complete
+port and standalone transport evidence separately. Contract tests and fixture
+listeners do not complete
 steps 2 or 3, and this document does not claim they have passed.

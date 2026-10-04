@@ -466,7 +466,9 @@ The [machine network contract](development-network-contract.json) freezes the
 next cutover's address/membership/DNS rules, dedicated Gateway ingress and opaque
 diagnostic relay. Its isolated Docker probe verified why direct publication
 cannot reach purpose-bound listeners on internal/multihomed containers. Contract
-and probe evidence do not admit the pending Compose/transport implementation.
+and probe evidence do not admit the pending Compose/network deployment.
+The two [standalone transports](../../scripts/deployment/README.md) have component
+admission; actual service wiring and final integration remain pending.
 
 ## 6. Admission and ownership
 

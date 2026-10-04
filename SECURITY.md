@@ -49,7 +49,7 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **The frozen network cutover has one OTLP infrastructure exception.** A bounded
   ingestion-only transport will preserve Runtime telemetry while moving Jaeger
   entirely off management. It has no business credentials, query/control API or
-  arbitrary destination. Compose/transport admission is still pending; see the
+  arbitrary destination. Compose/network admission is still pending; see the
   [deployment network contract](contracts/platform/development-networks.md#runtime-telemetry-exception).
 - **TLS is not terminated by the platform.** Put a TLS-terminating reverse proxy
   in front of Edge Gateway and keep `ANTNEST_EDGE_COOKIE_SECURE=true`.
