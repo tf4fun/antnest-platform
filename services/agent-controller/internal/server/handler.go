@@ -19,10 +19,10 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 

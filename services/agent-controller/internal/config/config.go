@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 type Config struct {
@@ -130,7 +130,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if config.SkillRegistryURL != "" {
 		endpoints["skill-registry"] = config.SkillRegistryURL
 	}
-	config.Authentication, err = serviceauth.LoadOutbound(environment, endpoints)
+	config.Authentication, err = serviceauth.LoadOutbound("agent-controller", serviceauth.CallerContextHeaders, environment, endpoints)
 	if err != nil {
 		return Config{}, err
 	}

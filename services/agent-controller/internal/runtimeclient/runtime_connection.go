@@ -12,8 +12,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 )

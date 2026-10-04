@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/callercontext"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 // Test-only signing at the business fixture preserves existing domain tests.

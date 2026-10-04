@@ -7,10 +7,10 @@ toolchain go1.27.1
 require (
 	github.com/distribution/reference v0.6.0
 	github.com/exaring/otelpgx v0.12.0
-	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
+	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.22.0
@@ -32,6 +32,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
@@ -60,3 +61,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 )
+
+replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )

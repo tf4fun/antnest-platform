@@ -17,12 +17,12 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/acpclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 )
 
 func componentPrivateToken(t *testing.T) string {
@@ -103,7 +103,7 @@ func TestRuntimePrivateConnectionPostgresHTTPPublicationAndRecovery(t *testing.T
 	}
 	env := map[string]string{"ANTNEST_SERVICE_AUTH_MODE": "token", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": "true",
 		"ANTNEST_SERVICE_AUTH_TOKEN_DIR": directory, "ANTNEST_SERVICE_AUTH_CALLERS_FILE": filepath.Join(directory, "callers.json")}
-	clients, err := serviceauth.LoadOutbound(func(key string) (string, bool) { v, ok := env[key]; return v, ok }, map[string]string{"runtime-controller": rc.URL, "agent-acp-service": acp.URL})
+	clients, err := serviceauth.LoadOutbound("agent-controller", serviceauth.CallerContextHeaders, func(key string) (string, bool) { v, ok := env[key]; return v, ok }, map[string]string{"runtime-controller": rc.URL, "agent-acp-service": acp.URL})
 	require.NoError(t, err)
 	defer clients.CloseIdleConnections()
 	resolver, err := runtimeclient.New(rc.URL, time.Second, clients.HTTPClient())

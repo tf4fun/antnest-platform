@@ -14,8 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
@@ -27,7 +28,6 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 

@@ -11,6 +11,12 @@ leases. Resource creation completes separately from executable availability:
 an Agent becomes runnable only after independent healthy Runtime observation
 publishes its execution binding.
 
+
+Workload transport and signed CCT verification use the
+[shared Go module](../../modules/service-authentication/README.md). Controller
+uses the caller-context forwarding policy; Agent authorization, lifecycle
+coordination and Runtime authority relay remain Controller-owned.
+
 ## Responsibilities
 
 - Agent identity, organization, owner user, desired state and current status.
