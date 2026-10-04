@@ -8,8 +8,9 @@ Credential preparation does not complete network isolation or cross-service
 acceptance; their status remains in the [rollout ledger](service-authentication-rollout.json).
 
 The token/bootstrap helper passed 20 contract/CLI checks and 13 isolated Docker
-mount/replacement checks. Generated mounts remain read-only and private under
-the generating user's numeric UID/GID. PKI and Compose/network admission remain pending.
+mount/replacement checks. PKI passed eight native/CLI/TLS tests and 18 isolated
+Docker mount/TLS checks. Generated mounts remain read-only and private under
+the generating user's numeric UID/GID. Compose/network admission remains pending.
 
 ## Static credentials
 
@@ -112,14 +113,25 @@ hash and restart after a deployment-defined bounded overlap/drain. The fresh
 generator intentionally has no live rotation command. Do not regenerate tokens
 against a retained journal or install public conformance fixture credentials.
 
-## Development PKI and pending deployment work
+## Development PKI
 
 `scripts/dev-pki.sh` delegates to `scripts/dev-pki.mjs` using the selected Node
 on `PATH` and a noninteractive OpenSSL executable. It creates a fresh ignored
 `artifacts/dev-pki/` tree, or a fresh private verification subtree. It follows
 the same output/alias/permission/overwrite rules as token provisioning, without
-allowing token output paths as PKI destinations. PKI implementation and admission
-are pending in this contract-first batch.
+allowing token output paths as PKI destinations. Both helpers share the same
+private filesystem operations; the token suite and its Docker checks also pass
+after that reuse.
+
+Run it with the selected Node (for local development, select NVM first):
+
+```sh
+sh scripts/dev-pki.sh
+```
+
+`--output PATH` chooses a fresh directory under the allowed trees. The command
+prints only completion metadata. It does not restart services or replace an
+existing issuer.
 
 Each deployment has an independent ECDSA P-256 CA and nine independent P-256
 leaves. Private keys are unencrypted PKCS8 PEM. The CA is valid for 365 days,
@@ -150,6 +162,20 @@ and must not receive a global static leaf or token.
 The noninteractive CSR/root and certificate-signing interfaces follow the
 [OpenSSL req](https://docs.openssl.org/4.0/man1/openssl-req/) and
 [OpenSSL x509](https://docs.openssl.org/4.0/man1/openssl-x509/) documentation.
+
+`make test-service-authentication` includes native certificate-format, strict
+OpenSSL purpose, actual TLS peer rejection, overwrite/alias, inherited-umask,
+failure and normal-cancellation checks. OpenSSL is required for these tests.
+`node tests/e2e/service-authentication/development-pki/run.mjs` checks each
+static leaf in a separate nonroot, read-only, capability-free Docker container
+with no network or published ports. Only the public CA and that service's own
+leaf/key are mounted. Its loopback mTLS handshake and missing-certificate/name
+rejections prove the generated material works in the container, not production
+route authorization or a full-platform mTLS deployment. Owned containers and
+generated keys are removed; private evidence retains only source identities and
+completion/cleanup metadata.
+
+## Pending deployment and integration work
 
 Purpose networks, explicit listener bindings, Gateway-only base ports, the debug
 overlay and the full Docker security/browser/lifecycle/Skill regressions remain

@@ -22,6 +22,18 @@
       "docker": "node tests/e2e/service-authentication/deployment-credentials/run.mjs (13 private read-only mount and atomic sender-replacement checks; nonroot generating UID/GID; no container network or published ports; owned containers and credentials cleaned). This is credential preparation evidence, not platform business/security E2E."
     }
   },
+  "development_pki": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "admitted",
+    "helper": "scripts/dev-pki.sh",
+    "output_directory": "artifacts/dev-pki/",
+    "contract": "development-authentication.md",
+    "admission": {
+      "unit_contract_component": "Eight native/CLI tests: exact independent P-256 certificates, strict OpenSSL purposes, actual mutual TLS and peer/name/trust rejection, private permissions, overwrite/alias rejection, inherited umask, failure cleanup and normal cancellation; zero skips/failures. Token helper's 20 tests also pass after private-filesystem reuse.",
+      "docker": "node tests/e2e/service-authentication/development-pki/run.mjs (18 private read-only mount and actual loopback TLS checks across nine nonroot network-none containers; no host ports or CA private mount; owned containers/keys cleaned). Token mount/atomic-replacement regression also passed. This is generated credential evidence, not production route/mTLS or business acceptance."
+    }
+  },
   "audience_profiles": {
     "console": [
       "admin-console",
@@ -250,9 +262,11 @@
         "purpose-specific internal networks",
         "Gateway-only base ports and explicit debug overlay"
       ],
-      "admitted_substeps": ["development service-token provisioning helper"],
+      "admitted_substeps": [
+        "development service-token provisioning helper",
+        "development PKI helper"
+      ],
       "pending_substeps": [
-        "development PKI helper",
         "purpose-specific internal networks and explicit listener/health bindings",
         "Gateway-only base ports, debug overlay and dependency/E2E tooling wiring"
       ]

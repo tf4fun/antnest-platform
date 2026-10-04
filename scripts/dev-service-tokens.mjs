@@ -4,17 +4,16 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
-import {
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  createPrivateDirectory as directory,
+  createPrivateParents as parents,
+  validatePrivateOutput as validateOutput,
+  writePrivateFile as write,
+} from "./lib/private-output.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const contract = JSON.parse(
@@ -88,73 +87,6 @@ function readPairs() {
   } catch {
     throw failure("catalog_invalid");
   }
-}
-
-function optionalStat(path) {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-}
-
-function within(base, path) {
-  const child = relative(base, path);
-  return (
-    child === "" ||
-    (!isAbsolute(child) && child !== ".." && !child.startsWith(`..${sep}`))
-  );
-}
-
-function validateOutput(value) {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    [...value].some(
-      (character) =>
-        character.charCodeAt(0) < 32 ||
-        character.charCodeAt(0) === 127 ||
-        "'\"\\$`".includes(character),
-    )
-  )
-    throw failure("output_invalid");
-  const path = resolve(value);
-  if (
-    path.split(sep).includes(".cache") ||
-    !["artifacts/service-authentication", "artifacts/verification"].some(
-      (base) => within(resolve(root, base), path),
-    )
-  )
-    throw failure("output_invalid");
-  if (optionalStat(path)) throw failure("output_exists");
-  for (let ancestor = dirname(path); ; ancestor = dirname(ancestor)) {
-    const row = optionalStat(ancestor);
-    if (row && (!row.isDirectory() || row.isSymbolicLink()))
-      throw failure("output_invalid");
-    if (dirname(ancestor) === ancestor) break;
-  }
-  return path;
-}
-
-function directory(path) {
-  mkdirSync(path, { mode: 0o700 });
-  chmodSync(path, 0o700);
-}
-
-function parents(path) {
-  const missing = [];
-  for (
-    let ancestor = path;
-    !optionalStat(ancestor);
-    ancestor = dirname(ancestor)
-  )
-    missing.push(ancestor);
-  for (const ancestor of missing.reverse()) directory(ancestor);
-}
-
-function write(path, contents) {
-  writeFileSync(path, contents, { flag: "wx", mode: 0o600 });
-  chmodSync(path, 0o600);
 }
 
 function json(value) {

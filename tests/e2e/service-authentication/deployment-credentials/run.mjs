@@ -28,6 +28,7 @@ const probe = resolve(
 );
 const sourceFiles = [
   "scripts/dev-service-tokens.mjs",
+  "scripts/lib/private-output.mjs",
   "contracts/platform/development-authentication-contract.json",
   "tests/e2e/service-authentication/deployment-credentials/probe.mjs",
   "tests/e2e/service-authentication/deployment-credentials/run.mjs",

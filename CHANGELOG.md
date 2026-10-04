@@ -4,10 +4,13 @@
 
 ### Changed
 
-The development PKI contract now defines a private fresh CA, independent
+The development PKI helper now generates a private fresh CA, independent
 per-service P-256 leaves, exact URI/DNS identities and both TLS usages (#32).
-Native Runtime remains on its separate per-instance token profile. Implementation,
-purpose-network wiring and full acceptance remain tracked deployment batches.
+Existing issuers are never overwritten; normal cancellation reaps OpenSSL before
+cleaning candidate output. Native OpenSSL/TLS and isolated nonroot Docker
+read-only mount/TLS checks passed. Native Runtime remains on its separate
+per-instance token profile. Purpose-network wiring and full acceptance remain
+tracked deployment/integration batches; generation does not reconfigure a stack.
 
 Development authentication provisioning now generates catalog-derived per-caller
 credentials, separate Identity CCT and RC instance sealing keys, and optional
@@ -15,7 +18,7 @@ independent Skill maintenance keys (#32). Output is private and ignored; existin
 credentials are never overwritten. Generating UID/GID metadata lets nonroot Node
 services read 0700/0600 bind mounts without granting root or world access. Native
 contract/CLI and isolated Docker read-only/rotation checks passed. All ten service
-batches are admitted; PKI, network/Compose wiring and full cross-service acceptance
+batches are admitted; network/Compose wiring and full cross-service acceptance
 remain deployment/integration work. No live stack is reconfigured by the helper.
 
 ### Fixed
