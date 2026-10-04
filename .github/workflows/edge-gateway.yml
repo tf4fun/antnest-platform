@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
     paths:
       - services/edge-gateway/**
+      - modules/service-authentication/**
       - tests/integration/go/edge-gateway/**
       - tests/support/**
       - contracts/**
@@ -19,6 +20,7 @@ on:
   pull_request:
     paths:
       - services/edge-gateway/**
+      - modules/service-authentication/**
       - tests/integration/go/edge-gateway/**
       - tests/support/**
       - contracts/**

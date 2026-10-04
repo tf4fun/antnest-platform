@@ -7,6 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
@@ -32,3 +33,5 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication

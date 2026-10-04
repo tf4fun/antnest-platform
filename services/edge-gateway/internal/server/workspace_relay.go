@@ -10,8 +10,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 

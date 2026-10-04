@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/server"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
@@ -49,7 +49,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
-	internal, err := serviceauth.LoadOutbound(lookup, map[string]string{
+	internal, err := serviceauth.LoadOutbound("edge-gateway", serviceauth.GatewayHeaders, lookup, map[string]string{
 		"identity-service": cfg.IdentityURL, "admin-console": cfg.AdminConsoleURL,
 		"agent-ui": cfg.AgentUIURL, "agent-controller": cfg.AgentControllerURL, "agent-acp-service": cfg.AgentACPURL,
 	})

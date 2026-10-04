@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 const CallerContextHeader = "Antnest-Caller-Context"

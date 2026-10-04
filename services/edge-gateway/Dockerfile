@@ -1,6 +1,7 @@
 FROM golang:1.27.1-bookworm AS build
 
-WORKDIR /src
+WORKDIR /src/services/edge-gateway
+COPY modules/service-authentication /src/modules/service-authentication
 COPY services/edge-gateway/go.mod services/edge-gateway/go.sum* ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY services/edge-gateway ./

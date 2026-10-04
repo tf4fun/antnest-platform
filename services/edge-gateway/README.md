@@ -12,6 +12,12 @@ Browser-supplied authentication/identity headers and cookies are removed;
 presentation hints are regenerated from the verified principal. User access
 tokens reach only Identity's authenticated credential RPCs.
 
+
+Internal token/mTLS verification and outbound transport use the
+[shared Go module](../../modules/service-authentication/README.md), with the
+Gateway forwarding policy for its verified presentation hints and SCIM bearer.
+Gateway still owns browser credential stripping and route authorization.
+
 ## Responsibilities
 
 - Public HTTP listener and route policy.

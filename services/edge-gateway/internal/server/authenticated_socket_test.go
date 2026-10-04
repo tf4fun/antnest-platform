@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
@@ -53,7 +53,7 @@ func TestACPWebSocketHandshakeUsesReloadedWorkloadCredentialAndPrivateContext(t 
 		t.Fatal(err)
 	}
 	env := map[string]string{"ANTNEST_SERVICE_AUTH_MODE": "token", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": "true", "ANTNEST_SERVICE_AUTH_TOKEN_DIR": dir, "ANTNEST_SERVICE_AUTH_CALLERS_FILE": callers}
-	clients, err := serviceauth.LoadOutbound(func(name string) (string, bool) { v, ok := env[name]; return v, ok }, map[string]string{"agent-acp-service": upstream.URL})
+	clients, err := serviceauth.LoadOutbound("edge-gateway", serviceauth.GatewayHeaders, func(name string) (string, bool) { v, ok := env[name]; return v, ok }, map[string]string{"agent-acp-service": upstream.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
