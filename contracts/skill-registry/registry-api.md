@@ -7,21 +7,19 @@ publishing, listing, resolving and downloading immutable Skill versions. The
 are part of this boundary. Multipart ZIP bytes and HTTP status mapping are
 specified here because they are not JSON payloads.
 
-All routes are private control-plane HTTP routes. Callers authenticate with
-`Authorization: Bearer <registry service token>`; the token is configured on the
-Registry and distributed only to trusted internal callers. The authenticated
-caller supplies an organization ID on every operation. Registry scopes every
-lookup, list, version and artifact to that ID; callers must derive it from their
-own trusted principal or frozen Agent configuration, never from browser text.
-The token is not a tenant identity or a grant to the Runtime. A missing or
-invalid token returns 401 without revealing resource existence.
+All business routes are private and enforce per-caller workload credentials,
+exact route grants and, for Console operations, a verified Identity CCT.
+See the [Registry authentication profile](service-authentication.md) and
+[caller catalog](callers.json). Console organization/actor fields are audit
+echoes of the verified CCT; allowlisted service operations derive their scope
+from accepted owned records. A shared Registry bearer is no longer accepted.
 
 `org_<32 lowercase hex>`, `user_<32 lowercase hex>` and
 `skill_<32 lowercase hex>` use the platform resource-ID contract. `request_id`
 is an opaque, nonempty, at most 128-byte printable non-whitespace ASCII
 idempotency key (`!` through `~`) supplied by the caller and unique within an
 organization across both publish routes. Versions
-are positive integers, starting at 1. JSON objects reject unknown fields.
+are positive integers, starting at 1. JSON objects reject unknown fields and duplicate members; JSON routes require one UTF-8 application/json Content-Type.
 
 ## Package rules v1
 
@@ -62,14 +60,14 @@ The two publish routes consume multipart/form-data with exactly one JSON
 `metadata` part (at most 4 KiB) and one `artifact` ZIP part (at most 8 MiB),
 plus bounded multipart overhead. No other parts are accepted.
 
-| Method and route | Input | Success |
-| --- | --- | --- |
-| `POST /internal/skills` | metadata `{request_id, organization_id, actor_id}` | 201 `{skill_id, version, name, description, artifact_digest, content_digest, artifact_size, unpacked_size, package_rules_version}` |
-| `POST /internal/skills/{skill_id}/versions` | same metadata plus `expected_version` | 201 same shape, version incremented |
-| `GET /internal/skills?organization_id=...&after_id=...&limit=...` | `after_id` optional; limit default 50, max 100 | 200 `{items:[{skill_id,name,current_version,description,artifact_digest,content_digest,artifact_size,unpacked_size,package_rules_version}],next_after_id}` |
-| `GET /internal/skills/{skill_id}/versions?organization_id=...&after_version=...&limit=...` | `after_version` optional; limit default 50, max 100 | 200 `{items:[publish metadata],next_after_version}` |
-| `POST /internal/skill-versions/resolve` | JSON `{organization_id,refs:[{skill_id,version}]}`; up to 32 unique references | 200 `{items:[publish metadata]}` in input order |
-| `GET /internal/skills/{skill_id}/versions/{version}/artifact?organization_id=...` | fixed skill and version | 200 exact ZIP bytes, `Content-Type: application/zip`, `Content-Length`, `ETag` and `X-Antnest-Artifact-Digest`; never redirect |
+| Method and route                                                                           | Input                                                                          | Success                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /internal/skills`                                                                    | metadata `{request_id, organization_id, actor_id}`                             | 201 `{skill_id, version, name, description, artifact_digest, content_digest, artifact_size, unpacked_size, package_rules_version}`                         |
+| `POST /internal/skills/{skill_id}/versions`                                                | same metadata plus `expected_version`                                          | 201 same shape, version incremented                                                                                                                        |
+| `GET /internal/skills?organization_id=...&after_id=...&limit=...`                          | `after_id` optional; limit default 50, max 100                                 | 200 `{items:[{skill_id,name,current_version,description,artifact_digest,content_digest,artifact_size,unpacked_size,package_rules_version}],next_after_id}` |
+| `GET /internal/skills/{skill_id}/versions?organization_id=...&after_version=...&limit=...` | `after_version` optional; limit default 50, max 100                            | 200 `{items:[publish metadata],next_after_version}`                                                                                                        |
+| `POST /internal/skill-versions/resolve`                                                    | JSON `{organization_id,refs:[{skill_id,version}]}`; up to 32 unique references | 200 `{items:[publish metadata]}` in input order                                                                                                            |
+| `GET /internal/skills/{skill_id}/versions/{version}/artifact?organization_id=...`          | fixed skill and version                                                        | 200 exact ZIP bytes, `Content-Type: application/zip`, `Content-Length`, `ETag` and `X-Antnest-Artifact-Digest`; never redirect                             |
 
 Resolve rejects repeated skills, repeated names and an aggregate unpacked size
 over 128 MiB. The response contains no artifact bytes. A missing skill, version
@@ -87,7 +85,7 @@ original 201 response even if the head has since moved; different input returns
 `request_conflict` 409. A wrong current head returns `revision_conflict` 409.
 
 Errors are JSON `{error:{code,message}}`. Codes and HTTP status are:
-`invalid_request`/`invalid_package` 400, `unauthorized` 401,
+`invalid_request`/`invalid_package` 400, the authentication/scope/media-type outcomes in [service-authentication.md](service-authentication.md),
 `not_found` 404, `name_conflict`/`request_conflict`/`revision_conflict` 409,
 `limit_exceeded` 413, `busy` 429, `temporarily_unavailable` 503.
 Error messages must not contain ZIP contents or raw database secrets. Registry

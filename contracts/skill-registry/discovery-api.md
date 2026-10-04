@@ -36,7 +36,7 @@ higher-sequence authorized source state may become active again.
 
 ## Registry routes
 
-All routes use the existing private Registry bearer token. Body limit is 4 KiB.
+All routes enforce the [Registry authentication profile](service-authentication.md). Body limit is 4 KiB.
 Objects reject unknown fields; query is trimmed, nonempty, at most 256 UTF-8
 bytes. Search limit defaults to 20, maximum 50. A zero explicit limit is invalid.
 
@@ -105,8 +105,9 @@ skill_id+version refs, using the existing create/rebuild read-only delivery.
 ## ACP-owned source routes
 
 Registry uses one configured ACP origin, never a caller-supplied download URL.
-Two private endpoints require a distinct source-reader bearer token, scoped
-to these read routes only; the token is not a Runtime or model credential.
+Two private endpoints require Registry's own workload credential for ACP,
+scoped to these read routes only; use the dedicated service header and an
+ACP-specific outgoing file, with no user CCT or legacy source token.
 Source inspect accepts at most 8 KiB JSON; source artifact requests at most
 4 KiB. The larger inspect bound accommodates 50 maximum-length source keys.
 
@@ -202,7 +203,7 @@ extraction, actual source CLIENT propagation, native export and graceful shutdow
 
 Existing errors/status mappings remain. New codes are content_changed/409,
 source_unavailable/503 and source_invalid/502. Missing permissions/existence
-share not_found; wrong service token stays unauthorized/401. Provider error
+share not_found; wrong service credentials return service_unauthenticated/401. Provider error
 bodies/URLs and database secrets are never forwarded.
 
 Registry tests cover metadata-only persistence, update/replay/removed order,
