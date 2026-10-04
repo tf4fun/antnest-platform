@@ -248,6 +248,33 @@ try {
   await request("/api/admin/agents", { status: 503 });
   writeFileSync(consoleFile, next, { mode: 0o600 });
   await request("/api/admin/agents");
+  await docker([
+    "exec",
+    "--env",
+    "HTTP_PROXY=http://127.0.0.1:9",
+    "--env",
+    "HTTPS_PROXY=http://127.0.0.1:9",
+    id,
+    "/usr/local/bin/edge-gateway",
+    "--healthcheck",
+  ]);
+  checks++;
+  await assert.rejects(
+    docker([
+      "exec",
+      "--env",
+      "ANTNEST_EDGE_LISTEN=127.0.0.1:8080",
+      id,
+      "/usr/local/bin/edge-gateway",
+      "--healthcheck",
+    ]),
+  );
+  checks++;
+  await docker(["stop", "--time", "10", id], true);
+  const [stopped] = JSON.parse(await docker(["inspect", id]));
+  assert.equal(stopped.Config.Labels["com.docker.compose.project"], project);
+  assert.equal(stopped.State.ExitCode, 0);
+  checks++;
   complete = true;
 } finally {
   clearTimeout(timer);
@@ -266,6 +293,28 @@ try {
       ]),
       "",
     );
+    // Only remove the unique image built by this disposable project.
+    const image = `${project}-edge-gateway:latest`;
+    if (
+      await cleanup(["image", "ls", "-q", "--filter", `reference=${image}`])
+    ) {
+      const [candidate] = JSON.parse(
+        await cleanup(["image", "inspect", image]),
+      );
+      assert.equal(
+        candidate.Config.Labels["com.docker.compose.project"],
+        project,
+      );
+      assert.equal(
+        candidate.Config.Labels["com.docker.compose.service"],
+        "edge-gateway",
+      );
+      assert.equal(
+        await cleanup(["ps", "-aq", "--filter", `ancestor=${image}`]),
+        "",
+      );
+      await cleanup(["image", "rm", image]);
+    }
     cleaned = true;
   } finally {
     rmSync(credentials, { recursive: true, force: true });

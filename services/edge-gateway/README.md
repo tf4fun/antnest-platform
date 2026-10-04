@@ -71,7 +71,8 @@ Every authenticated request re-resolves Identity, so re-bootstrap observes a
 rename without changing authorization scope. Organization display delivery
 [#92](https://github.com/tf4fun/antnest-platform/issues/92) and
 [#93](https://github.com/tf4fun/antnest-platform/issues/93) are complete. CCT
-consumer enforcement is a separate pending #26 service batch. The unused legacy
+consumer enforcement is delivered in the #26 service batch; coordinated
+deployment and cross-service acceptance remain pending. The unused legacy
 `/api/app/bootstrap` projection is unchanged, pending
 [#64](https://github.com/tf4fun/antnest-platform/issues/64).
 
@@ -87,7 +88,7 @@ opt-in. Public Gateway readiness remains a local HTTP check.
 
 | Variable                         | Required | Default | Description                                                                                                                                                                 |
 | -------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP listen address; the container health check uses its port                                                                                                               |
+| `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP listen address; `--healthcheck` follows the configured host and port. Missing/wildcard hosts use `127.0.0.1`. |
 | `ANTNEST_IDENTITY_SERVICE_URL`   | yes      | -       | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
 | `ANTNEST_ADMIN_CONSOLE_URL`      | yes      | -       | Admin Console base URL                                                                                                                                                      |
 | `ANTNEST_AGENT_UI_URL`           | yes      | -       | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API                                                                         |
@@ -102,6 +103,11 @@ opt-in. Public Gateway readiness remains a local HTTP check.
 | `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`  | no       | `15s`   | Graceful drain budget for ordinary HTTP requests                                                                                                                            |
 | `ANTNEST_ENVIRONMENT`            | no       | empty   | Deployment environment resource attribute for telemetry                                                                                                                     |
 | `OTEL_*`                         | no       | -       | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+
+`--healthcheck` probes the local HTTP `/status` directly, including configured
+IPv6 addresses. It disables environment proxies and refuses redirects, so
+another endpoint cannot report Gateway healthy. This follows the
+[purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
 
 Durations use Go duration syntax and must be positive. The 10-second request
 timeout bounds forwarded admin requests and is shorter than Admin Console's

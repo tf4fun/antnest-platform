@@ -70,7 +70,7 @@
         "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs identity-service -- -race",
         "postgres": "make test-identity-postgres (172 tests, 246 subtests, zero skips/failures)",
         "docker": "node tests/e2e/service-authentication/identity/run.mjs (43 checks; configured non-loopback health with unreachable environment proxies, rejected loopback substitution and normal shutdown; deterministic 3-second PostgreSQL initialization window waits for TCP readiness; owned containers/volumes/network and test credentials cleaned)",
-        "purpose_listener_health": "go test -race -count=1 ./...; go vet ./...; go-lint; real IPv4/IPv6 and redirect rejection through the root cmd overlay (one package / five tests / 11 subtests; zero skips/failures). Existing TLS server identity remains required; wildcard listeners retain loopback probing. Docker reproduces the socket-only PostgreSQL readiness race before the fixture TCP-health fix and passes afterward. Gateway/Console/Controller/Registry remain owning-service follow-ups before Compose unicast bindings.",
+        "purpose_listener_health": "go test -race -count=1 ./...; go vet ./...; go-lint; real IPv4/IPv6 and redirect rejection through the root cmd overlay (one package / five tests / 11 subtests; zero skips/failures). Existing TLS server identity remains required; wildcard listeners retain loopback probing. Docker reproduces the socket-only PostgreSQL readiness race before the fixture TCP-health fix and passes afterward. Compose binding and cross-service network acceptance remain deployment/integration work.",
         "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch"
       }
@@ -85,10 +85,11 @@
         "CCT forwarding; strip untrusted identity/context headers"
       ],
       "admission": {
-        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs edge-gateway -- -race (144 tests, 347 subtests, zero skips/failures); authenticated WebSocket rotation and account-switch CAS regressions passed",
-        "docker": "node tests/e2e/service-authentication/gateway/run.mjs (58 checks; cleaned); node tests/e2e/edge-gateway/shutdown-docker.mjs (SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; go-lint; node tests/integration/go/run.mjs edge-gateway -- -race (nine packages / 147 tests / 358 subtests; zero skips/failures); authenticated WebSocket rotation and account-switch CAS regressions passed",
+        "docker": "node tests/e2e/service-authentication/gateway/run.mjs (61 authentication and purpose-listener checks; unreachable environment proxies, rejected loopback substitution, normal stop and owned candidate-image cleanup); node tests/e2e/edge-gateway/shutdown-docker.mjs (previous SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
         "pending_consumers": [],
-        "cross_service_e2e": "pending final integration batch"
+        "cross_service_e2e": "pending final integration batch",
+        "purpose_listener_health": "Native race/vet/lint and root Go HTTP/TCP integration pass without skips; configured IPv4/IPv6 probes and redirect rejection retain the public local HTTP readiness contract. Docker binds only its own address and proves proxy isolation, loopback rejection and normal shutdown. Compose binding and cross-service network acceptance remain deployment/integration work."
       }
     },
     {
