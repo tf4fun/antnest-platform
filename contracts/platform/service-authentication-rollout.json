@@ -11,11 +11,16 @@
   "token_provisioning": {
     "owner": "deployment",
     "issue": 32,
-    "status": "pending",
+    "status": "admitted",
     "helper": "scripts/dev-service-tokens.mjs",
     "output_directory": "artifacts/service-authentication/",
     "ignore_before_generation": true,
-    "service_test_credentials": "Owning-service isolated harnesses generate and clean up temporary CSPRNG credentials before deployment wiring exists; never install public conformance tokens."
+    "service_test_credentials": "Owning-service isolated harnesses generate and clean up temporary CSPRNG credentials before deployment wiring exists; never install public conformance tokens.",
+    "contract": "development-authentication.md",
+    "admission": {
+      "unit_contract_component": "20 contract, catalog-derived token/key, private permission/ownership, CLI privacy, fresh-deployment, overwrite/alias rejection and failure cleanup tests; zero skips/failures.",
+      "docker": "node tests/e2e/service-authentication/deployment-credentials/run.mjs (13 private read-only mount and atomic sender-replacement checks; nonroot generating UID/GID; no container network or published ports; owned containers and credentials cleaned). This is credential preparation evidence, not platform business/security E2E."
+    }
   },
   "audience_profiles": {
     "console": [
@@ -244,6 +249,12 @@
         "development service-token provisioning helper",
         "purpose-specific internal networks",
         "Gateway-only base ports and explicit debug overlay"
+      ],
+      "admitted_substeps": ["development service-token provisioning helper"],
+      "pending_substeps": [
+        "development PKI helper",
+        "purpose-specific internal networks and explicit listener/health bindings",
+        "Gateway-only base ports, debug overlay and dependency/E2E tooling wiring"
       ]
     },
     {

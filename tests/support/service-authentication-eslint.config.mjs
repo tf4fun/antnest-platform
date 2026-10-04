@@ -11,6 +11,7 @@ export default [
       "tests/integration/platform/service-authentication-contract.test.mjs",
       "tests/integration/platform/development-authentication-contract.test.mjs",
       "tests/integration/platform/development-authentication.test.mjs",
+      "tests/integration/platform/service-token-contract.test.mjs",
       "scripts/dev-service-tokens.mjs",
       "tests/integration/runtime-egress/service-authentication-contract.test.mjs",
       "tests/support/service-authentication-eslint.config.mjs",

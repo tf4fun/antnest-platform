@@ -4,12 +4,14 @@
 
 ### Changed
 
-The development authentication provisioning contract now defines catalog-derived
-per-caller credentials, separate Identity CCT and RC instance sealing keys,
-private ignored output and refusal to overwrite an existing deployment (#32).
-All ten owning-service authentication batches are admitted. Credential helpers,
-network/Compose wiring and full cross-service acceptance remain deployment and
-integration work; no intermediate PR or live-stack reconfiguration is implied.
+Development authentication provisioning now generates catalog-derived per-caller
+credentials, separate Identity CCT and RC instance sealing keys, and optional
+independent Skill maintenance keys (#32). Output is private and ignored; existing
+credentials are never overwritten. Generating UID/GID metadata lets nonroot Node
+services read 0700/0600 bind mounts without granting root or world access. Native
+contract/CLI and isolated Docker read-only/rotation checks passed. All ten service
+batches are admitted; PKI, network/Compose wiring and full cross-service acceptance
+remain deployment/integration work. No live stack is reconfigured by the helper.
 
 ### Fixed
 

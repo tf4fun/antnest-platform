@@ -21,8 +21,7 @@ function read(name) {
 // these vectors using their real startup parsers and authentication boundaries.
 function parseCallers(raw) {
   const value = JSON.parse(raw);
-  const tokens =
-    raw.match(/"(?:\\.|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+/gu) ?? [];
+  const tokens = raw.match(/"(?:\\.|[^"\\])*"|[{}[\]:,]|[^\s{}[\]:,]+/gu) ?? [];
   const members = new Set();
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].startsWith('"') && tokens[i + 1] === ":") {
@@ -217,7 +216,9 @@ test("the integration branch uses service-local commits and final cross-service 
   );
   assert.deepEqual(rollout.batches[0].issues, [32, 101]);
   assert.equal(rollout.token_provisioning.owner, "deployment");
-  assert.equal(rollout.token_provisioning.status, "pending");
+  assert.equal(rollout.token_provisioning.status, "admitted");
+  assert(rollout.token_provisioning.admission.unit_contract_component);
+  assert(rollout.token_provisioning.admission.docker);
   assert.equal(rollout.token_provisioning.ignore_before_generation, true);
   assert(rollout.token_provisioning.service_test_credentials);
   assert(

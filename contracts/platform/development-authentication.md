@@ -7,6 +7,10 @@ This deployment-owned contract implements the credential preparation part of
 Credential preparation does not complete network isolation or cross-service
 acceptance; their status remains in the [rollout ledger](service-authentication-rollout.json).
 
+The token/bootstrap helper passed 20 contract/CLI checks and 13 isolated Docker
+mount/replacement checks. Generated mounts remain read-only and private under
+the generating user's numeric UID/GID. PKI and Compose/network admission remain pending.
+
 ## Static credentials
 
 `scripts/dev-service-tokens.mjs` uses Node's built-in modules only. It reads each
@@ -73,9 +77,14 @@ the RC journal and backups. Re-running the generator into a different output
 is a new deployment, not a way to rotate an existing master. Replacing or losing
 the master makes existing sealed instance authority unusable.
 
-`deployment.env` supplies the output directory and Identity signing key ID.
+`deployment.env` supplies the output directory, generating POSIX user's UID/GID
+and Identity signing key ID. Compose must run nonroot Node consumers with those
+numeric IDs so read-only host bind mounts remain readable at 0700/0600; do not
+make credentials world-readable or elevate those services to root. RC and Egress
+retain their existing separately justified Docker/kernel privileges.
 Without `--with-skill-learning`, it also supplies empty Skill maintenance key
-settings so a reused shell does not silently select a signer. With that explicit
+defaults. Explicit exported shell settings still take precedence in Compose;
+the helper does not silently change them. With that explicit
 flag, a separate Ed25519 pair supplies the existing ACP canonical base64 PKCS8
 DER environment setting and the matching RC public verifier JSON. The Runtime
 bootstrap still binds those public verifiers into its deployment identity;

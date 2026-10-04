@@ -249,6 +249,9 @@ test("the rollout records ten admitted services while keeping deployment and fin
   assert.deepEqual(egress.independent_packet_dns_issues, [34, 36]);
   assert.deepEqual(egress.admission.pending_consumers, []);
   assert(egress.admission.cross_service_e2e.includes("pending"));
+  assert.equal(rollout.token_provisioning.status, "admitted");
+  assert(rollout.token_provisioning.admission.unit_contract_component);
+  assert(rollout.token_provisioning.admission.docker);
   for (const owner of ["deployment", "integration"]) {
     assert.equal(
       rollout.batches.find((batch) => batch.owner === owner).status,

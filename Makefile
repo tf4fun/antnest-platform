@@ -125,7 +125,7 @@ test-repo:
 
 .PHONY: test-service-authentication
 test-service-authentication:
-	node --test --test-concurrency=1 tests/support/service-authentication.test.mjs tests/support/json-rpc-security.test.mjs tests/integration/platform/service-authentication-contract.test.mjs tests/integration/platform/service-token-contract.test.mjs tests/integration/platform/runtime-instance-connection-contract.test.mjs tests/integration/platform/development-authentication-contract.test.mjs
+	node --test --test-concurrency=1 tests/support/service-authentication.test.mjs tests/support/json-rpc-security.test.mjs tests/integration/platform/service-authentication-contract.test.mjs tests/integration/platform/service-token-contract.test.mjs tests/integration/platform/runtime-instance-connection-contract.test.mjs tests/integration/platform/development-authentication-contract.test.mjs tests/integration/platform/development-authentication.test.mjs
 	node tests/support/check-service-authentication.mjs
 
 test-managed-mcp-fixtures:

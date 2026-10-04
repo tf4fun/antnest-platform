@@ -25,6 +25,8 @@
     "sender_file": "<caller>/tokens/<receiver>",
     "manifest_file": "manifest.json",
     "environment_file": "deployment.env",
+    "container_uid_environment": "ANTNEST_SERVICE_AUTH_UID",
+    "container_gid_environment": "ANTNEST_SERVICE_AUTH_GID",
     "receiver_max_bytes": 8192
   },
   "bootstrap_keys": {
