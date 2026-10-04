@@ -438,6 +438,17 @@ reachable there. Split/bind listeners explicitly: network attachment alone
 cannot isolate a wildcard listener on a multi-homed container. Observability
 is an exporter destination, not an authorization bypass back into control APIs.
 
+Health probes must follow purpose-address listener bindings. For static services
+whose `--healthcheck` uses the primary listener, probe its configured unicast IP
+and port, including IPv6 brackets; only a missing/wildcard host falls back to
+`127.0.0.1`. Keep the existing HTTP opt-in and exact TLS service identity checks.
+Health transports disable environment proxies and reject redirects, so a proxy
+or another endpoint cannot report the local service healthy. RC/Egress retain
+their separate configured loopback health listener. Docker Node probes use the
+configured workspace/UI bind address. These owning-service health follow-ups
+must pass before applying unicast Compose bindings; final network probes remain
+in the integration batch.
+
 Base `compose.yaml` must ultimately publish only Gateway's 8090. Move service,
 Postgres and Temporal diagnostic ports into an explicit `compose.debug.yaml`
 override, and update owned E2E/dependency tooling before changing that default.

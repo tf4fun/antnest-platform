@@ -4,6 +4,12 @@
 
 ### Changed
 
+The deployment contract now requires primary-listener health probes to follow
+configured purpose addresses, preserve TLS identity checks, and bypass proxies
+and redirects (#32). Identity, Gateway, Console, Controller and Registry need
+separate owning-service health follow-ups before the unicast Compose wiring.
+RC/Egress keep their existing separate loopback health listeners.
+
 The development PKI helper now generates a private fresh CA, independent
 per-service P-256 leaves, exact URI/DNS identities and both TLS usages (#32).
 Existing issuers are never overwritten; normal cancellation reaps OpenSSL before
