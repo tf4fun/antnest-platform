@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 )
@@ -19,6 +20,8 @@ import (
 const MonitorRetryDelay = time.Second
 
 type Config struct {
+	InstanceCredentials   *instanceauth.Manager
+	RuntimeAuthentication map[string]string
 	Authentication        *serviceauth.Clients
 	HealthListenAddress   string
 	AllowedImages         []string
@@ -156,6 +159,24 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// Do not synthesize an insecure Runtime opt-in or claim unsupported TLS.
+	mode, _ := environment("ANTNEST_SERVICE_AUTH_MODE")
+	insecure, _ := environment("ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT")
+	if mode != "token" || insecure != "true" {
+		config.Authentication.CloseIdleConnections()
+		return Config{}, fmt.Errorf("runtime instance transport currently requires token mode and explicit insecure transport opt-in; native TLS/mTLS is unsupported")
+	}
+	keyPath, _ := environment("ANTNEST_RUNTIME_INSTANCE_KEY_FILE")
+	masterKey, err := instanceauth.LoadKey(keyPath)
+	if err != nil {
+		return Config{}, err
+	}
+	config.InstanceCredentials, err = instanceauth.New(masterKey)
+	clear(masterKey)
+	if err != nil {
+		return Config{}, err
+	}
+	config.RuntimeAuthentication = map[string]string{"ANTNEST_SERVICE_AUTH_MODE": mode, "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": insecure, "ANTNEST_SERVICE_AUTH_CALLERS_FILE": instanceauth.CallersFile}
 	dockerHost := valueOr(lookup, "ANTNEST_DOCKER_HOST", "unix:///var/run/docker.sock")
 	parsedHost, err := url.Parse(dockerHost)
 	if err != nil || parsedHost.Scheme != "unix" || strings.TrimSpace(parsedHost.Path) == "" {

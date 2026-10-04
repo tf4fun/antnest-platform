@@ -11,19 +11,54 @@
       "description": "Immutable learning verifier bootstrap. RC freezes the bounded public-key set with each accepted lifecycle operation and includes it in the deployment digest. Runtime validates the set and uses it for its private maintenance route. Empty keys disable maintenance."
     },
     "mcp_servers": {
-      "type": "array", "default": [], "maxItems": 8,
+      "type": "array",
+      "default": [],
+      "maxItems": 8,
       "description": "Required non-root stdio MCP processes, initialized before readiness. IDs must be unique; each configuration is limited to 32 KiB and the encoded array to 64 KiB. Changing this list requires a Runtime rebuild.",
       "items": {
-        "type": "object", "additionalProperties": false,
+        "type": "object",
+        "additionalProperties": false,
         "required": ["id", "command"],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,15}$"},
-          "command": {"type": "string", "minLength": 1, "maxLength": 4096},
-          "args": {"type": "array", "default": [], "maxItems": 64, "items": {"type": "string", "maxLength": 8192}},
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,15}$"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "args": {
+            "type": "array",
+            "default": [],
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          },
           "env": {
-            "type": "object", "default": {}, "maxProperties": 64,
-            "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$", "not": {"anyOf": [{"enum": ["HOME", "PATH"]}, {"pattern": "^ANTNEST_"}]}},
-            "additionalProperties": {"type": "string", "maxLength": 8192}
+            "type": "object",
+            "default": {},
+            "maxProperties": 64,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": ["HOME", "PATH"]
+                  },
+                  {
+                    "pattern": "^ANTNEST_"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         }
       }
@@ -35,14 +70,23 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$",
       "description": "Stable deployment-safe Agent identifier used in platform resource names."
     },
-    "generation": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
     "listen": {
       "$ref": "#/$defs/socketAddress"
     },
     "network": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["packet_contract_revision", "egress_endpoint", "tunnel_ipv4", "resolver_ipv4"],
+      "required": [
+        "packet_contract_revision",
+        "egress_endpoint",
+        "tunnel_ipv4",
+        "resolver_ipv4"
+      ],
       "properties": {
         "packet_contract_revision": {
           "type": "integer",
@@ -82,11 +126,17 @@
           "description": "Normalized absolute system Skill root; must not overlap workspace."
         }
       }
+    },
+    "authentication": {
+      "$ref": "instance-connection.schema.json#/$defs/bootstrap_descriptor",
+      "description": "RC-owned nonsecret bootstrap identity, frozen with accepted generation. Runtime consumer adoption is a separate #30 batch; no bearer enters RuntimeSpec."
     }
   },
   "$defs": {
     "maintenanceKid": {
-      "type": "string", "minLength": 1, "maxLength": 64,
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
       "description": "Exact ASCII maintenance key identity shared by RC, Runtime and ACP. No whitespace normalization; see maintenance-kid-fixtures.json."
     },
@@ -99,22 +149,38 @@
           "type": "string",
           "const": "0.0.0.0"
         },
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
       },
       "description": "Internal Runtime HTTP listener expressed without language-specific socket parsing."
     },
     "skillMaintenanceVerifiers": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "required": ["keys"],
       "properties": {
-        "keys": { "type": "array", "maxItems": 2, "uniqueItems": true,
+        "keys": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
           "items": {
-            "type": "object", "additionalProperties": false,
+            "type": "object",
+            "additionalProperties": false,
             "required": ["kid", "algorithm", "public_key_base64url"],
             "properties": {
-              "kid": { "$ref": "#/$defs/maintenanceKid" },
-              "algorithm": { "const": "Ed25519" },
-              "public_key_base64url": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+              "kid": {
+                "$ref": "#/$defs/maintenanceKid"
+              },
+              "algorithm": {
+                "const": "Ed25519"
+              },
+              "public_key_base64url": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
+              }
             }
           }
         }
@@ -125,8 +191,15 @@
       "additionalProperties": false,
       "required": ["ipv4", "port"],
       "properties": {
-        "ipv4": {"type": "string", "format": "ipv4"},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+        "ipv4": {
+          "type": "string",
+          "format": "ipv4"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
       },
       "description": "Controller-resolved usable unicast IPv4 address and UDP port."
     }

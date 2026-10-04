@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { createHash } from "node:crypto";
 
 const [mode, raw = "{}"] = process.argv.slice(2);
 const options = JSON.parse(raw);
@@ -16,7 +17,7 @@ async function request({
   headers = {},
   status = 200,
   code,
-  host = "runtime-controller:8120",
+  host = process.env.RC_AUTH_CONTROL_ADDRESS ?? "runtime-controller:8120",
 } = {}) {
   const keys = credentials();
   const outgoing = { ...headers };
@@ -47,6 +48,63 @@ async function request({
 }
 if (mode === "request") {
   process.stdout.write(JSON.stringify(await request(options)));
+} else if (mode === "instance") {
+  const inspected = await request({
+    path: `/internal/runtimes/${options.agent}`,
+    auth: options.auth ?? "current",
+  });
+  const connection = await request({
+    path: `/internal/runtimes/${options.agent}/connection`,
+    method: "POST",
+    auth: options.auth ?? "current",
+    body: {
+      runtime_revision: inspected.runtime_revision,
+      expected_execution_id: inspected.runtime_execution_id,
+    },
+  });
+  assert.equal(connection.agent_id, options.agent);
+  assert.equal(connection.runtime_revision, inspected.runtime_revision);
+  assert.equal(connection.runtime_execution_id, inspected.runtime_execution_id);
+  assert.equal(connection.mcp_endpoint, inspected.mcp_endpoint);
+  assert.equal(connection.credential.caller, "agent-acp-service");
+  const endpoint = new URL(connection.mcp_endpoint);
+  for (const [path, proof, expected] of [
+    ["/status", null, 401],
+    ["/mcp", null, 401],
+    ["/status", connection.credential.token, 200],
+  ]) {
+    const response = await fetch(new URL(path, endpoint), {
+      headers: proof
+        ? { "Antnest-Service-Authorization": "Bearer " + proof }
+        : {},
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.status, expected);
+    await response.arrayBuffer();
+    checks++;
+  }
+  await request({
+    path: `/internal/runtimes/${options.agent}/connection`,
+    method: "POST",
+    auth: options.auth ?? "current",
+    body: {
+      runtime_revision: inspected.runtime_revision,
+      expected_execution_id: "stale-execution",
+    },
+    status: 409,
+    code: "runtime_connection_stale",
+  });
+  process.stdout.write(
+    JSON.stringify({
+      checks,
+      connection_id: connection.connection_id,
+      execution_id: connection.runtime_execution_id,
+      token_digest: createHash("sha256")
+        .update(connection.credential.token)
+        .digest("hex"),
+    }),
+  );
 } else if (mode === "matrix") {
   const contract = JSON.parse(
     readFileSync("/fixture/control-contract.json", "utf8"),

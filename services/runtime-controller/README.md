@@ -14,6 +14,12 @@ service.
 
 ## Responsibilities
 
+- Issue and atomically seal distinct RC/ACP Runtime tokens with each private
+  compute generation. Deliver only caller hashes through a verified root-only,
+  read-only receiver volume; exact recovery retains credentials. Privately
+  resolve ACP's current connection for Controller; ordinary projections remain
+  secret-free. See [the instance connection contract](../../contracts/runtime/instance-connection.md).
+
 - Idempotently `Initialize`, `Update`, `Disable`, `Enable`, `Inspect`, and
   `Delete` one Agent Runtime Environment.
 - Allocate internal immutable compute generations and expose only an opaque
@@ -52,6 +58,23 @@ service.
   configuration.
 - It does not run a Runtime reverse-connection server.
 - It does not authenticate end users or expose a public API.
+
+## Runtime instance bootstrap
+
+`ANTNEST_RUNTIME_INSTANCE_KEY_FILE` is required: a private regular mode-0600
+file containing exactly 32 raw CSPRNG bytes, mounted read-only by deployment.
+Retain it with RC's journal across restarts. It is separate from Controller's
+credential key and the workload-token directory; losing or changing it makes
+existing instance authority unavailable. There is no automatic reissue during
+recovery. Development has no legacy data to migrate; rebuild a fresh test stack.
+
+The first instance receiver supports token mode with the explicit
+`ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true` opt-in on its isolated
+internal network. Native Runtime TLS/mTLS is unsupported and unsupported profiles
+fail RC startup; no opt-in is synthesized. The control-service TLS library still
+validates TLS when configured. Production transport expansion is separate work.
+Runtime, Controller relay and ACP consumption remain the next #30 owning batches.
+
 - It does not read another service's database.
 - It does not hold the Skill maintenance signing key; that belongs to Agent ACP
   Service.

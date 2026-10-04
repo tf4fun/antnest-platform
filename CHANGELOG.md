@@ -4,7 +4,19 @@
 
 ### Fixed
 
-The #30 private Runtime instance connection contract is frozen before service implementation. RC owns per-caller, per-Agent/generation CSPRNG tokens and sealed records; Controller privately relays ACP authority. Receiver volumes contain only root-only SHA256 configuration; public bindings/Run snapshots never contain tokens. The contract defines authenticated full status, identity-free liveness, exact Host admission, preserved execution fences/tickets and service-owned producer/consumer batches. Runtime/RC/Controller/ACP implementation and final integration are still pending.
+RC revision 16 now issues and atomically seals separate per-generation RC/ACP
+Runtime credentials (#30). Exact retry and restart retain authority; new compute
+rotates it. A verified root-only, read-only named volume carries hashes only,
+with actual post-create/pre-start mount validation. Private Controller connection
+resolution checks the current revision/execution, exports only ACP authority,
+uses no-store and disables debug content capture. Ordinary projections remain
+unchanged. Operators must retain a private 0600, exactly 32-byte raw master file
+via `ANTNEST_RUNTIME_INSTANCE_KEY_FILE`. This first native instance profile
+requires explicit internal-HTTP token opt-in; TLS/mTLS is unsupported and fails
+startup. Native Runtime admission, Controller/ACP adoption, coordinated deployment
+and full business/security E2E remain subsequent batches.
+
+The #30 private Runtime instance connection contract is frozen before service implementation. RC owns per-caller, per-Agent/generation CSPRNG tokens and sealed records; Controller privately relays ACP authority. Receiver volumes contain only root-only SHA256 configuration; public bindings/Run snapshots never contain tokens. The contract defines authenticated full status, identity-free liveness, exact Host admission, preserved execution fences/tickets and service-owned producer/consumer batches. RC producer implementation is described above; native Runtime/Controller/ACP adoption and final integration are still pending.
 
 Runtime Controller now admits only verified Controller workloads on every control route, including all three Skill preparation routes (#29). Control revision 15 adds exact token/mTLS admission and strict JSON errors, an explicit unicast control address (default `127.0.0.1:8080`), and a separate loopback health listener (default `127.0.0.1:8082`). Operators must supply authentication configuration, bind the Controller-purpose address, and remove nonempty `ANTNEST_SKILL_REGISTRY_API_TOKEN`. Registry downloads use per-receiver credentials without proxies or redirects. `ANTNEST_RUNTIME_ALLOWED_IMAGES` accepts exact repository or SHA256-manifest allowlists; the default Runtime repository is the only allowed repository when unset. Disallowed new selections return `422 image_not_allowed` before Docker or journal effects; accepted recovery retains its frozen image ID. Cross-package exported Go route wrappers cannot forward route-pattern parameters to Handle/HandleFunc without failing catalog checks. RC still holds host-equivalent Docker-socket authority; final network deployment, Runtime instance credentials and cross-service E2E remain separate batches.
 

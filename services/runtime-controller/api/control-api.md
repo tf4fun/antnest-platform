@@ -1,7 +1,7 @@
 # Runtime Controller Control API
 
 Runtime Controller exposes a small JSON-over-HTTP RPC surface to Agent
-Controller with verified workload identity on its purpose-specific private listener. Revision 15 requires the [exact workload profile](service-authentication.md), adds admission errors and operator image allowlists, and separates loopback readiness from the control surface. It performs no end-user authentication. The cross-service aggregate is one Runtime Environment per
+Controller with verified workload identity on its purpose-specific private listener. Revision 16 includes private Runtime connection resolution; revision 15 requires the [exact workload profile](service-authentication.md), adds admission errors and operator image allowlists, and separates loopback readiness from the control surface. It performs no end-user authentication. The cross-service aggregate is one Runtime Environment per
 Agent. Docker containers, Kubernetes Pods, workspace volumes, physical
 generation numbers, deployment digests, and platform resource identifiers are
 private implementation details.
@@ -34,6 +34,30 @@ stable across retries. It becomes the Environment's current
 Runtime Controller privately allocates a compute generation for Initialize,
 Update, and Enable. That number is supplied to Antnest Runtime and platform
 labels, but never appears in this API.
+
+## Private Runtime connection
+
+Revision 16 adds `POST /internal/runtimes/{agent_id}/connection` for Controller
+workload admission only. The JSON request carries `runtime_revision` and
+`expected_execution_id`, with no Idempotency-Key. It requires a provisioned
+current Environment and a fresh authenticated full-status identity check under
+the Agent lock. An absent instance returns 404, stale binding 409
+`runtime_connection_stale`, and unavailable verification 503
+`runtime_connection_unavailable`. Only the 503 failure is retryable.
+
+The [shared schema](../../../contracts/runtime/instance-connection.schema.json)
+defines the private response. It returns ACP's per-instance token alongside the
+exact current binding; RC's status token is never exported. All responses use
+`Cache-Control: no-store`; request and response content capture is unconditionally
+disabled, including with RPC debug capture enabled. Ordinary Inspect/List,
+operation receipts and observations contain no instance credential.
+
+RC atomically persists the sealed two-caller record with compute admission.
+RuntimeSpec contains only connection ID, fixed caller-file location and receiver
+digest. A root-only receiver volume is read back, mounted read-only, and checked
+again after actual container creation before start. Docker liveness uses
+`/status/live`; RC identity checks always use authenticated full `/status`.
+Consumer implementation and cross-service acceptance remain separate #30 batches.
 
 ## Lifecycle
 

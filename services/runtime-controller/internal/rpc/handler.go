@@ -109,6 +109,7 @@ func NewHandler(
 	registerRPC("GET /internal/runtime-images/resolve", handler.resolveImage)
 	registerRPC("GET /internal/runtimes", handler.listRuntimes)
 	registerRPC("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/connection", handler.resolveRuntimeConnection)
 	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/prepare", handler.prepareSkillSet)
 	registerRPC("GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}", handler.getSkillPreparation)
 	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release", handler.releaseSkillPreparation)
@@ -123,6 +124,7 @@ func NewHandler(
 	for _, pattern := range []string{
 		"/internal/runtime-images/resolve",
 		"/status", "/internal/runtimes", "/internal/runtimes/{agent_id}",
+		"/internal/runtimes/{agent_id}/connection",
 		"/internal/runtimes/{agent_id}/initialize", "/internal/runtimes/{agent_id}/update",
 		"/internal/runtimes/{agent_id}/disable", "/internal/runtimes/{agent_id}/enable",
 		"/internal/runtimes/{agent_id}/delete", "/internal/runtime-operations/{request_id}",
@@ -139,6 +141,10 @@ func NewHandler(
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if strings.HasSuffix(request.URL.Path, "/connection") {
+		response.Header().Set("Cache-Control", "no-store")
+		telemetry.SuppressRPCContent(request.Context())
+	}
 	if !h.authenticate(response, request) {
 		return
 	}

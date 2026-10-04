@@ -1,7 +1,7 @@
 {
   "service": "runtime-controller",
   "status": "enforced",
-  "implementation_issues": [29],
+  "implementation_issues": [29, 30],
   "routes": {
     "* /": {
       "callers": [],
@@ -40,6 +40,12 @@
       "request_body": "none"
     },
     "* /internal/runtimes/{agent_id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/runtimes/{agent_id}/connection": {
       "callers": [],
       "authentication": "deny",
       "caller_context": {},
@@ -162,6 +168,14 @@
         "local-healthcheck": "none"
       },
       "request_body": "none"
+    },
+    "POST /internal/runtimes/{agent_id}/connection": {
+      "callers": ["agent-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
     },
     "POST /internal/runtimes/{agent_id}/delete": {
       "callers": ["agent-controller"],

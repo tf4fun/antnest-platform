@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { runCommand } from "../../../support/run-command.mjs";
 import {
   dockerClient,
   networkOctet,
@@ -47,6 +54,9 @@ const saveCallers = (tokens) => {
   );
 };
 saveCallers([keys.current, keys.next]);
+writeFileSync(resolve(directory, "instance-master"), randomBytes(32), {
+  mode: 0o600,
+});
 const abort = new AbortController();
 const stop = () => abort.abort();
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, stop);
@@ -55,6 +65,7 @@ const docker = dockerClient(process.env, abort.signal, 600000);
 let env,
   compose,
   image,
+  runtimeImage,
   checks = 0,
   complete = false,
   cleaned = false;
@@ -87,6 +98,21 @@ try {
     ),
   ];
   const invoke = dockerClient(env, abort.signal, 600000);
+  runtimeImage = "antnest/antnest-runtime:rc-instance-" + project.slice(-8);
+  await invoke(
+    [
+      "build",
+      "-f",
+      resolve(
+        root,
+        "tests/e2e/service-authentication/runtime-controller/runtime-fixture.Dockerfile",
+      ),
+      "-t",
+      runtimeImage,
+      root,
+    ],
+    true,
+  );
   await invoke(
     [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "180"],
     true,
@@ -100,19 +126,32 @@ try {
   );
   assert(container.NetworkSettings.Networks[env.RC_AUTH_MANAGEMENT_NETWORK]);
   checks++;
-  const probe = async (service, mode, options = {}) =>
-    JSON.parse(
-      await invoke([
-        ...compose,
-        "exec",
-        "-T",
-        service,
-        "node",
-        "/fixture/probe.mjs",
-        mode,
-        JSON.stringify(options),
-      ]),
-    );
+  let privateProbe = 0;
+  const probe = async (service, mode, options = {}) => {
+    const args = [
+      ...compose,
+      "exec",
+      "-T",
+      service,
+      "node",
+      "/fixture/probe.mjs",
+      mode,
+      JSON.stringify(options),
+    ];
+    if (mode !== "instance") return JSON.parse(await invoke(args));
+    const name = "instance-probe-" + privateProbe++;
+    const result = await runCommand({
+      name,
+      command: ["docker", ...args],
+      cwd: root,
+      env,
+      output: evidence,
+      timeoutMs: 30000,
+      graceMs: 5000,
+    });
+    assert.equal(result.exit_code, 0, name + " failed; see private evidence");
+    return JSON.parse(readFileSync(resolve(evidence, name + ".log"), "utf8"));
+  };
   checks += (await probe("control-probe", "matrix")).checks;
   checks += (await probe("management-probe", "unreachable")).checks;
   const request = async (options) => {
@@ -120,7 +159,6 @@ try {
     checks++;
     return result;
   };
-  const runtimeImage = "antnest/antnest-runtime:local";
   const installed = await invoke([
     "image",
     "inspect",
@@ -264,6 +302,63 @@ try {
       }
     }
   };
+  const waitRuntime = async () => {
+    const deadline = Date.now() + 60000;
+    for (;;) {
+      const current = await request({
+        path: `/internal/runtimes/${agent}`,
+        auth: "next",
+      });
+      if (current.health === "healthy" && current.runtime_execution_id)
+        return current;
+      if (Date.now() > deadline)
+        throw new Error("owned fixture Runtime did not become verified");
+      await delay(250, undefined, { signal: abort.signal });
+    }
+  };
+  await waitRuntime();
+  const beforeConnection = await probe("instance-probe", "instance", { agent });
+  checks += beforeConnection.checks;
+  const authMount = runtime.Mounts.find(
+    (mount) => mount.Destination === "/run/antnest-auth",
+  );
+  assert(authMount && !authMount.RW);
+  const [authVolume] = JSON.parse(
+    await invoke(["volume", "inspect", authMount.Name]),
+  );
+  assert.equal(
+    authVolume.Labels["io.antnest.runtime-controller-scope"],
+    project,
+  );
+  const rawBootstrap = await invoke([
+    "exec",
+    runtime.Id,
+    "cat",
+    "/run/antnest-auth/callers.json",
+  ]);
+  const receiver = JSON.parse(rawBootstrap);
+  assert.deepEqual(Object.keys(receiver).sort(), [
+    "agent-acp-service",
+    "runtime-controller",
+  ]);
+  assert.deepEqual(receiver["agent-acp-service"], [
+    "sha256:" + beforeConnection.token_digest,
+  ]);
+  assert.notEqual(
+    receiver["runtime-controller"][0],
+    receiver["agent-acp-service"][0],
+  );
+  const uidRead = await invoke([
+    "exec",
+    "--user",
+    "1000:1000",
+    runtime.Id,
+    "node",
+    "-e",
+    "try { require('fs').readFileSync('/run/antnest-auth/callers.json'); process.exit(1); } catch(e) { if(e.code !== 'EACCES') process.exit(2); }",
+  ]);
+  assert.equal(uidRead, "");
+  checks += 3;
   saveCallers([keys.next]);
   await request({ auth: "current" }); // Receiver changes require restart.
   await invoke([...compose, "restart", "runtime-controller"], true);
@@ -274,6 +369,13 @@ try {
     code: "service_unauthenticated",
   });
   await request({ auth: "next" });
+  const afterConnection = await probe("instance-probe", "instance", {
+    agent,
+    auth: "next",
+  });
+  assert.equal(afterConnection.connection_id, beforeConnection.connection_id);
+  assert.equal(afterConnection.token_digest, beforeConnection.token_digest);
+  checks += afterConnection.checks + 2;
   const replay = await request({
     method: "POST",
     path: `/internal/runtimes/${agent}/initialize`,
@@ -291,11 +393,42 @@ try {
     return result;
   };
   await lifecycle("update", { expected_revision: revision, configuration });
+  await waitRuntime();
+  const updatedConnection = await probe("instance-probe", "instance", {
+    agent,
+    auth: "next",
+  });
+  assert.notEqual(
+    updatedConnection.connection_id,
+    beforeConnection.connection_id,
+  );
+  assert.notEqual(
+    updatedConnection.token_digest,
+    beforeConnection.token_digest,
+  );
+  checks += updatedConnection.checks + 2;
+  assert.equal(
+    await invoke(["volume", "ls", "-q", "--filter", "name=" + authMount.Name]),
+    "",
+  );
+  checks++;
   assert.equal(
     (await lifecycle("disable", { expected_revision: revision })).inspection
       .lifecycle_state,
     "disabled",
   );
+  const receiverVolumes = () =>
+    invoke([
+      "volume",
+      "ls",
+      "-q",
+      "--filter",
+      "label=" + scopeLabel + "=" + project,
+      "--filter",
+      "label=io.antnest.managed=runtime-auth",
+    ]);
+  assert.equal(await receiverVolumes(), "");
+  checks++;
   await mutate(
     agent,
     "enable",
@@ -322,6 +455,8 @@ try {
       .lifecycle_state,
     "deleted",
   );
+  assert.equal(await receiverVolumes(), "");
+  checks++;
   for (const signal of ["SIGTERM", "SIGINT"]) {
     await invoke(["kill", "--signal", signal, id]);
     await invoke(["wait", id]);
@@ -333,6 +468,14 @@ try {
     checks++;
   }
   const startupCases = [
+    {
+      ANTNEST_SERVICE_AUTH_MODE: "token",
+      ANTNEST_RUNTIME_INSTANCE_KEY_FILE: "",
+    },
+    {
+      ANTNEST_SERVICE_AUTH_MODE: "token",
+      ANTNEST_RUNTIME_INSTANCE_KEY_FILE: "/run/auth/fixture.json",
+    },
     {},
     { ANTNEST_SERVICE_AUTH_MODE: "token " },
     {
@@ -400,6 +543,41 @@ try {
   for (const secret of Object.values(keys)) assert(!logs.includes(secret));
   checks++;
   complete = true;
+} catch (error) {
+  // Preserve owning-service diagnostics before cleanup. Never echo Docker
+  // create requests, bearer files or raw subprocess output to the caller.
+  const diagnostics = dockerClient(env ?? process.env, undefined, 30000);
+  if (compose) {
+    try {
+      await runCommand({
+        name: "controller-diagnostics",
+        command: [
+          "docker",
+          ...compose,
+          "logs",
+          "--no-color",
+          "runtime-controller",
+        ],
+        cwd: root,
+        env,
+        output: evidence,
+        timeoutMs: 10000,
+      });
+      for (const id of await owned(diagnostics, project, "container")) {
+        await runCommand({
+          name: "container-" + id,
+          command: ["docker", "logs", "--tail", "100", id],
+          cwd: root,
+          env,
+          output: evidence,
+          timeoutMs: 10000,
+        });
+      }
+    } catch {
+      // The original gate error remains authoritative if Docker is unavailable.
+    }
+  }
+  throw error;
 } finally {
   clearTimeout(timer);
   const cleanup = dockerClient(env ?? process.env, undefined, 180000);
@@ -422,6 +600,10 @@ try {
           kind === "container" ? ["rm", "-f", "-v", id] : [kind, "rm", id],
         );
       assert.deepEqual(await owned(cleanup, project, kind), []);
+    }
+    if (runtimeImage) {
+      const ids = await cleanup(["image", "ls", "-q", runtimeImage]);
+      if (ids) await cleanup(["image", "rm", runtimeImage]);
     }
     if (image) {
       const ids = await cleanup(["image", "ls", "-q", image]);

@@ -96,6 +96,9 @@ func TestVerifyRejectsMissingOrMismatchedIdentity(t *testing.T) {
 		{name: "feature list is a string", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":"skill-maintenance-e2e-gate"}`},
 		{name: "feature is a number", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":[42]}`},
 		{name: "feature is an object", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready","test_features":[{}]}`},
+		{name: "duplicate identity", body: `{"agent_id":"other","agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready"}`},
+		{name: "oversized document", body: `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready"}` + strings.Repeat(" ", maxStatusBytes)},
+		{name: "invalid UTF-8 execution", body: "{\"agent_id\":\"agent-1\",\"generation\":7,\"execution_id\":\"exec-\xff\",\"status\":\"ready\"}"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -141,7 +144,7 @@ func newTestClient(t *testing.T, body string) *Client {
 			Body: io.NopCloser(strings.NewReader(body)),
 		}, nil
 	})}
-	client, err := New(httpClient, time.Second)
+	client, err := newClient(httpClient, time.Second)
 	if err != nil {
 		t.Fatalf("new Runtime client: %v", err)
 	}

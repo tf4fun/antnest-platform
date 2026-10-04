@@ -150,21 +150,25 @@
     },
     {
       "owner": "runtime-controller",
-      "issues": [29],
+      "issues": [29, 30],
       "status": "service-admitted",
       "deliverables": [
         "workload verification and image policy",
         "management listener isolation",
         "JSON media-type checks",
-        "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc"
+        "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc",
+        "atomic sealed per-generation RC/ACP Runtime credentials and verified root-only receiver volume",
+        "private current-binding connection resolution; never project or capture credentials",
+        "authenticated full-status client and reduced Docker liveness"
       ],
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs runtime-controller; real HTTP route matrix, strict JSON, local readiness, native Registry credential rotation/redirect/proxy isolation; shared 115 token/TLS vectors and exported Go wrapper regressions passed",
-        "postgres": "15 packages / 311 tests / 498 subtests; zero skips/failures; installed-image and tag-move Docker adapter checks; isolated database/resources cleaned",
-        "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (89 route authentication, management-interface isolation, local health, image policy/nonacceptance, frozen image ID, credential rotation/replay, direct lifecycle, startup rejection and SIGTERM/SIGINT checks; cleaned)",
-        "pending_runtime_client": "#30 private instance connection contract, producer and consumers remain separate service-owned batches. Existing execution fences and signed maintenance tickets are retained.",
+        "postgres": "16 packages / 327 tests / 504 subtests; zero skips/failures; atomic credential/operation/generation rollback and exact replay; isolated database/resources cleaned",
+        "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (130 authentication, image, private connection, root-only actual receiver mount, restart/replay, new-generation authority, Disable/Delete cleanup and normal shutdown checks; cleaned). Uses an explicitly RC-owned Runtime protocol double; native receiver is a separate batch.",
+        "pending_runtime_client": "#30 RC issuer, private resolver and status client are admitted. Native Runtime receiver, Controller relay and ACP instance clients remain separate owning-service batches. Execution fences and signed tickets are retained.",
         "pending_dependencies": ["skill-registry"],
-        "cross_service_e2e": "pending final integration batch"
+        "cross_service_e2e": "pending final integration batch",
+        "runtime_volume_component": "Direct Docker archive preparation into a never-started helper: directory UID/GID 0 mode 0700, file 0600, idempotent readback and auto-created empty-volume race rejection; zero skips/failures; resources cleaned."
       }
     },
     {
@@ -232,10 +236,9 @@
     "machine_contract": "../runtime/instance-connection-contract.json",
     "schema": "../runtime/instance-connection.schema.json",
     "fixtures": "../runtime/instance-connection-fixtures.json",
-    "status": "contract-frozen-service-batches-pending",
+    "status": "rc-producer-admitted-consumers-pending",
     "issuer": "runtime-controller",
     "pending_service_batches": [
-      "runtime-controller",
       "antnest-runtime",
       "agent-controller",
       "agent-acp-service"

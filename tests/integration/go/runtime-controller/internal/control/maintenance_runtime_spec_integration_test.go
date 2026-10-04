@@ -51,6 +51,11 @@ func TestGeneratedMaintenanceRuntimeSpecs(t *testing.T) {
 		values["ANTNEST_SERVICE_AUTH_MODE"] = "token"
 		values["ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT"] = "true"
 		values["ANTNEST_SERVICE_AUTH_CALLERS_FILE"] = callers
+		master := filepath.Join(t.TempDir(), "instance-master")
+		if err := os.WriteFile(master, make([]byte, 32), 0600); err != nil {
+			t.Fatal(err)
+		}
+		values["ANTNEST_RUNTIME_INSTANCE_KEY_FILE"] = master
 		loaded, err := config.Load(func(key string) (string, bool) { value, present := values[key]; return value, present })
 		if err != nil {
 			t.Fatal(err)

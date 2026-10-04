@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/distribution/reference"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
@@ -42,6 +43,7 @@ func (k Key) Validate() error {
 }
 
 type Deployment struct {
+	InstanceAuthentication  *instanceauth.Record              `json:"-"`
 	ImageReference          string                            `json:"image_reference,omitempty"`
 	ImageRef                string                            `json:"image_ref"`
 	RuntimeSpec             RuntimeSpec                       `json:"runtime_spec"`
@@ -113,13 +115,21 @@ func (c Configuration) Validate() error {
 }
 
 type RuntimeSpec struct {
-	MCPServers                []MCPServer           `json:"mcp_servers,omitempty"`
-	SkillMaintenanceVerifiers *MaintenanceVerifiers `json:"skill_maintenance_verifiers,omitempty"`
-	AgentID                   string                `json:"agent_id"`
-	Generation                uint64                `json:"generation"`
-	Listen                    SocketAddress         `json:"listen"`
-	Network                   NetworkSpec           `json:"network"`
-	Filesystem                FilesystemSpec        `json:"filesystem"`
+	Authentication            *RuntimeAuthentication `json:"authentication,omitempty"`
+	MCPServers                []MCPServer            `json:"mcp_servers,omitempty"`
+	SkillMaintenanceVerifiers *MaintenanceVerifiers  `json:"skill_maintenance_verifiers,omitempty"`
+	AgentID                   string                 `json:"agent_id"`
+	Generation                uint64                 `json:"generation"`
+	Listen                    SocketAddress          `json:"listen"`
+	Network                   NetworkSpec            `json:"network"`
+	Filesystem                FilesystemSpec         `json:"filesystem"`
+}
+
+// RuntimeAuthentication is nonsecret bootstrap identity. Bearers never enter RuntimeSpec.
+type RuntimeAuthentication struct {
+	ConnectionID   string `json:"connection_id"`
+	CallersFile    string `json:"callers_file"`
+	ReceiverDigest string `json:"receiver_digest"`
 }
 
 type SocketAddress struct {
@@ -159,6 +169,11 @@ func (d Deployment) ValidateFor(key Key) error {
 	}
 	if d.RuntimeSpec.AgentID != key.AgentID || d.RuntimeSpec.Generation != key.Generation {
 		return invalid("path identity and runtime_spec identity differ")
+	}
+	if auth := d.RuntimeSpec.Authentication; auth != nil {
+		if !instanceauth.ValidConnectionID(auth.ConnectionID) || auth.CallersFile != instanceauth.CallersFile || ValidateDigest(auth.ReceiverDigest) != nil {
+			return invalid("authentication bootstrap identity is invalid")
+		}
 	}
 	if err := validateSocketAddress("listen", d.RuntimeSpec.Listen); err != nil {
 		return err
@@ -516,21 +531,22 @@ const (
 )
 
 type Operation struct {
-	ImageReference       string
-	ImageID              string
-	MaintenanceVerifiers *MaintenanceVerifiers
-	RequestID            string
-	RequestDigest        string
-	Kind                 OperationKind
-	AgentID              string
-	RuntimeRevision      RuntimeRevision
-	State                OperationState
-	Effect               EffectState
-	Inspection           *Environment
-	ErrorCode            string
-	ErrorDetail          string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	InstanceAuthentication *instanceauth.Record `json:"-"`
+	ImageReference         string
+	ImageID                string
+	MaintenanceVerifiers   *MaintenanceVerifiers
+	RequestID              string
+	RequestDigest          string
+	Kind                   OperationKind
+	AgentID                string
+	RuntimeRevision        RuntimeRevision
+	State                  OperationState
+	Effect                 EffectState
+	Inspection             *Environment
+	ErrorCode              string
+	ErrorDetail            string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 
 	Attempt                 uint64
 	ExpectedRevision        RuntimeRevision

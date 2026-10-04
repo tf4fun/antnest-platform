@@ -108,6 +108,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
 
 	expectedRoutes := map[string][]string{
+		"POST /internal/runtimes/{agent_id}/connection":                                   {"200"},
 		"GET /internal/runtime-images/resolve":                                            {"200"},
 		"GET /status":                                                                     {"200", "503"},
 		"GET /internal/runtimes":                                                          {"200"},
@@ -164,7 +165,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 				assertKnownSchemaReference(t, schema, response.SSE.Data)
 			}
 		}
-		if route.Method == "POST" {
+		if route.Method == "POST" && route.OperationID != "resolveRuntimeConnection" {
 			if !slices.Contains(route.RequiredHeaders, "Idempotency-Key") {
 				t.Fatalf("mutation route %s omits Idempotency-Key", key)
 			}

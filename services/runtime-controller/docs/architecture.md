@@ -662,6 +662,28 @@ capture, and forwarding to Runtimes.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [caller catalog](../api/callers.json) require verified Controller workload identity on every control route. Missing/malformed/duplicate authority gets 401 and a known different workload gets 403 before decoding, journal writes or Docker effects. RC acts on Controller-owned accepted operations and strips unsigned user/CCT hints. It never authorizes itself on Skill preparation routes. The [RC profile](../api/service-authentication.md) also requires strict UTF-8 JSON, an explicit Controller-purpose listen IP, a separate loopback health port, and authenticated Registry downloads without proxies or redirects. This owning-service batch leaves deployment topology and #30 Runtime instance credentials to their designated batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and this service's [caller catalog](../api/callers.json) require verified Controller workload identity on every control route. Missing/malformed/duplicate authority gets 401 and a known different workload gets 403 before decoding, journal writes or Docker effects. RC acts on Controller-owned accepted operations and strips unsigned user/CCT hints. It never authorizes itself on Skill preparation routes. The [RC profile](../api/service-authentication.md) also requires strict UTF-8 JSON, an explicit Controller-purpose listen IP, a separate loopback health port, and authenticated Registry downloads without proxies or redirects. RC now owns sealed generation credentials and verified receiver volumes (#30), with a Controller-only, uncaptured private resolve endpoint. Native Runtime admission, Controller relay, ACP consumer adoption and deployment topology remain the designated next batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
 and run the shared route/media-type checks in the owning-service batch before
 the cross-service Docker security acceptance.
+
+## Sealed Runtime instance authority
+
+The credential record lives in the compute creator's immutable operation row,
+committed in the same transaction as the Environment and generation claim.
+AES-256-GCM AAD binds scope, Agent, generation, connection ID and caller; record
+JSON contains only ciphertext, nonce and nonsecret identity. Disable/Delete
+receipts cannot replace the generation's creator. Exact replay reads the stored
+record, and missing or undecryptable authority fails closed.
+
+The Docker adapter prepares a separate labeled receiver volume with UID-0
+0700 directory and 0600 caller hashes, validates full readback, then validates
+actual mounts before starting or adopting compute. A running receiver is never
+rewritten. Definitive compute deletion removes its owned receiver volume;
+unknown effects retain records/references for exact recovery. RC's sender file
+is private and volatile, installed per connection and reread for every status
+request. Proxy environment and redirects never carry that authority elsewhere.
+
+The private resolve holds the Agent mutation lock through fresh identity
+verification. It exports only ACP's token; public projections remain unchanged.
+Both request and response capture are suppressed even with debug enabled.
+Consumer adoption follows the [shared delivery sequence](../../../contracts/runtime/instance-connection.md#delivery-and-evidence).

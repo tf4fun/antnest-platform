@@ -125,6 +125,23 @@
           "$ref": "#/$defs/credential"
         }
       }
+    },
+    "bootstrap_descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connection_id", "callers_file", "receiver_digest"],
+      "properties": {
+        "connection_id": {
+          "$ref": "#/$defs/connection_id"
+        },
+        "callers_file": {
+          "const": "/run/antnest-auth/callers.json"
+        },
+        "receiver_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
     }
   }
 }

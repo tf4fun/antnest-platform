@@ -19,7 +19,9 @@ import (
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 	platformmonitor "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/monitor"
@@ -155,13 +157,24 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("skill_preparation", "skill_volume_writer_initialization_failed", err)
 	}
+	instanceVolumes, err := platformdocker.NewInstanceVolumeWriter(dockerClient, configuration.SkillPreparerImage, configuration.InstanceCredentials, configuration.ControllerScope)
+	if err != nil {
+		return classified("instance_authentication", "instance_volume_initialization_failed", err)
+	}
+	senders, err := instanceauth.NewSender("", configuration.InstanceCredentials)
+	if err != nil {
+		return classified("instance_authentication", "instance_sender_initialization_failed", err)
+	}
+	defer joinCloseError(&resultErr, "Runtime instance sender files", senders.Close)
 	driver, err := platformdocker.NewDriver(dockerClient, platformdocker.Config{
-		AllowedImages:      configuration.AllowedImages,
-		ControllerScope:    configuration.ControllerScope,
-		ManagementNetwork:  configuration.ManagementNetwork,
-		SystemSkillsVolume: configuration.SystemSkillsVolume,
-		RuntimeOTEL:        configuration.RuntimeOTEL,
-		SkillMountGate:     skillVolumes,
+		AllowedImages:         configuration.AllowedImages,
+		ControllerScope:       configuration.ControllerScope,
+		ManagementNetwork:     configuration.ManagementNetwork,
+		SystemSkillsVolume:    configuration.SystemSkillsVolume,
+		RuntimeOTEL:           configuration.RuntimeOTEL,
+		SkillMountGate:        skillVolumes,
+		InstanceMountGate:     instanceVolumes,
+		RuntimeAuthentication: configuration.RuntimeAuthentication,
 	})
 	if err != nil {
 		return classified("platform", "docker_driver_initialization_failed", err)
@@ -199,7 +212,13 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("telemetry", "platform_observer_initialization_failed", err)
 	}
-	verifier, err := runtimeclient.New(runtimeStatusHTTPClient(), configuration.RuntimeStatusTimeout)
+	verifier, err := runtimeclient.NewAuthenticated(runtimeStatusHTTPClient(), configuration.RuntimeStatusTimeout, func(ctx context.Context, inspection deployment.Inspection) (string, error) {
+		creator, err := baseRepository.GenerationOperation(ctx, inspection.RuntimeKey())
+		if err != nil || creator.SpecDigest != inspection.SpecDigest || creator.InstanceAuthentication == nil {
+			return "", control.ErrConnectionUnavailable
+		}
+		return senders.Install(instanceauth.Identity{Scope: configuration.ControllerScope, AgentID: inspection.AgentID, Generation: inspection.Generation}, creator.InstanceAuthentication, "runtime-controller")
+	})
 	if err != nil {
 		return classified("runtime_status", "runtime_verifier_initialization_failed", err)
 	}
@@ -213,6 +232,9 @@ func run(ctx context.Context) (resultErr error) {
 	}
 	if err := service.SetMaintenanceVerifiers(configuration.MaintenanceVerifiers); err != nil {
 		return classified("control", "maintenance_verifier_initialization_failed", err)
+	}
+	if err := service.SetInstanceCredentials(configuration.ControllerScope, configuration.InstanceCredentials); err != nil {
+		return classified("instance_authentication", "instance_issuer_initialization_failed", err)
 	}
 	service.SetSkillVolumeInspector(skillVolumes)
 	monitor, err := platformmonitor.New(

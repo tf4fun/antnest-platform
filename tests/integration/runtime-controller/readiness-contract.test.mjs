@@ -34,8 +34,8 @@ const ready = {
   monitor_ready: true,
 };
 
-test("revision 14 requires a distinct monitor boolean on ready and unready responses", () => {
-  assert.equal(contract.revision, 14);
+test("the current RC contract retains revision 14's required monitor boolean", () => {
+  assert(contract.revision >= 14);
   assert(validate(ready), JSON.stringify(validate.errors));
   const unavailable = {
     ...ready,

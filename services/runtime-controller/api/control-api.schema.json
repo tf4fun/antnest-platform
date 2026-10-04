@@ -491,6 +491,12 @@
       "type": "string",
       "pattern": "^[Bb][Ee][Aa][Rr][Ee][Rr] [A-Za-z0-9_-]{43,86}$",
       "description": "Header wire profile; canonical base64url bytes and per-caller SHA256 comparison are enforced by the receiver."
+    },
+    "runtime_connection_request": {
+      "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/resolve_request"
+    },
+    "runtime_connection": {
+      "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/private_connection"
     }
   }
 }

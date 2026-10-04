@@ -2,11 +2,11 @@ package runtimeclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,6 +16,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
@@ -33,11 +35,38 @@ var (
 )
 
 type Client struct {
-	httpClient *http.Client
-	timeout    time.Duration
+	httpClient       *http.Client
+	timeout          time.Duration
+	credentialSource CredentialSource
 }
 
-func New(httpClient *http.Client, timeout time.Duration) (*Client, error) {
+type CredentialSource func(context.Context, deployment.Inspection) (string, error)
+
+// NewAuthenticated binds status authority to the trusted generation inspected by
+// Docker. The source returns a private instance file, never a global token.
+func NewAuthenticated(httpClient *http.Client, timeout time.Duration, source CredentialSource) (*Client, error) {
+	if httpClient == nil || source == nil {
+		return nil, fmt.Errorf("instance credential source and HTTP client are required")
+	}
+	private := *httpClient
+	if private.Transport == nil {
+		private.Transport = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	if transport, ok := private.Transport.(*http.Transport); ok {
+		pinned := transport.Clone()
+		pinned.Proxy = nil
+		private.Transport = pinned
+	}
+	private.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client, err := newClient(&private, timeout)
+	if err != nil {
+		return nil, err
+	}
+	client.credentialSource = source
+	return client, nil
+}
+
+func newClient(httpClient *http.Client, timeout time.Duration) (*Client, error) {
 	if httpClient == nil || timeout <= 0 {
 		return nil, fmt.Errorf("HTTP client and positive status timeout are required")
 	}
@@ -82,6 +111,21 @@ func (c *Client) Verify(
 	if err != nil {
 		return deployment.Inspection{}, fmt.Errorf("create Runtime status request: %w", err)
 	}
+	if c.credentialSource != nil {
+		target, parseErr := url.Parse(inspection.StatusEndpoint)
+		if parseErr != nil || target.Host == "" || target.Scheme != "http" || target.User != nil || target.Opaque != "" || target.Path != "/status" || target.RawPath != "" || target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
+			return deployment.Inspection{}, fmt.Errorf("trusted Runtime status target is invalid")
+		}
+		path, authErr := c.credentialSource(requestCtx, inspection)
+		if authErr != nil {
+			return deployment.Inspection{}, fmt.Errorf("accepted instance status authority is unavailable")
+		}
+		token, readErr := instanceauth.ReadSenderFile(path)
+		if readErr != nil || !serviceauth.ValidToken(token) {
+			return deployment.Inspection{}, fmt.Errorf("accepted instance status authority is unavailable")
+		}
+		request.Header.Set(serviceauth.Header, "Bearer "+string(token))
+	}
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return deployment.Inspection{}, fmt.Errorf("request Runtime status: %w", err)
@@ -98,13 +142,9 @@ func (c *Client) Verify(
 		Status       string   `json:"status"`
 		TestFeatures []string `json:"test_features"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxStatusBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&status); err != nil {
-		return deployment.Inspection{}, fmt.Errorf("decode Runtime status: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return deployment.Inspection{}, fmt.Errorf("runtime status must contain one JSON object")
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxStatusBytes+1))
+	if err != nil || len(raw) > maxStatusBytes || serviceauth.DecodeObject(raw, &status) != nil {
+		return deployment.Inspection{}, fmt.Errorf("runtime status must contain one bounded strict UTF-8 JSON object")
 	}
 	if status.AgentID != inspection.AgentID || status.Generation != inspection.Generation {
 		return deployment.Inspection{}, deployment.ErrIdentityConflict

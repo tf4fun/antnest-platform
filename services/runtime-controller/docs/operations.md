@@ -380,3 +380,18 @@ changes. Creation consumers must still require successful allocation after
 absence. Missing-source Rebuild consumers must correlate the old absent generation
 with successful allocation/start of its replacement. See the
 [Inspect contract](inspect-absence-contract.md).
+
+## Runtime instance master key
+
+Mount a private regular 0600 file containing exactly 32 raw CSPRNG bytes and set
+`ANTNEST_RUNTIME_INSTANCE_KEY_FILE`. Retain the key with the operation journal;
+never reuse the service-token directory or Controller key. Restart reads the
+same key and reconstructs private volatile status sender files from sealed
+records. A wrong or missing key closes connection resolution; no recovery path
+silently creates replacement authority. This batch has no key-rotation API.
+
+The native Runtime instance transport currently requires token mode plus exact
+explicit insecure-transport opt-in on the isolated internal network. Unsupported
+secure profiles fail startup rather than downgrade. Coordinate RC revision 16,
+native Runtime receiver, Controller relay and ACP clients in the final deployment
+batch. Until those consumers land, this branch is not a deployable full workflow.

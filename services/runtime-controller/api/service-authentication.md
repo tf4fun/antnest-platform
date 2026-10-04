@@ -83,6 +83,8 @@ Docker sandbox against the host administrator or Docker-daemon compromise.
 RC unit/contract/component, isolated PostgreSQL and owning-service Docker gates
 must pass before its commit. Controller/RC business workflows and probes of every
 deployed service network remain the final integration batch on
-`feat/service-authentication`. Runtime instance credentials are a separate #30
-contract/producer/consumer sequence; this batch retains current execution fences
-and maintenance tickets and does not invent a shared ACP-to-Runtime token.
+`feat/service-authentication`. RC's #30 producer seals generation credentials in
+the accepted-operation transaction, verifies the root-only receiver volume and
+privately resolves ACP authority for Controller. Native Runtime, Controller relay
+and ACP consumers are still pending owning batches. Existing execution fences
+and maintenance tickets remain separate requirements.

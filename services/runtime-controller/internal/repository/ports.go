@@ -28,6 +28,12 @@ type GenerationClaim struct {
 	SpecDigest      string
 }
 
+// InstanceCredentialStore reads the immutable creator of a private generation.
+// Disable/Delete receipts must never replace its credential record.
+type InstanceCredentialStore interface {
+	GenerationOperation(context.Context, deployment.Key) (deployment.Operation, error)
+}
+
 // Store is the complete persistence contract required by Runtime Controller
 // use cases. It contains no PostgreSQL-specific type or query concern.
 type Store interface {
