@@ -23,6 +23,7 @@ services:
       dockerfile: services/admin-console/Dockerfile
     user: "${CONSOLE_TEST_UID:?}:${CONSOLE_TEST_GID:?}"
     environment:
+      ANTNEST_ADMIN_CONSOLE_LISTEN: admin-console:8080
       ANTNEST_IDENTITY_SERVICE_URL: http://dependencies:8101
       ANTNEST_AGENT_CONTROLLER_URL: http://dependencies:8102
       ANTNEST_AGENT_ACP_SERVICE_URL: http://dependencies:8103

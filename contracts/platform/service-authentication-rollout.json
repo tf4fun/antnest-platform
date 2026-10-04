@@ -103,10 +103,11 @@
         "thin proxy to Controller model-only discovery; remove Provider client and saved credential reads"
       ],
       "admission": {
-        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs admin-console; node tests/integration/go/run.mjs admin-console -- -race (188 tests, 336 subtests, zero skips/failures); real HTTP signed-scope and model-only proxy checks passed",
-        "docker": "node tests/e2e/service-authentication/console/run.mjs (74 authentication, model-only discovery, safe error/projection, unchanged CCT, lifecycle-progress and SIGTERM/SIGINT/restart checks; cleaned)",
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs admin-console; node tests/integration/go/run.mjs admin-console -- -race (eight packages / 191 tests / 347 subtests, zero skips/failures); real HTTP signed-scope and model-only proxy checks passed",
+        "docker": "node tests/e2e/service-authentication/console/run.mjs (76 configured-listener health, proxy isolation, rejected loopback, authentication, model-only discovery, safe error/projection, unchanged CCT, lifecycle-progress and SIGTERM/SIGINT/restart checks; cleaned)",
         "pending_consumers": [],
-        "cross_service_e2e": "pending final integration batch"
+        "cross_service_e2e": "pending final integration batch",
+        "purpose_listener_health": "Native race/vet/lint, full root HTTP/TCP integration and owning-service Docker acceptance retain TLS identity and wildcard loopback behavior; configured IPv4/IPv6, redirect rejection and unreachable health-process proxies are covered. Compose binding and cross-service network acceptance remain deployment/integration work."
       }
     },
     {

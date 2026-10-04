@@ -55,7 +55,7 @@ Console directly.
 
 | Variable                                        | Required   | Default | Description                                                                                                                                                                 |
 | ----------------------------------------------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_ADMIN_CONSOLE_LISTEN`                  | no         | `:8080` | HTTP listen address; the container health check uses its port                                                                                                               |
+| `ANTNEST_ADMIN_CONSOLE_LISTEN`                  | no         | `:8080` | Listen address; `--healthcheck` follows the configured host and port. Missing/wildcard hosts use `127.0.0.1`. |
 | `ANTNEST_IDENTITY_SERVICE_URL`                  | yes        | -       | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
 | `ANTNEST_AGENT_CONTROLLER_URL`                  | yes        | -       | Agent Controller base URL                                                                                                                                                   |
 | `ANTNEST_AGENT_ACP_SERVICE_URL`                 | yes        | -       | Agent ACP Service base URL for execution audit                                                                                                                              |
@@ -64,12 +64,17 @@ Console directly.
 | `ANTNEST_SERVICE_AUTH_CALLERS_FILE`             | token mode | -       | Read-only Gateway caller hashes, loaded at startup                                                                                                                          |
 | `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                | token mode | -       | Per-receiver credentials, validated at startup and read on every new request                                                                                                |
 | `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | no         | `false` | Exact `true` only for disposable token-mode development HTTP                                                                                                                |
-| `ANTNEST_SERVICE_AUTH_TLS_*`                    | TLS        | -       | CA, certificate, key and server DNS identity; required in mTLS mode                                                                                                         |
+| `ANTNEST_TLS_*`                                 | TLS        | -       | CA, certificate, key and server DNS identity; required in mTLS mode                                                                                                         |
 | `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF`       | no         | empty   | Default Runtime image reference offered when creating a Template                                                                                                            |
 | `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`              | no         | `15s`   | Timeout for non-streaming dependency calls, including Provider discovery                                                                                                    |
 | `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT`                | no         | `15s`   | Graceful HTTP drain budget                                                                                                                                                  |
 | `ANTNEST_ENVIRONMENT`                           | no         | empty   | Deployment environment resource attribute for telemetry                                                                                                                     |
 | `OTEL_*`                                        | no         | -       | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+
+`--healthcheck` directly probes the configured IPv4/IPv6 `/status` address,
+disables environment proxies and refuses redirects. The existing token HTTP
+opt-in and TLS service identity checks still apply. See the
+[purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
 
 Edge Gateway forwards admin requests with a 10-second
 `ANTNEST_EDGE_REQUEST_TIMEOUT`, shorter than the 15-second Console dependency

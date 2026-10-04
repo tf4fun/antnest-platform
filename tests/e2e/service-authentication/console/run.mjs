@@ -102,6 +102,28 @@ export async function runConsoleAcceptance({
       checks++;
       return { response, text };
     };
+    await docker([
+      "exec",
+      "--env",
+      "HTTP_PROXY=http://127.0.0.1:9",
+      "--env",
+      "HTTPS_PROXY=http://127.0.0.1:9",
+      id,
+      "/usr/local/bin/admin-console",
+      "--healthcheck",
+    ]);
+    checks++;
+    await assert.rejects(
+      docker([
+        "exec",
+        "--env",
+        "ANTNEST_ADMIN_CONSOLE_LISTEN=127.0.0.1:8080",
+        id,
+        "/usr/local/bin/admin-console",
+        "--healthcheck",
+      ]),
+    );
+    checks++;
     if (authentication) {
       await request("/status", { service: null, context: null });
       await request("/", {
