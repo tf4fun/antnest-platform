@@ -118,6 +118,34 @@ try {
     .split(/\s+/)
     .filter(Boolean);
   const rows = JSON.parse(await docker(["inspect", ...ids]));
+  const registryContainer = rows.find(
+    (row) => row.Config.Labels["com.docker.compose.service"] === "registry",
+  );
+  assert.equal(
+    registryContainer.Config.Labels["com.docker.compose.project"],
+    project,
+  );
+  await docker([
+    "exec",
+    "--env",
+    "HTTP_PROXY=http://127.0.0.1:9",
+    "--env",
+    "HTTPS_PROXY=http://127.0.0.1:9",
+    registryContainer.Id,
+    "/usr/local/bin/skill-registry",
+    "--healthcheck",
+  ]);
+  await assert.rejects(
+    docker([
+      "exec",
+      "--env",
+      "ANTNEST_SKILL_REGISTRY_LISTEN=127.0.0.1:8080",
+      registryContainer.Id,
+      "/usr/local/bin/skill-registry",
+      "--healthcheck",
+    ]),
+  );
+  checks.push("configured-listener-health-proxy-isolation-loopback-rejection");
   const port = (service, internal) => {
     const row = rows.find(
       (row) => row.Config.Labels["com.docker.compose.service"] === service,
@@ -499,6 +527,7 @@ try {
     image,
     checks,
     authentication_checks: authentication.count,
+    purpose_health_checks: 2,
     source:
       "explicit deterministic HTTP fixture; actual ACP source integration is a separate gate",
     scope: traceBatch

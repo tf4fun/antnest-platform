@@ -96,7 +96,7 @@ Configuration is read from the environment at startup.
 | `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | no         | `false`          | Exact `true` opts into token-over-HTTP only for disposable development; invalid with mTLS                                                                          |
 | `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS modes  | none             | Complete shared TLS profile; pinned workload identities and server names; partial configuration fails startup                                                      |
 | `ANTNEST_IDENTITY_URL`                                                                            | yes        | none             | Pinned Identity origin for authenticated JWKS retrieval                                                                                                            |
-| `ANTNEST_SKILL_REGISTRY_LISTEN`                                                                   | no         | `:8080`          | HTTP listen address in `host:port` form; `--healthcheck` uses its port                                                                                             |
+| `ANTNEST_SKILL_REGISTRY_LISTEN`                                                                   | no         | `:8080`          | Listen address; `--healthcheck` follows the configured host and port. Missing/wildcard hosts use `127.0.0.1`. |
 | `ANTNEST_SKILL_REGISTRY_SOURCE_URL`                                                               | no         | empty            | Pinned ACP origin for source reads: `http` or `https`, no credentials, query, fragment or path prefix; enabling it requires the ACP sender file in token mode      |
 | `ANTNEST_SKILL_REGISTRY_API_TOKEN`, `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`                         | retired    | empty            | Any nonempty value fails startup; remove them and use the shared file profile                                                                                      |
 | `OTEL_SDK_DISABLED`                                                                               | no         | unset            | `true` (case-insensitive) disables trace export while keeping W3C propagation                                                                                      |
@@ -106,6 +106,10 @@ Configuration is read from the environment at startup.
 | `OTEL_EXPORTER_OTLP_PROTOCOL`                                                                     | no         | unset            | Only `http/protobuf` is accepted                                                                                                                                   |
 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`                                                              | no         | unset            | Only `http/protobuf` is accepted; overrides the general protocol                                                                                                   |
 | `OTEL_SERVICE_NAME`                                                                               | no         | `skill-registry` | `service.name` resource attribute                                                                                                                                  |
+
+`--healthcheck` probes the configured IPv4/IPv6 `/status` directly. TLS service
+identity, proxy isolation and redirect rejection remain required. See the
+[purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
 
 If the source URL is empty, formal routes and formal search results work, but
 any search or load that needs an Agent source returns `source_unavailable`.

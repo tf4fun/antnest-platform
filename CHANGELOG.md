@@ -6,8 +6,9 @@
 
 The deployment contract now requires primary-listener health probes to follow
 configured purpose addresses, preserve TLS identity checks, and bypass proxies
-and redirects (#32). Registry needs its owning-service health follow-up before
-the unicast Compose wiring.
+and redirects (#32). Identity, Gateway, Console, Controller and Registry have
+passed their separate owning-service health gates; unicast Compose wiring and
+cross-service network acceptance remain deployment/integration work.
 RC/Egress keep their existing separate loopback health listeners.
 
 The development PKI helper now generates a private fresh CA, independent
@@ -28,6 +29,10 @@ batches are admitted; network/Compose wiring and full cross-service acceptance
 remain deployment/integration work. No live stack is reconfigured by the helper.
 
 ### Fixed
+
+Skill Registry's health probe follows its configured IPv4/IPv6 listener
+(#32 deployment follow-up), preserving wildcard loopback behavior and the
+existing TLS identity, proxy isolation and redirect rejection checks.
 
 Agent Controller's health probe follows its configured IPv4/IPv6 listener
 (#32 deployment follow-up). An empty TLS CA variable keeps the explicit

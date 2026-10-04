@@ -210,11 +210,12 @@
       ],
       "admission": {
         "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs skill-registry; frozen Registry/token/CCT and route catalog gates; real HTTP ambiguity, Console signed scope, JSON/multipart and source/TLS/proxy/redirect checks passed",
-        "postgres": "Full isolated suite: five packages / 72 tests / 359 subtests; zero skips/failures. Verified Console upload/promotion persist signed actor; forged replay cannot add receipts.",
-        "docker": "node tests/e2e/skill-registry/discovery-docker.mjs (66 authentication checks plus metadata-only mapping, owner/organization scope, drift/offline/revocation, promotion/provenance/CAS, restart and source-removal cases; production image; owned resources and credentials cleaned). Identity and ACP source are explicitly Registry-owned protocol peers.",
+        "postgres": "Full isolated suite: five packages / 75 tests / 370 subtests; zero skips/failures. Verified Console upload/promotion persist signed actor; forged replay cannot add receipts.",
+        "docker": "node tests/e2e/skill-registry/discovery-docker.mjs (66 authentication and two configured-listener/proxy/loopback health checks plus metadata-only mapping, owner/organization scope, drift/offline/revocation, promotion/provenance/CAS, restart and source-removal cases; production image; owned resources and credentials cleaned). Identity and ACP source are explicitly Registry-owned protocol peers.",
         "pending_consumers": [],
         "cross_service_e2e": "pending final integration batch",
-        "deployment": "Legacy Compose bearer fixtures and complete Skill delivery/propagation harnesses still require coordinated file/TLS authentication wiring."
+        "deployment": "Legacy Compose bearer fixtures and complete Skill delivery/propagation harnesses still require coordinated file/TLS authentication wiring.",
+        "purpose_listener_health": "Native race/vet/lint, targeted cmd HTTP/TCP overlay (one package / five tests / 11 subtests; zero skips/failures) and owning-service PostgreSQL/Docker acceptance cover configured IPv4/IPv6 while retaining TLS identity, proxy isolation, redirect rejection and wildcard loopback behavior. Compose binding and cross-service network acceptance remain deployment/integration work."
       }
     },
     {
@@ -268,7 +269,8 @@
       ],
       "admitted_substeps": [
         "development service-token provisioning helper",
-        "development PKI helper"
+        "development PKI helper",
+        "owning-service purpose-listener health prerequisites (Identity, Gateway, Console, Controller, Registry)"
       ],
       "pending_substeps": [
         "purpose-specific internal networks and explicit listener/health bindings",

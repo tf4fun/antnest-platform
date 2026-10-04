@@ -101,11 +101,7 @@ func main() {
 
 func healthcheck(lookup serviceauth.LookupEnv) error {
 	rawAddress, _ := lookup("ANTNEST_SKILL_REGISTRY_LISTEN")
-	address := strings.TrimSpace(rawAddress)
-	if address == "" {
-		address = ":8080"
-	}
-	_, port, err := net.SplitHostPort(address)
+	address, err := healthProbeAddress(rawAddress)
 	if err != nil {
 		return fmt.Errorf("invalid healthcheck listen address")
 	}
@@ -120,7 +116,7 @@ func healthcheck(lookup serviceauth.LookupEnv) error {
 	if tlsConfig != nil {
 		scheme = "https"
 	}
-	response, err := client.Get(scheme + "://127.0.0.1:" + port + "/status")
+	response, err := client.Get(scheme + "://" + address + "/status")
 	if err != nil {
 		return fmt.Errorf("registry healthcheck request failed")
 	}
@@ -129,6 +125,21 @@ func healthcheck(lookup serviceauth.LookupEnv) error {
 		return fmt.Errorf("registry healthcheck status %d", response.StatusCode)
 	}
 	return nil
+}
+
+func healthProbeAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	if address == "" {
+		address = ":8080"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", err
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func run(ctx context.Context, lookup serviceauth.LookupEnv) error {

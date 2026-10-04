@@ -44,6 +44,7 @@ services:
       identity: { condition: service_healthy }
     environment:
       ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://registry_service:discovery-fixture-registry@postgres:5432/registry
+      ANTNEST_SKILL_REGISTRY_LISTEN: registry:8080
       ANTNEST_IDENTITY_URL: http://identity:8080
       ANTNEST_SERVICE_AUTH_MODE: token
       ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
