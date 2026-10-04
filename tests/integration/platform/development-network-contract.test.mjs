@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 
 const root = new URL("../../../", import.meta.url);
+const require = createRequire(
+  new URL("services/agent-acp-service/package.json", root),
+);
+const { parse } = require("yaml");
 function readContract() {
   const file = new URL(
     "contracts/platform/development-network-contract.json",
@@ -213,4 +218,19 @@ test("outbound Internet paths and database memberships cannot introduce business
     assert.equal(network.independent_roles, true);
   }
   assert.equal(owners.size, 0);
+});
+
+test("fixed network peers name actual Compose services or the two declared transports", () => {
+  const contract = readContract();
+  const known = new Set(
+    Object.keys(
+      parse(readFileSync(new URL("compose.yaml", root), "utf8")).services,
+    ),
+  );
+  known.add("diagnostic-relay");
+  known.add("runtime-telemetry-ingress");
+  for (const [name, network] of Object.entries(contract.networks)) {
+    for (const service of Object.keys(network.members))
+      assert(known.has(service), `${name} names missing service ${service}`);
+  }
 });

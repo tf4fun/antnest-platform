@@ -78,7 +78,7 @@
       "members": {
         "temporal": 98,
         "agent-controller": 99,
-        "temporal-namespace-init": 100,
+        "temporal-namespace": 100,
         "diagnostic-relay": 101
       }
     },

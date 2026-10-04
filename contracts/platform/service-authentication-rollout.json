@@ -330,7 +330,7 @@
     "contract": "development-networks.md",
     "machine_contract": "development-network-contract.json",
     "admission": {
-      "contract": "Six catalog-derived topology/destination, address, management/OTLP, diagnostics, outbound and database checks pass; the four existing provisioning-contract checks also pass. No skipped tests.",
+      "contract": "Seven catalog/Compose-derived topology/destination, address, management/OTLP, diagnostics, outbound/database and peer-name checks pass; the four existing provisioning-contract checks also pass. No skipped tests. Peer names use the existing temporal-namespace service.",
       "docker_observation": "node tests/integration/deployment/purpose-listener-docker.mjs: three isolated internal/unicast/multihomed observations reproduce unpublished, unreachable and outbound-targeted host ports. Primary health and normal exit pass; own labelled resources are cleaned and retained container/network/volume IDs remain unchanged.",
       "scope": "Contract and infrastructure-decision evidence only. Diagnostic/OTLP transports, Compose unicast/address/DNS/key wiring, dependency-tooling cutover and final actual platform security/browser/lifecycle/Skill integration remain pending."
     }
