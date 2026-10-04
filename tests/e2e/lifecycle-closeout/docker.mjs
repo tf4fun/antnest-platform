@@ -150,6 +150,8 @@ export function composeArgs(project, args) {
     "-f",
     "compose.yaml",
     "-f",
+    "compose.debug.yaml",
+    "-f",
     "compose.stage3.yaml",
     "-f",
     "tests/e2e/lifecycle-closeout/compose.yaml",

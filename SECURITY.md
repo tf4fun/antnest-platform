@@ -23,7 +23,8 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **Edge Gateway is the only public entry point.** All other services expose
   internal HTTP/JSON RPC. Identity, Gateway, Console, Agent UI, Controller, ACP,
   RC, Registry and native Runtime have passed their owning-service authentication
-  gates. Egress, coordinated deployment and full integration remain pending in
+  gates. Egress has also passed its owning-service authentication gates;
+  coordinated network/credential deployment and full integration remain pending in
   the rollout ledger. Services must stay on private networks that browsers, Agent
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
@@ -39,7 +40,9 @@ cluster network. Before exposing a deployment, understand these boundaries:
   to ACP relay are implemented; purpose-network deployment and cross-service
   acceptance remain later batches.
 - **Runtime Egress is privileged.** It owns a TUN device, routes and nftables
-  rules, and its control listener is unauthenticated.
+  rules. Its control listener admits only authenticated Controller calls on its
+  configured purpose address; readiness uses a separate loopback listener.
+  These checks do not contain a compromised Egress process.
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.
@@ -47,6 +50,11 @@ cluster network. Before exposing a deployment, understand these boundaries:
   in front of Edge Gateway and keep `ANTNEST_EDGE_COOKIE_SECURE=true`.
 - **RPC content capture can record secrets.** Keep
   `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` outside local debugging.
+- **Host diagnostics require an explicit overlay.** Base Compose publishes
+  only Gateway. `compose.debug.yaml` is for disposable local diagnostics and
+  binds every publication to loopback, preserving workload/CCT verification.
+  Keep it out of public deployments; see the
+  [development port contract](contracts/platform/development-authentication.md#host-ports-and-explicit-diagnostics).
 
 ## Development defaults are not secrets
 

@@ -34,6 +34,17 @@
       "docker": "node tests/e2e/service-authentication/development-pki/run.mjs (18 private read-only mount and actual loopback TLS checks across nine nonroot network-none containers; no host ports or CA private mount; owned containers/keys cleaned). Token mount/atomic-replacement regression also passed. This is generated credential evidence, not production route/mTLS or business acceptance."
     }
   },
+  "host_port_publication": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "admitted",
+    "contract": "development-authentication.md#host-ports-and-explicit-diagnostics",
+    "admission": {
+      "unit_contract_component": "24 rendered Compose, dependency-planner/hygiene and related deployment/foundation checks; all profiles, both overlay orders, exact loopback/default/assigned ports and diagnostics-only overlay verified; zero skips/failures.",
+      "docker": "node tests/e2e/service-authentication/deployment-ports/run.mjs (three real PostgreSQL query / Temporal GetSystemInfo / DescribeNamespace checks through assigned loopback ports; isolated project initialization and owned container/network/volume cleanup passed).",
+      "scope": "Host-port publication and dependency tooling only. Authentication credential mounts, purpose-network/unicast binding and actual full-platform browser/lifecycle/security/Skill acceptance remain pending. No service protocol peers or business flows were substituted for that final integration."
+    }
+  },
   "audience_profiles": {
     "console": [
       "admin-console",
@@ -270,11 +281,12 @@
       "admitted_substeps": [
         "development service-token provisioning helper",
         "development PKI helper",
-        "owning-service purpose-listener health prerequisites (Identity, Gateway, Console, Controller, Registry)"
+        "owning-service purpose-listener health prerequisites (Identity, Gateway, Console, Controller, Registry)",
+        "Gateway-only base ports, explicit loopback debug overlay and dependency/E2E diagnostic selection"
       ],
       "pending_substeps": [
         "purpose-specific internal networks and explicit listener/health bindings",
-        "Gateway-only base ports, debug overlay and dependency/E2E tooling wiring"
+        "per-workload credential, CCT and Runtime instance master mounts and coordinated client configuration"
       ]
     },
     {

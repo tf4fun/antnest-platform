@@ -53,7 +53,18 @@ PKI preparation evidence, not platform mTLS or business acceptance.
 
 The PostgreSQL targets run through `tests/support/dependencies.mjs`, which
 starts a uniquely named Compose project, runs the command and removes the
-project's containers, volumes and network on exit.
+project's containers, volumes and network on exit. It explicitly loads
+`compose.debug.yaml` and assigns loopback ports; base Compose has no dependency
+publications. Full-stack entry points select the same overlay before stage3,
+so application diagnostic ports remain suppressed.
+
+`make test-deployment-ports` renders all Compose profiles and both overlay orders,
+verifying the Gateway-only base and exact loopback diagnostic mappings. It needs
+the Compose CLI, but no running Engine. `make e2e-deployment-ports` uses a fresh
+PostgreSQL/Temporal project to verify a real database query and Temporal's gRPC
+system-info/namespace calls through Docker-assigned host ports, then verifies
+owned resource cleanup. This is deployment-tooling evidence; full platform
+security and business acceptance remains in the final integration batch.
 
 To compile all root Go sources for one service without running them:
 

@@ -46,6 +46,8 @@ export function dependencyPlan(profile, inherited = process.env) {
       project,
       "-f",
       resolve(root, "compose.yaml"),
+      "-f",
+      resolve(root, "compose.debug.yaml"),
       "--profile",
       "stage3",
     ],

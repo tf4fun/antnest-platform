@@ -449,11 +449,15 @@ configured workspace/UI bind address. These owning-service health follow-ups
 must pass before applying unicast Compose bindings; final network probes remain
 in the integration batch.
 
-Base `compose.yaml` must ultimately publish only Gateway's 8090. Move service,
-Postgres and Temporal diagnostic ports into an explicit `compose.debug.yaml`
-override, and update owned E2E/dependency tooling before changing that default.
-Debug publication never bypasses credentials. Until that batch ships, the
-current shared network and loopback ports remain an open release blocker.
+Base `compose.yaml` now publishes only Gateway's 8090. Service, PostgreSQL,
+Temporal and Jaeger diagnostic ports require the explicit `compose.debug.yaml`
+overlay; owned dependency/E2E tooling selects it explicitly. Debug publication
+never bypasses credentials. The
+[port contract](development-authentication.md#host-ports-and-explicit-diagnostics)
+passed rendered all-profile/overlay checks and isolated dependency host-protocol
+acceptance. The current shared network and unwired authentication mounts remain
+an open release blocker; application unicast/debug reachability still belongs
+to the coordinated deployment and final integration batch.
 
 ## 6. Admission and ownership
 

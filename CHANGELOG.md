@@ -4,6 +4,14 @@
 
 ### Changed
 
+Base Compose now publishes only Gateway (#32). PostgreSQL, Temporal, RC, ACP,
+Identity, Controller and Jaeger host ports require the explicit loopback-only
+`compose.debug.yaml`; authentication remains enabled. Loading stage3 after debug
+suppresses application diagnostics. Dependency and full-stack test entry points
+now select diagnostics explicitly. Use the same ordered files for startup and
+shutdown. Purpose-network/credential wiring and final cross-service acceptance
+remain separate pending batches.
+
 The deployment contract now requires primary-listener health probes to follow
 configured purpose addresses, preserve TLS identity checks, and bypass proxies
 and redirects (#32). Identity, Gateway, Console, Controller and Registry have

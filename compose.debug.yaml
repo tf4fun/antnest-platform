@@ -1,0 +1,31 @@
+# Explicit disposable-development diagnostics. Never load for a public stack.
+# Every publication stays on host loopback; authentication is unchanged.
+# Put compose.stage3.yaml after this file to suppress application diagnostics.
+services:
+  postgres:
+    ports:
+      - 127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:-55432}:5432
+
+  temporal:
+    ports:
+      - 127.0.0.1:${ANTNEST_TEMPORAL_HOST_PORT:-7233}:7233
+
+  runtime-controller:
+    ports:
+      - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-58080}:8080
+
+  agent-acp-service:
+    ports:
+      - 127.0.0.1:${ANTNEST_ACP_HOST_PORT:-58081}:8080
+
+  identity-service:
+    ports:
+      - 127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT:-58082}:8080
+
+  agent-controller:
+    ports:
+      - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_HOST_PORT:-58083}:8080
+
+  jaeger:
+    ports:
+      - 127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:-16686}:16686

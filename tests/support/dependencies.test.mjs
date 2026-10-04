@@ -5,6 +5,22 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dependencyPlan, withDependencies } from "./dependencies.mjs";
 
+test("dependency plans explicitly select loopback diagnostics", () => {
+  for (const profile of ["postgres", "temporal"]) {
+    const plan = dependencyPlan(profile, {});
+    const files = plan.compose.flatMap((arg, index, args) =>
+      arg === "-f" ? [args[index + 1]] : [],
+    );
+    assert.equal(files.length, 2);
+    assert(files[0].endsWith("/compose.yaml"));
+    assert(files[1].endsWith("/compose.debug.yaml"));
+    assert.deepEqual(
+      plan.services,
+      profile === "postgres" ? ["postgres"] : ["postgres", "temporal"],
+    );
+  }
+});
+
 test("dependency plans isolate projects and override retained ports and credentials", () => {
   const plan = dependencyPlan("temporal", {
     COMPOSE_PROJECT_NAME: "retained",

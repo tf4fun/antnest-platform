@@ -52,7 +52,7 @@ test("Temporal probe runs inside the pinned derived image without publishing HTT
     "/etc/temporal/readiness.sh",
   ]);
   assert.equal(temporal.healthcheck.timeout, "10s");
-  assert(temporal.ports.every((port) => !port.includes("7243")));
+  assert.deepEqual(temporal.ports ?? [], []);
   const dockerfile = await readFile(
     new URL(temporal.build.dockerfile, root),
     "utf8",

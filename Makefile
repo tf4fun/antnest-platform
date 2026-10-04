@@ -82,6 +82,14 @@ test-verification-python:
 check-links:
 	node tests/support/check-markdown-links.mjs
 
+# Compose rendering requires the CLI, but does not contact a Docker daemon.
+.PHONY: test-deployment-ports e2e-deployment-ports
+test-deployment-ports:
+	node --test --test-concurrency=1 tests/integration/deployment/host-ports.test.mjs tests/support/dependencies.test.mjs
+
+e2e-deployment-ports:
+	node tests/e2e/service-authentication/deployment-ports/run.mjs
+
 test-node: test-repo
 	npm --prefix services/agent-acp-service test
 	npm --prefix services/agent-acp-service run test:integration

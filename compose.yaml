@@ -26,8 +26,6 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/postgres-init.sh:/docker-entrypoint-initdb.d/10-antnest-services.sh:ro
-    ports:
-      - 127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:-55432}:5432
     networks:
       [
         egress-database,
@@ -100,8 +98,6 @@ services:
       retries: 5
       start_period: 60s
       start_interval: 2s
-    ports:
-      - 127.0.0.1:${ANTNEST_TEMPORAL_HOST_PORT:-7233}:7233
     networks: [temporal-database, development]
     stop_grace_period: 30s
 
@@ -202,8 +198,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runtime-system-skills:/system-skills-volume:ro
-    ports:
-      - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-58080}:8080
     healthcheck:
       test: ["CMD", "/usr/local/bin/runtime-controller", "--healthcheck"]
       interval: 30s
@@ -247,8 +241,6 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: agent-acp-service
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
-    ports:
-      - 127.0.0.1:${ANTNEST_ACP_HOST_PORT:-58081}:8080
     healthcheck:
       test:
         ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/status"]
@@ -335,8 +327,6 @@ services:
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
       OTEL_SERVICE_NAME: identity-service
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
-    ports:
-      - 127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT:-58082}:8080
     healthcheck:
       test: ["CMD", "/usr/local/bin/identity-service", "--healthcheck"]
       interval: 30s
@@ -393,8 +383,6 @@ services:
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
       OTEL_SERVICE_NAME: agent-controller
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
-    ports:
-      - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_HOST_PORT:-58083}:8080
     healthcheck:
       test: ["CMD", "/usr/local/bin/agent-controller", "--healthcheck"]
       interval: 30s
@@ -574,8 +562,6 @@ services:
   jaeger:
     profiles: [observability]
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.21.0
-    ports:
-      - 127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:-16686}:16686
     networks:
       development: {}
       observability: {}

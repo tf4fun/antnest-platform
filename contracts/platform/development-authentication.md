@@ -10,7 +10,10 @@ acceptance; their status remains in the [rollout ledger](service-authentication-
 The token/bootstrap helper passed 20 contract/CLI checks and 13 isolated Docker
 mount/replacement checks. PKI passed eight native/CLI/TLS tests and 18 isolated
 Docker mount/TLS checks. Generated mounts remain read-only and private under
-the generating user's numeric UID/GID. Compose/network admission remains pending.
+the generating user's numeric UID/GID. Host-port publication/tooling passed 24
+rendered configuration and related fixture tests and three real PostgreSQL/Temporal
+host-protocol checks, with owned Docker resource cleanup. Credential mounts and
+purpose-network admission remain pending.
 
 ## Static credentials
 
@@ -144,11 +147,12 @@ stack or an application workload. Full-stack test entry points must likewise
 select their diagnostic overlay explicitly rather than relying on base ports.
 This does not waive the final Gateway-only/security regression.
 
-The port contract is frozen before Compose/tooling implementation. Admission
-requires rendered Compose checks for all profiles and overlay orders, actual
-isolated PostgreSQL/Temporal connectivity through the dependency harness, and
-cleanup of the harness's own containers, networks and volumes. Full cross-service
-authentication/network/browser acceptance remains a separate integration batch.
+The contract was frozen before Compose/tooling implementation. Admission passed
+rendered Compose checks for all profiles and overlay orders, a real PostgreSQL
+query and Temporal's `GetSystemInfo`/`DescribeNamespace` through the dependency
+harness, and cleanup of the harness's own containers, networks and volumes. Full
+cross-service authentication/network/browser acceptance remains a separate
+integration batch.
 
 ## Development PKI
 
@@ -214,7 +218,8 @@ completion/cleanup metadata.
 
 ## Pending deployment and integration work
 
-Purpose networks, explicit listener bindings, Gateway-only base ports, the debug
-overlay and the full Docker security/browser/lifecycle/Skill regressions remain
-separate deployment/integration admission work. No existing running stack is
+Purpose networks, explicit listener bindings, authentication/key mounts and the
+full Docker security/browser/lifecycle/Skill regressions remain separate
+deployment/integration admission work. Gateway-only base ports and the explicit
+diagnostic overlay/tooling are admitted. No existing running stack is
 reconfigured by credential generation.

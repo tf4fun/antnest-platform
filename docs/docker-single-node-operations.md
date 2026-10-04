@@ -145,19 +145,32 @@ docker compose -f compose.yaml -f compose.stage3.yaml \
   --profile stage3 --profile observability ps
 ```
 
-Always include `compose.stage3.yaml`. It removes the debug host ports of the
-internal application services. Expected host bindings with the example config:
+The base Compose file publishes only Gateway, including when the observability
+profile is enabled. Expected host binding with the example config:
 
-| Entry        | Default address   | Purpose                                                             |
-| ------------ | ----------------- | ------------------------------------------------------------------- |
-| Edge Gateway | `127.0.0.1:8090`  | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
-| PostgreSQL   | `127.0.0.1:55432` | Local development/backup access, not a product API                  |
-| Temporal     | `127.0.0.1:7233`  | Local SDK/workflow diagnostics, not a product API                   |
-| Jaeger       | `127.0.0.1:16686` | Local trace inspection; not an authenticated public dashboard       |
+| Entry        | Default address  | Purpose                                                             |
+| ------------ | ---------------- | ------------------------------------------------------------------- |
+| Edge Gateway | `127.0.0.1:8090` | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
 
-No Runtime, ACP, Identity, Controller or BFF host port should be published.
-The loopback defaults and insecure-cookie setting are for local HTTP only.
-Do not merely bind them to `0.0.0.0` for public deployment.
+For explicit local diagnostics, use this ordered selection for both startup
+and shutdown:
+
+```sh
+docker compose -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml \
+  --profile stage3 --profile observability up -d --wait --no-build
+```
+
+It adds only PostgreSQL `127.0.0.1:55432`, Temporal `127.0.0.1:7233` and Jaeger
+`127.0.0.1:16686`; stage3 suppresses application diagnostic ports. To diagnose
+RC/ACP/Identity/Controller directly, deliberately place debug after stage3.
+Those mappings still require their normal workload/CCT credentials, and ACP's
+Controller-only listener is never published. Debug does not enable model-learning
+debug settings or change Identity's public callback URL.
+
+No Runtime MCP or separate health listener is published by either file. The
+loopback defaults and insecure-cookie setting are for local HTTP only. Do not
+bind them to `0.0.0.0` for public deployment. Follow the
+[port contract](../contracts/platform/development-authentication.md#host-ports-and-explicit-diagnostics).
 
 With the `stage3` and `observability` profiles, the deployment runs one
 resident container per service plus PostgreSQL, Temporal and Jaeger.
