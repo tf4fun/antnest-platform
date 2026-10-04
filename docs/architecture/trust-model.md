@@ -11,10 +11,12 @@ the design assumption that a reachable internal peer is trusted.
 The foundation defines schemas, public verification fixtures, caller catalogs
 and a repository route-coverage check. All ten owning-service authentication
 batches have passed their local gates. Compose now wires private per-pair keys,
-purpose listeners and bounded diagnostic/OTLP transports. Actual deployment
-admission has passed; full cross-service security and business acceptance
-remains pending. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json)
-records those separate gates under
+purpose listeners, isolated private bridges and bounded diagnostic/OTLP transports.
+Actual deployment and cross-service security/business acceptance have passed
+for the disposable token/HTTP profile: 24 networks, 560 network checks and 30
+genuine issuer/context/role/Runtime checks, followed by browser, lifecycle and
+Skill workflows. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json)
+records local, deployment and integration evidence separately under
 [#80](https://github.com/tf4fun/antnest-platform/issues/80).
 
 ## Request boundaries
@@ -50,5 +52,7 @@ essential even on an internal network.
 The deployment batch moves diagnostic host ports into an explicit relay overlay,
 keeps Gateway as the sole base published port and provides an explicit outbound
 path for model inference. The [security policy](../../SECURITY.md) continues to
-describe current limitations until the service and Docker security E2E batches
-prove the new boundary end to end.
+describe the remaining privileged-host and production-transport limitations.
+`make e2e-service-authentication-integration` admits the full development token
+profile; a full-platform mTLS deployment and the independent #35, #58 and #77
+work remain outside this admission.

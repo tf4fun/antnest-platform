@@ -46,7 +46,16 @@ const runtimeSchema = JSON.parse(
     ),
   ),
 );
+const instanceSchema = JSON.parse(
+  await readFile(
+    new URL(
+      "../../../contracts/runtime/instance-connection.schema.json",
+      import.meta.url,
+    ),
+  ),
+);
 const runtimeValidator = new Ajv2020({ strict: true, validateFormats: false });
+runtimeValidator.addSchema(instanceSchema);
 runtimeValidator.addSchema(runtimeSchema);
 const validateVerifiers = runtimeValidator.getSchema(
   `${runtimeSchema.$id}#/$defs/skillMaintenanceVerifiers`,
@@ -690,6 +699,7 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
   const [bridge, runtime, workspace] = related;
   const compile = (document, name) => {
     const validator = new Ajv2020({ strict: true, validateFormats: false });
+    validator.addSchema(instanceSchema);
     validator.addSchema(document);
     return validator.getSchema(`${document.$id}#/$defs/${name}`);
   };

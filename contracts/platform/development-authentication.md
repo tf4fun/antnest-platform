@@ -13,17 +13,17 @@ Docker mount/TLS checks. Generated mounts remain read-only and private under
 the generating user's numeric UID/GID. Host-port publication/tooling passed 24
 rendered configuration and related fixture tests and three real PostgreSQL/Temporal
 host-protocol checks, with owned Docker resource cleanup. The subsequent
-Compose cutover is deployment-admitted: 43 wiring/port/dependency/v3 HTTP checks
+Compose cutover is deployment-admitted: 44 wiring/port/dependency/v3 HTTP checks
 and 51 actual production-service checks pass without skips/failures. All 14
 resident services/helpers start healthy and stop normally; private keys, unique
 image tags and owned project resources are cleaned, with retained Docker
 container/network/volume identities unchanged.
 
 The subsequent [network contract](development-networks.md) is frozen with
-Compose deployment admitted. It defines dedicated Gateway ingress,
+Compose deployment and final token-profile integration admitted. It defines dedicated Gateway ingress,
 opaque diagnostic forwarding and a restricted Runtime OTLP destination. The
 port evidence below applies to the intermediate direct-publication overlay;
-actual unicast reachability must be admitted again at network cutover.
+actual unicast and isolated-bridge reachability have since passed at network cutover.
 
 ## Static credentials
 
@@ -168,8 +168,8 @@ starts the relay alongside PostgreSQL or PostgreSQL/Temporal, discovers a free
 purpose-network prefix and retrieves only the relay's assigned loopback ports.
 Inactive workload declarations use inert paths that are never mounted;
 no application or placeholder credential files are created. Full
-cross-service authentication/network/browser acceptance remains a separate
-integration batch.
+cross-service authentication/network/browser acceptance subsequently passed in
+the explicit integration batch.
 
 ## Current Compose cutover
 
@@ -196,8 +196,9 @@ The latter builds isolated production image tags and prepares temporary keys,
 then checks actual health, owner mounts, fixed addresses, diagnostic authority,
 management OTLP admission into Jaeger and normal shutdown. It removes only its
 project, tags and credentials and compares retained Docker resource identities.
-It performs no Provider call and is deployment evidence; final per-network
-security and browser/lifecycle/Skill acceptance remain a separate integration batch.
+It performs no Provider call and is deployment evidence. Final per-network
+security and browser/lifecycle/Skill acceptance separately passed through
+`make e2e-service-authentication-integration`.
 
 Jaeger 2.21 removed the legacy service-list endpoint; deployment probes use v3
 services and OTLP trace responses. Exporter dependencies retain the collector
@@ -266,10 +267,13 @@ route authorization or a full-platform mTLS deployment. Owned containers and
 generated keys are removed; private evidence retains only source identities and
 completion/cleanup metadata.
 
-## Pending deployment and integration work
+## Deployment and integration admission
 
-Purpose networks, explicit listener bindings, authentication/key mounts and the
-full Docker security/browser/lifecycle/Skill regressions remain separate
-deployment/integration admission work. Gateway-only base ports and the explicit
-diagnostic overlay/tooling are admitted. No existing running stack is
-reconfigured by credential generation.
+Purpose networks, isolated private bridges, explicit listener bindings,
+authentication/key mounts and the complete Docker security/browser/lifecycle/Skill
+regression passed their separate deployment/integration gates. Final integration
+uses only disposable token/HTTP credentials and a deterministic model; it makes
+no full-platform mTLS claim. Gateway-only base ports and the explicit diagnostic
+overlay/tooling are admitted. Credential generation never reconfigures an existing
+running stack; adopt the new network creation options through that deployment's
+normal stop/start procedure.

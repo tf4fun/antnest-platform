@@ -25,7 +25,7 @@ cluster network. Before exposing a deployment, understand these boundaries:
   RC, Registry and native Runtime have passed their owning-service authentication
   gates. Egress has also passed its owning-service authentication gates;
   Compose now wires private credentials and purpose networks; actual deployment
-  admission has passed; full cross-service integration remains pending in
+  and complete token/HTTP cross-service integration have passed in
   the rollout ledger. Services must stay on private networks that browsers, Agent
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
@@ -39,7 +39,7 @@ cluster network. Before exposing a deployment, understand these boundaries:
   [RC assessment](services/runtime-controller/api/service-authentication.md#docker-socket-assessment).
   RC-issued Runtime instance credentials, native admission and private Controller
   to ACP relay are implemented. Compose uses separate control and management
-  interfaces; cross-service acceptance remains pending.
+  interfaces; real native Runtime, MCP, learning and rebuild acceptance has passed.
 - **Runtime Egress is privileged.** It owns a TUN device, routes and nftables
   rules. Its control listener admits only authenticated Controller calls on its
   configured purpose address; readiness uses a separate loopback listener.
@@ -50,8 +50,8 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **The network cutover has one OTLP infrastructure exception.** A bounded
   ingestion-only transport preserves Runtime telemetry while moving Jaeger
   entirely off management. It has no business credentials, query/control API or
-  arbitrary destination. Actual Compose deployment admission has passed; full
-  per-network authorization probes remain pending. See the
+  arbitrary destination. Actual Compose deployment and authorization probes on
+  all 24 created networks have passed. See the
   [deployment network contract](contracts/platform/development-networks.md#runtime-telemetry-exception).
 - **TLS is not terminated by the platform.** Put a TLS-terminating reverse proxy
   in front of Edge Gateway and keep `ANTNEST_EDGE_COOKIE_SECURE=true`.
@@ -84,7 +84,14 @@ Caller Context Tokens, per-route allowlists and JSON media-type checks. Its
 [trust model](docs/architecture/trust-model.md) and
 [rollout ledger](contracts/platform/service-authentication-rollout.json) distinguish
 the admitted service batches from deployment and integration acceptance.
-Repository catalog/schema checks and admitted service batches do not complete
-deployment security. Actual network authorization and browser/lifecycle/Skill
-integration remain pending under
+The completed integration uses the explicit disposable-development token/HTTP
+profile, synthetic model responses and fresh private per-pair credentials.
+`make e2e-service-authentication-integration` verifies actual network boundaries,
+issuer signatures, audience/scope and caller-role rejection, native Runtime and
+normal browser/lifecycle/Skill workflows. Private bridges require Docker Engine
+28+ and `gateway_mode_ipv4=isolated`; recreate an existing deployment's networks
+with its normal stop/start procedure before adopting that option.
+Owning-service TLS/mTLS gates have passed; full-platform mTLS deployment is not
+claimed. Docker-socket containment (#35), long-lived stream renewal (#58) and
+service-principal delegation (#77) remain independent work in
 [#80](https://github.com/tf4fun/antnest-platform/issues/80).

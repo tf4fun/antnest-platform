@@ -68,16 +68,19 @@ test("Provider destination policy freezes common ranges and transport scenarios 
   }
 });
 
-test("Provider policy records every consumer as pending until its own gate passes", () => {
+test("Provider policy records admitted service gates and final integration", () => {
   const ledger = JSON.parse(
     readFileSync(new URL("service-authentication-rollout.json", root), "utf8"),
   );
   const policy = ledger.provider_destination_policy;
   assert.equal(policy.issue, 28);
   assert.equal(policy.version, 1);
-  assert.equal(policy.status, "service-batches");
+  assert.equal(policy.status, "integration-admitted");
   assert.deepEqual(policy.pending_service_batches, []);
   for (const name of [policy.contract, policy.fixtures])
     assert(readFileSync(new URL(name, root)).length);
-  assert.equal(policy.cross_service_e2e, "pending final integration batch");
+  assert(policy.cross_service_e2e.includes("admitted"));
+  assert(
+    policy.cross_service_e2e.includes("e2e-service-authentication-integration"),
+  );
 });

@@ -114,6 +114,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
+	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
@@ -503,7 +504,14 @@ test-skill-deployment:
 	node --test --test-concurrency=1 tests/integration/skill-registry/deployment-config.test.mjs
 
 e2e-skill-deployment:
-	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+	$(MAKE) e2e-service-authentication-integration
+
+.PHONY: test-service-authentication-integration e2e-service-authentication-integration
+test-service-authentication-integration:
+	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+
+e2e-service-authentication-integration:
+	ANTNEST_E2E_SERVICE_AUTHENTICATION=true ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
 
 .PHONY: e2e-skill-source-lifecycle
 e2e-skill-source-lifecycle:

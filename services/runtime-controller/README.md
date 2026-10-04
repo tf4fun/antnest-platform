@@ -159,7 +159,7 @@ thresholds. See [operations](docs/operations.md#observation-dependency-recovery)
 
 ## Build and test
 
-All control routes require verified Controller workload identity; RC never calls its own API. The [workload boundary](api/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. Deployment wiring and complete cross-service E2E remain the final integration batch.
+All control routes require verified Controller workload identity; RC never calls its own API. The [workload boundary](api/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. Deployment wiring and complete token-profile cross-service E2E passed the final integration batch, recorded in the [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
 Service-local checks, from `services/runtime-controller`:
 

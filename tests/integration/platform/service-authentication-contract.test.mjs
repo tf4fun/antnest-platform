@@ -158,9 +158,9 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
   );
 });
 
-test("the rollout records ten admitted services and deployment while keeping final integration pending", () => {
+test("the rollout records ten admitted services, deployment and final token-profile integration", () => {
   const rollout = read("service-authentication-rollout.json");
-  assert.equal(rollout.status, "integration-pending");
+  assert.equal(rollout.status, "integration-admitted");
   assert.deepEqual(rollout.batches[0].issues, [32, 101]);
   assert.equal(rollout.batches[0].owner, "platform-contracts");
   const identity = rollout.batches.find(
@@ -194,7 +194,7 @@ test("the rollout records ten admitted services and deployment while keeping fin
   assert(acp.admission.docker);
   assert.deepEqual(acp.admission.pending_consumers, []);
   assert(acp.admission.runtime_instance_client.includes("#30"));
-  assert(acp.admission.pending_provider_policy.includes("#28"));
+  assert(acp.admission.provider_policy.includes("#28"));
   const ui = rollout.batches.find((batch) => batch.owner === "agent-ui");
   assert.equal(ui.status, "service-admitted");
   assert(ui.admission.unit_contract_component);
@@ -207,7 +207,7 @@ test("the rollout records ten admitted services and deployment while keeping fin
   assert(controller.admission.unit_contract_component);
   assert(controller.admission.postgres);
   assert(controller.admission.docker);
-  assert(controller.admission.pending_provider_discovery.includes("#28"));
+  assert(controller.admission.provider_discovery.includes("#28"));
   assert(controller.issues.includes(30));
   assert(controller.admission.runtime_instance_relay);
   assert.deepEqual(controller.admission.pending_consumers, []);
@@ -236,7 +236,7 @@ test("the rollout records ten admitted services and deployment while keeping fin
   assert(registry.admission.postgres);
   assert(registry.admission.docker);
   assert.deepEqual(registry.admission.pending_consumers, []);
-  assert(registry.admission.cross_service_e2e.includes("pending"));
+  assert(registry.admission.cross_service_e2e.includes("admitted"));
   assert(registry.admission.deployment.includes("deployment-admitted"));
   const egress = rollout.batches.find(
     (batch) => batch.owner === "runtime-egress",
@@ -248,13 +248,13 @@ test("the rollout records ten admitted services and deployment while keeping fin
   assert.equal(egress.control_contract_revision, 5);
   assert.deepEqual(egress.independent_packet_dns_issues, [34, 36]);
   assert.deepEqual(egress.admission.pending_consumers, []);
-  assert(egress.admission.cross_service_e2e.includes("pending"));
+  assert(egress.admission.cross_service_e2e.includes("admitted"));
   assert.equal(rollout.token_provisioning.status, "admitted");
   assert(rollout.token_provisioning.admission.unit_contract_component);
   assert(rollout.token_provisioning.admission.docker);
   for (const [owner, status] of [
     ["deployment", "deployment-admitted"],
-    ["integration", "pending"],
+    ["integration", "integration-admitted"],
   ]) {
     assert.equal(
       rollout.batches.find((batch) => batch.owner === owner).status,
@@ -264,7 +264,7 @@ test("the rollout records ten admitted services and deployment while keeping fin
   }
   assert.equal(
     rollout.runtime_instance_connection.status,
-    "service-batches-admitted",
+    "integration-admitted",
   );
   assert.deepEqual(
     rollout.runtime_instance_connection.pending_service_batches,
@@ -273,6 +273,32 @@ test("the rollout records ten admitted services and deployment while keeping fin
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));
   assert(rollout.batches.some((batch) => batch.owner === "integration"));
+  const services = rollout.batches.filter(
+    (batch) => batch.status === "service-admitted",
+  );
+  assert.equal(services.length, 10);
+  for (const batch of services) {
+    assert(batch.admission.cross_service_e2e.includes("admitted"), batch.owner);
+    assert(
+      batch.admission.cross_service_e2e.includes(
+        "e2e-service-authentication-integration",
+      ),
+      batch.owner,
+    );
+  }
+  const admission = rollout.batches.find(
+    (batch) => batch.owner === "integration",
+  ).admission;
+  assert.equal(admission.profile, "disposable-development-token-http");
+  assert.equal(admission.networks, 24);
+  assert.equal(admission.network_checks, 560);
+  assert.equal(admission.authenticated_checks, 30);
+  assert.equal(admission.external_provider_requests, 0);
+  assert.equal(
+    admission.cleanup,
+    "owned resources removed; retained state unchanged",
+  );
+  assert(admission.docker.includes("e2e-service-authentication-integration"));
 });
 
 test("the complete Workspace wire contract is represented by the caller catalog", () => {

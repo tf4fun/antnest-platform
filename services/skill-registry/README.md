@@ -121,11 +121,13 @@ Trace export is enabled only when it is not disabled and at least one of
 detector also read the standard OpenTelemetry SDK variables, such as
 `OTEL_RESOURCE_ATTRIBUTES` and exporter header or timeout settings.
 
-The old Compose bearer wiring is being replaced in the separate deployment
-batch. It cannot start this service unchanged. The
+Compose uses private per-pair credentials and isolated purpose networks. The
+old shared-bearer configuration cannot start this service. The
 [Skill deployment guide](../../docs/skill-deployment.md) and the
 [deployment wiring contract](../../contracts/skill-registry/deployment.md)
-describe the required profile and pending coordinated deployment.
+describe the admitted deployment profile; complete authentication and Skill
+workflow evidence is recorded in the
+[rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
 ## Dependencies
 
@@ -180,9 +182,10 @@ docker compose --profile stage3 build skill-registry
   runs the full PostgreSQL/HTTP component suite, and checks route denials,
   verified publication, discovery and promotion. Identity and ACP source are
   explicitly Registry-owned protocol peers. All resources are removed afterward.
-  The trace harness and cross-service preparation/delivery/propagation harnesses
-  still need coordinated authentication wiring in the final integration batch;
-  passing this producer gate does not accept those workflows.
+  This producer gate is separate from the complete authenticated platform gate:
+  `make e2e-service-authentication-integration` validates learning Trace,
+  discovery, temporary use, browser promotion, Template preparation/delivery,
+  immutable presets and explicit rebuild using all real production services.
 - `docker compose --profile stage3 build skill-registry` builds
   `antnest/skill-registry:local`. The equivalent direct command is
   `docker build -f services/skill-registry/Dockerfile -t antnest/skill-registry:local .`

@@ -122,7 +122,7 @@ bearer settings; discovery uses pinned origins and per-pair file/TLS authority.
 Compose now mounts each service's prepared credentials and binds its purpose
 addresses. Actual deployment admission has passed in the
 [authentication rollout ledger](../contracts/platform/service-authentication-rollout.json).
-Isolated Registry service gates have passed; complete workflow E2E remains pending. Existing
+Isolated Registry service gates and complete token-profile workflow E2E have passed. Existing
 Runtimes acquire new verifier configuration only through explicit rebuild.
 
 ## 3. Build And Start

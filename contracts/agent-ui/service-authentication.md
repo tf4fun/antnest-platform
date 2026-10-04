@@ -35,6 +35,7 @@ malformed JSON or decoded duplicate members are `400`, and oversize bodies are
 `503 identity_dependency_unavailable`. Existing browser-safe error envelopes and
 read recovery semantics remain in use.
 
-This service batch does not certify the cross-service workflow. Controller
-consumer admission and deployment credential/network wiring remain their owning
-batches; final business/security Docker E2E follows those batches.
+The service gate is separate from cross-service admission. Controller consumer
+and deployment credential/network batches passed, followed by the complete
+token-profile business/security Docker gate recorded in the
+[rollout ledger](../platform/service-authentication-rollout.json).

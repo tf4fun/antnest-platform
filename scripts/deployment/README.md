@@ -3,10 +3,10 @@
 These two small Node built-in transports implement the infrastructure decisions
 in the [purpose-network contract](../../contracts/platform/development-networks.md).
 They have passed 17 native component tests and 21 isolated Docker protocol,
-interface and shutdown checks. Compose wiring passed 43 local configuration/HTTP
+interface and shutdown checks. Compose wiring passed 44 local configuration/HTTP
 checks and 51 actual production-service startup/mount/diagnostic/OTLP/normal-stop
 checks, with owned resources cleaned and retained Docker identities unchanged.
-Final platform integration remains pending in the
+Final token-profile platform integration also passed in the
 [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 They are deployment plumbing with no domain service identity or credentials.
 

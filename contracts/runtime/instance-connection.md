@@ -7,8 +7,10 @@ service batches. The [machine contract](instance-connection-contract.json),
 [exact workload profile](../platform/service-authentication.md). Service
 implementations are delivered as owning-service batches: RC's issuer/volume/client,
 native Runtime's receiver, Controller relay and ACP consumers are implemented and
-have passed their owning-service gates. Coordinated deployment and integration
-remain pending; no completed platform workflow is claimed.
+have passed their owning-service gates. Coordinated deployment and native Runtime
+MCP, learning, temporary-use and rebuild integration are admitted for the
+token/HTTP profile in the
+[rollout ledger](../platform/service-authentication-rollout.json).
 
 ## Ownership and credential identity
 

@@ -6,7 +6,9 @@ export async function assertReleasedSkillSurface({
   docker,
   project,
   rcImage,
-  acpContainer,
+  networkPrefix,
+  credentials,
+  user,
 }) {
   const executables = await docker([
     "run",
@@ -31,7 +33,7 @@ export async function assertReleasedSkillSurface({
       "/internal/legacy-system-skills/backups",
       "/internal/legacy-system-skills/backups/retired",
       "/internal/runtimes/agent-1/skill-sets/verify-active",
-    ].map((path) => ["http://runtime-controller:8080", path]),
+    ].map((path) => [`http://${networkPrefix}.50:8080`, path]),
     ...[
       "",
       "/choices",
@@ -39,16 +41,28 @@ export async function assertReleasedSkillSurface({
       "/proof-loss-recovery",
       "/source-recovery",
     ].map((suffix) => [
-      "http://agent-controller:8080",
+      `http://${networkPrefix}.18:8080`,
       `/internal/agents/agent-1/legacy-system-skills-migration${suffix}`,
     ]),
   ];
   const program = `
+    import {readFileSync} from "node:fs";
+    const tokens = {
+      rc: readFileSync("/run/auth/rc-token", "utf8"),
+      controller: readFileSync("/run/auth/controller-token", "utf8"),
+    };
     const routes = ${JSON.stringify(routes)};
     const checks = [];
     for (const [base, path] of routes) {
       for (const method of ["GET", "POST", "HEAD", "DELETE"]) {
-        const response = await fetch(base + path, { method, signal: AbortSignal.timeout(10000) });
+        const response = await fetch(base + path, {
+          method, signal: AbortSignal.timeout(10000),
+          headers: {
+            "Antnest-Service-Authorization": "Bearer " + tokens[base.includes(".50:") ? "rc" : "controller"],
+            "Content-Type": "application/json",
+          },
+          ...(method === "POST" ? {body:"{}"} : {}),
+        });
         await response.arrayBuffer();
         if (response.status !== 404) throw new Error(method + " " + path + " returned " + response.status);
         checks.push({ method, path, status: response.status });
@@ -56,18 +70,37 @@ export async function assertReleasedSkillSurface({
     }
     console.log(JSON.stringify({ checks }));
   `;
-  const result = JSON.parse(
+  const peer = `${project}-retired-route-probe`;
+  let result;
+  try {
     await docker([
-      "exec",
-      "-e",
-      "NODE_OPTIONS=",
-      acpContainer,
+      "create",
+      "--name",
+      peer,
+      "--label",
+      `com.docker.compose.project=${project}`,
+      "--network",
+      `${project}_controller-runtime`,
+      "--user",
+      user,
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "-v",
+      `${credentials}/agent-controller/tokens/runtime-controller:/run/auth/rc-token:ro`,
+      "-v",
+      `${credentials}/admin-console/tokens/agent-controller:/run/auth/controller-token:ro`,
+      "node:24.21.0-bookworm-slim",
       "node",
       "--input-type=module",
       "-e",
       program,
-    ]),
-  );
+    ]);
+    await docker(["network", "connect", `${project}_controller-clients`, peer]);
+    result = JSON.parse(await docker(["start", "-a", peer]));
+  } finally {
+    await docker(["rm", "-f", peer]);
+  }
   assert.equal(result.checks.length, 36);
   return {
     rc_executables: ["runtime-controller"],

@@ -17,6 +17,8 @@ import {
   until,
 } from "../workspace-closeout/c4-setup.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { runNetworkMatrix } from "../security/network-flow.mjs";
+import { runAuthenticatedPeer } from "../security/authenticated-flow.mjs";
 import { collectLearningTraces } from "./learning-trace.mjs";
 import { collectDiscoveryTrace } from "./discovery-trace.mjs";
 import { temporaryAcpFlow } from "./temporary-acp-flow.mjs";
@@ -38,6 +40,9 @@ const discoveryTools = process.env.ANTNEST_E2E_SKILL_DISCOVERY_TOOLS === "true";
 const temporaryTools = process.env.ANTNEST_E2E_SKILL_TEMPORARY === "true";
 const propagation = process.env.ANTNEST_E2E_SKILL_PROPAGATION === "true";
 const deployment = process.env.ANTNEST_E2E_SKILL_DEPLOYMENT === "true";
+const authenticationIntegration =
+  process.env.ANTNEST_E2E_SERVICE_AUTHENTICATION === "true";
+assert(!authenticationIntegration || deployment);
 const signingKid = deployment ? "key_2026-01" : "fixture-key";
 const sourceLifecycle =
   process.env.ANTNEST_E2E_SKILL_SOURCE_LIFECYCLE === "true";
@@ -143,7 +148,7 @@ test(
                     : "automatic Agent sources, temporary use, real Console promotion and frozen Template rebuild form the full Skill propagation workflow"
                   : "completed Runs create and update a personal Skill, publish notices, and serve the next Run",
   {
-    timeout: 720_000,
+    timeout: 1_200_000,
   },
   async () => {
     process.chdir(root);
@@ -166,6 +171,7 @@ test(
     let callerEvidence;
     let resourceBaseline;
     let developmentSettings;
+    const additionalImages = [];
     const propagationOutput = () =>
       `${root}/artifacts/verification/${callerDiscovery ? "skill-discovery-caller-di3-20261001" : sourceLifecycle ? "skill-source-lifecycle-di2-20261001" : deployment ? "skill-deployment-20261001" : "skill-propagation-di1-20261001"}/${config.project}`;
     const resources = async (docker) => {
@@ -181,6 +187,18 @@ test(
     };
     try {
       config = await configuration(abort.signal);
+      if (authenticationIntegration)
+        config.env.ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS = "false";
+      for (const [service, variable] of [
+        ["identity-service", "ANTNEST_E2E_IDENTITY_IMAGE"],
+        ["edge-gateway", "ANTNEST_E2E_GATEWAY_IMAGE"],
+        ["runtime-egress", "ANTNEST_E2E_EGRESS_IMAGE"],
+        ["temporal", "ANTNEST_E2E_TEMPORAL_IMAGE"],
+      ]) {
+        const candidate = `antnest/${service}:authentication-${config.project.slice(-8)}`;
+        config.env[variable] = candidate;
+        additionalImages.push({ service, image: candidate });
+      }
       const keys = generateKeyPairSync("ed25519");
       const nextKeys = keyRotation ? generateKeyPairSync("ed25519") : null;
       const rawPublic = keys.publicKey
@@ -207,12 +225,6 @@ test(
         discoveryImage = `antnest/skill-registry:acp-source-${config.project.slice(-8)}`;
         Object.assign(config.env, {
           ANTNEST_E2E_DISCOVERY_REGISTRY_IMAGE: discoveryImage,
-          ANTNEST_E2E_SKILL_REGISTRY_TOKEN:
-            "discovery-registry-e2e-token-at-least-32-bytes",
-          ANTNEST_SKILL_REGISTRY_API_TOKEN:
-            "discovery-registry-e2e-token-at-least-32-bytes",
-          ANTNEST_E2E_SKILL_SOURCE_TOKEN:
-            "discovery-source-e2e-token-at-least-32-bytes",
         });
       }
       Object.assign(config.env, {
@@ -262,8 +274,6 @@ test(
       });
       if (deployment)
         Object.assign(config.env, {
-          ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN:
-            config.env.ANTNEST_E2E_SKILL_SOURCE_TOKEN,
           ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID:
             config.env.ANTNEST_E2E_SKILL_SIGNING_KID,
           ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:
@@ -271,8 +281,26 @@ test(
           ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:
             config.env.ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS,
         });
-      const docker = dockerClient(config.env, abort.signal, 720_000);
+      const docker = dockerClient(config.env, abort.signal, 1_200_000);
       if (propagation) resourceBaseline = await resources(docker);
+      for (const { service, image: candidate } of additionalImages) {
+        assert.equal(await docker(["image", "ls", "-q", candidate]), "");
+        await docker(
+          [
+            "build",
+            "-f",
+            service === "temporal"
+              ? "scripts/temporal/Dockerfile"
+              : `services/${service}/Dockerfile`,
+            "-t",
+            candidate,
+            "--label",
+            `io.antnest.authentication-integration=${config.project}`,
+            ".",
+          ],
+          true,
+        );
+      }
       if (callerDiscovery)
         await writeFile(
           `${propagationOutput()}/baseline.json`,
@@ -295,13 +323,14 @@ test(
           ],
           true,
         );
-        config.image = await docker([
+        config.resolvedImage = await docker([
           "image",
           "inspect",
           "--format",
           "{{.Id}}",
           temporaryRuntimeImage,
         ]);
+        config.image = temporaryRuntimeImage;
         config.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF = config.image;
         console.log(
           `Temporary acceptance ${config.project}: Runtime candidate built`,
@@ -389,19 +418,13 @@ test(
         true,
       );
       if (propagation) {
-        const acpContainer = await docker(
-          composeArgs(config.project, [
-            ...overlay,
-            "ps",
-            "-q",
-            "agent-acp-service",
-          ]),
-        );
         const release = await assertReleasedSkillSurface({
           docker,
           project: config.project,
           rcImage,
-          acpContainer,
+          networkPrefix: config.env.ANTNEST_SERVICE_NETWORK_PREFIX,
+          credentials: config.credentials,
+          user: `${config.env.ANTNEST_SERVICE_AUTH_UID}:${config.env.ANTNEST_SERVICE_AUTH_GID}`,
         });
         await writeFile(
           `${propagationOutput()}/release-surface.json`,
@@ -409,7 +432,132 @@ test(
           { mode: 0o600 },
         );
       }
+      if (authenticationIntegration) {
+        await runNetworkMatrix({
+          config,
+          docker,
+          root,
+          image,
+          output: propagationOutput(),
+        });
+        const admin = new GatewayClient(config.gateway);
+        await admin.request("/api/session/login", {
+          body: {
+            organization_slug: "stage3",
+            email: "stage3-admin@example.com",
+            password: "stage3-admin-password",
+          },
+        });
+        for (const path of [
+          "/api/admin/provider-models/discovery",
+          "/api/admin/provider-connections",
+        ]) {
+          const response = await admin.request(path, {
+            status: 422,
+            body: {
+              provider_key: "deepseek",
+              base_url: "http://identity-service:8080/v1",
+              credential: {
+                method: "api_key",
+                api_key: "synthetic-destination-probe",
+              },
+              ...(path.endsWith("connections")
+                ? {
+                    display_name: "Forbidden internal destination",
+                    models: [
+                      {
+                        display_name: "Fixture",
+                        model: {
+                          model: "stage3-model",
+                          context_window: 8192,
+                          max_output_tokens: 1024,
+                          supports_images: true,
+                        },
+                      },
+                    ],
+                  }
+                : {}),
+            },
+          });
+          assert.equal(response.body.code, "provider_endpoint_forbidden");
+        }
+        config.env.ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS = "true";
+        await docker(
+          composeArgs(config.project, [
+            ...overlay,
+            "up",
+            "-d",
+            "--no-deps",
+            "--no-build",
+            "--wait",
+            "--wait-timeout",
+            "120",
+            "agent-controller",
+            "agent-acp-service",
+          ]),
+          true,
+        );
+      }
       const fixture = await setup(config, abort.signal);
+      if (authenticationIntegration) {
+        const admin = new GatewayClient(config.gateway);
+        await admin.request("/api/session/login", {
+          body: {
+            organization_slug: "stage3",
+            email: "stage3-admin@example.com",
+            password: "stage3-admin-password",
+          },
+        });
+        const connections = (
+          await admin.request("/api/admin/provider-connections")
+        ).body.items;
+        assert.equal(connections.length, 1);
+        const saved = await admin.request(
+          `/api/admin/provider-connections/${connections[0].connection_id}/models/discovery`,
+        );
+        const draft = await admin.request(
+          "/api/admin/provider-models/discovery",
+          {
+            body: {
+              provider_key: "deepseek",
+              base_url: "http://stage3-model:8080/v1",
+              credential: {
+                method: "api_key",
+                api_key: "stage3-model-secret",
+              },
+            },
+          },
+        );
+        assert.deepEqual(saved.body, draft.body);
+        assert.equal(saved.body.models.length, 1);
+        assert.equal(saved.body.models[0].model_id, "stage3-model");
+        assert(!JSON.stringify(saved.body).includes("stage3-model-secret"));
+        const modelStatus = await fetch(`${config.model}/status`, {
+          signal: AbortSignal.timeout(5000),
+        }).then((response) => response.json());
+        assert.equal(modelStatus.discoveries, 2);
+        assert.deepEqual(modelStatus.errors, []);
+        await writeFile(
+          `${propagationOutput()}/provider-destination.json`,
+          JSON.stringify({
+            production_private_destinations: "rejected",
+            saved_model_discovery: "passed",
+            draft_model_discovery: "passed",
+            actual_model_discovery_requests: modelStatus.discoveries,
+            external_provider_requests: 0,
+          }),
+          { flag: "wx", mode: 0o600 },
+        );
+        await runAuthenticatedPeer({
+          config,
+          docker,
+          root,
+          image,
+          agentId: fixture.agentID,
+          mode: "admission",
+          output: propagationOutput(),
+        });
+      }
       const postgresContainer = await docker(
         composeArgs(config.project, [...overlay, "ps", "-q", "postgres"]),
       );
@@ -487,11 +635,13 @@ test(
               "--label",
               `com.docker.compose.project=${config.project}`,
               "--network",
-              `${config.project}_development`,
+              `${config.project}_gateway-ingress`,
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
               `ANTNEST_E2E_LEARNING_MODE=${mode}`,
+              "-e",
+              `ANTNEST_E2E_MODEL_URL=${config.model.replace("127.0.0.1", "host.docker.internal")}`,
               "-e",
               `ANTNEST_E2E_SKILL_LEARNING_DEBUG=${debugLearning}`,
               ...(noticeFailure
@@ -646,13 +796,18 @@ test(
         try {
           output = await docker(
             [
-              "run",
+              "create",
               "--name",
               clientName,
               "--label",
               `com.docker.compose.project=${config.project}`,
               "--network",
-              `${config.project}_development`,
+              `${config.project}_registry-clients`,
+              "--user",
+              `${config.env.ANTNEST_SERVICE_AUTH_UID}:${config.env.ANTNEST_SERVICE_AUTH_GID}`,
+              "--read-only",
+              "--cap-drop",
+              "ALL",
               "-e",
               `ANTNEST_E2E_ORG_ID=${organizationId}`,
               "-e",
@@ -664,9 +819,13 @@ test(
               "-e",
               `ANTNEST_E2E_SKILL_PROPAGATION=${propagation}`,
               "-e",
-              `ANTNEST_E2E_SKILL_REGISTRY_TOKEN=${config.env.ANTNEST_E2E_SKILL_REGISTRY_TOKEN}`,
+              `ANTNEST_E2E_REGISTRY_URL=http://${config.env.ANTNEST_SERVICE_NETWORK_PREFIX}.82:8080`,
               "-e",
-              `ANTNEST_E2E_SKILL_SOURCE_TOKEN=${config.env.ANTNEST_E2E_SKILL_SOURCE_TOKEN}`,
+              `ANTNEST_E2E_SOURCE_URL=http://${config.env.ANTNEST_SERVICE_NETWORK_PREFIX}.5:8080`,
+              "-v",
+              `${config.credentials}/agent-acp-service/tokens/skill-registry:/run/auth/registry-token:ro`,
+              "-v",
+              `${config.credentials}/skill-registry/tokens/agent-acp-service:/run/auth/source-token:ro`,
               ...(previous
                 ? [
                     "-e",
@@ -681,6 +840,13 @@ test(
             ],
             true,
           );
+          await docker([
+            "network",
+            "connect",
+            `${config.project}_edge`,
+            clientName,
+          ]);
+          output = await docker(["start", "-a", clientName], true);
         } catch (error) {
           const evidence = `${root}/artifacts/verification/skill-discovery-d2-20261001`;
           await mkdir(evidence, { recursive: true, mode: 0o700 });
@@ -860,7 +1026,7 @@ test(
               "--label",
               `com.docker.compose.project=${config.project}`,
               "--network",
-              `${config.project}_development`,
+              `${config.project}_gateway-ingress`,
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -1023,6 +1189,16 @@ test(
             () => fixture.json(`/api/admin/agents/${targetId}`),
             abort.signal,
           );
+          if (temporaryTools)
+            await runAuthenticatedPeer({
+              config,
+              docker,
+              root,
+              image,
+              agentId: targetId,
+              mode: "policy-off",
+              output: propagationOutput(),
+            });
           const clientName = `${config.project}-discovery-tools`;
           let output;
           try {
@@ -1034,7 +1210,7 @@ test(
                 "--label",
                 `com.docker.compose.project=${config.project}`,
                 "--network",
-                `${config.project}_development`,
+                `${config.project}_gateway-ingress`,
                 "-e",
                 `ANTNEST_E2E_AGENT_ID=${targetId}`,
                 "-e",
@@ -1234,7 +1410,7 @@ test(
             "--label",
             `com.docker.compose.project=${config.project}`,
             "--network",
-            `${config.project}_development`,
+            `${config.project}_gateway-ingress`,
             "-e",
             `ANTNEST_E2E_CANDIDATE_ARTIFACT_HEX=${candidate.artifact_hex}`,
             "-e",
@@ -1460,7 +1636,7 @@ test(
               "--label",
               `com.docker.compose.project=${config.project}`,
               "--network",
-              `${config.project}_development`,
+              `${config.project}_gateway-ingress`,
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -1657,6 +1833,7 @@ test(
               temporaryRuntimeImage,
               ...(pinned || propagation ? [controllerImage] : []),
               ...(propagation ? [consoleImage, rcImage] : []),
+              ...additionalImages.map(({ image }) => image),
             ].filter((tag) => tag && existingImages.has(tag)))
               await cleanImages(["image", "rm", ownedImage]);
             if (propagation && resourceBaseline) {

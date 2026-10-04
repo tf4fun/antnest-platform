@@ -5,8 +5,8 @@ learning, source, discovery and temporary-package contracts. It introduces no
 service API; the [operator guide](../../docs/skill-deployment.md) covers
 configuration in practice.
 
-Status: Compose wiring and actual deployment admission have passed;
-complete workflow E2E remains pending in the
+Status: Compose wiring, actual deployment and complete token-profile workflow
+E2E have passed in the
 [rollout ledger](../platform/service-authentication-rollout.json).
 Owning-service protocol peers do not accept the complete propagation workflow.
 The deployment batch must provide the following operator-owned configuration:
@@ -64,7 +64,8 @@ HTTP Trace wiring. Registry's span behavior is defined in the
 `make e2e-skill-discovery-registry` admits only Registry, using temporary CSPRNG
 files, signed Console context and explicit Identity/source protocol peers.
 `make test-skill-deployment` covers credential, key/source and network configuration.
-`make e2e-skill-deployment` still needs its integration fixtures updated.
-Final integration must use actual services, the standard
+`make e2e-skill-deployment` delegates to the admitted
+`make e2e-service-authentication-integration` workflow.
+Final integration uses actual services, the standard
 environment names and production credential/network wiring. Test overlays may
 choose isolated images, ranges and a local model, but may not bypass admission.

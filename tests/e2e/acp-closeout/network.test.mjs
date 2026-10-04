@@ -6,6 +6,8 @@ test("test subnet pairs avoid either occupied side and enclosing or contained ne
   assert.equal(selectNetworkOctet([], 45), 45);
   assert.equal(selectNetworkOctet(["10.242.45.0/24"], 45), 46);
   assert.equal(selectNetworkOctet(["10.243.45.0/24"], 45), 46);
+  assert.equal(selectNetworkOctet(["10.244.45.0/24"], 45), 46);
+  assert.equal(selectNetworkOctet(["10.244.45.64/26"], 45), 46);
   assert.equal(selectNetworkOctet(["10.242.45.128/25"], 45), 46);
   assert.equal(selectNetworkOctet(["10.242.44.0/23"], 45), 46);
   assert.equal(selectNetworkOctet(["10.242.200.0/24"], 200), 1);
@@ -43,7 +45,12 @@ test("Docker discovery fails closed on command errors or incomplete IPAM data", 
 });
 
 test("unavailable or invalid IPAM discovery cannot manufacture a free subnet", () => {
-  for (const subnets of [["10.0.0.0/8"], ["10.243.0.0/16"], ["0.0.0.0/0"]])
+  for (const subnets of [
+    ["10.0.0.0/8"],
+    ["10.243.0.0/16"],
+    ["10.244.0.0/16"],
+    ["0.0.0.0/0"],
+  ])
     assert.throws(() => selectNetworkOctet(subnets, 45), /No unused/);
   assert.throws(() => selectNetworkOctet(["invalid"], 45));
   for (const start of [0, 201, 1.5, NaN])

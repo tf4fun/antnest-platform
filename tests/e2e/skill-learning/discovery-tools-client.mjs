@@ -7,34 +7,7 @@ const agentId = process.env.ANTNEST_E2E_AGENT_ID;
 const sourceAgentId = process.env.ANTNEST_E2E_SOURCE_AGENT_ID;
 assert(agentId && sourceAgentId && agentId !== sourceAgentId);
 const client = new GatewayClient("http://edge-gateway:8080");
-const login = (await client.request("/api/session/login", { body: member }))
-  .body;
-if (process.env.ANTNEST_E2E_SKILL_TEMPORARY === "true") {
-  const policyUrl = `http://agent-controller:8080/internal/agents/${agentId}/skill-learning-policy`;
-  const query = new URLSearchParams({
-    organization_id: login.principal.organization_id,
-    principal_id: login.principal.user_id,
-  });
-  const before = await fetch(`${policyUrl}?${query}`).then((reply) => {
-    assert.equal(reply.status, 200);
-    return reply.json();
-  });
-  const changed = await fetch(policyUrl, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      request_id: "temporary-fixture-policy-off",
-      organization_id: login.principal.organization_id,
-      actor_principal_id: login.principal.user_id,
-      expected_revision: before.revision,
-      mode: "off",
-      scope: before.scope,
-      pinned_paths: before.pinned_paths,
-      limits: before.limits,
-    }),
-  });
-  assert.equal(changed.status, 200);
-}
+await client.request("/api/session/login", { body: member });
 const acp = connectACP(1, agentId, client.cookie, {
   requestPermission: ({ params }) => ({
     outcome: {

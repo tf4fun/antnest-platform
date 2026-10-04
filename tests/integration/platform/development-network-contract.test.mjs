@@ -26,10 +26,26 @@ const credentials = JSON.parse(
   ),
 );
 
+test("private bridge isolation is an explicit contract independent of token identity", () => {
+  const contract = readContract();
+  assert.equal(contract.private_bridge.gateway_mode_ipv4, "isolated");
+  assert.equal(contract.private_bridge.minimum_engine_major, 28);
+  assert.equal(contract.private_bridge.admission, "admitted");
+  const compose = parse(readFileSync(new URL("compose.yaml", root), "utf8"));
+  for (const [name, network] of Object.entries(compose.networks)) {
+    if (!network.internal) continue;
+    assert.equal(
+      network.driver_opts?.["com.docker.network.bridge.gateway_mode_ipv4"],
+      contract.private_bridge.gateway_mode_ipv4,
+      name,
+    );
+  }
+});
+
 test("every current workload pair shares the receiver's explicitly bound purpose network", () => {
   const contract = readContract();
   assert.equal(contract.version, 1);
-  assert.equal(contract.status, "deployment-admitted-integration-pending");
+  assert.equal(contract.status, "integration-admitted");
   assert.equal(
     contract.service_prefix_environment,
     "ANTNEST_SERVICE_NETWORK_PREFIX",

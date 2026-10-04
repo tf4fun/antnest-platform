@@ -62,6 +62,7 @@ receiver token or mTLS identity, with verified CCT for Template resolution.
 Controller has passed its owning authentication and Provider discovery gates.
 Revision 38 removes `/access`, adds saved/draft model-only discovery, and enforces
 the shared [Provider destination policy](../platform/provider-destination-policy.md)
-at creation and discovery. Console and ACP consumer adoption, RC/Registry/Egress
-receiver adoption, deployment wiring and final business/security E2E remain
-tracked in the [rollout ledger](../platform/service-authentication-rollout.json).
+at creation and discovery. Console/ACP consumer and RC/Registry/Egress receiver
+batches, deployment wiring and final token-profile business/security E2E have
+passed their gates, recorded in the
+[rollout ledger](../platform/service-authentication-rollout.json).

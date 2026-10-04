@@ -307,6 +307,7 @@ export function modelServer() {
   const errors = [];
   const pending = new Map();
   const cancelled = [];
+  let discoveries = 0;
   const holdReview = process.env.ANTNEST_E2E_HOLD_REVIEW === "true";
   let reviewUnavailable = process.env.ANTNEST_E2E_REVIEW_FAILURE === "true";
   const completion = (result) => ({
@@ -344,7 +345,24 @@ export function modelServer() {
         errors,
         pending: [...pending.keys()],
         cancelled,
+        discoveries,
       });
+    if (request.method === "GET" && request.url === "/v1/models") {
+      if (request.headers.authorization !== "Bearer stage3-model-secret")
+        return reply(401, { error: "synthetic credential required" });
+      discoveries++;
+      return reply(200, {
+        data: [
+          {
+            id: "stage3-model",
+            name: "Synthetic discovery model",
+            context_length: 8192,
+            top_provider: { max_completion_tokens: 1024 },
+            architecture: { input_modalities: ["text", "image"] },
+          },
+        ],
+      });
+    }
     if (request.method === "POST" && request.url === "/release-review") {
       const held = pending.get("review-create");
       if (!held) return reply(409, { error: "no held review" });

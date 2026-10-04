@@ -21,9 +21,9 @@ with the token challenge; a verified wrong service returns 403
 Both listeners use the same mandatory shared token/mTLS configuration; startup
 opens both before reporting readiness and closes both if either bind fails.
 Deployment must bind them to their separate caller networks, not merely attach
-a wildcard listener to several networks. That wiring and authenticated Controller
-client adoption belong to later owning batches. Cross-service E2E is deferred
-until final integration.
+a wildcard listener to several networks. That wiring, authenticated Controller
+client adoption and final token-profile integration are admitted in the
+[rollout ledger](../platform/service-authentication-rollout.json).
 
 ACP and workspace routes require exactly one Identity-signed CCT with ACP
 audience and `agt`, then repeat current local Agent and Session authorization.
@@ -36,8 +36,9 @@ Identity JWKS is read only through the configured, authenticated
 `ANTNEST_ACP_IDENTITY_URL` origin. Token files are validated before listening
 and reread per outgoing request. Optional Controller learning-policy and Registry
 clients use their separate fixed origins and per-receiver credentials. Runtime
-outbound authentication remains pending the RC-owned private instance connection
-reference in #29/#30; execution fences and maintenance tickets remain mandatory.
+outbound authentication uses the admitted RC-owned
+[private instance connection](../runtime/instance-connection.md);
+execution fences and maintenance tickets remain mandatory.
 
 Expired CCTs reject new HTTP requests and new WebSocket methods. A WebSocket
 closes with 1008 and `caller_context_expired`; already accepted model work is

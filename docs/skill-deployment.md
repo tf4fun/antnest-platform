@@ -3,11 +3,11 @@
 This document describes how to enable automatic personal Skill maintenance and
 dynamic Skill source discovery in the standard Docker deployment.
 
-Service authentication is being rolled out on `feat/service-authentication`.
-The owning-service gates have passed for Registry and its consumers, but the
-standard `compose.yaml` now uses per-pair private file mounts and purpose-address
-listeners. Actual deployment admission has passed; complete workflow E2E
-belongs to the final integration batch in the
+Service authentication is admitted for the disposable token/HTTP deployment.
+Registry and its consumers passed their owning-service gates; standard
+`compose.yaml` uses per-pair private file mounts, purpose-address listeners and
+isolated private bridges. Actual deployment and complete workflow E2E passed
+the final integration gate recorded in the
 [rollout ledger](../contracts/platform/service-authentication-rollout.json).
 The required interfaces and permissions are defined by the
 [deployment contract](../contracts/skill-registry/deployment.md).
@@ -140,9 +140,10 @@ actual cross-service implementations. Temporary CSPRNG credentials and Docker
 resources are cleaned after the run.
 
 `make test-skill-deployment` covers the new configuration and key/source separation.
-`make e2e-skill-deployment` still needs its legacy fixtures replaced in the
-integration batch. The final gate
-must exercise actual learning, projection, temporary use, browser promotion and
-Template create/rebuild/Run with the admitted service authentication profile.
-Until then, those complete workflows remain pending; no real Provider credential
-or model quota is needed for the isolated model fixture.
+`make e2e-skill-deployment` delegates to
+`make e2e-service-authentication-integration`. This admitted gate uses all real
+services and the production credential/network wiring, then exercises actual
+learning and notices, projection, temporary use/cancel/restart/retry, browser
+promotion and Template create/rebuild/Run. It also checks version freezing,
+read-only preset volumes, source removal and business/learning Trace topology.
+The model is deterministic; no real Provider credential or model quota is used.

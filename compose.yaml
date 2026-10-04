@@ -1085,41 +1085,57 @@ services:
 networks:
   edge:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.0/28
   controller-clients:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.16/28
   controller-acp:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.32/28
   controller-runtime:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.48/28
   identity-clients:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.64/28
   registry-clients:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.80/28
   temporal-clients:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.96/28
   observability:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.112/28
@@ -1135,28 +1151,46 @@ networks:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.144/28
   postgres-diagnostics:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.160/28
   control:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET:-172.31.255.0/24}
   egress-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   runtime-controller-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   agent-acp-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   identity-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   agent-controller-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   skill-registry-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   temporal-database:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   identity-outbound:
     internal: false
   controller-provider:
@@ -1168,6 +1202,8 @@ networks:
   runtime-management:
     name: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-172.30.255.0/24}

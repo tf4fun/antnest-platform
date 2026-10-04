@@ -26,13 +26,15 @@ service token/mTLS configuration. Complete TLS configuration pins their DNS and
 service URIs. Credential files are validated before listening and re-read per
 request; no cached token, redirect or legacy Registry-wide Authorization token
 is accepted. Outgoing RPCs carry the private request CCT unchanged and derive
-actor/scope payloads from its verified principal. Public provider-model discovery
-continues to use its separate provider client; service credentials are never
-attached to provider origins.
+actor/scope payloads from its verified principal. Provider-model discovery is a
+thin proxy to Controller revision 38: saved keys remain in Controller and draft
+keys are forwarded once. Console receives model metadata only; it has no Provider
+client or credential-export consumer. Workload credentials stay on private origins.
 
 JSON operations require exactly one `application/json` content type, with only
 optional UTF-8 charset. Body parsing rejects duplicate/case aliases and extra
 documents before effects; existing multipart Skill upload routes keep their
 separate size and structure rules. Credentials and CCTs are excluded from
-browser projections, logs and RPC-content/trace capture. Consumer and deployment
-admissions remain separate; final cross-service Docker E2E follows all batches.
+browser projections, logs and RPC-content/trace capture. Service, deployment and
+final token-profile Docker integration gates passed separately; the
+[rollout ledger](../platform/service-authentication-rollout.json) records their evidence.

@@ -74,6 +74,7 @@ test("private publication uses the frozen instance credential rules without publ
   assert.equal(runtime.properties.credential.additionalProperties, false);
   assert.deepEqual(runtime.properties.credential.required, ["caller", "token"]);
   assert.deepEqual(runtime.properties.credential.properties.caller, {
+    type: "string",
     const: "agent-acp-service",
   });
   assert.deepEqual(

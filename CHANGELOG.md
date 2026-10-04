@@ -4,13 +4,31 @@
 
 ### Changed
 
-The #32 Compose deployment batch is admitted: 43 wiring/port/dependency/v3 HTTP
-checks and 51 actual production-service checks pass, including 14 healthy
-resident services/helpers, diagnostic authentication, management isolation,
-actual Jaeger ingestion and every normal exit zero. Owned resources, candidate
-tags and keys are cleaned; retained Docker identities remain unchanged.
-All ten service batches have passed their local gates. Full per-network security
-and browser/lifecycle/Skill acceptance remain in the final integration batch.
+The #101 / #25–#32 authentication rollout is integration-admitted. All ten
+owning-service batches passed their local gates. The final token/HTTP Docker gate
+passes 560 network checks on all 24 created networks and 30 actual issuer/context,
+caller-role and native Runtime checks, followed by real login, model discovery,
+automatic learning/notices, temporary Skill use/cancel/restart/retry, browser
+promotion, frozen Templates, read-only presets and explicit two-Agent rebuild.
+Business and learning Trace topology passes; no external Provider is called.
+The production deployment gate was repeated after private-bridge hardening:
+51 checks across 14 healthy services/helpers pass, including actual Jaeger
+ingestion and every normal exit zero. Owned resources, candidate tags and keys
+are cleaned; retained Docker identities remain unchanged.
+
+All private bridges now use `gateway_mode_ipv4=isolated` with `internal: true`.
+Docker Engine 28+ is required. Integration reproduced cross-network HTTP access
+with default/`nat` multihomed bridges and confirms rejection with `isolated`.
+Recreate an existing deployment's own networks through its normal stop/start
+procedure; this creation option cannot update an existing network in place.
+
+This is a coordinated cutover: prepare credentials/issuer/master mounts first;
+Identity must precede Gateway and CCT consumers, RC/native Runtime must precede
+Controller's private relay and ACP adoption, and Controller revision 38 must
+precede Console's model-only discovery. Remove retired shared token settings.
+The admitted full-platform profile is disposable token/HTTP; service-local mTLS
+evidence does not claim a full-platform mTLS deployment. Independent #35, #58
+and #77 remain outside this rollout.
 
 Fresh development deployments must prepare private per-pair workload credentials,
 Identity CCT keys and an RC instance master with `scripts/dev-service-tokens.mjs`,
@@ -80,7 +98,7 @@ purpose addresses. Strict JSON/media/query/no-body checks retain CAS, replay,
 allocation and flow/conntrack semantics. Native and Linux HTTP/TLS, isolated
 PostgreSQL and production Docker gates passed, including current/next rotation,
 database-loss health and normal SIGTERM/SIGINT recovery. Coordinated deployment
-and actual Controller-to-Egress/full-platform E2E remain pending; packet/DNS
+and actual Controller-to-Egress/full-platform token-profile E2E passed; packet/DNS
 issues #34/#36 are independent.
 
 Skill Registry now verifies per-caller token/mTLS authority and exact route
@@ -92,7 +110,7 @@ without gaining Console publication authority. Strict JSON/multipart carriers
 reject ambiguous media and duplicate metadata. JWKS and ACP source transports
 use receiver-specific credentials with no proxies, redirects or forwarded user
 authority. Unit, contract, real HTTP/PostgreSQL and isolated Docker gates passed;
-coordinated deployment and complete business/security E2E remain pending.
+coordinated deployment and complete token-profile business/security E2E passed.
 
 ACP now uses RC-issued per-instance authority for all Runtime MCP, status and
 private Skill clients (#30). Private publications stage verified 0700/0600
@@ -106,7 +124,7 @@ identity, and regenerated schema preserves the frozen admission conditions.
 The current native Runtime profile requires explicit HTTP token opt-in and
 rejects unsupported TLS/mTLS composition. RC revision 16, native receiver and
 Controller relay must precede ACP adoption; coordinated deployment and complete
-business/security E2E remain the final integration batch.
+token-profile business/security E2E passed the final integration batch.
 
 Controller now resolves and verifies RC-issued Runtime instance authority on every
 accepting execution publication (#30), including equal-revision resends and
@@ -116,13 +134,13 @@ prevents publication and acknowledgement. Closed Agents need no resolution and
 carry no credentials, preserving Drain/revocation/disable during Runtime outages.
 Private dependency transports now explicitly bypass environment proxies. RC
 revision 16 and this relay must precede the ACP instance clients described above;
-final cross-service acceptance remains pending.
+final token-profile cross-service acceptance passed.
 
 The #30 private execution publication contract now requires verified Runtime
 connection identity and ACP authority for accepting Agents. Closed publications
 carry only execution fences and never depend on a healthy resolver; revocation,
 Drain and settlement cannot be blocked by missing Runtime credentials. Controller
-relay and ACP private/public separation are delivered above; final integration remains pending.
+relay and ACP private/public separation are delivered above; final token-profile integration passed.
 
 Native Runtime now enforces the RC-issued instance authority before the entire
 MCP/private Skill mount and full status (#30). Anonymous Docker liveness moves
@@ -134,7 +152,7 @@ strict caller JSON are checked before networking/HTTP; malformed, missing,
 ambiguous or unsupported TLS/mTLS configuration fails startup. Operators must
 use RC's prepared read-only receiver volume and exact token/HTTP opt-in.
 Controller relay and ACP private clients are delivered above; coordinated
-deployment/business E2E remain separate batches.
+deployment/business E2E passed their separate gates.
 
 RC revision 16 now issues and atomically seals separate per-generation RC/ACP
 Runtime credentials (#30). Exact retry and restart retain authority; new compute
@@ -146,11 +164,11 @@ unchanged. Operators must retain a private 0600, exactly 32-byte raw master file
 via `ANTNEST_RUNTIME_INSTANCE_KEY_FILE`. This first native instance profile
 requires explicit internal-HTTP token opt-in; TLS/mTLS is unsupported and fails
 startup. ACP adoption is described above; coordinated deployment
-and full business/security E2E remain subsequent batches.
+and full token-profile business/security E2E passed.
 
-The #30 private Runtime instance connection contract is frozen before service implementation. RC owns per-caller, per-Agent/generation CSPRNG tokens and sealed records; Controller privately relays ACP authority. Receiver volumes contain only root-only SHA256 configuration; public bindings/Run snapshots never contain tokens. The contract defines authenticated full status, identity-free liveness, exact Host admission, preserved execution fences/tickets and service-owned producer/consumer batches. RC producer, native Runtime receiver, Controller relay and ACP adoption are described above; final integration is still pending.
+The #30 private Runtime instance connection contract is frozen before service implementation. RC owns per-caller, per-Agent/generation CSPRNG tokens and sealed records; Controller privately relays ACP authority. Receiver volumes contain only root-only SHA256 configuration; public bindings/Run snapshots never contain tokens. The contract defines authenticated full status, identity-free liveness, exact Host admission, preserved execution fences/tickets and service-owned producer/consumer batches. RC producer, native Runtime receiver, Controller relay and ACP adoption are described above; final token-profile integration passed.
 
-Runtime Controller now admits only verified Controller workloads on every control route, including all three Skill preparation routes (#29). Control revision 15 adds exact token/mTLS admission and strict JSON errors, an explicit unicast control address (default `127.0.0.1:8080`), and a separate loopback health listener (default `127.0.0.1:8082`). Operators must supply authentication configuration, bind the Controller-purpose address, and remove nonempty `ANTNEST_SKILL_REGISTRY_API_TOKEN`. Registry downloads use per-receiver credentials without proxies or redirects. `ANTNEST_RUNTIME_ALLOWED_IMAGES` accepts exact repository or SHA256-manifest allowlists; the default Runtime repository is the only allowed repository when unset. Disallowed new selections return `422 image_not_allowed` before Docker or journal effects; accepted recovery retains its frozen image ID. Cross-package exported Go route wrappers cannot forward route-pattern parameters to Handle/HandleFunc without failing catalog checks. RC still holds host-equivalent Docker-socket authority; final network deployment, Runtime instance credentials and cross-service E2E remain separate batches.
+Runtime Controller now admits only verified Controller workloads on every control route, including all three Skill preparation routes (#29). Control revision 15 adds exact token/mTLS admission and strict JSON errors, an explicit unicast control address (default `127.0.0.1:8080`), and a separate loopback health listener (default `127.0.0.1:8082`). Operators must supply authentication configuration, bind the Controller-purpose address, and remove nonempty `ANTNEST_SKILL_REGISTRY_API_TOKEN`. Registry downloads use per-receiver credentials without proxies or redirects. `ANTNEST_RUNTIME_ALLOWED_IMAGES` accepts exact repository or SHA256-manifest allowlists; the default Runtime repository is the only allowed repository when unset. Disallowed new selections return `422 image_not_allowed` before Docker or journal effects; accepted recovery retains its frozen image ID. Cross-package exported Go route wrappers cannot forward route-pattern parameters to Handle/HandleFunc without failing catalog checks. RC still holds host-equivalent Docker-socket authority; final network deployment, Runtime instance credentials and token-profile cross-service E2E passed their separate gates.
 
 ACP now enforces the shared Provider destination policy for foreground,
 permission-judge and Skill-learning model calls (#28). All DNS answers are
@@ -162,15 +180,15 @@ and each completion closes its bounded transport. Destination failures use
 and Trace, without keys, rejected URLs or raw DNS details. Operators must set the
 same exact `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS` policy in Controller and ACP
 when explicitly enabling private/local model endpoints. Controller, Console and
-ACP service gates have passed; coordinated deployment and full E2E remain the
-final integration batch.
+ACP service gates have passed; coordinated deployment and full token-profile E2E
+passed the final integration batch.
 
 Admin Console model discovery is now a thin, authenticated Controller proxy (#28).
 Saved keys never leave Controller; draft keys are forwarded once. The Provider
 HTTP client and plaintext `/access` consumer are removed. Browser revision 49
 remains unchanged: model metadata is allowlisted and upstream failures use static
 safe messages without private addresses or credentials. Controller revision 38
-and this Console update must deploy together after final integration. ACP's
+and this Console update must deploy together; final token-profile integration passed. ACP's
 actual-model destination guard is delivered above.
 
 Controller model discovery now runs next to encrypted credentials (#28).
@@ -182,14 +200,14 @@ The exact operator-only `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS` option defaul
 false; present empty, padded or other spellings fail startup. Explicit true permits
 local/private LLM endpoints and metadata ranges and is unsafe for multi-tenant use.
 Console thin-proxy and ACP model-call adoption are delivered above;
-Controller and Console discovery changes must be deployed together after final
-integration. No intermediate business E2E completion is claimed.
+Controller and Console discovery changes require a coordinated upgrade;
+final token-profile integration passed.
 
 The shared Provider destination policy and IPv4/IPv6/DNS fixtures are frozen for
 #28 before Controller, Console and ACP adoption. The policy specifies private
 endpoint opt-in, checked literal-IP dialing, disabled proxies/redirects and
 bounded errors that exclude credentials. Controller, Console and ACP adoption is
-recorded above; final cross-service E2E remains pending.
+recorded above; final token-profile cross-service E2E passed.
 
 Controller now authenticates every business route and rejects forged Organization,
 actor and Agent scope before effects (#32 / #28 prerequisite). Console management
@@ -201,8 +219,8 @@ revision 37 adds admission errors and strict UTF-8 JSON. Deployments must config
 the shared exact authentication settings and `ANTNEST_AGENT_ACP_CONTROL_URL`;
 nonempty legacy ACP workspace URL or Registry API token now fails startup.
 Controller discovery/address policy and Console adoption are delivered above;
-ACP destination policy is delivered above; remaining receivers/deployment and
-final cross-service E2E remain separate batches.
+ACP destination policy, remaining receivers, deployment and final token-profile
+cross-service E2E passed their separate gates.
 
 Agent UI now verifies Gateway workload credentials and Identity-signed CCT before
 Workspace handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
@@ -214,8 +232,8 @@ Malformed media, UTF-8 and duplicate JSON members fail before business effects.
 Expiry denies new operations without cancelling accepted Runs. Startup requires
 the shared exact authentication settings and `ANTNEST_AGENT_UI_IDENTITY_URL`,
 with distinct pinned dependency origins; container health supports TLS/mTLS and
-custom ports. Controller/deployment admission and final integration remain later
-batches on `feat/service-authentication`; #58 owns long-lived renewal.
+custom ports. Controller/deployment admission and final token-profile integration
+passed on `feat/service-authentication`; #58 owns long-lived renewal.
 
 ACP now verifies workload credentials and Identity-signed caller context before
 protocol, workspace or audit handling ([#26](https://github.com/tf4fun/antnest-platform/issues/26),
@@ -230,7 +248,7 @@ credentials at startup and reread token files per request. Deploy with the new
 mandatory service-authentication settings and `ANTNEST_ACP_IDENTITY_URL`; nonempty
 legacy Registry/source bearer settings now fail startup. Controller/Registry
 consumers, private Runtime instance credentials, network deployment and final
-integration remain later batches on `feat/service-authentication`.
+token-profile integration passed their separate gates.
 
 Gateway preserves the existing account-switch CAS guard for network-policy
 writes while stripping browser identity headers ([#26](https://github.com/tf4fun/antnest-platform/issues/26)).
@@ -251,7 +269,7 @@ headers. JSON parsing rejects ambiguous media types, duplicate members and case
 aliases. Console's old `ANTNEST_SKILL_REGISTRY_API_TOKEN` setting is removed;
 a nonempty value fails startup. Deploy Identity, Gateway, then Console with the
 new credentials. Controller/ACP/Registry consumers, deployment and final
-cross-service acceptance remain pending on `feat/service-authentication`.
+token-profile cross-service acceptance passed their separate gates.
 
 Gateway now authenticates each internal dependency with the exact token/mTLS
 contract and forwards Identity revision-14 signed caller context selected by
@@ -264,8 +282,8 @@ Internal origins, TLS DNS/service identities and redirects are constrained.
 Gateway session contract revision 15 keeps browser JSON unchanged and rejects
 new direct WebSocket messages after the handshake CCT expires; reconnect does
 not cancel accepted Runs. Identity must upgrade first; Controller
-consumers, deployment credentials and final integration remain pending on
-`feat/service-authentication`. #58 separately owns long-lived renewal.
+consumers, deployment credentials and final token-profile integration passed.
+#58 separately owns long-lived renewal.
 
 Identity now rejects administrative calls based only on a body-selected actor
 ([#25](https://github.com/tf4fun/antnest-platform/issues/25)). RPC revision 14
@@ -273,10 +291,9 @@ requires verified workload identity, route allowlists and a signed caller contex
 whose live session, subject and organization match the operation. It adds a
 protected public JWKS endpoint and CCT issuance to access-token resolution.
 JSON RPC media types and exact-case/duplicate member rules are enforced before
-effects. Missing workload/TLS/signing configuration fails startup. Deploy only
-after the matching Gateway/Console and credential-provisioning batches; the
-complete coordinated rollout and Docker E2E remain pending on
-`feat/service-authentication`.
+effects. Missing workload/TLS/signing configuration fails startup. Provision
+credentials before the coordinated Identity → Gateway → Console rollout;
+complete token-profile Docker integration passed.
 
 Runtime release images now use a feature-free default Docker target, while the
 test-only Skill commit gate requires an explicit `--target e2e` build
@@ -373,26 +390,26 @@ service authentication profile are mandatory. Nonempty
 `ANTNEST_SKILL_REGISTRY_API_TOKEN` or `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` now
 fails startup. Replace shared bearers with read-only receiver hash and per-pair
 sender files (or the complete mTLS profile) before deploying the new service.
-The existing Compose defaults are being replaced in the deployment batch;
-upgrading only Registry with those defaults is unsupported.
+Compose now requires generated private credentials; upgrading only Registry
+with the retired shared-token defaults is unsupported.
 
 Froze the interim service-token configuration and wire profile for
 [#101](https://github.com/tf4fun/antnest-platform/issues/101): explicit shared
 mode/file variables, canonical per-pair credentials, receiver SHA-256 hash
 arrays, strict duplicate-header handling, outcomes and file rotation. Added
 public synthetic conformance vectors for Go/TypeScript/Rust adoption. Service
-implementations remain pending; batches commit to `feat/service-authentication`
-with local service gates and one final cross-service Docker acceptance before
-the branch merges into `main`.
+implementations passed their separate owning-service gates on
+`feat/service-authentication`, followed by the admitted final cross-service
+Docker token-profile acceptance before the branch merges into `main`.
 
 Defined the platform service-authentication foundation for
 [#32](https://github.com/tf4fun/antnest-platform/issues/32): workload identity,
 Identity-issued caller-context schemas and public verification vectors,
 per-service route caller catalogs, and repository checks that detect missing
 caller policies or unreviewed custom matchers. Added a shared negative JSON
-media-type probe for later service-owned tests. This is a contract-only batch:
-authentication middleware, network/port changes and Docker security acceptance
-remain pending in the rollout ledger; internal listeners are not yet secured.
+media-type probe adopted by service-owned tests. Subsequent authentication
+middleware, network/port changes and full token-profile Docker security acceptance
+are admitted in the rollout ledger; reachable internal peers are no longer trusted.
 Go route checks include wrapper calls across files in the same package and
 reject unresolved arguments alongside known calls. Runtime Controller's Skill
 preparation routes allow Agent Controller only, matching the actual HTTP client.

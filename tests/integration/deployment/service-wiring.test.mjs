@@ -32,6 +32,17 @@ const binds = {
 };
 const base = composeConfig();
 
+test("private networks explicitly isolate their bridge from host-routed access", () => {
+  for (const [name, network] of Object.entries(base.networks)) {
+    if (!network.internal) continue;
+    assert.equal(
+      network.driver_opts?.["com.docker.network.bridge.gateway_mode_ipv4"],
+      "isolated",
+      name,
+    );
+  }
+});
+
 test("optional observability outlives every exporter during normal Compose stop", () => {
   for (const name of applications) {
     assert.deepEqual(

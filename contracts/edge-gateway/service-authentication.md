@@ -2,8 +2,9 @@
 
 This owning-service batch implements the
 [platform token and CCT contract](../platform/service-authentication.md).
-Consumers remain separate batches; Gateway admission alone does not complete
-the authenticated business workflow.
+Consumer gates were admitted as separate owning-service batches, followed by
+complete token-profile Docker integration. The
+[rollout ledger](../platform/service-authentication-rollout.json) records both.
 
 The public Gateway listener and local `/status` retain their public catalog
 policy. Internal dependencies are Identity, Console, Agent UI, Controller and

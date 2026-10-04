@@ -181,5 +181,6 @@ discovery requires Controller contract revision 38. Console forwards the verifie
 administrator CCT unchanged, sends draft credentials once, and receives model
 metadata only. It cannot retrieve a saved key or enable private Provider access.
 Identity and Gateway must deploy before Console. Controller, ACP and Registry
-consumption, deployment provisioning and complete cross-service Docker acceptance
-remain separate batches on `feat/service-authentication`.
+consumption, deployment provisioning and complete token-profile Docker acceptance
+passed their separate batches in the
+[rollout ledger](../../contracts/platform/service-authentication-rollout.json).

@@ -2,8 +2,8 @@
 
 This deployment contract belongs to [#32](https://github.com/tf4fun/antnest-platform/issues/32).
 The [machine contract](development-network-contract.json) is frozen at version 1;
-Compose wiring and actual deployment admission have passed;
-full cross-service acceptance remains **pending**. The
+Compose wiring, actual deployment and full cross-service acceptance have passed
+for the disposable-development token/HTTP profile. The
 [deployment transports](../../scripts/deployment/README.md) separately passed
 17 native and 21 isolated Docker component checks; those do not admit the full
 deployment topology or actual business flows.
@@ -29,6 +29,28 @@ the deployment decision, not full-platform or route authorization acceptance.
 Consequently Gateway has a dedicated ingress interface. Internal services keep
 their purpose-address listeners; explicitly requested diagnostics use a bounded
 TCP relay. Do not restore wildcard listeners to make old port mappings work.
+
+Final integration additionally reproduced host-routed access to a multihomed
+receiver's private listening address from an outbound-network peer: `internal`
+plus a purpose-address bind alone did not prevent an HTTP 200 response. The
+credential-free minimal observation compared default, explicit `nat` and
+`isolated` modes; only `isolated` blocked HTTP on Engine 29.4.0. The same peer
+could still complete a TCP handshake in all three modes, so the integration
+gate checks actual HTTP reachability and fails on any HTTP response, including
+401 or 404. Its labelled resources were cleaned and retained identities were
+unchanged.
+
+Every private bridge (purpose, database, control and Runtime management) must
+therefore explicitly set `com.docker.network.bridge.gateway_mode_ipv4=isolated`
+with `internal: true`. This requires Engine 28 or newer and does not change
+workload credentials or callers. The
+[Docker gateway-mode contract](https://docs.docker.com/engine/network/port-publishing/#gateway-modes)
+explains that isolated bridges have no host bridge address. Existing networks
+must be recreated under their own deployment's normal stop/start procedure;
+Compose cannot change this creation option on an already existing network.
+Do not modify daemon-wide options or another deployment's resources. The
+production deployment gate was repeated after this hardening and passed all
+51 checks; final integration passed 560 checks on all 24 created networks.
 
 ## Addresses and destinations
 
@@ -154,9 +176,16 @@ generate/mount placeholder credentials.
 The [rollout ledger](service-authentication-rollout.json) retains intermediate
 port and standalone transport evidence separately. Contract tests and fixture
 listeners do not complete steps 2 or 3. Actual deployment admission is
-complete: 43 wiring/port/dependency/v3 HTTP checks and 51 actual Compose checks
+complete: 44 wiring/port/dependency/v3 HTTP checks and 51 actual Compose checks
 pass without skips/failures. The latter verifies 14 healthy production
 services/helpers, private mounts, fixed addresses, diagnostic authentication,
 management business/query isolation, actual Jaeger ingestion and every normal
 exit zero. It cleans owned resources/keys/tags and preserves retained identities.
-Final security and business integration follow it.
+Final security and business integration also passed:
+`make e2e-service-authentication-integration` checks all 24 networks, 560 network
+cases and 30 genuine issuer/context/role/Runtime cases, then actual login,
+model discovery, learning/notices, temporary Skill use/cancel/restart/retry,
+browser promotion, frozen Templates and explicit two-Agent rebuild. Business
+and learning Trace topology pass; owned resources are removed and retained
+resource state is unchanged. No external Provider is called. Full-platform
+mTLS and the independent #35/#58/#77 work are not part of this token-profile gate.

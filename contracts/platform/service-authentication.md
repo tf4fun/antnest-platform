@@ -388,7 +388,7 @@ issues. In particular:
 - #28 removed Controller's credential-returning `/access` route and moved
   model-only discovery into Controller. Console uses an authenticated thin
   proxy and ACP enforces the same Provider destination policy. Their service
-  batches are admitted; coordinated deployment and full acceptance remain pending.
+  batches, coordinated deployment and full token-profile acceptance are admitted.
 
 ## 4. Errors and JSON request hygiene
 
@@ -460,8 +460,8 @@ never bypasses credentials. The
 [port contract](development-authentication.md#host-ports-and-explicit-diagnostics)
 passed rendered all-profile/overlay checks and isolated dependency host-protocol
 acceptance. Compose now wires private credential mounts and purpose-only
-listeners; actual production-service admission has passed and complete
-network authorization belongs to final integration.
+listeners; actual production-service admission and complete network authorization
+passed their separate deployment and final integration gates.
 
 The [machine network contract](development-network-contract.json) freezes the
 cutover's address/membership/DNS rules, dedicated Gateway ingress and opaque
@@ -469,7 +469,10 @@ diagnostic relay. Its isolated Docker probe verified why direct publication
 cannot reach purpose-bound listeners on internal/multihomed containers. Contract
 and probe evidence do not admit the actual Compose/network deployment.
 The two [standalone transports](../../scripts/deployment/README.md) have component
-admission; actual deployment admission has passed and final integration remains pending.
+admission; actual deployment and final token-profile integration also passed.
+All private bridges require Engine 28+ and explicit `isolated` gateway mode;
+the final probe rejects any cross-network HTTP response. Owning-service mTLS
+tests do not claim full-platform mTLS deployment admission.
 
 ## 6. Admission and ownership
 

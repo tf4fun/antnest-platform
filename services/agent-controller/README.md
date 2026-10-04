@@ -134,7 +134,7 @@ Agents carry only execution fences and do not require resolution. Tokens are
 never persisted in Controller or exposed through its management projection.
 See [execution publication](docs/execution-publication.md#private-runtime-authority).
 Instance issuer, receiver and client service batches have passed their own gates;
-coordinated deployment and final business E2E remain pending in the
+coordinated deployment and final token-profile business E2E are admitted in the
 [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 
 ## Dependencies
@@ -221,4 +221,5 @@ Provider endpoints default to public unicast only. The exact operator option
 `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS=true` enables private/local LLM endpoints
 and is unsafe for multi-tenant use; empty, padded or other values fail startup.
 See [Provider management](docs/provider-management.md) for DNS pinning, error
-classes, model-only saved/draft discovery and pending consumer work.
+classes and model-only saved/draft discovery. Consumer and final integration
+admission are recorded in the rollout ledger.
