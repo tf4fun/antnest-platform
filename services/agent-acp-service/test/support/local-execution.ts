@@ -4,6 +4,7 @@ import { ProviderClients } from "../../src/application/provider-clients.js";
 import type { PublicExecutionConfiguration } from "../../src/domain/execution-configuration.js";
 import type { ExecutionConfigurationRepository } from "../../src/ports/execution-configuration.js";
 import { executionConfiguration } from "../fixtures/execution-configuration.js";
+import { runtimeConnections } from "./runtime-connections.js";
 
 export async function localExecution(initialize = true) {
   const configurations = new Map<string, PublicExecutionConfiguration>();
@@ -21,7 +22,14 @@ export async function localExecution(initialize = true) {
   });
   const onApplied = vi.fn(() => Promise.resolve());
   const onUnavailable = vi.fn();
-  const directory = new ExecutionDirectory({ repository, clients, onApplied, onUnavailable });
+  const connections = runtimeConnections();
+  const directory = new ExecutionDirectory({
+    repository,
+    clients,
+    runtimeConnections: connections,
+    onApplied,
+    onUnavailable,
+  });
   if (initialize) await directory.apply(executionConfiguration());
-  return { directory, clients, repository, configurations, onApplied, onUnavailable };
+  return { directory, clients, connections, repository, configurations, onApplied, onUnavailable };
 }

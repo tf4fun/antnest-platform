@@ -98,6 +98,33 @@ Controller calls `POST /rpc/agent-acp/apply-execution-snapshot`; its
 organization snapshots, applied revision and failure semantics. A stored snapshot
 alone cannot initialize a restarted process's credentials.
 
+## Runtime Instance Authority
+
+Controller privately relays RC-issued ACP authority with the current Runtime
+revision, execution ID, endpoint and connection ID. ACP stores only those public
+fields. Its process-owned 0700 directory contains one 0600 sender file per
+connection; every request verifies and rereads it. Runtime authority is never a
+global `ANTNEST_SERVICE_AUTH_TOKEN_DIR/antnest-runtime` credential.
+
+The current native Runtime profile requires `ANTNEST_SERVICE_AUTH_MODE=token`
+and exact `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true`. Unsupported
+TLS/mTLS Runtime composition fails startup or publication without downgrading.
+The installed Runtime origin is fixed, unrelated authority is stripped, and
+redirects and environment proxies are disabled.
+
+Equal-revision publications must carry the same token for an existing connection
+ID. Missing or unsafe files make calls unavailable; memory never supplies a
+fallback bearer. Recover sender storage by restarting ACP and having Controller
+republish the verified current private reference. A cold database snapshot or
+closed publication cannot create authority.
+
+Accepted Runs and maintenance operations retain original authority for cleanup
+through closure. An authentication failure cannot erase an earlier unknown effect;
+normal stopping and durable settlement rules still apply. Normal shutdown,
+failed startup and worker ownership loss close the dispatcher and remove owned
+sender files. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
+and the [private connection contract](../../../contracts/runtime/instance-connection.md).
+
 ## Provider Model Egress
 
 Every foreground response, permission judge and background learning completion

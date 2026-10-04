@@ -12,6 +12,12 @@ import {
 } from "./session-configuration.js";
 import type { ModelSpec, RuntimeBinding } from "./types.js";
 import { resolveThinking, thinkingEfforts } from "./model-thinking.js";
+import {
+  runtimeConnectionIdSchema,
+  runtimeMcpEndpointSchema,
+  runtimeRevisionSchema,
+  runtimeTokenSchema,
+} from "./runtime-connection.js";
 
 const identifier = z.string().min(1).max(200);
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -77,7 +83,22 @@ const toolRuleSchema = z.strictObject({
   decision: z.enum(["allow", "deny"]),
 });
 
-export const agentConfigurationSchema = z.strictObject({
+const publicRuntimeSchema = z.strictObject({
+  runtime_revision: identifier,
+  runtime_execution_id: identifier,
+  mcp_endpoint: endpoint,
+  connection_id: runtimeConnectionIdSchema.optional(),
+});
+const privateRuntimeSchema = publicRuntimeSchema.extend({
+  credential: z
+    .strictObject({
+      caller: z.literal("agent-acp-service"),
+      token: runtimeTokenSchema.meta({ writeOnly: true }),
+    })
+    .optional(),
+});
+
+const agentFieldsSchema = z.strictObject({
   agent_id: identifier,
   principal_ids: z.array(identifier),
   access_revision: identifier,
@@ -108,21 +129,87 @@ export const agentConfigurationSchema = z.strictObject({
       "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime.",
     ),
   max_model_requests: revision,
-  runtime: z
-    .strictObject({
-      runtime_revision: identifier,
-      runtime_execution_id: identifier,
-      mcp_endpoint: endpoint,
-    })
-    .nullable(),
+  runtime: publicRuntimeSchema.nullable(),
 });
+
+export const agentConfigurationSchema = agentFieldsSchema.superRefine((agent, ctx) => {
+  validateExecutableRuntime(agent, ctx);
+});
+const privateAgentConfigurationSchema = agentFieldsSchema
+  .extend({
+    runtime: privateRuntimeSchema.nullable(),
+  })
+  .superRefine((agent, ctx) => {
+    validateExecutableRuntime(agent, ctx);
+    if (
+      agent.accepting_runs
+        ? agent.runtime?.credential === undefined
+        : agent.runtime?.credential !== undefined
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Runtime credential does not match admission",
+        path: ["runtime"],
+      });
+  })
+  // JSON Schema cannot infer a superRefine. Preserve the frozen publication
+  // condition explicitly so --write never weakens the wire contract.
+  .meta({
+    allOf: [
+      {
+        if: {
+          properties: { accepting_runs: { const: true } },
+          required: ["accepting_runs"],
+        },
+        then: {
+          properties: {
+            runtime: {
+              type: "object",
+              properties: { connection_id: {}, credential: {} },
+              required: ["connection_id", "credential"],
+            },
+          },
+        },
+        else: {
+          properties: {
+            runtime: {
+              not: {
+                type: "object",
+                properties: { credential: {} },
+                required: ["credential"],
+              },
+            },
+          },
+        },
+      },
+    ],
+  });
+
+function validateExecutableRuntime(
+  agent: z.infer<typeof agentFieldsSchema>,
+  ctx: z.RefinementCtx,
+): void {
+  if (!agent.accepting_runs) return;
+  const runtime = agent.runtime;
+  if (
+    runtime === null ||
+    runtime.connection_id === undefined ||
+    !runtimeRevisionSchema.safeParse(runtime.runtime_revision).success ||
+    !runtimeMcpEndpointSchema.safeParse(runtime.mcp_endpoint).success
+  )
+    ctx.addIssue({
+      code: "custom",
+      message: "Accepting Agent requires an instance connection",
+      path: ["runtime"],
+    });
+}
 
 export const executionConfigurationSchema = z.strictObject({
   organization_id: identifier,
   revision,
   providers: z.array(providerConfigurationSchema),
   models: z.array(executionModelSchema),
-  agents: z.array(agentConfigurationSchema),
+  agents: z.array(privateAgentConfigurationSchema),
 });
 
 export type ProviderConfiguration = z.infer<typeof providerConfigurationSchema>;
@@ -139,6 +226,7 @@ export const publicProviderConfigurationSchema = z.discriminatedUnion("enabled",
 ]);
 export const publicExecutionConfigurationSchema = executionConfigurationSchema.extend({
   providers: z.array(publicProviderConfigurationSchema),
+  agents: z.array(agentConfigurationSchema),
 });
 export type PublicProviderConfiguration = z.infer<typeof publicProviderConfigurationSchema>;
 export type ProviderRouting = Pick<
@@ -247,7 +335,24 @@ export function publicExecutionConfiguration(
             : {}),
         };
   });
-  const configuration = structuredClone({ ...snapshot, providers });
+  const agents = snapshot.agents.map((agent) => {
+    const runtime = agent.runtime;
+    return {
+      ...agent,
+      runtime:
+        runtime === null
+          ? null
+          : {
+              runtime_revision: runtime.runtime_revision,
+              runtime_execution_id: runtime.runtime_execution_id,
+              mcp_endpoint: runtime.mcp_endpoint,
+              ...(runtime.connection_id === undefined
+                ? {}
+                : { connection_id: runtime.connection_id }),
+            },
+    };
+  });
+  const configuration = structuredClone({ ...snapshot, providers, agents });
   configuration.providers.sort((a, b) => compare(a.connection_id, b.connection_id));
   configuration.models.sort((a, b) => compare(a.model_profile_id, b.model_profile_id));
   configuration.agents.sort((a, b) => compare(a.agent_id, b.agent_id));
@@ -296,6 +401,7 @@ export function resolveExecutionConfiguration(
   }
   if (
     agent.runtime === null ||
+    agent.runtime.connection_id === undefined ||
     agent.agent_spec_revision === null ||
     agent.execution_revision === null
   ) {
@@ -326,6 +432,7 @@ export function resolveExecutionConfiguration(
       revision: agent.runtime.runtime_revision,
       executionId: agent.runtime.runtime_execution_id,
       mcpEndpoint: agent.runtime.mcp_endpoint,
+      connectionId: agent.runtime.connection_id,
     } satisfies RuntimeBinding,
     systemPrompt: agent.system_prompt,
     contextPolicyVersion: agent.context_policy_version,

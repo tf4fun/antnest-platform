@@ -52,6 +52,7 @@ async function setup() {
   const closed: ExecutionConfiguration = executionConfiguration();
   closed.revision = 2;
   closed.agents[0]!.accepting_runs = false;
+  delete closed.agents[0]!.runtime?.credential;
   closed.agents[0]!.operation_id = "operation-1";
   async function start() {
     const accepted: AcceptedAcpRun = {
@@ -156,7 +157,7 @@ describe("Agent lifecycle settlement", () => {
         {
           organizationId: "organization-1",
           agentId: "agent-1",
-          runtimeRevision: "runtime-1",
+          runtimeRevision: test.closed.agents[0]!.runtime!.runtime_revision,
         },
         expect.any(AbortSignal),
       );

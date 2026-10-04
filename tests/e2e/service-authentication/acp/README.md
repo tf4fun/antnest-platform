@@ -1,16 +1,27 @@
-# ACP authentication and Provider acceptance
+# ACP authentication, Provider and Runtime instance acceptance
 
 Run serially from the repository root with NVM Node:
 
 ```sh
-docker build -f services/agent-acp-service/Dockerfile -t antnest/agent-acp-service:auth-provider-28 .
-ANTNEST_ACP_AUDIT_IMAGE=antnest/agent-acp-service:auth-provider-28 node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs
+docker build -f services/agent-acp-service/Dockerfile -t antnest/agent-acp-service:auth-runtime-30 .
+ANTNEST_ACP_AUDIT_IMAGE=antnest/agent-acp-service:auth-runtime-30 node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs
 ```
 
 The owning-service harness uses the production image, isolated PostgreSQL,
 temporary CSPRNG service credentials, an Identity fixture and synthetic model/MCP
 dependencies. It covers 14 authentication/listener checks, 23 Provider policy
-checks and five official SDK business scenarios, including normal process restart.
+checks, 18 Runtime instance checks and five official SDK business scenarios,
+including normal process restart. The Runtime protocol peer admits only the
+fixture's separate CSPRNG instance token and exact execution fence on every
+official MCP request; it rejects unrelated user/CCT/cookie authority.
+
+Runtime checks cover malformed executable/closed publications, immutable token
+identity on equal and newer revisions, credential-free database/Run/model/log
+projections, 0700/0600 sender storage, cold restart without restored authority,
+verified same-revision republishing, in-flight closure without a connection ID,
+retained unknown-effect protection and normal shutdown cleanup. The production
+ACP image and migrations run here; native Runtime's own receiver and the actual
+Controller/RC lifecycle belong to their separate gates and final integration.
 
 An internal network with a randomly selected public-classified subnet verifies
 the production adapter's default policy without Internet access. A separate private

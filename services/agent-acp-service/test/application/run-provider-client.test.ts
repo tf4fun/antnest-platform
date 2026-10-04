@@ -82,6 +82,7 @@ function setup() {
   const finish = vi.fn<ExecutionRepository["finish"]>().mockResolvedValue();
   let sequence = 0;
   const executor = new RunExecutor({
+    runtimeConnections: { releaseRun: vi.fn() },
     providers,
     tools,
     contextBuilder: { build },

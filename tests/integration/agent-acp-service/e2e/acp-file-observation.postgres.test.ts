@@ -73,11 +73,13 @@ describe.skipIf(databaseUrl === undefined)(
       closeFixture = () => fixture.close();
       fixture.finish();
       const catalog = new McpToolCatalog({
-        runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+        runtimeDialer: new OfficialMcpDialer({
+          trust: "runtime",
+          connections: app.connections,
+        }),
         revisions: { getClientMcpRevision: () => Promise.resolve([]) },
       });
-      app.configuration.agents[0]!.runtime!.mcp_endpoint =
-        fixture.endpoint.href;
+      app.configuration.agents[0]!.runtime = fixture.authority.runtime;
       await app.publishConfiguration();
       app.tools.list.mockImplementation(catalog.list.bind(catalog));
       app.tools.call.mockImplementation(catalog.call.bind(catalog));
@@ -221,7 +223,9 @@ describe.skipIf(databaseUrl === undefined)(
           expect(app.tools.call).toHaveBeenCalledOnce();
           await closeApp?.();
           closeApp = undefined;
-          app = await startBoundaryApplication(pool);
+          app = await startBoundaryApplication(pool, undefined, {
+            configuration: app.configuration,
+          });
           closeApp = app.close;
           const restarted = await app.connect(version);
           expect(

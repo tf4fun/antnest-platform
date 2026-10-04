@@ -10,8 +10,10 @@ import {
 import type { LearningTaskClaim } from "../domain/learning-scan.js";
 import type { RuntimeSkillMaintenanceSigner } from "./runtime-skill-maintenance-signer.js";
 import { tracedFetch } from "../telemetry/http.js";
+import type { RuntimeBinding } from "../domain/types.js";
+import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
+import { runtimeAdmissionDenial } from "../domain/runtime-admission-error.js";
 
-type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 type IntentPort = {
   reserve(input: {
     claim: LearningTaskClaim;
@@ -19,6 +21,8 @@ type IntentPort = {
     action: "prepare" | "check" | "commit" | "observe" | "cancel" | "release";
     executionId: string;
     mcpEndpoint: string;
+    revision: string;
+    connectionId: string;
     bodySha256: string;
     requestFacts: Record<string, unknown>;
   }): Promise<{ dispatch: boolean; state: "pending" | "unknown" | "settled" }>;
@@ -105,15 +109,15 @@ export class RuntimeSkillMaintenanceClient {
   public constructor(
     private readonly signer: RuntimeSkillMaintenanceSigner,
     private readonly intents: IntentPort,
-    private readonly fetchFn: FetchFn = tracedFetch(
-      (url: string, init: RequestInit) => fetch(url, init),
-      "antnest-runtime",
-    ),
+    private readonly connections: Pick<
+      RuntimeConnectionAuthority,
+      "fetchFor" | "retainOperation" | "releaseOperation"
+    >,
   ) {}
 
   public async prepare(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     candidateId: string;
     requestId: string;
     package: LearningCandidatePackage;
@@ -177,13 +181,13 @@ export class RuntimeSkillMaintenanceClient {
         "Runtime Skill preparation receipt does not match the request",
       );
     }
-    await this.intents.settle(claim, requestId, receipt.data);
+    await this.settle(claim, requestId, receipt.data);
     return receipt.data;
   }
 
   public async check(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     candidateId: string;
     requestId: string;
     package: LearningCandidatePackage;
@@ -230,13 +234,13 @@ export class RuntimeSkillMaintenanceClient {
         "Runtime Skill check receipt does not match the request",
       );
     }
-    await this.intents.settle(input.claim, input.requestId, receipt.data);
+    await this.settle(input.claim, input.requestId, receipt.data);
     return receipt.data;
   }
 
   public async commit(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     candidateId: string;
     requestId: string;
     package: LearningCandidatePackage;
@@ -268,13 +272,13 @@ export class RuntimeSkillMaintenanceClient {
         "Runtime Skill commit receipt does not match the request",
       );
     }
-    await this.intents.settle(input.claim, input.requestId, receipt.data);
+    await this.settle(input.claim, input.requestId, receipt.data);
     return receipt.data;
   }
 
   public async observe(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     requestId: string;
     effectRequestId: string;
     expectedTargetDigest: string | null;
@@ -306,13 +310,13 @@ export class RuntimeSkillMaintenanceClient {
     }
     if (receipt.data.outcome === "unknown")
       await this.intents.markUnknown(input.claim, input.requestId);
-    else await this.intents.settle(input.claim, input.requestId, receipt.data);
+    else await this.settle(input.claim, input.requestId, receipt.data);
     return receipt.data;
   }
 
   public async cancel(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     requestId: string;
     signal: AbortSignal;
   }): Promise<CancelledSkillReceipt> {
@@ -328,13 +332,13 @@ export class RuntimeSkillMaintenanceClient {
         "Runtime Skill cancel receipt does not match the request",
       );
     }
-    await this.intents.settle(input.claim, input.requestId, receipt.data);
+    await this.settle(input.claim, input.requestId, receipt.data);
     return receipt.data;
   }
 
   public async release(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     requestId: string;
     storageClass: "candidate";
     storageKey: string;
@@ -365,14 +369,14 @@ export class RuntimeSkillMaintenanceClient {
         "Runtime Skill release receipt does not match the request",
       );
     }
-    await this.intents.settle(input.claim, input.requestId, receipt.data);
+    await this.settle(input.claim, input.requestId, receipt.data);
     return receipt.data;
   }
 
   private async sendControl(
     input: {
       claim: LearningTaskClaim;
-      binding: { mcpEndpoint: string; executionId: string };
+      binding: RuntimeBinding;
       requestId: string;
       signal: AbortSignal;
     },
@@ -397,7 +401,7 @@ export class RuntimeSkillMaintenanceClient {
 
   private async send(input: {
     claim: LearningTaskClaim;
-    binding: { mcpEndpoint: string; executionId: string };
+    binding: RuntimeBinding;
     requestId: string;
     action: "prepare" | "check" | "commit" | "observe" | "cancel" | "release";
     body: Buffer;
@@ -417,20 +421,29 @@ export class RuntimeSkillMaintenanceClient {
       body: input.body,
     });
     const url = maintenanceUrl(input.binding.mcpEndpoint, input.action);
+    // Pin and verify the original sender before creating any durable effect intent.
+    if (["observe", "cancel", "release"].includes(input.action))
+      this.connections.retainOperation(input.requestId, input.binding, { cleanup: true });
+    else this.connections.retainOperation(input.requestId, input.binding);
+    const send = tracedFetch(this.connections.fetchFor(input.binding), "antnest-runtime");
     const reservation = await this.intents.reserve({
       claim: input.claim,
       requestId: input.requestId,
       action: input.action,
       executionId: input.binding.executionId,
       mcpEndpoint: input.binding.mcpEndpoint,
+      revision: input.binding.revision,
+      connectionId: input.binding.connectionId,
       bodySha256: sha256(input.body),
       requestFacts: input.requestFacts,
     });
-    if (!reservation.dispatch)
+    if (!reservation.dispatch) {
+      if (reservation.state === "settled") this.connections.releaseOperation(input.requestId);
       throw new RuntimeMaintenancePreviouslyDispatchedError(reservation.state);
+    }
     let response: Response;
     try {
-      response = await this.fetchFn(url, {
+      response = await send(url, {
         method: "POST",
         headers: {
           Authorization: authorization,
@@ -439,6 +452,7 @@ export class RuntimeSkillMaintenanceClient {
         },
         body: new Uint8Array(input.body),
         signal: input.signal,
+        redirect: "error",
       });
     } catch (error) {
       await this.intents.markUnknown(input.claim, input.requestId);
@@ -465,6 +479,15 @@ export class RuntimeSkillMaintenanceClient {
       });
     }
     if (!response.ok) {
+      const admissionCode = runtimeAdmissionDenial(response, parsed);
+      if (admissionCode !== null && reservation.state !== "unknown") {
+        await this.intents.reject(input.claim, input.requestId, {
+          status: response.status,
+          code: admissionCode,
+        });
+        this.connections.releaseOperation(input.requestId);
+        throw new RuntimeMaintenanceRejectedError(response.status, admissionCode);
+      }
       const error = z
         .object({
           error: z.object({
@@ -479,7 +502,8 @@ export class RuntimeSkillMaintenanceClient {
         response.status >= 500 ||
         response.status === 408 ||
         response.status === 429 ||
-        error.data.error.retryable
+        error.data.error.retryable ||
+        reservation.state === "unknown"
       ) {
         await this.intents.markUnknown(input.claim, input.requestId);
         throw new RuntimeMaintenanceUnknownError("Runtime Skill maintenance outcome is unknown");
@@ -488,9 +512,19 @@ export class RuntimeSkillMaintenanceClient {
         status: response.status,
         code: error.data.error.code,
       });
+      this.connections.releaseOperation(input.requestId);
       throw new RuntimeMaintenanceRejectedError(response.status, error.data.error.code);
     }
     return parsed;
+  }
+
+  private async settle(
+    claim: LearningTaskClaim,
+    requestId: string,
+    receipt: unknown,
+  ): Promise<void> {
+    await this.intents.settle(claim, requestId, receipt);
+    this.connections.releaseOperation(requestId);
   }
 }
 

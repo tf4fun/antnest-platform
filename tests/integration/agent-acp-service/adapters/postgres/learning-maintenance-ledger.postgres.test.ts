@@ -54,6 +54,8 @@ const intent = {
   action: "prepare" as const,
   executionId: "execution-1",
   mcpEndpoint: "http://runtime.test:8093/mcp",
+  revision: `rtv_${"a".repeat(32)}`,
+  connectionId: `rci_${"b".repeat(32)}`,
   bodySha256: digest,
   requestFacts: { candidate_id: "candidate-1", target_digest: digest },
 };
@@ -168,6 +170,63 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
   });
   afterAll(async () => {
     await pool.end();
+  });
+
+  it("persists complete Runtime authority identity and rejects revision/connection substitution on replay", async () => {
+    await ledger.reserve(intent);
+    expect(await ledger.read(claim, intent.requestId)).toMatchObject({
+      revision: intent.revision,
+      connectionId: intent.connectionId,
+    });
+    expect(await ledger.unresolved(claim)).toEqual([
+      expect.objectContaining({
+        revision: intent.revision,
+        connectionId: intent.connectionId,
+      }),
+    ]);
+    for (const changed of [
+      { revision: `rtv_${"f".repeat(32)}` },
+      { connectionId: `rci_${"f".repeat(32)}` },
+    ])
+      await expect(ledger.reserve({ ...intent, ...changed })).rejects.toThrow(
+        "conflicts",
+      );
+    const saved = await pool.query<{
+      runtime_revision: string;
+      connection_id: string;
+    }>(
+      "SELECT runtime_revision,connection_id FROM learning_maintenance_intents WHERE request_id=$1",
+      [intent.requestId],
+    );
+    expect(saved.rows).toEqual([
+      { runtime_revision: intent.revision, connection_id: intent.connectionId },
+    ]);
+  });
+
+  it("releases accepted private-operation authority only after a durable settlement", async () => {
+    const released = vi.fn<(requestId: string) => void>();
+    const ownedLedger = new PostgresLearningMaintenanceLedger(
+      new PostgresKernel(pool),
+      released,
+    );
+    await ownedLedger.reserve(intent);
+    await ownedLedger.markUnknown(claim, intent.requestId);
+    await expect(
+      ownedLedger.settle(claim, intent.requestId, { request_id: "wrong" }),
+    ).rejects.toThrow();
+    expect(released).not.toHaveBeenCalled();
+    await ownedLedger.settle(claim, intent.requestId, {
+      request_id: intent.requestId,
+      action: intent.action,
+      execution_id: intent.executionId,
+      outcome: "prepared",
+      observed_digest: digest,
+      storage_key: "a".repeat(64),
+    });
+    expect(released).toHaveBeenCalledWith(intent.requestId);
+    expect((await ownedLedger.read(claim, intent.requestId))?.state).toBe(
+      "settled",
+    );
   });
 
   it("projects only paused blockers and filters source identities by current Session access", async () => {

@@ -1,4 +1,6 @@
 import { testSecurityEnvironment } from "./support/auth-fixture.js";
+import { existsSync } from "node:fs";
+import { RuntimeConnections } from "../src/adapters/runtime-connections.js";
 import { describe, expect, it, vi } from "vitest";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../src/ports/telemetry.js";
 
@@ -12,6 +14,32 @@ import {
 import { loadConfig } from "../src/config.js";
 
 describe("development startup diagnostics", () => {
+  it.each([new Error("migration failed"), new WorkerOwnershipLostError()])(
+    "removes owned Runtime sender storage on startup failure: %s",
+    async (failure) => {
+      const migration = vi.spyOn(migrations, "migrate").mockRejectedValue(failure);
+      const cleanup = vi.spyOn(RuntimeConnections.prototype, "close");
+      const config = loadConfig({
+        ...testSecurityEnvironment(),
+        ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 7).toString("base64"),
+      });
+      try {
+        await expect(startAgentAcpService(config, NOOP_TELEMETRY, vi.fn())).rejects.toBe(failure);
+        expect(cleanup).toHaveBeenCalledOnce();
+        const directories = cleanup.mock.contexts.flatMap((instance) =>
+          instance instanceof RuntimeConnections ? [instance.directory] : [],
+        );
+        expect(directories).toHaveLength(1);
+        expect(directories.every((directory) => !existsSync(directory))).toBe(true);
+      } finally {
+        migration.mockRestore();
+        cleanup.mockRestore();
+        if (failure instanceof WorkerOwnershipLostError)
+          await config.authentication.workload.close();
+      }
+    },
+  );
   it.each([undefined, "agent-debug"])(
     "warns only when a debug Agent is configured: %j",
     async (agentId) => {

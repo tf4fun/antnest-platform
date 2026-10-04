@@ -29,6 +29,47 @@ const receiptFixtures = JSON.parse(
 afterEach(() => vi.restoreAllMocks());
 
 describe("RunExecutor", () => {
+  it("releases original Runtime authority only after a confirmed terminal commit", async () => {
+    const test = setup();
+    test.input.accepted.command = { name: "help", locale: "en" };
+    const entered = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    test.finish.mockImplementationOnce(() => {
+      entered.resolve();
+      return finish.promise;
+    });
+    const executing = test.execute();
+    await entered.promise;
+    try {
+      expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+    } finally {
+      finish.resolve();
+    }
+    await executing;
+    expect(test.dependencies.runtimeConnections.releaseRun).toHaveBeenCalledExactlyOnceWith(
+      test.input.accepted.runId,
+    );
+  });
+
+  it("keeps authority for unresolved temporary effects after a terminal commit", async () => {
+    const test = setup();
+    test.dependencies.temporarySkills = {
+      releaseRun: () => Promise.reject(new Error("cleanup not confirmed")),
+    };
+    expect(await test.execute()).toMatchObject({
+      terminalClass: "unresolved",
+      toolEffectState: "unknown",
+    });
+    expect(test.finish).toHaveBeenCalledOnce();
+    expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps authority after an unknown terminal commit receipt", async () => {
+    const test = setup();
+    test.finish.mockRejectedValueOnce(new Error("terminal acknowledgement lost"));
+    await expect(test.execute()).rejects.toBeInstanceOf(RunRecoveryRequiredError);
+    expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+  });
   it.each([
     { name: "network code", code: "ECONNREFUSED" },
     { name: "PostgreSQL SQLSTATE", code: "40001" },
@@ -374,6 +415,7 @@ function setup() {
   const cancellation = new AbortController();
   const recoveryRequired = vi.fn();
   const dependencies: RunExecutorDependencies = {
+    runtimeConnections: { releaseRun: vi.fn() },
     providers,
     executions: {
       finish,

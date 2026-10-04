@@ -10,6 +10,7 @@ import type {
   ModelToolDefinition,
   ToolEffectState,
   ToolDefinition,
+  RuntimeBinding,
 } from "../../domain/types.js";
 import type {
   ClientMcpRevisionPort,
@@ -22,6 +23,7 @@ export type McpConnectInput = {
   endpoint: URL;
   headers: Record<string, string>;
   signal: AbortSignal;
+  runtimeBinding?: RuntimeBinding;
 };
 
 export type McpRemoteTool = {
@@ -80,14 +82,12 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
   }
 
   /** Reads the current Runtime binding for maintenance admission, not a historical Run snapshot. */
-  public async readBinding(
-    binding: { executionId: string; mcpEndpoint: string },
-    signal: AbortSignal,
-  ) {
+  public async readBinding(binding: RuntimeBinding, signal: AbortSignal) {
     return this.withConnection(
       this.dependencies.runtimeDialer,
       {
         endpoint: new URL(binding.mcpEndpoint),
+        runtimeBinding: binding,
         headers: runtimeHeaders(binding.executionId),
         signal,
       },
@@ -102,7 +102,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
 
   /** Reads only an explicitly named personal Skill; no model tool catalog is exposed. */
   public async readPersonalSkill(
-    binding: { executionId: string; mcpEndpoint: string },
+    binding: RuntimeBinding,
     packagePath: string,
     signal: AbortSignal,
   ): Promise<string> {
@@ -112,7 +112,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
   }
 
   public async readSkill(
-    binding: { executionId: string; mcpEndpoint: string },
+    binding: RuntimeBinding,
     path: RuntimePath,
     signal: AbortSignal,
   ): Promise<string> {
@@ -130,7 +130,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
   }
 
   private async readSkillFile(
-    binding: { executionId: string; mcpEndpoint: string },
+    binding: RuntimeBinding,
     path: string,
     signal: AbortSignal,
   ): Promise<string> {
@@ -138,6 +138,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       this.dependencies.runtimeDialer,
       {
         endpoint: new URL(binding.mcpEndpoint),
+        runtimeBinding: binding,
         headers: runtimeHeaders(binding.executionId),
         signal,
       },
@@ -201,6 +202,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       this.dependencies.runtimeDialer,
       {
         endpoint: new URL(snapshot.runtime.mcpEndpoint),
+        runtimeBinding: snapshot.runtime,
         headers: runtimeHeaders(snapshot.runtime.executionId),
         signal,
       },
@@ -223,6 +225,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       this.dependencies.runtimeDialer,
       () => ({
         endpoint: new URL(input.snapshot.runtime.mcpEndpoint),
+        runtimeBinding: input.snapshot.runtime,
         headers: runtimeHeaders(input.snapshot.runtime.executionId),
         signal: input.signal,
       }),

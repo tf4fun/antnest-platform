@@ -1,4 +1,5 @@
 import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
+import { runtimeConnections } from "../../../../services/agent-acp-service/test/support/runtime-connections.js";
 import { SessionConfigurationService } from "../../../../services/agent-acp-service/src/application/session-configuration.js";
 import { PostgresToolPermissions } from "../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { ToolPermissions } from "../../../../services/agent-acp-service/src/application/tool-permissions.js";
@@ -34,7 +35,10 @@ import type {
   ExecutionAccessSnapshot,
 } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { SessionOutputStreams } from "../../../../services/agent-acp-service/src/transport/acp/session-output.js";
-import { executionConfiguration } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
+import {
+  executionConfiguration,
+  runtimeConfiguration,
+} from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import type { AuthenticatedModelTransport } from "../../../../services/agent-acp-service/src/ports/model.js";
 import type { ToolCatalogPort } from "../../../../services/agent-acp-service/src/ports/tools.js";
 import { AgentAcpHttpServer } from "../../../../services/agent-acp-service/src/transport/http-server.js";
@@ -47,7 +51,10 @@ const encryptionKey = randomBytes(32);
 export async function startBoundaryApplication(
   pool: Pool,
   information = runtimeInformation(),
-  options: { runTimeoutMs?: number } = {},
+  options: {
+    runTimeoutMs?: number;
+    configuration?: ExecutionConfiguration;
+  } = {},
 ) {
   const kernel = new PostgresKernel(pool);
   const sessions = new PostgresSessionRepository(
@@ -121,9 +128,11 @@ export async function startBoundaryApplication(
     permissions.revokeAccess(snapshot);
     outputs.revokeAccess(snapshot);
   };
+  const connections = runtimeConnections();
   const directory = new ExecutionDirectory({
     repository: configurations,
     clients: providers,
+    runtimeConnections: connections,
     onApplied: (snapshot) => {
       revoke(snapshot);
       return Promise.resolve();
@@ -135,23 +144,39 @@ export async function startBoundaryApplication(
   });
   const stored = await configurations.load("organization-1");
   const configuration: ExecutionConfiguration =
-    stored === null
-      ? boundaryConfiguration()
-      : {
-          ...stored,
-          providers: stored.providers.map((provider) => ({
-            ...provider,
-            credential_revision: provider.credential_revision ?? "credential-1",
-            credential: {
-              method: "api_key" as const,
-              secret: "synthetic-provider-secret",
-            },
-          })),
-        };
+    options.configuration !== undefined
+      ? structuredClone(options.configuration)
+      : stored === null
+        ? boundaryConfiguration()
+        : {
+            ...stored,
+            agents: stored.agents.map((agent) => ({
+              ...agent,
+              runtime:
+                !agent.accepting_runs || agent.runtime === null
+                  ? agent.runtime
+                  : {
+                      ...agent.runtime,
+                      credential: boundaryConfiguration().agents.find(
+                        (candidate) => candidate.agent_id === agent.agent_id,
+                      )!.runtime!.credential!,
+                    },
+            })),
+            providers: stored.providers.map((provider) => ({
+              ...provider,
+              credential_revision:
+                provider.credential_revision ?? "credential-1",
+              credential: {
+                method: "api_key" as const,
+                secret: "synthetic-provider-secret",
+              },
+            })),
+          };
   const access = new AccessService({ directory });
   const permissionRepository = new PostgresToolPermissions(kernel);
   const supervisor = new RunSupervisor(
     new RunExecutor({
+      runtimeConnections: connections,
       permissions: new ToolPermissions(
         permissionRepository,
         permissions,
@@ -223,6 +248,7 @@ export async function startBoundaryApplication(
     for (const client of clients) await client.close();
     await server.close();
     await supervisor.shutdown();
+    await connections.close();
   }
   try {
     await directory.apply(configuration);
@@ -244,6 +270,7 @@ export async function startBoundaryApplication(
       acceptRun,
       acquireClient,
       configuration,
+      connections,
       directory,
       identities,
       identity(alias = "owner") {
@@ -305,6 +332,7 @@ function boundaryConfiguration(): ExecutionConfiguration {
   configuration.agents.push({
     ...structuredClone(agent),
     agent_id: "agent-2",
+    runtime: runtimeConfiguration(2),
     principal_ids: ["principal-1"],
   });
   return configuration;

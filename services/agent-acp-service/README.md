@@ -88,6 +88,13 @@ and [fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
 It is matched exactly against the Runtime's trusted verifier IDs; startup
 rejects invalid IDs without trimming whitespace.
 
+Runtime calls require RC-issued per-instance ACP authority privately published
+by Controller. Database and Run projections contain only the public reference;
+there is no global Runtime bearer. The current native profile requires exact
+HTTP token opt-in, and unsupported Runtime TLS/mTLS composition fails closed.
+See [Runtime instance authority](docs/operations.md#runtime-instance-authority)
+for startup, republishing and cleanup requirements.
+
 | Variable                                                                                          | Required | Default             | Description                                                                                                    |
 | ------------------------------------------------------------------------------------------------- | -------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `ANTNEST_ACP_DATABASE_URL`                                                                        | yes      | -                   | `postgres://` or `postgresql://` URL of the service-owned database                                             |

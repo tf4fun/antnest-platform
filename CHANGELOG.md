@@ -4,6 +4,20 @@
 
 ### Fixed
 
+ACP now uses RC-issued per-instance authority for all Runtime MCP, status and
+private Skill clients (#30). Private publications stage verified 0700/0600
+sender files before database CAS; database, Run, audit, model and Trace
+projections exclude Runtime tokens. Same connection ID cannot change its token.
+Accepted work retains its original reference through closure; missing authority
+fails closed and cannot clear an unknown-effect barrier. Cold restart requires
+Controller to republish the verified private reference. Normal shutdown removes
+owned sender files. Maintenance intents now retain public revision/connection
+identity, and regenerated schema preserves the frozen admission conditions.
+The current native Runtime profile requires explicit HTTP token opt-in and
+rejects unsupported TLS/mTLS composition. RC revision 16, native receiver and
+Controller relay must precede ACP adoption; coordinated deployment and complete
+business/security E2E remain the final integration batch.
+
 Controller now resolves and verifies RC-issued Runtime instance authority on every
 accepting execution publication (#30), including equal-revision resends and
 restart. The relay remains private to ACP's control origin; credentials never enter
@@ -11,14 +25,14 @@ Controller tables, ordinary projections or Trace. Mismatched/unavailable authori
 prevents publication and acknowledgement. Closed Agents need no resolution and
 carry no credentials, preserving Drain/revocation/disable during Runtime outages.
 Private dependency transports now explicitly bypass environment proxies. RC
-revision 16 and this relay must precede the ACP instance-client/deployment batches;
+revision 16 and this relay must precede the ACP instance clients described above;
 final cross-service acceptance remains pending.
 
 The #30 private execution publication contract now requires verified Runtime
 connection identity and ACP authority for accepting Agents. Closed publications
 carry only execution fences and never depend on a healthy resolver; revocation,
 Drain and settlement cannot be blocked by missing Runtime credentials. Controller
-relay is delivered above; ACP private/public separation remains a subsequent batch.
+relay and ACP private/public separation are delivered above; final integration remains pending.
 
 Native Runtime now enforces the RC-issued instance authority before the entire
 MCP/private Skill mount and full status (#30). Anonymous Docker liveness moves
@@ -29,7 +43,7 @@ multipart format. Root-only receiver permissions, owners, complete digest and
 strict caller JSON are checked before networking/HTTP; malformed, missing,
 ambiguous or unsupported TLS/mTLS configuration fails startup. Operators must
 use RC's prepared read-only receiver volume and exact token/HTTP opt-in.
-Controller relay is delivered above; ACP private clients and coordinated
+Controller relay and ACP private clients are delivered above; coordinated
 deployment/business E2E remain separate batches.
 
 RC revision 16 now issues and atomically seals separate per-generation RC/ACP
@@ -41,10 +55,10 @@ uses no-store and disables debug content capture. Ordinary projections remain
 unchanged. Operators must retain a private 0600, exactly 32-byte raw master file
 via `ANTNEST_RUNTIME_INSTANCE_KEY_FILE`. This first native instance profile
 requires explicit internal-HTTP token opt-in; TLS/mTLS is unsupported and fails
-startup. ACP adoption, coordinated deployment
+startup. ACP adoption is described above; coordinated deployment
 and full business/security E2E remain subsequent batches.
 
-The #30 private Runtime instance connection contract is frozen before service implementation. RC owns per-caller, per-Agent/generation CSPRNG tokens and sealed records; Controller privately relays ACP authority. Receiver volumes contain only root-only SHA256 configuration; public bindings/Run snapshots never contain tokens. The contract defines authenticated full status, identity-free liveness, exact Host admission, preserved execution fences/tickets and service-owned producer/consumer batches. RC producer, native Runtime receiver and Controller relay implementation are described above; ACP adoption and final integration are still pending.
+The #30 private Runtime instance connection contract is frozen before service implementation. RC owns per-caller, per-Agent/generation CSPRNG tokens and sealed records; Controller privately relays ACP authority. Receiver volumes contain only root-only SHA256 configuration; public bindings/Run snapshots never contain tokens. The contract defines authenticated full status, identity-free liveness, exact Host admission, preserved execution fences/tickets and service-owned producer/consumer batches. RC producer, native Runtime receiver, Controller relay and ACP adoption are described above; final integration is still pending.
 
 Runtime Controller now admits only verified Controller workloads on every control route, including all three Skill preparation routes (#29). Control revision 15 adds exact token/mTLS admission and strict JSON errors, an explicit unicast control address (default `127.0.0.1:8080`), and a separate loopback health listener (default `127.0.0.1:8082`). Operators must supply authentication configuration, bind the Controller-purpose address, and remove nonempty `ANTNEST_SKILL_REGISTRY_API_TOKEN`. Registry downloads use per-receiver credentials without proxies or redirects. `ANTNEST_RUNTIME_ALLOWED_IMAGES` accepts exact repository or SHA256-manifest allowlists; the default Runtime repository is the only allowed repository when unset. Disallowed new selections return `422 image_not_allowed` before Docker or journal effects; accepted recovery retains its frozen image ID. Cross-package exported Go route wrappers cannot forward route-pattern parameters to Handle/HandleFunc without failing catalog checks. RC still holds host-equivalent Docker-socket authority; final network deployment, Runtime instance credentials and cross-service E2E remain separate batches.
 

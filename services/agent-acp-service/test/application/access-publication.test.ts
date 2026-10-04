@@ -84,6 +84,7 @@ describe("configuration publication access effects", () => {
     try {
       const changed = executionConfiguration();
       changed.agents[0]!.accepting_runs = false;
+      delete changed.agents[0]!.runtime?.credential;
       supervisor.revokeAccess(changed);
       supervisor.revokeAccess({ ...revoked, organization_id: "organization-2" });
       expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(false);

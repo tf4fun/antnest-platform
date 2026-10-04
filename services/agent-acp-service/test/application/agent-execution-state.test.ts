@@ -4,7 +4,11 @@ import { RunSupervisor } from "../../src/application/run-supervisor.js";
 import type { AgentExecutionStateView } from "../../src/domain/agent-execution-state.js";
 import type { RuntimeProtectionRepository } from "../../src/ports/execution-repository.js";
 import type { ExecuteRunResult, SubmittedAcpRun } from "../../src/ports/acp-application.js";
-import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
+import {
+  executionConfiguration,
+  executionIdentity,
+  runtimeConfiguration,
+} from "../fixtures/execution-configuration.js";
 import { localExecution } from "../support/local-execution.js";
 import { snapshot } from "../support/fixtures.js";
 
@@ -121,6 +125,7 @@ describe("ACP-owned workspace execution state", () => {
     const closed = executionConfiguration();
     closed.revision = 2;
     closed.agents[0]!.accepting_runs = false;
+    delete closed.agents[0]!.runtime?.credential;
     await test.directory.apply(closed);
     const state = await read(test.service);
     expect(state).toMatchObject({
@@ -186,13 +191,19 @@ describe("ACP-owned workspace execution state", () => {
       const next = executionConfiguration();
       next.revision = 2;
       if (change === "another Agent")
-        next.agents.push({ ...next.agents[0]!, agent_id: "other", system_prompt: "Different" });
+        next.agents.push({
+          ...next.agents[0]!,
+          agent_id: "other",
+          system_prompt: "Different",
+          runtime: runtimeConfiguration(2),
+        });
       if (change === "credential") {
         next.providers[0]!.credential_revision = "rotated";
         next.providers[0]!.credential.secret = "rotated-secret";
       }
       if (change === "lifecycle") {
         next.agents[0]!.accepting_runs = false;
+        delete next.agents[0]!.runtime?.credential;
         next.agents[0]!.operation_id = "operation-2";
       }
       await test.directory.apply(next);
@@ -208,7 +219,7 @@ describe("ACP-owned workspace execution state", () => {
       const next = executionConfiguration();
       next.revision = 2;
       if (change === "Agent settings") next.agents[0]!.system_prompt = "Changed";
-      if (change === "Runtime") next.agents[0]!.runtime!.runtime_revision = "runtime-2";
+      if (change === "Runtime") next.agents[0]!.runtime = runtimeConfiguration(2);
       if (change === "model catalog") next.models[0]!.context_window += 100;
       await test.directory.apply(next);
       expect((await read(test.service)).configuration_revision).not.toBe(
@@ -266,12 +277,12 @@ describe("ACP-owned workspace execution state", () => {
     await entered.promise;
     const next = executionConfiguration();
     next.revision = 2;
-    next.agents[0]!.runtime!.runtime_revision = "replacement";
+    next.agents[0]!.runtime = runtimeConfiguration(2);
     await test.directory.apply(next);
     evidence.resolve(true);
     expect(await result).toHaveProperty("availability", "ready");
     expect(test.protection.hasUnstoppedRuntimeCalls).toHaveBeenLastCalledWith(
-      expect.objectContaining({ runtimeRevision: "replacement" }),
+      expect.objectContaining({ runtimeRevision: runtimeConfiguration(2).runtime_revision }),
       expect.any(AbortSignal),
     );
   });

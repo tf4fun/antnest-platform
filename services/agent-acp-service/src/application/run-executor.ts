@@ -14,8 +14,10 @@ import type { RunEventRepository } from "../ports/run-event-repository.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { assertWorkerOwnership, withWorkerOwnership } from "./worker-ownership.js";
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
+import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
 
 export type RunExecutorDependencies = {
+  runtimeConnections: Pick<RuntimeConnectionAuthority, "releaseRun">;
   permissions?: ToolPermissionPort;
   executions: ExecutionRepository;
   contextBuilder: Pick<ContextBuilder, "build">;
@@ -80,6 +82,8 @@ export class RunExecutor implements RunExecutionPort {
       throw new RunRecoveryRequiredError("Run terminal state requires recovery", error);
     }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
+    if (result.terminalClass !== "unresolved")
+      this.dependencies.runtimeConnections.releaseRun(input.accepted.runId);
     return result;
   }
 

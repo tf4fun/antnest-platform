@@ -6,6 +6,8 @@ import {
   type SkillSourceRecord,
 } from "../domain/skill-source.js";
 import type { RuntimeSkillMaintenanceSigner } from "./runtime-skill-maintenance-signer.js";
+import type { RuntimeBinding } from "../domain/types.js";
+import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
 import { tracedFetch } from "../telemetry/http.js";
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -51,12 +53,15 @@ export class RegistrySkillProjectionClient {
 export class RuntimeSkillSourceVerifier {
   public constructor(
     private readonly signer: Pick<RuntimeSkillMaintenanceSigner, "sign">,
-    private readonly fetchFn: Fetch = tracedFetch(fetch, "runtime"),
+    private readonly connections: Pick<
+      RuntimeConnectionAuthority,
+      "fetchFor" | "retainOperation" | "releaseOperation"
+    >,
   ) {}
 
   public async verify(
     record: SkillSourceRecord,
-    binding: { runtime_execution_id: string; mcp_endpoint: string },
+    binding: RuntimeBinding,
     signal: AbortSignal,
   ): Promise<"current" | "changed" | "unknown"> {
     const requestId = `source-${randomUUID()}`;
@@ -70,7 +75,7 @@ export class RuntimeSkillSourceVerifier {
         expected_target_digest: record.projection.content_digest,
       }),
     );
-    const url = new URL(binding.mcp_endpoint);
+    const url = new URL(binding.mcpEndpoint);
     if (
       !["http:", "https:"].includes(url.protocol) ||
       url.pathname !== "/mcp" ||
@@ -84,50 +89,58 @@ export class RuntimeSkillSourceVerifier {
     const authorization = this.signer.sign({
       organizationId: record.projection.organization_id,
       agentId: record.projection.agent_id,
-      executionId: binding.runtime_execution_id,
+      executionId: binding.executionId,
       jobId: record.taskId,
       generation: record.generation,
       action: "observe",
       requestId,
       body,
     });
-    const response = await this.fetchFn(url.toString(), {
-      method: "POST",
-      headers: {
-        Authorization: authorization,
-        "Content-Type": "application/json",
-        "X-Antnest-Expected-Execution-ID": binding.runtime_execution_id,
-      },
-      body: new Uint8Array(body),
-      redirect: "error",
-      signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
-    });
-    const result = z
-      .strictObject({
-        request_id: z.string(),
-        action: z.literal("observe"),
-        execution_id: z.string(),
-        outcome: z.enum(["applied", "conflict", "unknown"]),
-        observed_digest: z
-          .string()
-          .regex(/^sha256:[0-9a-f]{64}$/u)
-          .nullable(),
-      })
-      .safeParse(JSON.parse(await boundedText(response, 4096)));
-    if (
-      !response.ok ||
-      !result.success ||
-      result.data.request_id !== requestId ||
-      result.data.execution_id !== binding.runtime_execution_id
-    )
-      return "unknown";
-    if (result.data.outcome === "conflict") return "changed";
-    if (
-      result.data.outcome !== "applied" ||
-      result.data.observed_digest !== record.projection.content_digest
-    )
-      return "unknown";
-    return "current";
+    this.connections.retainOperation(requestId, binding);
+    try {
+      const response = await tracedFetch(this.connections.fetchFor(binding), "runtime")(
+        url.toString(),
+        {
+          method: "POST",
+          headers: {
+            Authorization: authorization,
+            "Content-Type": "application/json",
+            "X-Antnest-Expected-Execution-ID": binding.executionId,
+          },
+          body: new Uint8Array(body),
+          redirect: "error",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+        },
+      );
+      const result = z
+        .strictObject({
+          request_id: z.string(),
+          action: z.literal("observe"),
+          execution_id: z.string(),
+          outcome: z.enum(["applied", "conflict", "unknown"]),
+          observed_digest: z
+            .string()
+            .regex(/^sha256:[0-9a-f]{64}$/u)
+            .nullable(),
+        })
+        .safeParse(JSON.parse(await boundedText(response, 4096)));
+      if (
+        !response.ok ||
+        !result.success ||
+        result.data.request_id !== requestId ||
+        result.data.execution_id !== binding.executionId
+      )
+        return "unknown";
+      if (result.data.outcome === "conflict") return "changed";
+      if (
+        result.data.outcome !== "applied" ||
+        result.data.observed_digest !== record.projection.content_digest
+      )
+        return "unknown";
+      return "current";
+    } finally {
+      this.connections.releaseOperation(requestId);
+    }
   }
 }
 

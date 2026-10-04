@@ -50,6 +50,7 @@ const snapshot: RunExecutionSnapshot = {
     revision: "runtime-2",
     executionId: "runtime-execution-2",
     mcpEndpoint: "http://runtime-2:8080/mcp",
+    connectionId: "rci_11111111111111111111111111111111",
   },
   executionSpec: {
     systemPrompt: "You are useful.",

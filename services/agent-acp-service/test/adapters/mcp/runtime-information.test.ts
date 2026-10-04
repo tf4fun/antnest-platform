@@ -114,6 +114,7 @@ describe("Runtime information resource", () => {
       await expect(catalog.read(runtimeSnapshot(), signal)).resolves.toEqual(runtimeInformation());
     expect(connect).toHaveBeenCalledWith({
       endpoint: new URL(runtimeSnapshot().runtime.mcpEndpoint),
+      runtimeBinding: runtimeSnapshot().runtime,
       headers: { "x-antnest-expected-execution-id": "runtime-execution-1" },
       signal,
     });
@@ -125,7 +126,11 @@ describe("Runtime information resource", () => {
   });
 
   it("reads the current learning binding instead of the source Run snapshot", async () => {
-    const current = { executionId: "current-execution", mcpEndpoint: "http://current.test/mcp" };
+    const current = {
+      ...runtimeSnapshot().runtime,
+      executionId: "current-execution",
+      mcpEndpoint: "http://current.test/mcp",
+    };
     const { executionId: sourceExecutionId, ...information } = runtimeInformation();
     expect(sourceExecutionId).not.toBe(current.executionId);
     const readResource = vi.fn<McpConnection["readResource"]>().mockResolvedValue({
@@ -149,6 +154,7 @@ describe("Runtime information resource", () => {
     });
     expect(connect).toHaveBeenCalledWith({
       endpoint: new URL(current.mcpEndpoint),
+      runtimeBinding: current,
       headers: { "x-antnest-expected-execution-id": current.executionId },
       signal,
     });
@@ -158,7 +164,11 @@ describe("Runtime information resource", () => {
   });
 
   it("reads a bounded personal Skill directly from the current Runtime binding", async () => {
-    const current = { executionId: "current-execution", mcpEndpoint: "http://current.test/mcp" };
+    const current = {
+      ...runtimeSnapshot().runtime,
+      executionId: "current-execution",
+      mcpEndpoint: "http://current.test/mcp",
+    };
     const callTool = vi.fn<McpConnection["callTool"]>().mockResolvedValue({
       content: [],
       isError: false,
@@ -192,6 +202,7 @@ describe("Runtime information resource", () => {
     );
     expect(connect).toHaveBeenCalledWith({
       endpoint: new URL(current.mcpEndpoint),
+      runtimeBinding: current,
       headers: { "x-antnest-expected-execution-id": current.executionId },
       signal,
     });

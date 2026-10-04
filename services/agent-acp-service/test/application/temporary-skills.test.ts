@@ -9,6 +9,8 @@ import { snapshot } from "../support/fixtures.js";
 import { packageWithFiles, packageWithFilesDigest } from "../fixtures/skill-discovery-package.js";
 
 const scope: TemporarySkillScope = {
+  revision: `rtv_${"a".repeat(32)}`,
+  connectionId: `rci_${"b".repeat(32)}`,
   runId: "run_1",
   organizationId: "org_1",
   agentId: "agent_1",

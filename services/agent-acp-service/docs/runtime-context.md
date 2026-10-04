@@ -7,7 +7,10 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
 
 1. Read `antnest://runtime/info` with the official MCP SDK over the existing
    Runtime Streamable HTTP endpoint. Send the admitted execution identity and
-   active W3C trace context. Force a fresh read, not an SDK/session cache hit.
+   active W3C trace context with RC-issued per-instance ACP authority. The full
+   public connection reference is frozen in the Run; the bearer stays only in
+   ACP's volatile sender file and is reread for every SDK request. Force a fresh
+   read, not an SDK/session cache hit. See [Runtime instance authority](operations.md#runtime-instance-authority).
 2. Validate the resource URI, bounded JSON structure, and returned execution ID.
    Runtime startup configuration (commands, arguments, environment, credentials)
    is not an information field. A failed/mismatched read fails setup before any

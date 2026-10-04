@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
+import { readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { DomainError } from "../../src/domain/errors.js";
 
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
 import { bridgeIntentDigest } from "../../src/domain/bridge-intent.js";
 import type { ContentBlock } from "../../src/domain/types.js";
 import type { RunIntent, RunRepository } from "../../src/ports/run-repository.js";
-import { executionConfiguration } from "../fixtures/execution-configuration.js";
+import {
+  executionConfiguration,
+  runtimeConfiguration,
+} from "../fixtures/execution-configuration.js";
 import { binding, sessionRecord } from "../support/fixtures.js";
 import { localExecution } from "../support/local-execution.js";
 
@@ -14,11 +20,7 @@ async function setup(initialize = true) {
   const local = await localExecution(false);
   const configuration = executionConfiguration();
   configuration.agents[0]!.execution_revision = "execution-2";
-  configuration.agents[0]!.runtime = {
-    runtime_revision: "runtime-2",
-    runtime_execution_id: "runtime-execution-2",
-    mcp_endpoint: "http://runtime-2:8080/mcp",
-  };
+  configuration.agents[0]!.runtime = runtimeConfiguration(2);
   if (initialize) await local.directory.apply(configuration);
   const session = {
     ...sessionRecord(),
@@ -65,6 +67,72 @@ async function setup(initialize = true) {
 }
 
 describe("PromptCoordinator", () => {
+  async function closeAgent(test: Awaited<ReturnType<typeof setup>>) {
+    const closed = structuredClone(test.configuration);
+    closed.revision++;
+    closed.agents[0]!.accepting_runs = false;
+    delete closed.agents[0]!.runtime!.credential;
+    await test.directory.apply(closed);
+  }
+
+  it("retains the exact accepted Runtime connection after Controller closes admission", async () => {
+    const test = await setup();
+    const accepted = await test.coordinator.accept(test.input);
+    await closeAgent(test);
+    expect(() => test.connections.fetchFor(accepted.snapshot.runtime)).not.toThrow();
+    expect(() => test.connections.retainRun("unaccepted-run", accepted.snapshot.runtime)).toThrow();
+    test.connections.releaseRun(accepted.runId);
+    expect(readdirSync(test.connections.directory)).toEqual([]);
+  });
+
+  it("rejects the intent before accepting a Run when its private credential is unavailable", async () => {
+    const test = await setup();
+    unlinkSync(
+      join(
+        test.connections.directory,
+        test.configuration.agents[0]!.runtime!.connection_id!,
+        "antnest-runtime",
+      ),
+    );
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      code: "runtime_connection_unavailable",
+    });
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.repository.rejectRun).toHaveBeenCalledWith(
+      expect.any(String),
+      "runtime_connection_unavailable",
+      now,
+    );
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
+  });
+
+  it.each(["cancelled", "rejected"])(
+    "releases candidate Run authority after confirmed %s acceptance",
+    async (condition) => {
+      const test = await setup();
+      if (condition === "cancelled") test.repository.acceptRun.mockResolvedValueOnce("cancelled");
+      else
+        test.repository.acceptRun.mockRejectedValueOnce(
+          new DomainError("configuration_conflict", "Admission changed"),
+        );
+      await expect(test.coordinator.accept(test.input)).rejects.toThrow();
+      await closeAgent(test);
+      expect(readdirSync(test.connections.directory)).toEqual([]);
+    },
+  );
+
+  it("preserves original Run authority when the acceptance commit receipt is unknown", async () => {
+    const test = await setup();
+    test.repository.acceptRun.mockRejectedValueOnce(new Error("commit acknowledgement lost"));
+    await expect(test.coordinator.accept(test.input)).rejects.toThrow(
+      "commit acknowledgement lost",
+    );
+    await closeAgent(test);
+    expect(readdirSync(test.connections.directory)).toEqual([
+      test.configuration.agents[0]!.runtime!.connection_id,
+    ]);
+    expect(test.recoveryRequired).toHaveBeenCalledOnce();
+  });
   it("assigns separate resource kinds to the Run, request and user message", async () => {
     const test = await setup();
     await test.coordinator.accept(test.input);
@@ -118,6 +186,7 @@ describe("PromptCoordinator", () => {
     const test = await setup();
     test.configuration.revision = 2;
     test.configuration.agents[0]!.accepting_runs = false;
+    delete test.configuration.agents[0]!.runtime?.credential;
     test.configuration.agents[0]!.unavailable_reason = "Agent is rebuilding";
     await test.directory.apply(test.configuration);
     await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
@@ -218,22 +287,18 @@ describe("PromptCoordinator", () => {
     const original = structuredClone(first.snapshot);
     test.configuration.revision = 2;
     test.configuration.agents[0]!.execution_revision = "execution-3";
-    test.configuration.agents[0]!.runtime = {
-      runtime_revision: "runtime-3",
-      runtime_execution_id: "runtime-execution-3",
-      mcp_endpoint: "http://runtime-3:8080/mcp",
-    };
+    test.configuration.agents[0]!.runtime = runtimeConfiguration(3);
     await test.directory.apply(test.configuration);
     const second = await test.coordinator.accept(test.input);
     expect(first.snapshot).toEqual(original);
     expect(first.snapshot).toMatchObject({
       executionRevision: "execution-2",
-      runtime: { revision: "runtime-2" },
+      runtime: { revision: runtimeConfiguration(2).runtime_revision },
     });
     expect(second.snapshot).toMatchObject({
       configurationRevision: 2,
       executionRevision: "execution-3",
-      runtime: { revision: "runtime-3" },
+      runtime: { revision: runtimeConfiguration(3).runtime_revision },
     });
     expect(test.repository.acceptRun).toHaveBeenCalledTimes(2);
   });

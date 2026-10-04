@@ -252,6 +252,7 @@ describe.skipIf(url === undefined)("cancellable PostgreSQL reads", () => {
     const closed = executionConfiguration();
     closed.revision = 2;
     closed.agents[0]!.accepting_runs = false;
+    delete closed.agents[0]!.runtime?.credential;
     closed.agents[0]!.operation_id = "operation-1";
     await local.directory.apply(closed);
     const supervisor = new RunSupervisor({

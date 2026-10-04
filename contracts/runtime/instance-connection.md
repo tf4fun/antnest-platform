@@ -5,10 +5,10 @@ service batches. The [machine contract](instance-connection-contract.json),
 [schema](instance-connection.schema.json) and
 [fixtures](instance-connection-fixtures.json) are normative alongside the
 [exact workload profile](../platform/service-authentication.md). Service
-implementations are delivered as owning-service batches: RC's issuer/volume/client
-and native Runtime's receiver are implemented. Controller relay, ACP consumption
-and coordinated deployment/integration remain pending; no completed platform
-workflow is claimed.
+implementations are delivered as owning-service batches: RC's issuer/volume/client,
+native Runtime's receiver, Controller relay and ACP consumers are implemented and
+have passed their owning-service gates. Coordinated deployment and integration
+remain pending; no completed platform workflow is claimed.
 
 ## Ownership and credential identity
 

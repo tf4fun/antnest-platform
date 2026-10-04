@@ -243,6 +243,14 @@ export class ServiceAuthentication {
     };
   }
 
+  /** Non-secret validated operator policy; Runtime files carry separate per-instance authority. */
+  public runtimeTransport(): {
+    authMode: "token" | "mtls";
+    allowInsecureTransport: "true" | "false";
+  } {
+    return { authMode: this.mode, allowInsecureTransport: this.insecure ? "true" : "false" };
+  }
+
   public authenticate(request: IncomingMessage, allowed: readonly string[]): Admission {
     if (this.mode === "token") return authenticateFields(this.receiver, fields(request), allowed);
     const socket = request.socket as TLSSocket;

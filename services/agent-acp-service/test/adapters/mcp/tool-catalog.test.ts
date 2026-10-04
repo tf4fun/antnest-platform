@@ -30,6 +30,7 @@ describe("McpToolCatalog", () => {
       for (const [connection] of runtime.connect.mock.calls) {
         expect(connection).toMatchObject({
           headers: { "x-antnest-expected-execution-id": executionId },
+          runtimeBinding: input.runtime,
         });
       }
     },
@@ -419,6 +420,7 @@ function snapshot(): RunExecutionSnapshot {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
       mcpEndpoint: "http://runtime-1:8080/mcp",
+      connectionId: "rci_11111111111111111111111111111111",
     },
     executionSpec: {
       systemPrompt: "system",

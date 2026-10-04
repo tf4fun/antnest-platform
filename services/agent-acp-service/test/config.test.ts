@@ -20,6 +20,17 @@ const SIGNING_KEY = generateKeyPairSync("ed25519")
   .toString("base64");
 
 describe("loadConfig", () => {
+  it("carries the validated service mode and exact HTTP opt-in to Runtime transport without credentials", async () => {
+    const config = loadConfig({ ...testSecurityEnvironment(), ...requiredEnvironment() });
+    try {
+      expect(config.authentication.workload.runtimeTransport()).toEqual({
+        authMode: "token",
+        allowInsecureTransport: "true",
+      });
+    } finally {
+      await config.authentication.workload.close();
+    }
+  });
   it("defaults private Provider access off and accepts only exact operator values", () => {
     const env = { ...testSecurityEnvironment(), ...requiredEnvironment() };
     expect(loadConfig(env).providerAllowPrivateEndpoints).toBe(false);

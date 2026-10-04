@@ -3,8 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeSkillTemporaryClient } from "../../src/adapters/runtime-skill-temporary-client.js";
 import { RuntimeSkillMaintenanceSigner } from "../../src/adapters/runtime-skill-maintenance-signer.js";
 import { packageWithFiles, packageWithFilesDigest } from "../fixtures/skill-discovery-package.js";
+import type { RuntimeBinding } from "../../src/domain/types.js";
 
 const scope = {
+  revision: `rtv_${"a".repeat(32)}`,
+  connectionId: `rci_${"b".repeat(32)}`,
   runId: "run_1",
   organizationId: "org_1",
   agentId: "agent_1",
@@ -23,14 +26,25 @@ function fixture() {
   const pair = generateKeyPairSync("ed25519");
   const signer = new RuntimeSkillMaintenanceSigner("key-1", pair.privateKey);
   const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
-  const client = new RuntimeSkillTemporaryClient(signer, fetchFn, {
+  const connections = {
+    fetchFor: vi.fn<(binding: RuntimeBinding) => typeof fetch>(
+      () =>
+        (url, init = {}) =>
+          fetchFn(
+            url instanceof Request ? url.url : typeof url === "string" ? url : url.href,
+            init,
+          ),
+    ),
+    retainRun: vi.fn<(runId: string, binding: RuntimeBinding) => void>(),
+  };
+  const client = new RuntimeSkillTemporaryClient(signer, connections, {
     installTimeoutMs: 100,
     cleanupTimeoutMs: 100,
   });
-  return { client, fetchFn, pair };
+  return { client, fetchFn, pair, connections };
 }
 function installReply(init: RequestInit, patch: Record<string, unknown> = {}) {
-  const token = (init.headers as Record<string, string>).Authorization!.split(" ")[1]!.split(".");
+  const token = new Headers(init.headers).get("Authorization")!.split(" ")[1]!.split(".");
   const payload = JSON.parse(Buffer.from(token[1]!, "base64url").toString()) as Record<
     string,
     unknown
@@ -57,18 +71,129 @@ function status(execution = scope.executionId, agent = scope.agentId) {
   return Response.json({ status: "ready", agent_id: agent, execution_id: execution });
 }
 describe("signed Runtime temporary client", () => {
+  it("rejects missing sender material before install I/O and leaves cleanup unconfirmed", async () => {
+    const f = fixture();
+    f.connections.retainRun.mockImplementation(() => {
+      throw new Error("Runtime connection is unavailable");
+    });
+    await expect(
+      f.client.install(scope, loaded, new AbortController().signal),
+    ).rejects.toMatchObject({ effectState: "none", runtimeCallStopped: true });
+    expect(f.fetchFn).not.toHaveBeenCalled();
+    f.connections.fetchFor.mockImplementation(() => {
+      throw new Error("Runtime connection is unavailable");
+    });
+    await expect(f.client.cleanup(scope, new AbortController().signal)).rejects.toMatchObject({
+      effectState: "unknown",
+      runtimeCallStopped: false,
+    });
+    expect(f.fetchFn).not.toHaveBeenCalled();
+  });
+  it.each([
+    [401, "runtime_unauthorized"],
+    [403, "caller_not_allowed"],
+    [403, "host_not_allowed"],
+  ] as const)(
+    "recognizes native admission denial %i/%s before temporary installation",
+    async (statusCode, code) => {
+      const f = fixture();
+      f.fetchFn.mockResolvedValue(
+        Response.json(
+          { code, message: "Runtime request rejected", retryable: false },
+          {
+            status: statusCode,
+            headers:
+              statusCode === 401 ? { "WWW-Authenticate": 'Bearer realm="antnest-service"' } : {},
+          },
+        ),
+      );
+      await expect(
+        f.client.install(scope, loaded, new AbortController().signal),
+      ).rejects.toMatchObject({ effectState: "none", runtimeCallStopped: true, remoteCode: code });
+      expect(f.connections.fetchFor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          revision: scope.revision,
+          connectionId: scope.connectionId,
+          executionId: scope.executionId,
+          mcpEndpoint: scope.mcpEndpoint,
+        }),
+      );
+    },
+  );
+  it("does not use a denied release as proof that an earlier install has been cleaned", async () => {
+    const f = fixture();
+    f.fetchFn.mockImplementation((url) =>
+      Promise.resolve(
+        url.endsWith("/status")
+          ? status()
+          : Response.json(
+              { code: "caller_not_allowed", message: "Runtime request rejected", retryable: false },
+              { status: 403 },
+            ),
+      ),
+    );
+    await expect(f.client.cleanup(scope, new AbortController().signal)).rejects.toMatchObject({
+      effectState: "unknown",
+      runtimeCallStopped: false,
+    });
+    expect(f.fetchFn).toHaveBeenCalledTimes(2);
+  });
   it("checks a newly published endpoint after rebuild rather than treating a missing old endpoint as cleanup proof", async () => {
     const f = fixture();
-    const current = { executionId: "execution-2", mcpEndpoint: "http://replacement:8093/mcp" };
-    const client = new RuntimeSkillTemporaryClient(undefined, f.fetchFn, undefined, () => current);
+    const current = {
+      revision: `rtv_${"c".repeat(32)}`,
+      connectionId: `rci_${"d".repeat(32)}`,
+      executionId: "execution-2",
+      mcpEndpoint: "http://replacement:8093/mcp",
+    };
+    const client = new RuntimeSkillTemporaryClient(
+      undefined,
+      f.connections,
+      undefined,
+      () => current,
+    );
     f.fetchFn.mockResolvedValue(status("execution-2"));
     await client.cleanup(scope, new AbortController().signal);
+    expect(f.connections.fetchFor).toHaveBeenCalledWith(current);
+    expect(
+      new Headers(f.fetchFn.mock.calls[0]![1].headers).get("X-Antnest-Expected-Execution-ID"),
+    ).toBe(current.executionId);
     expect(f.fetchFn.mock.calls[0]![0]).toBe("http://replacement:8093/status");
     expect(f.fetchFn).toHaveBeenCalledTimes(1);
   });
+  it.each(["revision", "connectionId", "mcpEndpoint"] as const)(
+    "rejects a changed %s under the same execution identity",
+    async (field) => {
+      const f = fixture();
+      const current = {
+        revision: scope.revision,
+        connectionId: scope.connectionId,
+        executionId: scope.executionId,
+        mcpEndpoint: scope.mcpEndpoint,
+        [field]:
+          field === "mcpEndpoint"
+            ? "http://replacement:8093/mcp"
+            : `${field === "revision" ? "rtv" : "rci"}_${"f".repeat(32)}`,
+      };
+      const client = new RuntimeSkillTemporaryClient(
+        undefined,
+        f.connections,
+        undefined,
+        () => current,
+      );
+      f.fetchFn.mockResolvedValue(status());
+      await expect(client.cleanup(scope, new AbortController().signal)).rejects.toMatchObject({
+        effectState: "unknown",
+        runtimeCallStopped: false,
+      });
+      expect(f.fetchFn).not.toHaveBeenCalled();
+    },
+  );
   it("does not accept a replacement endpoint reporting a different execution than its published binding", async () => {
     const f = fixture();
-    const client = new RuntimeSkillTemporaryClient(undefined, f.fetchFn, undefined, () => ({
+    const client = new RuntimeSkillTemporaryClient(undefined, f.connections, undefined, () => ({
+      revision: `rtv_${"c".repeat(32)}`,
+      connectionId: `rci_${"d".repeat(32)}`,
       executionId: "execution-2",
       mcpEndpoint: "http://replacement:8093/mcp",
     }));
@@ -80,7 +205,7 @@ describe("signed Runtime temporary client", () => {
   });
   it("keeps an old scope pending when its signing key is absent and does not send unsigned mutations", async () => {
     const f = fixture();
-    const client = new RuntimeSkillTemporaryClient(undefined, f.fetchFn);
+    const client = new RuntimeSkillTemporaryClient(undefined, f.connections);
     f.fetchFn.mockResolvedValue(status());
     await expect(client.cleanup(scope, new AbortController().signal)).rejects.toThrow();
     expect(f.fetchFn).toHaveBeenCalledTimes(1);
@@ -98,8 +223,9 @@ describe("signed Runtime temporary client", () => {
     });
     const [url, init] = f.fetchFn.mock.calls[0]!;
     expect(url).toBe("http://runtime:8093/internal/skill-temporary/install");
-    const [header, payload, signature] = (init.headers as Record<string, string>)
-      .Authorization!.split(" ")[1]!
+    const [header, payload, signature] = new Headers(init.headers)
+      .get("Authorization")!
+      .split(" ")[1]!
       .split(".") as [string, string, string];
     expect(
       verify(
@@ -177,10 +303,13 @@ describe("signed Runtime temporary client", () => {
     });
     expect(f.fetchFn).not.toHaveBeenCalled();
   });
-  it("a ready new execution of the same Agent proves inherited cleanup without old release", async () => {
+  it("does not trust a new execution returned through only the original binding", async () => {
     const f = fixture();
     f.fetchFn.mockResolvedValue(status("execution-2"));
-    await f.client.cleanup(scope, new AbortController().signal);
+    await expect(f.client.cleanup(scope, new AbortController().signal)).rejects.toMatchObject({
+      effectState: "unknown",
+      runtimeCallStopped: false,
+    });
     expect(f.fetchFn).toHaveBeenCalledTimes(1);
   });
   it.each([

@@ -1,4 +1,5 @@
 import { testSecurityEnvironment } from "./support/auth-fixture.js";
+import { runtimeConnections } from "./support/runtime-connections.js";
 import { getEventListeners } from "node:events";
 import { generateKeyPairSync } from "node:crypto";
 import { Pool } from "pg";
@@ -28,6 +29,8 @@ describe("production execution configuration composition", () => {
   it("keeps temporary cleanup and its foreground admission guard even with discovery disabled", async () => {
     const pool = new Pool();
     const scope = {
+      revision: `rtv_${"a".repeat(32)}`,
+      connectionId: `rci_${"b".repeat(32)}`,
       organizationId: binding().organizationId,
       agentId: binding().agentId,
       runId: "previous-run",
@@ -50,6 +53,7 @@ describe("production execution configuration composition", () => {
       NOOP_TELEMETRY,
       vi.fn(),
       new AbortController().signal,
+      runtimeConnections(),
     );
     const accept = vi.fn();
     try {
@@ -90,6 +94,7 @@ describe("production execution configuration composition", () => {
         NOOP_TELEMETRY,
         vi.fn(),
         new AbortController().signal,
+        runtimeConnections(),
       );
       const open = executionConfiguration();
       await components.directory.apply(open);
@@ -98,6 +103,7 @@ describe("production execution configuration composition", () => {
       const closed = structuredClone(open);
       closed.revision += 1;
       closed.agents[0]!.accepting_runs = false;
+      delete closed.agents[0]!.runtime?.credential;
       closed.agents[0]!.operation_id = "operation-1";
       await components.directory.apply(closed);
       expect(maintenance.signal.reason).toBeInstanceOf(LifecycleLearningStopped);
@@ -133,6 +139,7 @@ describe("production execution configuration composition", () => {
       NOOP_TELEMETRY,
       vi.fn(),
       new AbortController().signal,
+      runtimeConnections(),
     );
     try {
       expect(
@@ -142,6 +149,7 @@ describe("production execution configuration composition", () => {
           NOOP_TELEMETRY,
           vi.fn(),
           new AbortController().signal,
+          runtimeConnections(),
         ).learningWorker,
       ).toBeUndefined();
       expect(
@@ -151,6 +159,7 @@ describe("production execution configuration composition", () => {
           NOOP_TELEMETRY,
           vi.fn(),
           new AbortController().signal,
+          runtimeConnections(),
         ).learningWorker,
       ).toBeUndefined();
       expect(configured.learningWorker).toBeInstanceOf(LearningWorker);
@@ -195,6 +204,7 @@ describe("production execution configuration composition", () => {
         NOOP_TELEMETRY,
         vi.fn(),
         new AbortController().signal,
+        runtimeConnections(),
       );
       const lifetime = new AbortController();
       const pendingOutput = Promise.withResolvers<SessionOutputSnapshot>();
@@ -242,6 +252,7 @@ describe("production execution configuration composition", () => {
         const closed = executionConfiguration();
         closed.revision = 2;
         closed.agents[0]!.accepting_runs = false;
+        delete closed.agents[0]!.runtime?.credential;
         closed.agents[0]!.unavailable_reason = "Rebuilding";
         await components.directory.apply(closed);
         expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(false);

@@ -112,6 +112,7 @@ describe("Agent settlement HTTP contract", () => {
       const closed = executionConfiguration();
       closed.revision = 2;
       closed.agents[0]!.accepting_runs = false;
+      delete closed.agents[0]!.runtime?.credential;
       closed.agents[0]!.operation_id = "operation-1";
       await local.directory.apply(closed);
       const settlement = new AgentSettlement({
@@ -232,6 +233,7 @@ describe("Agent settlement HTTP contract", () => {
       const closed = executionConfiguration();
       closed.revision = 2;
       closed.agents[0]!.accepting_runs = false;
+      delete closed.agents[0]!.runtime?.credential;
       closed.agents[0]!.operation_id = "operation-1";
       await local.directory.apply(closed);
       const entered = Promise.withResolvers<AbortSignal>();

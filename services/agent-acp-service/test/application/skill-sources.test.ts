@@ -10,7 +10,12 @@ const owner_id = `user_${"c".repeat(32)}`;
 const text =
   '---\nname: "inspect-first"\ndescription: "Inspect before editing."\n---\nInspect the file.\n';
 const key = { agent_id, name: "inspect-first" };
-const runtime = { runtime_execution_id: "execution-1", mcp_endpoint: "http://runtime/mcp" };
+const runtime = {
+  runtime_revision: `rtv_${"a".repeat(32)}`,
+  runtime_execution_id: "execution-1",
+  mcp_endpoint: "http://runtime:8080/mcp",
+  connection_id: `rci_${"b".repeat(32)}`,
+};
 
 function setup() {
   const packageValue = learningSkillTextPackage(text);
@@ -112,8 +117,42 @@ describe("current Agent-owned Skill sources", () => {
     expect(loaded.package.artifact).toEqual(s.record.package.artifact);
     expect(loaded.projection).toEqual(s.projection);
     expect(s.verify).toHaveBeenCalledTimes(2);
+    expect(s.verify).toHaveBeenCalledWith(
+      s.record,
+      {
+        revision: runtime.runtime_revision,
+        executionId: runtime.runtime_execution_id,
+        mcpEndpoint: runtime.mcp_endpoint,
+        connectionId: runtime.connection_id,
+      },
+      signal,
+    );
     expect(s.finish).toHaveBeenCalledWith(true);
   });
+
+  it.each(["runtime_revision", "connection_id"] as const)(
+    "rejects a changed %s even when the endpoint and execution fence are unchanged",
+    async (field) => {
+      const s = setup();
+      s.verify.mockImplementation(() => {
+        s.inspect.mockReturnValue({
+          agent: {
+            accepting_runs: true,
+            runtime: {
+              ...runtime,
+              [field]: `${field === "connection_id" ? "rci" : "rtv"}_${"f".repeat(32)}`,
+            },
+          },
+        });
+        return Promise.resolve("current");
+      });
+      await expect(
+        s.service.artifact(s.artifact, new AbortController().signal),
+      ).rejects.toMatchObject({
+        code: "source_unavailable",
+      });
+    },
+  );
 
   it("does not reveal another owner's personal source even if Agent access allows that actor", async () => {
     const s = setup();

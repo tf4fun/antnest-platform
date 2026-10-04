@@ -5,13 +5,16 @@ import {
   RuntimeMaintenanceUnknownError,
 } from "../domain/learning-maintenance-errors.js";
 import type { LearningTaskClaim } from "../domain/learning-scan.js";
+import type { RuntimeBinding } from "../domain/types.js";
 
-type Binding = { executionId: string; mcpEndpoint: string; acceptingRuns?: boolean };
+type Binding = RuntimeBinding & { acceptingRuns?: boolean };
 type Intent = {
   requestId: string;
   action: string;
   executionId: string;
   mcpEndpoint: string;
+  revision: string | null;
+  connectionId: string | null;
   requestFacts: Record<string, unknown>;
 };
 type Ledger = {
@@ -77,8 +80,12 @@ export class LearningEffectRecovery {
     const current = await this.bindings.current(claim);
     if (
       current === null ||
+      effect.revision === null ||
+      effect.connectionId === null ||
       (current.executionId === effect.executionId
-        ? current.mcpEndpoint !== effect.mcpEndpoint
+        ? current.mcpEndpoint !== effect.mcpEndpoint ||
+          current.revision !== effect.revision ||
+          current.connectionId !== effect.connectionId
         : current.acceptingRuns !== true)
     )
       return "binding_changed";

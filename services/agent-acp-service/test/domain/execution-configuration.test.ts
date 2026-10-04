@@ -5,7 +5,11 @@ import {
   publicExecutionConfiguration,
   resolveExecutionConfiguration,
 } from "../../src/domain/execution-configuration.js";
-import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
+import {
+  closedExecutionAgent,
+  executionConfiguration,
+  executionIdentity,
+} from "../fixtures/execution-configuration.js";
 
 describe("execution configuration", () => {
   it("rejects the retired skill instruction body channel", () => {
@@ -223,8 +227,7 @@ describe("execution configuration", () => {
     const disabled = parseExecutionConfiguration({
       ...fixture,
       agents: fixture.agents.map((agent) => ({
-        ...agent,
-        accepting_runs: false,
+        ...closedExecutionAgent(agent),
         unavailable_reason: "disabled",
       })),
     });

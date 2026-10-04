@@ -145,6 +145,7 @@ export class PromptCoordinator {
         clientMcpRevisionId: intent.clientMcpRevisionId,
         deadlineAt: new Date(now.getTime() + this.dependencies.runTimeoutMs),
       });
+      this.dependencies.directory.retainRuntimeRun(runId, snapshot.runtime);
     } catch (error) {
       await this.persist(async () => {
         if (signal.aborted)
@@ -160,16 +161,27 @@ export class PromptCoordinator {
 
     const acceptedAt = this.dependencies.now();
     const title = session.title ?? defaultSessionTitle(input.prompt);
-    const disposition = await this.persist(() =>
-      this.dependencies.repository.acceptRun({
-        runId,
-        snapshot,
-        environmentFact: environmentChangeFact(session, snapshot),
-        ...(title === undefined ? {} : { sessionTitle: title }),
-        acceptedAt,
-      }),
-    );
-    if (disposition === "cancelled") throw cancelledError();
+    let disposition: Awaited<ReturnType<RunRepository["acceptRun"]>>;
+    try {
+      disposition = await this.persist(() =>
+        this.dependencies.repository.acceptRun({
+          runId,
+          snapshot,
+          environmentFact: environmentChangeFact(session, snapshot),
+          ...(title === undefined ? {} : { sessionTitle: title }),
+          acceptedAt,
+        }),
+      );
+    } catch (error) {
+      // A lost storage receipt may already have accepted this exact binding.
+      // Leave that pin to startup/reconciliation instead of discarding authority.
+      if (error instanceof DomainError) this.dependencies.directory.releaseRuntimeRun(runId);
+      throw error;
+    }
+    if (disposition === "cancelled") {
+      this.dependencies.directory.releaseRuntimeRun(runId);
+      throw cancelledError();
+    }
     const command = matchCommand(intent.prompt);
     return {
       outputSequence: session.lastMessageSequence,

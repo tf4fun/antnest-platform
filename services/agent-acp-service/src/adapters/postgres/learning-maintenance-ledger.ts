@@ -2,6 +2,11 @@ import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 
 import type { LearningTaskClaim } from "../../domain/learning-scan.js";
+import {
+  runtimeConnectionIdSchema,
+  runtimeRevisionSchema,
+  runtimeMcpEndpointSchema,
+} from "../../domain/runtime-connection.js";
 import type { PostgresKernel } from "./kernel.js";
 
 type Action = "prepare" | "check" | "commit" | "observe" | "cancel" | "release";
@@ -12,6 +17,8 @@ type Intent = {
   action: Action;
   executionId: string;
   mcpEndpoint: string;
+  revision: string;
+  connectionId: string;
   bodySha256: string;
   requestFacts: Record<string, unknown>;
 };
@@ -23,6 +30,8 @@ type SavedIntent = {
   action: Action;
   execution_id: string;
   mcp_endpoint: string;
+  runtime_revision: string | null;
+  connection_id: string | null;
   body_sha256: string;
   request_facts: Record<string, unknown>;
   state: State;
@@ -30,7 +39,10 @@ type SavedIntent = {
 };
 
 export class PostgresLearningMaintenanceLedger {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    private readonly onSettled?: (requestId: string) => void,
+  ) {}
 
   public async reserve(input: Intent): Promise<{ dispatch: boolean; state: State }> {
     validateIntent(input);
@@ -69,8 +81,8 @@ export class PostgresLearningMaintenanceLedger {
       await client.query(
         `INSERT INTO learning_maintenance_intents
         (request_id,task_id,claim_id,generation,action,execution_id,mcp_endpoint,
-         body_sha256,request_facts,state)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'pending')`,
+         body_sha256,request_facts,runtime_revision,connection_id,state)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,'pending')`,
         [
           input.requestId,
           input.claim.taskId,
@@ -81,6 +93,8 @@ export class PostgresLearningMaintenanceLedger {
           input.mcpEndpoint,
           input.bodySha256,
           JSON.stringify(input.requestFacts),
+          input.revision,
+          input.connectionId,
         ],
       );
       return { dispatch: true, state: "pending" as const };
@@ -129,6 +143,7 @@ export class PostgresLearningMaintenanceLedger {
         [requestId, serialized],
       );
     });
+    this.onSettled?.(requestId);
   }
 
   public async reject(
@@ -166,6 +181,7 @@ export class PostgresLearningMaintenanceLedger {
         [requestId, JSON.stringify(receipt)],
       );
     });
+    this.onSettled?.(requestId);
   }
 
   public async settleObservedEffect(
@@ -175,7 +191,7 @@ export class PostgresLearningMaintenanceLedger {
   ): Promise<"settled" | "unknown"> {
     if (effectRequestId === observationRequestId)
       throw new Error("An effect cannot observe its own request");
-    return this.kernel.transaction(async (client) => {
+    const outcome = await this.kernel.transaction(async (client) => {
       const effect = await this.lockClaimIntent(client, claim, effectRequestId);
       const observation = await this.lockClaimIntent(client, claim, observationRequestId);
       const expected = effect.action === "commit" ? effect.request_facts.target_digest : undefined;
@@ -217,7 +233,7 @@ export class PostgresLearningMaintenanceLedger {
       if (effect.state === "settled") {
         if (!isDeepStrictEqual(effect.receipt, result))
           throw new Error("Learning effect observation conflicts with a settled outcome");
-        return "settled";
+        return "settled" as const;
       }
       await client.query(
         `UPDATE learning_maintenance_intents
@@ -225,8 +241,13 @@ export class PostgresLearningMaintenanceLedger {
         WHERE request_id=$1`,
         [effectRequestId, JSON.stringify(result)],
       );
-      return "settled";
+      return "settled" as const;
     });
+    if (outcome === "settled") {
+      this.onSettled?.(effectRequestId);
+      this.onSettled?.(observationRequestId);
+    }
+    return outcome;
   }
 
   public async unresolved(claim: LearningTaskClaim): Promise<
@@ -235,6 +256,8 @@ export class PostgresLearningMaintenanceLedger {
       action: Action;
       executionId: string;
       mcpEndpoint: string;
+      revision: string | null;
+      connectionId: string | null;
       bodySha256: string;
       requestFacts: Record<string, unknown>;
       state: "pending" | "unknown";
@@ -266,6 +289,8 @@ export class PostgresLearningMaintenanceLedger {
         action: row.action,
         executionId: row.execution_id,
         mcpEndpoint: row.mcp_endpoint,
+        revision: row.runtime_revision,
+        connectionId: row.connection_id,
         bodySha256: row.body_sha256,
         requestFacts: row.request_facts,
         state: row.state,
@@ -281,6 +306,8 @@ export class PostgresLearningMaintenanceLedger {
     action: Action;
     executionId: string;
     mcpEndpoint: string;
+    revision: string | null;
+    connectionId: string | null;
     bodySha256: string;
     requestFacts: Record<string, unknown>;
     state: State;
@@ -311,6 +338,8 @@ export class PostgresLearningMaintenanceLedger {
           action: saved.action,
           executionId: saved.execution_id,
           mcpEndpoint: saved.mcp_endpoint,
+          revision: saved.runtime_revision,
+          connectionId: saved.connection_id,
           bodySha256: saved.body_sha256,
           requestFacts: saved.request_facts,
           state: saved.state,
@@ -378,6 +407,8 @@ function matchesIntent(saved: SavedIntent, input: Intent): boolean {
     saved.action === input.action &&
     saved.execution_id === input.executionId &&
     saved.mcp_endpoint === input.mcpEndpoint &&
+    saved.runtime_revision === input.revision &&
+    saved.connection_id === input.connectionId &&
     saved.body_sha256 === input.bodySha256 &&
     isDeepStrictEqual(saved.request_facts, input.requestFacts)
   );
@@ -387,6 +418,9 @@ function validateIntent(input: Intent): void {
   const url = new URL(input.mcpEndpoint);
   const facts = JSON.stringify(input.requestFacts) as string | undefined;
   if (
+    !runtimeRevisionSchema.safeParse(input.revision).success ||
+    !runtimeConnectionIdSchema.safeParse(input.connectionId).success ||
+    !runtimeMcpEndpointSchema.safeParse(input.mcpEndpoint).success ||
     !/^[!-~]{1,128}$/u.test(input.requestId) ||
     input.requestId.includes("/") ||
     input.requestId.includes("\\") ||

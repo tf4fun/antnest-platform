@@ -11,6 +11,7 @@ import type { LearningReviewDecision } from "../domain/learning-review-proposal.
 import { learningPolicySchema } from "../domain/learning-policy.js";
 import type { LearningScanScope, LearningTaskClaim } from "../domain/learning-scan.js";
 import type { RuntimeInformation } from "../domain/runtime-information.js";
+import type { RuntimeBinding } from "../domain/types.js";
 
 type Review = {
   execute(input: {
@@ -44,7 +45,7 @@ type Outcomes = {
     packagePath: string,
   ): Promise<{ state: "skipped" }>;
 };
-type Binding = { executionId: string; mcpEndpoint: string };
+type Binding = RuntimeBinding;
 type Runtime = {
   current(claim: LearningTaskClaim): Promise<Binding | null>;
   readBinding(

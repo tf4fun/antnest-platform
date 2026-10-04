@@ -643,9 +643,14 @@ mandatory before listening. JSON parsing fails before effects on ambiguous media
 duplicate members, malformed UTF-8 or extra documents.
 
 This ACP batch authenticates outgoing Identity, optional Controller policy and
-Registry clients. Runtime outbound adoption is pending RC's instance-specific
-private connection reference (#29/#30); existing execution fences and signed
-maintenance tickets stay in force. Controller/Registry/UI client adoption and
-separate-network deployment wiring remain their owning batches. Follow the
+Registry clients. MCP/status, Skill source observation, maintenance and temporary
+clients use the RC-issued instance reference privately relayed by Controller
+(#30). ACP stages volatile per-instance files before publication, keeps tokens out
+of database/Run/audit projections, and retains original accepted authority through
+closure until durable settlement or process cleanup. Execution fences and signed
+maintenance tickets remain independent checks. See
+[execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission).
+Registry receiver adoption and separate-network deployment wiring remain their
+owning batches. Follow the
 [rollout ledger](../../../contracts/platform/service-authentication-rollout.json);
 final cross-service security E2E runs after all service gates pass.

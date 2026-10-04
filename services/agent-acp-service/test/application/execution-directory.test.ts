@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   ExecutionDirectory,
@@ -7,10 +9,16 @@ import { ProviderClients } from "../../src/application/provider-clients.js";
 import {
   parseExecutionConfiguration,
   publicExecutionConfiguration,
+  resolveExecutionConfiguration,
   type PublicExecutionConfiguration,
 } from "../../src/domain/execution-configuration.js";
 import type { ExecutionConfigurationRepository } from "../../src/ports/execution-configuration.js";
-import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
+import {
+  executionConfiguration,
+  executionIdentity,
+  runtimeConfiguration,
+} from "../fixtures/execution-configuration.js";
+import { runtimeConnections } from "../support/runtime-connections.js";
 
 class MemoryConfigurationRepository implements ExecutionConfigurationRepository {
   public readonly records = new Map<string, PublicExecutionConfiguration>();
@@ -33,25 +41,195 @@ function setup(repository = new MemoryConfigurationRepository()) {
   });
   const onApplied = vi.fn<ExecutionDirectoryDependencies["onApplied"]>(() => Promise.resolve());
   const onUnavailable = vi.fn<ExecutionDirectoryDependencies["onUnavailable"]>();
-  const directory = new ExecutionDirectory({ repository, clients, onApplied, onUnavailable });
-  return { repository, clients, onApplied, onUnavailable, directory };
+  const connections = runtimeConnections();
+  const directory = new ExecutionDirectory({
+    repository,
+    clients,
+    runtimeConnections: connections,
+    onApplied,
+    onUnavailable,
+  });
+  return { repository, clients, connections, onApplied, onUnavailable, directory };
 }
 
 describe("execution directory", () => {
-  it("exposes only a published Runtime binding for private cleanup, including a closed Agent", async () => {
-    const { directory } = setup();
+  function binding(configuration = executionConfiguration()) {
+    return resolveExecutionConfiguration(
+      publicExecutionConfiguration(parseExecutionConfiguration(configuration)),
+      executionIdentity(),
+      {},
+    ).runtime;
+  }
+
+  it("publishes usable private Runtime authority while storing and exposing only its public reference", async () => {
+    const { directory, repository, connections, onApplied } = setup();
+    const configuration = executionConfiguration();
+    const reference = binding(configuration);
+    onApplied.mockImplementationOnce((candidate) => {
+      expect(JSON.stringify(candidate)).not.toContain(
+        configuration.agents[0]!.runtime!.credential!.token,
+      );
+      expect(() => connections.fetchFor(reference)).toThrow();
+      return Promise.resolve();
+    });
+    await directory.apply(configuration);
+    expect(() => connections.fetchFor(reference)).not.toThrow();
+    expect(JSON.stringify([...repository.records.values()])).not.toContain(
+      configuration.agents[0]!.runtime!.credential!.token,
+    );
+    expect(directory.inspect(executionIdentity()).agent.runtime).toEqual({
+      runtime_revision: reference.revision,
+      runtime_execution_id: reference.executionId,
+      mcp_endpoint: reference.mcpEndpoint,
+      connection_id: reference.connectionId,
+    });
+  });
+
+  it.each([1, 2])(
+    "rejects changed Runtime credentials before acknowledgement or storage at revision %i",
+    async (revision) => {
+      const { directory, repository, onApplied } = setup();
+      await directory.apply(executionConfiguration());
+      const changed = executionConfiguration();
+      changed.revision = revision;
+      changed.agents[0]!.runtime!.credential!.token = Buffer.alloc(32, 7).toString("base64url");
+      await expect(directory.apply(changed)).rejects.toMatchObject({
+        code: "configuration_conflict",
+      });
+      expect(repository.save).toHaveBeenCalledTimes(1);
+      expect(onApplied).toHaveBeenCalledTimes(1);
+      expect(directory.inspect(executionIdentity()).configuration.revision).toBe(1);
+    },
+  );
+
+  it("rechecks sender files before acknowledging an equal-revision replay", async () => {
+    const { directory, repository, connections, onApplied } = setup();
+    await directory.apply(executionConfiguration());
+    unlinkSync(join(connections.directory, binding().connectionId, "antnest-runtime"));
+    await expect(directory.apply(executionConfiguration())).rejects.toMatchObject({
+      code: "runtime_connection_unavailable",
+    });
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["database", "cas", "lost_receipt"])(
+    "rolls back candidate authority and keeps the original connection after %s failure",
+    async (failure) => {
+      const { directory, repository, connections } = setup();
+      await directory.apply(executionConfiguration());
+      const previous = binding();
+      const changed = executionConfiguration();
+      changed.revision = 2;
+      changed.agents[0]!.runtime = runtimeConfiguration(2);
+      const candidate = binding(changed);
+      if (failure === "cas") repository.save.mockResolvedValueOnce(false);
+      else
+        repository.save.mockImplementationOnce((configuration) => {
+          if (failure === "lost_receipt")
+            repository.records.set(configuration.organization_id, structuredClone(configuration));
+          return Promise.reject(new Error("storage failed"));
+        });
+      await expect(directory.apply(changed)).rejects.toThrow();
+      expect(() => connections.fetchFor(previous)).not.toThrow();
+      expect(() => connections.fetchFor(candidate)).toThrow();
+      expect(readdirSync(connections.directory)).toEqual([previous.connectionId]);
+      expect(directory.inspect(executionIdentity()).configuration.revision).toBe(1);
+      if (failure === "lost_receipt") {
+        await directory.apply(changed);
+        expect(() => connections.fetchFor(candidate)).not.toThrow();
+        expect(() => connections.fetchFor(previous)).toThrow();
+      }
+    },
+  );
+
+  it("revokes publication authority on failure but preserves an already accepted original Run", async () => {
+    const { directory, connections, onApplied } = setup();
+    await directory.apply(executionConfiguration());
+    const previous = binding();
+    connections.retainRun("accepted-run", previous);
+    const changed = executionConfiguration();
+    changed.revision = 2;
+    changed.agents[0]!.runtime = runtimeConfiguration(2);
+    onApplied.mockRejectedValueOnce(new Error("publication failed"));
+    await expect(directory.apply(changed)).rejects.toThrow("publication failed");
+    expect(() => directory.inspect(executionIdentity())).toThrow("ready");
+    expect(() => connections.fetchFor(previous)).not.toThrow();
+    expect(() => connections.retainRun("later-run", previous)).toThrow();
+    expect(() => connections.fetchFor(binding(changed))).toThrow();
+    connections.releaseRun("accepted-run");
+    expect(readdirSync(connections.directory)).toEqual([]);
+    await directory.apply(changed);
+    expect(() => connections.fetchFor(binding(changed))).not.toThrow();
+  });
+
+  it.each([2, 3])(
+    "keeps immutable Runtime credential identity after failed publication when revision %i is retried",
+    async (revision) => {
+      const { directory, onApplied, repository } = setup();
+      await directory.apply(executionConfiguration());
+      const changed = executionConfiguration();
+      changed.revision = 2;
+      changed.agents[0]!.runtime = runtimeConfiguration(2);
+      onApplied.mockRejectedValueOnce(new Error("publication failed"));
+      await expect(directory.apply(changed)).rejects.toThrow("publication failed");
+      const altered = structuredClone(changed);
+      altered.revision = revision;
+      altered.agents[0]!.runtime!.credential!.token = Buffer.alloc(32, 7).toString("base64url");
+      await expect(directory.apply(altered)).rejects.toMatchObject({
+        code: "configuration_conflict",
+      });
+      expect(repository.records.get("organization-1")?.revision).toBe(2);
+      await directory.apply(changed);
+    },
+  );
+
+  it("closes execution if a staged sender file disappears during publication", async () => {
+    const { directory, connections, onApplied, onUnavailable } = setup();
+    const configuration = executionConfiguration();
+    onApplied.mockImplementationOnce(() => {
+      unlinkSync(join(connections.directory, binding().connectionId, "antnest-runtime"));
+      return Promise.resolve();
+    });
+    await expect(directory.apply(configuration)).rejects.toMatchObject({
+      code: "runtime_connection_unavailable",
+    });
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith("organization-1");
+    expect(() => directory.inspect(executionIdentity())).toThrow("ready");
+    expect(existsSync(join(connections.directory, binding().connectionId))).toBe(false);
+  });
+
+  it("exposes only installed and retained Runtime authority for private cleanup of a closed Agent", async () => {
+    const { directory, connections } = setup();
     const scope = { organizationId: "organization-1", agentId: "agent-1" };
     expect(directory.runtimeForCleanup(scope)).toBeNull();
     const configuration = executionConfiguration();
+    await directory.apply(configuration);
+    const original = binding(configuration);
+    connections.retainRun("accepted-run", original);
+    configuration.revision++;
     configuration.agents[0]!.accepting_runs = false;
+    delete configuration.agents[0]!.runtime?.credential;
+    delete configuration.agents[0]!.runtime?.connection_id;
     configuration.agents[0]!.principal_ids = [];
     await directory.apply(configuration);
-    expect(directory.runtimeForCleanup(scope)).toEqual({
-      executionId: configuration.agents[0]!.runtime!.runtime_execution_id,
-      mcpEndpoint: configuration.agents[0]!.runtime!.mcp_endpoint,
-    });
+    expect(directory.runtimeForCleanup(scope)).toEqual(original);
     expect(directory.runtimeForCleanup({ ...scope, organizationId: "other-org" })).toBeNull();
     expect(directory.runtimeForCleanup({ ...scope, agentId: "other-agent" })).toBeNull();
+    connections.releaseRun("accepted-run");
+    expect(directory.runtimeForCleanup(scope)).toBeNull();
+  });
+
+  it("cannot manufacture cleanup authority from a closed snapshot after restart", async () => {
+    const { directory, connections } = setup();
+    const configuration = executionConfiguration();
+    configuration.agents[0]!.accepting_runs = false;
+    delete configuration.agents[0]!.runtime?.credential;
+    await directory.apply(configuration);
+    expect(
+      directory.runtimeForCleanup({ organizationId: "organization-1", agentId: "agent-1" }),
+    ).toBeNull();
+    expect(readdirSync(connections.directory)).toEqual([]);
   });
   it("rejects nonempty legacy Skill bodies without changing the published configuration", async () => {
     const { directory, repository, onApplied } = setup();
@@ -74,6 +252,7 @@ describe("execution directory", () => {
     configuration.revision = 3;
     configuration.agents[0]!.principal_ids = [];
     configuration.agents[0]!.accepting_runs = false;
+    delete configuration.agents[0]!.runtime?.credential;
     configuration.agents[0]!.operation_id = "rebuild-1";
     await directory.apply(configuration);
     const operation = {
@@ -94,6 +273,8 @@ describe("execution directory", () => {
       const { directory } = setup();
       const configuration = executionConfiguration();
       configuration.agents[0]!.accepting_runs = condition === "open";
+      if (!configuration.agents[0]!.accepting_runs)
+        delete configuration.agents[0]!.runtime?.credential;
       configuration.agents[0]!.operation_id =
         condition === "wrong_operation" ? "rebuild-2" : "rebuild-1";
       if (condition === "missing") configuration.agents = [];
@@ -120,6 +301,7 @@ describe("execution directory", () => {
     const { directory, onApplied } = setup();
     const configuration = executionConfiguration();
     configuration.agents[0]!.accepting_runs = false;
+    delete configuration.agents[0]!.runtime?.credential;
     configuration.agents[0]!.operation_id = "rebuild-1";
     await directory.apply(configuration);
     const replacement = structuredClone(configuration);
@@ -466,7 +648,10 @@ describe("execution directory", () => {
   it("does not couple another organization's access to a pending configuration write", async () => {
     const { directory } = setup();
     await directory.apply(executionConfiguration());
-    await directory.apply({ ...executionConfiguration(), organization_id: "organization-2" });
+    const other = executionConfiguration();
+    other.organization_id = "organization-2";
+    other.agents[0]!.runtime = runtimeConfiguration(2);
+    await directory.apply(other);
     const entered = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
     const active = directory.withAccess(executionIdentity(), async () => {

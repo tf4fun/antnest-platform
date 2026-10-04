@@ -1,4 +1,5 @@
 import type { LearningTaskClaim } from "../domain/learning-scan.js";
+import type { RuntimeBinding } from "../domain/types.js";
 
 export type LearningCleanupItem = {
   claim: LearningTaskClaim;
@@ -7,7 +8,7 @@ export type LearningCleanupItem = {
   packagePath: string;
   expectedDigest: string;
 };
-type Binding = { executionId: string; mcpEndpoint: string; acceptingRuns?: boolean };
+type Binding = RuntimeBinding & { acceptingRuns?: boolean };
 type Store = { next(): Promise<LearningCleanupItem | null> };
 type Bindings = { current(claim: LearningTaskClaim): Promise<Binding | null> };
 type Runtime = {

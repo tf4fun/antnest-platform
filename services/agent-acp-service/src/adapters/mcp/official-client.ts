@@ -14,11 +14,13 @@ import {
 } from "./client-network.js";
 import type { McpConnectInput, McpConnection, McpDialer, McpRemoteTool } from "./tool-catalog.js";
 import { tracedFetch } from "../../telemetry/http.js";
+import { DomainError } from "../../domain/errors.js";
+import type { RuntimeConnectionAuthority } from "../../ports/runtime-connections.js";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 export type OfficialMcpDialerOptions =
-  | { trust: "runtime" }
+  | { trust: "runtime"; connections: Pick<RuntimeConnectionAuthority, "fetchFor"> }
   | {
       trust: "client";
       blockedCidrs?: string[];
@@ -28,6 +30,7 @@ export class OfficialMcpDialer implements McpDialer {
   public constructor(private readonly options: OfficialMcpDialerOptions) {}
 
   public async connect(input: McpConnectInput): Promise<McpConnection> {
+    const runtimeFetch = this.runtimeFetch(input);
     const managedFetch = this.clientFetch(input);
     const client = new Client(
       { name: "antnest-agent-acp-service", version: "0.1.0" },
@@ -38,9 +41,7 @@ export class OfficialMcpDialer implements McpDialer {
     );
     const transport = new StreamableHTTPClientTransport(input.endpoint, {
       requestInit: { headers: input.headers },
-      fetch:
-        managedFetch?.fetch ??
-        ((url, init = {}) => tracedFetch(fetch, "antnest-runtime")(url, init)),
+      fetch: runtimeFetch ?? managedFetch!.fetch,
       reconnectionOptions: {
         maxReconnectionDelay: 1_000,
         initialReconnectionDelay: 100,
@@ -57,6 +58,20 @@ export class OfficialMcpDialer implements McpDialer {
       await closeAfterFailure(client, managedFetch);
       throw error;
     }
+  }
+
+  private runtimeFetch(input: McpConnectInput): typeof fetch | undefined {
+    if (this.options.trust !== "runtime") return undefined;
+    if (
+      input.runtimeBinding === undefined ||
+      input.endpoint.href !== input.runtimeBinding.mcpEndpoint
+    )
+      throw new DomainError("runtime_connection_unavailable", "Runtime connection is unavailable");
+    const send = tracedFetch(
+      this.options.connections.fetchFor(input.runtimeBinding),
+      "antnest-runtime",
+    );
+    return (input, init = {}) => send(input, init);
   }
 
   private clientFetch(input: McpConnectInput): ManagedFetch | undefined {

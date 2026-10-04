@@ -20,6 +20,7 @@ describe("local Agent access", () => {
     const next = executionConfiguration();
     next.revision = 2;
     next.agents[0]!.accepting_runs = false;
+    delete next.agents[0]!.runtime?.credential;
     next.agents[0]!.unavailable_reason = "Rebuilding";
     await directory.apply(next);
     await expect(new AccessService({ directory }).assert(binding())).resolves.toBeUndefined();

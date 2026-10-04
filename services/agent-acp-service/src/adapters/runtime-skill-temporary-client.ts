@@ -15,8 +15,10 @@ import type {
 } from "../ports/temporary-skills.js";
 import { tracedFetch } from "../telemetry/http.js";
 import type { RuntimeSkillMaintenanceSigner } from "./runtime-skill-maintenance-signer.js";
+import type { RuntimeBinding } from "../domain/types.js";
+import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
+import { runtimeAdmissionDenial } from "../domain/runtime-admission-error.js";
 
-type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 const statusSchema = z.object({
   status: z.literal("ready"),
   agent_id: z.string().min(1).max(200),
@@ -25,11 +27,9 @@ const statusSchema = z.object({
 export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
   public constructor(
     private readonly signer: RuntimeSkillMaintenanceSigner | undefined,
-    private readonly fetchFn: Fetch = tracedFetch(fetch, "runtime"),
+    private readonly connections: Pick<RuntimeConnectionAuthority, "fetchFor" | "retainRun">,
     private readonly limits = { installTimeoutMs: 75000, cleanupTimeoutMs: 12000 },
-    private readonly currentBinding?: (
-      scope: TemporaryAgentScope,
-    ) => { executionId: string; mcpEndpoint: string } | null,
+    private readonly currentBinding?: (scope: TemporaryAgentScope) => RuntimeBinding | null,
   ) {
     for (const [name, value] of Object.entries(limits))
       if (
@@ -87,10 +87,20 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
     const operation = AbortSignal.any([signal, AbortSignal.timeout(this.limits.cleanupTimeoutMs)]);
     try {
       const binding = this.currentBinding?.(scope) ?? null;
-      const target = binding ? { ...scope, mcpEndpoint: binding.mcpEndpoint } : scope;
+      const original = runtimeBinding(scope);
+      const target = binding ?? original;
+      if (
+        target.executionId === original.executionId &&
+        (target.revision !== original.revision ||
+          target.connectionId !== original.connectionId ||
+          target.mcpEndpoint !== original.mcpEndpoint)
+      )
+        throw new TemporarySkillFailure("unknown", false);
+      const send = tracedFetch(this.connections.fetchFor(target), "runtime");
       const status = await bounded(async () => {
-        const response = await this.fetchFn(new URL("/status", target.mcpEndpoint).toString(), {
+        const response = await send(new URL("/status", target.mcpEndpoint).toString(), {
           method: "GET",
+          headers: { "X-Antnest-Expected-Execution-ID": target.executionId },
           redirect: "error",
           signal: operation,
         });
@@ -98,11 +108,7 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
         return statusSchema.parse(await jsonBounded(response, operation));
       }, operation);
       if (status.agent_id !== scope.agentId) throw new TemporarySkillFailure("unknown", false);
-      if (
-        binding &&
-        binding.executionId !== scope.executionId &&
-        status.execution_id !== binding.executionId
-      )
+      if (status.execution_id !== target.executionId)
         throw new TemporarySkillFailure("unknown", false);
       if (status.execution_id !== scope.executionId) return;
       const requestId = `release_${randomUUID().replaceAll("-", "")}`;
@@ -118,7 +124,7 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
         try {
           const result = temporaryReleasedSchema.parse(
             await this.dispatch(
-              target,
+              scope,
               "temporary_release",
               requestId,
               body,
@@ -148,8 +154,12 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
         }
       }
     } catch (error) {
-      if (error instanceof TemporarySkillFailure) throw error;
-      throw new TemporarySkillFailure("unknown", false);
+      // A denied/failed release proves nothing about the earlier install.
+      throw new TemporarySkillFailure(
+        "unknown",
+        false,
+        error instanceof TemporarySkillFailure ? error.remoteCode : undefined,
+      );
     }
   }
   private async dispatch(
@@ -164,6 +174,9 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
     try {
       signal.throwIfAborted();
       if (!this.signer) throw new TemporarySkillFailure("none", true);
+      const binding = runtimeBinding(scope);
+      if (action === "temporary_install") this.connections.retainRun(scope.runId, binding);
+      const send = tracedFetch(this.connections.fetchFor(binding), "runtime");
       const authorization = this.signer.sign({
         organizationId: scope.organizationId,
         agentId: scope.agentId,
@@ -177,7 +190,7 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
       signal.throwIfAborted();
       return await bounded(async () => {
         dispatchState.dispatched = true;
-        const response = await this.fetchFn(
+        const response = await send(
           new URL(
             `/internal/skill-temporary/${action === "temporary_install" ? "install" : "release"}`,
             scope.mcpEndpoint,
@@ -185,14 +198,20 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
           {
             method: "POST",
             redirect: "error",
-            headers: { Authorization: authorization, "Content-Type": contentType },
+            headers: {
+              Authorization: authorization,
+              "Content-Type": contentType,
+              "X-Antnest-Expected-Execution-ID": binding.executionId,
+            },
             body,
             signal,
           },
         );
+        const raw = await jsonBounded(response, signal);
+        const admissionCode = runtimeAdmissionDenial(response, raw);
+        if (admissionCode !== null) throw new TemporarySkillFailure("none", true, admissionCode);
         if (response.headers.get("cache-control") !== "no-store")
           throw new TemporarySkillFailure("unknown", false);
-        const raw = await jsonBounded(response, signal);
         if (!response.ok) {
           const error = temporaryErrorSchema.safeParse(raw);
           if (!error.success) throw new TemporarySkillFailure("unknown", false);
@@ -212,6 +231,14 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
       );
     }
   }
+}
+function runtimeBinding(scope: TemporarySkillScope): RuntimeBinding {
+  return {
+    revision: scope.revision,
+    executionId: scope.executionId,
+    mcpEndpoint: scope.mcpEndpoint,
+    connectionId: scope.connectionId,
+  };
 }
 async function jsonBounded(response: Response, signal: AbortSignal): Promise<unknown> {
   if (
