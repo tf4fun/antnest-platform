@@ -86,6 +86,10 @@ invalid or missing credential prevents startup. HTTPS pins each dependency's
 DNS name and service URI; HTTP requires the explicit disposable-development
 opt-in. Public Gateway readiness remains a local HTTP check.
 
+Authenticated dependency requests and ACP WebSocket handshakes disable
+environment/default-transport proxies. Service tokens and signed caller
+context are sent directly to the configured service origin.
+
 | Variable                         | Required | Default | Description                                                                                                                                                                 |
 | -------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP listen address; `--healthcheck` follows the configured host and port. Missing/wildcard hosts use `127.0.0.1`. |
