@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+The development authentication provisioning contract now defines catalog-derived
+per-caller credentials, separate Identity CCT and RC instance sealing keys,
+private ignored output and refusal to overwrite an existing deployment (#32).
+All ten owning-service authentication batches are admitted. Credential helpers,
+network/Compose wiring and full cross-service acceptance remain deployment and
+integration work; no intermediate PR or live-stack reconfiguration is implied.
+
 ### Fixed
 
 Runtime Egress now authenticates all eight control method/route combinations

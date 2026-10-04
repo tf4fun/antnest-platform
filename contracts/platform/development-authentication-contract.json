@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "profile": "disposable-development-token-http",
+  "static_services": {
+    "identity-service": "contracts/identity/callers.json",
+    "edge-gateway": "contracts/edge-gateway/callers.json",
+    "admin-console": "contracts/admin-console/callers.json",
+    "agent-ui": "contracts/agent-ui/callers.json",
+    "agent-controller": "contracts/agent-controller/callers.json",
+    "agent-acp-service": "contracts/agent-acp/callers.json",
+    "runtime-controller": "services/runtime-controller/api/callers.json",
+    "skill-registry": "contracts/skill-registry/callers.json",
+    "runtime-egress": "contracts/egress/callers.json"
+  },
+  "dynamic_receivers": ["antnest-runtime"],
+  "token_provisioning": {
+    "helper": "scripts/dev-service-tokens.mjs",
+    "output_directory": "artifacts/service-authentication/",
+    "output_policy": "fresh-directory-only",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "random_bytes_per_pair": 32,
+    "receiver_file": "<service>/callers.json",
+    "sender_directory": "<service>/tokens/",
+    "sender_file": "<caller>/tokens/<receiver>",
+    "manifest_file": "manifest.json",
+    "environment_file": "deployment.env",
+    "receiver_max_bytes": 8192
+  },
+  "bootstrap_keys": {
+    "identity_cct": {
+      "algorithm": "Ed25519",
+      "private_file": "identity-service/cct-signing.pem",
+      "private_format": "PKCS8-PEM",
+      "public_file": "identity-service/cct-jwks.json"
+    },
+    "runtime_instance_master": {
+      "file": "runtime-controller/instance-master.key",
+      "random_bytes": 32,
+      "encoding": "raw"
+    },
+    "skill_maintenance": {
+      "enabled_by_default": false,
+      "cli_flag": "--with-skill-learning",
+      "algorithm": "Ed25519",
+      "private_encoding": "base64-PKCS8-DER",
+      "public_encoding": "base64url-Ed25519"
+    }
+  },
+  "development_pki": {
+    "helper": "scripts/dev-pki.sh",
+    "output_directory": "artifacts/dev-pki/",
+    "ca_private_key_service_mount": false,
+    "native_runtime_tls_supported": false
+  }
+}

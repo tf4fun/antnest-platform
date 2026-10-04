@@ -5,11 +5,11 @@ The interim token wire/configuration profile is frozen by
 [#101](https://github.com/tf4fun/antnest-platform/issues/101).
 The schemas, caller catalogs and repository admission checks are delivered by
 the foundation. Identity provides the issuer/JWKS; Identity, Gateway, Console,
-Agent UI, Controller, ACP, RC, Registry and native Runtime have passed their
-owning-service admission gates. Remaining Egress adoption, deployment changes
+Agent UI, Controller, ACP, RC, Registry, native Runtime and Egress have passed their
+owning-service admission gates. Remaining deployment changes
 and full Docker security E2E are tracked in the
 [rollout ledger](service-authentication-rollout.json).
-This document does not describe the current unauthenticated listeners as secure.
+The legacy Compose wiring is not yet an admitted secured deployment.
 
 Provider URLs use the separate [destination policy](provider-destination-policy.md)
 for #28. Workload authentication authorizes internal callers; it does not authorize
@@ -77,7 +77,8 @@ and execution. The execution fence and existing maintenance tickets remain
 mandatory; a workload certificate alone does not authorize a maintenance action.
 
 Compose PKI generation (`scripts/dev-pki.sh`), certificate mounting and helper
-implementations belong to later owning-service/deployment batches. Generated
+implementations belong to deployment batches under the
+[development provisioning contract](development-authentication.md). Generated
 development PKI must live in ignored `artifacts/dev-pki/`, excluded from images,
 and contain no checked-in private keys. The deployment batch must add its Git
 ignore entry before generating any files (Docker already excludes `artifacts/`).
@@ -159,7 +160,8 @@ private reference before RC/ACP consumers adopt it; the execution ID fence and
 signed maintenance/temporary tickets remain independent requirements. The frozen
 [Runtime instance connection v1](../runtime/instance-connection.md) chooses RC
 as generation-scoped token issuer and Controller as its private ACP relay;
-service-owned producer/consumer implementation is still pending. Runtime's
+service-owned producer/consumer batches are admitted; coordinated deployment
+and full cross-service acceptance remain pending. Runtime's
 specific missing/malformed-token wire code is `runtime_unauthorized` (401), with
 the same dedicated bearer challenge and all other exact token-profile checks.
 
@@ -382,10 +384,10 @@ issues. In particular:
   `Authorization` for existing signed maintenance/temporary tickets. Any
   Runtime interim token must also be bound to its Agent/generation, not shared
   among all Runtime instances. The execution ID remains a fence, not a secret.
-- #28 will remove Controller's current credential-returning `/access` route
-  while moving discovery into its owner. This foundation catalogs the current
-  route as Console-only with a CCT; it does not claim that returning plaintext
-  Provider credentials has been fixed.
+- #28 removed Controller's credential-returning `/access` route and moved
+  model-only discovery into Controller. Console uses an authenticated thin
+  proxy and ACP enforces the same Provider destination policy. Their service
+  batches are admitted; coordinated deployment and full acceptance remain pending.
 
 ## 4. Errors and JSON request hygiene
 
@@ -460,11 +462,11 @@ The current Go scan resolves wrapper arguments only within their owning
 directory/package; it does not follow imported calls such as
 `probe.Reg(mux, "POST /internal/x")`. Current route wrappers are unexported
 methods or local closures. [#29](https://github.com/tf4fun/antnest-platform/issues/29)
-must add an admission rule rejecting any exported function or method that uses
+added an admission rule rejecting any exported function or method that uses
 its own parameter, or a value derived from it, as the route pattern passed to
 `Handle` or `HandleFunc`. Reject the definition even when an in-package call is
-known. This rule is pending, not enforced by the foundation. Its regression
-must cover an in-package known route plus an unlisted imported call. Fixed
+known. The rule and regression are admitted with the RC batch, covering an
+in-package known route plus an unlisted imported call. Fixed
 literal registrations and a constructor's local closure parameters are not
 exported pattern parameters.
 
@@ -499,5 +501,5 @@ changes after the integration batch; a partially upgraded chain must fail
 closed. Do not add body-only/header-only identity fallback. The disposable
 development HTTP opt-in relaxes transport only; workload credentials, required
 CCTs and actor checks remain mandatory. Controller's general route
-authentication and Egress control authentication remain #32-owned follow-ups;
+authentication and Egress control authentication have passed their #32-owned gates;
 #28's discovery fix and #34/#36's network work alone do not complete them.
