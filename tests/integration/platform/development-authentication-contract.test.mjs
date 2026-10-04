@@ -61,6 +61,15 @@ test("the bootstrap contract retains independent issuer and instance master form
   assert.equal(keys.skill_maintenance.enabled_by_default, false);
   assert.equal(contract.development_pki.ca_private_key_service_mount, false);
   assert.equal(contract.development_pki.native_runtime_tls_supported, false);
+  assert.equal(contract.development_pki.algorithm, "ECDSA-P256");
+  assert.equal(contract.development_pki.private_format, "PKCS8-PEM");
+  assert.equal(contract.development_pki.ca.path_length, 0);
+  assert.equal(contract.development_pki.ca.valid_days, 365);
+  assert.equal(contract.development_pki.leaf.valid_days, 30);
+  assert.deepEqual(contract.development_pki.leaf.extended_key_usages, [
+    "serverAuth",
+    "clientAuth",
+  ]);
 });
 
 test("credentials and private verification output are ignored before generation", () => {

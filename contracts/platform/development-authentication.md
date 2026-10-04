@@ -114,13 +114,42 @@ against a retained journal or install public conformance fixture credentials.
 
 ## Development PKI and pending deployment work
 
-`scripts/dev-pki.sh` and ignored `artifacts/dev-pki/` remain the reserved target
-for static-service development mTLS material. Certificates must contain the
-one exact workload URI, expected DNS SAN and both required usages under the
-platform contract. The CA private key is never a service mount. PKI generation
-and its acceptance remain pending; the token helper does not claim to implement
-them. Native Runtime currently supports only its separate instance HTTP token
-profile and must not receive a global static leaf or token.
+`scripts/dev-pki.sh` delegates to `scripts/dev-pki.mjs` using the selected Node
+on `PATH` and a noninteractive OpenSSL executable. It creates a fresh ignored
+`artifacts/dev-pki/` tree, or a fresh private verification subtree. It follows
+the same output/alias/permission/overwrite rules as token provisioning, without
+allowing token output paths as PKI destinations. PKI implementation and admission
+are pending in this contract-first batch.
+
+Each deployment has an independent ECDSA P-256 CA and nine independent P-256
+leaves. Private keys are unencrypted PKCS8 PEM. The CA is valid for 365 days,
+has critical CA/key-signing constraints and path length zero. Leaves are valid
+for 30 days, have critical `CA:false` and digital-signature constraints, and
+both `serverAuth` and `clientAuth` EKUs. Every leaf has exactly one workload URI
+`antnest://service/<service>` and its canonical service DNS name. ACP also gets
+the two contract-declared control/workspace DNS aliases. There are no wildcard,
+loopback/IP, arbitrary user-supplied or native Runtime names.
+
+The tree contains `ca.pem`, `ca-key.pem`, each `<service>/cert.pem` and
+`<service>/key.pem`, a public-identity-only `manifest.json`, and private `pki.env`
+with `ANTNEST_DEV_PKI_DIRECTORY` and the generating POSIX UID/GID. Temporary
+signing requests/configuration are removed after generation. Subprocess output
+and private key contents are never printed. Failure/cancellation stops and
+reaps OpenSSL before removing newly generated output; it never removes a retained
+deployment or parent directory.
+
+Mount only the CA certificate and each service's own leaf/key read-only, outside
+workspace/Skill volumes. The CA private key is never a service mount. Retain it
+privately for that deployment's controlled renewal; a fresh generator run is a
+new issuer, not an in-place CA or leaf rotation. Certificate selection and mode
+changes still require coordinated deployment/restart and explicit receiver trust.
+The helper does not change Compose, enable mTLS, or relax token/HTTP policy.
+Native Runtime currently supports only its separate instance HTTP token profile
+and must not receive a global static leaf or token.
+
+The noninteractive CSR/root and certificate-signing interfaces follow the
+[OpenSSL req](https://docs.openssl.org/4.0/man1/openssl-req/) and
+[OpenSSL x509](https://docs.openssl.org/4.0/man1/openssl-x509/) documentation.
 
 Purpose networks, explicit listener bindings, Gateway-only base ports, the debug
 overlay and the full Docker security/browser/lifecycle/Skill regressions remain

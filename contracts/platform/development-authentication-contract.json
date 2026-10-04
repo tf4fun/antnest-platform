@@ -51,7 +51,31 @@
   },
   "development_pki": {
     "helper": "scripts/dev-pki.sh",
+    "implementation": "scripts/dev-pki.mjs",
     "output_directory": "artifacts/dev-pki/",
+    "output_policy": "fresh-directory-only",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "algorithm": "ECDSA-P256",
+    "private_format": "PKCS8-PEM",
+    "manifest_file": "manifest.json",
+    "environment_file": "pki.env",
+    "ca": {
+      "certificate_file": "ca.pem",
+      "private_file": "ca-key.pem",
+      "valid_days": 365,
+      "path_length": 0
+    },
+    "leaf": {
+      "certificate_file": "<service>/cert.pem",
+      "private_file": "<service>/key.pem",
+      "valid_days": 30,
+      "uri_template": "antnest://service/<service>",
+      "extended_key_usages": ["serverAuth", "clientAuth"],
+      "dns_aliases": {
+        "agent-acp-service": ["agent-acp-control", "agent-acp-workspace"]
+      }
+    },
     "ca_private_key_service_mount": false,
     "native_runtime_tls_supported": false
   }

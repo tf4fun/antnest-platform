@@ -4,6 +4,11 @@
 
 ### Changed
 
+The development PKI contract now defines a private fresh CA, independent
+per-service P-256 leaves, exact URI/DNS identities and both TLS usages (#32).
+Native Runtime remains on its separate per-instance token profile. Implementation,
+purpose-network wiring and full acceptance remain tracked deployment batches.
+
 Development authentication provisioning now generates catalog-derived per-caller
 credentials, separate Identity CCT and RC instance sealing keys, and optional
 independent Skill maintenance keys (#32). Output is private and ignored; existing
