@@ -12,6 +12,13 @@ promote it into an immutable formal version. A mapping never stores the source
 ZIP or Skill body; the Registry takes custody of package bytes only when a
 promotion commits.
 
+
+Workload authentication and signed CCT verification use the
+[shared Go module](../../modules/service-authentication/README.md). Registry uses
+the workload-only outbound policy: source/JWKS calls replace peer credentials
+and remove CCT, browser cookies, Authorization and legacy identity headers.
+Skill authorization, ownership and content lifecycle remain Registry-owned.
+
 ## Responsibilities
 
 - Own a private PostgreSQL schema and its embedded, checksum-checked migrations.

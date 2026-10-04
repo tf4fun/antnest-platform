@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
 

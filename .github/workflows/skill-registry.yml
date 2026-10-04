@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
     paths:
       - services/skill-registry/**
+      - modules/service-authentication/**
       - tests/integration/go/skill-registry/**
       - tests/integration/skill-registry/**
       - tests/support/**
@@ -20,6 +21,7 @@ on:
   pull_request:
     paths:
       - services/skill-registry/**
+      - modules/service-authentication/**
       - tests/integration/go/skill-registry/**
       - tests/integration/skill-registry/**
       - tests/support/**

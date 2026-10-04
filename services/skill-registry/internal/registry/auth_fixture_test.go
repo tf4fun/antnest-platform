@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/callercontext"
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 type handlerFixture struct {
@@ -115,7 +115,7 @@ func newTestSource(t *testing.T, origin, token string) (*HTTPAgentSource, error)
 		t.Fatal(err)
 	}
 	env := map[string]string{"ANTNEST_SERVICE_AUTH_MODE": "token", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": "true", "ANTNEST_SERVICE_AUTH_CALLERS_FILE": callers, "ANTNEST_SERVICE_AUTH_TOKEN_DIR": dir}
-	clients, err := serviceauth.LoadOutbound(func(k string) (string, bool) { v, p := env[k]; return v, p }, map[string]string{"agent-acp-service": origin})
+	clients, err := serviceauth.LoadOutbound("skill-registry", serviceauth.WorkloadOnlyHeaders, func(k string) (string, bool) { v, p := env[k]; return v, p }, map[string]string{"agent-acp-service": origin})
 	if err != nil {
 		return nil, err
 	}

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/callercontext"
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 func TestRegistryEveryCallerDeniedOutsideItsCatalogRow(t *testing.T) {

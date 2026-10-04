@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/serviceauth"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"os"
 	"path/filepath"
 	"testing"

@@ -16,9 +16,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/registry"
-	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
@@ -58,7 +58,7 @@ func loadConfig(lookup serviceauth.LookupEnv) (config, error) {
 	if value.sourceURL != "" {
 		endpoints["agent-acp-service"] = value.sourceURL
 	}
-	clients, err := serviceauth.LoadOutbound(lookup, endpoints)
+	clients, err := serviceauth.LoadOutbound("skill-registry", serviceauth.WorkloadOnlyHeaders, lookup, endpoints)
 	if err != nil {
 		return config{}, err
 	}
