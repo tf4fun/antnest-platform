@@ -9,8 +9,9 @@ Agent UI, Controller, ACP, RC, Registry, native Runtime and Egress have passed t
 owning-service admission gates. Actual Compose deployment admission
 and full Docker security E2E are tracked in the
 [rollout ledger](service-authentication-rollout.json).
-Compose wires private credentials and purpose networks; full integration is
-still pending.
+Compose wires private credentials and purpose networks. The development
+token/HTTP profile is integration-admitted; full-platform mTLS remains outside
+that evidence.
 
 Provider URLs use the separate [destination policy](provider-destination-policy.md)
 for #28. Workload authentication authorizes internal callers; it does not authorize
@@ -234,6 +235,25 @@ as a fallback workload credential. Gateway strips browser-supplied service
 credentials and sends its own. A BFF similarly supplies its own immediate-hop
 credential instead of forwarding the incoming peer's token. Never capture the
 raw token in logs, traces, RPC content or errors.
+
+Authenticated internal dependency clients connect directly to their configured
+service origin. They MUST disable inherited environment/default-transport
+proxies, including when the disposable HTTP opt-in is enabled; an HTTP proxy
+must never receive a workload token or CCT. This also applies to WebSocket
+handshakes. Redirects remain disabled.
+
+Console, Controller and RC static workload clients strip `X-Antnest-*`,
+`Cookie` and `Authorization` from an outbound clone and replace any incoming
+service credential with their own. They preserve the separately verified
+`Antnest-Caller-Context`. Registry's workload-only source client also strips
+CCT. Gateway's request adapters remove browser authority before regenerating
+verified presentation hints; its explicit forwarding profile preserves those
+hints and the SCIM adapter's bearer while replacing workload credentials.
+Signed Runtime-ticket transports remain separate protocol adapters.
+
+The [Go module extraction](../../docs/go-authentication-module.md) defines the
+single implementation of this profile without moving service authorization or
+Identity's signing/session ownership into a library.
 
 The [shared token fixtures](service-token-fixtures.json) cover receiver schema
 and semantic rejection, canonical file bytes, uncombined headers, rotation and

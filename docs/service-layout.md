@@ -38,11 +38,18 @@ Registry, Channel Manager and Task Scheduler together.
 | `services/<name>/` | Long-lived control-plane or business service                         | Entrypoints, domain/application code, adapters, private persistence, service tests, image definition |
 | `runtimes/<name>/` | Managed execution process with a distinct trust or resource boundary | Runtime protocol, side effects, privilege and platform code                                          |
 | `contracts/`       | Language-neutral inter-service contracts                             | JSON Schema, RPC schema, examples, compatibility notes                                               |
+| `modules/<name>/`  | Service-independent libraries                                        | Shared protocol/security primitives and their unit tests; no service domain, persistence or route policy |
 | `docs/`            | Cross-service architecture and operations                            | Service map, stage integration, deployment-wide decisions                                            |
 
 A service must not import another service's implementation. Communication
 crosses a language-neutral contract in `contracts/`; shared source code is not
 a substitute for a service boundary.
+
+The [Go authentication module](go-authentication-module.md) shares the existing
+workload/CCT protocol implementation. Services still own route grants, domain
+authorization and error projection. Each Go service must build with `GOWORK=off`
+and declare its own dependency on the module; Docker builds mirror the repository
+layout instead of importing another service's source.
 
 ## Required Service Documentation
 
