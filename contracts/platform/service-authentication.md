@@ -426,15 +426,18 @@ classification describes the mixed methods on the SDK mount, not a JSON bypass.
 
 Authentication is the primary control. The later deployment batch replaces
 `development` with purpose-specific **internal** networks, based on actual
-caller edges: `edge`, `controller-acp`, `controller-runtime`,
-`controller-identity`, `registry-clients` and the Controller/Egress control
+caller edges: `edge`, `controller-clients`, `controller-acp`, `controller-runtime`,
+`identity-clients`, `registry-clients` and the Controller/Egress control
 path. Preserve the existing service-owned database networks. Model/provider
 Internet access uses a separate explicit outbound path; making all networks
 internal without providing that path would break model inference.
 
 `runtime-management` retains RC/ACP outbound Runtime probes/tools, Runtime Egress
-and managed Runtimes. Jaeger and business/administrative listeners must not be
-reachable there. Split/bind listeners explicitly: network attachment alone
+and managed Runtimes. The [frozen deployment network contract](development-networks.md)
+adds an explicit bounded OTLP-only infrastructure ingress because current Runtime
+exporters require a literal address on that network. Jaeger itself and its
+query/control APIs, business/administrative listeners and diagnostic transport
+must not be reachable there. Split/bind listeners explicitly: network attachment alone
 cannot isolate a wildcard listener on a multi-homed container. Observability
 is an exporter destination, not an authorization bypass back into control APIs.
 
@@ -458,6 +461,12 @@ passed rendered all-profile/overlay checks and isolated dependency host-protocol
 acceptance. The current shared network and unwired authentication mounts remain
 an open release blocker; application unicast/debug reachability still belongs
 to the coordinated deployment and final integration batch.
+
+The [machine network contract](development-network-contract.json) freezes the
+next cutover's address/membership/DNS rules, dedicated Gateway ingress and opaque
+diagnostic relay. Its isolated Docker probe verified why direct publication
+cannot reach purpose-bound listeners on internal/multihomed containers. Contract
+and probe evidence do not admit the pending Compose/transport implementation.
 
 ## 6. Admission and ownership
 

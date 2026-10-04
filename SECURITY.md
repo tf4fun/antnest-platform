@@ -46,6 +46,11 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.
+- **The frozen network cutover has one OTLP infrastructure exception.** A bounded
+  ingestion-only transport will preserve Runtime telemetry while moving Jaeger
+  entirely off management. It has no business credentials, query/control API or
+  arbitrary destination. Compose/transport admission is still pending; see the
+  [deployment network contract](contracts/platform/development-networks.md#runtime-telemetry-exception).
 - **TLS is not terminated by the platform.** Put a TLS-terminating reverse proxy
   in front of Edge Gateway and keep `ANTNEST_EDGE_COOKIE_SECURE=true`.
 - **RPC content capture can record secrets.** Keep

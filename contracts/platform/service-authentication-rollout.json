@@ -43,7 +43,9 @@
       "unit_contract_component": "24 rendered Compose, dependency-planner/hygiene and related deployment/foundation checks; all profiles, both overlay orders, exact loopback/default/assigned ports and diagnostics-only overlay verified; zero skips/failures.",
       "docker": "node tests/e2e/service-authentication/deployment-ports/run.mjs (three real PostgreSQL query / Temporal GetSystemInfo / DescribeNamespace checks through assigned loopback ports; isolated project initialization and owned container/network/volume cleanup passed).",
       "scope": "Host-port publication and dependency tooling only. Authentication credential mounts, purpose-network/unicast binding and actual full-platform browser/lifecycle/security/Skill acceptance remain pending. No service protocol peers or business flows were substituted for that final integration."
-    }
+    },
+    "topology": "intermediate-shared-network-direct-publication",
+    "admitted_commit": "35750f0"
   },
   "audience_profiles": {
     "console": [
@@ -320,5 +322,17 @@
     "issuer": "runtime-controller",
     "pending_service_batches": [],
     "cross_service_e2e": "pending final integration batch"
+  },
+  "purpose_network_deployment": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "contract-frozen-implementation-pending",
+    "contract": "development-networks.md",
+    "machine_contract": "development-network-contract.json",
+    "admission": {
+      "contract": "Six catalog-derived topology/destination, address, management/OTLP, diagnostics, outbound and database checks pass; the four existing provisioning-contract checks also pass. No skipped tests.",
+      "docker_observation": "node tests/integration/deployment/purpose-listener-docker.mjs: three isolated internal/unicast/multihomed observations reproduce unpublished, unreachable and outbound-targeted host ports. Primary health and normal exit pass; own labelled resources are cleaned and retained container/network/volume IDs remain unchanged.",
+      "scope": "Contract and infrastructure-decision evidence only. Diagnostic/OTLP transports, Compose unicast/address/DNS/key wiring, dependency-tooling cutover and final actual platform security/browser/lifecycle/Skill integration remain pending."
+    }
   }
 }

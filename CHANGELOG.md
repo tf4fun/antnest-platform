@@ -4,6 +4,12 @@
 
 ### Changed
 
+The next #32 purpose-network cutover is frozen in the deployment contract;
+implementation and full integration remain pending. Docker observations require
+dedicated Gateway ingress and explicit opaque TCP diagnostics for purpose-bound
+listeners. Runtime telemetry will use a bounded OTLP-only management destination
+while Jaeger leaves that network. No business credential or route rule changes.
+
 Base Compose now publishes only Gateway (#32). PostgreSQL, Temporal, RC, ACP,
 Identity, Controller and Jaeger host ports require the explicit loopback-only
 `compose.debug.yaml`; authentication remains enabled. Loading stage3 after debug

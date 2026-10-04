@@ -15,6 +15,12 @@ rendered configuration and related fixture tests and three real PostgreSQL/Tempo
 host-protocol checks, with owned Docker resource cleanup. Credential mounts and
 purpose-network admission remain pending.
 
+The subsequent [network contract](development-networks.md) is frozen with
+Compose/transport implementation pending. It defines dedicated Gateway ingress,
+opaque diagnostic forwarding and a restricted Runtime OTLP destination. The
+port evidence below applies to the intermediate direct-publication overlay;
+actual unicast reachability must be admitted again at network cutover.
+
 ## Static credentials
 
 `scripts/dev-service-tokens.mjs` uses Node's built-in modules only. It reads each

@@ -26,6 +26,9 @@ business code.
 The deployment credential layout is defined by the
 [development authentication contract](platform/development-authentication.md)
 and its [machine contract](platform/development-authentication-contract.json).
+The subsequent [purpose-network contract](platform/development-networks.md) and
+[machine topology](platform/development-network-contract.json) are frozen;
+Compose/transport implementation and final integration remain pending.
 All ten service batches are admitted; deployment and final cross-service
 acceptance remain pending in the rollout ledger.
 
