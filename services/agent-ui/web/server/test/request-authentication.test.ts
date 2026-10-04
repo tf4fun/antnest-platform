@@ -7,7 +7,7 @@ import { SERVICES } from "../src/adapters/service-authentication.ts";
 import { testAuthentication, testContext, workloadHeaders } from "./support/auth-fixture.ts";
 
 const catalog = JSON.parse(readFileSync(new URL("../../../../../contracts/agent-ui/callers.json", import.meta.url), "utf8"));
-for (const [route, policy] of Object.entries(catalog.routes) as [string, { authentication: string; callers: string[] }][]) {
+for (const [route, policy] of Object.entries(catalog.routes) as [string, { authentication: string; callers: string[]; caller_context: Record<string, string> }][]) {
   if (policy.authentication === "health") continue;
   test(`caller matrix: ${route}`, async () => {
     const [method, raw] = route.split(" ");
@@ -29,5 +29,20 @@ for (const [route, policy] of Object.entries(catalog.routes) as [string, { authe
         }
       } finally { socket.destroy(); }
     }
+  });
+}
+
+for (const [route, policy] of Object.entries(catalog.routes) as [string, { caller_context: Record<string, string> }][]) {
+  if (policy.caller_context["edge-gateway"] !== "required") continue;
+  test(`missing caller context: ${route}`, async () => {
+    const [method, raw] = route.split(" ");
+    const path = raw!.replace(/\{([^}]+)\}/gu, (_, name: string) => name === "agentId" ? "agent-1" : "fixture");
+    const socket = new Socket();
+    const request = new IncomingMessage(socket);
+    try {
+      request.method = method; request.url = path;
+      request.rawHeaders = Object.entries(workloadHeaders()).flat();
+      assert.deepEqual(await testAuthentication().admit(request), { status: 401, code: "caller_context_required" });
+    } finally { socket.destroy(); }
   });
 }

@@ -51,7 +51,8 @@ test("Gateway workload and signed Agent context are both required before dispatc
     const valid = testContext({ agt: "agent-1" }).token;
     for (const [headers, status, code] of [
       [workloadHeaders("admin-console"), 403, "caller_not_allowed"],
-      [workloadHeaders(), 401, "caller_context_invalid"],
+      [workloadHeaders(), 401, "caller_context_required"],
+      [{ ...workloadHeaders(), "Antnest-Caller-Context": "" }, 401, "caller_context_invalid"],
       [{ ...workloadHeaders(), "Antnest-Caller-Context": "bad" }, 401, "caller_context_invalid"],
       [{ ...workloadHeaders(), "Antnest-Caller-Context": testContext({ agt: "other" }).token }, 401, "caller_context_invalid"],
       [{ ...workloadHeaders(), "Antnest-Caller-Context": testContext({ agt: "agent-1", aud: ["agent-acp-service"] }).token }, 401, "caller_context_invalid"],
@@ -72,12 +73,18 @@ test("duplicate raw authentication and context fields fail before normalized Hea
     const base = Object.entries({ ...workloadHeaders(), "Antnest-Caller-Context": token }).flat();
     for (const duplicate of ["Antnest-Service-Authorization", "Antnest-Caller-Context"]) {
       const value = duplicate === "Antnest-Caller-Context" ? token : workloadHeaders()["Antnest-Service-Authorization"];
-      const status = await new Promise<number>((resolve, reject) => {
+      const result = await new Promise<{ status: number; code: string }>((resolve, reject) => {
         const request = httpRequest(`${origin}/api/app/workspace/v1/agents/agent-1/sessions`,
-          { headers: ["Host", new URL(origin).host, ...base, duplicate.toLowerCase(), value] }, response => { response.resume(); resolve(response.statusCode!); });
+          { headers: ["Host", new URL(origin).host, ...base, duplicate.toLowerCase(), value] }, response => {
+            const chunks: Buffer[] = [];
+            response.on("data", chunk => chunks.push(chunk));
+            response.on("end", () => resolve({ status: response.statusCode!, code: JSON.parse(Buffer.concat(chunks).toString()).code }));
+          });
         request.on("error", reject); request.end();
       });
-      assert.equal(status, 401); assert.equal(calls(), 0);
+      assert.equal(result.status, 401);
+      assert.equal(result.code, duplicate === "Antnest-Caller-Context" ? "caller_context_invalid" : "service_unauthenticated");
+      assert.equal(calls(), 0);
     }
   });
 });

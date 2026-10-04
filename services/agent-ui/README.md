@@ -54,7 +54,9 @@ permissions.
 
 Edge Gateway resolves the browser session through Identity Service and enforces
 CSRF and Origin before forwarding. Node verifies Gateway workload identity and
-Identity-signed CCT. Signed subject, Organization and roles determine authority;
+Identity-signed CCT. A missing CCT returns `401 caller_context_required`; an
+empty, duplicate or invalid CCT returns `401 caller_context_invalid`, before
+business dispatch. Signed subject, Organization and roles determine authority;
 raw identity/administrator headers grant nothing. HTML and bootstrap use
 Organization-scoped CCT for discovery; Agent API paths match signed `agt`.
 Organization slug/name remain presentation hints. See the

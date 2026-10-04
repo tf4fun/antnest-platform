@@ -357,7 +357,7 @@
       "routes": []
     },
     "services/agent-ui/web/server/src/http/request-authentication.ts": {
-      "sha256": "54642d7354afda7c7c60f7e4e16a2c97c7f4a645c2356e7b2526b1535b982e7a",
+      "sha256": "2cdd5d237ed2e90458bbcd561c48f9ffc1bae5c328612b0207ef48ec4e5d9aec",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/events",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions",
