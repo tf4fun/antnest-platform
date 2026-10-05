@@ -3,6 +3,43 @@
 This document covers the Agent Controller process model, configuration,
 readiness, lifecycle recovery, tracing, retention and verification procedures.
 
+## Rotating encryption keys
+
+Provider API keys are stored as authenticated envelopes under an active master
+key; all other configured master keys are decrypt-only. The legacy single-key
+variable maps to `local-v1`, including reading pre-upgrade ciphertext. New writes
+always carry a wrapped data key. See the
+[shared encryption contract](../../../contracts/platform/encryption-key-rotation.md)
+for exact parsing, associated data and deployment ordering.
+
+Deploy the new binary and additive migration first with the existing key. Add
+`kid2` to every Controller replica's `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS`
+ring while retaining `local-v1`, then switch every writer's
+`ANTNEST_AGENT_CONTROLLER_ENCRYPTION_ACTIVE_KID` to `kid2`. Unset/empty the
+single-key variable when using the ring. Once all writers have switched, run:
+
+```sh
+docker compose exec -T agent-controller /usr/local/bin/agent-controller rekey --batch-size 100
+```
+
+The command needs only the owned database URL and encryption configuration.
+It starts no HTTP listener, Temporal worker, bootstrap or dependency clients.
+Progress is JSON with table, active ID, committed batch count and remaining
+rows. Require a final successful `remaining: 0` result before removing the old
+key and recreating the service. Keep retired keys with historical backups.
+
+Each batch locks and authenticates its rows, then updates only encryption
+columns. Concurrent reads continue and concurrent Provider credential changes
+serialize on the same row. Rekey never advances Provider versions, execution
+revisions, timestamps or receipts. Cancellation leaves committed batches intact;
+rerun with the same active key to resume. Unknown IDs, tampered records or storage
+failures fail the batch and command; overlapping rotation commands are rejected.
+Do not retire a key on a partial/failed result or run against old active writers.
+
+After new envelope writes, a pre-rotation binary cannot read the database;
+rollback requires its matching pre-upgrade backup and keys. Rotate/revoke leaked
+Provider API keys separately; changing the wrapping key does not revoke them.
+
 ## Process Model
 
 All lifecycle operations use [Temporal workflows](lifecycle-workflows.md).

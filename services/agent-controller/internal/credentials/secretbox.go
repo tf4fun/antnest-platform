@@ -2,79 +2,68 @@ package credentials
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"io"
 
+	secretencryption "github.com/tf4fun/antnest-platform/modules/secret-encryption"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
-const LocalKeyVersion = "local-v1"
+const LocalKeyVersion = secretencryption.LegacyKeyID
 
-type SecretBox struct {
-	aead cipher.AEAD
-}
+type SecretBox struct{ box *secretencryption.Box }
 
 func NewSecretBox(key []byte) (*SecretBox, error) {
-	if len(key) != 32 {
-		return nil, fmt.Errorf("provider credential encryption key must contain exactly 32 bytes")
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("create Provider credential cipher: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("create Provider credential AEAD: %w", err)
-	}
-	return &SecretBox{aead: aead}, nil
+	return NewKeyring(secretencryption.Config{ActiveKID: LocalKeyVersion, Keys: map[string][]byte{LocalKeyVersion: key}})
 }
 
-func (box *SecretBox) Seal(
-	ctx context.Context, identity ports.CredentialIdentity, plaintext string,
-) (ports.SealedSecret, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.SealedSecret{}, err
+func NewKeyring(config secretencryption.Config) (*SecretBox, error) {
+	box, err := secretencryption.NewLocal(config, "agent-controller")
+	if err != nil {
+		return nil, err
 	}
+	return &SecretBox{box: box}, nil
+}
+
+func (box *SecretBox) ActiveKeyID() string { return box.box.ActiveKeyID() }
+
+func (box *SecretBox) Seal(ctx context.Context, identity ports.CredentialIdentity, plaintext string) (ports.SealedSecret, error) {
 	aad, err := credentialAAD(identity)
 	if err != nil {
 		return ports.SealedSecret{}, err
 	}
-	nonce := make([]byte, box.aead.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return ports.SealedSecret{}, fmt.Errorf("generate Provider credential nonce: %w", err)
-	}
-	return ports.SealedSecret{
-		Ciphertext: box.aead.Seal(nil, nonce, []byte(plaintext), aad),
-		Nonce:      nonce, KeyVersion: LocalKeyVersion,
-	}, nil
+	sealed, err := box.box.Seal(ctx, []byte(plaintext), aad)
+	return fromEnvelope(sealed), err
 }
 
-func (box *SecretBox) Open(
-	ctx context.Context, identity ports.CredentialIdentity, sealed ports.SealedSecret,
-) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if sealed.KeyVersion != LocalKeyVersion {
-		return "", fmt.Errorf("unsupported Provider credential key version %q", sealed.KeyVersion)
-	}
-	if len(sealed.Nonce) != box.aead.NonceSize() {
-		return "", fmt.Errorf("invalid Provider credential nonce")
-	}
+func (box *SecretBox) Open(ctx context.Context, identity ports.CredentialIdentity, sealed ports.SealedSecret) (string, error) {
 	aad, err := credentialAAD(identity)
 	if err != nil {
 		return "", err
 	}
-	plaintext, err := box.aead.Open(nil, sealed.Nonce, sealed.Ciphertext, aad)
+	plaintext, err := box.box.Open(ctx, toEnvelope(sealed), aad)
 	if err != nil {
-		return "", fmt.Errorf("authenticate Provider credential: %w", err)
+		return "", err
 	}
+	defer clear(plaintext)
 	return string(plaintext), nil
+}
+
+func (box *SecretBox) Rekey(ctx context.Context, identity ports.CredentialIdentity, sealed ports.SealedSecret) (ports.SealedSecret, error) {
+	aad, err := credentialAAD(identity)
+	if err != nil {
+		return ports.SealedSecret{}, err
+	}
+	rotated, err := box.box.Rekey(ctx, toEnvelope(sealed), aad)
+	return fromEnvelope(rotated), err
+}
+
+func toEnvelope(sealed ports.SealedSecret) secretencryption.SealedSecret {
+	return secretencryption.SealedSecret{KeyID: sealed.KeyVersion, WrappedDataKey: sealed.WrappedDataKey, Nonce: sealed.Nonce, Ciphertext: sealed.Ciphertext}
+}
+
+func fromEnvelope(sealed secretencryption.SealedSecret) ports.SealedSecret {
+	return ports.SealedSecret{KeyVersion: sealed.KeyID, WrappedDataKey: sealed.WrappedDataKey, Nonce: sealed.Nonce, Ciphertext: sealed.Ciphertext}
 }
 
 func credentialAAD(identity ports.CredentialIdentity) ([]byte, error) {

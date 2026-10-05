@@ -36,11 +36,11 @@ FROM agent_controller.provider_connections WHERE organization_id=$1 AND id=$2`, 
 
 func (repository *Repository) GetProviderAccess(ctx context.Context, organizationID, connectionID string) (ports.ProviderConnectionRecord, error) {
 	var record ports.ProviderConnectionRecord
-	err := repository.pool.QueryRow(ctx, `SELECT `+providerColumns+`, ciphertext, nonce, key_version
+	err := repository.pool.QueryRow(ctx, `SELECT `+providerColumns+`, ciphertext, nonce, key_version, wrapped_data_key
 FROM agent_controller.provider_connections WHERE organization_id=$1 AND id=$2`, organizationID, connectionID).Scan(
 		&record.ConnectionID, &record.OrganizationID, &record.ProviderKey, &record.DisplayName, &record.BaseURL,
 		&record.CredentialMethod, &record.CredentialVersion, &record.CredentialRevision, &record.Enabled, &record.CreatedAt, &record.UpdatedAt,
-		&record.SealedCredential.Ciphertext, &record.SealedCredential.Nonce, &record.SealedCredential.KeyVersion)
+		&record.SealedCredential.Ciphertext, &record.SealedCredential.Nonce, &record.SealedCredential.KeyVersion, &record.SealedCredential.WrappedDataKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return record, ports.ErrNotFound
 	}
@@ -117,11 +117,11 @@ func (repository *Repository) RotateProviderCredential(ctx context.Context, expe
 	return repository.persistProvider(ctx, ports.RotateProviderCredentialRequest, connection, func(tx *databaseTransaction, current *ports.ProviderConnectionRecord) error {
 		err := tx.QueryRow(ctx, `UPDATE agent_controller.provider_connections
 SET current_credential_version=$3, credential_revision=credential_revision+1, updated_at=$4,
-    ciphertext=$7, nonce=$8, key_version=$9
+    ciphertext=$7, nonce=$8, key_version=$9, wrapped_data_key=$10
 WHERE id=$1 AND organization_id=$2 AND current_credential_version=$5 AND credential_revision=$6 RETURNING enabled`,
 			connection.ConnectionID, connection.OrganizationID, connection.CredentialVersion, connection.UpdatedAt,
 			expectedVersion, connection.CredentialRevision-1,
-			connection.SealedCredential.Ciphertext, connection.SealedCredential.Nonce, connection.SealedCredential.KeyVersion).Scan(&current.Enabled)
+			connection.SealedCredential.Ciphertext, connection.SealedCredential.Nonce, connection.SealedCredential.KeyVersion, connection.SealedCredential.WrappedDataKey).Scan(&current.Enabled)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ports.ErrConcurrentChange
 		}
@@ -165,11 +165,11 @@ func (repository *Repository) persistProvider(ctx context.Context, kind ports.Ca
 }
 
 func insertProviderConnection(ctx context.Context, tx *databaseTransaction, record ports.ProviderConnectionRecord) error {
-	_, err := tx.Exec(ctx, `INSERT INTO agent_controller.provider_connections (`+providerColumns+`, ciphertext, nonce, key_version)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, record.ConnectionID, record.OrganizationID, record.ProviderKey,
+	_, err := tx.Exec(ctx, `INSERT INTO agent_controller.provider_connections (`+providerColumns+`, ciphertext, nonce, key_version, wrapped_data_key)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, record.ConnectionID, record.OrganizationID, record.ProviderKey,
 		record.DisplayName, record.BaseURL, record.CredentialMethod, record.CredentialVersion, record.CredentialRevision,
 		record.Enabled, record.CreatedAt, record.UpdatedAt,
-		record.SealedCredential.Ciphertext, record.SealedCredential.Nonce, record.SealedCredential.KeyVersion)
+		record.SealedCredential.Ciphertext, record.SealedCredential.Nonce, record.SealedCredential.KeyVersion, record.SealedCredential.WrappedDataKey)
 	if err != nil {
 		return fmt.Errorf("insert Provider connection: %w", err)
 	}

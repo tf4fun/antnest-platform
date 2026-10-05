@@ -24,6 +24,13 @@ publish closure, settle and finish. Peer statistics retain only credential hashe
 and non-secret bindings, and public responses/logs are checked for the private token.
 These peers are Controller-owned doubles, not implementations of downstream services.
 
+Stored-secret acceptance adds an old and new master key, activates the new key,
+creates an active-key Provider alongside the existing Provider, runs the actual
+`agent-controller rekey --batch-size 1` command twice, and removes the old key.
+It verifies mixed-row conversion, idempotency, unchanged Provider business
+metadata and authenticated saved model discovery after retirement. Real-Agent
+continuity across both service rotations belongs to the final integration batch.
+
 The project, volumes, networks and private credentials are cleaned in finally;
 only bounded results and redacted failure diagnostics remain under ignored
 artifacts/verification/.
