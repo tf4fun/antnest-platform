@@ -12,7 +12,7 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	values := map[string]string{
 		"ANTNEST_AGENT_ACP_CONTROL_URL":           "http://agent-acp-service:8090",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
-		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
@@ -51,7 +51,7 @@ func TestSkillRegistryUsesPerReceiverCredentials(t *testing.T) {
 	values := map[string]string{
 		"ANTNEST_AGENT_ACP_CONTROL_URL":           "http://agent-acp-service:8081",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
-		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
@@ -90,7 +90,7 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("invalid encryption key was accepted")
 	}
-	values["ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 32))
+	values["ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 	values["ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT"] = "0s"
 	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive shutdown timeout was accepted")

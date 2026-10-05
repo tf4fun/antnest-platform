@@ -35,7 +35,7 @@ func TestConfiguredDependencyClientsSendReceiverSpecificCredentials(t *testing.T
 		"ANTNEST_SERVICE_AUTH_MODE": "token", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": "true",
 		"ANTNEST_SERVICE_AUTH_TOKEN_DIR": dir, "ANTNEST_SERVICE_AUTH_CALLERS_FILE": callers,
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://fixture/controller_test",
-		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 	var mu sync.Mutex
 	calls := map[string]int{}
