@@ -11,6 +11,8 @@ resource lifetimes explicit without a garbage-collection pause or a second
 low-level helper process. The control path may use PostgreSQL; the packet path
 never queries the database, spawns commands, or waits on a global lock.
 
+Startup rejects published PostgreSQL passwords using the connection driver parser under the [development secret policy](../../contracts/platform/development-secrets.md). Only exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` allows those passwords, with a variable-only WARN; other gates remain independent.
+
 ## Responsibilities
 
 - Own a private PostgreSQL schema and migrations.

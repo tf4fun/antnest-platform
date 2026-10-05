@@ -3,6 +3,94 @@ use std::collections::HashMap;
 use antnest_runtime_egress::config::{Config, ConfigError, DatabaseTlsMode};
 
 #[test]
+fn rejects_published_development_database_passwords() {
+    for dsn in [
+        "postgres://egress:antnest-egress-dev@postgres/egress",
+        "postgres://egress:%61ntnest-egress-dev@postgres/egress",
+        "postgres://egress@postgres/egress?password=antnest-egress-dev",
+        "host=postgres user=egress password='antnest-egress-dev' dbname=egress",
+    ] {
+        let values = HashMap::from([
+            ("ANTNEST_EGRESS_DATABASE_URL".to_owned(), dsn.to_owned()),
+            (
+                "ANTNEST_EGRESS_UDP_ADVERTISE".to_owned(),
+                "10.20.0.8:8092".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
+                "10.20.0.53:53".to_owned(),
+            ),
+        ]);
+        assert!(
+            Config::from_values(values).is_err(),
+            "published password was accepted"
+        );
+    }
+}
+
+#[test]
+fn public_development_opt_in_uses_shared_vectors_and_names_warnings() {
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../contracts/platform/development-secrets.json"
+    ))
+    .unwrap();
+    let mut values = HashMap::from([
+        (
+            "ANTNEST_EGRESS_DATABASE_URL".to_owned(),
+            "postgres://egress:private@postgres/egress".to_owned(),
+        ),
+        (
+            "ANTNEST_EGRESS_UDP_ADVERTISE".to_owned(),
+            "10.20.0.8:8092".to_owned(),
+        ),
+        (
+            "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
+            "10.20.0.53:53".to_owned(),
+        ),
+    ]);
+    assert!(
+        Config::from_values(values.clone())
+            .unwrap()
+            .development_secret_warnings
+            .is_empty()
+    );
+    for value in contract["published_values"].as_array().unwrap() {
+        values.insert(
+            "ANTNEST_EGRESS_DATABASE_URL".to_owned(),
+            format!(
+                "postgres://egress:{}@postgres/egress",
+                value.as_str().unwrap()
+            ),
+        );
+        values.remove("ANTNEST_ALLOW_PUBLIC_DEV_SECRETS");
+        assert_eq!(
+            Config::from_values(values.clone()).unwrap_err(),
+            ConfigError::PublishedDevelopmentValue("ANTNEST_EGRESS_DATABASE_URL")
+        );
+        values.insert(
+            "ANTNEST_ALLOW_PUBLIC_DEV_SECRETS".to_owned(),
+            "true".to_owned(),
+        );
+        assert_eq!(
+            Config::from_values(values.clone())
+                .unwrap()
+                .development_secret_warnings,
+            vec!["ANTNEST_EGRESS_DATABASE_URL"]
+        );
+    }
+    for value in contract["invalid_values"].as_array().unwrap() {
+        values.insert(
+            "ANTNEST_ALLOW_PUBLIC_DEV_SECRETS".to_owned(),
+            value.as_str().unwrap().to_owned(),
+        );
+        assert_eq!(
+            Config::from_values(values.clone()).unwrap_err(),
+            ConfigError::Invalid("ANTNEST_ALLOW_PUBLIC_DEV_SECRETS")
+        );
+    }
+}
+
+#[test]
 fn config_has_bounded_operational_defaults() {
     let config = Config::from_values(HashMap::from([
         (

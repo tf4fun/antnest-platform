@@ -15,6 +15,7 @@ pub use crate::repository::DatabaseTlsMode;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     pub database_url: String,
+    pub development_secret_warnings: Vec<&'static str>,
     pub database_tls_mode: DatabaseTlsMode,
     pub database_startup_timeout: Duration,
     pub database_retry_delay: Duration,
@@ -38,6 +39,8 @@ pub enum ConfigError {
     Missing(&'static str),
     #[error("invalid environment variable {0}")]
     Invalid(&'static str),
+    #[error("{0} uses a published development value")]
+    PublishedDevelopmentValue(&'static str),
     #[error("advertised UDP endpoint must not use an unspecified address")]
     UnspecifiedAdvertisedEndpoint,
     #[error("advertised UDP endpoint must be usable unicast with a non-zero port")]
@@ -57,6 +60,7 @@ impl Config {
 
     pub fn from_values(values: HashMap<String, String>) -> Result<Self, ConfigError> {
         let database_url = required(&values, "ANTNEST_EGRESS_DATABASE_URL")?;
+        let development_secret_warnings = check_development_secrets(&values, &database_url)?;
         let database_tls_mode = match values
             .get("ANTNEST_EGRESS_DATABASE_TLS_MODE")
             .map(String::as_str)
@@ -130,6 +134,7 @@ impl Config {
         let command_timeout = parse_duration(&values, "ANTNEST_EGRESS_COMMAND_TIMEOUT", "5s")?;
         Ok(Self {
             database_url,
+            development_secret_warnings,
             database_tls_mode,
             database_startup_timeout,
             database_retry_delay,
@@ -147,6 +152,48 @@ impl Config {
             command_timeout,
         })
     }
+}
+
+fn check_development_secrets(
+    values: &HashMap<String, String>,
+    database_url: &str,
+) -> Result<Vec<&'static str>, ConfigError> {
+    let allow = match values
+        .get("ANTNEST_ALLOW_PUBLIC_DEV_SECRETS")
+        .map(String::as_str)
+    {
+        None | Some("") | Some("false") => false,
+        Some("true") => true,
+        _ => return Err(ConfigError::Invalid("ANTNEST_ALLOW_PUBLIC_DEV_SECRETS")),
+    };
+    let config = database_url
+        .parse::<tokio_postgres::Config>()
+        .map_err(|_| ConfigError::Invalid("ANTNEST_EGRESS_DATABASE_URL"))?;
+    let published = config.get_password().is_some_and(|password| {
+        [
+            "antnest-postgres-dev",
+            "antnest-egress-dev",
+            "antnest-runtime-controller-dev",
+            "antnest-agent-acp-dev",
+            "antnest-identity-dev",
+            "antnest-agent-controller-dev",
+            "antnest-skill-registry-dev",
+            "antnest-temporal-dev",
+            "antnest-admin-dev",
+            "antnest-skill-registry-local-development-token",
+        ]
+        .iter()
+        .any(|value| password == value.as_bytes())
+    });
+    if !published {
+        return Ok(Vec::new());
+    }
+    if !allow {
+        return Err(ConfigError::PublishedDevelopmentValue(
+            "ANTNEST_EGRESS_DATABASE_URL",
+        ));
+    }
+    Ok(vec!["ANTNEST_EGRESS_DATABASE_URL"])
 }
 
 pub fn health_listen_from_env() -> Result<SocketAddrV4, ConfigError> {

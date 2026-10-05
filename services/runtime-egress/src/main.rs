@@ -41,6 +41,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let security = SecurityConfig::from_env()?;
     let config = Config::from_env()?;
     let telemetry = Telemetry::init()?;
+    for variable in &config.development_secret_warnings {
+        tracing::warn!(variable, "Published development secret explicitly enabled");
+    }
     let result = run(config, security, telemetry.metrics()).await;
     if let Err(error) = &result {
         tracing::error!(%error, "Runtime Egress stopped with an error");
