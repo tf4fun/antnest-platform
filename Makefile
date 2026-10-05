@@ -52,7 +52,7 @@ test-storage-policy:
 	node tests/support/check-storage.mjs
 	python3 -B tests/support/verification/configuration_test.py
 
-test-go: test-go-authentication
+test-go: test-go-authentication test-go-encryption
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs runtime-controller
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs identity-service
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs agent-controller
@@ -61,7 +61,7 @@ test-go: test-go-authentication
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs skill-registry
 
 .PHONY: test-go-unit
-test-go-unit: test-go-authentication
+test-go-unit: test-go-authentication test-go-encryption
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/runtime-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/identity-service/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/...
@@ -72,6 +72,10 @@ test-go-unit: test-go-authentication
 .PHONY: test-go-authentication
 test-go-authentication:
 	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/service-authentication test -race -count=1 ./...
+
+.PHONY: test-go-encryption
+test-go-encryption:
+	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/secret-encryption test -race -count=1 ./...
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
