@@ -1,5 +1,9 @@
 # Admin Console
 
+The former published Skill Registry bearer is rejected even with the
+`ANTNEST_ALLOW_PUBLIC_DEV_SECRETS` development opt-in. Console uses per-receiver
+workload credentials and CCT; see the [secret policy](../../contracts/platform/development-secrets.md).
+
 Admin Console is the administrator React application and thin BFF
 (backend-for-frontend) of Antnest Platform. It exists so administrators can
 manage Identity, Provider, Model, Template, Skill and Agent lifecycle facts
