@@ -95,6 +95,16 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		AdminEmail: "admin@example.com", AdminDisplayName: "Antnest Administrator",
 		PasswordHash: passwordHash, Now: now,
 	}
+	publicPassword := errors.New("ANTNEST_BOOTSTRAP_ADMIN_PASSWORD uses a published development value")
+	bootstrapInput.ValidateNewAdministratorPassword = func() error { return publicPassword }
+	if _, err := store.Bootstrap(ctx, bootstrapInput); !errors.Is(err, publicPassword) {
+		t.Fatalf("new administrator bypassed password admission: %v", err)
+	}
+	var rejectedOrganizations int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM organizations WHERE slug = $1", bootstrapInput.OrganizationSlug).Scan(&rejectedOrganizations); err != nil || rejectedOrganizations != 0 {
+		t.Fatalf("rejected bootstrap persisted partial facts: count=%d err=%v", rejectedOrganizations, err)
+	}
+	bootstrapInput.ValidateNewAdministratorPassword = nil
 	type bootstrapOutcome struct {
 		result BootstrapResult
 		err    error
@@ -114,6 +124,14 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		t.Fatalf("concurrent bootstrap errors = %v, %v", firstBootstrap.err, secondBootstrap.err)
 	}
 	bootstrap := firstBootstrap.result
+	replayInput := bootstrapInput
+	replayInput.ValidateNewAdministratorPassword = func() error {
+		t.Error("existing administrator consumed unused bootstrap password")
+		return publicPassword
+	}
+	if _, err := store.Bootstrap(ctx, replayInput); err != nil {
+		t.Fatalf("existing bootstrap rejected: %v", err)
+	}
 	if secondBootstrap.result.Organization.ID != bootstrap.Organization.ID ||
 		secondBootstrap.result.User.ID != bootstrap.User.ID ||
 		secondBootstrap.result.Membership.ID != bootstrap.Membership.ID {

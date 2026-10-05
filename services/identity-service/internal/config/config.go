@@ -6,32 +6,53 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 )
 
 type Bootstrap struct {
-	OrganizationSlug string
-	OrganizationName string
-	AdminEmail       string
-	AdminPassword    string
+	OrganizationSlug      string
+	OrganizationName      string
+	AdminEmail            string
+	AdminPassword         string
+	allowPublicDevSecrets bool
 }
 
 func (b Bootstrap) Enabled() bool { return b.OrganizationSlug != "" }
 
+// Only invoke after the bootstrap transaction determines an account is new.
+func (b Bootstrap) CheckNewAdministratorPassword() ([]string, error) {
+	optIn := "false"
+	if b.allowPublicDevSecrets {
+		optIn = "true"
+	}
+	policy, _ := devsecrets.New(optIn)
+	if err := policy.CheckValue("ANTNEST_BOOTSTRAP_ADMIN_PASSWORD", b.AdminPassword); err != nil {
+		return nil, err
+	}
+	return policy.Warnings(), nil
+}
+
 type Config struct {
-	ListenAddress   string
-	DatabaseURL     string
-	EncryptionKey   []byte
-	PublicBaseURL   string
-	TokenTTL        time.Duration
-	OIDCSessionTTL  time.Duration
-	HTTPTimeout     time.Duration
-	ShutdownTimeout time.Duration
-	Bootstrap       Bootstrap
+	ListenAddress             string
+	DatabaseURL               string
+	EncryptionKey             []byte
+	PublicBaseURL             string
+	TokenTTL                  time.Duration
+	OIDCSessionTTL            time.Duration
+	HTTPTimeout               time.Duration
+	ShutdownTimeout           time.Duration
+	Bootstrap                 Bootstrap
+	DevelopmentSecretWarnings []string
 }
 
 func Load(lookup func(string) string) (Config, error) {
 	if lookup == nil {
 		return Config{}, fmt.Errorf("environment lookup is required")
+	}
+	policy, err := devsecrets.New(lookup(devsecrets.OptInVariable))
+	if err != nil {
+		return Config{}, err
 	}
 	tokenTTL, err := duration(lookup, "ANTNEST_IDENTITY_TOKEN_TTL", 12*time.Hour)
 	if err != nil {
@@ -56,10 +77,11 @@ func Load(lookup func(string) string) (Config, error) {
 		TokenTTL:      tokenTTL, OIDCSessionTTL: sessionTTL, HTTPTimeout: httpTimeout,
 		ShutdownTimeout: shutdownTimeout,
 		Bootstrap: Bootstrap{
-			OrganizationSlug: strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG")),
-			OrganizationName: strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_NAME")),
-			AdminEmail:       strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ADMIN_EMAIL")),
-			AdminPassword:    lookup("ANTNEST_BOOTSTRAP_ADMIN_PASSWORD"),
+			OrganizationSlug:      strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG")),
+			OrganizationName:      strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_NAME")),
+			AdminEmail:            strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ADMIN_EMAIL")),
+			AdminPassword:         lookup("ANTNEST_BOOTSTRAP_ADMIN_PASSWORD"),
+			allowPublicDevSecrets: lookup(devsecrets.OptInVariable) == "true",
 		},
 	}
 	if config.DatabaseURL == "" {
@@ -70,6 +92,13 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config.EncryptionKey = key
+	if err := policy.CheckKey("ANTNEST_IDENTITY_ENCRYPTION_KEY", key); err != nil {
+		return Config{}, err
+	}
+	if err := policy.CheckDatabaseURL("ANTNEST_IDENTITY_DATABASE_URL", config.DatabaseURL); err != nil {
+		return Config{}, err
+	}
+	config.DevelopmentSecretWarnings = policy.Warnings()
 	if err := validatePublicBaseURL(config.PublicBaseURL); err != nil {
 		return Config{}, err
 	}

@@ -52,7 +52,7 @@ func TestLoadRejectsPartialBootstrapAndNoncanonicalKey(t *testing.T) {
 func validEnvironment() map[string]string {
 	return map[string]string{
 		"ANTNEST_IDENTITY_DATABASE_URL":       "postgres://identity:identity@postgres/identity",
-		"ANTNEST_IDENTITY_ENCRYPTION_KEY":     base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"ANTNEST_IDENTITY_ENCRYPTION_KEY":     base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 		"ANTNEST_IDENTITY_PUBLIC_BASE_URL":    "https://identity.example.com",
 		"ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG": "engineering",
 		"ANTNEST_BOOTSTRAP_ORGANIZATION_NAME": "Engineering",
