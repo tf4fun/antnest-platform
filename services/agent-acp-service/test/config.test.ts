@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { ConfigError, loadConfig } from "../src/config.js";
 
-const KEY = Buffer.alloc(32, 7).toString("base64");
+const KEY = Buffer.from("0123456789abcdef0123456789abcdef").toString("base64");
 const MAINTENANCE_KIDS = JSON.parse(
   readFileSync(
     new URL("../../../contracts/runtime/maintenance-kid-fixtures.json", import.meta.url),
@@ -113,7 +113,7 @@ describe("loadConfig", () => {
     expect(config.databaseUrl).toBe("postgres://agent:secret@postgres/agent_acp");
     expect(config.databaseTimeoutMs).toBe(10_000);
     expect(config.stateDeliveryTimeoutMs).toBe(10_000);
-    expect(config.clientMcpKey).toEqual(Buffer.alloc(32, 7));
+    expect(config.clientMcpKey).toEqual(Buffer.from("0123456789abcdef0123456789abcdef"));
     expect(config.skillMaintenanceSigning).toBeUndefined();
     expect(config.skillLearningControllerUrl).toBeUndefined();
     expect(config.skillLearningDebugAgentId).toBeUndefined();
