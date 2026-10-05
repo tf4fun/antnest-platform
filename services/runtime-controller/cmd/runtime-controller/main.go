@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
@@ -126,6 +127,7 @@ func run(ctx context.Context) (resultErr error) {
 		return classified("configuration", "invalid_configuration", err)
 	}
 	defer configuration.Authentication.CloseIdleConnections()
+	devsecrets.LogWarnings(slog.Default(), configuration.DevelopmentSecretWarnings)
 	database, err := postgresrepository.OpenDatabase(ctx, configuration.DatabaseURL, 20, 5)
 	if err != nil {
 		return classified("repository", "database_connection_failed", err)

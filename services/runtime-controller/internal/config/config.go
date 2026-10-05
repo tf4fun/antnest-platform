@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
@@ -20,29 +21,30 @@ import (
 const MonitorRetryDelay = time.Second
 
 type Config struct {
-	InstanceCredentials   *instanceauth.Manager
-	RuntimeAuthentication map[string]string
-	Authentication        *serviceauth.Clients
-	HealthListenAddress   string
-	AllowedImages         []string
-	ListenAddress         string
-	DatabaseURL           string
-	Platform              string
-	DockerSocketPath      string
-	ControllerScope       string
-	ManagementNetwork     string
-	SystemSkillsVolume    string
-	SkillRegistryURL      string
-	SkillPreparerImage    string
-	RuntimeStatusTimeout  time.Duration
-	MutationTimeout       time.Duration
-	RPCRequestTimeout     time.Duration
-	ReconciliationTimeout time.Duration
-	MonitorMaxRetryDelay  time.Duration
-	ObservationRetention  time.Duration
-	SSEHeartbeat          time.Duration
-	RuntimeOTEL           map[string]string
-	MaintenanceVerifiers  deployment.MaintenanceVerifiers
+	InstanceCredentials       *instanceauth.Manager
+	RuntimeAuthentication     map[string]string
+	Authentication            *serviceauth.Clients
+	DevelopmentSecretWarnings []string
+	HealthListenAddress       string
+	AllowedImages             []string
+	ListenAddress             string
+	DatabaseURL               string
+	Platform                  string
+	DockerSocketPath          string
+	ControllerScope           string
+	ManagementNetwork         string
+	SystemSkillsVolume        string
+	SkillRegistryURL          string
+	SkillPreparerImage        string
+	RuntimeStatusTimeout      time.Duration
+	MutationTimeout           time.Duration
+	RPCRequestTimeout         time.Duration
+	ReconciliationTimeout     time.Duration
+	MonitorMaxRetryDelay      time.Duration
+	ObservationRetention      time.Duration
+	SSEHeartbeat              time.Duration
+	RuntimeOTEL               map[string]string
+	MaintenanceVerifiers      deployment.MaintenanceVerifiers
 }
 
 func Load(environment serviceauth.LookupEnv) (Config, error) {
@@ -50,6 +52,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("environment lookup is required")
 	}
 	lookup := func(name string) string { value, _ := environment(name); return value }
+	policy, err := devsecrets.New(lookup(devsecrets.OptInVariable))
+	if err != nil {
+		return Config{}, err
+	}
 	if raw, _ := environment("ANTNEST_SKILL_REGISTRY_API_TOKEN"); raw != "" {
 		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN is retired; use exact service authentication")
 	}
@@ -122,6 +128,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL is required")
 	}
+	if err := policy.CheckDatabaseURL("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL", config.DatabaseURL); err != nil {
+		return Config{}, err
+	}
+	config.DevelopmentSecretWarnings = policy.Warnings()
 	if config.Platform != "docker" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_PLATFORM currently supports only docker")
 	}
