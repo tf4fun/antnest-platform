@@ -8,7 +8,7 @@ recovery, and shutdown.
 
 Startup validates workload mode/receiver credentials, complete TLS configuration
 and separate CCT signing/public keys before opening a listener. It connects to the private database, applies
-checksummed migrations, validates the encryption key, and idempotently creates
+checksummed migrations, validates the encryption configuration, and idempotently creates
 the bootstrap Organization and local system administrator when bootstrap
 variables are present.
 
@@ -27,7 +27,9 @@ and do not affect process readiness.
 | ------------------------------------- | ----------- | ------------------------------------------ |
 | `ANTNEST_IDENTITY_LISTEN`             | no          | Listen address, default `:8080`            |
 | `ANTNEST_IDENTITY_DATABASE_URL`       | yes         | Private PostgreSQL URL                     |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEY`     | yes         | Canonical base64 32-byte AES key           |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY`     | single-key mode | Canonical padded Base64 32-byte key; identity `local-v1` |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEYS`    | ring mode   | Exact comma-separated `kid:base64key` entries |
+| `ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID` | ring mode | Exact active ID present in the ring       |
 | `ANTNEST_IDENTITY_PUBLIC_BASE_URL`    | yes         | OIDC callback and SCIM location base       |
 | `ANTNEST_IDENTITY_TOKEN_TTL`          | no          | Local/OIDC access token TTL, default `12h` |
 | `ANTNEST_IDENTITY_OIDC_SESSION_TTL`   | no          | OIDC state lifetime, default `10m`         |
@@ -66,10 +68,50 @@ the explicit override and credential/data ownership precautions.
   query value. Treat the entire URL as a secret; do not place it in logs,
   analytics, support tickets, or telemetry.
 - Token hashes and encrypted payloads are not returned by list/query methods.
-- Online encryption-key rotation is not implemented. Replacing the
-  key without first re-provisioning encrypted Provider/session data makes that
-  data intentionally unreadable and is therefore a planned maintenance
-  operation, not a supported live command.
+- Encryption key IDs and record identities are authenticated. Unknown keys,
+  tampered labels and invalid ciphertext fail closed without exposing secrets.
+
+## Encryption key rotation
+
+The [shared contract](../../../contracts/platform/encryption-key-rotation.md)
+defines exact configuration and envelope authentication. Keep bootstrap,
+signing and transport keys separate from this stored-secret key ring.
+
+1. Back up first and stop old replicas before starting upgraded replicas with
+   the existing single key. Use a coordinated binary cutover: old binaries
+   cannot accept the new migration journal or read new envelopes. Migration
+   `0003` labels historical rows `local-v1`; new writes use envelopes. This is
+   additive; rollback needs the pre-upgrade database, keys and matching binary.
+2. Replace the single-key variable with a ring containing `local-v1` with the
+   **same bytes** and a fresh key ID. Keep active `local-v1` while every replica
+   receives both keys. Ring values and active IDs are not trimmed.
+3. Switch every writer's active ID to the new key, retaining both keys. Only
+   after all writers have switched, run the existing binary:
+
+   ```sh
+   identity-service rekey --batch-size 100
+   ```
+
+   It loads only `ANTNEST_IDENTITY_DATABASE_URL` and encryption configuration;
+   no listener, bootstrap or signing configuration is needed. It serializes
+   rotation jobs with a session advisory lock and locks at most 100 rows per
+   transaction (accepted range 1–1000). Readers remain available; writers of
+   locked rows wait for that bounded batch. Ctrl-C/SIGTERM cancels safely.
+4. Check successful JSON progress ends with `updated: 0, remaining: 0` for
+   **both** `oidc_providers` and `oidc_auth_sessions`. Rerunning is idempotent
+   and resumes committed batches. Unknown keys or authentication errors roll
+   back the current batch; restore the correct key or investigate corruption
+   rather than deleting rows or relabeling ciphertext.
+5. Remove the old key only after all writers have switched and the final sweep
+   reports zero for both tables. Preserve it with backups that still contain
+   old ciphertext. Removing it early can break pending OIDC callbacks.
+
+Rotation changes only ciphertext, nonces, key IDs and wrapped data keys. It
+does not change Provider revisions, session states, timestamps, completed-login
+receipts or access tokens. Metadata updates that retain a Provider secret also
+rewrap it under the active key. Rekey does not revoke external OIDC secrets;
+rotate those at the issuer separately after a compromise. A remote KMS adapter
+is not implemented; the shared `KeyEncrypter` interface is its extension point.
 
 ## Telemetry
 

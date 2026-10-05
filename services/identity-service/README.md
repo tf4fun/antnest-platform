@@ -109,7 +109,9 @@ for the failure behavior when components are upgraded out of order.
 | `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Secure transport | None | Complete platform TLS configuration; exact service URI identity and DNS verification. |
 | `ANTNEST_IDENTITY_CCT_SIGNING_KID`, `ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE`, `ANTNEST_IDENTITY_CCT_JWKS_FILE` | Yes | None | Exact signing ID, separate Ed25519 PKCS8 private key, bounded public JWKS. See the signing contract. |
 | `ANTNEST_IDENTITY_DATABASE_URL` | Yes | None | Private PostgreSQL URL. |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Yes | None | Canonical base64 encoding of exactly 32 bytes; AES key for OIDC client secrets. |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Single-key mode | None | Canonical padded Base64 for exactly 32 bytes; maps to `local-v1`. Cannot coexist with the ring. |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEYS` | Ring mode | None | Comma-separated exact `kid:base64key` entries. Retain old keys for decrypting OIDC client and login-session secrets. |
+| `ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID` | Ring mode | None | Exact member of the ring; only this key wraps new secrets. |
 | `ANTNEST_IDENTITY_PUBLIC_BASE_URL` | Yes | None | Absolute base URL for the OIDC callback and SCIM locations. No credentials, query, or fragment. HTTPS is required unless the host is `localhost`, `127.0.0.1`, or `::1`. A trailing `/` is removed. |
 | `ANTNEST_IDENTITY_LISTEN` | No | `:8080` | Listen address. `--healthcheck` follows its configured host and port; missing/wildcard hosts use `127.0.0.1`. |
 | `ANTNEST_IDENTITY_TOKEN_TTL` | No | `12h` | Local and OIDC access-token lifetime. Positive Go duration. |
@@ -134,6 +136,14 @@ listener, with the existing token HTTP opt-in or pinned TLS service identity.
 It disables environment proxies and refuses redirects; only the local `/status`
 response can report health. This follows the
 [purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
+
+Choose exactly one encryption configuration. Every key, including decrypt-only
+members, passes development-secret admission. `identity-service rekey
+[--batch-size N]` rotates both OIDC tables without changing provider revisions
+or pending login state; it requires only database and encryption configuration.
+See [rotation operations](docs/operations.md#encryption-key-rotation) and the
+[shared contract](../../contracts/platform/encryption-key-rotation.md). New
+envelopes require this version of the binary; do not downgrade after new writes.
 
 Bootstrap is enabled when the bootstrap variables are set. Repeated startup
 verifies the same identity and never resets an existing password. See

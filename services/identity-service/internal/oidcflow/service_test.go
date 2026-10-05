@@ -56,7 +56,7 @@ func TestUpsertProviderDiscoversBeforePersistingEnabledConfiguration(t *testing.
 	}
 	secret, err := service.secretBox.Open(
 		repository.upsert.Provider.ClientSecret,
-		providerSecretAAD(repository.upsert.Provider.OrganizationID, repository.upsert.Provider.Name),
+		ProviderSecretIdentity(repository.upsert.Provider.OrganizationID, repository.upsert.Provider.Name),
 	)
 	if err != nil || string(secret) != "top-secret" {
 		t.Fatalf("open Provider secret with stable identity: %q, %v", secret, err)
@@ -685,7 +685,7 @@ func testProvider(t *testing.T) ProviderWithSecret {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret, err := box.Seal([]byte("client-secret"), providerSecretAAD("org-1", "workforce"))
+	secret, err := box.Seal([]byte("client-secret"), ProviderSecretIdentity("org-1", "workforce"))
 	if err != nil {
 		t.Fatal(err)
 	}

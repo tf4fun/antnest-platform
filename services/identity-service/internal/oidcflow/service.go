@@ -350,10 +350,15 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 	if input.ClientSecret != "" {
 		sealedSecret, err = s.secretBox.Seal(
 			[]byte(input.ClientSecret),
-			providerSecretAAD(input.OrganizationID, name),
+			ProviderSecretIdentity(input.OrganizationID, name),
 		)
 		if err != nil {
 			return Provider{}, fmt.Errorf("seal OIDC client secret: %w", err)
+		}
+	} else if len(sealedSecret.Ciphertext) > 0 {
+		sealedSecret, err = s.secretBox.Rekey(ctx, sealedSecret, ProviderSecretIdentity(input.OrganizationID, name))
+		if err != nil {
+			return Provider{}, fmt.Errorf("rewrap retained OIDC client secret: %w", err)
 		}
 	}
 	if len(sealedSecret.Ciphertext) == 0 {
@@ -539,7 +544,7 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 	}
 	clientSecret, err := s.secretBox.Open(
 		provider.ClientSecret,
-		providerSecretAAD(provider.OrganizationID, provider.Name),
+		ProviderSecretIdentity(provider.OrganizationID, provider.Name),
 	)
 	if err != nil {
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "provider_secret", err)
@@ -799,7 +804,8 @@ func normalizeScopes(input []string) []string {
 	return result
 }
 
-func providerSecretAAD(organizationID, providerName string) string {
+// ProviderSecretIdentity preserves the pre-rotation AAD for stored OIDC secrets.
+func ProviderSecretIdentity(organizationID, providerName string) string {
 	return "oidc-provider\x00" + organizationID + "\x00" + providerName
 }
 

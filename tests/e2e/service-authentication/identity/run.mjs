@@ -14,6 +14,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { assertJsonRpcContentTypeRejection } from "../../../support/json-rpc-security.mjs";
 import { runCommand } from "../../../support/run-command.mjs";
+import { rotateIdentityFixture } from "./rekey-flow.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-identity-auth-${randomUUID()}`;
@@ -100,7 +101,7 @@ try {
   const binding = identity.NetworkSettings.Ports["8080/tcp"][0];
   assert.equal(binding.HostIp, "127.0.0.1");
   const port = binding.HostPort;
-  const url = `http://127.0.0.1:${port}`;
+  let url = `http://127.0.0.1:${port}`;
   const rpc = async (
     path,
     body,
@@ -342,6 +343,28 @@ try {
   assert.equal(stopped.State.ExitCode, 0);
   checks++;
   await docker(["rm", healthName]);
+  stage = "encryption-key-rotation";
+  const rotation = await rotateIdentityFixture({
+    env,
+    docker,
+    compose,
+    rebind: (value) => {
+      url = value;
+    },
+    organizationID: login.principal.organization_id,
+    login: async () => {
+      const fresh = await rpc("local-login", {
+        request_id: randomUUID(),
+        organization_slug: "auth-test",
+        email: "admin@example.test",
+        password: env.IDENTITY_TEST_ADMIN_PASSWORD,
+      });
+      assert.deepEqual(fresh.principal, login.principal);
+    },
+  });
+  writeFileSync(resolve(evidence, "rotation.json"), JSON.stringify(rotation), {
+    mode: 0o600,
+  });
   complete = true;
 } catch (error) {
   // Preserve only this disposable project's diagnostics before removing it.

@@ -13,6 +13,14 @@ effects after rejection. TLS/mTLS handshakes are additionally covered by the
 service component tests. It does not claim Gateway/Console or cross-service
 acceptance.
 
+The same real binary also rotates synthetic historical Provider and pending
+login-session ciphertext: add a decrypt-only key, switch the active key, run
+`rekey --batch-size 1` twice, verify both tables finish at zero without business
+changes, retire the old key and verify normal login still works. The service's
+PostgreSQL integration tests additionally complete an actual fixture OIDC
+callback started before rotation after the old key is removed; the Docker
+fixture does not call an external issuer.
+
 The service runs as the invoking nonroot UID solely so it can read the temporary
 0600 bind-mounted credentials. The image's production nonroot default is unchanged.
 Containers and networks are removed on completion/interruption; temporary keys

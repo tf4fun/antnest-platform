@@ -1,12 +1,12 @@
 package config
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
+	secretencryption "github.com/tf4fun/antnest-platform/modules/secret-encryption"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 )
 
@@ -36,7 +36,7 @@ func (b Bootstrap) CheckNewAdministratorPassword() ([]string, error) {
 type Config struct {
 	ListenAddress             string
 	DatabaseURL               string
-	EncryptionKey             []byte
+	Encryption                secretencryption.Config
 	PublicBaseURL             string
 	TokenTTL                  time.Duration
 	OIDCSessionTTL            time.Duration
@@ -87,12 +87,8 @@ func Load(lookup func(string) string) (Config, error) {
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_IDENTITY_DATABASE_URL is required")
 	}
-	key, err := decodeEncryptionKey(strings.TrimSpace(lookup("ANTNEST_IDENTITY_ENCRYPTION_KEY")))
+	config.Encryption, err = loadEncryption(lookup, policy)
 	if err != nil {
-		return Config{}, err
-	}
-	config.EncryptionKey = key
-	if err := policy.CheckKey("ANTNEST_IDENTITY_ENCRYPTION_KEY", key); err != nil {
 		return Config{}, err
 	}
 	if err := policy.CheckDatabaseURL("ANTNEST_IDENTITY_DATABASE_URL", config.DatabaseURL); err != nil {
@@ -106,14 +102,6 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	return config, nil
-}
-
-func decodeEncryptionKey(raw string) ([]byte, error) {
-	decoded, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil || len(decoded) != 32 || base64.StdEncoding.EncodeToString(decoded) != raw {
-		return nil, fmt.Errorf("ANTNEST_IDENTITY_ENCRYPTION_KEY must be canonical base64 for exactly 32 bytes")
-	}
-	return decoded, nil
 }
 
 func validatePublicBaseURL(raw string) error {
