@@ -17,18 +17,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/registry"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
 type config struct {
-	listenAddress string
-	databaseURL   string
-	sourceURL     string
-	identityURL   string
-	clients       *serviceauth.Clients
-	security      registry.Security
+	listenAddress             string
+	databaseURL               string
+	sourceURL                 string
+	identityURL               string
+	clients                   *serviceauth.Clients
+	security                  registry.Security
+	developmentSecretWarnings []string
 }
 
 func loadConfig(lookup serviceauth.LookupEnv) (config, error) {
@@ -36,6 +38,10 @@ func loadConfig(lookup serviceauth.LookupEnv) (config, error) {
 		return config{}, fmt.Errorf("registry environment lookup is required")
 	}
 	get := func(k string) string { v, _ := lookup(k); return v }
+	policy, err := devsecrets.New(get(devsecrets.OptInVariable))
+	if err != nil {
+		return config{}, err
+	}
 	value := config{listenAddress: strings.TrimSpace(get("ANTNEST_SKILL_REGISTRY_LISTEN")), databaseURL: strings.TrimSpace(get("ANTNEST_SKILL_REGISTRY_DATABASE_URL")), sourceURL: strings.TrimSpace(get("ANTNEST_SKILL_REGISTRY_SOURCE_URL")), identityURL: strings.TrimSpace(get("ANTNEST_IDENTITY_URL"))}
 	if value.listenAddress == "" {
 		value.listenAddress = ":8080"
@@ -46,6 +52,10 @@ func loadConfig(lookup serviceauth.LookupEnv) (config, error) {
 	if value.databaseURL == "" {
 		return config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_DATABASE_URL is required")
 	}
+	if err := policy.CheckDatabaseURL("ANTNEST_SKILL_REGISTRY_DATABASE_URL", value.databaseURL); err != nil {
+		return config{}, err
+	}
+	value.developmentSecretWarnings = policy.Warnings()
 	if value.identityURL == "" {
 		return config{}, fmt.Errorf("ANTNEST_IDENTITY_URL is required")
 	}
@@ -152,6 +162,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) error {
 	if err != nil {
 		return err
 	}
+	devsecrets.LogWarnings(slog.Default(), cfg.developmentSecretWarnings)
 	defer func() {
 		if err := observability.Shutdown(context.Background()); err != nil {
 			slog.Error("Registry telemetry shutdown failed", "error_class", "export_error")
