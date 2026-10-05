@@ -75,8 +75,10 @@ do not expose plaintext, ciphertext, DSNs or database error details.
 
 ## Deployment sequence and acceptance
 
-1. Back up each owned database with its required keys. Deploy the new binaries
-   and additive migrations with the existing single-key configuration first.
+1. Back up each owned database with its required keys and matching binary.
+   Stop old replicas before starting upgraded replicas with the existing single
+   key and additive migrations. This initial binary cutover is coordinated:
+   old binaries cannot accept the migration journal or read new envelopes.
 2. Add a fresh key to every replica's ring, retaining all old keys. Once every
    replica can decrypt both IDs, activate the new key on every writer. Do not
    run rotation while a writer still uses an old active key.
@@ -86,8 +88,9 @@ do not expose plaintext, ciphertext, DSNs or database error details.
    completed. Retained historical backups still require their old keys.
 
 Removal is not hot reload: recreate/restart the owning service with its updated
-configuration. After new envelope writes, downgrading to a pre-rotation binary
-is unsupported. Encryption rotation cannot undo a leak of previously exported
+configuration. Downgrading against the migrated database is unsupported;
+rollback requires the matching pre-upgrade database, keys and binary.
+Encryption rotation cannot undo a leak of previously exported
 secrets; revoke/replace affected Provider and IdP credentials separately.
 
 Delivery is split into shared contract/module, Controller, Identity, then an

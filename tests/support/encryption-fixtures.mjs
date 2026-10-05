@@ -32,7 +32,10 @@ export async function seedLegacyOIDCSecrets({ sql, key, organizationID }) {
   );
   const session = seal(
     Buffer.from(
-      JSON.stringify({ nonce: randomUUID(), code_verifier: randomUUID() }),
+      JSON.stringify({
+        nonce: randomBytes(32).toString("base64url"),
+        pkce_verifier: randomBytes(32).toString("base64url"),
+      }),
     ),
     sessionID,
   );

@@ -25,6 +25,10 @@ const fields = [
   ...policy.password_variables,
   ...policy.encryption_key_variables,
 ];
+const rotatingKeys = new Set([
+  "ANTNEST_IDENTITY_ENCRYPTION_KEY",
+  "ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY",
+]);
 const composeEnvironment = {
   ...Object.fromEntries(
     Object.entries(process.env).filter(
@@ -112,6 +116,22 @@ test("public example leaves every deployment secret empty and has no opt-in", ()
       "standard Compose must not enable the exception",
     );
     for (const name of fields) {
+      if (file === "compose.yaml" && rotatingKeys.has(name)) {
+        const ring = `${name}S`;
+        assert(
+          source.includes(`\${${name}:-\${${ring}:?`),
+          `${name} requires one encryption mode`,
+        );
+        assert(
+          source.includes(`\${${name}:-}`),
+          `${name} has no public fallback`,
+        );
+        assert(
+          source.includes(`\${${ring}:-}`),
+          `${ring} has no public fallback`,
+        );
+        continue;
+      }
       assert(!source.includes(`\${${name}:-`), name);
       if (file === "compose.yaml")
         assert(source.includes(`\${${name}:?`), `${name} must fail closed`);

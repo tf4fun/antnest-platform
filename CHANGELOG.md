@@ -4,6 +4,23 @@
 
 ### Changed
 
+Controller and Identity support active/decrypt-only master-key rings and online
+`rekey --batch-size N` commands (#42). New writes use authenticated per-record
+data-key envelopes; key IDs, service and record identity are bound to encryption.
+Envelope rotation rewraps data keys; historical single-key ciphertext remains
+readable as `local-v1` and is converted once. Identity adds key IDs/wrapped keys
+to both OIDC tables; Controller adds wrapped keys to Provider credentials.
+The shared Go module exposes a KMS adapter seam; no external adapter is shipped.
+
+Deployment note: back up first and perform a coordinated initial binary cutover
+for each owner. Old binaries cannot accept the migrated database or new
+envelopes; rollback needs the matching pre-upgrade recovery set. Once all replicas
+are upgraded, add both keys, switch all writers, run rekey until every owned table
+reports zero, then remove the old key. Keep retired keys with old backups. See
+[Rotating encryption keys](docs/encryption-key-rotation.md). Single-key mode and
+the existing public-secret admission gate remain; ring values/active IDs are
+exact and never trimmed. ACP's client-MCP key is outside this rotation.
+
 Development Compose requires all twelve database/bootstrap passwords and
 encryption keys instead of falling back to public values (#13). `.env.example`
 leaves secrets empty. Quick start and operations use `scripts/generate-dev-env.sh`,
@@ -79,6 +96,12 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Stored Provider and OIDC secrets no longer depend on one irreplaceable master
+key (#42). Bounded row-locked rekey batches resume after interruption and preserve
+business revisions, timestamps, pending callbacks and Runtime identity. Identity
+metadata updates also rewrap a retained secret under the active key instead of
+writing the decrypt-only key back. Unknown keys and tampering fail closed.
 
 Unconfigured deployments can no longer start with the repository's publicly
 known credentials or all-zero keys (#13). PostgreSQL password checks use each

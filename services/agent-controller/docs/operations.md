@@ -12,7 +12,10 @@ always carry a wrapped data key. See the
 [shared encryption contract](../../../contracts/platform/encryption-key-rotation.md)
 for exact parsing, associated data and deployment ordering.
 
-Deploy the new binary and additive migration first with the existing key. Add
+Back up first and stop old replicas before starting the new binary and additive
+migration with the existing key. This initial coordinated binary cutover avoids
+mixing readers that cannot accept the migration journal or new envelopes;
+rollback requires the matching pre-upgrade recovery set. Add
 `kid2` to every Controller replica's `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS`
 ring while retaining `local-v1`, then switch every writer's
 `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_ACTIVE_KID` to `kid2`. Unset/empty the

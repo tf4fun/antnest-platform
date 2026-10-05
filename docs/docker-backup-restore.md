@@ -16,8 +16,8 @@ Keep one protected recovery set, with a timestamp and checksums:
 
 | Owner              | Database                                          | Additional state                                                                                                                                                               |
 | ------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Identity           | `antnest_identity`                                | `ANTNEST_IDENTITY_ENCRYPTION_KEY`, IdP configuration, database role/DSN                                                                                                        |
-| Agent Controller   | `antnest_agent_controller`                        | `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`, provider credentials/configuration, deployment identity                                                                             |
+| Identity           | `antnest_identity`                                | Single encryption key or complete `ANTNEST_IDENTITY_ENCRYPTION_KEYS` ring and active ID; IdP configuration, database role/DSN                                                  |
+| Agent Controller   | `antnest_agent_controller`                        | Single encryption key or complete `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS` ring and active ID; Provider configuration, deployment identity                                   |
 | ACP                | `antnest_agent_acp`                               | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context, Skill maintenance signing keys                                                                                 |
 | Runtime Controller | `antnest_runtime_controller`                      | Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration                                                              |
 | Egress             | `antnest_egress`                                  | Tunnel CIDR/resolver and deployment network configuration                                                                                                                      |
@@ -25,14 +25,23 @@ Keep one protected recovery set, with a timestamp and checksums:
 | Temporal           | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data                                                                            |
 | Runtime filesystem | none                                              | Every retained `antnest-workspace-<agent-id>` volume, every referenced per-Agent Skill volume and the configured system Skills volume, including ownership, modes and symlinks |
 
-The three encryption keys are independent of database login passwords. Preserve
-the keys and working connection configuration, plus the exact Compose files and
+The three owners' encryption configurations are independent of database login
+passwords. Preserve every key ID/key needed by the backed-up rows, including
+decrypt-only and retired keys, the active ID and working connection configuration,
+plus the exact Compose files and
 deployment environment, outside Git in an access-controlled secret backup. A
 database dump without its required key is not a complete recovery set. Dump
 contents and workspace files are sensitive too. Use a private backup directory
 (0700) and restrict archive/key files to 0600; encrypt and restrict off-host
 storage according to operator policy. Do not print environment values or put
 credentials in terminal transcripts.
+
+Online rekey does not convert previous backup copies. Restoring one requires its
+original key set and matching binary/schema before any traffic is admitted.
+Do not restore old ciphertext using only the current active key or regenerate
+keys to replace a missing recovery set. See
+[Rotating encryption keys](encryption-key-rotation.md) for retirement and the
+initial binary cutover/rollback constraints.
 
 The shared development PostgreSQL server uses private service roles created by
 `scripts/postgres-init.sh`, `scripts/temporal/init-databases.sh` and

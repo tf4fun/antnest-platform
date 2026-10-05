@@ -5,8 +5,11 @@ This contract removes the published deployment credentials tracked in issue #13.
 
 ## Deployment
 
-Every listed password and encryption key is required by the standard Compose
-configuration, with no public fallback. The example leaves these fields empty.
+Every listed password and encryption configuration is required by standard
+Compose, with no public fallback. Controller and Identity may supply their
+[key ring](encryption-key-rotation.md) instead of the single-key variable;
+Compose requires at least one mode, and each owner rejects missing/mixed modes
+or invalid members at startup. The example leaves these fields empty.
 `scripts/generate-dev-env.sh` generates independent random values into a private
 0600 `.env`, refuses an existing output unless `--force` is explicit, and prints
 only the newly generated bootstrap administrator password once. Force is for a
@@ -53,7 +56,8 @@ rejection, private/non-overwriting generation, and an actual fresh Stage 3 stack
 and generated-password login. Fixed fixtures explicitly opt in in their own
 environment; generated operator deployments do not.
 
-Key rotation/versioning remains the separate scope of #42. Keep original keys
-and database passwords when upgrading a retained deployment; if they are public
-defaults, plan the owner-specific credential migration instead of regenerating
-`.env` against existing volumes.
+Stored-secret key rotation/versioning follows the implemented
+[#42 contract](encryption-key-rotation.md). Keep original keys and database
+passwords when upgrading a retained deployment; if they are public defaults,
+plan the owner-specific credential rotation instead of regenerating `.env`
+against existing volumes.

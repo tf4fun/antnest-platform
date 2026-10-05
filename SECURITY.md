@@ -89,8 +89,15 @@ See the [secret admission contract](contracts/platform/development-secrets.md).
 Keep workload credentials in the private directory prepared by
 `scripts/dev-service-tokens.mjs`; Registry's retired API/source tokens remain
 rejected, including with the development opt-in. Never commit either generated
-configuration. Retain existing keys with their encrypted data; versioned key
-rotation remains the separate scope of #42.
+configuration. Controller and Identity now use authenticated envelopes with an
+active master key and decrypt-only ring entries. Their independent `rekey`
+commands rotate stored credentials and OIDC session secrets online (#42).
+Every ring member passes the same admission policy, and unknown or relabeled
+keys fail authentication. See [Rotating encryption keys](docs/encryption-key-rotation.md)
+for the coordinated initial binary upgrade, add/activate/rekey/retire order,
+zero-remaining checks and backups. Preserve retired keys with historical backups;
+rekey neither revokes leaked external credentials nor rewrites backup copies.
+The shared KMS interface is available; external adapters are follow-up work.
 
 ## Service authentication rollout
 
