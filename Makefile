@@ -96,7 +96,7 @@ e2e-deployment-ports:
 
 .PHONY: test-deployment-wiring e2e-deployment-wiring
 test-deployment-wiring:
-	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
 
 e2e-deployment-wiring:
 	node tests/integration/deployment/compose-runtime-docker.mjs
@@ -108,7 +108,7 @@ test-node: test-repo
 	npm --prefix services/agent-ui/web test
 
 # Repository-level contract, tooling, and fixture suites. They need Node,
-# Go, Python, and the agent-acp-service dependencies, but no Docker or databases.
+# Go, Python, Compose CLI and ACP dependencies, but no Docker daemon or databases.
 .PHONY: test-repo
 test-repo:
 	$(MAKE) test-verification-python
@@ -119,7 +119,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
 	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
-	node --test tests/integration/deployment/deployment.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
@@ -168,7 +168,7 @@ test-lifecycle-fixtures:
 	node --test --test-concurrency=1 tests/e2e/lifecycle-closeout/*.test.mjs
 
 e2e-lifecycle:
-	node tests/e2e/lifecycle-closeout/run.mjs
+	node tests/support/authenticated-shell-e2e.mjs lifecycle
 
 .PHONY: e2e-organization-display
 e2e-organization-display:
@@ -435,11 +435,11 @@ compose-up: docker-build-runtime-controller
 compose-down:
 	docker compose down --remove-orphans
 
-e2e-stage1: docker-build-runtime-controller
-	sh tests/e2e/e2e-stage1.sh
+e2e-stage1:
+	node tests/support/authenticated-shell-e2e.mjs stage1
 
-e2e-stage2: docker-build
-	sh tests/e2e/e2e-stage2.sh
+e2e-stage2:
+	node tests/support/authenticated-shell-e2e.mjs stage2
 
 e2e-stage3: docker-build-stage3
 	sh tests/e2e/e2e-stage3a.sh
@@ -585,8 +585,8 @@ e2e-acp-closeout:
 e2e-agent-access:
 	ANTNEST_E2E_AGENT_ACCESS=true sh tests/e2e/e2e-stage3a.sh
 
-e2e-runtime-controller: docker-build-runtime-controller
-	sh tests/e2e/runtime-controller/run.sh
+e2e-runtime-controller:
+	node tests/support/authenticated-shell-e2e.mjs runtime-controller
 
 .PHONY: e2e-runtime-controller-observation-retry
 e2e-runtime-controller-observation-retry:

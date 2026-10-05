@@ -12,6 +12,73 @@ import * as acp from "../../../services/agent-acp-service/node_modules/@agentcli
 import { createWebSocketStream } from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/ws-stream.js";
 import WebSocket from "../../../services/agent-acp-service/node_modules/ws/wrapper.mjs";
 import { assertPromptEvidence } from "./stage2-acp-evidence.mjs";
+import { FixtureCallerContext } from "../../support/fixture-caller-context.mjs";
+
+let fixtureAuthentication;
+let fixtureOrigins;
+let administratorID;
+export function configureStage2Authentication(origins) {
+  fixtureOrigins = origins;
+  fixtureAuthentication = new FixtureCallerContext(
+    process.env.ANTNEST_SERVICE_AUTH_DIRECTORY,
+    process.env.ANTNEST_IDENTITY_CCT_SIGNING_KID,
+  );
+}
+export function registerFixturePrincipal(principal, sessionID) {
+  if (!fixtureAuthentication) return;
+  fixtureAuthentication.register(principal, sessionID);
+  administratorID ??= principal.user_id;
+}
+function authenticatedHeaders(url, headers, body) {
+  if (!fixtureAuthentication) return headers;
+  const address = new URL(url);
+  const receiver = Object.entries(fixtureOrigins).find(
+    ([, origin]) => new URL(origin).host === address.host,
+  )?.[0];
+  if (!receiver) return headers;
+  const extra = Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => !name.startsWith("x-antnest-fixture-"),
+    ),
+  );
+  if (headers["x-antnest-fixture-authentication"] === "none") return extra;
+  const login =
+    receiver === "identity-service" &&
+    address.pathname.endsWith("/local-login");
+  const caller =
+    receiver === "agent-acp-service"
+      ? /(?:execution-audit|execution-events)/u.test(address.pathname)
+        ? "admin-console"
+        : "edge-gateway"
+      : login
+        ? "edge-gateway"
+        : "admin-console";
+  return {
+    ...extra,
+    ...fixtureAuthentication.headers({
+      caller,
+      receiver,
+      ...(login
+        ? {}
+        : {
+            principalID:
+              headers["x-antnest-user-id"] ??
+              headers["x-antnest-principal-id"] ??
+              administratorID,
+            organizationID:
+              headers["x-antnest-organization-id"] ??
+              body?.organization_id ??
+              address.searchParams.get("organization_id") ??
+              undefined,
+            agentID:
+              headers["x-antnest-agent-id"] ??
+              (receiver === "agent-controller"
+                ? /^\/internal\/agents\/([^/]+)/u.exec(address.pathname)?.[1]
+                : undefined),
+          }),
+    }),
+  };
+}
 
 export async function waitFor(read, accept, label, timeout = 180000) {
   const deadline = Date.now() + timeout;
@@ -62,7 +129,10 @@ export async function json(
       },
     },
     async (span) => {
-      const outgoing = { "content-type": "application/json", ...headers };
+      const outgoing = {
+        "content-type": "application/json",
+        ...authenticatedHeaders(url, headers, body),
+      };
       propagation.inject(context.active(), outgoing);
       try {
         const response = await fetch(url, {
@@ -108,7 +178,7 @@ export async function openClient(url, headers, { promptContext = true } = {}) {
       this.on("error", (error) => closed.abort(error));
     }
   }
-  const transportHeaders = { ...headers };
+  const transportHeaders = { ...authenticatedHeaders(url, headers) };
   propagation.inject(context.active(), transportHeaders);
   const connection = client.connect(
     createWebSocketStream(url, {

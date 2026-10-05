@@ -8,9 +8,16 @@ import {
   collectFoundationLifecycle,
   saveFoundationFailure,
 } from "./foundation-trace.mjs";
-import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
+import {
+  collectLifecycleEvidence,
+  foundationLifecycleExpectation,
+} from "./foundation-evidence.mjs";
 import { setupFoundation } from "./foundation-setup.mjs";
-import { exerciseStartupFailure } from "./failure.mjs";
+import {
+  assertRuntimeStorage,
+  exerciseStartupFailure,
+  waitForDeletedRuntimeResources,
+} from "./failure.mjs";
 import { withHeldRun } from "./foundation-drain.mjs";
 import {
   waitForAgentReady,
@@ -154,6 +161,8 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       !expectation.runtimeStartupFailure
     )
       await ready(id);
+    if (kind === "delete")
+      await waitForDeletedRuntimeResources(() => resources(id), { signal });
     const beforeReplay = await physicalIdentity(id);
     const historyPath = `/api/admin/agents/${id}/events?limit=100`;
     const beforeEvents = await json(historyPath);
@@ -179,10 +188,7 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       `${kind} replay changed event history`,
     );
     const result = {
-      ...expectation,
-      ...(config.skillRestore && ["create", "enable", "rebuild"].includes(kind)
-        ? { skillPreparation: true }
-        : {}),
+      ...foundationLifecycleExpectation(kind, expectation),
       kind,
       agentID: id,
       requestID: op.request_id,
@@ -220,25 +226,13 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     assert.equal(physical.containers.length, 1);
     const container = physical.containers[0];
     assert.equal(container.State.Health.Status, "healthy");
-    assert.equal(container.Image, config.image);
-    const workspaceVolume = `antnest-workspace-${agentID}`;
-    assert(physical.volumes.includes(workspaceVolume));
-    const skillVolumes = physical.volumes.filter(
-      (name) => name !== workspaceVolume,
-    );
-    assert.equal(skillVolumes.length, config.skillRestore ? 1 : 0);
-    if (config.skillRestore) {
-      const mount = container.Mounts.find(
-        (item) => item.Destination === "/skills",
-      );
-      assert.equal(mount?.Name, skillVolumes[0]);
-      assert.equal(mount.RW, false);
-    }
+    assert.equal(container.Image, config.resolvedImage);
+    const storage = assertRuntimeStorage(physical, agentID);
     return {
       agent,
       container,
-      volume: workspaceVolume,
-      skillVolume: skillVolumes[0],
+      volume: storage.workspace,
+      skillVolume: storage.skills,
     };
   }
   async function physicalIdentity(agentID) {
@@ -378,7 +372,10 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
   const disabled = await resources(agentID);
   assertAgentDisabled(await json(`/api/admin/agents/${agentID}`));
   assert.deepEqual(disabled.containers, []);
-  assert.deepEqual(disabled.volumes, [initial.volume]);
+  assert.deepEqual(
+    disabled.volumes.sort(),
+    [initial.volume, initial.skillVolume].sort(),
+  );
   assert.equal(
     (await policy(originalPolicy.action)).attachment.state,
     "closed",
@@ -441,6 +438,7 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     templateBody,
     agentBody,
     image: config.image,
+    resolvedImage: config.resolvedImage,
     docker,
   });
   await docker(

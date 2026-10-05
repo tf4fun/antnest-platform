@@ -19,6 +19,8 @@ the workload-only outbound policy: source/JWKS calls replace peer credentials
 and remove CCT, browser cookies, Authorization and legacy identity headers.
 Skill authorization, ownership and content lifecycle remain Registry-owned.
 
+Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits variable-only WARNs. Retired API/source bearers remain rejected even with the opt-in.
+
 ## Responsibilities
 
 - Own a private PostgreSQL schema and its embedded, checksum-checked migrations.

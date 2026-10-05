@@ -2,9 +2,22 @@ const DEFAULT_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 import { ServiceAuthentication } from "./adapters/service-authentication.js";
 import { CallerContextVerifier } from "./adapters/caller-context.js";
 import { RequestAuthentication } from "./transport/request-authentication.js";
+import { parse as parsePostgresConnection } from "pg-connection-string";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_STATE_DELIVERY_TIMEOUT_MS = 10_000;
 export const MAINTENANCE_KID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
+const PUBLISHED_DEVELOPMENT_VALUES = [
+  "antnest-postgres-dev",
+  "antnest-egress-dev",
+  "antnest-runtime-controller-dev",
+  "antnest-agent-acp-dev",
+  "antnest-identity-dev",
+  "antnest-agent-controller-dev",
+  "antnest-skill-registry-dev",
+  "antnest-temporal-dev",
+  "antnest-admin-dev",
+  "antnest-skill-registry-local-development-token",
+];
 
 export type AgentAcpConfig = {
   authentication: RequestAuthentication;
@@ -15,6 +28,7 @@ export type AgentAcpConfig = {
   databaseTimeoutMs: number;
   stateDeliveryTimeoutMs: number;
   clientMcpKey: Buffer;
+  developmentSecretWarnings: string[];
   allowDevelopmentSettings: boolean;
   skillMaintenanceSigning?: { kid: string; privateKey: KeyObject };
   skillLearningControllerUrl?: string;
@@ -45,6 +59,31 @@ export class ConfigError extends Error {
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentAcpConfig {
   const databaseUrl = required(environment, "ANTNEST_ACP_DATABASE_URL");
   assertUrlScheme(databaseUrl, "ANTNEST_ACP_DATABASE_URL", ["postgres:", "postgresql:"]);
+  const allowPublicDevSecrets = parseBoolean(
+    environment.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS || "false",
+    "ANTNEST_ALLOW_PUBLIC_DEV_SECRETS",
+  );
+  const developmentSecretWarnings: string[] = [];
+  const checkPublished = (name: string, published: boolean): void => {
+    if (!published) return;
+    if (!allowPublicDevSecrets) throw new ConfigError(`${name} uses a published development value`);
+    if (!developmentSecretWarnings.includes(name)) developmentSecretWarnings.push(name);
+  };
+  let databasePassword: string;
+  try {
+    databasePassword = parsePostgresConnection(databaseUrl).password ?? "";
+  } catch {
+    throw new ConfigError("ANTNEST_ACP_DATABASE_URL must be a valid PostgreSQL connection string");
+  }
+  checkPublished(
+    "ANTNEST_ACP_DATABASE_URL",
+    PUBLISHED_DEVELOPMENT_VALUES.includes(databasePassword),
+  );
+  const clientMcpKey = parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY"));
+  checkPublished(
+    "ANTNEST_ACP_CLIENT_MCP_KEY",
+    clientMcpKey.every((value) => value === clientMcpKey[0]),
+  );
   const allowDevelopmentSettings = parseBoolean(
     environment.ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS ?? "false",
     "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
@@ -99,7 +138,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
       environment.ANTNEST_ACP_STATE_DELIVERY_TIMEOUT ?? `${DEFAULT_STATE_DELIVERY_TIMEOUT_MS}ms`,
       "ANTNEST_ACP_STATE_DELIVERY_TIMEOUT",
     ),
-    clientMcpKey: parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY")),
+    clientMcpKey,
+    developmentSecretWarnings,
     allowDevelopmentSettings,
     ...parseSkillMaintenanceSigning(environment),
     ...learningController,

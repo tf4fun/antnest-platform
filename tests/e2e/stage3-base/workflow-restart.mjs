@@ -128,7 +128,7 @@ export function inspectWorkflowRestart(trace, tree, expected) {
   assert.equal(tag(server, "error.type"), "stream_interrupted");
   assert.equal(client.operationName, "HTTP POST agent-acp-service");
   assert.equal(tag(client, "rpc.method"), "settle_agent");
-  assert.equal(tag(client, "server.address"), "agent-acp-service");
+  assert.equal(tag(client, "server.address"), "agent-acp-control");
   assert.equal(tag(client, "antnest.operation.id"), expected.requestId);
   assert.equal(tag(client, "antnest.agent.id"), expected.agentId);
   assert.equal(tag(client, "antnest.outcome"), "canceled");

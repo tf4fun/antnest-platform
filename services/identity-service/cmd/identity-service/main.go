@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/config"
@@ -158,6 +159,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		)
 	}()
 	logger := telemetryRuntime.Logger()
+	devsecrets.LogWarnings(logger, cfg.DevelopmentSecretWarnings)
 
 	poolConfig, err := repository.ParsePoolConfig(cfg.DatabaseURL)
 	if err != nil {
@@ -175,7 +177,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	if err := initializeIdentityFacts(ctx, cfg, store); err != nil {
+	if err := initializeIdentityFacts(ctx, cfg, store, logger); err != nil {
 		return classifyFailure("identity_bootstrap", err)
 	}
 	interrupted, err := store.FailExpiredOIDCSessions(ctx, time.Now().UTC())
@@ -280,7 +282,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	return resultErr
 }
 
-func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repository.Store) error {
+func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repository.Store, logger *slog.Logger) error {
 	if !cfg.Bootstrap.Enabled() {
 		return nil
 	}
@@ -303,6 +305,13 @@ func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repo
 	_, err = store.Bootstrap(ctx, repository.BootstrapInput{
 		OrganizationSlug: slug, OrganizationName: name, AdminEmail: email,
 		AdminDisplayName: "Antnest Administrator", PasswordHash: passwordHash, Now: time.Now().UTC(),
+		ValidateNewAdministratorPassword: func() error {
+			warnings, err := cfg.Bootstrap.CheckNewAdministratorPassword()
+			if err == nil {
+				devsecrets.LogWarnings(logger, warnings)
+			}
+			return err
+		},
 	})
 	return err
 }

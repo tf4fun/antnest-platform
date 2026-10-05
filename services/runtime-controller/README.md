@@ -18,6 +18,8 @@ Workload authentication and configured Registry transport use the
 caller-context forwarding policy. RC retains its Controller-only route grants,
 Docker boundary and separate Runtime instance credential lifecycle.
 
+Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits a variable-only WARN; it never restores the retired Registry token.
+
 ## Responsibilities
 
 - Issue and atomically seal distinct RC/ACP Runtime tokens with each private

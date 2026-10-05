@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/config"
@@ -159,6 +160,7 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 		)
 	}()
 	logger := telemetryRuntime.Logger()
+	devsecrets.LogWarnings(logger, cfg.DevelopmentSecretWarnings)
 	slog.SetDefault(logger)
 
 	repository, err := postgres.Open(

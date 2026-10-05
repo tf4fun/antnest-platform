@@ -8,7 +8,7 @@ export function verifyExecutionDeployment(config) {
   assert(controller && acp, "both execution services must be configured");
   const producer = controller.environment ?? {};
   const consumer = acp.environment ?? {};
-  const rawOrigin = producer.ANTNEST_AGENT_ACP_SERVICE_URL ?? "";
+  const rawOrigin = producer.ANTNEST_AGENT_ACP_CONTROL_URL ?? "";
   const origin = URL.parse(rawOrigin);
   assert(
     origin &&
@@ -19,7 +19,7 @@ export function verifyExecutionDeployment(config) {
       !origin.search &&
       !origin.hash &&
       origin.pathname === "/",
-    "Controller must have an ACP HTTP publication origin",
+    "Controller must have an ACP HTTP control publication origin",
   );
   for (const key of [
     "ANTNEST_AGENT_CONTROLLER_URL",
@@ -29,9 +29,17 @@ export function verifyExecutionDeployment(config) {
   }
   const consoleService = config.services?.["admin-console"];
   if (consoleService) {
+    const workspaceOrigin =
+      consoleService.environment?.ANTNEST_AGENT_ACP_SERVICE_URL ?? "";
+    const workspace = URL.parse(workspaceOrigin);
     assert(
-      consoleService.environment?.ANTNEST_AGENT_ACP_SERVICE_URL === rawOrigin,
-      "Console audit consumer must target the configured ACP origin",
+      workspace &&
+        /^https?:\/\/[^/?#\\\s]+\/?$/iu.test(workspaceOrigin) &&
+        !workspace.username &&
+        !workspace.password &&
+        workspace.pathname === "/" &&
+        workspace.origin !== origin.origin,
+      "Console must use a separate ACP workspace origin",
     );
   }
   assert(

@@ -127,6 +127,8 @@ export async function startAgentAcpService(
   telemetry: TelemetryPort,
   reportOwnershipLoss: (error: WorkerOwnershipLostError) => void,
 ): Promise<RunningAgentAcpService> {
+  for (const variable of config.developmentSecretWarnings)
+    telemetry.log("warn", "published_development_secret_enabled", { variable });
   if (config.providerAllowPrivateEndpoints)
     telemetry.log("warn", "provider_private_endpoints_enabled");
   if (config.skillLearningDebugAgentId !== undefined)

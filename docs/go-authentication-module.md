@@ -30,6 +30,11 @@ checks and public error envelope. Identity keeps CCT signing keys, issuance and
 session/revocation checks; it projects library failures into its domain errors.
 No library reads a database, starts a listener or grants a domain action.
 
+The `devsecrets` package also owns the [published-secret admission policy](../contracts/platform/development-secrets.md).
+It uses pgx's configuration parser to inspect passwords without opening a
+connection; each service owns invocation and startup warnings. It has no
+database state, migration or credential-rotation ownership.
+
 ## Delivery batches
 
 1. Freeze this boundary and direct-transport/header requirements.

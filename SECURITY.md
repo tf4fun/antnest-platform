@@ -64,17 +64,33 @@ cluster network. Before exposing a deployment, understand these boundaries:
   Keep it out of public deployments; see the
   [development port contract](contracts/platform/development-authentication.md#host-ports-and-explicit-diagnostics).
 
-## Development defaults are not secrets
+## Required private secrets and startup rejection
 
-`.env.example` and `compose.yaml` contain public, synthetic development values:
-database passwords ending in `-dev`, all-zero encryption keys and the bootstrap
-administrator password `antnest-admin-dev`.
-These are disposable-development settings. The authenticated services
-reject missing service credentials, and Registry rejects its nonempty legacy
-API/source tokens. Compose requires a fresh private credential directory prepared
-by `scripts/dev-service-tokens.mjs`; it has no shared workload-token fallback. Replace
-public defaults with unique randomly generated values, keep per-pair secrets in
-protected files, and never commit the resulting configuration.
+`.env.example` leaves database/bootstrap passwords and encryption keys empty;
+`compose.yaml` requires each with no public fallback. For a fresh deployment,
+run `scripts/generate-dev-env.sh` to create independent random values in a
+mode-0600 `.env`. Existing output is refused unless `--force` is explicit. That
+option is for disposable data and does not rotate existing roles or encrypted data.
+
+Identity, Controller, RC, Registry, ACP and Egress reject the formerly published
+database passwords using their driver's PostgreSQL parser. Identity, Controller
+and ACP also reject 32-byte encryption keys containing a single repeated byte.
+Identity rejects the published administrator password only when creating a new
+bootstrap account; existing accounts are not rejected or reset by an unused value.
+Errors and opt-in warnings name variables without including credentials.
+
+Only exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` permits these fixed values for
+explicit disposable tests, with one startup WARN per affected variable. Other
+spellings/whitespace are rejected. The standard Compose files never pass this
+flag; fixed-fixture E2E uses its own explicit override. It does not restore removed
+bearers, enable private Provider access or enable Skill learning debug mode.
+See the [secret admission contract](contracts/platform/development-secrets.md).
+
+Keep workload credentials in the private directory prepared by
+`scripts/dev-service-tokens.mjs`; Registry's retired API/source tokens remain
+rejected, including with the development opt-in. Never commit either generated
+configuration. Retain existing keys with their encrypted data; versioned key
+rotation remains the separate scope of #42.
 
 ## Service authentication rollout
 

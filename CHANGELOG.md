@@ -4,6 +4,21 @@
 
 ### Changed
 
+Development Compose requires all twelve database/bootstrap passwords and
+encryption keys instead of falling back to public values (#13). `.env.example`
+leaves secrets empty. Quick start and operations use `scripts/generate-dev-env.sh`,
+which creates independent random passwords/keys in a 0600 `.env`, refuses existing
+output by default, and prints only the administrator password once.
+
+Upgrade note: services now reject the published database passwords and uniform
+32-byte encryption keys on every startup. New bootstrap administrators also
+reject the published password; an existing account does not consume or reset that
+unused setting. Retain keys/passwords with their data; regenerating `.env` with
+`--force` does not migrate existing encrypted records or rotate database roles.
+Explicit disposable fixtures can use exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true`
+with per-variable WARNs. Standard Compose never passes this flag; it is independent
+of other development gates and cannot restore retired Registry authentication.
+
 Go workload authentication and CCT verification are consolidated in
 `modules/service-authentication`, consumed by Identity, Gateway, Console,
 Controller, RC and Registry. Services retain route and business authorization;
@@ -64,6 +79,20 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Unconfigured deployments can no longer start with the repository's publicly
+known credentials or all-zero keys (#13). PostgreSQL password checks use each
+driver's parser, including supported URL escaping/query and keyword forms,
+without exposing credentials in rejection messages or startup warnings.
+
+The Chinese quick start now includes both private development provisioners and
+the generated administrator password. ACP operations no longer describe a
+usable all-zero example key. Identity/Controller authentication fixtures use
+their random secrets without the public-secret exception. Stage1, Stage2 and
+RC's older shell acceptance entrances now provision workload/Runtime credentials
+and use the current private listeners and approved image references. These
+targets and Lifecycle build isolated candidate images from the checkout and
+verify cleanup; Stage1 no longer selects debug Compose by default.
 
 Gateway and Console private authenticated HTTP requests now bypass environment
 and default-transport proxies, including Gateway's ACP WebSocket handshakes.

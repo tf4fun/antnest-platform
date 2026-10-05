@@ -357,7 +357,10 @@ export async function withHeldRun({
                 expected.runId,
                 "request trace belongs to another Run",
               );
-            return strictSessionEvidence(result, trace);
+            return {
+              ...strictSessionEvidence(result, trace),
+              topology: "passed",
+            };
           },
           signal,
         ),

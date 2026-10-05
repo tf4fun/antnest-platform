@@ -6,11 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 type Config struct {
 	Authentication                 *serviceauth.Clients
+	DevelopmentSecretWarnings      []string
 	Execution                      ExecutionConfiguration
 	ListenAddress                  string
 	TemporalAddress                string
@@ -33,6 +35,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("environment lookup is required")
 	}
 	lookup := func(key string) string { value, _ := environment(key); return value }
+	policy, err := devsecrets.New(lookup(devsecrets.OptInVariable))
+	if err != nil {
+		return Config{}, err
+	}
 	privateValue, privatePresent := environment("ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS")
 	if privatePresent && privateValue != "true" && privateValue != "false" {
 		return Config{}, fmt.Errorf("ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS must be exactly true or false")
@@ -125,6 +131,13 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 	config.EncryptionKey = key
+	if err := policy.CheckKey("ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY", key); err != nil {
+		return Config{}, err
+	}
+	if err := policy.CheckDatabaseURL("ANTNEST_AGENT_CONTROLLER_DATABASE_URL", config.DatabaseURL); err != nil {
+		return Config{}, err
+	}
+	config.DevelopmentSecretWarnings = policy.Warnings()
 	endpoints := map[string]string{"identity-service": config.IdentityServiceURL, "agent-acp-service": config.Execution.URL,
 		"runtime-controller": config.RuntimeControllerURL, "runtime-egress": config.RuntimeEgressURL}
 	if config.SkillRegistryURL != "" {

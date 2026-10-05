@@ -33,6 +33,7 @@ function launch(t, entry, evidenceRoot, cached, extra = {}, setup = () => {}) {
   for (const file of [
     "tests/e2e/e2e-" + entry + ".sh",
     "tests/support/storage.mjs",
+    "tests/support/public-development-secrets.sh",
     ...(existsSync(join(root, "tests/support/verification/stage3-storage.mjs"))
       ? ["tests/support/verification/stage3-storage.mjs"]
       : []),

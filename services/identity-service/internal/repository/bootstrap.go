@@ -17,7 +17,9 @@ type BootstrapInput struct {
 	AdminEmail       string
 	AdminDisplayName string
 	PasswordHash     string
-	Now              time.Time
+	// Checked under the bootstrap lock for new accounts only.
+	ValidateNewAdministratorPassword func() error
+	Now                              time.Time
 }
 
 type BootstrapResult struct {
@@ -109,6 +111,11 @@ func (s *Store) bootstrapAdministrator(
 	}
 	if !errors.Is(err, domain.ErrNotFound) {
 		return domain.User{}, domain.OrganizationMembership{}, false, err
+	}
+	if input.ValidateNewAdministratorPassword != nil {
+		if err := input.ValidateNewAdministratorPassword(); err != nil {
+			return domain.User{}, domain.OrganizationMembership{}, false, err
+		}
 	}
 	user = domain.User{
 		ID: s.newID("user"), SystemRole: domain.SystemRoleAdmin, Active: true,

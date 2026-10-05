@@ -14,11 +14,14 @@ import {
 import { applicationServices, assertDeployment } from "./deployment.mjs";
 import { runFoundationFlow } from "./foundation-flow.mjs";
 import {
-  acceptedClockOnlyRestore,
   foundationTraceExitCode,
+  foundationAcceptedTraceExitCode,
 } from "./foundation-evidence.mjs";
 
-export async function runFoundation(profile = "foundation") {
+export async function runFoundation(
+  profile = "foundation",
+  { runtimeImage, candidateTag } = {},
+) {
   assert(
     [
       "foundation",
@@ -42,19 +45,27 @@ export async function runFoundation(profile = "foundation") {
   const timer = setTimeout(interrupt, 900000);
   let config, result, deployment, failure;
   try {
-    config = await configuration(abort.signal, (project) => {
-      const directory = evidenceDirectory(
-        `artifacts/verification/lifecycle-${profile}/${project}`,
-      );
-      evidenceDirectory(`${directory}/traces`);
-      for (const name of [
-        "deployment.private.json",
-        "business.json",
-        "failure.private.txt",
-        "services.private.json",
-      ])
-        evidenceFilePath(directory, name);
-    });
+    config = await configuration(
+      abort.signal,
+      (project) => {
+        const directory = evidenceDirectory(
+          `artifacts/verification/lifecycle-${profile}/${project}`,
+        );
+        evidenceDirectory(`${directory}/traces`);
+        for (const name of [
+          "deployment.private.json",
+          "business.json",
+          "failure.private.txt",
+          "services.private.json",
+        ])
+          evidenceFilePath(directory, name);
+      },
+      runtimeImage,
+    );
+    if (candidateTag !== undefined) {
+      assert.match(candidateTag, /^shell-[a-f0-9]{8}$/u);
+      config.env.ANTNEST_ADMISSION_TAG = candidateTag;
+    }
     configureFoundation(config);
     if (
       [
@@ -176,26 +187,18 @@ export async function runFoundation(profile = "foundation") {
         "inspect",
         "--format",
         "{{.Id}}",
-        name === "agent-controller"
-          ? config.controllerImage
-          : name === "runtime-controller"
-            ? config.runtimeControllerImage
-            : `antnest/${name}:local`,
+        config.images[name],
       ]);
     assertDeployment(
       config,
-      baseRows
-        .filter(
-          (r) => r.Config.Labels["com.docker.compose.service"] !== "temporal",
-        )
-        .map((r) => ({
-          id: r.Id,
-          labels: r.Config.Labels,
-          image: r.Image,
-          running: r.State.Running,
-          health: r.State.Health?.Status ?? "none",
-          ports: r.NetworkSettings.Ports,
-        })),
+      baseRows.map((r) => ({
+        id: r.Id,
+        labels: r.Config.Labels,
+        image: r.Image,
+        running: r.State.Running,
+        health: r.State.Health?.Status ?? "none",
+        ports: r.NetworkSettings.Ports,
+      })),
       images,
     );
     const scenario =
@@ -304,11 +307,8 @@ export async function runFoundation(profile = "foundation") {
     ...(result.watch_traces ?? []),
   ];
   const strictCode = foundationTraceExitCode(traceEvidence);
-  const clockAccepted =
-    ["restore", "skill-restore"].includes(profile) &&
-    strictCode === 2 &&
-    acceptedClockOnlyRestore(traceEvidence);
-  const code = clockAccepted ? 0 : strictCode;
+  const code = foundationAcceptedTraceExitCode(traceEvidence, profile);
+  const reviewed = strictCode === 2 && code === 0;
   console.log(
     JSON.stringify({
       status:
@@ -322,8 +322,21 @@ export async function runFoundation(profile = "foundation") {
       cleanup: "verified",
       strict_exit: strictCode,
       accepted_exit: code,
-      ...(clockAccepted
-        ? { strict_trace: "failed", clock_warnings_accepted: true }
+      ...(reviewed
+        ? {
+            strict_trace: "failed",
+            trace_review: {
+              clock_warning_traces: traceEvidence.filter(
+                (item) => item.warning_count > 0,
+              ).length,
+              busy_rejections: traceEvidence.filter(
+                (item) => item.rejection === "agent_busy",
+              ).length,
+              graceful_restarts: traceEvidence.filter(
+                (item) => item.restart_error_spans === 3,
+              ).length,
+            },
+          }
         : {}),
     }),
   );

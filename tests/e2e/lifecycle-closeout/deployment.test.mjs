@@ -14,9 +14,12 @@ const applicationServices = [
   "skill-registry",
 ];
 const bindings = {
-  postgres: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "45001" }] },
+  "diagnostic-relay": {
+    "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "45001" }],
+    "16686/tcp": [{ HostIp: "127.0.0.1", HostPort: "45003" }],
+  },
   "edge-gateway": { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "45002" }] },
-  jaeger: { "16686/tcp": [{ HostIp: "127.0.0.1", HostPort: "45003" }] },
+
   "stage3-model": { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "45004" }] },
 };
 function fixture() {
@@ -40,6 +43,9 @@ function fixture() {
     "postgres",
     "jaeger",
     "stage3-model",
+    "temporal",
+    "diagnostic-relay",
+    "runtime-telemetry-ingress",
   ].map((service) => ({
     id: `container-${service}`,
     labels: {
@@ -57,7 +63,7 @@ function fixture() {
 test("deployment inspection proves current images, health and exact loopback bindings", () => {
   const { config, images, rows } = fixture();
   assert.deepEqual(assertDeployment(config, rows, images), {
-    services: 12,
+    services: 15,
     applicationImages: 9,
     publishedPorts: 4,
   });
@@ -108,7 +114,7 @@ for (const [name, mutate] of [
     "wrong host port",
     (f) => {
       f.rows.find(
-        (r) => r.labels["com.docker.compose.service"] === "postgres",
+        (r) => r.labels["com.docker.compose.service"] === "diagnostic-relay",
       ).ports["5432/tcp"][0].HostPort = "9999";
     },
   ],

@@ -13,6 +13,8 @@ and draft v2 are separate adapters over one application core. The unversioned
 not construct Agents or Runtimes; Agent Controller publishes the current
 execution configuration into it.
 
+Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP keys under the [development secret policy](../../contracts/platform/development-secrets.md). The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits one variable-only WARN per affected setting and enables neither Skill learning debug mode nor removed Registry bearers.
+
 ## Responsibilities
 
 - ACP Sessions, replayable messages and active connection bindings.
@@ -136,8 +138,10 @@ trailing whitespace is removed; empty or whitespace-only values mean unset.
 conversion: `"true"` is valid, but `" true "` and `"TRUE"` fail configuration.
 
 Durations accept a positive integer followed by `ms`, `s` or `m`. Invalid
-values fail startup before the database or network is used. The all-zero key
-in the repository's `.env.example` is for disposable local data only. See
+values fail startup before the database or network is used. The repository's
+`.env.example` leaves encryption keys empty; generate private values with
+`scripts/generate-dev-env.sh`. Published passwords and uniform 32-byte keys
+are rejected by default. See
 [operations](docs/operations.md) for key handling and failure behavior.
 
 ## Dependencies

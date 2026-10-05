@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { json } from "./stage2-transport.mjs";
+import { json, registerFixturePrincipal } from "./stage2-transport.mjs";
 import { gatewayLogin } from "./stage2-gateway.mjs";
 
 export async function verifyAdministrativeAudit({
@@ -17,7 +17,8 @@ export async function verifyAdministrativeAudit({
   const request = async (path, cookie = "", status = 200, extra = {}) => {
     const response = await fetch(gateway + path, {
       headers: { cookie, ...extra },
-      signal: AbortSignal.timeout(20000),
+      // The fault probe must outlive Compose's 150s dependency deadline.
+      signal: AbortSignal.timeout(status === 503 ? 165000 : 20000),
     });
     const payload = await response.json();
     assert.equal(
@@ -116,6 +117,13 @@ export async function verifyAdministrativeAudit({
     owner_email: "stage2-admin@example.com",
     owner_display_name: "Stage 2 Administrator",
   });
+  const foreignAdmin = await json(`${identity}/rpc/identity/local-login`, {
+    request_id: "stage2-foreign-admin-login",
+    organization_slug: "stage2-foreign",
+    email: "stage2-admin@example.com",
+    password: "stage2-admin-password",
+  });
+  registerFixturePrincipal(foreignAdmin.principal, foreignAdmin.token_id);
   await command("create-local-user", {
     organization_id: organization.id,
     email: "stage2-foreign@example.com",

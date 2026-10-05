@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { publicDevelopmentSecrets } from "./public-development-secrets.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(
@@ -45,6 +46,7 @@ export function composeConfig(files = ["compose.yaml"], overrides = {}) {
       cwd: root,
       env: {
         ...env,
+        ...publicDevelopmentSecrets(),
         COMPOSE_DISABLE_ENV_FILE: "1",
         ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-deployment-credentials",
         ANTNEST_SERVICE_AUTH_UID: "65532",

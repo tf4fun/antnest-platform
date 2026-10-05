@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
@@ -40,6 +40,7 @@ const project = `antnest-deployment-${randomUUID().slice(0, 8)}`;
 const tag = `authentication-${project.slice(-8)}`;
 const output = durablePath(resolve(root, "artifacts/verification", project));
 const credentials = resolve(output, "credentials");
+const envFile = resolve(output, "deployment.env");
 const controller = new AbortController();
 const stop = () => controller.abort();
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stop);
@@ -52,7 +53,7 @@ const docker = dockerClient(env, controller.signal, 1800000);
 const compose = [
   "compose",
   "--env-file",
-  "/dev/null",
+  envFile,
   "--project-name",
   project,
   "-f",
@@ -120,17 +121,31 @@ async function http(url, options = {}) {
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
   });
   const body = await response.json();
-  return { status: response.status, body };
+  return { status: response.status, body, headers: response.headers };
 }
 let before, rows;
 try {
   before = await identities(docker);
   await phase("prepare", async () => {
+    const generated = await runCommand({
+      command: [
+        "sh",
+        resolve(root, "scripts/generate-dev-env.sh"),
+        "--output",
+        envFile,
+      ],
+      output,
+      name: "generate-deployment-env",
+      env,
+      cwd: root,
+    });
+    assert.equal(generated.exit_code, 0, "environment generation failed");
     provisionTokens({ output: credentials, withSkillLearning: true });
     const octet = await networkOctet(docker, 1 + (process.pid % 200));
     const gatewayPort = await freePort();
     Object.assign(
       env,
+      parseEnv(readFileSync(envFile, "utf8")),
       parseEnv(readFileSync(resolve(credentials, "deployment.env"), "utf8")),
       {
         COMPOSE_PROJECT_NAME: project,
@@ -153,11 +168,6 @@ try {
         ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: "deployment-admission",
         ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: "Deployment admission",
         ANTNEST_BOOTSTRAP_ADMIN_EMAIL: "deployment@example.com",
-        ANTNEST_BOOTSTRAP_ADMIN_PASSWORD: randomBytes(24).toString("base64url"),
-        ANTNEST_IDENTITY_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
-        ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:
-          randomBytes(32).toString("base64"),
-        ANTNEST_ACP_CLIENT_MCP_KEY: randomBytes(32).toString("base64"),
         OTEL_SDK_DISABLED: "false",
         OTEL_TRACES_EXPORTER: "otlp",
         OTEL_METRICS_EXPORTER: "none",
@@ -220,6 +230,57 @@ try {
         assert.equal(row.State.Health?.Status, "healthy");
       report.checks++;
     }
+  });
+  await phase("generated-administrator-login", async () => {
+    const gateway = env.ANTNEST_EDGE_PUBLIC_BASE_URL;
+    const login = await http(gateway + "/api/session/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        organization_slug: env.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
+        email: env.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
+        password: env.ANTNEST_BOOTSTRAP_ADMIN_PASSWORD,
+      }),
+    });
+    assert.equal(
+      login.status,
+      200,
+      "generated administrator credentials did not log in",
+    );
+    assert.equal(
+      login.body.principal.organization_name,
+      env.ANTNEST_BOOTSTRAP_ORGANIZATION_NAME,
+    );
+    assert.equal(login.body.principal.system_role, "admin");
+    assert(
+      login.headers.getSetCookie().length > 0,
+      "Gateway did not establish a browser session",
+    );
+    report.checks++;
+    const publicLogin = await http(gateway + "/api/session/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        organization_slug: env.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
+        email: env.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
+        password: "antnest-admin-dev",
+      }),
+    });
+    assert.equal(
+      publicLogin.status,
+      401,
+      "published administrator password still logs in",
+    );
+    report.checks++;
+    for (const row of rows) {
+      assert(
+        !row.Config.Env.some((value) =>
+          value.startsWith("ANTNEST_ALLOW_PUBLIC_DEV_SECRETS="),
+        ),
+        "standard generated deployment inherited the test exception",
+      );
+    }
+    report.checks++;
   });
   await phase("private-mounts-and-listeners", async () => {
     for (const service of services) {

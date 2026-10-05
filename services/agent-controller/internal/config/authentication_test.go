@@ -28,7 +28,7 @@ func TestProductionConfigurationRequiresExactWorkloadSettings(t *testing.T) {
 			for key, value := range map[string]string{
 				"ANTNEST_AGENT_ACP_CONTROL_URL":           "http://acp:8081",
 				"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
-				"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+				"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 				"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081", "ANTNEST_RUNTIME_CONTROLLER_URL": "http://runtime-controller:8080",
 				"ANTNEST_IDENTITY_SERVICE_URL": "http://identity-service:8080",
 			} {
@@ -59,7 +59,7 @@ func TestEveryConfiguredDependencyCredentialIsCheckedAtStartup(t *testing.T) {
 			}
 			values["ANTNEST_AGENT_ACP_CONTROL_URL"] = "http://acp:8081"
 			values["ANTNEST_AGENT_CONTROLLER_DATABASE_URL"] = "postgres://controller:secret@postgres/controller"
-			values["ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 32))
+			values["ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 			values["ANTNEST_RUNTIME_EGRESS_URL"] = "http://runtime-egress:8081"
 			values["ANTNEST_RUNTIME_CONTROLLER_URL"] = "http://runtime-controller:8080"
 			values["ANTNEST_IDENTITY_SERVICE_URL"] = "http://identity-service:8080"

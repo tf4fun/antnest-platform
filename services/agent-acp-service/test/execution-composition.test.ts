@@ -47,7 +47,9 @@ describe("production execution configuration composition", () => {
         ...testSecurityEnvironment(),
         ...{
           ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+            "base64",
+          ),
         },
       }),
       NOOP_TELEMETRY,
@@ -88,7 +90,9 @@ describe("production execution configuration composition", () => {
           ...testSecurityEnvironment(),
           ...{
             ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-            ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+            ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+              "base64",
+            ),
           },
         }),
         NOOP_TELEMETRY,
@@ -118,7 +122,9 @@ describe("production execution configuration composition", () => {
     const pool = new Pool();
     const basic = {
       ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-      ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+      ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+        "base64",
+      ),
     };
     const signer = {
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "learning-test",
@@ -195,7 +201,9 @@ describe("production execution configuration composition", () => {
         ...testSecurityEnvironment(),
         ...{
           ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 3).toString("base64"),
+          ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+            "base64",
+          ),
         },
       });
       const components = buildComponents(

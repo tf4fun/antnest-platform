@@ -14,6 +14,32 @@ import {
 import { loadConfig } from "../src/config.js";
 
 describe("development startup diagnostics", () => {
+  it("logs exactly one variable-only WARN for each admitted development secret", async () => {
+    const failure = new Error("stop before connecting dependencies");
+    const migration = vi.spyOn(migrations, "migrate").mockRejectedValue(failure);
+    const log = vi.fn<TelemetryPort["log"]>();
+    const config = loadConfig({
+      ...testSecurityEnvironment(),
+      ANTNEST_ACP_DATABASE_URL: "postgres://acp:antnest-agent-acp-dev@postgres/acp",
+      ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32).toString("base64"),
+      ANTNEST_ALLOW_PUBLIC_DEV_SECRETS: "true",
+    });
+    try {
+      await expect(startAgentAcpService(config, { ...NOOP_TELEMETRY, log }, vi.fn())).rejects.toBe(
+        failure,
+      );
+      expect(log.mock.calls).toEqual([
+        ["warn", "published_development_secret_enabled", { variable: "ANTNEST_ACP_DATABASE_URL" }],
+        [
+          "warn",
+          "published_development_secret_enabled",
+          { variable: "ANTNEST_ACP_CLIENT_MCP_KEY" },
+        ],
+      ]);
+    } finally {
+      migration.mockRestore();
+    }
+  });
   it.each([new Error("migration failed"), new WorkerOwnershipLostError()])(
     "removes owned Runtime sender storage on startup failure: %s",
     async (failure) => {
@@ -22,7 +48,9 @@ describe("development startup diagnostics", () => {
       const config = loadConfig({
         ...testSecurityEnvironment(),
         ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
-        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 7).toString("base64"),
+        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+          "base64",
+        ),
       });
       try {
         await expect(startAgentAcpService(config, NOOP_TELEMETRY, vi.fn())).rejects.toBe(failure);
@@ -51,7 +79,9 @@ describe("development startup diagnostics", () => {
           ...testSecurityEnvironment(),
           ...{
             ANTNEST_ACP_DATABASE_URL: "postgres://agent:secret@postgres/agent_acp",
-            ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.alloc(32, 7).toString("base64"),
+            ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+              "base64",
+            ),
             ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "true",
             ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: agentId,
           },

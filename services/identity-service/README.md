@@ -14,6 +14,13 @@ Workload authentication and CCT parsing/verification use the
 signing keys, issuance, live-session authorization and revocation; library
 verification failures are mapped to Identity domain errors.
 
+Startup rejects published database passwords and 32-byte uniform encryption
+keys under the [development secret policy](../../contracts/platform/development-secrets.md).
+The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in logs one WARN
+per affected variable. A published bootstrap password is rejected only when
+creating a new administrator under the bootstrap lock; existing accounts are
+not rejected or reset by that unused value.
+
 ## Responsibilities
 
 - Users, Organizations, OrganizationMemberships, Groups, and GroupMemberships.

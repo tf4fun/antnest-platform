@@ -87,9 +87,11 @@ The encryption key is a service bootstrap secret, not a Provider credential.
 Rotation requires decrypt-with-old/encrypt-with-new maintenance and is not
 performed implicitly at startup.
 
-The all-zero key in the repository's `.env.example` is for disposable local
-data only. Production deployment must inject a random key and retain it for the
-lifetime of the service-owned database.
+The repository's `.env.example` leaves the key empty. Generate a random key
+with `scripts/generate-dev-env.sh` and retain it for the lifetime of the
+service-owned database. Uniform 32-byte keys, including the all-zero key, fail
+startup unless exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` explicitly permits
+a disposable fixture. Standard Compose never passes that exception.
 
 Normal execution does not resolve access or credentials from Controller.
 The optional learning-policy client has its own authenticated Controller origin.

@@ -5,7 +5,43 @@ import {
   assertFailureEvents,
   assertMCPStartupLog,
   exerciseStartupFailure,
+  waitForDeletedRuntimeResources,
 } from "./failure.mjs";
+
+test("Delete waits for the RC worker to collect its unreferenced Skill volume", async () => {
+  let reads = 0;
+  assert.deepEqual(
+    await waitForDeletedRuntimeResources(
+      async () => ({
+        containers: [],
+        volumes: ++reads < 3 ? ["owned-skill-set"] : [],
+      }),
+      { interval: 1 },
+    ),
+    { containers: [], volumes: [] },
+  );
+  assert.equal(reads, 3);
+});
+
+test("Delete still fails if an owned volume is not collected before the deadline", async () => {
+  await assert.rejects(
+    waitForDeletedRuntimeResources(
+      async () => ({ containers: [], volumes: ["owned-skill-set"] }),
+      { timeout: 10, interval: 1 },
+    ),
+    /Runtime resources remain/u,
+  );
+});
+
+test("Delete resource polling propagates Docker failures", async () => {
+  const failed = new Error("Docker unavailable");
+  await assert.rejects(
+    waitForDeletedRuntimeResources(async () => {
+      throw failed;
+    }),
+    (error) => error === failed,
+  );
+});
 
 test("failed-start fixture uses its own returned Template revision", async () => {
   const stop = new Error("stop after command assertion");
@@ -54,9 +90,33 @@ function fixture() {
         {
           Image: "sha256:fixture",
           State: { Status: "exited", Health: { Status: "unhealthy" } },
+          Mounts: [
+            {
+              Destination: "/workspace",
+              Type: "volume",
+              Name: "antnest-workspace-a",
+              RW: true,
+            },
+            {
+              Destination: "/skills",
+              Type: "volume",
+              Name: "antnest-skill-set-fixture",
+              RW: false,
+            },
+            {
+              Destination: "/run/antnest-auth",
+              Type: "volume",
+              Name: "antnest-runtime-auth-fixture",
+              RW: false,
+            },
+          ],
         },
       ],
-      volumes: ["antnest-workspace-a"],
+      volumes: [
+        "antnest-workspace-a",
+        "antnest-skill-set-fixture",
+        "antnest-runtime-auth-fixture",
+      ],
     },
   };
 }
@@ -92,6 +152,42 @@ for (const [name, mutate] of [
     "missing workspace",
     (f) => {
       f.physical.volumes = [];
+    },
+  ],
+  [
+    "missing receiver",
+    (f) => {
+      f.physical.containers[0].Mounts.pop();
+    },
+  ],
+  [
+    "writable receiver",
+    (f) => {
+      f.physical.containers[0].Mounts[2].RW = true;
+    },
+  ],
+  [
+    "writable preset Skills",
+    (f) => {
+      f.physical.containers[0].Mounts[1].RW = true;
+    },
+  ],
+  [
+    "foreign storage",
+    (f) => {
+      f.physical.volumes.push("foreign-volume");
+    },
+  ],
+  [
+    "non-volume receiver",
+    (f) => {
+      f.physical.containers[0].Mounts[2].Type = "bind";
+    },
+  ],
+  [
+    "unowned receiver",
+    (f) => {
+      f.physical.containers[0].Mounts[2].Name = "foreign-volume";
     },
   ],
   [

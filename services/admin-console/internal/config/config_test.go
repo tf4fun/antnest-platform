@@ -99,3 +99,19 @@ func TestRegistryUsesUnifiedAuthenticationInsteadOfLegacyBearer(t *testing.T) {
 		t.Fatal("removed legacy credential was silently accepted")
 	}
 }
+
+func TestPublishedRegistryBearerRemainsRetiredWithDevelopmentOptIn(t *testing.T) {
+	for _, gate := range []string{"", "false", "true"} {
+		values := map[string]string{
+			"ANTNEST_IDENTITY_SERVICE_URL":     "http://identity.internal",
+			"ANTNEST_AGENT_CONTROLLER_URL":     "http://controller.internal",
+			"ANTNEST_AGENT_ACP_SERVICE_URL":    "http://acp.internal",
+			"ANTNEST_SKILL_REGISTRY_URL":       "http://registry.internal",
+			"ANTNEST_SKILL_REGISTRY_API_TOKEN": "antnest-skill-registry-local-development-token",
+			"ANTNEST_ALLOW_PUBLIC_DEV_SECRETS": gate,
+		}
+		if _, err := Load(func(name string) string { return values[name] }); err == nil || !strings.Contains(err.Error(), "ANTNEST_SKILL_REGISTRY_API_TOKEN") {
+			t.Fatalf("retired bearer admitted with gate %q: %v", gate, err)
+		}
+	}
+}

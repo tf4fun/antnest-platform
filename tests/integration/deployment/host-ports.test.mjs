@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { composeConfig } from "../../support/compose-config.mjs";
+import { publicDevelopmentSecrets } from "../../support/public-development-secrets.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const require = createRequire(
@@ -63,6 +64,7 @@ function render(files, overrides = {}) {
       cwd: root,
       env: {
         ...env,
+        ...publicDevelopmentSecrets(),
         COMPOSE_DISABLE_ENV_FILE: "1",
         ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-deployment-credentials",
         ANTNEST_SERVICE_AUTH_UID: "65532",

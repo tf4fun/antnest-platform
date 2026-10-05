@@ -46,13 +46,13 @@ application tables.
 
 ## 2. Configuration Before First Start
 
-Copy `.env.example` to the ignored `.env` and use it as the configuration
-inventory.
-
-> **Warning:** the passwords and zero-valued keys in `.env.example` and
-> the Compose defaults are public, disposable local development values. Anyone
-> can read them in this repository. Override every one of them before storing
-> any non-disposable data or exposing the deployment beyond your workstation.
+Use `.env.example` as the configuration inventory. Its secrets are empty;
+Compose rejects missing or empty passwords/keys before starting containers.
+For a fresh instance, `scripts/generate-dev-env.sh` writes a private mode-0600
+`.env` with independent random secrets and prints the administrator password once.
+It needs OpenSSL, refuses an existing output, and supports `--output PATH`.
+`--force` is only for disposable data: regenerating an existing deployment's
+keys or passwords does not rotate its database roles or encrypted records.
 
 Keep `.env`, `.secret`, `auth.json` and any other credential files out of Git and
 Docker build contexts. Do not publish `docker compose config` or `docker inspect`
@@ -62,6 +62,7 @@ For a fresh deployment, prepare the private workload credentials and independent
 Identity/RC bootstrap keys before invoking Make or Compose:
 
 ```sh
+scripts/generate-dev-env.sh
 node scripts/dev-service-tokens.mjs
 set -a
 . artifacts/service-authentication/deployment.env
@@ -82,8 +83,8 @@ Three separate 32-byte base64 keys must remain stable with the associated data:
 | `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` | Model credentials                                                                             |
 | `ANTNEST_ACP_CLIENT_MCP_KEY`              | ACP's persisted Session MCP revision envelope, including the current empty client-MCP profile |
 
-Generate each independently, for example with `openssl rand -base64 32`. Back up
-the resulting values securely, not in this repository. Changing a key is not a
+The environment generator creates each independently with `openssl rand -base64 32`.
+Back up the resulting values securely, not in this repository. Changing a key is not a
 supported way to rotate already encrypted data. Database passwords are inserted
 into DSNs by Compose; use URL-safe values such as random hexadecimal strings.
 
@@ -91,11 +92,13 @@ Identity evaluates bootstrap on every start. Keep the organization slug/name
 and administrator email stable: an existing organization's different name or
 an inactive/non-admin bootstrap identity causes startup conflict; a new email
 can create an additional administrator. Changing the password variable does
-not reset an existing account password. Removing variables from `.env` restores
-Compose's public defaults, not an empty bootstrap. To deliberately disable
+not reset an existing account password. A published bootstrap password is
+checked only when creating a new administrator. Missing secrets in `.env` make
+Compose fail instead of supplying public defaults. To deliberately disable
 bootstrap after provisioning, a Compose override must set all four bootstrap
 environment entries to empty strings explicitly. Keep an independently tested
-administrator login before making that change. PostgreSQL initialization
+administrator login before making that change and retain the required password
+variable for base-file interpolation. PostgreSQL initialization
 variables likewise do not rotate existing roles. Do not delete business data
 to solve a login problem.
 
@@ -216,9 +219,9 @@ overlays. Confirm initialization already completed; this is not first deployment
 ## 4. Empty Instance To A Usable Agent
 
 1. Log in to Console with the configured bootstrap organization, email and
-   password. The disposable local defaults are `engineering` /
-   `admin@example.com` / `antnest-admin-dev`. They are public; override them in
-   `.env` for any deployment that is not a throwaway local environment.
+   password. The generated instance uses `engineering` / `admin@example.com`
+   and the random administrator password printed by the generator, also stored
+   privately in `.env`.
 2. Add a Model Profile with an available model and credential. Add an active
    organization member when testing the end-user role.
 3. Create a Template using that model revision and the built Runtime image tag.

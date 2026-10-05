@@ -5,6 +5,7 @@ Consumers retain their route caller lists and business authorization.
 
 - `serviceauth` supplies strict JSON, bounded configuration, token/mTLS receivers and configured-origin outbound clients. `LoadOutbound` takes the caller and an explicit header policy. Every profile disables proxies and redirects and reloads its own credential per request; only Gateway may use `GatewayHeaders` for its verified hints and SCIM bearer.
 - `callercontext` supplies strict signed CCT/JWKS parsing, claim verification, bounded key refresh and verified-token forwarding. Identity retains signing, session validation and revocation.
+- `devsecrets` rejects published credentials and uniform encryption keys unless the exact, independent development opt-in is set. It validates PostgreSQL passwords with the driver's parser and emits variable-only warnings. See the [secret admission contract](../../contracts/platform/development-secrets.md).
 
 Use `CallerContextHeaders` for Console, Controller and RC; use `WorkloadOnlyHeaders` for Registry. HTTP and socket setup apply the same policy. User authority cannot be inferred from unverified headers.
 

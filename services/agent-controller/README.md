@@ -17,6 +17,8 @@ Workload transport and signed CCT verification use the
 uses the caller-context forwarding policy; Agent authorization, lifecycle
 coordination and Runtime authority relay remain Controller-owned.
 
+Startup follows the [development secret policy](../../contracts/platform/development-secrets.md): published PostgreSQL passwords and uniform 32-byte encryption keys are rejected by default. The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits variable-only WARNs and never restores the removed Registry bearer.
+
 ## Responsibilities
 
 - Agent identity, organization, owner user, desired state and current status.
