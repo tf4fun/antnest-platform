@@ -1,3 +1,9 @@
+import {
+  createTestWorkspaceHttpServer as createWorkspaceHttpServer,
+  testFetch as fetch,
+  testHeaders,
+  startTestWorkspaceService as startWorkspaceService,
+} from "./auth-fixture.mjs";
 import assert from "node:assert/strict";
 import { applyAgentDelta } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { test } from "node:test";
@@ -7,8 +13,6 @@ import { get } from "node:http";
 import { createRequire } from "node:module";
 import { HistoryTokens } from "../../../services/agent-ui/web/server/dist/bridge/history-token.js";
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
-import { createWorkspaceHttpServer } from "../../../services/agent-ui/web/server/dist/http/node-server.js";
-import { startWorkspaceService } from "../../../services/agent-ui/web/server/dist/service-lifecycle.js";
 
 const requireFromAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -294,7 +298,11 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
         `${origin}/workspace/agent-1/sessions/session-1`,
         {
           headers: {
-            ...headers,
+            ...testHeaders(
+              headers,
+              "edge-gateway",
+              `${origin}/workspace/agent-1/sessions/session-1`,
+            ),
             "x-antnest-administrator": "false",
             "x-antnest-organization-slug": "ZW5naW5lZXJpbmc",
             "x-antnest-organization-name": "RW5naW5lZXJpbmc",
@@ -765,7 +773,7 @@ test("Node HTTP entry accepts prompt without waiting for ACP completion and supp
           headers: { ...headers, "x-antnest-agent-id": "agent-2" },
         })
       ).status,
-      403,
+      401,
     );
     const missing = await fetch(`http://127.0.0.1:${address.port}/unmapped`);
     assert.equal(missing.status, 404);

@@ -1,8 +1,9 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 36,
+  "revision": 38,
   "transport": "json-over-http",
-  "trust": "internal-network",
+  "trust": "verified-workload-and-caller-context",
+  "authentication": "service-authentication.md",
   "media_types": {
     "request": "application/json",
     "response": "application/json"
@@ -26,12 +27,12 @@
       }
     },
     "provider_connections": {
-      "resolve_access": {
-        "method": "GET",
-        "path": "/internal/provider-connections/{connection_id}/access",
-        "query": ["organization_id"],
+      "discover_models": {
+        "method": "POST",
+        "path": "/internal/provider-connections/{connection_id}/discover-models",
+        "request": "control-api.schema.json#/$defs/discover_provider_models_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/provider_access"
+        "response": "control-api.schema.json#/$defs/provider_discovery_result"
       },
       "availability": {
         "method": "PUT",
@@ -67,6 +68,15 @@
         "query": ["organization_id", "after_id", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/provider_connection_list"
+      }
+    },
+    "provider_discovery": {
+      "draft": {
+        "method": "POST",
+        "path": "/internal/provider-discovery/draft",
+        "request": "control-api.schema.json#/$defs/discover_draft_provider_models_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/provider_discovery_result"
       }
     },
     "agent_network_policy": {
@@ -363,7 +373,20 @@
       "lifecycle_timeout": 504,
       "internal_error": 500,
       "access_denied": 403,
-      "configuration_conflict": 409
+      "configuration_conflict": 409,
+      "service_unauthenticated": 401,
+      "caller_not_allowed": 403,
+      "caller_context_required": 401,
+      "caller_context_invalid": 401,
+      "identity_dependency_unavailable": 503,
+      "organization_mismatch": 403,
+      "actor_mismatch": 403,
+      "forbidden": 403,
+      "unsupported_media_type": 415,
+      "request_too_large": 413,
+      "provider_endpoint_forbidden": 422,
+      "provider_endpoint_unavailable": 503,
+      "provider_discovery_failed": 502
     },
     "retryable_by_code": {
       "resource_version_conflict": false,
@@ -387,7 +410,20 @@
       "lifecycle_timeout": true,
       "internal_error": true,
       "access_denied": false,
-      "configuration_conflict": false
+      "configuration_conflict": false,
+      "service_unauthenticated": false,
+      "caller_not_allowed": false,
+      "caller_context_required": false,
+      "caller_context_invalid": false,
+      "identity_dependency_unavailable": true,
+      "organization_mismatch": false,
+      "actor_mismatch": false,
+      "forbidden": false,
+      "unsupported_media_type": false,
+      "request_too_large": false,
+      "provider_endpoint_forbidden": false,
+      "provider_endpoint_unavailable": true,
+      "provider_discovery_failed": true
     }
   },
   "compatibility": {

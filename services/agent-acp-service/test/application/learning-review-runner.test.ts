@@ -48,7 +48,12 @@ const snapshot: RunExecutionSnapshot = {
   executionRevision: "execution-1",
   runtimeMcpSourceDigest: "a".repeat(64),
   agentExecutionSpecDigest: "b".repeat(64),
-  runtime: { revision: "runtime-1", executionId: "execution-1", mcpEndpoint: "http://runtime/mcp" },
+  runtime: {
+    revision: "runtime-1",
+    executionId: "execution-1",
+    mcpEndpoint: "http://runtime/mcp",
+    connectionId: "rci_11111111111111111111111111111111",
+  },
   executionSpec: {
     systemPrompt: "Unrelated foreground prompt",
     contextPolicyVersion: "context-v1",

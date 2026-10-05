@@ -10,14 +10,14 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
-		"ANTNEST_AGENT_ACP_SERVICE_URL":           "http://agent-acp-service:8090",
+		"ANTNEST_AGENT_ACP_CONTROL_URL":           "http://agent-acp-service:8090",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
 	}
-	loaded, err := Load(func(key string) string {
+	loaded, err := loadBusinessConfig(t, func(key string) string {
 		if key == "ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL" {
 			t.Fatal("Controller must not configure execution admission")
 		}
@@ -42,15 +42,14 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	}
 
 	delete(values, "ANTNEST_AGENT_CONTROLLER_DATABASE_URL")
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing database URL was accepted")
 	}
 }
 
-func TestSkillRegistryConfigurationMustBePaired(t *testing.T) {
-	t.Parallel()
+func TestSkillRegistryUsesPerReceiverCredentials(t *testing.T) {
 	values := map[string]string{
-		"ANTNEST_AGENT_ACP_SERVICE_URL":           "http://agent-acp-service:8090",
+		"ANTNEST_AGENT_ACP_CONTROL_URL":           "http://agent-acp-service:8081",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
@@ -59,17 +58,21 @@ func TestSkillRegistryConfigurationMustBePaired(t *testing.T) {
 		"ANTNEST_SKILL_REGISTRY_URL":              "http://skill-registry:8080",
 	}
 	lookup := func(key string) string { return values[key] }
-	if _, err := Load(lookup); err == nil {
-		t.Fatal("URL without token accepted")
+	loaded, err := loadBusinessConfig(t, lookup)
+	if err != nil || loaded.SkillRegistryURL != values["ANTNEST_SKILL_REGISTRY_URL"] {
+		t.Fatalf("Registry URL without legacy token rejected: %v", err)
 	}
-	values["ANTNEST_SKILL_REGISTRY_API_TOKEN"] = "secret"
-	loaded, err := Load(lookup)
-	if err != nil || loaded.SkillRegistryURL != values["ANTNEST_SKILL_REGISTRY_URL"] || loaded.SkillRegistryAPIToken != "secret" {
-		t.Fatalf("paired Registry configuration = %+v, %v", loaded, err)
+	for _, legacy := range []string{"secret", " "} {
+		values["ANTNEST_SKILL_REGISTRY_API_TOKEN"] = legacy
+		if _, err := loadBusinessConfig(t, lookup); err == nil {
+			t.Fatal("legacy shared token accepted")
+		}
 	}
+	delete(values, "ANTNEST_SKILL_REGISTRY_API_TOKEN")
 	delete(values, "ANTNEST_SKILL_REGISTRY_URL")
-	if _, err := Load(lookup); err == nil {
-		t.Fatal("token without URL accepted")
+	loaded, err = loadBusinessConfig(t, lookup)
+	if err != nil || loaded.SkillRegistryURL != "" {
+		t.Fatalf("optional Registry = %v", err)
 	}
 }
 
@@ -77,44 +80,44 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
-		"ANTNEST_AGENT_ACP_SERVICE_URL":           "http://agent-acp-service:8090",
+		"ANTNEST_AGENT_ACP_CONTROL_URL":           "http://agent-acp-service:8090",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": "not-base64",
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
 	}
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("invalid encryption key was accepted")
 	}
 	values["ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 32))
 	values["ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT"] = "0s"
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive shutdown timeout was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT")
 	values["ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT"] = "not-a-duration"
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("invalid drain timeout was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT")
 	values["ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL"] = "0s"
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive Runtime observation poll interval was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL")
 	values["ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL"] = "0s"
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive identity revocation poll interval was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL")
 	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing Runtime Egress URL was accepted")
 	}
 	values["ANTNEST_RUNTIME_EGRESS_URL"] = "http://runtime-egress:8081"
 	delete(values, "ANTNEST_IDENTITY_SERVICE_URL")
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+	if _, err := loadBusinessConfig(t, func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing Identity Service URL was accepted")
 	}
 }

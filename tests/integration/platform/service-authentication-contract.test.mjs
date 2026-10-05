@@ -54,8 +54,7 @@ test("CCT public keys exclude private material and use an explicit Ed25519 curve
 // principal boundary and run these vectors in their owning delivery batches.
 function parseObject(raw) {
   const value = JSON.parse(raw);
-  const tokens =
-    raw.match(/"(?:\\.|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+/gu) ?? [];
+  const tokens = raw.match(/"(?:\\.|[^"\\])*"|[{}[\]:,]|[^\s{}[\]:,]+/gu) ?? [];
   const stack = [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
@@ -159,15 +158,147 @@ test("authentication failures have stable codes, HTTP statuses and no retry", ()
   );
 });
 
-test("the foundation describes planned adoption without claiming service enforcement", () => {
+test("the rollout records ten admitted services, deployment and final token-profile integration", () => {
   const rollout = read("service-authentication-rollout.json");
-  assert.equal(rollout.status, "contract-only");
-  assert.deepEqual(rollout.batches[0].issues, [32]);
+  assert.equal(rollout.status, "integration-admitted");
+  assert.deepEqual(rollout.batches[0].issues, [32, 101]);
   assert.equal(rollout.batches[0].owner, "platform-contracts");
-  assert(rollout.batches.slice(1).every((batch) => batch.status === "pending"));
+  const identity = rollout.batches.find(
+    (batch) => batch.owner === "identity-service",
+  );
+  assert.equal(identity.status, "service-admitted");
+  assert(identity.admission.unit_contract_component);
+  assert(identity.admission.postgres);
+  assert(identity.admission.docker);
+  assert.deepEqual(identity.admission.pending_consumers, []);
+  const gateway = rollout.batches.find(
+    (batch) => batch.owner === "edge-gateway",
+  );
+  assert.equal(gateway.status, "service-admitted");
+  assert(gateway.admission.unit_contract_component);
+  assert(gateway.admission.docker);
+  assert.deepEqual(gateway.admission.pending_consumers, []);
+  const consoleBatch = rollout.batches.find(
+    (batch) => batch.owner === "admin-console",
+  );
+  assert.equal(consoleBatch.status, "service-admitted");
+  assert(consoleBatch.admission.unit_contract_component);
+  assert(consoleBatch.admission.docker);
+  assert.deepEqual(consoleBatch.admission.pending_consumers, []);
+  const acp = rollout.batches.find(
+    (batch) => batch.owner === "agent-acp-service",
+  );
+  assert.equal(acp.status, "service-admitted");
+  assert(acp.admission.unit_contract_component);
+  assert(acp.admission.postgres);
+  assert(acp.admission.docker);
+  assert.deepEqual(acp.admission.pending_consumers, []);
+  assert(acp.admission.runtime_instance_client.includes("#30"));
+  assert(acp.admission.provider_policy.includes("#28"));
+  const ui = rollout.batches.find((batch) => batch.owner === "agent-ui");
+  assert.equal(ui.status, "service-admitted");
+  assert(ui.admission.unit_contract_component);
+  assert(ui.admission.docker);
+  assert.deepEqual(ui.admission.pending_consumers, []);
+  const controller = rollout.batches.find(
+    (batch) => batch.owner === "agent-controller",
+  );
+  assert.equal(controller.status, "service-admitted");
+  assert(controller.admission.unit_contract_component);
+  assert(controller.admission.postgres);
+  assert(controller.admission.docker);
+  assert(controller.admission.provider_discovery.includes("#28"));
+  assert(controller.issues.includes(30));
+  assert(controller.admission.runtime_instance_relay);
+  assert.deepEqual(controller.admission.pending_consumers, []);
+  assert.deepEqual(controller.admission.pending_dependencies, []);
+  const rc = rollout.batches.find(
+    (batch) => batch.owner === "runtime-controller",
+  );
+  assert.equal(rc.status, "service-admitted");
+  assert(rc.admission.unit_contract_component);
+  assert(rc.admission.postgres);
+  assert(rc.admission.docker);
+  assert(rc.admission.runtime_instance_clients.includes("#30"));
+  assert.deepEqual(rc.admission.pending_dependencies, []);
+  const runtime = rollout.batches.find(
+    (batch) => batch.owner === "antnest-runtime",
+  );
+  assert.equal(runtime.status, "service-admitted");
+  assert(runtime.admission.unit_contract_component);
+  assert(runtime.admission.docker);
+  assert.deepEqual(runtime.admission.pending_consumers, []);
+  const registry = rollout.batches.find(
+    (batch) => batch.owner === "skill-registry",
+  );
+  assert.equal(registry.status, "service-admitted");
+  assert(registry.admission.unit_contract_component);
+  assert(registry.admission.postgres);
+  assert(registry.admission.docker);
+  assert.deepEqual(registry.admission.pending_consumers, []);
+  assert(registry.admission.cross_service_e2e.includes("admitted"));
+  assert(registry.admission.deployment.includes("deployment-admitted"));
+  const egress = rollout.batches.find(
+    (batch) => batch.owner === "runtime-egress",
+  );
+  assert.equal(egress.status, "service-admitted");
+  assert(egress.admission.unit_contract_component);
+  assert(egress.admission.postgres);
+  assert(egress.admission.docker);
+  assert.equal(egress.control_contract_revision, 5);
+  assert.deepEqual(egress.independent_packet_dns_issues, [34, 36]);
+  assert.deepEqual(egress.admission.pending_consumers, []);
+  assert(egress.admission.cross_service_e2e.includes("admitted"));
+  assert.equal(rollout.token_provisioning.status, "admitted");
+  assert(rollout.token_provisioning.admission.unit_contract_component);
+  assert(rollout.token_provisioning.admission.docker);
+  for (const [owner, status] of [
+    ["deployment", "deployment-admitted"],
+    ["integration", "integration-admitted"],
+  ]) {
+    assert.equal(
+      rollout.batches.find((batch) => batch.owner === owner).status,
+      status,
+      owner,
+    );
+  }
+  assert.equal(
+    rollout.runtime_instance_connection.status,
+    "integration-admitted",
+  );
+  assert.deepEqual(
+    rollout.runtime_instance_connection.pending_service_batches,
+    [],
+  );
   const pending = new Set(rollout.batches.flatMap((batch) => batch.issues));
   for (let issue = 25; issue <= 31; issue++) assert(pending.has(issue));
   assert(rollout.batches.some((batch) => batch.owner === "integration"));
+  const services = rollout.batches.filter(
+    (batch) => batch.status === "service-admitted",
+  );
+  assert.equal(services.length, 10);
+  for (const batch of services) {
+    assert(batch.admission.cross_service_e2e.includes("admitted"), batch.owner);
+    assert(
+      batch.admission.cross_service_e2e.includes(
+        "e2e-service-authentication-integration",
+      ),
+      batch.owner,
+    );
+  }
+  const admission = rollout.batches.find(
+    (batch) => batch.owner === "integration",
+  ).admission;
+  assert.equal(admission.profile, "disposable-development-token-http");
+  assert.equal(admission.networks, 24);
+  assert.equal(admission.network_checks, 560);
+  assert.equal(admission.authenticated_checks, 30);
+  assert.equal(admission.external_provider_requests, 0);
+  assert.equal(
+    admission.cleanup,
+    "owned resources removed; retained state unchanged",
+  );
+  assert(admission.docker.includes("e2e-service-authentication-integration"));
 });
 
 test("the complete Workspace wire contract is represented by the caller catalog", () => {

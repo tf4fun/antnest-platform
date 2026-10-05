@@ -11,6 +11,7 @@ import {
   publicExecutionConfiguration,
 } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { executionConfiguration } from "../../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
+import { runtimeConnections } from "../../../../../services/agent-acp-service/test/support/runtime-connections.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 
@@ -101,6 +102,7 @@ describe.skipIf(databaseUrl === undefined)(
       const closed = structuredClone(input);
       closed.revision = 2;
       closed.agents[0]!.accepting_runs = false;
+      delete closed.agents[0]!.runtime?.credential;
       closed.agents[0]!.unavailable_reason = "rebuilding";
       closed.agents[0]!.operation_id = "operation+rebuild@example.org";
       await restarted.apply(closed);
@@ -150,6 +152,7 @@ describe.skipIf(databaseUrl === undefined)(
     function executionDirectory(onApplied = vi.fn(() => Promise.resolve())) {
       return new ExecutionDirectory({
         repository,
+        runtimeConnections: runtimeConnections(),
         clients: new ProviderClients({
           complete: () => Promise.reject(new Error("No model call")),
         }),
@@ -229,6 +232,7 @@ describe.skipIf(databaseUrl === undefined)(
         };
         const directory = new ExecutionDirectory({
           repository,
+          runtimeConnections: runtimeConnections(),
           clients: new ProviderClients({
             complete: () => Promise.reject(new Error("No model call")),
           }),

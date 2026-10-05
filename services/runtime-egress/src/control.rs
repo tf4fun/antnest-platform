@@ -1,9 +1,9 @@
-use std::{net::Ipv4Addr, sync::Arc};
+use std::{error::Error as _, net::Ipv4Addr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use axum::{
     Router,
-    body::Body,
+    body::{Body, to_bytes},
     extract::{
         MatchedPath, Path, State,
         rejection::{JsonRejection, PathRejection},
@@ -26,6 +26,10 @@ use crate::{
     domain::{AgentId, AttachmentState, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
     policy::PolicySpec,
     repository::Repository,
+    service_auth::{
+        Admission, AdmissionError, MAX_JSON_BYTES, SERVICE_HEADER, valid_json_body,
+        valid_json_media,
+    },
     telemetry::{EgressMetrics, capture_rpc_content_from_environment},
 };
 
@@ -56,6 +60,9 @@ pub const CONTROL_ROUTES: &[(&str, &str)] = &[
 ];
 
 pub const CONTROL_ERROR_CODES: &[&str] = &[
+    "service_unauthenticated",
+    "caller_not_allowed",
+    "unsupported_media_type",
     "invalid_request",
     "route_not_found",
     "agent_network_not_found",
@@ -184,17 +191,27 @@ struct AppState {
     capture_rpc_content: bool,
 }
 
-pub fn router<R, K>(service: Arc<ControlService<R, K>>, metrics: EgressMetrics) -> Router
+pub fn router<R, K>(
+    service: Arc<ControlService<R, K>>,
+    metrics: EgressMetrics,
+    admission: Admission,
+) -> Router
 where
     R: Repository,
     K: KernelCleanup,
 {
-    router_with_capture_rpc_content(service, metrics, capture_rpc_content_from_environment())
+    router_with_capture_rpc_content(
+        service,
+        metrics,
+        admission,
+        capture_rpc_content_from_environment(),
+    )
 }
 
 pub fn router_with_capture_rpc_content<R, K>(
     service: Arc<ControlService<R, K>>,
     metrics: EgressMetrics,
+    admission: Admission,
     capture_rpc_content: bool,
 ) -> Router
 where
@@ -207,7 +224,6 @@ where
         capture_rpc_content,
     };
     Router::new()
-        .route(STATUS_ROUTE, get(status_handler))
         .route(AGENT_NETWORK_ROUTE, get(get_network).put(ensure_network))
         .route(ATTACHMENT_ROUTE, put(set_attachment))
         .route(RELEASE_ROUTE, post(release_network))
@@ -221,8 +237,169 @@ where
         )
         .fallback(route_not_found)
         .method_not_allowed_fallback(method_not_allowed)
+        .layer(middleware::from_fn_with_state(
+            Arc::new(admission),
+            admit_request,
+        ))
         .layer(middleware::from_fn_with_state(state.clone(), trace_request))
         .with_state(state)
+}
+
+pub fn health_router<R, K>(service: Arc<ControlService<R, K>>, metrics: EgressMetrics) -> Router
+where
+    R: Repository,
+    K: KernelCleanup,
+{
+    let state = AppState {
+        api: service,
+        metrics,
+        capture_rpc_content: false,
+    };
+    Router::new()
+        .route(STATUS_ROUTE, get(status_handler))
+        .fallback(route_not_found)
+        .method_not_allowed_fallback(method_not_allowed)
+        .layer(middleware::from_fn(health_request))
+        .layer(middleware::from_fn_with_state(state.clone(), trace_request))
+        .with_state(state)
+}
+
+async fn admit_request(
+    State(admission): State<Arc<Admission>>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    if let Err(error) = admission.authorize_request(&request) {
+        return match error {
+            AdmissionError::Unauthenticated => ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "service_unauthenticated",
+                "service authentication failed",
+                false,
+            ),
+            AdmissionError::Forbidden => ApiError::new(
+                StatusCode::FORBIDDEN,
+                "caller_not_allowed",
+                "caller is not allowed",
+                false,
+            ),
+        }
+        .into_response();
+    }
+    let carriers = request
+        .headers()
+        .keys()
+        .filter(|name| {
+            matches!(
+                name.as_str(),
+                "authorization" | "cookie" | "antnest-caller-context" | SERVICE_HEADER
+            ) || name.as_str().starts_with("x-antnest-")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for name in carriers {
+        request.headers_mut().remove(name);
+    }
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str);
+    let Some(route) = route else {
+        return next.run(request).await;
+    };
+    if control_operation(request.method().as_str(), route).is_none() {
+        // In particular, Axum's implicit HEAD on GET must not create a ninth
+        // business method outside the exact Controller route contract.
+        return method_not_allowed().await.into_response();
+    }
+    if request.uri().query().is_some() {
+        return ApiError::invalid_request().into_response();
+    }
+    let json = request.method() != axum::http::Method::GET
+        && !(request.method() == axum::http::Method::PUT && route == AGENT_NETWORK_ROUTE);
+    if json && !json_media(&request) {
+        return ApiError::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            "JSON media type is required",
+            false,
+        )
+        .into_response();
+    }
+    match bounded_body(request, json).await {
+        Ok(request) => next.run(request).await,
+        Err(error) => error.into_response(),
+    }
+}
+
+fn json_media(request: &Request<Body>) -> bool {
+    let content_types = request
+        .headers()
+        .get_all("content-type")
+        .iter()
+        .map(|value| value.to_str())
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(content_types) = content_types else {
+        return false;
+    };
+    let encodings = request
+        .headers()
+        .get_all("content-encoding")
+        .iter()
+        .map(|value| value.to_str())
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(encodings) = encodings else {
+        return false;
+    };
+    valid_json_media(&content_types)
+        && (encodings.is_empty()
+            || matches!(encodings.as_slice(), [value] if value.eq_ignore_ascii_case("identity")))
+}
+
+async fn bounded_body(request: Request<Body>, json: bool) -> Result<Request<Body>, ApiError> {
+    let (parts, body) = request.into_parts();
+    let limit = if json { MAX_JSON_BYTES } else { 0 };
+    let bytes = tokio::time::timeout(Duration::from_secs(5), to_bytes(body, limit))
+        .await
+        .map_err(|_| ApiError::invalid_request())?
+        .map_err(|error| {
+            if json
+                && error
+                    .source()
+                    .is_some_and(|source| source.is::<http_body_util::LengthLimitError>())
+            {
+                ApiError::new(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "invalid_request",
+                    "request body is too large",
+                    false,
+                )
+            } else {
+                ApiError::invalid_request()
+            }
+        })?;
+    if json && !valid_json_body(&bytes) {
+        return Err(ApiError::invalid_request());
+    }
+    Ok(Request::from_parts(parts, Body::from(bytes)))
+}
+
+async fn health_request(request: Request<Body>, next: Next) -> Response {
+    if request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        == Some(STATUS_ROUTE)
+    {
+        if request.uri().query().is_some() {
+            return ApiError::invalid_request().into_response();
+        }
+        return match bounded_body(request, false).await {
+            Ok(request) => next.run(request).await,
+            Err(error) => error.into_response(),
+        };
+    }
+    next.run(request).await
 }
 
 async fn route_not_found() -> ApiError {
@@ -759,6 +936,12 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response();
+        if self.code == "service_unauthenticated" {
+            response.headers_mut().insert(
+                "www-authenticate",
+                axum::http::HeaderValue::from_static("Bearer realm=\"antnest-service\""),
+            );
+        }
         response
             .extensions_mut()
             .insert(ControlErrorCode(self.code));

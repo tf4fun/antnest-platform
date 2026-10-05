@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RequestError } from "@agentclientprotocol/sdk";
+import { testScope } from "./support/auth-fixture.ts";
 import {
   bridgeHeaders,
   requireBridgeCapabilities,
@@ -21,12 +22,9 @@ const scope = {
   agentId: "agent:1",
 };
 
-test("the internal ACP caller uses trusted scope headers without browser cookies", () => {
-  assert.deepEqual(bridgeHeaders(scope), {
-    "x-antnest-organization-id": "org+1",
-    "x-antnest-principal-id": "user/1",
-    "x-antnest-agent-id": "agent:1",
-  });
+test("the internal ACP caller forwards signed context without browser credentials or authority hints", () => {
+  assert.deepEqual(Object.keys(bridgeHeaders(testScope(scope))), ["Antnest-Caller-Context"]);
+  assert.throws(() => bridgeHeaders({ ...scope }));
 });
 
 test("ACP boolean configuration carries the SDK discriminator on the wire", () => {

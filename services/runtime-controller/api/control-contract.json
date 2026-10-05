@@ -1,7 +1,7 @@
 {
-  "revision": 14,
+  "revision": 16,
   "transport": "json-over-http",
-  "trust_boundary": "internal-network",
+  "trust_boundary": "authenticated-controller-workload",
   "schemas": {
     "control": "control-api.schema.json",
     "configuration": "runtime-deployment.schema.json"
@@ -11,6 +11,11 @@
       "required": true,
       "schema": "control-api.schema.json#/$defs/request_id",
       "description": "Stable logical request identity reused for an exact retry"
+    },
+    "Antnest-Service-Authorization": {
+      "required": true,
+      "schema": "control-api.schema.json#/$defs/service_credential",
+      "description": "Exact dedicated bearer in token mode; mTLS uses the verified Controller service URI instead. Not required by local health."
     }
   },
   "routes": [
@@ -18,136 +23,392 @@
       "operation_id": "resolveRuntimeImage",
       "method": "GET",
       "path": "/internal/runtime-images/resolve",
-      "query_parameters": {"reference": "control-api.schema.json#/$defs/tagged_image_reference"},
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/image_resolution"}},
-      "errors": ["invalid_request", "image_not_found", "platform_unavailable", "deadline_exceeded", "internal_error"]
+      "query_parameters": {
+        "reference": "control-api.schema.json#/$defs/tagged_image_reference"
+      },
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/image_resolution"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "image_not_found",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "image_not_allowed"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
     },
     {
       "operation_id": "getStatus",
       "method": "GET",
       "path": "/status",
       "responses": {
-        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/readiness"},
-        "503": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/readiness"}
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/readiness"
+        },
+        "503": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/readiness"
+        }
       },
-      "errors": []
+      "errors": [],
+      "listener": "loopback-health"
     },
     {
       "operation_id": "listRuntimes",
       "method": "GET",
       "path": "/internal/runtimes",
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/runtime_list"}},
-      "errors": ["runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/runtime_list"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "runtime_drift",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "internal_error"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
     },
     {
       "operation_id": "inspectRuntime",
       "method": "GET",
       "path": "/internal/runtimes/{agent_id}",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/runtime_inspection"}},
-      "errors": ["invalid_request", "runtime_not_found", "runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/runtime_inspection"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "runtime_not_found",
+        "runtime_drift",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "internal_error"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
     },
     {
       "operation_id": "prepareRuntimeSkillSet",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/skill-sets/prepare",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/skill_prepare_request",
-      "responses": {"202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/skill_prepare_receipt"}},
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "skill_preparation_unavailable", "skill_cleanup_in_progress", "skill_preparation_closed", "deadline_exceeded", "internal_error"]
+      "responses": {
+        "202": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/skill_prepare_receipt"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "request_id_conflict",
+        "skill_preparation_unavailable",
+        "skill_cleanup_in_progress",
+        "skill_preparation_closed",
+        "deadline_exceeded",
+        "internal_error",
+        "unsupported_media_type"
+      ]
     },
     {
       "operation_id": "getRuntimeSkillPreparation",
       "method": "GET",
       "path": "/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id", "request_id": "control-api.schema.json#/$defs/request_id"},
-      "query_parameters": {"organization_id": "control-api.schema.json#/$defs/organization_id"},
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/skill_prepare_receipt"}},
-      "errors": ["invalid_request", "preparation_not_found", "skill_preparation_unavailable", "deadline_exceeded", "internal_error"]
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id",
+        "request_id": "control-api.schema.json#/$defs/request_id"
+      },
+      "query_parameters": {
+        "organization_id": "control-api.schema.json#/$defs/organization_id"
+      },
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/skill_prepare_receipt"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "preparation_not_found",
+        "skill_preparation_unavailable",
+        "deadline_exceeded",
+        "internal_error"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
     },
     {
       "operation_id": "releaseRuntimeSkillPreparation",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id", "request_id": "control-api.schema.json#/$defs/request_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id",
+        "request_id": "control-api.schema.json#/$defs/request_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/skill_release_request",
-      "responses": {"204": {}},
-      "errors": ["invalid_request", "idempotency_key_required", "preparation_not_found", "skill_preparation_unavailable", "deadline_exceeded", "internal_error"]
+      "responses": {
+        "204": {}
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "preparation_not_found",
+        "skill_preparation_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "unsupported_media_type"
+      ]
     },
     {
       "operation_id": "initializeRuntime",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/initialize",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/initialize_request",
       "responses": {
-        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
-        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        },
+        "202": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        }
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "prepared_skill_set_invalidated", "skill_preflight_unavailable", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "runtime_not_ready", "internal_error"]
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "request_id_conflict",
+        "agent_mutation_in_progress",
+        "mutation_lock_lost",
+        "runtime_lifecycle_conflict",
+        "prepared_skill_set_invalidated",
+        "skill_preflight_unavailable",
+        "runtime_drift",
+        "storage_not_found",
+        "storage_ownership_conflict",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "operation_failed",
+        "runtime_not_ready",
+        "internal_error",
+        "unsupported_media_type",
+        "image_not_allowed"
+      ]
     },
     {
       "operation_id": "updateRuntime",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/update",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
       "responses": {
-        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
-        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        },
+        "202": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        }
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "prepared_skill_set_invalidated", "skill_preflight_unavailable", "runtime_drift", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "request_id_conflict",
+        "agent_mutation_in_progress",
+        "mutation_lock_lost",
+        "runtime_lifecycle_conflict",
+        "runtime_revision_conflict",
+        "prepared_skill_set_invalidated",
+        "skill_preflight_unavailable",
+        "runtime_drift",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "operation_failed",
+        "internal_error",
+        "unsupported_media_type",
+        "image_not_allowed"
+      ]
     },
     {
       "operation_id": "disableRuntime",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/disable",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/revision_request",
       "responses": {
-        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
-        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        },
+        "202": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        }
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "request_id_conflict",
+        "agent_mutation_in_progress",
+        "mutation_lock_lost",
+        "runtime_lifecycle_conflict",
+        "runtime_revision_conflict",
+        "runtime_drift",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "operation_failed",
+        "internal_error",
+        "unsupported_media_type"
+      ]
     },
     {
       "operation_id": "enableRuntime",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/enable",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
       "responses": {
-        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
-        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        },
+        "202": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        }
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "prepared_skill_set_invalidated", "skill_preflight_unavailable", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "request_id_conflict",
+        "agent_mutation_in_progress",
+        "mutation_lock_lost",
+        "runtime_lifecycle_conflict",
+        "runtime_revision_conflict",
+        "prepared_skill_set_invalidated",
+        "skill_preflight_unavailable",
+        "runtime_drift",
+        "storage_not_found",
+        "storage_ownership_conflict",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "operation_failed",
+        "internal_error",
+        "unsupported_media_type",
+        "image_not_allowed"
+      ]
     },
     {
       "operation_id": "deleteRuntime",
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/delete",
-      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
-      "required_headers": ["Idempotency-Key"],
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
       "request_body": "control-api.schema.json#/$defs/revision_request",
       "responses": {
-        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
-        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        },
+        "202": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        }
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "storage_in_use", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "idempotency_key_required",
+        "request_id_conflict",
+        "agent_mutation_in_progress",
+        "mutation_lock_lost",
+        "runtime_lifecycle_conflict",
+        "runtime_revision_conflict",
+        "runtime_drift",
+        "storage_in_use",
+        "storage_ownership_conflict",
+        "platform_unavailable",
+        "deadline_exceeded",
+        "operation_failed",
+        "internal_error",
+        "unsupported_media_type"
+      ]
     },
     {
       "operation_id": "getRuntimeOperation",
       "method": "GET",
       "path": "/internal/runtime-operations/{request_id}",
-      "path_parameters": {"request_id": "control-api.schema.json#/$defs/request_id"},
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}},
-      "errors": ["invalid_request", "operation_not_found", "internal_error"]
+      "path_parameters": {
+        "request_id": "control-api.schema.json#/$defs/request_id"
+      },
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/operation"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "operation_not_found",
+        "internal_error"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
     },
     {
       "operation_id": "listRuntimeObservations",
@@ -157,14 +418,28 @@
         "after_sequence": "control-api.schema.json#/$defs/sequence",
         "limit": "control-api.schema.json#/$defs/page_limit"
       },
-      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/observation_list"}},
-      "errors": ["invalid_request", "observation_cursor_expired", "internal_error"]
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/observation_list"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "observation_cursor_expired",
+        "internal_error"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
     },
     {
       "operation_id": "watchRuntimeObservations",
       "method": "GET",
       "path": "/internal/runtime-observations/watch",
-      "query_parameters": {"after_sequence": "control-api.schema.json#/$defs/sequence"},
+      "query_parameters": {
+        "after_sequence": "control-api.schema.json#/$defs/sequence"
+      },
       "responses": {
         "200": {
           "content_type": "text/event-stream",
@@ -180,38 +455,215 @@
           }
         }
       },
-      "errors": ["invalid_request", "observation_cursor_expired", "internal_error"]
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "observation_cursor_expired",
+        "internal_error"
+      ],
+      "required_headers": ["Antnest-Service-Authorization"]
+    },
+    {
+      "operation_id": "resolveRuntimeConnection",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/connection",
+      "path_parameters": {
+        "agent_id": "control-api.schema.json#/$defs/agent_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization"],
+      "request_body": "control-api.schema.json#/$defs/runtime_connection_request",
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/runtime_connection"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "unsupported_media_type",
+        "invalid_request",
+        "runtime_not_found",
+        "runtime_connection_stale",
+        "runtime_connection_unavailable"
+      ],
+      "cache_control": "no-store",
+      "capture_payload": false
     }
   ],
   "errors": {
-    "runtime_not_ready": {"status": 500, "retryable": false, "body": "control-api.schema.json#/$defs/error", "historical_only": true},
-    "image_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "invalid_request": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "idempotency_key_required": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "request_id_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "agent_mutation_in_progress": {"status": 409, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "mutation_lock_lost": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "runtime_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "preparation_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "skill_preparation_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "skill_cleanup_in_progress": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "skill_preparation_closed": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "runtime_lifecycle_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "runtime_revision_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "prepared_skill_set_invalidated": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "skill_preflight_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "runtime_drift": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "storage_in_use": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "storage_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "storage_ownership_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "platform_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "operation_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "observation_cursor_expired": {"status": 410, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "deadline_exceeded": {"status": 504, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
-    "route_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "method_not_allowed": {"status": 405, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "operation_failed": {"status": 500, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
-    "internal_error": {"status": 500, "retryable": true, "body": "control-api.schema.json#/$defs/error"}
+    "runtime_not_ready": {
+      "status": 500,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error",
+      "historical_only": true
+    },
+    "image_not_found": {
+      "status": 404,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "invalid_request": {
+      "status": 400,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "idempotency_key_required": {
+      "status": 400,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "request_id_conflict": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "agent_mutation_in_progress": {
+      "status": 409,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "mutation_lock_lost": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "runtime_not_found": {
+      "status": 404,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "preparation_not_found": {
+      "status": 404,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "skill_preparation_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "skill_cleanup_in_progress": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "skill_preparation_closed": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "runtime_lifecycle_conflict": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "runtime_revision_conflict": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "prepared_skill_set_invalidated": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "skill_preflight_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "runtime_drift": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "storage_in_use": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "storage_not_found": {
+      "status": 404,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "storage_ownership_conflict": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "platform_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "operation_not_found": {
+      "status": 404,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "observation_cursor_expired": {
+      "status": 410,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "deadline_exceeded": {
+      "status": 504,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "route_not_found": {
+      "status": 404,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "method_not_allowed": {
+      "status": 405,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "operation_failed": {
+      "status": 500,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "internal_error": {
+      "status": 500,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "service_unauthenticated": {
+      "status": 401,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "caller_not_allowed": {
+      "status": 403,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "unsupported_media_type": {
+      "status": 415,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "image_not_allowed": {
+      "status": 422,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "runtime_connection_stale": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "runtime_connection_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    }
   },
   "operation_error_codes": {
     "runtime_not_ready": {
@@ -256,6 +708,30 @@
       "effects": ["not_started", "unknown"],
       "http_statuses": [503, 202],
       "retry_same_request_only": true
+    },
+    "instance_receiver_preparation_failed": {
+      "operation_states": ["unknown"],
+      "effects": ["unknown"],
+      "http_statuses": [202],
+      "retry_same_request_only": true
+    },
+    "instance_mount_verification_failed": {
+      "operation_states": ["unknown"],
+      "effects": ["unknown"],
+      "http_statuses": [202],
+      "retry_same_request_only": true
+    },
+    "instance_receiver_cleanup_failed": {
+      "operation_states": ["unknown"],
+      "effects": ["unknown"],
+      "http_statuses": [202],
+      "retry_same_request_only": true
     }
+  },
+  "authentication": {
+    "contract": "../../../contracts/platform/service-authentication.md",
+    "allowed_callers": ["agent-controller"],
+    "caller_context": "Controller-owned accepted operation; unsigned identity headers grant nothing",
+    "local_health": "GET /status on the separate loopback-only health listener; remote requests are not admitted"
   }
 }

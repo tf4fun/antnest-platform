@@ -7,7 +7,7 @@ POSTGRES_ADMIN_USER := antnest_test_admin
 
 
 fmt:
-	gofmt -w $$(find services tests -name '*.go' -type f)
+	gofmt -w $$(find modules services tests -name '*.go' -type f)
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
 	npm --prefix services/agent-acp-service run format
@@ -15,7 +15,7 @@ fmt:
 	services/agent-acp-service/node_modules/.bin/prettier --write 'tests/**/*.mjs' 'tests/**/*.ts'
 
 fmt-check:
-	@unformatted="$$(gofmt -l $$(find services tests -name '*.go' -type f))" || exit $$?; \
+	@unformatted="$$(gofmt -l $$(find modules services tests -name '*.go' -type f))" || exit $$?; \
 		test -z "$$unformatted"
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
@@ -52,7 +52,7 @@ test-storage-policy:
 	node tests/support/check-storage.mjs
 	python3 -B tests/support/verification/configuration_test.py
 
-test-go:
+test-go: test-go-authentication
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs runtime-controller
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs identity-service
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs agent-controller
@@ -61,13 +61,17 @@ test-go:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs skill-registry
 
 .PHONY: test-go-unit
-test-go-unit:
+test-go-unit: test-go-authentication
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/runtime-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/identity-service/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/admin-console/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/edge-gateway/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/skill-registry/...
+
+.PHONY: test-go-authentication
+test-go-authentication:
+	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/service-authentication test -race -count=1 ./...
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
@@ -81,6 +85,21 @@ test-verification-python:
 .PHONY: check-links
 check-links:
 	node tests/support/check-markdown-links.mjs
+
+# Compose rendering requires the CLI, but does not contact a Docker daemon.
+.PHONY: test-deployment-ports e2e-deployment-ports
+test-deployment-ports:
+	node --test --test-concurrency=1 tests/integration/deployment/host-ports.test.mjs tests/support/dependencies.test.mjs
+
+e2e-deployment-ports:
+	node tests/e2e/service-authentication/deployment-ports/run.mjs
+
+.PHONY: test-deployment-wiring e2e-deployment-wiring
+test-deployment-wiring:
+	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
+
+e2e-deployment-wiring:
+	node tests/integration/deployment/compose-runtime-docker.mjs
 
 test-node: test-repo
 	npm --prefix services/agent-acp-service test
@@ -99,6 +118,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
+	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 	node --test tests/integration/deployment/deployment.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
@@ -125,8 +145,16 @@ test-repo:
 
 .PHONY: test-service-authentication
 test-service-authentication:
-	node --test --test-concurrency=1 tests/support/service-authentication.test.mjs tests/support/json-rpc-security.test.mjs tests/integration/platform/service-authentication-contract.test.mjs
+	node --test --test-concurrency=1 tests/support/service-authentication.test.mjs tests/support/json-rpc-security.test.mjs tests/integration/platform/service-authentication-contract.test.mjs tests/integration/platform/service-token-contract.test.mjs tests/integration/platform/runtime-instance-connection-contract.test.mjs tests/integration/platform/development-authentication-contract.test.mjs tests/integration/platform/development-network-contract.test.mjs tests/integration/platform/development-authentication.test.mjs tests/integration/platform/development-pki.test.mjs
 	node tests/support/check-service-authentication.mjs
+	node tests/support/check-go-authentication-module.mjs
+
+.PHONY: test-deployment-transports e2e-deployment-transports
+test-deployment-transports:
+	node --test --test-concurrency=1 tests/integration/deployment/diagnostic-relay.test.mjs tests/integration/deployment/runtime-telemetry-ingress.test.mjs
+
+e2e-deployment-transports:
+	node tests/integration/deployment/transports-docker.mjs
 
 test-managed-mcp-fixtures:
 	node --test --test-concurrency=1 tests/e2e/managed-mcp/*.test.mjs
@@ -481,7 +509,14 @@ test-skill-deployment:
 	node --test --test-concurrency=1 tests/integration/skill-registry/deployment-config.test.mjs
 
 e2e-skill-deployment:
-	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+	$(MAKE) e2e-service-authentication-integration
+
+.PHONY: test-service-authentication-integration e2e-service-authentication-integration
+test-service-authentication-integration:
+	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+
+e2e-service-authentication-integration:
+	ANTNEST_E2E_SERVICE_AUTHENTICATION=true ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
 
 .PHONY: e2e-skill-source-lifecycle
 e2e-skill-source-lifecycle:

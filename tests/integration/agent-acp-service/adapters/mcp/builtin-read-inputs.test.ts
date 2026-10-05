@@ -24,11 +24,14 @@ describe("Official MCP flat read inputs", () => {
     try {
       fixture.finish();
       const catalog = new McpToolCatalog({
-        runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+        runtimeDialer: new OfficialMcpDialer({
+          trust: "runtime",
+          connections: fixture.authority.connections,
+        }),
         revisions: { getClientMcpRevision: () => Promise.resolve([]) },
       });
       const execution = snapshot();
-      execution.runtime.mcpEndpoint = fixture.endpoint.href;
+      execution.runtime = fixture.authority.binding;
       const signal = AbortSignal.timeout(5000);
       const tools = await catalog.list(execution, signal);
       expect(tools[0]?.inputSchema?.properties).toMatchObject({

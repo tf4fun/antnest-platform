@@ -19,18 +19,24 @@ import (
 func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder := networkPolicyTraceRecorder(t)
-	for _, path := range []string{"/internal/provider-connections", "/internal/provider-connections/provider-1/credentials"} {
+	for _, path := range []string{"/internal/provider-connections", "/internal/provider-connections/provider-1/credentials", "/internal/provider-discovery/draft", "/internal/provider-connections/provider-1/discover-models"} {
 		for _, outcome := range []string{"success", "invalid", "dependency"} {
 			t.Run(path+"/"+outcome, func(t *testing.T) {
 				service := &catalogServiceStub{}
 				if outcome == "dependency" {
 					service.getModelErr = application.ErrDependencyUnavailable
 				}
-				handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+				handler, err := newBusinessHandler(t, service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 				if err != nil {
 					t.Fatal(err)
 				}
 				body := `{"request_id":"test","organization_id":"org-1","credential":{"method":"api_key","api_key":"stage2-model-secret"}}`
+				if strings.Contains(path, "discover-models") {
+					body = `{"organization_id":"org-1"}`
+				}
+				if strings.Contains(path, "provider-discovery") {
+					body = `{"organization_id":"org-1","provider_key":"deepseek","base_url":"https://api.deepseek.com","credential":{"method":"api_key","api_key":"stage2-model-secret"}}`
+				}
 				if outcome == "invalid" {
 					body = strings.TrimSuffix(body, "}") + `,"unexpected":"stage2-model-secret"}`
 				}
@@ -38,6 +44,9 @@ func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {
 				response := httptest.NewRecorder()
 				telemetry.HTTPHandler(handler, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
 				expected := map[string]int{"success": http.StatusCreated, "invalid": http.StatusBadRequest, "dependency": http.StatusServiceUnavailable}[outcome]
+				if outcome == "success" && (strings.Contains(path, "discover-models") || strings.Contains(path, "provider-discovery")) {
+					expected = http.StatusOK
+				}
 				if response.Code != expected {
 					t.Fatalf("status = %d, want %d", response.Code, expected)
 				}
@@ -54,7 +63,7 @@ func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {
 func TestProviderReadRetainsNonSecretRPCDiagnostics(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder := networkPolicyTraceRecorder(t)
-	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,17 +80,17 @@ func TestProviderReadRetainsNonSecretRPCDiagnostics(t *testing.T) {
 	t.Fatal("non-secret RPC positive capture control missing")
 }
 
-func TestProviderAccessIsMetadataOnlyEvenWithContentCaptureEnabled(t *testing.T) {
+func TestRetiredProviderAccessCannotReturnCredentialEvenWithContentCapture(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder := networkPolicyTraceRecorder(t)
-	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := newBusinessHandler(t, &catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
 	telemetry.HTTPHandler(handler, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(response,
 		httptest.NewRequest(http.MethodGet, "/internal/provider-connections/provider-1/access?organization_id=org-1", nil))
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(response.Body.String(), "synthetic") {
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "synthetic") {
 		t.Fatalf("access contract not satisfied: status %d", response.Code)
 	}
 	spans := recorder.Ended()

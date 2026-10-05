@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -113,7 +114,7 @@ type routeDefinition struct {
 func NewHandler(
 	catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
 	queries AgentQueryService, events AgentEventService, network NetworkPolicyService,
-	health HealthCheck,
+	health HealthCheck, authentication ...Security,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -136,6 +137,10 @@ func NewHandler(
 	if network == nil {
 		return nil, fmt.Errorf("network policy service is required")
 	}
+	if len(authentication) != 1 || !authentication[0].valid() {
+		return nil, fmt.Errorf("workload authentication and caller-context verification are required")
+	}
+	security := authentication[0]
 	h := &handler{
 		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, health: health,
 	}
@@ -145,9 +150,9 @@ func NewHandler(
 		if !route.metadataOnly {
 			endpoint = telemetry.RPCHandler(route.pattern, endpoint)
 		}
-		mux.Handle(route.pattern, endpoint)
+		mux.Handle(route.pattern, security.guardRoute(route.pattern, endpoint))
 	}
-	return mux, nil
+	return security.guardMux(mux), nil
 }
 
 func (h *handler) routes() []routeDefinition {
@@ -163,7 +168,8 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "PUT /internal/agent-templates/{template_id}/availability", handler: h.setTemplateAvailability},
 		{pattern: "GET /internal/provider-connections", handler: h.listProviderConnections},
 		{pattern: "GET /internal/provider-connections/{connection_id}", handler: h.getProviderConnection},
-		{pattern: "GET /internal/provider-connections/{connection_id}/access", handler: h.resolveProviderAccess, metadataOnly: true},
+		{pattern: "POST /internal/provider-connections/{connection_id}/discover-models", handler: h.discoverProviderModels, metadataOnly: true},
+		{pattern: "POST /internal/provider-discovery/draft", handler: h.discoverDraftProviderModels, metadataOnly: true},
 		{pattern: "POST /internal/provider-connections/{connection_id}/credentials", handler: h.rotateProviderCredential, metadataOnly: true},
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
@@ -1124,18 +1130,12 @@ func nonnegativeInt64(response http.ResponseWriter, raw string) (int64, bool) {
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
 	request.Body = http.MaxBytesReader(response, request.Body, maximumRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
-		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
-		return false
+	raw, err := io.ReadAll(request.Body)
+	if err == nil {
+		err = serviceauth.DecodeObject(raw, target)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("request contains trailing JSON")
-		}
-		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON contains trailing or incomplete data", false)
+	if err != nil {
+		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
 		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
 		return false
 	}
@@ -1314,6 +1314,12 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusServiceUnavailable, errorResponse{
 			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
 		}
+	case errors.Is(err, ports.ErrProviderEndpointForbidden):
+		return http.StatusUnprocessableEntity, errorResponse{Code: "provider_endpoint_forbidden", Message: "Provider endpoint is forbidden"}
+	case errors.Is(err, ports.ErrProviderEndpointUnavailable):
+		return http.StatusServiceUnavailable, errorResponse{Code: "provider_endpoint_unavailable", Message: "Provider endpoint is unavailable", Retryable: true}
+	case errors.Is(err, ports.ErrProviderDiscoveryFailed):
+		return http.StatusBadGateway, errorResponse{Code: "provider_discovery_failed", Message: "Provider model discovery failed", Retryable: true}
 	default:
 		return http.StatusInternalServerError, errorResponse{
 			Code: "internal_error", Message: "internal service error", Retryable: true,

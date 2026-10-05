@@ -1,3 +1,8 @@
+import {
+  testSecurityEnvironment,
+  testAuthentication,
+  testHeaders,
+} from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -23,10 +28,15 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
   const runs = new PostgresRunRepository(kernel);
   const config = {
     ...loadConfig({
-      ANTNEST_ACP_DATABASE_URL: url ?? "postgres://unused/unused",
-      ANTNEST_ACP_CLIENT_MCP_KEY: key.toString("base64"),
+      ...testSecurityEnvironment(),
+      ...{
+        ANTNEST_ACP_DATABASE_URL: url ?? "postgres://unused/unused",
+        ANTNEST_ACP_CLIENT_MCP_KEY: key.toString("base64"),
+      },
     }),
     listen: { host: "127.0.0.1", port: 0 },
+    controlListen: { host: "127.0.0.1", port: 0 },
+    authentication: testAuthentication(),
   };
   const ownershipLost = vi.fn();
   let service: RunningAgentAcpService | undefined;
@@ -53,13 +63,16 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
     path: string,
     input: unknown,
     override: Record<string, string> = {},
+    caller = "admin-console",
   ) {
     const address = service?.address();
     if (address == null || typeof address === "string")
       throw new Error("No listening address");
+    const identity: Record<string, string> = { ...headers, ...override };
+    if (caller === "edge-gateway") delete identity["X-Antnest-User-ID"];
     return fetch(`http://127.0.0.1:${address.port}/rpc/agent-acp/${path}`, {
       method: "POST",
-      headers: { ...headers, ...override },
+      headers: testHeaders(identity, caller),
       body: JSON.stringify(input),
     });
   }
@@ -134,6 +147,7 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
           "X-Antnest-Principal-ID": "owner-1",
           "X-Antnest-Agent-ID": "deleted-agent",
         },
+        "edge-gateway",
       );
       expect(execution.status).toBe(503);
       expect(await execution.json()).toMatchObject({

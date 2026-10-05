@@ -14,14 +14,15 @@ section 4 to verify the full path.
   the Runtime also drops privileges for Tool execution. Do not remove these
   controls to make readiness pass. Rootless Docker is not supported.
 - BuildKit must support Dockerfile cache mounts. Compose must understand
-  `!reset`, `healthcheck.start_interval` and `networks.gw_priority`. Inspect
+  `!reset`, `!override`, `healthcheck.start_interval` and `networks.gw_priority`. Inspect
   `docker version` and `docker compose version`; a rejected Compose file is a
   prerequisite failure, not a reason to omit the `compose.stage3.yaml` override.
 - The selected Docker context is the deployment target. Runtime Controller uses
   that Engine's socket, image store, networks and volumes. A local Runtime image
   on a different Engine is not available to the Controller.
-- The host needs Make and Docker for image builds. Host-side fixture tests and
-  E2E drivers additionally need Node and the locked ACP service dependencies.
+- The host needs Make, Docker and Node 24.21 for builds and fresh credential
+  preparation. Host-side fixture tests and E2E drivers additionally need the
+  locked ACP service dependencies.
   Go/Rust/Node compilers for image builds are inside the Dockerfiles.
 - Reserve ports and non-overlapping subnets before startup. Never prune the
   entire Engine to make room for this deployment.
@@ -48,7 +49,7 @@ application tables.
 Copy `.env.example` to the ignored `.env` and use it as the configuration
 inventory.
 
-> **Warning:** the passwords, tokens and zero-valued keys in `.env.example` and
+> **Warning:** the passwords and zero-valued keys in `.env.example` and
 > the Compose defaults are public, disposable local development values. Anyone
 > can read them in this repository. Override every one of them before storing
 > any non-disposable data or exposing the deployment beyond your workstation.
@@ -56,6 +57,22 @@ inventory.
 Keep `.env`, `.secret`, `auth.json` and any other credential files out of Git and
 Docker build contexts. Do not publish `docker compose config` or `docker inspect`
 output containing resolved environments.
+
+For a fresh deployment, prepare the private workload credentials and independent
+Identity/RC bootstrap keys before invoking Make or Compose:
+
+```sh
+node scripts/dev-service-tokens.mjs
+set -a
+. artifacts/service-authentication/deployment.env
+set +a
+```
+
+The helper refuses existing output and does not rotate a retained deployment.
+Retain this private directory and use the same settings for subsequent starts
+and shutdown. Add `--with-skill-learning` to the helper on the first invocation
+when automatic maintenance and dynamic discovery are wanted. See the
+[provisioning contract](../contracts/platform/development-authentication.md).
 
 Three separate 32-byte base64 keys must remain stable with the associated data:
 
@@ -85,21 +102,28 @@ to solve a login problem.
 The default operator stack is `antnest-platform`, with management network
 `antnest-runtime-management` and system Skill volume `antnest-system-skills`.
 For another stack, change project, Controller scope, network and Skill-volume
-names together, plus host ports and both subnets. Egress and Jaeger static IPs
-must be inside their corresponding networks. The disposable test runners choose
+names together, plus host ports, `ANTNEST_SERVICE_NETWORK_PREFIX`, the control
+and management subnets, fixed infrastructure addresses and the management dynamic
+allocation range. The disposable test runners choose
 these values automatically; operators should not copy their transient IDs.
 Also update `ANTNEST_EDGE_PUBLIC_BASE_URL` to the selected Gateway port/domain
 (Identity uses it for OIDC callbacks), and
-`ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT` to the selected Jaeger management
-IP and collector port. These example values are literal URLs, not dynamically
-derived from the port/subnet variables.
+`ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT` if overriding the default Runtime
+ingestion address. Jaeger belongs only to observability; Runtime OTLP uses the
+restricted management ingress, default `172.30.255.4:4318`. Keep its fixed address
+outside the dynamic allocation range. See the
+[purpose-network contract](../contracts/platform/development-networks.md).
 
 Optional automatic Skill maintenance and dynamic source discovery are configured
-as described in the [Skill deployment guide](skill-deployment.md). Standard
-Compose forwards the ACP private signer, the Runtime Controller public verifier
-set and a separate shared source bearer; no test configuration override is
-needed. Existing Runtimes acquire new verifier configuration only through
-explicit rebuild.
+as described in the [Skill deployment guide](skill-deployment.md).
+The ACP private signer and Runtime Controller public verifier set are separate
+from workload credentials. Registry/ACP now reject the old shared source/API
+bearer settings; discovery uses pinned origins and per-pair file/TLS authority.
+Compose now mounts each service's prepared credentials and binds its purpose
+addresses. Actual deployment admission has passed in the
+[authentication rollout ledger](../contracts/platform/service-authentication-rollout.json).
+Isolated Registry service gates and complete token-profile workflow E2E have passed. Existing
+Runtimes acquire new verifier configuration only through explicit rebuild.
 
 ## 3. Build And Start
 
@@ -141,22 +165,41 @@ docker compose -f compose.yaml -f compose.stage3.yaml \
   --profile stage3 --profile observability ps
 ```
 
-Always include `compose.stage3.yaml`. It removes the debug host ports of the
-internal application services. Expected host bindings with the example config:
+The base Compose file publishes only Gateway, including when the observability
+profile is enabled. Expected host binding with the example config:
 
-| Entry        | Default address   | Purpose                                                             |
-| ------------ | ----------------- | ------------------------------------------------------------------- |
-| Edge Gateway | `127.0.0.1:8090`  | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
-| PostgreSQL   | `127.0.0.1:55432` | Local development/backup access, not a product API                  |
-| Temporal     | `127.0.0.1:7233`  | Local SDK/workflow diagnostics, not a product API                   |
-| Jaeger       | `127.0.0.1:16686` | Local trace inspection; not an authenticated public dashboard       |
+| Entry        | Default address  | Purpose                                                             |
+| ------------ | ---------------- | ------------------------------------------------------------------- |
+| Edge Gateway | `127.0.0.1:8090` | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
 
-No Runtime, ACP, Identity, Controller or BFF host port should be published.
-The loopback defaults and insecure-cookie setting are for local HTTP only.
-Do not merely bind them to `0.0.0.0` for public deployment.
+For explicit local diagnostics, use this ordered selection for both startup
+and shutdown:
+
+```sh
+docker compose -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml \
+  --profile stage3 --profile observability up -d --wait --no-build
+```
+
+It explicitly enables the credential-free diagnostic relay, publishing
+PostgreSQL `127.0.0.1:55432`, Temporal `127.0.0.1:7233`, Jaeger
+`127.0.0.1:16686` and RC/ACP/Identity/Controller at ports 58080–58083.
+Product overlay order does not suppress explicitly selected diagnostics.
+These opaque forwarded connections require the receivers' normal workload/CCT
+credentials, and ACP's
+Controller-only listener is never published. Debug does not enable model-learning
+debug settings or change Identity's public callback URL.
+
+No Runtime MCP or separate health listener is published by either file. The
+loopback defaults and insecure-cookie setting are for local HTTP only. Do not
+bind them to `0.0.0.0` for public deployment. Follow the
+[port contract](../contracts/platform/development-authentication.md#host-ports-and-explicit-diagnostics).
 
 With the `stage3` and `observability` profiles, the deployment runs one
-resident container per service plus PostgreSQL, Temporal and Jaeger.
+resident container per service plus PostgreSQL, Temporal, Jaeger and the
+restricted Runtime telemetry ingress. Explicit debug also starts the diagnostic
+relay; both helpers are read-only, nonroot and have no workload credentials.
+Exporter dependencies keep Jaeger alive until their normal shutdown finishes;
+use the same Compose selection for stop/down instead of stopping the collector first.
 `temporal-databases`, `temporal-schema`, and `temporal-namespace` are additional
 one-shot initialization jobs, not resident workers: they provision databases,
 apply engine schemas, and register the `antnest` namespace, respectively.

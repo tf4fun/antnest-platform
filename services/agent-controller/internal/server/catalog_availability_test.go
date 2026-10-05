@@ -38,7 +38,7 @@ func TestCatalogAvailabilityRoutesRequireExplicitBooleans(t *testing.T) {
 	} {
 		t.Run(route.path, func(t *testing.T) {
 			service := &availabilityServiceStub{}
-			boundary, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+			boundary, err := newBusinessHandler(t, service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			require.NoError(t, err)
 			path := "/internal/" + route.path + "/resource/availability"
 			for _, fields := range []string{`"expected_enabled":true`, `"enabled":false`, `"expected_enabled":null,"enabled":false`, `"expected_enabled":true,"enabled":null`, `"expected_enabled":true,"enabled":false,"extra":1`} {

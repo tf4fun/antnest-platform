@@ -97,8 +97,9 @@ func TestResolveRejectsIncompleteAuthorityResponse(t *testing.T) {
 }
 
 func TestResolvePreservesExplicitInactivePrincipal(t *testing.T) {
+	contextJSON, _ := json.Marshal(testIssuerContext(t))
 	client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{"principal":{"user_id":"u","organization_id":"o","organization_slug":"engineering","organization_name":"Engineering","membership_id":"m","active":false}}`), nil
+		return jsonResponse(http.StatusOK, `{"caller_context":`+string(contextJSON)+`,"principal":{"user_id":"u","organization_id":"o","organization_slug":"engineering","organization_name":"Engineering","membership_id":"m","active":false}}`), nil
 	})})
 	if err != nil {
 		t.Fatal(err)

@@ -78,36 +78,24 @@ func TestLoadRejectsInvalidDependencies(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresPairedSkillRegistryAddressAndServiceToken(t *testing.T) {
-	base := map[string]string{
-		"ANTNEST_IDENTITY_SERVICE_URL":  "http://identity-service:8080",
-		"ANTNEST_AGENT_CONTROLLER_URL":  "http://agent-controller:8080",
-		"ANTNEST_AGENT_ACP_SERVICE_URL": "http://agent-acp-service:8080",
-	}
-	lookup := func(values map[string]string) func(string) string {
-		return func(key string) string { return values[key] }
-	}
-	for _, values := range []map[string]string{
-		{"ANTNEST_SKILL_REGISTRY_URL": "http://skill-registry:8080"},
-		{"ANTNEST_SKILL_REGISTRY_API_TOKEN": "local-skill-registry-token-000000000000"},
-		{"ANTNEST_SKILL_REGISTRY_URL": "file:///tmp/registry", "ANTNEST_SKILL_REGISTRY_API_TOKEN": "local-skill-registry-token-000000000000"},
-		{"ANTNEST_SKILL_REGISTRY_URL": "http://skill-registry:8080", "ANTNEST_SKILL_REGISTRY_API_TOKEN": "short"},
-	} {
-		input := make(map[string]string)
-		for key, value := range base {
-			input[key] = value
-		}
-		for key, value := range values {
-			input[key] = value
-		}
-		if _, err := Load(lookup(input)); err == nil {
-			t.Fatalf("accepted invalid Registry config: %v", values)
+func TestLoadRejectsMalformedOptionalRegistryURL(t *testing.T) {
+	base := map[string]string{"ANTNEST_IDENTITY_SERVICE_URL": "http://identity.internal", "ANTNEST_AGENT_CONTROLLER_URL": "http://controller.internal", "ANTNEST_AGENT_ACP_SERVICE_URL": "http://acp.internal"}
+	for _, raw := range []string{"file:///tmp/registry", "http://user:password@registry.internal", "http://registry.internal?"} {
+		base["ANTNEST_SKILL_REGISTRY_URL"] = raw
+		if _, err := Load(func(key string) string { return base[key] }); err == nil {
+			t.Fatal("accepted malformed Registry URL")
 		}
 	}
-	base["ANTNEST_SKILL_REGISTRY_URL"] = "http://skill-registry:8080"
-	base["ANTNEST_SKILL_REGISTRY_API_TOKEN"] = "local-skill-registry-token-000000000000"
-	config, err := Load(lookup(base))
-	if err != nil || config.SkillRegistryURL != base["ANTNEST_SKILL_REGISTRY_URL"] {
-		t.Fatalf("config=%+v err=%v", config, err)
+}
+
+func TestRegistryUsesUnifiedAuthenticationInsteadOfLegacyBearer(t *testing.T) {
+	values := map[string]string{"ANTNEST_IDENTITY_SERVICE_URL": "http://identity.internal", "ANTNEST_AGENT_CONTROLLER_URL": "http://controller.internal", "ANTNEST_AGENT_ACP_SERVICE_URL": "http://acp.internal", "ANTNEST_SKILL_REGISTRY_URL": "http://registry.internal"}
+	lookup := func(key string) string { return values[key] }
+	if _, err := Load(lookup); err != nil {
+		t.Fatalf("registry URL still requires a legacy bearer: %v", err)
+	}
+	values["ANTNEST_SKILL_REGISTRY_API_TOKEN"] = strings.Repeat("x", 32)
+	if _, err := Load(lookup); err == nil {
+		t.Fatal("removed legacy credential was silently accepted")
 	}
 }

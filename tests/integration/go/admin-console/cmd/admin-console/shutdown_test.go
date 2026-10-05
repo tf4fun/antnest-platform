@@ -13,8 +13,6 @@ import (
 
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
 func TestRunStopsActiveWatchCleanly(t *testing.T) {
@@ -28,7 +26,7 @@ func TestRunStopsActiveWatchCleanly(t *testing.T) {
 		<-r.Context().Done()
 	})
 	console := startConsole(t, backend.URL, time.Second)
-	response := consoleRequest(t, console.url+"/api/admin/agents/agent-1/events/watch")
+	response := consoleRequest(t, console, console.url+"/api/admin/agents/agent-1/events/watch")
 	defer closeResponse(t, response)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("watch status = %d", response.StatusCode)
@@ -72,11 +70,11 @@ func TestRunDrainsOrdinaryRequestsWhileStoppingWatch(t *testing.T) {
 	})
 	defer releaseOnce()
 	console := startConsole(t, backend.URL, 2*time.Second)
-	watch := consoleRequest(t, console.url+"/api/admin/agents/agent-1/events/watch")
+	watch := consoleRequest(t, console, console.url+"/api/admin/agents/agent-1/events/watch")
 	defer closeResponse(t, watch)
 	ordinary := make(chan error, 1)
 	go func() {
-		response, err := adminRequest(console.url + "/api/admin/account")
+		response, err := console.auth.request(console.url + "/api/admin/account")
 		if err == nil {
 			_, readErr := io.Copy(io.Discard, response.Body)
 			err = errors.Join(readErr, response.Body.Close())
@@ -122,7 +120,7 @@ func TestRunRetainsShutdownDeadlineFailure(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		response, err := adminRequest(console.url + "/api/admin/account")
+		response, err := console.auth.request(console.url + "/api/admin/account")
 		if err == nil {
 			closeResponse(t, response)
 		}
@@ -159,7 +157,7 @@ func TestRunWaitsForRequestTraceAfterForcedClose(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		response, err := adminRequest(console.url + "/api/admin/account")
+		response, err := console.auth.request(console.url + "/api/admin/account")
 		if err == nil {
 			closeResponse(t, response)
 		}
@@ -197,6 +195,7 @@ func (e *blockedRequestExporter) ExportSpans(_ context.Context, spans []sdktrace
 func (*blockedRequestExporter) Shutdown(context.Context) error { return nil }
 
 type runningConsole struct {
+	auth    *consoleAuthFixture
 	url     string
 	stop    context.CancelFunc
 	result  <-chan error
@@ -234,6 +233,7 @@ func startConsole(t *testing.T, upstreamURL string, budget time.Duration) runnin
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
+	auth := newConsoleAuthFixture(t, upstreamURL)
 	values := map[string]string{
 		"ANTNEST_ADMIN_CONSOLE_LISTEN":   address,
 		"ANTNEST_IDENTITY_SERVICE_URL":   upstreamURL,
@@ -241,13 +241,16 @@ func startConsole(t *testing.T, upstreamURL string, budget time.Duration) runnin
 		"ANTNEST_AGENT_ACP_SERVICE_URL":  upstreamURL,
 		"ANTNEST_ADMIN_SHUTDOWN_TIMEOUT": budget.String(),
 	}
+	for key, value := range auth.values {
+		values[key] = value
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done, stopped := make(chan error, 1), make(chan struct{})
 	go func() {
 		defer close(stopped)
-		done <- run(ctx, func(key string) string { return values[key] })
+		done <- run(ctx, func(key string) (string, bool) { value, present := values[key]; return value, present })
 	}()
-	console := runningConsole{url: "http://" + address, stop: cancel, result: done, stopped: stopped}
+	console := runningConsole{auth: auth, url: "http://" + address, stop: cancel, result: done, stopped: stopped}
 	t.Cleanup(func() {
 		cancel()
 		awaitSignal(t, stopped, "Console cleanup")
@@ -263,7 +266,7 @@ func waitForConsole(t *testing.T, console runningConsole) {
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
 	for {
-		response, err := adminRequest(console.url + "/api/admin/template-defaults")
+		response, err := console.auth.request(console.url + "/api/admin/template-defaults")
 		if err == nil {
 			if _, err := io.Copy(io.Discard, response.Body); err != nil {
 				closeResponse(t, response)
@@ -284,22 +287,9 @@ func waitForConsole(t *testing.T, console runningConsole) {
 	}
 }
 
-func adminRequest(url string) (*http.Response, error) {
-	r, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	r.Header.Set(principal.HeaderUserID, "user-admin")
-	r.Header.Set(principal.HeaderOrganizationID, "org-1")
-	r.Header.Set(principal.HeaderMembershipID, "member-1")
-	r.Header.Set(principal.HeaderSystemRole, "admin")
-	r.Header.Set(principal.HeaderOrganizationRole, "admin")
-	return (&http.Client{Timeout: 4 * time.Second}).Do(r)
-}
-
-func consoleRequest(t *testing.T, url string) *http.Response {
+func consoleRequest(t *testing.T, console runningConsole, url string) *http.Response {
 	t.Helper()
-	response, err := adminRequest(url)
+	response, err := console.auth.request(url)
 	if err != nil {
 		t.Fatal(err)
 	}

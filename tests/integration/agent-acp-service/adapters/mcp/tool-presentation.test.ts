@@ -23,11 +23,14 @@ describe("Official MCP presentation metadata", () => {
       try {
         fixture.finish(isError);
         const catalog = new McpToolCatalog({
-          runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+          runtimeDialer: new OfficialMcpDialer({
+            trust: "runtime",
+            connections: fixture.authority.connections,
+          }),
           revisions: { getClientMcpRevision: () => Promise.resolve([]) },
         });
         const execution = snapshot();
-        execution.runtime.mcpEndpoint = fixture.endpoint.href;
+        execution.runtime = fixture.authority.binding;
         const tool = (
           await catalog.list(execution, AbortSignal.timeout(5000))
         )[0]!;
@@ -66,11 +69,14 @@ describe("Official MCP presentation metadata", () => {
     });
     try {
       const catalog = new McpToolCatalog({
-        runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+        runtimeDialer: new OfficialMcpDialer({
+          trust: "runtime",
+          connections: fixture.authority.connections,
+        }),
         revisions: { getClientMcpRevision: () => Promise.resolve([]) },
       });
       const execution = snapshot();
-      execution.runtime.mcpEndpoint = fixture.endpoint.href;
+      execution.runtime = fixture.authority.binding;
       const tools = await catalog.list(execution, AbortSignal.timeout(5000));
       expect(tools[0]).toMatchObject({
         name: "read",

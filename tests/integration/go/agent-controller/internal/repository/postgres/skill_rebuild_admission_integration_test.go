@@ -65,7 +65,8 @@ func TestInvalidatedSkillRebuildClosesThenRestoresACPSnapshotAdmission(t *testin
 		t.Fatal("source Agent was not initially admitted")
 	}
 	publications := make(chan ports.ExecutionSnapshot, 8)
-	publisher := application.NewExecutionPublisher(repository, mutationCredentialOpener{}, skillAdmissionACPStub{published: publications})
+	publisher := application.NewExecutionPublisher(repository, mutationCredentialOpener{}, skillAdmissionACPStub{published: publications},
+		application.WithRuntimeConnectionResolver(fixtureRuntimeConnectionResolver{repository: repository}))
 	worker, err := application.NewExecutionPublicationWorker(repository, publisher, application.ExecutionPublicationSchedule{
 		ResyncInterval: time.Hour, RetryInterval: 10 * time.Millisecond,
 		MaxRetryInterval: time.Second, RequestTimeout: 5 * time.Second,

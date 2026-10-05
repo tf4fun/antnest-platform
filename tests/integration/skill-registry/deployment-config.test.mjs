@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { composeConfig } from "../../support/compose-config.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const keys = generateKeyPairSync("ed25519");
@@ -25,48 +26,11 @@ const registryToken = "deployment-registry-fixture-at-least-32-bytes";
 const sourceToken = "deployment-source-fixture-at-least-32-bytes";
 
 function render(extra = {}) {
-  const env = { ...process.env };
-  // Never inherit operator secrets or read the workspace .env into evidence.
-  for (const name of Object.keys(env))
-    if (name.startsWith("ANTNEST_") || name.startsWith("OTEL_"))
-      delete env[name];
-  Object.assign(env, extra);
-  let text;
-  try {
-    text = execFileSync(
-      "docker",
-      [
-        "compose",
-        "--env-file",
-        "/dev/null",
-        "-f",
-        "compose.yaml",
-        "-f",
-        "compose.stage3.yaml",
-        "--profile",
-        "stage3",
-        "config",
-        "--format",
-        "json",
-      ],
-      {
-        cwd: root,
-        env,
-        encoding: "utf8",
-        timeout: 30000,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-  } catch {
-    throw new Error("Standard Compose configuration could not be rendered");
-  }
-  return JSON.parse(text).services;
+  return composeConfig(["compose.yaml", "compose.stage3.yaml"], extra).services;
 }
 
 const configured = () =>
   render({
-    ANTNEST_SKILL_REGISTRY_API_TOKEN: registryToken,
-    ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: sourceToken,
     ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "deployment-fixture",
     ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: privateKey,
     ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: verifiers,
@@ -91,7 +55,12 @@ test("default Compose keeps source discovery disabled and formal Registry availa
   const services = render();
   disabled(services);
   assert(
-    services["skill-registry"].environment.ANTNEST_SKILL_REGISTRY_API_TOKEN,
+    services["skill-registry"].environment.ANTNEST_SERVICE_AUTH_MODE ===
+      "token",
+  );
+  assert.equal(
+    services["skill-registry"].environment.ANTNEST_IDENTITY_URL,
+    "http://identity-service:8080",
   );
   assert(
     !services["agent-acp-service"].environment
@@ -103,7 +72,7 @@ test("default Compose keeps source discovery disabled and formal Registry availa
   );
 });
 
-test("one source bearer configures both service origins and preserves signer/public-verifier separation", () => {
+test("maintenance enables authenticated source origins and preserves signer/public-verifier separation", () => {
   const services = configured();
   const acp = services["agent-acp-service"].environment;
   const registry = services["skill-registry"].environment;
@@ -112,22 +81,26 @@ test("one source bearer configures both service origins and preserves signer/pub
     acp.ANTNEST_ACP_SKILL_REGISTRY_URL,
     "http://skill-registry:8080",
   );
-  assert(
-    acp.ANTNEST_ACP_SKILL_REGISTRY_TOKEN === registryToken,
-    "ACP Registry bearer must match the existing Registry bearer",
-  );
-  assert(
-    acp.ANTNEST_ACP_SKILL_SOURCE_TOKEN === sourceToken,
-    "ACP source bearer must match the shared source setting",
-  );
   assert.equal(
     registry.ANTNEST_SKILL_REGISTRY_SOURCE_URL,
-    "http://agent-acp-service:8080",
+    "http://agent-acp-workspace:8080",
   );
-  assert(
-    registry.ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN === sourceToken,
-    "Registry must use ACP's source bearer",
+  assert.equal(
+    acp.ANTNEST_SERVICE_AUTH_TOKEN_DIR,
+    "/etc/antnest/service-auth/tokens",
   );
+  assert.equal(
+    registry.ANTNEST_SERVICE_AUTH_TOKEN_DIR,
+    "/etc/antnest/service-auth/tokens",
+  );
+  for (const environment of [acp, registry, rc])
+    for (const field of [
+      "ANTNEST_SKILL_REGISTRY_API_TOKEN",
+      "ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN",
+      "ANTNEST_ACP_SKILL_REGISTRY_TOKEN",
+      "ANTNEST_ACP_SKILL_SOURCE_TOKEN",
+    ])
+      assert(!environment[field], `retired credential ${field}`);
   assert(
     acp.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY === privateKey,
     "signing key must reach only its owning ACP service",
@@ -152,26 +125,26 @@ test("one source bearer configures both service origins and preserves signer/pub
       );
 });
 
-test("maintenance can operate without enabling discovery", () => {
+test("Runtime public verifier configuration alone cannot activate ACP learning or discovery", () => {
   const services = render({
-    ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "deployment-fixture",
-    ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: privateKey,
     ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS: verifiers,
   });
   disabled(services);
   assert.equal(
     services["agent-acp-service"].environment
       .ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL,
-    "http://agent-controller:8080",
+    "",
   );
 });
 
-test("changing only the formal API bearer never accidentally enables source discovery", () => {
-  const services = render({ ANTNEST_SKILL_REGISTRY_API_TOKEN: registryToken });
+test("retired host tokens never install authority or activate source discovery", () => {
+  const services = render({
+    ANTNEST_SKILL_REGISTRY_API_TOKEN: registryToken,
+    ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: sourceToken,
+  });
   disabled(services);
   assert(
-    services["skill-registry"].environment.ANTNEST_SKILL_REGISTRY_API_TOKEN ===
-      registryToken,
+    !services["skill-registry"].environment.ANTNEST_SKILL_REGISTRY_API_TOKEN,
   );
 });
 
@@ -179,7 +152,10 @@ test("the real deployment keeps Registry outside Runtime/Egress and source crede
   const services = configured();
   const registry = services["skill-registry"];
   assert.deepEqual(Object.keys(registry.networks).sort(), [
-    "development",
+    "edge",
+    "identity-clients",
+    "observability",
+    "registry-clients",
     "skill-registry-database",
   ]);
   assert(!registry.ports?.length);
@@ -211,7 +187,7 @@ test("Registry tracing is disabled by default with its own canonical service res
   const registry = render()["skill-registry"].environment;
   assert.equal(registry.OTEL_SDK_DISABLED, "true");
   assert.equal(registry.OTEL_SERVICE_NAME, "skill-registry");
-  assert.equal(registry.OTEL_EXPORTER_OTLP_ENDPOINT, "");
+  assert.equal(registry.OTEL_EXPORTER_OTLP_ENDPOINT, "http://jaeger:4318");
   assert.equal(registry.OTEL_TRACES_EXPORTER, "");
 });
 
@@ -232,7 +208,10 @@ test("standard Compose passes Registry the shared and trace-specific exporter se
   assert.equal(registry.OTEL_SERVICE_NAME, "skill-registry");
   disabled(services);
   assert.deepEqual(Object.keys(services["skill-registry"].networks).sort(), [
-    "development",
+    "edge",
+    "identity-clients",
+    "observability",
+    "registry-clients",
     "skill-registry-database",
   ]);
   assert(!services["skill-registry"].ports?.length);

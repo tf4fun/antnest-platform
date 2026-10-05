@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../../../services/agent-acp-service/test/support/model-network.js";
 import { OpenAICompatibleModel } from "../../../../services/agent-acp-service/src/adapters/model/openai-compatible.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
 import { sessionConfigurationView } from "../../../../services/agent-acp-service/test/support/fixtures.js";
@@ -447,7 +448,10 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
       const fetchFn = vi.fn(() =>
         Promise.reject(new Error("Unexpected Provider request")),
       );
-      const model = new OpenAICompatibleModel({ fetchFn });
+      const model = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
+        fetchFn,
+      });
       app.model.complete
         .mockReset()
         .mockImplementation((request) => model.complete(request));

@@ -1,7 +1,9 @@
+import { createTestWorkspaceHttpServer as createWorkspaceHttpServer, testFetch as fetch } from "./support/auth-fixture.ts";
+import { verifiedRequestContext } from "../src/http/trusted-identity.ts";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
-import { createWorkspaceHttpServer } from "../src/http/node-server.ts";
+
 
 test("Node Bridge serves readiness without creating an ACP owner", async () => {
   let handled = 0;
@@ -48,9 +50,10 @@ test("Node Bridge records bounded HTTP routes and final response statuses", asyn
     assert.ok(address && typeof address !== "string");
     const base = `http://127.0.0.1:${address.port}`;
     await fetch(`${base}/status`);
-    await fetch(`${base}/api/app/workspace/v1/agents/private-agent/view`);
-    await fetch(`${base}/workspace/private-agent/`);
-    await fetch(`${base}/workspace/private-agent/sessions/private-session`);
+    const headers = { "x-antnest-organization-id": "org", "x-antnest-principal-id": "user", "x-antnest-agent-id": "private-agent" };
+    await fetch(`${base}/api/app/workspace/v1/agents/private-agent/view`, { headers });
+    await fetch(`${base}/workspace/private-agent/`, { headers });
+    await fetch(`${base}/workspace/private-agent/sessions/private-session`, { headers });
     assert.deepEqual(observed, [
       { method: "GET", route: "/status", status: 200 },
       { method: "GET", route: "/api/app/workspace/v1/*", status: 200 },
@@ -96,7 +99,7 @@ test("workspace document requires trusted identity and isolates bootstrap by req
   const server = createWorkspaceHttpServer({
     async handle(request) {
       assert.equal(new URL(request.url).pathname, "/api/app/workspace/v1/bootstrap");
-      const userId = request.headers.get("x-antnest-principal-id");
+      const userId = verifiedRequestContext(request.headers)?.claims.sub;
       return Response.json({ principal: { userId }, agents: [{ name: `Agent ${userId}` }] });
     },
   }, {

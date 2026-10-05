@@ -63,6 +63,7 @@ use crate::tool_error::{ToolEffectState, ToolError, ToolErrorCode};
 use crate::tools::ToolEngine;
 
 pub(crate) const STATUS_PATH: &str = "/status";
+pub(crate) const STATUS_LIVE_PATH: &str = "/status/live";
 pub(crate) const MCP_PATH: &str = "/mcp";
 pub(crate) const MAINTENANCE_ROUTE: &str = "/internal/skill-maintenance/{action}";
 pub(crate) const EXPECTED_EXECUTION_HEADER: &str = "X-Antnest-Expected-Execution-ID";
@@ -127,6 +128,7 @@ pub(crate) struct RuntimeHttp {
     metrics: RuntimeMetrics,
     managed: Catalog,
     maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
+    receiver: crate::service_auth::Receiver,
 }
 
 impl RuntimeHttp {
@@ -136,6 +138,7 @@ impl RuntimeHttp {
         metrics: RuntimeMetrics,
         managed: Catalog,
         maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
+        receiver: crate::service_auth::Receiver,
     ) -> Self {
         Self {
             status,
@@ -143,6 +146,7 @@ impl RuntimeHttp {
             metrics,
             managed,
             maintenance_verifiers,
+            receiver,
         }
     }
 
@@ -154,6 +158,7 @@ impl RuntimeHttp {
             metrics: RuntimeMetrics::default(),
             managed: Catalog::default(),
             maintenance_verifiers: Vec::new(),
+            receiver: crate::service_auth::test_receiver(),
         }
     }
 
@@ -173,6 +178,11 @@ impl RuntimeHttp {
         listener: tokio::net::TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), std::io::Error> {
+        let admission = crate::service_auth::AdmissionState::new(
+            self.receiver,
+            format!("antnest-runtime-{}", self.status.agent_id),
+            listener.local_addr()?.port(),
+        );
         let maintenance_actor = match &self.tools {
             ToolBackend::Process(actor) => Some(actor.clone()),
             #[cfg(test)]
@@ -189,7 +199,7 @@ impl RuntimeHttp {
                 move || Ok(ObservedRuntime(tools.clone())),
                 Default::default(),
                 StreamableHttpServerConfig::default()
-                    .disable_allowed_hosts()
+                    .with_allowed_hosts(admission.hosts().iter().cloned())
                     .with_legacy_session_mode(false)
                     .with_stateless_protocol_metadata_required(true)
                     .with_max_request_body_bytes(MAX_EXECUTOR_MESSAGE_BYTES)
@@ -212,16 +222,25 @@ impl RuntimeHttp {
             managed: self.managed.clone(),
         };
         let health = self.managed;
+        let live_health = health.clone();
         let router = Router::new()
             .route(
                 STATUS_PATH,
                 get(move || status_response(status.clone(), health.clone())),
             )
+            .route(
+                STATUS_LIVE_PATH,
+                get(move || live_status(live_health.clone())),
+            )
             .nest_service(MCP_PATH, service)
             .merge(maintenance)
             .merge(temporary)
             .layer(DefaultBodyLimit::max(MAX_EXECUTOR_MESSAGE_BYTES))
-            .layer(middleware::from_fn_with_state(state, trace_http_request));
+            .layer(middleware::from_fn_with_state(state, trace_http_request))
+            .layer(middleware::from_fn_with_state(
+                admission,
+                crate::service_auth::admit_http,
+            ));
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown.cancelled_owned())
             .await
@@ -557,6 +576,18 @@ async fn status_response(
     }
     status.status = "unavailable";
     (StatusCode::SERVICE_UNAVAILABLE, Json(status))
+}
+
+async fn live_status(managed: Catalog) -> (StatusCode, Json<serde_json::Value>) {
+    let ready = managed.healthy();
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(json!({"status":if ready {"ready"} else {"unavailable"}})),
+    )
 }
 
 async fn trace_http_request(
@@ -993,6 +1024,8 @@ impl Drop for ObservedBody {
 pub(crate) fn route_label(path: &str) -> &'static str {
     if path == STATUS_PATH {
         STATUS_PATH
+    } else if path == STATUS_LIVE_PATH {
+        STATUS_LIVE_PATH
     } else if path == MCP_PATH || path.starts_with("/mcp/") {
         MCP_PATH
     } else if path.starts_with("/internal/skill-maintenance/") {

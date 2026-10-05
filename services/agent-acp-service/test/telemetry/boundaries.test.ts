@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../support/model-network.js";
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -430,6 +431,7 @@ describe("existing adapter and runner metadata", () => {
   it("does not let HTTP200 hide an invalid completion from the real model adapter", async () => {
     const model = new InstrumentedModel(
       new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
         fetchFn: () =>
           Promise.resolve(
             Response.json({

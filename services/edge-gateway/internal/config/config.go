@@ -104,7 +104,7 @@ func positiveInteger(lookup func(string) string, key string, fallback int) (int,
 func serviceURL(name, raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
+		parsed.User != nil || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("%s must be an absolute HTTP URL", name)
 	}
 	return nil

@@ -2,16 +2,28 @@ import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   agentStreamObserver,
-  readTurnContent,
+  readTurnContent as readContent,
 } from "../../support/agent-ui/bridge-protocol.mjs";
 import { execFile } from "node:child_process";
-import { createServer, get } from "node:http";
+import { createServer, get, request as httpRequest } from "node:http";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import {
+  testFetch as fetch,
+  testHeaders,
+  testJwks,
+  dockerAuthenticationArgs,
+  authenticateFixtureRequest,
+  testContext,
+  workloadHeaders,
+} from "./auth-fixture.mjs";
+
+const readTurnContent = (base, sessionId, turn, headers, signal) =>
+  readContent(base, sessionId, turn, testHeaders(headers), signal);
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -96,6 +108,7 @@ test(
   { timeout: 600_000 },
   async () => {
     const suffix = randomUUID().slice(0, 12);
+    const evidenceRoot = `${root}/artifacts/verification/agent-ui-service-authentication-${suffix}`;
     const image = `antnest-agent-ui-bridge-e2e:${suffix}`;
     const container = `antnest-agent-ui-bridge-e2e-${suffix}`;
     const idleContainer = `${container}-idle`;
@@ -322,7 +335,9 @@ test(
         commandMutations.prompts++;
         throw new Error("Controls must never dispatch a model prompt");
       });
-    const acpHandler = createNodeHttpHandler(new AcpServer({ agent }));
+    const transport = new AcpServer({ agent });
+    const acpHandler = createNodeHttpHandler(transport);
+    const verifiedScopes = new WeakMap();
     const fixture = createServer((request, response) => {
       if (request.url === "/v1/traces" || request.url === "/v1/metrics") {
         const chunks = [];
@@ -340,7 +355,11 @@ test(
         });
         return;
       }
-      seen.push({ path: request.url, headers: request.headers });
+      seen.push({
+        path: request.url,
+        headers: request.headers,
+        claims: verifiedScopes.get(request),
+      });
       if (request.url === "/rpc/agent-controller/list-workspace-agents") {
         const chunks = [];
         request.on("data", (chunk) => chunks.push(chunk));
@@ -367,7 +386,7 @@ test(
         return;
       }
       if (request.url === "/v1/acp") {
-        requestPrincipal.run(request.headers["x-antnest-principal-id"], () => {
+        requestPrincipal.run(verifiedScopes.get(request)?.sub, () => {
           acpHandler(request, response);
         });
         return;
@@ -403,9 +422,7 @@ test(
             outputWatermark: request.url.includes("session-long")
               ? 21
               : request.url.includes("session-medium")
-                ? (mediumWatermarks.get(
-                    request.headers["x-antnest-principal-id"],
-                  ) ?? 9)
+                ? (mediumWatermarks.get(verifiedScopes.get(request)?.sub) ?? 9)
                 : request.url.includes("session-memory")
                   ? memoryWatermark
                   : session1Watermark,
@@ -422,15 +439,55 @@ test(
       response.statusCode = 404;
       response.end(JSON.stringify({ code: "not_found" }));
     });
-    await new Promise((resolve) => fixture.listen(0, "0.0.0.0", resolve));
+    const handler = fixture.listeners("request")[0];
+    fixture.removeAllListeners("request");
+    const authenticatedHandler = (receiver) => (request, response) => {
+      if (
+        receiver === "agent-acp-service" &&
+        ["/v1/traces", "/v1/metrics"].includes(request.url)
+      ) {
+        handler(request, response);
+        return;
+      }
+      void authenticateFixtureRequest(request, receiver)
+        .then((claims) => {
+          verifiedScopes.set(request, claims);
+          if (receiver === "identity-service") {
+            if (request.url !== "/rpc/identity/jwks") {
+              response.writeHead(404).end();
+              return;
+            }
+            response
+              .writeHead(200, { "content-type": "application/json" })
+              .end(JSON.stringify(testJwks));
+          } else handler(request, response);
+        })
+        .catch(() =>
+          response
+            .writeHead(401)
+            .end(JSON.stringify({ code: "fixture_rejected" })),
+        );
+    };
+    fixture.on("request", authenticatedHandler("agent-acp-service"));
+    const controllerFixture = createServer(
+      authenticatedHandler("agent-controller"),
+    );
+    const identityFixture = createServer(
+      authenticatedHandler("identity-service"),
+    );
+    for (const server of [fixture, controllerFixture, identityFixture])
+      await new Promise((resolve) => server.listen(0, "0.0.0.0", resolve));
     const fixtureAddress = fixture.address();
     assert.ok(fixtureAddress && typeof fixtureAddress !== "string");
     const cleanup = async () => {
       await docker(["rm", "-f", idleContainer], 30_000).catch(() => {});
       await docker(["rm", "-f", container], 30_000).catch(() => {});
       await docker(["image", "rm", image], 30_000).catch(() => {});
-      fixture.closeAllConnections();
-      await new Promise((resolve) => fixture.close(resolve));
+      await transport.close();
+      for (const server of [fixture, controllerFixture, identityFixture]) {
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+      }
     };
     try {
       await docker([
@@ -447,6 +504,9 @@ test(
         "-d",
         "--name",
         container,
+        ...dockerAuthenticationArgs(),
+        "-e",
+        `ANTNEST_AGENT_UI_IDENTITY_URL=http://host.docker.internal:${identityFixture.address().port}`,
         "--add-host",
         "host.docker.internal:host-gateway",
         "-p",
@@ -454,7 +514,7 @@ test(
         "-e",
         `ANTNEST_AGENT_ACP_SERVICE_URL=http://host.docker.internal:${fixtureAddress.port}`,
         "-e",
-        `ANTNEST_AGENT_CONTROLLER_URL=http://host.docker.internal:${fixtureAddress.port}`,
+        `ANTNEST_AGENT_CONTROLLER_URL=http://host.docker.internal:${controllerFixture.address().port}`,
         "-e",
         `OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:${fixtureAddress.port}`,
         "-e",
@@ -519,7 +579,7 @@ test(
         ),
         requestAttempts: coldAttempts,
       };
-      const coldEvidencePath = `${root}/artifacts/verification/agent-ui-cold-start-20260924`;
+      const coldEvidencePath = `${evidenceRoot}/cold-start`;
       await mkdir(coldEvidencePath, { recursive: true });
       await writeFile(
         `${coldEvidencePath}/run-${Date.now()}.json`,
@@ -550,6 +610,132 @@ test(
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       assert.equal(ready, true, "Bridge container did not become ready");
+      const authenticationChecks = [];
+      const authorized = {
+        ...workloadHeaders(),
+        "Antnest-Caller-Context": testContext({ agt: "agent-1" }).token,
+      };
+      const beforeDenied = seen.length;
+      for (const [name, headers, status, method = "GET", body] of [
+        ["missing workload", {}, 401],
+        [
+          "forged identity headers",
+          {
+            "x-antnest-organization-id": "org-1",
+            "x-antnest-principal-id": "user-1",
+            "x-antnest-agent-id": "agent-1",
+            "x-antnest-administrator": "true",
+          },
+          401,
+        ],
+        ["wrong caller", workloadHeaders("admin-console"), 403],
+        ["missing CCT", workloadHeaders(), 401],
+        [
+          "bad CCT",
+          { ...workloadHeaders(), "Antnest-Caller-Context": "bad" },
+          401,
+        ],
+        [
+          "foreign Agent",
+          {
+            ...workloadHeaders(),
+            "Antnest-Caller-Context": testContext({ agt: "other" }).token,
+          },
+          401,
+        ],
+        [
+          "foreign audience",
+          {
+            ...workloadHeaders(),
+            "Antnest-Caller-Context": testContext({
+              agt: "agent-1",
+              aud: ["agent-acp-service"],
+            }).token,
+          },
+          401,
+        ],
+        [
+          "expired CCT",
+          {
+            ...workloadHeaders(),
+            "Antnest-Caller-Context": testContext({
+              agt: "agent-1",
+              iat: 1,
+              exp: 61,
+            }).token,
+          },
+          401,
+        ],
+        [
+          "wrong media",
+          { ...authorized, "content-type": "text/plain" },
+          415,
+          "POST",
+          "{}",
+        ],
+        [
+          "duplicate JSON",
+          { ...authorized, "content-type": "application/json" },
+          400,
+          "POST",
+          '{"a":1,"\\u0061":2}',
+        ],
+      ]) {
+        const response = await globalThis.fetch(
+          `${base}/api/app/workspace/v1/agents/agent-1/sessions`,
+          { method, headers, body, signal: AbortSignal.timeout(10000) },
+        );
+        assert.equal(response.status, status, name);
+        await response.text();
+        authenticationChecks.push(name);
+      }
+      for (const duplicate of [
+        "Antnest-Service-Authorization",
+        "Antnest-Caller-Context",
+      ]) {
+        const response = await new Promise((resolve, reject) => {
+          const request = httpRequest(
+            `${base}/api/app/workspace/v1/agents/agent-1/sessions`,
+            {
+              headers: [
+                "Host",
+                new URL(base).host,
+                ...Object.entries(authorized).flat(),
+                duplicate.toLowerCase(),
+                authorized[duplicate],
+              ],
+              signal: AbortSignal.timeout(10000),
+            },
+            resolve,
+          );
+          request.once("error", reject);
+          request.end();
+        });
+        assert.equal(response.statusCode, 401);
+        response.resume();
+        authenticationChecks.push(`duplicate ${duplicate}`);
+      }
+      assert.equal(
+        seen.length,
+        beforeDenied,
+        "Denied requests must have no upstream effects",
+      );
+      assert.equal(
+        (await globalThis.fetch(`${base}/workspace/assets/missing.js`)).status,
+        401,
+      );
+      authenticationChecks.push("assets require workload");
+      assert.equal((await globalThis.fetch(`${base}/live`)).status, 200);
+      authenticationChecks.push("minimal unauthenticated liveness");
+      await mkdir(evidenceRoot, { recursive: true });
+      await writeFile(
+        `${evidenceRoot}/authentication.json`,
+        JSON.stringify({ checks: authenticationChecks }, null, 2) + "\n",
+      );
+      process.stdout.write(
+        JSON.stringify({ authentication_checks: authenticationChecks.length }) +
+          "\n",
+      );
       const memoryBytes = async () => {
         const { stdout } = await docker([
           "stats",
@@ -596,6 +782,8 @@ test(
         userId: "user-1",
         organizationId: "org-1",
         administrator: false,
+        organizationSlug: "engineering",
+        organizationName: "Engineering",
       });
       assert.equal(bootstrap.agents[0]?.agentId, "agent-1");
       assert.equal(controllerCalls[0]?.organization_id, "org-1");
@@ -930,8 +1118,8 @@ test(
         },
       );
       assert.equal(processResponse.status, 200);
-      const process = await processResponse.json();
-      const largeTool = process.items.find(
+      const processView = await processResponse.json();
+      const largeTool = processView.items.find(
         (item) => item.kind === "tool" && item.summary === "Large",
       );
       assert.ok(
@@ -1028,15 +1216,15 @@ test(
         abandonedAfterBytes - abandonedBeforeBytes < 32 * 1024 * 1024,
         `Abandoned process pages retained container memory: ${JSON.stringify(abandonedEvidence)}`,
       );
-      await mkdir(`${root}/artifacts/verification/agent-ui`, {
+      await mkdir(`${evidenceRoot}`, {
         recursive: true,
       });
       await writeFile(
-        `${root}/artifacts/verification/agent-ui/abandoned-process-pages-container.json`,
+        `${evidenceRoot}/abandoned-process-pages-container.json`,
         JSON.stringify(abandonedEvidence, null, 2) + "\n",
       );
-      const memoryEvidencePath = `${root}/artifacts/verification/agent-ui/memory-container-small-updates.json`;
-      await mkdir(`${root}/artifacts/verification/agent-ui`, {
+      const memoryEvidencePath = `${evidenceRoot}/memory-container-small-updates.json`;
+      await mkdir(`${evidenceRoot}`, {
         recursive: true,
       });
       await writeFile(
@@ -1053,7 +1241,9 @@ test(
         "x-antnest-principal-id": "user-1",
         "x-antnest-agent-id": "agent-1",
       };
-      const slowRequest = get(streamUrl, { headers: streamHeaders });
+      const slowRequest = get(streamUrl, {
+        headers: testHeaders(streamHeaders),
+      });
       const slowResponse = await new Promise((resolve, reject) => {
         slowRequest.once("response", resolve);
         slowRequest.once("error", reject);
@@ -1261,12 +1451,12 @@ test(
           32 * 1024 * 1024,
         `Repeated production SSE observers retained memory: ${JSON.stringify(observerChurn)}`,
       );
-      const churnEvidencePath = `${root}/artifacts/verification/agent-ui/${
+      const churnEvidencePath = `${evidenceRoot}/${
         dockerSoak
           ? "observer-churn-container-soak"
           : "observer-churn-container"
       }.json`;
-      await mkdir(`${root}/artifacts/verification/agent-ui`, {
+      await mkdir(`${evidenceRoot}`, {
         recursive: true,
       });
       await writeFile(
@@ -1615,7 +1805,7 @@ test(
       );
       assert.equal(reclaimedBody.selectedView?.sessionId, "session-medium");
       const afterReclaimBytes = await memoryBytes();
-      const metricsPath = `${root}/artifacts/verification/agent-ui-capacity-20260925`;
+      const metricsPath = `${evidenceRoot}/capacity`;
       await mkdir(metricsPath, { recursive: true });
       await writeFile(
         `${metricsPath}/metrics.json`,
@@ -1705,15 +1895,18 @@ test(
         ),
         "ACP initialization must continue the active Bridge HTTP trace",
       );
-      for (const { headers } of seen.filter(
+      for (const { headers, claims } of seen.filter(
         ({ path }) => path !== "/rpc/agent-controller/list-workspace-agents",
       )) {
-        assert.equal(headers["x-antnest-organization-id"], "org-1");
+        assert.equal(claims.org, "org-1");
         assert.match(
-          headers["x-antnest-principal-id"] ?? "",
+          claims.sub,
           /^user-(?:\d+|replacement-\d+|after-reclaim)$/,
         );
-        assert.equal(headers["x-antnest-agent-id"], "agent-1");
+        assert.equal(claims.agt, "agent-1");
+        assert.equal(headers["x-antnest-organization-id"], undefined);
+        assert.equal(headers["x-antnest-principal-id"], undefined);
+        assert.equal(headers["x-antnest-agent-id"], undefined);
         assert.equal(headers.cookie, undefined);
       }
       await docker([
@@ -1721,6 +1914,9 @@ test(
         "-d",
         "--name",
         idleContainer,
+        ...dockerAuthenticationArgs(),
+        "-e",
+        `ANTNEST_AGENT_UI_IDENTITY_URL=http://host.docker.internal:${identityFixture.address().port}`,
         "--add-host",
         "host.docker.internal:host-gateway",
         "-p",
@@ -1728,7 +1924,7 @@ test(
         "-e",
         `ANTNEST_AGENT_ACP_SERVICE_URL=http://host.docker.internal:${fixtureAddress.port}`,
         "-e",
-        `ANTNEST_AGENT_CONTROLLER_URL=http://host.docker.internal:${fixtureAddress.port}`,
+        `ANTNEST_AGENT_CONTROLLER_URL=http://host.docker.internal:${controllerFixture.address().port}`,
         "-e",
         "ANTNEST_AGENT_UI_BRIDGE_IDLE_MS=100",
         "-e",
@@ -1802,7 +1998,7 @@ test(
         "{{.State.ExitCode}}",
         container,
       ]);
-      const stopEvidence = `${root}/artifacts/verification/agent-ui-capacity-20260925`;
+      const stopEvidence = `${evidenceRoot}/capacity`;
       await mkdir(stopEvidence, { recursive: true });
       await writeFile(
         `${stopEvidence}/normal-stop.json`,
@@ -1910,7 +2106,7 @@ test(
         gaugeValues("antnest.ui.process.rss_bytes").some((value) => value > 0),
       );
     } catch (error) {
-      const diagnostics = `${root}/artifacts/verification/agent-ui-capacity-20260925`;
+      const diagnostics = `${evidenceRoot}/capacity`;
       await mkdir(diagnostics, { recursive: true });
       const logs = await docker(["logs", "--tail", "200", container], 30_000)
         .then(({ stdout, stderr }) => stdout + stderr)

@@ -31,7 +31,10 @@ export function extractedContext(headers: Record<string, unknown>): Context {
   });
 }
 
-export function startHttpBoundary(request: IncomingMessage): {
+export function startHttpBoundary(
+  request: IncomingMessage,
+  listener: "workspace" | "control" = "workspace",
+): {
   span: Span;
   context: Context;
   finish: (status?: number, error?: unknown) => void;
@@ -42,8 +45,9 @@ export function startHttpBoundary(request: IncomingMessage): {
     "/internal/skill-sources/artifact",
     "/v1/acp",
     "/v2/acp",
-    "/rpc/agent-acp/apply-execution-snapshot",
-    "/rpc/agent-acp/settle-agent",
+    ...(listener === "control"
+      ? ["/rpc/agent-acp/apply-execution-snapshot", "/rpc/agent-acp/settle-agent"]
+      : []),
     "/rpc/agent-acp/get-agent-execution-state",
     "/rpc/agent-acp/watch-agent-execution-state",
     "/rpc/agent-acp/list-execution-audits",
@@ -63,6 +67,7 @@ export function startHttpBoundary(request: IncomingMessage): {
           attributes: {
             "http.request.method": method,
             "http.route": route,
+            "antnest.listener": listener,
           },
         },
         parent,
@@ -91,8 +96,9 @@ export function observeHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   operation: () => Promise<void>,
+  listener: "workspace" | "control" = "workspace",
 ): Promise<void> {
-  const boundary = startHttpBoundary(request);
+  const boundary = startHttpBoundary(request, listener);
   const completed = () => {
     boundary.finish(response.headersSent ? response.statusCode : undefined);
   };

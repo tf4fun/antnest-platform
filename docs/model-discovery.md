@@ -6,13 +6,13 @@ Console and explicitly choose which ones to save.
 ## Scope and ownership
 
 The Console owns builtin model defaults and model selection. Agent Controller
-owns credentials and the administrator's saved model configuration. ACP is not
+owns discovery, credentials and the administrator's saved model configuration. ACP is not
 changed by discovery and continues consuming published execution configuration.
 
 1. Enter a provider credential in Console, or select an existing connection.
-2. Console requests the provider's model list. New connections use the form's
-   credential without saving it; existing connections resolve only their current
-   credential through Controller's organization-scoped internal access endpoint.
+2. Console requests Controller's model-only discovery. Drafts use the form's
+   ephemeral credential without saving it; saved connections open the current
+   credential inside Controller. Console never receives a decrypted stored key.
 3. Console merges remote candidates, its builtin directory, and saved models by
    API model ID within that connection. Remote metadata fills the candidate draft;
    missing fields use builtin defaults. Saved records retain their own parameters.
@@ -29,11 +29,27 @@ successful additions and identify the remaining selection for retry.
 
 ## Contract
 
-Controller exposes only
-`GET /internal/provider-connections/{connection_id}/access?organization_id=...`.
-It returns current connection configuration and its credential to trusted services,
-with metadata-only telemetry and no caching. It never contacts providers or knows
-about model discovery. This endpoint is not exposed through Gateway.
+Controller revision 38 exposes
+`POST /internal/provider-connections/{connection_id}/discover-models` and
+`POST /internal/provider-discovery/draft`. Both return model lists only and require
+verified Console workload plus signed administrator/Organization CCT. Saved
+discovery accepts only Organization scope, reads current credential identity and
+ciphertext together, validates the endpoint, and opens the key inside Controller.
+Draft discovery forwards the submitted credential once and does not persist it.
+The former plaintext `/access` export and its response schema are removed.
+
+Controller discovery, the Console thin proxy and ACP's model-call destination
+policy are admitted as separate owning-service batches on
+`feat/service-authentication`, recorded in the
+[rollout ledger](../contracts/platform/service-authentication-rollout.json).
+Complete cross-service acceptance follows all service and deployment batches.
+
+ACP checks every DNS answer before sending the Provider credential, pins the
+socket to a verified literal address, preserves the original TLS/Host identity,
+and disables redirects and environment proxies. Foreground, permission-judge
+and Skill-learning calls use the same policy. Private endpoints require the exact
+operator-only opt-in in Controller and ACP; policy failures remain bounded Run
+errors and do not prevent a later explicitly submitted Run.
 
 Console exposes `GET /api/admin/provider-connections/{connection_id}/models/discovery`
 for saved connections, and `POST /api/admin/provider-models/discovery` for drafts
@@ -47,10 +63,12 @@ free. Missing required execution parameters must be supplied before model save.
 
 Provider timeout, invalid response, and non-2xx status return
 `502 provider_discovery_failed`; the response never includes upstream bodies or
-credentials. Existing scope/disabled errors retain their standard status/code.
+credentials. Destination policy denial is `422 provider_endpoint_forbidden`;
+DNS failure is retryable `503 provider_endpoint_unavailable`. Existing
+scope/disabled errors retain their standard status/code.
 The operation does not write any business data or perform a model completion.
 
-The Console-owned adapter covers DeepSeek and OpenRouter's OpenAI-compatible `/models`
+The Controller-owned adapter covers DeepSeek and OpenRouter's OpenAI-compatible `/models`
 envelope. OpenRouter metadata may prefill limits, image support, and per-token
 prices converted to per-million. Discovery uses a bounded request and response,
 does not follow redirects with credentials, and uses shared HTTP instrumentation.
@@ -70,8 +88,8 @@ duplicate prevention and mobile layout. It does not perform model completions.
 Test coverage by component:
 
 - Controller: organization scope, current credential, disabled references,
-  read-only access, absence of provider discovery responsibilities.
-- Console provider adapter: list normalization, duplicate IDs, optional metadata,
+  read-only discovery, no exported key, destination denial and DNS/socket pinning.
+- Controller provider adapter: list normalization, duplicate IDs, optional metadata,
   unknown pricing, timeout/cancellation, malformed/oversized response, redirect.
 - Console: authenticated access, secret-free projection, remote success vs
   empty vs failure, provider-scoped merge/enrichment, explicit selection, existing

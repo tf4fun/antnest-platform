@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "purpose": "Public synthetic schema conformance; never deployment credentials.",
+  "vectors": [
+    {
+      "name": "executable-private-connection",
+      "accepting_runs": true,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "closed-fence-without-credentials",
+      "accepting_runs": false,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp"
+      },
+      "valid": true
+    },
+    {
+      "name": "closed-fence-with-known-connection",
+      "accepting_runs": false,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp"
+      },
+      "valid": true
+    },
+    {
+      "name": "closed-unbuilt",
+      "accepting_runs": false,
+      "runtime": null,
+      "valid": true
+    },
+    {
+      "name": "executable-requires-credential",
+      "accepting_runs": true,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp"
+      },
+      "valid": false
+    },
+    {
+      "name": "executable-requires-connection-id",
+      "accepting_runs": true,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "executable-cannot-be-null",
+      "accepting_runs": true,
+      "runtime": null,
+      "valid": false
+    },
+    {
+      "name": "closed-must-not-transfer-credentials",
+      "accepting_runs": false,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "wrong-caller",
+      "accepting_runs": true,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "runtime-controller",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "padded-token",
+      "accepting_runs": true,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown-private-field",
+      "accepting_runs": true,
+      "runtime": {
+        "runtime_revision": "rtv_11111111111111111111111111111111",
+        "runtime_execution_id": "execution-1",
+        "connection_id": "rci_22222222222222222222222222222222",
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "credential": {
+          "caller": "agent-acp-service",
+          "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        "credential_directory": "/tmp/user-selected"
+      },
+      "valid": false
+    }
+  ]
+}

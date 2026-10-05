@@ -1,12 +1,11 @@
-import type { RunExecutionSnapshot } from "../domain/types.js";
+import type { RunExecutionSnapshot, RuntimeBinding } from "../domain/types.js";
 import type { LoadedSkillText } from "./skill-discovery.js";
 
 export type TemporaryAgentScope = { organizationId: string; agentId: string };
-export type TemporarySkillScope = TemporaryAgentScope & {
-  runId: string;
-  executionId: string;
-  mcpEndpoint: string;
-};
+export type TemporarySkillScope = TemporaryAgentScope &
+  RuntimeBinding & {
+    runId: string;
+  };
 export type TemporaryInstallInput = {
   runId: string;
   snapshot: RunExecutionSnapshot;

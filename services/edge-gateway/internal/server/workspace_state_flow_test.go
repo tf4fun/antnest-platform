@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -113,7 +114,7 @@ func TestWorkspaceStateHTTPChainPreservesTraceAndStripsBrowserCredentials(t *tes
 				}
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/rpc/identity/resolve-access-token" {
-					if err := json.NewEncoder(w).Encode(map[string]any{"principal": ordinaryPrincipal()}); err != nil {
+					if err := json.NewEncoder(w).Encode(map[string]any{"principal": ordinaryPrincipal(), "caller_context": testIssuerContext(t)}); err != nil {
 						t.Error(err)
 					}
 					return
@@ -278,4 +279,13 @@ func TestWorkspaceStateReconnectsAfterSourceFailureWithoutController(t *testing.
 	if calls.Load() != 2 || controller.input.RequestID != "" {
 		t.Fatalf("ACP requests=%d Controller request=%s", calls.Load(), controller.input.RequestID)
 	}
+}
+
+// This trusted issuer double preserves real CCT framing; downstream signature
+// verification is covered in its owning-service batch.
+func testIssuerContext(t *testing.T) string {
+	t.Helper()
+	now := time.Now().Unix()
+	body, _ := json.Marshal(map[string]any{"iat": now, "exp": now + 60})
+	return base64.RawURLEncoding.EncodeToString([]byte(`{"typ":"antnest-cct+jwt","alg":"EdDSA","kid":"test"}`)) + "." + base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 64))
 }

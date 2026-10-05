@@ -2,10 +2,12 @@
 
 ## Trust Boundary
 
-Docker or Kubernetes, the host, Runtime Controller, Agent Controller, Runtime
-Egress, and their internal network are trusted infrastructure. Runtime does not
-duplicate platform identity with admission tokens, Egress tokens, mTLS, OAuth,
-or internal request signatures.
+Docker or Kubernetes, the host and the root Supervisor are trusted infrastructure.
+Runtime authenticates RC/ACP workload authority with RC-issued per-instance
+tokens before HTTP dispatch; membership of an internal network grants no tool
+authority. This profile is explicitly HTTP-only: exact token mode and the
+insecure-transport opt-in are required. TLS/mTLS configuration fails startup
+instead of downgrading. Runtime does not authorize end users or issue OAuth tokens.
 
 Agent-selected shell commands, scripts, Skills, and downloaded dependencies are
 untrusted. The container, UID/capability boundary, root-owned image files,
@@ -25,8 +27,13 @@ Controller freezes generation at lifecycle admission: a new Initialize,
 Update or Enable allocates the next value even with unchanged configuration.
 A same-deployment restart or exact-operation recovery retains the allocated
 generation. The workspace and system-Skill roots must be
-normalized absolute paths without `..` and must not overlap. No bootstrap
-secret is injected.
+normalized absolute paths without `..` and must not overlap. The nonsecret
+`authentication` descriptor is mandatory for `serve`; raw bearers are not injected.
+RC prepares a separate read-only named volume at `/run/antnest-auth`, with a
+UID/GID 0 mode-0700 directory and sole regular mode-0600 `callers.json`. Runtime
+checks ownership, modes, complete digest and exact RC/ACP hash identities before
+network setup. Symlinks, FIFOs, malformed or ambiguous JSON and mount loss stop
+bootstrap. The UID/GID 1000 executor cannot read this volume.
 
 OpenTelemetry variables are deployment-owned diagnostics and are never copied
 into Executor environments.
@@ -47,6 +54,8 @@ reserved names.
 - `/workspace` is a writable persistent Agent volume.
 - `/skills` is mounted read-only by Runtime Controller/container policy. Runtime's tool
   API does not grant writes but does not enforce the mount flag.
+- `/run/antnest-auth` is RC's read-only, root-only, per-generation receiver volume.
+  Its hashes are not credentials and it is separate from the workspace and Skills.
 - `/tmp` is bounded ephemeral storage.
 - No Docker socket, database credential, host filesystem, or external API
   credential is mounted.
@@ -82,7 +91,11 @@ docker run --rm \
 dst=/workspace \
   --mount type=bind,src=/srv/antnest/skills,\
 dst=/skills,readonly \
-  --env 'ANTNEST_RUNTIME_SPEC={"agent_id":"agent-123","generation":1,"listen":{"host":"0.0.0.0","port":8093},"network":{"packet_contract_revision":1,"egress_endpoint":{"ipv4":"172.30.255.3","port":8092},"tunnel_ipv4":"100.96.0.2","resolver_ipv4":"100.64.0.1"},"filesystem":{"workspace":"/workspace","system_skills":"/skills"}}' \
+  --mount type=volume,src=RC_PREPARED_AUTH_VOLUME,dst=/run/antnest-auth,readonly \
+  --env ANTNEST_SERVICE_AUTH_MODE=token \
+  --env ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true \
+  --env ANTNEST_SERVICE_AUTH_CALLERS_FILE=/run/antnest-auth/callers.json \
+  --env 'ANTNEST_RUNTIME_SPEC=<RC-generated document with authentication descriptor>' \
   antnest/antnest-runtime:<immutable-tag>
 ```
 
@@ -94,8 +107,8 @@ spec:
   containers:
     - name: runtime
       resources:
-        requests: {cpu: 100m, memory: 256Mi}
-        limits: {cpu: "1", memory: 1Gi}
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: "1", memory: 1Gi }
       securityContext:
         runAsUser: 0
         runAsGroup: 0
@@ -103,12 +116,22 @@ spec:
         allowPrivilegeEscalation: false
         capabilities:
           drop: ["ALL"]
-          add: ["CHOWN", "DAC_OVERRIDE", "KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID"]
+          add:
+            [
+              "CHOWN",
+              "DAC_OVERRIDE",
+              "KILL",
+              "NET_ADMIN",
+              "SETGID",
+              "SETPCAP",
+              "SETUID",
+            ]
       volumeMounts:
-        - {name: tun, mountPath: /dev/net/tun}
-        - {name: workspace, mountPath: /workspace}
-        - {name: system-skills, mountPath: /skills, readOnly: true}
-        - {name: tmp, mountPath: /tmp}
+        - { name: tun, mountPath: /dev/net/tun }
+        - { name: workspace, mountPath: /workspace }
+        - { name: system-skills, mountPath: /skills, readOnly: true }
+        - { name: instance-auth, mountPath: /run/antnest-auth, readOnly: true }
+        - { name: tmp, mountPath: /tmp }
 ```
 
 `tun` is a deployment-managed character-device mount, `workspace` is an
@@ -116,8 +139,10 @@ Agent-owned persistent volume, `system-skills` is read-only, and `tmp` is a
 memory-backed `emptyDir` with a size limit. `/etc/resolv.conf` must remain
 writable by the root Supervisor during bootstrap; the default cluster resolver
 is only an initial platform value and is not an Agent DNS path.
-The Pod has no public Service or ingress. NetworkPolicy permits inbound status
-and MCP only from Agent Controller/ACP callers, and permits root-owned outbound
+The `instance-auth` volume must preserve the root-only receiver shape above;
+default-readable projected volumes are insufficient. The Pod has no public
+Service or ingress. NetworkPolicy permits full status from RC/ACP, MCP from ACP,
+and root-owned outbound
 traffic only to Runtime Egress UDP and the optional OTLP collector. Executor
 traffic reaches every allowed internal or external destination through TUN and
 Runtime Egress policy.

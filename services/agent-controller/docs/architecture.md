@@ -86,10 +86,10 @@ or copy the endpoint. See [Provider management](provider-management.md).
 Controller publishes current Model parameters and independently versioned Provider
 credentials to ACP. ACP selects execution configuration locally. Templates retain
 stable model identity; credentials are never resolved from a build snapshot. Credential plaintext is absent from
-browser-facing responses, specs and events. Provider writes, credential access
+browser-facing responses, specs and events. Provider writes, discovery
 and execution publication use metadata-only telemetry even when RPC content
 capture is enabled; see [observability](observability.md). Console resolves
-credentials only through the scoped internal access endpoint for discovery.
+model lists through scoped saved/draft discovery. Discovery credentials are opened only inside Controller; `/access` is removed.
 
 ### AgentTemplate
 
@@ -360,7 +360,7 @@ candidate Runtime.
    absence of another lifecycle operation. Lost or early events cannot strand
    readiness because the worker also reconciles pending intent.
 10. Initial creation failure retains `not_created`, records exact phase/class,
-   and appends `agent_build_failed`. Later failures never erase established creation.
+    and appends `agent_build_failed`. Later failures never erase established creation.
 
 The request thread commits intent and returns `202 Accepted`; it does not
 execute lifecycle effects. Temporal dispatches Activities and retains child
@@ -666,9 +666,20 @@ Execution state, current Session and cancellation belong to ACP.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/agent-controller/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#32](https://github.com/tf4fun/antnest-platform/issues/32) and [#28](https://github.com/tf4fun/antnest-platform/issues/28); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+and this service's [caller catalog](../../../contracts/agent-controller/callers.json)
+define verified workload identity and route-specific caller context. Every
+business route independently verifies the workload, then the required CCT,
+signed scope and strict JSON. Only minimal status probes are unauthenticated;
+ACP's learning-policy read uses a persisted operation and live owner membership.
+[Controller authentication](../../../contracts/agent-controller/service-authentication.md)
+also defines mandatory startup configuration and authenticated dependency clients.
+Controller owns saved/draft model discovery and creation/destination guards under
+the shared Provider policy; Console and ACP consumers are admitted separately.
+The execution publisher resolves current-instance authority from RC outside the
+database transaction, checks its persisted execution binding and relays it only
+to ACP's private control origin. Neither management projections nor Controller
+tables contain Runtime credentials. Closed publications do not resolve authority.
+See [private Runtime publication](execution-publication.md#private-runtime-authority).
+ACP instance-client adoption remains a separate #30 owning-service batch.
+Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+for remaining receivers, deployment and final cross-service acceptance.

@@ -1,5 +1,15 @@
 # Disposable fixture only. Relative mounts are rooted at the first Compose file.
 services:
+  agent-controller:
+    environment:
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: ${ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS:-false}
+  agent-acp-service:
+    environment:
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: ${ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS:-false}
+  diagnostic-relay:
+    ports: !override
+      - "127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT}:5432"
+      - "127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT}:16686"
   stage3-model:
     command: ["node", "/lifecycle/model.mjs"]
     volumes:

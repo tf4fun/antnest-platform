@@ -4,16 +4,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
+	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 )
 
 const MonitorRetryDelay = time.Second
 
 type Config struct {
+	InstanceCredentials   *instanceauth.Manager
+	RuntimeAuthentication map[string]string
+	Authentication        *serviceauth.Clients
+	HealthListenAddress   string
+	AllowedImages         []string
 	ListenAddress         string
 	DatabaseURL           string
 	Platform              string
@@ -22,7 +33,6 @@ type Config struct {
 	ManagementNetwork     string
 	SystemSkillsVolume    string
 	SkillRegistryURL      string
-	SkillRegistryToken    string
 	SkillPreparerImage    string
 	RuntimeStatusTimeout  time.Duration
 	MutationTimeout       time.Duration
@@ -35,9 +45,13 @@ type Config struct {
 	MaintenanceVerifiers  deployment.MaintenanceVerifiers
 }
 
-func Load(lookup func(string) string) (Config, error) {
-	if lookup == nil {
+func Load(environment serviceauth.LookupEnv) (Config, error) {
+	if environment == nil {
 		return Config{}, fmt.Errorf("environment lookup is required")
+	}
+	lookup := func(name string) string { value, _ := environment(name); return value }
+	if raw, _ := environment("ANTNEST_SKILL_REGISTRY_API_TOKEN"); raw != "" {
+		return Config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN is retired; use exact service authentication")
 	}
 	statusTimeout, err := duration(lookup, "ANTNEST_RUNTIME_STATUS_TIMEOUT", 5*time.Second)
 	if err != nil {
@@ -79,10 +93,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config := Config{
-		ListenAddress:     valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", ":8080"),
-		DatabaseURL:       strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
-		Platform:          strings.ToLower(valueOr(lookup, "ANTNEST_RUNTIME_PLATFORM", "docker")),
-		ManagementNetwork: strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
+		ListenAddress:       valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", "127.0.0.1:8080"),
+		HealthListenAddress: valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN", "127.0.0.1:8082"),
+		DatabaseURL:         strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
+		Platform:            strings.ToLower(valueOr(lookup, "ANTNEST_RUNTIME_PLATFORM", "docker")),
+		ManagementNetwork:   strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
 		ControllerScope: valueOr(
 			lookup,
 			"ANTNEST_RUNTIME_CONTROLLER_SCOPE",
@@ -90,7 +105,6 @@ func Load(lookup func(string) string) (Config, error) {
 		),
 		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
 		SkillRegistryURL:      strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
-		SkillRegistryToken:    strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN")),
 		SkillPreparerImage:    valueOr(lookup, "ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE", "antnest/runtime-controller:local"),
 		RuntimeStatusTimeout:  statusTimeout,
 		MutationTimeout:       mutationTimeout,
@@ -117,9 +131,52 @@ func Load(lookup func(string) string) (Config, error) {
 	if config.ControllerScope == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_SCOPE is required")
 	}
-	if (config.SkillRegistryURL == "") != (config.SkillRegistryToken == "") {
-		return Config{}, fmt.Errorf("skill Registry URL and API token must be configured together")
+	if err := validateListen(config.ListenAddress, false); err != nil {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_LISTEN: %w", err)
 	}
+	if err := validateListen(config.HealthListenAddress, true); err != nil {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN: %w", err)
+	}
+	if config.ListenAddress == config.HealthListenAddress {
+		return Config{}, fmt.Errorf("control and local health listeners must differ")
+	}
+	if raw, present := environment("ANTNEST_RUNTIME_ALLOWED_IMAGES"); present && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &config.AllowedImages); err != nil {
+			return Config{}, fmt.Errorf("ANTNEST_RUNTIME_ALLOWED_IMAGES must be a JSON array of repositories or repository@sha256 digests")
+		}
+		if config.AllowedImages == nil {
+			return Config{}, fmt.Errorf("ANTNEST_RUNTIME_ALLOWED_IMAGES must be a JSON array")
+		}
+	}
+	if _, err := platformdocker.ParseImagePolicy(config.AllowedImages); err != nil {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_ALLOWED_IMAGES: %w", err)
+	}
+	endpoints := map[string]string{}
+	if config.SkillRegistryURL != "" {
+		endpoints["skill-registry"] = config.SkillRegistryURL
+	}
+	config.Authentication, err = serviceauth.LoadOutbound("runtime-controller", serviceauth.CallerContextHeaders, environment, endpoints)
+	if err != nil {
+		return Config{}, err
+	}
+	// Do not synthesize an insecure Runtime opt-in or claim unsupported TLS.
+	mode, _ := environment("ANTNEST_SERVICE_AUTH_MODE")
+	insecure, _ := environment("ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT")
+	if mode != "token" || insecure != "true" {
+		config.Authentication.CloseIdleConnections()
+		return Config{}, fmt.Errorf("runtime instance transport currently requires token mode and explicit insecure transport opt-in; native TLS/mTLS is unsupported")
+	}
+	keyPath, _ := environment("ANTNEST_RUNTIME_INSTANCE_KEY_FILE")
+	masterKey, err := instanceauth.LoadKey(keyPath)
+	if err != nil {
+		return Config{}, err
+	}
+	config.InstanceCredentials, err = instanceauth.New(masterKey)
+	clear(masterKey)
+	if err != nil {
+		return Config{}, err
+	}
+	config.RuntimeAuthentication = map[string]string{"ANTNEST_SERVICE_AUTH_MODE": mode, "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT": insecure, "ANTNEST_SERVICE_AUTH_CALLERS_FILE": instanceauth.CallersFile}
 	dockerHost := valueOr(lookup, "ANTNEST_DOCKER_HOST", "unix:///var/run/docker.sock")
 	parsedHost, err := url.Parse(dockerHost)
 	if err != nil || parsedHost.Scheme != "unix" || strings.TrimSpace(parsedHost.Path) == "" {
@@ -130,6 +187,19 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_RPC_TIMEOUT must exceed ANTNEST_RUNTIME_MUTATION_TIMEOUT")
 	}
 	return config, nil
+}
+
+func validateListen(raw string, local bool) error {
+	host, port, err := net.SplitHostPort(raw)
+	if err != nil {
+		return fmt.Errorf("explicit IP and port are required")
+	}
+	ip, err := netip.ParseAddr(host)
+	number, portErr := strconv.ParseUint(port, 10, 16)
+	if err != nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Zone() != "" || portErr != nil || number == 0 || local && !ip.IsLoopback() {
+		return fmt.Errorf("listener must use an explicit unicast IP; health must be loopback")
+	}
+	return nil
 }
 
 func parseMaintenanceVerifiers(raw string) (deployment.MaintenanceVerifiers, error) {

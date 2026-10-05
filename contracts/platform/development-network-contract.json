@@ -1,0 +1,513 @@
+{
+  "version": 1,
+  "status": "integration-admitted",
+  "profile": "disposable-development-token-http",
+  "private_bridge": {
+    "gateway_mode_ipv4": "isolated",
+    "minimum_engine_major": 28,
+    "admission": "admitted"
+  },
+  "service_prefix_environment": "ANTNEST_SERVICE_NETWORK_PREFIX",
+  "default_service_prefix": "10.241.0",
+  "destination_resolution": "purpose-address-extra-hosts",
+  "networks": {
+    "edge": {
+      "internal": true,
+      "subnet_suffix": 0,
+      "members": {
+        "edge-gateway": 2,
+        "admin-console": 3,
+        "agent-ui": 4,
+        "agent-acp-service": 5,
+        "skill-registry": 6,
+        "diagnostic-relay": 7
+      }
+    },
+    "controller-clients": {
+      "internal": true,
+      "subnet_suffix": 16,
+      "members": {
+        "agent-controller": 18,
+        "edge-gateway": 19,
+        "admin-console": 20,
+        "agent-ui": 21,
+        "agent-acp-service": 22,
+        "diagnostic-relay": 23
+      }
+    },
+    "controller-acp": {
+      "internal": true,
+      "subnet_suffix": 32,
+      "members": {
+        "agent-acp-service": 34,
+        "agent-controller": 35
+      }
+    },
+    "controller-runtime": {
+      "internal": true,
+      "subnet_suffix": 48,
+      "members": {
+        "runtime-controller": 50,
+        "agent-controller": 51,
+        "diagnostic-relay": 52
+      }
+    },
+    "identity-clients": {
+      "internal": true,
+      "subnet_suffix": 64,
+      "members": {
+        "identity-service": 66,
+        "edge-gateway": 67,
+        "admin-console": 68,
+        "agent-ui": 69,
+        "agent-controller": 70,
+        "agent-acp-service": 71,
+        "skill-registry": 72,
+        "diagnostic-relay": 73
+      }
+    },
+    "registry-clients": {
+      "internal": true,
+      "subnet_suffix": 80,
+      "members": {
+        "skill-registry": 82,
+        "admin-console": 83,
+        "agent-controller": 84,
+        "runtime-controller": 85,
+        "agent-acp-service": 86
+      }
+    },
+    "temporal-clients": {
+      "internal": true,
+      "subnet_suffix": 96,
+      "members": {
+        "temporal": 98,
+        "agent-controller": 99,
+        "temporal-namespace": 100,
+        "diagnostic-relay": 101
+      }
+    },
+    "observability": {
+      "internal": true,
+      "subnet_suffix": 112,
+      "members": {
+        "jaeger": 114,
+        "identity-service": 115,
+        "edge-gateway": 116,
+        "admin-console": 117,
+        "agent-ui": 118,
+        "agent-controller": 119,
+        "agent-acp-service": 120,
+        "runtime-controller": 121,
+        "skill-registry": 122,
+        "runtime-egress": 123,
+        "runtime-telemetry-ingress": 124,
+        "diagnostic-relay": 125
+      }
+    },
+    "gateway-ingress": {
+      "internal": false,
+      "subnet_suffix": 128,
+      "members": {
+        "edge-gateway": 130
+      }
+    },
+    "diagnostic-ingress": {
+      "internal": false,
+      "subnet_suffix": 144,
+      "members": {
+        "diagnostic-relay": 146
+      }
+    },
+    "postgres-diagnostics": {
+      "internal": true,
+      "subnet_suffix": 160,
+      "members": {
+        "postgres": 162,
+        "diagnostic-relay": 163
+      }
+    },
+    "control": {
+      "internal": true,
+      "subnet_environment": "ANTNEST_EGRESS_CONTROL_SUBNET",
+      "default_subnet": "172.31.255.0/24",
+      "members": {
+        "runtime-egress": 3,
+        "agent-controller": 4
+      }
+    }
+  },
+  "outbound_networks": {
+    "identity-outbound": {
+      "internal": false,
+      "members": ["identity-service"]
+    },
+    "controller-provider": {
+      "internal": false,
+      "members": ["agent-controller"]
+    },
+    "acp-provider": {
+      "internal": false,
+      "members": ["agent-acp-service"]
+    },
+    "egress": {
+      "internal": false,
+      "members": ["runtime-egress"]
+    }
+  },
+  "database_networks": {
+    "egress-database": {
+      "internal": true,
+      "owner": "runtime-egress",
+      "database": "postgres",
+      "independent_roles": true
+    },
+    "runtime-controller-database": {
+      "internal": true,
+      "owner": "runtime-controller",
+      "database": "postgres",
+      "independent_roles": true
+    },
+    "agent-acp-database": {
+      "internal": true,
+      "owner": "agent-acp-service",
+      "database": "postgres",
+      "independent_roles": true
+    },
+    "identity-database": {
+      "internal": true,
+      "owner": "identity-service",
+      "database": "postgres",
+      "independent_roles": true
+    },
+    "agent-controller-database": {
+      "internal": true,
+      "owner": "agent-controller",
+      "database": "postgres",
+      "independent_roles": true
+    },
+    "skill-registry-database": {
+      "internal": true,
+      "owner": "skill-registry",
+      "database": "postgres",
+      "independent_roles": true
+    },
+    "temporal-database": {
+      "internal": true,
+      "owner": "temporal",
+      "database": "postgres",
+      "independent_roles": true
+    }
+  },
+  "listeners": {
+    "edge-gateway": {
+      "primary": {
+        "network": "gateway-ingress",
+        "address_suffix": 130,
+        "port": 8080,
+        "dns_name": "edge-gateway"
+      }
+    },
+    "admin-console": {
+      "primary": {
+        "network": "edge",
+        "address_suffix": 3,
+        "port": 8080,
+        "dns_name": "admin-console"
+      }
+    },
+    "agent-ui": {
+      "primary": {
+        "network": "edge",
+        "address_suffix": 4,
+        "port": 8080,
+        "dns_name": "agent-ui"
+      }
+    },
+    "agent-controller": {
+      "primary": {
+        "network": "controller-clients",
+        "address_suffix": 18,
+        "port": 8080,
+        "dns_name": "agent-controller"
+      }
+    },
+    "agent-acp-service": {
+      "primary": {
+        "network": "edge",
+        "address_suffix": 5,
+        "port": 8080,
+        "dns_name": "agent-acp-workspace"
+      },
+      "control": {
+        "network": "controller-acp",
+        "address_suffix": 34,
+        "port": 8081,
+        "dns_name": "agent-acp-control"
+      }
+    },
+    "runtime-controller": {
+      "primary": {
+        "network": "controller-runtime",
+        "address_suffix": 50,
+        "port": 8080,
+        "dns_name": "runtime-controller"
+      }
+    },
+    "identity-service": {
+      "primary": {
+        "network": "identity-clients",
+        "address_suffix": 66,
+        "port": 8080,
+        "dns_name": "identity-service"
+      }
+    },
+    "skill-registry": {
+      "primary": {
+        "network": "registry-clients",
+        "address_suffix": 82,
+        "port": 8080,
+        "dns_name": "skill-registry"
+      }
+    },
+    "runtime-egress": {
+      "primary": {
+        "network": "control",
+        "address_suffix": 3,
+        "port": 8081,
+        "dns_name": "runtime-egress"
+      }
+    }
+  },
+  "control_routes": {
+    "agent-acp-service": [
+      "POST /rpc/agent-acp/apply-execution-snapshot",
+      "POST /rpc/agent-acp/settle-agent"
+    ]
+  },
+  "destinations": {
+    "identity-service": {},
+    "edge-gateway": {
+      "identity-service": {
+        "receiver": "identity-service",
+        "listener": "primary"
+      },
+      "admin-console": {
+        "receiver": "admin-console",
+        "listener": "primary"
+      },
+      "agent-ui": {
+        "receiver": "agent-ui",
+        "listener": "primary"
+      },
+      "agent-controller": {
+        "receiver": "agent-controller",
+        "listener": "primary"
+      },
+      "agent-acp-workspace": {
+        "receiver": "agent-acp-service",
+        "listener": "primary"
+      }
+    },
+    "admin-console": {
+      "identity-service": {
+        "receiver": "identity-service",
+        "listener": "primary"
+      },
+      "agent-controller": {
+        "receiver": "agent-controller",
+        "listener": "primary"
+      },
+      "agent-acp-workspace": {
+        "receiver": "agent-acp-service",
+        "listener": "primary"
+      },
+      "skill-registry": {
+        "receiver": "skill-registry",
+        "listener": "primary"
+      }
+    },
+    "agent-ui": {
+      "identity-service": {
+        "receiver": "identity-service",
+        "listener": "primary"
+      },
+      "agent-controller": {
+        "receiver": "agent-controller",
+        "listener": "primary"
+      },
+      "agent-acp-workspace": {
+        "receiver": "agent-acp-service",
+        "listener": "primary"
+      }
+    },
+    "agent-controller": {
+      "identity-service": {
+        "receiver": "identity-service",
+        "listener": "primary"
+      },
+      "agent-acp-control": {
+        "receiver": "agent-acp-service",
+        "listener": "control"
+      },
+      "runtime-controller": {
+        "receiver": "runtime-controller",
+        "listener": "primary"
+      },
+      "skill-registry": {
+        "receiver": "skill-registry",
+        "listener": "primary"
+      },
+      "runtime-egress": {
+        "receiver": "runtime-egress",
+        "listener": "primary"
+      }
+    },
+    "agent-acp-service": {
+      "identity-service": {
+        "receiver": "identity-service",
+        "listener": "primary"
+      },
+      "agent-controller": {
+        "receiver": "agent-controller",
+        "listener": "primary"
+      },
+      "skill-registry": {
+        "receiver": "skill-registry",
+        "listener": "primary"
+      }
+    },
+    "runtime-controller": {
+      "skill-registry": {
+        "receiver": "skill-registry",
+        "listener": "primary"
+      }
+    },
+    "skill-registry": {
+      "identity-service": {
+        "receiver": "identity-service",
+        "listener": "primary"
+      },
+      "agent-acp-workspace": {
+        "receiver": "agent-acp-service",
+        "listener": "primary"
+      }
+    },
+    "runtime-egress": {}
+  },
+  "runtime_management": {
+    "subnet_environment": "ANTNEST_RUNTIME_MANAGEMENT_SUBNET",
+    "default_subnet": "172.30.255.0/24",
+    "dynamic_ip_range_environment": "ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE",
+    "default_dynamic_ip_range": "172.30.255.128/25",
+    "static_members": [
+      "runtime-controller",
+      "agent-acp-service",
+      "runtime-egress",
+      "runtime-telemetry-ingress"
+    ],
+    "static_addresses": {
+      "runtime-egress": 3,
+      "runtime-telemetry-ingress": 4,
+      "runtime-controller": 5,
+      "agent-acp-service": 6
+    },
+    "dynamic_member": "antnest-runtime",
+    "business_listeners": false,
+    "jaeger_member": false,
+    "diagnostics_member": false,
+    "telemetry_exception": "fixed-otlp-data-ingestion-only"
+  },
+  "infrastructure": {
+    "runtime_telemetry_ingress": {
+      "service": "runtime-telemetry-ingress",
+      "profile": "observability",
+      "bind_network": "runtime-management",
+      "bind_address_suffix": 4,
+      "port": 4318,
+      "methods": ["POST"],
+      "paths": ["/v1/traces", "/v1/metrics", "/v1/logs"],
+      "query_strings": false,
+      "upstream": "jaeger",
+      "upstream_network": "observability",
+      "upstream_port": 4318,
+      "max_wire_body_bytes": 8388608,
+      "max_upstream_response_bytes": 1048576,
+      "max_inflight": 8,
+      "timeout_ms": 15000,
+      "forwarded_request_headers": ["content-type", "content-encoding"],
+      "forward_authority_headers": false,
+      "business_credential_mounts": false,
+      "host_publications": false,
+      "read_only": true,
+      "uid": 65532,
+      "gid": 65532,
+      "capabilities": []
+    },
+    "diagnostics": {
+      "publisher": "diagnostic-relay",
+      "profile": "diagnostics",
+      "enabled_by_debug_overlay": true,
+      "stage3_port_suppression": "explicit-test-override",
+      "transport": "opaque-tcp",
+      "bind_network": "diagnostic-ingress",
+      "bind_address_suffix": 146,
+      "listener_ports": {
+        "postgres": 5432,
+        "temporal": 7233,
+        "runtime-controller": 58080,
+        "agent-acp-service": 58081,
+        "identity-service": 58082,
+        "agent-controller": 58083,
+        "jaeger": 16686
+      },
+      "targets": {
+        "postgres": {
+          "network": "postgres-diagnostics",
+          "address_suffix": 162,
+          "port": 5432
+        },
+        "temporal": {
+          "network": "temporal-clients",
+          "address_suffix": 98,
+          "port": 7233
+        },
+        "runtime-controller": {
+          "network": "controller-runtime",
+          "address_suffix": 50,
+          "port": 8080
+        },
+        "agent-acp-service": {
+          "network": "edge",
+          "address_suffix": 5,
+          "port": 8080
+        },
+        "identity-service": {
+          "network": "identity-clients",
+          "address_suffix": 66,
+          "port": 8080
+        },
+        "agent-controller": {
+          "network": "controller-clients",
+          "address_suffix": 18,
+          "port": 8080
+        },
+        "jaeger": {
+          "network": "observability",
+          "address_suffix": 114,
+          "port": 16686
+        }
+      },
+      "arbitrary_targets": false,
+      "business_credential_mounts": false,
+      "max_connections": 64,
+      "max_buffer_bytes_per_stream": 65536,
+      "connect_timeout_ms": 5000,
+      "idle_timeout_ms": 300000,
+      "read_only": true,
+      "uid": 65532,
+      "gid": 65532,
+      "capabilities": []
+    }
+  }
+}

@@ -34,11 +34,7 @@ function fixture(reply: Response) {
   const fetch = vi.fn(() => Promise.resolve(reply));
   return {
     fetch,
-    client: new RegistrySkillDiscoveryClient(
-      "http://registry:8080",
-      "private-registry-token",
-      fetch,
-    ),
+    client: new RegistrySkillDiscoveryClient("http://registry:8080", fetch),
   };
 }
 

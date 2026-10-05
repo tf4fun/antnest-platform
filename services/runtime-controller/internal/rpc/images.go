@@ -37,6 +37,8 @@ func (h *Handler) resolveImage(response http.ResponseWriter, request *http.Reque
 
 func classifyImageError(err error) (errorDescriptor, bool) {
 	switch {
+	case errors.Is(err, platform.ErrImageNotAllowed):
+		return errorDescriptor{status: http.StatusUnprocessableEntity, response: errorResponse{Code: "image_not_allowed", Message: "Runtime image is not allowed by operator policy", Retryable: false}}, true
 	case errors.Is(err, platform.ErrInvalidImageReference):
 		return errorDescriptor{status: http.StatusBadRequest, response: errorResponse{
 			Code: "invalid_request", Message: "Select a valid image name, tag or digest reference", Retryable: false,

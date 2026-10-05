@@ -3,6 +3,8 @@ import { TemporarySkillCleanupWorker } from "../../src/application/temporary-ski
 import { LearningForegroundGate } from "../../src/application/learning-foreground-gate.js";
 import type { TemporarySkills } from "../../src/application/temporary-skills.js";
 const scope = {
+  revision: `rtv_${"a".repeat(32)}`,
+  connectionId: `rci_${"b".repeat(32)}`,
   organizationId: "organization-1",
   agentId: "agent-1",
   runId: "run-1",

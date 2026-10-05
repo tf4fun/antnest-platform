@@ -1,9 +1,16 @@
 {
   "contract": "antnest.identity",
-  "revision": 13,
+  "revision": 14,
   "transport": "json-over-http",
-  "trust": "internal-network",
+  "trust": "verified-workload-and-caller-context",
   "base_path": "/rpc/identity",
+  "authentication": {
+    "profile": "../platform/service-authentication.md",
+    "details": "service-authentication.md",
+    "workload_header": "Antnest-Service-Authorization",
+    "caller_context_header": "Antnest-Caller-Context",
+    "actor_principal_id": "Audit echo of the verified CCT sub; mismatch is actor_mismatch. No body-only fallback."
+  },
   "definitions": {
     "principal_revocation": {
       "type": "object",
@@ -253,6 +260,13 @@
           "invalid_argument",
           "bad_request",
           "unauthenticated",
+          "service_unauthenticated",
+          "caller_not_allowed",
+          "caller_context_required",
+          "caller_context_invalid",
+          "actor_mismatch",
+          "unsupported_media_type",
+          "identity_dependency_unavailable",
           "forbidden",
           "inactive_principal",
           "not_found",
@@ -286,6 +300,13 @@
       "invalid_argument": 400,
       "bad_request": 400,
       "unauthenticated": 401,
+      "service_unauthenticated": 401,
+      "caller_not_allowed": 403,
+      "caller_context_required": 401,
+      "caller_context_invalid": 401,
+      "actor_mismatch": 403,
+      "unsupported_media_type": 415,
+      "identity_dependency_unavailable": 503,
       "forbidden": 403,
       "inactive_principal": 403,
       "not_found": 404,
@@ -607,14 +628,45 @@
       "method": "POST",
       "path": "/resolve-access-token",
       "request": {
-        "required": ["access_token"],
+        "required": [
+          "access_token",
+          "profile"
+        ],
         "properties": {
-          "access_token": { "type": "string", "minLength": 1, "secret": true }
+          "access_token": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "console",
+              "workspace",
+              "acp"
+            ]
+          },
+          "agent_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
-        "required": ["principal"],
-        "properties": { "principal": { "$ref": "#/definitions/principal" } }
+        "required": [
+          "principal",
+          "caller_context"
+        ],
+        "properties": {
+          "principal": {
+            "$ref": "#/definitions/principal"
+          },
+          "caller_context": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192,
+            "secret": true
+          }
+        }
       }
     },
     "revoke_access_token": {
@@ -826,6 +878,13 @@
     }
   },
   "protocols": {
+    "jwks": {
+      "method": "GET",
+      "path": "/rpc/identity/jwks",
+      "workload_authentication": "required",
+      "caller_context": "none",
+      "response_schema": "../platform/caller-context-jwks.schema.json"
+    },
     "oidc_callback": {
       "method": "GET",
       "path": "/protocol/oidc/callback",

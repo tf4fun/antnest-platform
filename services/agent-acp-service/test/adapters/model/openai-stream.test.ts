@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../support/model-network.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { OpenAICompatibleModel } from "../../../src/adapters/model/openai-compatible.js";
@@ -24,7 +25,7 @@ function stream() {
     ),
   );
   return {
-    model: new OpenAICompatibleModel({ fetchFn }),
+    model: new OpenAICompatibleModel({ destination: syntheticProviderDestination, fetchFn }),
     fetchFn,
     writer,
     async send(data: unknown) {
@@ -54,6 +55,7 @@ describe("OpenAI streaming completions", () => {
         .map((part) => `data: ${JSON.stringify(part)}\n\n`)
         .join("") + "data: [DONE]\n\n";
     const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
       fetchFn: () =>
         Promise.resolve(
           new Response(payload, { headers: { "content-type": "text/event-stream" } }),
@@ -66,6 +68,7 @@ describe("OpenAI streaming completions", () => {
     async (reasoning) => {
       const payload = `data: ${JSON.stringify(chunk({ ...(reasoning === undefined ? {} : { reasoning_content: reasoning }), tool_calls: [{ index: 0, id: "read", function: { name: "read", arguments: "{}" } }] }, "tool_calls"))}\n\ndata: [DONE]\n\n`;
       const model = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
         fetchFn: () =>
           Promise.resolve(
             new Response(payload, { headers: { "content-type": "text/event-stream" } }),
@@ -126,7 +129,12 @@ describe("OpenAI streaming completions", () => {
       Promise.resolve(new Response(body, { headers: { "content-type": "text/event-stream" } })),
     );
     const request = input();
-    expect(await new OpenAICompatibleModel({ fetchFn }).complete(request)).toMatchObject({
+    expect(
+      await new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
+        fetchFn,
+      }).complete(request),
+    ).toMatchObject({
       content: [{ type: "text", text: "你好" }],
       stopReason: "end_turn",
     });

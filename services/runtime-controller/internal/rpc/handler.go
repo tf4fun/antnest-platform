@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
@@ -59,6 +60,7 @@ type Service interface {
 }
 
 type Handler struct {
+	security         Security
 	service          Service
 	skillPreparation SkillPreparationService
 	hub              *observation.Hub
@@ -74,11 +76,14 @@ type SkillPreparationService interface {
 }
 
 func NewHandler(
-	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration,
+	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration, security Security,
 	skillPreparations ...SkillPreparationService,
 ) (*Handler, error) {
 	if service == nil || hub == nil {
 		return nil, fmt.Errorf("service and observation hub are required")
+	}
+	if security.Authentication == nil {
+		return nil, fmt.Errorf("controller workload authentication is required")
 	}
 	if heartbeat <= 0 {
 		return nil, fmt.Errorf("SSE heartbeat must be positive")
@@ -88,6 +93,7 @@ func NewHandler(
 	}
 	handler := &Handler{
 		service: service, hub: hub, heartbeat: heartbeat, requestTimeout: requestTimeout,
+		security: security,
 	}
 	if len(skillPreparations) > 1 {
 		return nil, fmt.Errorf("only one Skill preparation service is supported")
@@ -103,6 +109,7 @@ func NewHandler(
 	registerRPC("GET /internal/runtime-images/resolve", handler.resolveImage)
 	registerRPC("GET /internal/runtimes", handler.listRuntimes)
 	registerRPC("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/connection", handler.resolveRuntimeConnection)
 	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/prepare", handler.prepareSkillSet)
 	registerRPC("GET /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}", handler.getSkillPreparation)
 	registerRPC("POST /internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release", handler.releaseSkillPreparation)
@@ -117,6 +124,7 @@ func NewHandler(
 	for _, pattern := range []string{
 		"/internal/runtime-images/resolve",
 		"/status", "/internal/runtimes", "/internal/runtimes/{agent_id}",
+		"/internal/runtimes/{agent_id}/connection",
 		"/internal/runtimes/{agent_id}/initialize", "/internal/runtimes/{agent_id}/update",
 		"/internal/runtimes/{agent_id}/disable", "/internal/runtimes/{agent_id}/enable",
 		"/internal/runtimes/{agent_id}/delete", "/internal/runtime-operations/{request_id}",
@@ -133,6 +141,13 @@ func NewHandler(
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if strings.HasSuffix(request.URL.Path, "/connection") {
+		response.Header().Set("Cache-Control", "no-store")
+		telemetry.SuppressRPCContent(request.Context())
+	}
+	if !h.authenticate(response, request) {
+		return
+	}
 	if request.URL.Path == "/internal/runtime-observations/watch" {
 		h.mux.ServeHTTP(response, request)
 		return
@@ -508,16 +523,9 @@ func nextSequence(after uint64, values []deployment.Observation) uint64 {
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
 	request.Body = http.MaxBytesReader(response, request.Body, maxRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("%w: invalid JSON body: %w", control.ErrInvalidRequest, err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return fmt.Errorf("%w: request body must contain one JSON value", control.ErrInvalidRequest)
-		}
-		return fmt.Errorf("%w: request body must contain one JSON value: %w", control.ErrInvalidRequest, err)
+	raw, err := io.ReadAll(request.Body)
+	if err != nil || serviceauth.DecodeObject(raw, target) != nil {
+		return control.ErrInvalidRequest
 	}
 	observeRequest(request, target)
 	return nil

@@ -117,11 +117,21 @@ describe("learning Trace", () => {
           reject: () => Promise.resolve(),
           markUnknown: () => Promise.resolve(),
         },
+        {
+          fetchFor: () => fetch,
+          retainOperation: () => undefined,
+          releaseOperation: () => undefined,
+        },
       );
       await telemetry.span("skill_learning.task", {}, () =>
         client.cancel({
           claim,
-          binding: { mcpEndpoint: "http://runtime.test:8093/mcp", executionId: "execution-1" },
+          binding: {
+            revision: `rtv_${"a".repeat(32)}`,
+            connectionId: `rci_${"b".repeat(32)}`,
+            mcpEndpoint: "http://runtime.test:8093/mcp",
+            executionId: "execution-1",
+          },
           requestId: "cancel-1",
           signal: new AbortController().signal,
         }),

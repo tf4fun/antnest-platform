@@ -4,111 +4,301 @@
   "title": "Antnest Runtime Controller HTTP Messages",
   "$defs": {
     "tagged_image_reference": {
-      "type": "string", "minLength": 1, "maxLength": 512,
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
       "description": "Original image name, tag, Docker image ID or repository digest accepted by the platform parser. URLs are rejected."
     },
     "image_resolution": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "required": ["reference", "image_ref"],
       "properties": {
-        "reference": {"$ref": "#/$defs/tagged_image_reference"},
-        "image_ref": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}
+        "reference": {
+          "$ref": "#/$defs/tagged_image_reference"
+        },
+        "image_ref": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-fA-F]{64}$"
+        }
       }
     },
-    "agent_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
-    "organization_id": {"type": "string", "pattern": "^org_[0-9a-f]{32}$"},
-    "request_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
-    "runtime_revision": {"type": "string", "pattern": "^rtv_[0-9a-f]{32}$"},
-    "sequence": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
-    "page_limit": {"type": "integer", "minimum": 1, "maximum": 500},
-    "configuration": {"$ref": "runtime-deployment.schema.json"},
-    "skill_prepare_request": {"$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepare_request", "required": ["organization_id", "owner_operation_id", "layout_version", "skill_set_digest", "system_skills"]},
-    "skill_prepare_receipt": {"$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepare_receipt", "required": ["request_id", "agent_id", "organization_id", "owner_operation_id", "state", "progress"]},
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "organization_id": {
+      "type": "string",
+      "pattern": "^org_[0-9a-f]{32}$"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "runtime_revision": {
+      "type": "string",
+      "pattern": "^rtv_[0-9a-f]{32}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854776000
+    },
+    "page_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "configuration": {
+      "$ref": "runtime-deployment.schema.json"
+    },
+    "skill_prepare_request": {
+      "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepare_request",
+      "required": [
+        "organization_id",
+        "owner_operation_id",
+        "layout_version",
+        "skill_set_digest",
+        "system_skills"
+      ]
+    },
+    "skill_prepare_receipt": {
+      "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepare_receipt",
+      "required": [
+        "request_id",
+        "agent_id",
+        "organization_id",
+        "owner_operation_id",
+        "state",
+        "progress"
+      ]
+    },
     "skill_release_request": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "required": ["organization_id", "owner_operation_id"],
       "properties": {
-        "organization_id": {"$ref": "#/$defs/organization_id"},
-        "owner_operation_id": {"$ref": "#/$defs/request_id"}
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "owner_operation_id": {
+          "$ref": "#/$defs/request_id"
+        }
       }
     },
     "initialize_request": {
       "type": "object",
       "additionalProperties": false,
       "required": ["configuration"],
-      "properties": {"configuration": {"$ref": "#/$defs/configuration"}}
+      "properties": {
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        }
+      }
     },
     "revision_request": {
       "type": "object",
       "additionalProperties": false,
       "required": ["expected_revision"],
-      "properties": {"expected_revision": {"$ref": "#/$defs/runtime_revision"}}
+      "properties": {
+        "expected_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        }
+      }
     },
     "revision_configuration_request": {
       "type": "object",
       "additionalProperties": false,
       "required": ["expected_revision", "configuration"],
       "properties": {
-        "expected_revision": {"$ref": "#/$defs/runtime_revision"},
-        "configuration": {"$ref": "#/$defs/configuration"}
+        "expected_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        }
       }
     },
     "readiness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "live", "ready", "database_ready", "platform_ready", "observation_ready", "monitor_ready"],
+      "required": [
+        "status",
+        "live",
+        "ready",
+        "database_ready",
+        "platform_ready",
+        "observation_ready",
+        "monitor_ready"
+      ],
       "properties": {
-        "status": {"enum": ["ready", "not_ready"]},
-        "live": {"type": "boolean", "const": true},
-        "ready": {"type": "boolean"},
-        "database_ready": {"type": "boolean"},
-        "platform_ready": {"type": "boolean"},
-        "observation_ready": {"type": "boolean"},
-        "monitor_ready": {"type": "boolean", "description": "Cached background monitor state: reconciliation and Watch handshake completed, or a follower observed the shared Watch-ready lease."}
+        "status": {
+          "enum": ["ready", "not_ready"]
+        },
+        "live": {
+          "type": "boolean",
+          "const": true
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "database_ready": {
+          "type": "boolean"
+        },
+        "platform_ready": {
+          "type": "boolean"
+        },
+        "observation_ready": {
+          "type": "boolean"
+        },
+        "monitor_ready": {
+          "type": "boolean",
+          "description": "Cached background monitor state: reconciliation and Watch handshake completed, or a follower observed the shared Watch-ready lease."
+        }
       }
     },
     "runtime_inspection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agent_id", "runtime_revision", "lifecycle_state", "phase", "health", "restart_count", "observed_at"],
+      "required": [
+        "agent_id",
+        "runtime_revision",
+        "lifecycle_state",
+        "phase",
+        "health",
+        "restart_count",
+        "observed_at"
+      ],
       "properties": {
-        "agent_id": {"$ref": "#/$defs/agent_id"},
-        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
-        "lifecycle_state": {"enum": ["initializing", "provisioned", "updating", "disabling", "disabled", "enabling", "deleting", "deleted", "failed", "unknown"]},
-        "health": {"enum": ["absent", "starting", "healthy", "unhealthy", "unknown"]},
-        "phase": {"enum": ["absent", "created", "running", "exited", "unknown"]},
-        "reason": {"type": "string"},
-        "diagnostic_summary": {"type": "string"},
-        "mcp_endpoint": {"type": "string", "format": "uri"},
-        "runtime_execution_id": {"type": "string", "minLength": 1},
-        "restart_count": {"type": "integer", "minimum": 0},
-        "observed_at": {"type": "string", "format": "date-time"}
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "lifecycle_state": {
+          "enum": [
+            "initializing",
+            "provisioned",
+            "updating",
+            "disabling",
+            "disabled",
+            "enabling",
+            "deleting",
+            "deleted",
+            "failed",
+            "unknown"
+          ]
+        },
+        "health": {
+          "enum": ["absent", "starting", "healthy", "unhealthy", "unknown"]
+        },
+        "phase": {
+          "enum": ["absent", "created", "running", "exited", "unknown"]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "diagnostic_summary": {
+          "type": "string"
+        },
+        "mcp_endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "runtime_execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "restart_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "runtime_list": {
       "type": "object",
       "additionalProperties": false,
       "required": ["runtimes"],
-      "properties": {"runtimes": {"type": "array", "items": {"$ref": "#/$defs/runtime_inspection"}}}
+      "properties": {
+        "runtimes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/runtime_inspection"
+          }
+        }
+      }
     },
     "operation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["request_id", "kind", "agent_id", "target_revision", "state", "effect", "created_at", "updated_at"],
+      "required": [
+        "request_id",
+        "kind",
+        "agent_id",
+        "target_revision",
+        "state",
+        "effect",
+        "created_at",
+        "updated_at"
+      ],
       "properties": {
-        "image_reference": {"$ref": "#/$defs/tagged_image_reference"},
-        "image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-        "request_id": {"$ref": "#/$defs/request_id"},
-        "kind": {"enum": ["initialize_runtime", "update_runtime", "disable_runtime", "enable_runtime", "delete_runtime"]},
-        "agent_id": {"$ref": "#/$defs/agent_id"},
-        "target_revision": {"$ref": "#/$defs/runtime_revision"},
-        "state": {"enum": ["running", "completed", "failed", "unknown"]},
-        "effect": {"enum": ["completed", "not_started", "unknown"]},
-        "inspection": {"$ref": "#/$defs/runtime_inspection"},
-        "error_code": {"type": "string"},
-        "error_detail": {"type": "string"},
-        "created_at": {"type": "string", "format": "date-time"},
-        "updated_at": {"type": "string", "format": "date-time"}
+        "image_reference": {
+          "$ref": "#/$defs/tagged_image_reference"
+        },
+        "image_id": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "kind": {
+          "enum": [
+            "initialize_runtime",
+            "update_runtime",
+            "disable_runtime",
+            "enable_runtime",
+            "delete_runtime"
+          ]
+        },
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "target_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "state": {
+          "enum": ["running", "completed", "failed", "unknown"]
+        },
+        "effect": {
+          "enum": ["completed", "not_started", "unknown"]
+        },
+        "inspection": {
+          "$ref": "#/$defs/runtime_inspection"
+        },
+        "error_code": {
+          "type": "string"
+        },
+        "error_detail": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "service_observation": {
@@ -116,55 +306,144 @@
       "additionalProperties": false,
       "required": ["sequence", "kind", "observed_at"],
       "properties": {
-        "sequence": {"$ref": "#/$defs/sequence"},
-        "kind": {"enum": ["observation_gap", "reconciled"]},
-        "diagnostic_summary": {"type": "string"},
-        "observed_at": {"type": "string", "format": "date-time"}
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "kind": {
+          "enum": ["observation_gap", "reconciled"]
+        },
+        "diagnostic_summary": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "environment_observation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sequence", "agent_id", "runtime_revision", "kind", "observed_at"],
+      "required": [
+        "sequence",
+        "agent_id",
+        "runtime_revision",
+        "kind",
+        "observed_at"
+      ],
       "properties": {
-        "sequence": {"$ref": "#/$defs/sequence"},
-        "agent_id": {"$ref": "#/$defs/agent_id"},
-        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
-        "kind": {"enum": ["initialized", "updated", "disabled", "enabled", "deleted", "storage_missing", "storage_drift"]},
-        "diagnostic_summary": {"type": "string"},
-        "observed_at": {"type": "string", "format": "date-time"}
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "kind": {
+          "enum": [
+            "initialized",
+            "updated",
+            "disabled",
+            "enabled",
+            "deleted",
+            "storage_missing",
+            "storage_drift"
+          ]
+        },
+        "diagnostic_summary": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "runtime_observation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sequence", "agent_id", "runtime_revision", "kind", "observed_at"],
+      "required": [
+        "sequence",
+        "agent_id",
+        "runtime_revision",
+        "kind",
+        "observed_at"
+      ],
       "properties": {
-        "sequence": {"$ref": "#/$defs/sequence"},
-        "agent_id": {"$ref": "#/$defs/agent_id"},
-        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
-        "runtime_execution_id": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["starting", "healthy", "unhealthy", "restarted", "exited", "runtime_deleted", "status_unverified", "runtime_missing"]},
-        "diagnostic_summary": {"type": "string"},
-        "observed_at": {"type": "string", "format": "date-time"}
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/agent_id"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/runtime_revision"
+        },
+        "runtime_execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "starting",
+            "healthy",
+            "unhealthy",
+            "restarted",
+            "exited",
+            "runtime_deleted",
+            "status_unverified",
+            "runtime_missing"
+          ]
+        },
+        "diagnostic_summary": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "observation": {
       "oneOf": [
-        {"$ref": "#/$defs/service_observation"},
-        {"$ref": "#/$defs/environment_observation"},
-        {"$ref": "#/$defs/runtime_observation"}
+        {
+          "$ref": "#/$defs/service_observation"
+        },
+        {
+          "$ref": "#/$defs/environment_observation"
+        },
+        {
+          "$ref": "#/$defs/runtime_observation"
+        }
       ]
     },
     "observation_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["observations", "oldest_sequence", "latest_sequence", "next_sequence"],
+      "required": [
+        "observations",
+        "oldest_sequence",
+        "latest_sequence",
+        "next_sequence"
+      ],
       "properties": {
-        "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
-        "oldest_sequence": {"$ref": "#/$defs/sequence"},
-        "latest_sequence": {"$ref": "#/$defs/sequence"},
-        "next_sequence": {"$ref": "#/$defs/sequence"}
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "oldest_sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "latest_sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "next_sequence": {
+          "$ref": "#/$defs/sequence"
+        }
       }
     },
     "error": {
@@ -172,16 +451,52 @@
       "additionalProperties": false,
       "required": ["code", "message", "retryable"],
       "properties": {
-        "code": {"type": "string", "minLength": 1},
-        "message": {"type": "string", "minLength": 1},
-        "retryable": {"type": "boolean"},
-        "reset_sequence": {"$ref": "#/$defs/sequence"}
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "reset_sequence": {
+          "$ref": "#/$defs/sequence"
+        }
       },
-      "allOf": [{
-        "if": {"properties": {"code": {"const": "observation_cursor_expired"}}, "required": ["code"]},
-        "then": {"required": ["reset_sequence"]},
-        "else": {"not": {"required": ["reset_sequence"]}}
-      }]
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "observation_cursor_expired"
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "required": ["reset_sequence"]
+          },
+          "else": {
+            "not": {
+              "required": ["reset_sequence"]
+            }
+          }
+        }
+      ]
+    },
+    "service_credential": {
+      "type": "string",
+      "pattern": "^[Bb][Ee][Aa][Rr][Ee][Rr] [A-Za-z0-9_-]{43,86}$",
+      "description": "Header wire profile; canonical base64url bytes and per-caller SHA256 comparison are enforced by the receiver."
+    },
+    "runtime_connection_request": {
+      "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/resolve_request"
+    },
+    "runtime_connection": {
+      "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/private_connection"
     }
   }
 }

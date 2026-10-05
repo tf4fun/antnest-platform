@@ -1,8 +1,13 @@
+import {
+  createTestWorkspaceHttpServer as createWorkspaceHttpServer,
+  testFetch as fetch,
+  testHeaders,
+} from "./auth-fixture.mjs";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { request as httpRequest } from "node:http";
 import { test } from "node:test";
-import { createWorkspaceHttpServer } from "../../../services/agent-ui/web/server/dist/http/node-server.js";
+
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
 
 async function serve(runtime, work) {
@@ -33,6 +38,7 @@ test("ordinary handler wait expires with a structured 504", async () => {
   await serve({ handle: () => pending }, async (origin) => {
     try {
       const response = await fetch(`${origin}${path}/view`, {
+        headers,
         signal: AbortSignal.timeout(1000),
       });
       assert.equal(response.status, 504);
@@ -65,6 +71,7 @@ test("ordinary response body consumption shares the handler deadline", async () 
     },
     async (origin) => {
       const response = await fetch(`${origin}${path}/view`, {
+        headers,
         signal: AbortSignal.timeout(1000),
       });
       assert.equal(response.status, 504);
@@ -112,7 +119,7 @@ test("incomplete request body times out without accepting a prompt", async () =>
           {
             method: "POST",
             headers: {
-              ...headers,
+              ...testHeaders(headers),
               "content-type": "application/json",
               "content-length": "1000",
               "if-match": view.historyToken,
@@ -265,7 +272,7 @@ test("Agent SSE survives beyond the ordinary request deadline", async () => {
       try {
         const response = await fetch(
           `${origin}/api/app/workspace/v1/agents/agent/events`,
-          { signal: abort.signal },
+          { headers, signal: abort.signal },
         );
         await new Promise((resolve) => setTimeout(resolve, 100));
         source.enqueue(new TextEncoder().encode("event: reset\ndata: {}\n\n"));

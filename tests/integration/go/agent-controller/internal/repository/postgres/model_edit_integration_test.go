@@ -32,7 +32,7 @@ func TestModelEditReplaysCommitAfterInitialLookupAndLaterEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := application.NewCatalogService(repository, box, providerTestClock{})
+	service := fixtureCatalogService(repository, box, providerTestClock{})
 	ctx := context.Background()
 	provider, err := service.CreateProviderConnection(ctx, providerTestInput("provider", "org"))
 	if err != nil {
@@ -64,7 +64,7 @@ func TestModelEditReplaysCommitAfterInitialLookupAndLaterEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}}
-	replayed, err := application.NewCatalogService(store, box, providerTestClock{}).ReviseModelProfile(ctx, edit)
+	replayed, err := fixtureCatalogService(store, box, providerTestClock{}).ReviseModelProfile(ctx, edit)
 	if err != nil || !reflect.DeepEqual(replayed, committed) {
 		t.Fatalf("duplicate command rejected after a later edit: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestModelEditConcurrentFormsCommitOnlyOneUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := application.NewCatalogService(repository, box, providerTestClock{})
+	service := fixtureCatalogService(repository, box, providerTestClock{})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	var workers sync.WaitGroup
 	t.Cleanup(func() { cancel(); workers.Wait() })
@@ -114,7 +114,7 @@ func TestModelEditConcurrentFormsCommitOnlyOneUpdate(t *testing.T) {
 	}
 	model := page.Items[0]
 	store := &modelReadBarrierStore{CatalogStore: repository, reads: make(chan struct{}, 2), release: make(chan struct{})}
-	racingService := application.NewCatalogService(store, box, providerTestClock{})
+	racingService := fixtureCatalogService(store, box, providerTestClock{})
 	results := make(chan error, 2)
 	for _, requestID := range []string{"edit-one", "edit-two"} {
 		workers.Go(func() {

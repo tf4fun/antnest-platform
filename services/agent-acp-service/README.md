@@ -58,7 +58,7 @@ execution configuration into it.
 | Inbound   | Execution state get and watch RPCs                                              | Current workspace state without Controller Run state                                   |
 | Inbound   | `GET /rpc/agent-acp/workspace/…` routes                                         | Principal-scoped Bridge recovery receipts, Session watermarks and learning status      |
 | Inbound   | Administrative audit RPCs                                                       | Organization-scoped retained Run, input and event queries                              |
-| Inbound   | `POST /internal/skill-sources/inspect`, `POST /internal/skill-sources/artifact` | Source reads for Skill Registry, using the source bearer                               |
+| Inbound   | `POST /internal/skill-sources/inspect`, `POST /internal/skill-sources/artifact` | Source reads for authenticated Skill Registry workload                                 |
 | Outbound  | MCP `2026-07-28` over HTTP                                                      | Platform Runtime Tool execution and Skill maintenance                                  |
 | Outbound  | ACP `session/request_permission`                                                | User confirmation on the existing ACP connection                                       |
 | Outbound  | OpenAI-compatible Chat Completions API                                          | Model calls through logical Provider clients                                           |
@@ -66,10 +66,16 @@ execution configuration into it.
 | Outbound  | Skill Registry discovery and projection routes                                  | Skill discovery and source metadata delivery, when configured                          |
 | Owned     | PostgreSQL                                                                      | Sessions, messages, checkpoints, Runs, Tool attempts, permissions and learning records |
 
-Gateway supplies the trusted `X-Antnest-Organization-ID`,
-`X-Antnest-Principal-ID` and `X-Antnest-Agent-ID` headers and must strip
-external values. ACP authorizes each resource method against the locally
-applied organization snapshot and advertises no ACP `authMethods`.
+Gateway and Agent UI supply an unchanged Identity-signed CCT plus their own
+verified workload credentials. ACP derives organization, principal and Agent
+from signed claims, ignores unsigned identity hints, and authorizes each resource
+method against the locally applied snapshot. It advertises no ACP `authMethods`.
+Controller publication and settlement use a separate control listener; see the
+[authentication contract](../../contracts/agent-acp/service-authentication.md).
+
+After workload admission, a required but absent CCT returns
+`401 caller_context_required`; an empty, duplicate or invalid CCT returns
+`401 caller_context_invalid`. Both are rejected before business effects.
 
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
 defines how Controller publishes into ACP. Normal ACP operation makes no
@@ -86,30 +92,43 @@ and [fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
 It is matched exactly against the Runtime's trusted verifier IDs; startup
 rejects invalid IDs without trimming whitespace.
 
-| Variable                                        | Required | Default             | Description                                                                                                    |
-| ----------------------------------------------- | -------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_ACP_DATABASE_URL`                      | yes      | -                   | `postgres://` or `postgresql://` URL of the service-owned database                                             |
-| `ANTNEST_ACP_CLIENT_MCP_KEY`                    | yes      | -                   | Canonical base64 encoding of a random 32-byte encryption key for retained MCP revision records                 |
-| `ANTNEST_ACP_LISTEN`                            | no       | `:8080`             | Listen address: `:port`, `host:port` or `[ipv6]:port`                                                          |
-| `ANTNEST_ACP_DATABASE_TIMEOUT`                  | no       | `10s`               | Connection, statement and read timeout for PostgreSQL                                                          |
-| `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`            | no       | `10000ms`           | Bound for delivering execution state to watchers                                                               |
-| `ANTNEST_ACP_RUN_TIMEOUT`                       | no       | `30m`               | Maximum Run duration                                                                                           |
-| `ANTNEST_ACP_MAX_PROMPT_BYTES`                  | no       | `16777216`          | Maximum WebSocket and prompt payload size (1024 to 67108864)                                                   |
-| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`           | no       | `16777216`          | Maximum execution snapshot body size (1024 to 67108864)                                                        |
-| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`                  | no       | `15s`               | Graceful shutdown deadline                                                                                     |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`     | paired   | unset               | Key ID of the Ed25519 Runtime Skill maintenance signing key; set together with the key                         |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`     | paired   | unset               | Canonical base64 Ed25519 PKCS8 DER private key                                                                 |
-| `ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL`     | no       | unset               | Agent Controller origin for learning policy reads. Learning starts only when this and the signing pair are set |
-| `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS`        | no       | `false`             | Accepts exactly `true` or `false`; explicitly permits development-only settings                                |
-| `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID`     | no       | unset               | Development only. Requires the gate; forces review for one Agent and warns at startup; never use in production |
-| `ANTNEST_ACP_SKILL_REGISTRY_URL`                | paired   | unset               | Skill Registry origin. Discovery needs all three discovery settings and the signing pair                       |
-| `ANTNEST_ACP_SKILL_REGISTRY_TOKEN`              | paired   | unset               | Bearer for the Registry private API, at least 32 printable bytes                                               |
-| `ANTNEST_ACP_SKILL_SOURCE_TOKEN`                | paired   | unset               | Distinct bearer that Registry presents to the source routes, at least 32 printable bytes                       |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`         | no       | `false`             | Record bounded RPC content in spans for diagnosis                                                              |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`                   | no       | unset               | OTLP HTTP endpoint. Traces and metrics export by default when set                                              |
-| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` | no       | derived             | Enable or disable individual signals                                                                           |
-| `OTEL_SERVICE_NAME`                             | no       | `agent-acp-service` | Service name in telemetry                                                                                      |
-| `OTEL_SDK_DISABLED`                             | no       | `false`             | Disable the OpenTelemetry SDK                                                                                  |
+Runtime calls require RC-issued per-instance ACP authority privately published
+by Controller. Database and Run projections contain only the public reference;
+there is no global Runtime bearer. The current native profile requires exact
+HTTP token opt-in, and unsupported Runtime TLS/mTLS composition fails closed.
+See [Runtime instance authority](docs/operations.md#runtime-instance-authority)
+for startup, republishing and cleanup requirements.
+
+| Variable                                                                                          | Required | Default             | Description                                                                                                    |
+| ------------------------------------------------------------------------------------------------- | -------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_ACP_DATABASE_URL`                                                                        | yes      | -                   | `postgres://` or `postgresql://` URL of the service-owned database                                             |
+| `ANTNEST_ACP_CLIENT_MCP_KEY`                                                                      | yes      | -                   | Canonical base64 encoding of a random 32-byte encryption key for retained MCP revision records                 |
+| `ANTNEST_ACP_LISTEN`                                                                              | no       | `:8080`             | Listen address: `:port`, `host:port` or `[ipv6]:port`                                                          |
+| `ANTNEST_ACP_CONTROL_LISTEN`                                                                      | no       | `:8081`             | Separate Controller-only publication/settlement listener; bind to its caller network                           |
+| `ANTNEST_ACP_IDENTITY_URL`                                                                        | yes      | -                   | Fixed authenticated Identity origin for public JWKS                                                            |
+| `ANTNEST_SERVICE_AUTH_MODE`                                                                       | yes      | -                   | Exact `token` or `mtls`; no default or fallback                                                                |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | no       | `false`             | Exact boolean; token HTTP only with explicit disposable development opt-in                                     |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                                                               | token    | -                   | Read-only receiver JSON containing per-caller hashes, loaded once at startup                                   |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                                                                  | token    | -                   | Read-only per-receiver secret files; configured dependencies validated at startup, reread per request          |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS      | -                   | Complete trust, service identity and DNS configuration; TLS 1.3, no partial configuration                      |
+| `ANTNEST_ACP_DATABASE_TIMEOUT`                                                                    | no       | `10s`               | Connection, statement and read timeout for PostgreSQL                                                          |
+| `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`                                                              | no       | `10000ms`           | Bound for delivering execution state to watchers                                                               |
+| `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS`                                                        | no       | `false`             | Exact operator-only boolean; unsafe private/local LLM and metadata access; malformed values fail startup       |
+| `ANTNEST_ACP_RUN_TIMEOUT`                                                                         | no       | `30m`               | Maximum Run duration                                                                                           |
+| `ANTNEST_ACP_MAX_PROMPT_BYTES`                                                                    | no       | `16777216`          | Maximum WebSocket and prompt payload size (1024 to 67108864)                                                   |
+| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`                                                             | no       | `16777216`          | Maximum execution snapshot body size (1024 to 67108864)                                                        |
+| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`                                                                    | no       | `15s`               | Graceful shutdown deadline                                                                                     |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`                                                       | paired   | unset               | Key ID of the Ed25519 Runtime Skill maintenance signing key; set together with the key                         |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`                                                       | paired   | unset               | Canonical base64 Ed25519 PKCS8 DER private key                                                                 |
+| `ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL`                                                       | no       | unset               | Agent Controller origin for learning policy reads. Learning starts only when this and the signing pair are set |
+| `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS`                                                          | no       | `false`             | Accepts exactly `true` or `false`; explicitly permits development-only settings                                |
+| `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID`                                                       | no       | unset               | Development only. Requires the gate; forces review for one Agent and warns at startup; never use in production |
+| `ANTNEST_ACP_SKILL_REGISTRY_URL`                                                                  | no       | unset               | Fixed Registry origin; discovery requires the maintenance signing pair and service credentials                 |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`                                                           | no       | `false`             | Record bounded RPC content in spans for diagnosis                                                              |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                     | no       | unset               | OTLP HTTP endpoint. Traces and metrics export by default when set                                              |
+| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`                                                   | no       | derived             | Enable or disable individual signals                                                                           |
+| `OTEL_SERVICE_NAME`                                                                               | no       | `agent-acp-service` | Service name in telemetry                                                                                      |
+| `OTEL_SDK_DISABLED`                                                                               | no       | `false`             | Disable the OpenTelemetry SDK                                                                                  |
 
 The debug Agent ID retains the existing `optional()` normalization: leading and
 trailing whitespace is removed; empty or whitespace-only values mean unset.
@@ -128,7 +147,9 @@ in the repository's `.env.example` is for disposable local data only. See
 - Agent Controller publishes execution snapshots. Until a current snapshot is
   applied, resource methods return an ACP error.
 - The Agent's Runtime MCP endpoint is required for every Run.
-- A model Provider reachable through the published Provider connections.
+- A model Provider reachable through published connections and the shared
+  destination policy. ACP checks all DNS answers and pins the socket; private
+  endpoints require explicit operator opt-in. See [operations](docs/operations.md#provider-model-egress).
 - Optional: Agent Controller for learning policy and Skill Registry for
   discovery. Their outages pause learning or discovery and never fail a
   completed Run.

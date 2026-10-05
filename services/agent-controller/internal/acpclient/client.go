@@ -39,7 +39,7 @@ func New(baseURL string, timeout time.Duration, httpClient *http.Client) (*Clien
 }
 
 func (client *Client) ApplyExecutionSnapshot(ctx context.Context, snapshot ports.ExecutionSnapshot) (result ports.ExecutionAcknowledgement, resultErr error) {
-	if err := snapshot.Validate(); err != nil {
+	if err := snapshot.ValidateForPublication(); err != nil {
 		return result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)

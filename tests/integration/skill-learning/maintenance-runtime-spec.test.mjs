@@ -30,7 +30,15 @@ test(
     const validate = new Ajv2020({
       strict: true,
       validateFormats: false,
-    }).compile(schema);
+    })
+      .addSchema(
+        JSON.parse(
+          await readFile(
+            resolve(root, "contracts/runtime/instance-connection.schema.json"),
+          ),
+        ),
+      )
+      .compile(schema);
     const output = resolve(
       root,
       `artifacts/verification/maintenance-runtime-spec-${Date.now()}-${process.pid}`,

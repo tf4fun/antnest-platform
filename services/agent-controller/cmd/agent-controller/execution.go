@@ -11,8 +11,8 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 )
 
-func configureExecutionPublication(repository *postgres.Repository, cfg config.Config, opener ports.CredentialOpener, logger *slog.Logger) (*application.ExecutionPublisher, *application.ExecutionPublicationWorker, error) {
-	client, err := acpclient.New(cfg.Execution.URL, cfg.DependencyTimeout, nil)
+func configureExecutionPublication(repository *postgres.Repository, cfg config.Config, opener ports.CredentialOpener, runtime ports.RuntimeConnectionResolver, logger *slog.Logger) (*application.ExecutionPublisher, *application.ExecutionPublicationWorker, error) {
+	client, err := acpclient.New(cfg.Execution.URL, cfg.DependencyTimeout, cfg.Authentication.HTTPClient())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -20,7 +20,7 @@ func configureExecutionPublication(repository *postgres.Repository, cfg config.C
 	if err != nil {
 		return nil, nil, err
 	}
-	publisher := application.NewExecutionPublisher(repository, opener, client)
+	publisher := application.NewExecutionPublisher(repository, opener, client, application.WithRuntimeConnectionResolver(runtime))
 	worker, err := application.NewExecutionPublicationWorker(repository, publisher, application.ExecutionPublicationSchedule{
 		ResyncInterval: cfg.Execution.ResyncInterval, RetryInterval: cfg.Execution.RetryInterval,
 		MaxRetryInterval: cfg.Execution.MaxRetryInterval, RequestTimeout: cfg.Execution.RequestTimeout,

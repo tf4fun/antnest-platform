@@ -1,9 +1,7 @@
 package registry
 
 import (
-	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,13 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
 
 type Handler struct {
 	service   *Service
 	discovery *Discovery
-	token     string
+	security  Security
 	ready     func(context.Context) error
 	uploading chan struct{}
 	download  chan struct{}
@@ -26,39 +25,31 @@ type Handler struct {
 	http      http.Handler
 }
 
-func NewHandler(service *Service, token string, ready func(context.Context) error, discovery ...*Discovery) *Handler {
-	h := &Handler{service: service, token: token, ready: ready,
+func NewHandler(service *Service, security Security, ready func(context.Context) error, discovery ...*Discovery) (*Handler, error) {
+	if err := security.validate(); err != nil {
+		return nil, err
+	}
+	h := &Handler{service: service, security: security, ready: ready,
 		uploading: make(chan struct{}, 2), download: make(chan struct{}, 4), mux: http.NewServeMux()}
 	if len(discovery) != 0 {
 		h.discovery = discovery[0]
 	}
 	h.mux.HandleFunc("GET /status", h.status)
-	h.mux.HandleFunc("POST /internal/skills", h.auth(h.create))
-	h.mux.HandleFunc("POST /internal/skills/{skill_id}/versions", h.auth(h.appendVersion))
-	h.mux.HandleFunc("GET /internal/skills", h.auth(h.list))
-	h.mux.HandleFunc("GET /internal/skills/{skill_id}/versions", h.auth(h.versions))
-	h.mux.HandleFunc("POST /internal/skill-versions/resolve", h.auth(h.resolve))
-	h.mux.HandleFunc("GET /internal/skills/{skill_id}/versions/{version}/artifact", h.auth(h.artifact))
-	h.mux.HandleFunc("PUT /internal/skill-projections", h.auth(h.updateProjection))
-	h.mux.HandleFunc("POST /internal/skill-discovery/search", h.auth(h.searchSkills))
-	h.mux.HandleFunc("POST /internal/skill-discovery/load", h.auth(h.loadSkill))
-	h.mux.HandleFunc("POST /internal/skill-projections/promote", h.auth(h.promoteSkill))
-	h.http = telemetry.HTTPHandler(h.mux)
-	return h
+	h.mux.HandleFunc("POST /internal/skills", h.auth([]string{"admin-console"}, false, h.create))
+	h.mux.HandleFunc("POST /internal/skills/{skill_id}/versions", h.auth([]string{"admin-console"}, false, h.appendVersion))
+	h.mux.HandleFunc("GET /internal/skills", h.auth([]string{"admin-console"}, false, h.list))
+	h.mux.HandleFunc("GET /internal/skills/{skill_id}/versions", h.auth([]string{"admin-console"}, false, h.versions))
+	h.mux.HandleFunc("POST /internal/skill-versions/resolve", h.auth([]string{"agent-controller"}, true, h.resolve))
+	h.mux.HandleFunc("GET /internal/skills/{skill_id}/versions/{version}/artifact", h.auth([]string{"admin-console", "runtime-controller"}, false, h.artifact))
+	h.mux.HandleFunc("PUT /internal/skill-projections", h.auth([]string{"agent-acp-service"}, true, h.updateProjection))
+	h.mux.HandleFunc("POST /internal/skill-discovery/search", h.auth([]string{"admin-console", "agent-acp-service"}, true, h.searchSkills))
+	h.mux.HandleFunc("POST /internal/skill-discovery/load", h.auth([]string{"admin-console", "agent-acp-service"}, true, h.loadSkill))
+	h.mux.HandleFunc("POST /internal/skill-projections/promote", h.auth([]string{"admin-console"}, true, h.promoteSkill))
+	h.http = telemetry.HTTPHandler(&authenticatedMux{mux: h.mux, security: security})
+	return h, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.http.ServeHTTP(w, r) }
-
-func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		values := r.Header.Values("Authorization")
-		if len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), []byte("Bearer "+h.token)) != 1 {
-			writeError(w, failure("unauthorized", "service authentication required"))
-			return
-		}
-		next(w, r)
-	}
-}
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	if h.ready != nil {
@@ -89,18 +80,7 @@ type publicationMetadata struct {
 	ExpectedVersion *int64 `json:"expected_version,omitempty"`
 }
 
-func decodeOne(data []byte, out any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(out); err != nil {
-		return err
-	}
-	var next any
-	if err := decoder.Decode(&next); err != io.EOF {
-		return failure("invalid_request", "JSON must contain one object")
-	}
-	return nil
-}
+func decodeOne(data []byte, out any) error { return serviceauth.DecodeObject(data, out) }
 
 func readUpload(w http.ResponseWriter, r *http.Request) (publicationMetadata, []byte, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxArtifactBytes+(1<<20))
@@ -181,6 +161,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, appendTo strin
 		writeError(w, failure("invalid_request", "expected_version is required only for append"))
 		return
 	}
+	if err := verifiedScope(r, &meta.OrganizationID, &meta.ActorID); err != nil {
+		writeError(w, err)
+		return
+	}
 	input := PublishInput{RequestID: meta.RequestID, OrganizationID: meta.OrganizationID,
 		ActorID: meta.ActorID, SkillID: appendTo, Artifact: archive}
 	if meta.ExpectedVersion != nil {
@@ -218,7 +202,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	page, err := h.service.List(r.Context(), r.URL.Query().Get("organization_id"), r.URL.Query().Get("after_id"), limit)
+	org := r.URL.Query().Get("organization_id")
+	if err := verifiedScope(r, &org, nil); err != nil {
+		writeError(w, err)
+		return
+	}
+	page, err := h.service.List(r.Context(), org, r.URL.Query().Get("after_id"), limit)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -240,7 +229,12 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	page, err := h.service.Versions(r.Context(), r.URL.Query().Get("organization_id"), r.PathValue("skill_id"), after, limit)
+	org := r.URL.Query().Get("organization_id")
+	if err := verifiedScope(r, &org, nil); err != nil {
+		writeError(w, err)
+		return
+	}
+	page, err := h.service.Versions(r.Context(), org, r.PathValue("skill_id"), after, limit)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -282,7 +276,12 @@ func (h *Handler) artifact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, failure("invalid_request", "invalid Skill version"))
 		return
 	}
-	value, archive, err := h.service.Artifact(r.Context(), r.URL.Query().Get("organization_id"), r.PathValue("skill_id"), version)
+	org := r.URL.Query().Get("organization_id")
+	if err := verifiedScope(r, &org, nil); err != nil {
+		writeError(w, err)
+		return
+	}
+	value, archive, err := h.service.Artifact(r.Context(), org, r.PathValue("skill_id"), version)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -306,10 +305,11 @@ func writeError(w http.ResponseWriter, err error) {
 	code := Code(err)
 	status := http.StatusServiceUnavailable
 	switch code {
+	case "organization_mismatch", "actor_mismatch":
+		writeBoundaryError(w, http.StatusForbidden, code, err.Error(), false)
+		return
 	case "invalid_request", "invalid_package":
 		status = http.StatusBadRequest
-	case "unauthorized":
-		status = http.StatusUnauthorized
 	case "not_found":
 		status = http.StatusNotFound
 	case "name_conflict", "request_conflict", "revision_conflict", "content_changed":

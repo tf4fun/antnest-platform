@@ -24,11 +24,12 @@ import (
 )
 
 type machineControlContract struct {
-	Contract   string `json:"contract"`
-	Revision   int    `json:"revision"`
-	Transport  string `json:"transport"`
-	Trust      string `json:"trust"`
-	MediaTypes struct {
+	Contract       string `json:"contract"`
+	Revision       int    `json:"revision"`
+	Transport      string `json:"transport"`
+	Trust          string `json:"trust"`
+	Authentication string `json:"authentication"`
+	MediaTypes     struct {
 		Request  string `json:"request"`
 		Response string `json:"response"`
 	} `json:"media_types"`
@@ -81,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 36 {
+	if contract.Revision != 38 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -89,7 +90,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 		t.Fatalf("control contract media types = %+v", contract.MediaTypes)
 	}
 
-	endpoint, err := NewHandler(
+	endpoint, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -97,10 +98,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
-	mux, ok := endpoint.(*http.ServeMux)
+	boundary, ok := endpoint.(*businessFixture).raw.(*authenticatedMux)
 	if !ok {
-		t.Fatalf("handler type = %T, want *http.ServeMux", endpoint)
+		t.Fatalf("handler type = %T, want authenticated native mux", endpoint)
 	}
+	mux := boundary.mux
 
 	expected := make(map[string]struct{})
 	for _, route := range (&handler{}).routes() {
@@ -223,19 +225,24 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	}
 
 	values := map[string]any{
-		"model_parameters":                   model.Parameters(),
-		"provider_credential_input":          application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
-		"provider_model_input":               application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
-		"set_agent_authorization_request":    application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
-		"set_agent_authorization_response":   map[string]int64{"authorization_revision": 2},
-		"list_workspace_agents_request":      listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
-		"list_workspace_agents_response":     workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
-		"create_provider_connection_request": sampleCreateProviderRequest(),
-		"rotate_provider_credential_request": sampleRotateProviderRequest(),
-		"provider_connection":                sampleProviderConnection(),
-		"provider_connection_list":           application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
-		"model_input":                        model,
-		"runtime_input":                      runtimeInput,
+		"model_parameters":                       model.Parameters(),
+		"provider_credential_input":              application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
+		"provider_model_input":                   application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
+		"set_agent_authorization_request":        application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
+		"set_agent_authorization_response":       map[string]int64{"authorization_revision": 2},
+		"list_workspace_agents_request":          listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
+		"list_workspace_agents_response":         workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
+		"discover_provider_models_request":       discoverProviderModelsRequest{OrganizationID: "org-1"},
+		"discover_draft_provider_models_request": application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
+		"provider_discovery_result":              sampleProviderDiscovery(),
+		"discovered_model":                       sampleProviderDiscovery().Models[0],
+		"discovered_pricing":                     ports.DiscoveredPricing{Currency: "USD"},
+		"create_provider_connection_request":     sampleCreateProviderRequest(),
+		"rotate_provider_credential_request":     sampleRotateProviderRequest(),
+		"provider_connection":                    sampleProviderConnection(),
+		"provider_connection_list":               application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
+		"model_input":                            model,
+		"runtime_input":                          runtimeInput,
 		"create_model_profile_request": createModelProfileRequest{ProviderConnectionID: "provider-1",
 			RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "example",
 			DisplayName: "Example", Model: model.Parameters(),
@@ -337,7 +344,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},
 	}
-	boundary, err := NewHandler(
+	boundary, err := newBusinessHandler(t,
 		catalog, lifecycle, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -346,13 +353,15 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
-		"POST /rpc/agent-controller/set-agent-authorization":              application.SetAgentAuthorizationInput{RequestID: "set-defaults", AgentID: "agent-1", PrincipalID: "user-1", ExpectedAccessRevision: "access-1", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationApprove, ToolRules: []domain.ToolRule{}}},
-		"POST /rpc/agent-controller/list-workspace-agents":                listWorkspaceAgentsRequest{RequestID: "list-workspace", OrganizationID: "org-1", PrincipalID: "user-1"},
-		"PUT /internal/provider-connections/{connection_id}/availability": map[string]any{"request_id": "provider-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
-		"PUT /internal/model-profiles/{model_profile_id}/availability":    map[string]any{"request_id": "model-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
-		"PUT /internal/agent-templates/{template_id}/availability":        map[string]any{"request_id": "template-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
-		"POST /internal/provider-connections":                             sampleCreateProviderRequest(),
-		"POST /internal/provider-connections/{connection_id}/credentials": sampleRotateProviderRequest(),
+		"POST /internal/provider-connections/{connection_id}/discover-models": discoverProviderModelsRequest{OrganizationID: "org-1"},
+		"POST /internal/provider-discovery/draft":                             application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
+		"POST /rpc/agent-controller/set-agent-authorization":                  application.SetAgentAuthorizationInput{RequestID: "set-defaults", AgentID: "agent-1", PrincipalID: "user-1", ExpectedAccessRevision: "access-1", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationApprove, ToolRules: []domain.ToolRule{}}},
+		"POST /rpc/agent-controller/list-workspace-agents":                    listWorkspaceAgentsRequest{RequestID: "list-workspace", OrganizationID: "org-1", PrincipalID: "user-1"},
+		"PUT /internal/provider-connections/{connection_id}/availability":     map[string]any{"request_id": "provider-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"PUT /internal/model-profiles/{model_profile_id}/availability":        map[string]any{"request_id": "model-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"PUT /internal/agent-templates/{template_id}/availability":            map[string]any{"request_id": "template-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"POST /internal/provider-connections":                                 sampleCreateProviderRequest(),
+		"POST /internal/provider-connections/{connection_id}/credentials":     sampleRotateProviderRequest(),
 		"PUT /internal/agents/{agent_id}/network-policy": application.SetAgentNetworkPolicyInput{
 			RequestID: "request-network", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
 			SetNetworkPolicy: ports.SetNetworkPolicy{NetworkPolicyReference: ports.NetworkPolicyReference{PolicyID: "builtin/allow-all", Revision: 1}, ExpectedResourceVersion: 7},
@@ -488,6 +497,10 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			path:   "/internal/agent-operations/missing-operation?organization_id=org-1",
 		},
 		{code: "dependency_unavailable", err: application.ErrDependencyUnavailable},
+		{code: "provider_endpoint_forbidden", err: ports.ErrProviderEndpointForbidden, method: http.MethodPost, path: "/internal/provider-connections/provider-1/discover-models", body: `{"organization_id":"org-1"}`},
+		{code: "provider_endpoint_unavailable", err: ports.ErrProviderEndpointUnavailable, method: http.MethodPost, path: "/internal/provider-connections/provider-1/discover-models", body: `{"organization_id":"org-1"}`},
+		{code: "provider_discovery_failed", err: ports.ErrProviderDiscoveryFailed, method: http.MethodPost, path: "/internal/provider-connections/provider-1/discover-models", body: `{"organization_id":"org-1"}`},
+
 		{code: "runtime_image_invalid", err: domain.ErrInvalidImageReference},
 		{code: "lifecycle_timeout", err: context.DeadlineExceeded},
 		{code: "internal_error", err: errors.New("unexpected failure")},
@@ -496,8 +509,8 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.code, func(t *testing.T) {
 			lifecycle := &lifecycleServiceStub{err: test.err}
-			boundary, err := NewHandler(
-				&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
+			boundary, err := newBusinessHandler(t,
+				&catalogServiceStub{getModelErr: test.err}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
 				func(context.Context) error { return nil })
@@ -538,6 +551,13 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			assertControlResponseSchema(t, compiler, contract.Errors.Response, response.Body.Bytes())
 			seen[test.code] = struct{}{}
 		})
+	}
+	for code, response := range authenticationErrorEvidence(t) {
+		if contract.Errors.StatusByCode[code] != response.status || contract.Errors.RetryableByCode[code] != response.retryable {
+			t.Fatalf("authentication HTTP error %s differs from contract", code)
+		}
+		assertControlResponseSchema(t, compiler, contract.Errors.Response, response.body)
+		seen[code] = struct{}{}
 	}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		t.Fatalf("error boundary coverage=%v contract=%v", seen, contract.Errors.StatusByCode)
@@ -592,7 +612,7 @@ func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
 		events := &agentEventServiceStub{page: application.AgentEventPage{
 			Events: []application.AgentEventView{event}, NextSequence: 1,
 		}}
-		boundary, err := NewHandler(
+		boundary, err := newBusinessHandler(t,
 			&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 			&agentQueryServiceStub{}, events, &networkPolicyServiceStub{},
 			func(context.Context) error { return nil },
@@ -799,6 +819,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
+	var instanceConnectionContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.schema.json"), &instanceConnectionContract)
+	if err := compiler.AddResource("https://antnest.local/contracts/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
+		t.Fatalf("load Runtime instance connection contract: %v", err)
+	}
 	var runtimeContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)
 	if err := compiler.AddResource("https://antnest.local/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
@@ -885,6 +910,9 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		application.ErrAgentNotReady,
 		application.ErrLifecycleConflict,
 		application.ErrDependencyUnavailable,
+		ports.ErrProviderEndpointForbidden,
+		ports.ErrProviderEndpointUnavailable,
+		ports.ErrProviderDiscoveryFailed,
 		context.DeadlineExceeded,
 		errors.New("unexpected failure"),
 	}
@@ -925,6 +953,12 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		t.Fatalf("configuration error differs from management contract: %d %+v", response.Code, payload)
 	}
 	seen[payload.Code] = struct{}{}
+	for code, response := range authenticationErrorEvidence(t) {
+		if contract.Errors.StatusByCode[code] != response.status || contract.Errors.RetryableByCode[code] != response.retryable {
+			t.Fatalf("authentication error %s differs from contract: %+v", code, response)
+		}
+		seen[code] = struct{}{}
+	}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		missing := make([]string, 0)
 		for code := range contract.Errors.StatusByCode {

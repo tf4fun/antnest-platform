@@ -2,6 +2,12 @@
 services:
   identity-service:
     image: ${ANTNEST_E2E_IDENTITY_IMAGE:-antnest/identity-service:local}
+  edge-gateway:
+    image: ${ANTNEST_E2E_GATEWAY_IMAGE:-antnest/edge-gateway:local}
+  runtime-egress:
+    image: ${ANTNEST_E2E_EGRESS_IMAGE:-antnest/runtime-egress:local}
+  temporal:
+    image: ${ANTNEST_E2E_TEMPORAL_IMAGE:-antnest/temporal:local}
   runtime-controller:
     image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
     environment:

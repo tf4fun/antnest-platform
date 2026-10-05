@@ -646,7 +646,7 @@ test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", (
 
 test("active Gateway contract describes the deployed Node Workspace routes", () => {
   const gateway = json("../../../contracts/edge-gateway/session-contract.json");
-  assert.equal(gateway.version, 14);
+  assert.equal(gateway.version, 15);
   assert.equal(
     gateway.routes.workspace_application.authentication,
     "browser_session_for_html; none_for_assets",
@@ -654,7 +654,7 @@ test("active Gateway contract describes the deployed Node Workspace routes", () 
   assert.equal(gateway.routes.workspace_application.prefix, "preserved");
   assert.equal(
     gateway.routes.workspace_application.html_identity,
-    "verified Gateway principal headers",
+    "signed organization-scoped workspace CCT plus verified presentation hints; SSR discovery only",
   );
   assert.equal(
     gateway.routes.workspace_application.upstream,

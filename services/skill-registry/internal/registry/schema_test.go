@@ -44,11 +44,11 @@ func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
 			t.Fatalf("%s response violates schema: %v\n%s", name, err, body)
 		}
 	}
-	handler := NewHandler(NewService(&memoryStore{}), testToken, nil)
+	handler := newTestHandler(t, NewService(&memoryStore{}))
 	published := httptest.NewRecorder()
-	handler.ServeHTTP(published, publishRequest(t,
+	handler.ServeHTTP(published, handler.Authenticate(publishRequest(t,
 		map[string]any{"request_id": "schema-1", "organization_id": testOrg, "actor_id": testActor},
-		skillZIP(t, "---\nname: code-review\ndescription: Helpful review\n---\n")))
+		skillZIP(t, "---\nname: code-review\ndescription: Helpful review\n---\n"))))
 	if published.Code != http.StatusCreated {
 		t.Fatalf("publish: %d %s", published.Code, published.Body.String())
 	}
@@ -58,7 +58,8 @@ func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	listRequest := httptest.NewRequest(http.MethodGet, "/internal/skills?organization_id="+testOrg, nil)
-	listRequest.Header.Set("Authorization", "Bearer "+testToken)
+	handler.Authenticate(listRequest)
+	listRequest.Header.Set("Content-Type", "application/json")
 	listed := httptest.NewRecorder()
 	handler.ServeHTTP(listed, listRequest)
 	if listed.Code != http.StatusOK {
@@ -68,7 +69,8 @@ func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
 	resolveBody, _ := json.Marshal(map[string]any{"organization_id": testOrg,
 		"refs": []Reference{{SkillID: value.SkillID, Version: 1}}})
 	resolveRequest := httptest.NewRequest(http.MethodPost, "/internal/skill-versions/resolve", bytes.NewReader(resolveBody))
-	resolveRequest.Header.Set("Authorization", "Bearer "+testToken)
+	handler.Authenticate(resolveRequest)
+	resolveRequest.Header.Set("Content-Type", "application/json")
 	resolved := httptest.NewRecorder()
 	handler.ServeHTTP(resolved, resolveRequest)
 	if resolved.Code != http.StatusOK {

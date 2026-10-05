@@ -1,3 +1,7 @@
+import {
+  testAuthentication,
+  workloadHeaders,
+} from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentAcpHttpServer } from "../../../../services/agent-acp-service/src/transport/http-server.js";
 import { SkillSourceError } from "../../../../services/agent-acp-service/src/domain/skill-source.js";
@@ -39,7 +43,8 @@ it("enforces the source-only bearer, exact contract, body bounds and sanitized f
   const inspect = vi.fn(() => Promise.resolve({ items: [projection] }));
   const artifact = vi.fn(() => Promise.resolve(record));
   server = new AgentAcpHttpServer({
-    skillSources: { token, service: { inspect, artifact } },
+    authentication: testAuthentication(),
+    skillSources: { service: { inspect, artifact } },
     ready: () => Promise.resolve(true),
     application: {} as AcpApplicationPort,
     maxWebSocketPayloadBytes: 1024,
@@ -53,7 +58,7 @@ it("enforces the source-only bearer, exact contract, body bounds and sanitized f
     fetch(url + path, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credential}`,
+        ...(credential === token ? workloadHeaders("skill-registry") : {}),
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -77,9 +82,9 @@ it("enforces the source-only bearer, exact contract, body bounds and sanitized f
       })
     ).status,
   ).toBe(400);
-  expect((await call(route + "?actor_id=x", input)).status).toBe(400);
+  expect((await call(route + "?actor_id=x", input)).status).toBe(403);
   expect((await call(route, { ...input, pad: "x".repeat(8192) })).status).toBe(
-    400,
+    413,
   );
   expect(await (await call(route, input)).json()).toEqual({
     items: [projection],

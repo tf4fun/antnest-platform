@@ -8,10 +8,18 @@ OpenAPI.
 
 ## Workspace routes
 
-Version 14 of `session-contract.json` includes the Node Workspace HTML, HTTP
+Version 15 of `session-contract.json` includes the Node Workspace HTML, HTTP
 API and SSE routes. Gateway authenticates HTML and business API requests, while
 hashed static assets are served without a browser session. The browser uses
 this route set instead of a direct ACP connection.
+
+Revision 15 adds mandatory internal workload authentication and forwards an
+unchanged Identity revision-14 CCT selected by the actual route. The entire
+browser X-Antnest namespace and both authentication headers are removed; CSRF
+is validated locally from private context. See
+[service authentication](service-authentication.md) for Agent scope, TLS,
+credential rotation, stream expiry and pending consumer batches. The identity
+headers below remain presentation hints, not workload or user authentication.
 
 For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
 `X-Antnest-*` identity header and injects verified `X-Antnest-Organization-ID`,

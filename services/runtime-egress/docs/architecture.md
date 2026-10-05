@@ -56,9 +56,12 @@ ownership and failover design is introduced.
 
 ## 2. Trust Model
 
-Docker or Kubernetes networking is trusted. The control listener
-binds one explicit control-network address and is reachable only by internal
-control-plane services; a wildcard control bind is rejected. The UDP listener
+Network membership is not workload authority. The control listener binds one
+explicit Controller-purpose address and admits only a verified Agent Controller
+token or mTLS identity before RPC decoding and application effects. Wildcard
+binds and an IP shared with the Runtime UDP endpoint are rejected. A separate
+loopback health listener serves only `GET/HEAD /status`; it grants no business
+access. Purpose networks still limit reachability. The UDP listener
 binds the single advertised Runtime-network address rather than a wildcard, so
 joining control and external networks does not expose the packet socket on
 those interfaces. Runtime cannot reach Egress PostgreSQL or the control
@@ -72,20 +75,22 @@ address to be an active Agent Tunnel IPv4.
 
 The crate uses the following modules:
 
-| Module | Responsibility | Must not depend on |
-| --- | --- | --- |
-| `config` | Parse and validate process configuration | Database, packet engine |
-| `domain` | Agent network, policy revision, assignment, and state invariants | Tokio, HTTP, SQL, Linux |
-| `allocator` | PID-style slot selection and quarantine transitions | HTTP, packet bytes |
-| `policy` | Validate, compile, and evaluate immutable policy snapshots, including the non-bypassable special/private-address baseline and resolver exception | PostgreSQL, sockets |
-| `packet` | Parse IPv4/TCP, derive flow keys, and build TCP rejection | Database, policy storage |
-| `flow` | Bounded first-owner flow table and reverse lookup | SQL, kernel commands |
-| `dataplane` | Coordinate UDP, TUN, compiled-policy decisions, and flow ownership; it never reimplements destination policy | HTTP DTOs, PostgreSQL |
-| `repository` | Egress PostgreSQL migrations and transactional control writes | UDP, TUN |
-| `control` | Map internal RPCs to application operations and stable errors | Linux implementation details |
-| `kernel` | TUN, routes, nftables/NAT, and conntrack cleanup | Agent or policy semantics |
-| `telemetry` | Logs and control-plane trace wiring | Packet payload logging |
-| `application` | Mutation barriers and orchestration across domain ports | Axum extractors, raw SQL |
+| Module         | Responsibility                                                                                                                                   | Must not depend on                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| `config`       | Parse and validate process configuration                                                                                                         | Database, packet engine            |
+| `domain`       | Agent network, policy revision, assignment, and state invariants                                                                                 | Tokio, HTTP, SQL, Linux            |
+| `allocator`    | PID-style slot selection and quarantine transitions                                                                                              | HTTP, packet bytes                 |
+| `policy`       | Validate, compile, and evaluate immutable policy snapshots, including the non-bypassable special/private-address baseline and resolver exception | PostgreSQL, sockets                |
+| `packet`       | Parse IPv4/TCP, derive flow keys, and build TCP rejection                                                                                        | Database, policy storage           |
+| `flow`         | Bounded first-owner flow table and reverse lookup                                                                                                | SQL, kernel commands               |
+| `dataplane`    | Coordinate UDP, TUN, compiled-policy decisions, and flow ownership; it never reimplements destination policy                                     | HTTP DTOs, PostgreSQL              |
+| `repository`   | Egress PostgreSQL migrations and transactional control writes                                                                                    | UDP, TUN                           |
+| `control`      | Map internal RPCs to application operations and stable errors                                                                                    | Linux implementation details       |
+| `service_auth` | Exact caller identity, bounded hash profile and JSON carrier validation                                                                          | PostgreSQL, packet engine          |
+| `transport`    | Startup TLS validation, verified connection identity, bounded handshake ownership and local health probe                                         | Application effects, packet engine |
+| `kernel`       | TUN, routes, nftables/NAT, and conntrack cleanup                                                                                                 | Agent or policy semantics          |
+| `telemetry`    | Logs and control-plane trace wiring                                                                                                              | Packet payload logging             |
+| `application`  | Mutation barriers and orchestration across domain ports                                                                                          | Axum extractors, raw SQL           |
 
 Unsafe Rust is allowed only in the Linux TUN adapter and must be wrapped by a
 small safe API with Linux container tests. Packet parsing and flow logic remain
@@ -230,13 +235,13 @@ the old Agent row has completed quarantine.
 Policy revisions are immutable. Schema version 1 is:
 
 ```json
-{"schema_version":1,"action":"allow_all"}
+{ "schema_version": 1, "action": "allow_all" }
 ```
 
 or:
 
 ```json
-{"schema_version":1,"action":"deny_all"}
+{ "schema_version": 1, "action": "deny_all" }
 ```
 
 The policy universe excludes platform and special-use address space. In schema
@@ -448,10 +453,20 @@ flow, reaching an upstream, or adding a session protocol to the data plane.
 
 ## Service authentication rollout
 
-The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/egress/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#32](https://github.com/tf4fun/antnest-platform/issues/32), [#34](https://github.com/tf4fun/antnest-platform/issues/34), [#36](https://github.com/tf4fun/antnest-platform/issues/36); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+The [platform authentication contract](../../../contracts/platform/service-authentication.md),
+[caller catalog](../../../contracts/egress/callers.json) and
+[Egress revision 5 profile](../../../contracts/egress/service-authentication.md)
+define verified workload authority and exact token/mTLS transport. Egress checks
+all control routes and fallbacks before body, repository and kernel effects.
+The service has no outbound business HTTP client and does not verify user CCTs;
+Controller owns the lifecycle operation. Incoming user authority carriers are
+removed before application and content capture. mTLS identity comes only from a
+verified TLS connection. Handshakes are concurrent, bounded to 16 and expire
+after five seconds; shutdown cancels pending handshakes.
+
+Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+for owning-service admission and the remaining coordinated deployment and
+cross-service acceptance. HTTP authentication belongs to #32. UDP inner-source
+binding [#34](https://github.com/tf4fun/antnest-platform/issues/34) and DNS
+restrictions [#36](https://github.com/tf4fun/antnest-platform/issues/36) remain
+independent work with unchanged packet format and trust limitations.

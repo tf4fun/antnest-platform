@@ -7,9 +7,10 @@ import {
   type SkillSourceRecord,
   type SkillProjection,
 } from "../domain/skill-source.js";
-import type { ExecutionIdentity } from "../domain/execution-configuration.js";
+import type { ExecutionIdentity, AgentConfiguration } from "../domain/execution-configuration.js";
+import type { RuntimeBinding } from "../domain/types.js";
 
-type Binding = { runtime_execution_id: string; mcp_endpoint: string };
+type Binding = NonNullable<AgentConfiguration["runtime"]>;
 type Dependencies = {
   directory: {
     inspect(identity: ExecutionIdentity): {
@@ -23,7 +24,7 @@ type Dependencies = {
   runtime: {
     verify(
       record: SkillSourceRecord,
-      binding: Binding,
+      binding: RuntimeBinding,
       signal: AbortSignal,
     ): Promise<"current" | "changed" | "unknown">;
   };
@@ -90,14 +91,27 @@ export class SkillSources {
           record.projection.content_digest !== expected.digest)
       )
         throw new SkillSourceError("content_changed");
-      if (!before.accepting_runs || before.runtime === null)
+      if (
+        !before.accepting_runs ||
+        before.runtime === null ||
+        before.runtime.connection_id === undefined
+      )
         throw new SkillSourceError("source_unavailable");
       const slot = this.dependencies.gate.begin({ organizationId, agentId: key.agent_id }, signal);
       try {
         slot.signal.throwIfAborted();
         // Once dispatched, finish this bounded read before yielding to a new Run.
         // A foreground preemption cancels delivery, not the observation acknowledgement.
-        const outcome = await this.dependencies.runtime.verify(record, before.runtime, signal);
+        const outcome = await this.dependencies.runtime.verify(
+          record,
+          {
+            revision: before.runtime.runtime_revision,
+            executionId: before.runtime.runtime_execution_id,
+            mcpEndpoint: before.runtime.mcp_endpoint,
+            connectionId: before.runtime.connection_id,
+          },
+          signal,
+        );
         slot.signal.throwIfAborted();
         if (outcome === "unknown") throw new SkillSourceError("source_unavailable");
         if (outcome === "changed") {
@@ -115,7 +129,9 @@ export class SkillSources {
         const after = this.dependencies.directory.inspect(identity).agent;
         if (
           !after.accepting_runs ||
-          after.runtime?.runtime_execution_id !== before.runtime.runtime_execution_id ||
+          after.runtime?.runtime_revision !== before.runtime.runtime_revision ||
+          after.runtime.connection_id !== before.runtime.connection_id ||
+          after.runtime.runtime_execution_id !== before.runtime.runtime_execution_id ||
           after.runtime.mcp_endpoint !== before.runtime.mcp_endpoint
         )
           throw new SkillSourceError("source_unavailable");

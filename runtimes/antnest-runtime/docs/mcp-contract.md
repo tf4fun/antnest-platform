@@ -11,13 +11,16 @@ Runtime implements MCP `2026-07-28` with the official Rust `rmcp` `3.4.1` SDK an
 Streamable HTTP server transport.
 
 - MCP endpoint: `POST /mcp`.
-- Status endpoint: `GET /status`.
+- Full status endpoint: authenticated `GET /status`; reduced Docker liveness:
+  identity-free `GET/HEAD /status/live`.
 - The server advertises tools and one read-only Runtime information resource.
 - The server is stateless at the MCP protocol layer.
-- Internal platform networking is trusted; Runtime does not implement MCP
-  authorization or OAuth.
-- Dynamic Docker/Kubernetes Host names are accepted. Platform network isolation,
-  not HTTP Host validation, prevents external access.
+- RC-issued per-instance service tokens authenticate all MCP methods/subpaths
+  and private Skill routes before SDK dispatch. ACP alone may execute; RC and ACP
+  may read full status. This is workload admission, not end-user OAuth.
+- Only the server-owned `antnest-runtime-<agent_id>` alias and loopback hosts with
+  the exact listen port pass Host admission. No wildcard or request-selected
+  hostname is trusted. See the [instance contract](../../../contracts/runtime/instance-connection.md).
 - The SDK owns MCP request metadata, version compatibility, cancellation,
   JSON-RPC envelopes, and Streamable HTTP behavior.
 

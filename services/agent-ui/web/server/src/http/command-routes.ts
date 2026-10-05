@@ -15,6 +15,8 @@ import {
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { BridgeCapacityError } from "../bridge/registry.ts";
+import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
+import { strictObject } from "../adapters/strict-json.ts";
 
 const prefix = ["api", "app", "workspace", "v1", "agents"];
 const id = z.string().min(1).max(200);
@@ -265,20 +267,11 @@ export function routeParts(pathname: string): string[] | null {
 }
 
 export function trustedScope(request: Request): BridgeScope | null {
-  const organizationId = request.headers.get("x-antnest-organization-id");
-  const principalId = request.headers.get("x-antnest-principal-id");
-  const headerAgentId = request.headers.get("x-antnest-agent-id");
-  if (
-    !organizationId ||
-    !principalId ||
-    !headerAgentId ||
-    ![organizationId, principalId, headerAgentId].every(
-      (value) =>
-        value.length <= 200 && value.trim() === value && !value.includes(","),
-    )
-  )
-    return null;
-  return { organizationId, principalId, agentId: headerAgentId };
+  const context = verifiedRequestContext(request.headers);
+  if (!context?.claims.agt) return null;
+  const scope = { organizationId: context.claims.org, principalId: context.claims.sub, agentId: context.claims.agt };
+  bindScopeContext(scope, context);
+  return scope;
 }
 
 export function bridgeCapacityResponse(cause: unknown): Response | null {
@@ -342,7 +335,7 @@ export async function readBody(
   }
   try {
     request.signal.throwIfAborted();
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return strictObject(bytes);
   } catch {
     throw new SyntaxError("Invalid JSON encoding");
   }

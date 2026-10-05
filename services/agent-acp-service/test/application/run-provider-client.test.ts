@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../support/model-network.js";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderClients } from "../../src/application/provider-clients.js";
 import { RunExecutor, type RunExecutorDependencies } from "../../src/application/run-executor.js";
@@ -81,6 +82,7 @@ function setup() {
   const finish = vi.fn<ExecutionRepository["finish"]>().mockResolvedValue();
   let sequence = 0;
   const executor = new RunExecutor({
+    runtimeConnections: { releaseRun: vi.fn() },
     providers,
     tools,
     contextBuilder: { build },
@@ -121,6 +123,7 @@ describe("Run logical Provider client", () => {
       const source = new TransformStream<Uint8Array, Uint8Array>();
       const writer = source.writable.getWriter();
       const transport = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
         fetchFn: () =>
           Promise.resolve(
             new Response(source.readable, {

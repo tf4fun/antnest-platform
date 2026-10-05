@@ -5,7 +5,11 @@ import type { SessionConfiguration } from "../../src/domain/session-configuratio
 import type { SessionRecord } from "../../src/domain/types.js";
 import type { RunRepository } from "../../src/ports/run-repository.js";
 import type { RuntimeProtectionRepository } from "../../src/ports/execution-repository.js";
-import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
+import {
+  executionConfiguration,
+  executionIdentity,
+  runtimeConfiguration,
+} from "../fixtures/execution-configuration.js";
 import { localExecution } from "../support/local-execution.js";
 
 const now = new Date("2026-09-14T00:00:00Z");
@@ -90,7 +94,7 @@ describe("local prompt configuration", () => {
         {
           organizationId: binding.organizationId,
           agentId: binding.agentId,
-          runtimeRevision: "runtime-1",
+          runtimeRevision: runtimeConfiguration().runtime_revision,
         },
         expect.any(AbortSignal),
       );
@@ -100,17 +104,17 @@ describe("local prompt configuration", () => {
   it("uses confirmed replacement revision without deleting old stopping evidence", async () => {
     const test = await setup();
     test.protection.hasUnstoppedRuntimeCalls.mockImplementation(({ runtimeRevision }) =>
-      Promise.resolve(runtimeRevision === "runtime-1"),
+      Promise.resolve(runtimeRevision === runtimeConfiguration().runtime_revision),
     );
     await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
       code: "runtime_barrier_required",
     });
     const next = executionConfiguration();
     next.revision = 2;
-    next.agents[0]!.runtime!.runtime_revision = "runtime-replacement";
+    next.agents[0]!.runtime = runtimeConfiguration(2);
     await test.directory.apply(next);
     await expect(test.coordinator.accept(test.input)).resolves.toMatchObject({
-      snapshot: { runtime: { revision: "runtime-replacement" } },
+      snapshot: { runtime: { revision: runtimeConfiguration(2).runtime_revision } },
     });
     expect(test.repository.acceptRun).toHaveBeenCalledOnce();
   });
@@ -197,6 +201,7 @@ describe("local prompt configuration", () => {
       next.revision = 2;
       if (scenario === "disabled") {
         next.agents[0]!.accepting_runs = false;
+        delete next.agents[0]!.runtime?.credential;
         next.agents[0]!.unavailable_reason = "Rebuilding";
       }
       if (scenario === "revoked") next.agents[0]!.principal_ids = [];

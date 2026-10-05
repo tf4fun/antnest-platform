@@ -1,6 +1,7 @@
 import { context, propagation, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import { IncomingMessage, ServerResponse } from "node:http";
+import { testAuthentication } from "../support/auth-fixture.js";
 import { Socket } from "node:net";
 import { getEventListeners } from "node:events";
 import { serveAgentExecutionState } from "../../src/transport/agent-execution-state.js";
@@ -77,6 +78,11 @@ describe("workspace state HTTP and SSE", () => {
       request.method = "POST";
       request.url = watchPath;
       request.headers = { ...identityHeaders(), "content-type": "application/json" };
+      request.rawHeaders = Object.entries(request.headers).flatMap(([name, value]) => [
+        name,
+        String(value),
+      ]);
+      expect(await testAuthentication().admit(request)).not.toHaveProperty("status");
       request.push(Buffer.from("{}"));
       request.push(null);
       const response = new ServerResponse(request);

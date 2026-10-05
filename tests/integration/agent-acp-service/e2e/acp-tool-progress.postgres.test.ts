@@ -38,10 +38,13 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool progress", () => {
     await migrate(pool);
     fixture = await startProgressFixture();
     app = await startBoundaryApplication(pool);
-    app.configuration.agents[0]!.runtime!.mcp_endpoint = fixture.endpoint.href;
+    app.configuration.agents[0]!.runtime = fixture.authority.runtime;
     await app.publishConfiguration();
     const tools = new McpToolCatalog({
-      runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+      runtimeDialer: new OfficialMcpDialer({
+        trust: "runtime",
+        connections: app.connections,
+      }),
       revisions: { getClientMcpRevision: () => Promise.resolve([]) },
     });
     app.tools.call.mockImplementation((input) => tools.call(input));

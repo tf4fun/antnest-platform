@@ -3,6 +3,7 @@ package platform
 import "errors"
 
 var (
+	ErrImageNotAllowed            = errors.New("runtime image is not allowed")
 	ErrInvalidImageReference      = errors.New("invalid tagged image reference")
 	ErrImageNotFound              = errors.New("image is not installed on the deployment platform")
 	ErrImageResolutionUnavailable = errors.New("platform image resolution is unavailable")

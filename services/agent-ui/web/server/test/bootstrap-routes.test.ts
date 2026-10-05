@@ -1,3 +1,4 @@
+import { TestRequest as Request } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createBootstrapHandler } from "../src/http/bootstrap-routes.ts";
@@ -38,7 +39,7 @@ test("bootstrap returns the trusted principal and only safe Controller Agent fac
   });
 });
 
-test("bootstrap rejects missing or malformed trusted administrator context before discovery", async () => {
+test("bootstrap rejects raw identity and administrator hints before discovery", async () => {
   let contacted = 0;
   const handler = createBootstrapHandler({
     epoch: "epoch-1", now: Date.now,
@@ -50,7 +51,7 @@ test("bootstrap rejects missing or malformed trusted administrator context befor
     { ...headers, "x-antnest-administrator": "yes" },
     { ...headers, "x-antnest-principal-id": "other, forged" },
   ]) {
-    const response = await handler(new Request(path, { headers: requestHeaders }));
+    const response = await handler(new globalThis.Request(path, { headers: requestHeaders }));
     assert.equal(response?.status, 401);
   }
   assert.equal(contacted, 0);

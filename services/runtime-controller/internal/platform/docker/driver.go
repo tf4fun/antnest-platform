@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
@@ -31,11 +32,14 @@ var (
 )
 
 type Config struct {
-	ControllerScope    string
-	ManagementNetwork  string
-	SystemSkillsVolume string
-	RuntimeOTEL        map[string]string
-	SkillMountGate     SkillMountGate
+	AllowedImages         []string
+	ControllerScope       string
+	ManagementNetwork     string
+	SystemSkillsVolume    string
+	RuntimeOTEL           map[string]string
+	SkillMountGate        SkillMountGate
+	InstanceMountGate     InstanceMountGate
+	RuntimeAuthentication map[string]string
 }
 
 type SkillMountGate interface {
@@ -132,6 +136,7 @@ type ContainerSpec struct {
 type Driver struct {
 	engine Engine
 	config Config
+	images *ImagePolicy
 }
 
 func NewDriver(engine Engine, config Config) (*Driver, error) {
@@ -144,7 +149,11 @@ func NewDriver(engine Engine, config Config) (*Driver, error) {
 	if config.ControllerScope == "" || config.ManagementNetwork == "" || config.SystemSkillsVolume == "" {
 		return nil, fmt.Errorf("controller scope, management network, and system Skills volume are required")
 	}
-	return &Driver{engine: engine, config: config}, nil
+	images, err := ParseImagePolicy(config.AllowedImages)
+	if err != nil {
+		return nil, err
+	}
+	return &Driver{engine: engine, config: config, images: images}, nil
 }
 
 func (d *Driver) Ready(ctx context.Context) error {
@@ -217,6 +226,14 @@ func (d *Driver) Create(
 			return dockerFailure("platform_unavailable", err, false)
 		}
 	}
+	if d.config.InstanceMountGate != nil || value.RuntimeSpec.Authentication != nil {
+		if d.config.InstanceMountGate == nil || value.RuntimeSpec.Authentication == nil || value.InstanceAuthentication == nil || value.InstanceAuthentication.ConnectionID != value.RuntimeSpec.Authentication.ConnectionID || value.InstanceAuthentication.ReceiverDigest != value.RuntimeSpec.Authentication.ReceiverDigest {
+			return failed(deployment.EffectNotStarted, "invalid_request", errors.New("accepted instance authority and mount gate are required"))
+		}
+		if err := d.config.InstanceMountGate.Prepare(ctx, key, value.InstanceAuthentication); err != nil {
+			return dockerFailure("instance_receiver_preparation_failed", err, true)
+		}
+	}
 
 	name := containerName(key.AgentID)
 	existing, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), name)
@@ -224,7 +241,7 @@ func (d *Driver) Create(
 		return dockerFailure("platform_unavailable", err, false)
 	}
 	if err == nil {
-		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization)
+		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication)
 	}
 
 	spec, err := d.containerSpec(value, digest)
@@ -235,7 +252,7 @@ func (d *Driver) Create(
 	if err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil {
-			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication)
 		}
 		return dockerFailure(
 			"platform_unavailable", errors.Join(err, inspectErr), errors.Is(err, ErrConflict),
@@ -247,10 +264,15 @@ func (d *Driver) Create(
 				errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
 		}
 	}
+	if auth := value.RuntimeSpec.Authentication; auth != nil {
+		if err := d.config.InstanceMountGate.VerifyRuntimeMount(ctx, key, auth, containerID); err != nil {
+			return failed(deployment.EffectUnknown, "instance_mount_verification_failed", errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
+		}
+	}
 	if err := d.engine.StartContainer(ctx, containerID); err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil && d.matches(existing, key, digest) && existing.Running {
-			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication)
 		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
 	}
@@ -278,7 +300,7 @@ func (d *Driver) removeRejectedSkillCandidate(containerID string, key deployment
 }
 
 func (d *Driver) convergeContainer(
-	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization,
+	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization, auth *deployment.RuntimeAuthentication,
 ) deployment.EffectOutcome {
 	if !d.matches(existing, key, digest) {
 		return failed(
@@ -290,6 +312,11 @@ func (d *Driver) convergeContainer(
 	if prepared != nil {
 		if err := d.config.SkillMountGate.VerifyRuntimeMount(ctx, prepared.Key, existing.ID, prepared.ManifestDigest); err != nil {
 			return failed(deployment.EffectUnknown, "skill_mount_verification_failed", err)
+		}
+	}
+	if auth != nil {
+		if err := d.config.InstanceMountGate.VerifyRuntimeMount(ctx, key, auth, existing.ID); err != nil {
+			return failed(deployment.EffectUnknown, "instance_mount_verification_failed", err)
 		}
 	}
 	if existing.Running {
@@ -333,6 +360,11 @@ func (d *Driver) Delete(
 	}
 	container, err := d.engine.InspectContainer(ctx, containerName(key.AgentID))
 	if errors.Is(err, ErrNotFound) {
+		if d.config.InstanceMountGate != nil {
+			if err := d.config.InstanceMountGate.Remove(ctx, key); err != nil {
+				return dockerFailure("instance_receiver_cleanup_failed", err, true)
+			}
+		}
 		return completed()
 	}
 	if err != nil {
@@ -352,6 +384,11 @@ func (d *Driver) Delete(
 	}
 	if err := d.engine.RemoveContainer(ctx, container.ID); err != nil && !errors.Is(err, ErrNotFound) {
 		return dockerFailure("platform_unavailable", err, true)
+	}
+	if d.config.InstanceMountGate != nil {
+		if err := d.config.InstanceMountGate.Remove(ctx, key); err != nil {
+			return dockerFailure("instance_receiver_cleanup_failed", err, true)
+		}
 	}
 	return completed()
 }
@@ -556,6 +593,11 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 	for key, raw := range d.config.RuntimeOTEL {
 		environment[key] = raw
 	}
+	if value.RuntimeSpec.Authentication != nil {
+		for key, raw := range d.config.RuntimeAuthentication {
+			environment[key] = raw
+		}
+	}
 	if value.ImageReference != "" {
 		environment["ANTNEST_RUNTIME_IMAGE_REFERENCE"] = value.ImageReference
 		environment["ANTNEST_RUNTIME_IMAGE_ID"] = value.ImageRef
@@ -570,7 +612,7 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 			skillsVolume = value.PreparedMaterialization.VolumeName
 		}
 	}
-	return ContainerSpec{
+	spec := ContainerSpec{
 		Name: containerName(value.RuntimeSpec.AgentID), Image: value.ImageRef, User: "0:0",
 		Environment: environment,
 		Labels: map[string]string{
@@ -606,7 +648,12 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 			StartInterval: 2 * time.Second,
 			Retries:       3,
 		},
-	}, nil
+	}
+	if value.RuntimeSpec.Authentication != nil {
+		spec.Mounts[instanceauth.Directory] = Mount{Source: instanceVolumeName(instanceauth.Identity{Scope: d.config.ControllerScope, AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation}), ReadOnly: true, NoCopy: true}
+		spec.Healthcheck.Test = []string{"CMD", "curl", "--fail", "--silent", "http://127.0.0.1:" + port + "/status/live"}
+	}
+	return spec, nil
 }
 
 func (d *Driver) matches(container Container, key deployment.Key, digest string) bool {

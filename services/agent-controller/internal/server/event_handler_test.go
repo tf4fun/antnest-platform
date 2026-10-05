@@ -183,7 +183,7 @@ func (response *deadlineResponseRecorder) SetWriteDeadline(deadline time.Time) e
 
 func newEventTestHandler(t *testing.T, events AgentEventService) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 		&agentQueryServiceStub{}, events, &networkPolicyServiceStub{},
 

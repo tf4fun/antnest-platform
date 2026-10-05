@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 
 const org = process.env.ANTNEST_E2E_ORG_ID;
@@ -13,16 +14,16 @@ const old = process.env.ANTNEST_E2E_DISCOVERY_PREVIOUS
 assert(/^org_[0-9a-f]{32}$/u.test(org));
 assert(/^user_[0-9a-f]{32}$/u.test(actor));
 assert(/^agent_[0-9a-f]{32}$/u.test(agent));
-const registryToken = process.env.ANTNEST_E2E_SKILL_REGISTRY_TOKEN;
-const sourceToken = process.env.ANTNEST_E2E_SKILL_SOURCE_TOKEN;
+const registryToken = readFileSync("/run/auth/registry-token", "utf8");
+const sourceToken = readFileSync("/run/auth/source-token", "utf8");
 assert(registryToken && sourceToken);
 async function call(path, value, status = 200, source = false) {
   const response = await fetch(
-    `http://${source ? "agent-acp-service" : "skill-registry"}:8080${path}`,
+    `${source ? process.env.ANTNEST_E2E_SOURCE_URL : process.env.ANTNEST_E2E_REGISTRY_URL}${path}`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${source ? sourceToken : registryToken}`,
+        "Antnest-Service-Authorization": `Bearer ${source ? sourceToken : registryToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(value),

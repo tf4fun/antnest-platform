@@ -1,3 +1,4 @@
+import { TestRequest as Request } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AcpBridgeCallbacks } from "../src/adapters/acp-http.ts";

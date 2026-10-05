@@ -16,7 +16,7 @@ export function selectNetworkOctet(subnets, start) {
   const occupied = subnets.map((subnet) => ipaddr.parseCIDR(subnet));
   for (let offset = 0; offset < 200; offset++) {
     const octet = 1 + ((start - 1 + offset) % 200);
-    const free = [242, 243].every((second) => {
+    const free = [242, 243, 244].every((second) => {
       const address = ipaddr.parse(`10.${second}.${octet}.0`);
       return occupied.every(
         ([network, prefix]) =>

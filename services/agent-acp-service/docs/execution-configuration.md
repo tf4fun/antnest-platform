@@ -53,8 +53,9 @@ Runtime Skill summaries and fetches a selected body through the existing Runtime
 path when needed.
 
 `execution_configurations` stores only the non-secret current configuration and
-revision in ACP's database. Credentials remain inside volatile logical Provider
-clients. A stored revision is not current-process readiness. Equal-revision
+revision in ACP's database. Provider credentials remain inside volatile logical
+Provider clients. Runtime credentials are also excluded from this stored projection.
+A stored revision is not current-process readiness. Equal-revision
 publication after restart restores credentials; older input cannot initialize
 the service or reverse a newer revocation.
 
@@ -69,6 +70,57 @@ commit acknowledgement must not trap retries behind an older cached revision.
 The in-memory directory contains only successfully published configurations;
 stored state and volatile client material are separate facts. Revoked handles
 remain unusable after re-enabling a Provider; re-enabling creates a fresh client.
+
+### Runtime instance authentication: #30 owning-service admission
+
+The [private Runtime connection contract](../../../contracts/runtime/instance-connection.md)
+requires an accepting Agent's publication to carry its current `connection_id`
+and ACP-only `credential`. A closed Agent must omit the credential; its retained
+Runtime fields are fences, not usable authority. The domain parsers enforce
+this distinction. Public configuration and Run snapshots contain only the
+revision, execution ID, MCP endpoint and public connection ID.
+
+The sender adapter prepares an ACP-owned volatile 0700 directory and one 0600
+`antnest-runtime` file per connection. Each request verifies the trusted file
+again. Same-ID credentials cannot change, including equal-revision replay.
+Accepted-operation references can retain obsolete authority through closure;
+closing metadata alone cannot reconstruct it after restart. The adapter pins
+the installed origin, bypasses environment proxies, rejects redirects, removes
+unrelated user/service/CCT authority and preserves separate maintenance tickets.
+The native receiver currently supports only explicitly opted-in HTTP token mode.
+
+Production publication stages and validates sender files before the database CAS,
+then publishes only the credential-free projection. Equal-revision replay also
+checks the installed file and immutable token identity. Failure rolls back an
+uncommitted candidate or closes the affected organization after persistence;
+accepted references remain available for their original cleanup.
+
+Acceptance retains the full Runtime reference before its durable commit. Known
+rejection releases it; an uncertain acceptance or unresolved terminal outcome
+does not. MCP tools and resources, Skill source observation, maintenance and
+temporary installation all use the per-instance sender. A new foreground or
+source operation requires current publication. Accepted maintenance and temporary
+cleanup can use retained original authority through closure without granting new
+execution. Learning recovery obtains this authority by persisted organization/Agent
+scope, including closure without a connection ID and principal revocation;
+ordinary learning reads still require current authorized access.
+
+Maintenance intents persist revision and connection ID alongside execution ID
+and endpoint. Old incomplete references fail closed; migration does not invent
+credentials. Settlement releases operation references only after the durable ACK.
+Temporary Skill scope derives the same reference from the immutable accepted Run,
+and cleanup cannot substitute a different endpoint or connection. A native
+authentication rejection proves only that HTTP attempt was not dispatched; it
+never clears an earlier unknown effect or cleanup barrier.
+
+Startup owns a fresh private directory; cold public metadata cannot restore a
+bearer. Normal shutdown, failed startup and worker ownership loss close the owned
+dispatcher and remove sender files. The ACP owning-service gates pass on this
+feature branch: 1616 unit tests, 201 component tests, 330 PostgreSQL tests, and
+isolated production-image acceptance including 18 Runtime checks and 56
+authenticated official-MCP requests. The Docker dependencies are ACP-owned
+protocol peers; these checks do not claim coordinated deployment or cross-service
+business/security acceptance, which remain the final integration batch.
 
 ## Local Identity And Session Configuration
 
@@ -219,7 +271,8 @@ an idle subscription and does not add polling or heartbeats. Reconnection reads
 current state instead of assuming that the terminal frame was delivered.
 
 `get-agent-execution-state` and `watch-agent-execution-state` are read-only
-internal POST routes. They consume trusted caller headers and an empty JSON
+internal POST routes on the workspace listener. They consume verified Gateway/UI
+workload, an Agent-scoped signed CCT and an empty JSON
 body. The state derives from the live execution directory, local Agent slot and
 durable old-Runtime protection, never Controller Run admissions or a new table.
 Read failure is unavailable, not idle. Busy includes acceptance and terminal
@@ -245,11 +298,12 @@ Run acceptance resolves the current organization configuration and the captured
 Session overrides locally. The immutable execution snapshot identifies the
 organization, logical Provider connection and model profile, and fixes model
 parameters, authorization and Runtime binding. It contains no Controller
-admission ID, credential reference or credential version.
+admission ID, bearer, Provider credential revision or maintenance ticket.
+The Runtime connection ID is a public part of the immutable binding.
 
 The local execution deadline is fixed when accepting the input, using ACP's
 execution timeout. It is independent of lifecycle settlement and is not extended
-by configuration replay or reconnect. Credential lookup is absent from Run
+by configuration replay or reconnect. Provider credential lookup is absent from Run
 acceptance and execution: the executor holds a logical client for actual work,
 and that client injects current authentication into each outgoing model request.
 Model loops and permission classification receive no secret field. Retirement

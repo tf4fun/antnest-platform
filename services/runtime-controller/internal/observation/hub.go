@@ -118,6 +118,14 @@ func (r *Repository) GetOperation(ctx context.Context, requestID string) (deploy
 	return r.next.GetOperation(ctx, requestID)
 }
 
+func (r *Repository) GenerationOperation(ctx context.Context, key deployment.Key) (deployment.Operation, error) {
+	store, ok := r.next.(repository.InstanceCredentialStore)
+	if !ok {
+		return deployment.Operation{}, repository.ErrNotFound
+	}
+	return store.GenerationOperation(ctx, key)
+}
+
 func (r *Repository) GetEnvironment(ctx context.Context, agentID string) (deployment.Environment, error) {
 	return r.next.GetEnvironment(ctx, agentID)
 }

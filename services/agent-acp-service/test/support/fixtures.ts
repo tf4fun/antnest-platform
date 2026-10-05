@@ -1,3 +1,4 @@
+import { testHeaders } from "./auth-fixture.js";
 import type {
   ConnectionBinding,
   RunExecutionSnapshot,
@@ -43,11 +44,11 @@ export function binding(): ConnectionBinding {
 export function identityHeaders(
   identity: Pick<ConnectionBinding, "organizationId" | "principalId" | "agentId"> = binding(),
 ): Record<string, string> {
-  return {
+  return testHeaders({
     "x-antnest-organization-id": identity.organizationId,
     "x-antnest-principal-id": identity.principalId,
     "x-antnest-agent-id": identity.agentId,
-  };
+  });
 }
 
 export function snapshot(): RunExecutionSnapshot {
@@ -66,6 +67,7 @@ export function snapshot(): RunExecutionSnapshot {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
       mcpEndpoint: "http://runtime-1:8080/mcp",
+      connectionId: "rci_11111111111111111111111111111111",
     },
     executionSpec: {
       systemPrompt: "system",

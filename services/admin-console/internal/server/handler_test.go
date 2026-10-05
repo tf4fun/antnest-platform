@@ -563,7 +563,7 @@ func TestHistoricalCatalogRevisionReadsRemainOrganizationScopedAndSecretFree(t *
 		t, handler, http.MethodGet,
 		"/api/admin/model-profile-revisions/model-revision-1", "",
 	)
-	if modelResponse.Code != http.StatusNotFound || len(backend.calls) != 0 {
+	if modelResponse.Code != http.StatusForbidden || len(backend.calls) != 0 {
 		t.Fatalf("historical model status=%d body=%s", modelResponse.Code, modelResponse.Body.String())
 	}
 	templateResponse := requestAdmin(
@@ -1008,15 +1008,12 @@ func newTestHandler(t *testing.T, backend Backend) http.Handler {
 		"index.html":    &fstest.MapFile{Data: []byte("<!doctype html><title>Antnest Console</title>")},
 		"assets/app.js": &fstest.MapFile{Data: []byte("console.log('app')")},
 	}
-	handler, err := NewHandler(Config{
+	handler := newBusinessHandler(t, Config{
 		DefaultRuntimeImageRef: testRuntimeDigest,
 		RequestTimeout:         time.Second,
 	}, Dependencies{
 		Backend: backend, Assets: fs.FS(assets), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	if err != nil {
-		t.Fatalf("NewHandler: %v", err)
-	}
 	return handler
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/opencontainers/go-digest"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
 
@@ -41,6 +42,10 @@ func deploymentForOperation(configuration deployment.Configuration, operation de
 	physical.ImageRef = operation.ImageID
 	verifiers := operation.MaintenanceVerifiers.Clone()
 	physical.RuntimeSpec.SkillMaintenanceVerifiers = &verifiers
+	if auth := operation.InstanceAuthentication; auth != nil {
+		physical.InstanceAuthentication = auth
+		physical.RuntimeSpec.Authentication = &deployment.RuntimeAuthentication{ConnectionID: auth.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: auth.ReceiverDigest}
+	}
 	if physical.PreparedSkills != nil && operation.PreparedSetID > 0 {
 		physical.PreparedMaterialization = &skillset.PreparedMaterialization{
 			SetID: operation.PreparedSetID,

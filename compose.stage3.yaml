@@ -1,16 +1,7 @@
 # Stage 3 production-shaped override. Internal application services remain
 # reachable only on Compose networks; Edge Gateway is the sole browser entry.
+# Diagnostics require compose.debug.yaml; this product override does not select them.
 services:
-  runtime-controller:
-    ports: !reset []
-
-  agent-acp-service:
-    ports: !reset []
-
   identity-service:
-    ports: !reset []
     environment:
       ANTNEST_IDENTITY_PUBLIC_BASE_URL: ${ANTNEST_EDGE_PUBLIC_BASE_URL:-http://127.0.0.1:8090}
-
-  agent-controller:
-    ports: !reset []

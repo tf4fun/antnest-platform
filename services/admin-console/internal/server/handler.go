@@ -20,8 +20,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
-	"github.com/tf4fun/antnest-platform/services/admin-console/internal/providerdiscovery"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -55,15 +56,18 @@ type Config struct {
 }
 
 type Dependencies struct {
-	Backend       Backend
-	Registry      RegistryBackend
-	Assets        fs.FS
-	Logger        *slog.Logger
-	StreamContext context.Context
+	Authentication *serviceauth.Receiver
+	CallerContext  *callercontext.Verifier
+	Backend        Backend
+	Registry       RegistryBackend
+	Assets         fs.FS
+	Logger         *slog.Logger
+	StreamContext  context.Context
 }
 
 type handler struct {
-	modelLister            providerdiscovery.Lister
+	authentication         *serviceauth.Receiver
+	callerContext          *callercontext.Verifier
 	backend                Backend
 	registry               RegistryBackend
 	skillUploads           chan struct{}
@@ -77,7 +81,7 @@ type handler struct {
 }
 
 func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) {
-	if dependencies.Backend == nil || dependencies.Assets == nil {
+	if dependencies.Backend == nil || dependencies.Assets == nil || dependencies.Authentication == nil || dependencies.CallerContext == nil {
 		return nil, fmt.Errorf("admin console dependencies are incomplete")
 	}
 	if dependencies.Logger == nil {
@@ -90,8 +94,8 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		dependencies.StreamContext = context.Background()
 	}
 	h := &handler{
-		modelLister: providerdiscovery.New(config.RequestTimeout, nil),
-		backend:     dependencies.Backend, assets: dependencies.Assets,
+		authentication: dependencies.Authentication, callerContext: dependencies.CallerContext,
+		backend: dependencies.Backend, assets: dependencies.Assets,
 		registry:     dependencies.Registry,
 		skillUploads: make(chan struct{}, 2),
 		fileServer:   http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,
@@ -157,6 +161,24 @@ func (h *handler) routes() {
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	_, pattern := h.mux.Handler(request)
+	if pattern != "GET /status" {
+		allowed := []string{"edge-gateway"}
+		if pattern == "/api/{path...}" {
+			allowed = nil
+		}
+		if _, err := h.authentication.Authorize(request, allowed); err != nil {
+			var failure *serviceauth.Failure
+			if !errors.As(err, &failure) {
+				failure = serviceauth.Unauthenticated()
+			}
+			if failure.Challenge != "" {
+				response.Header().Set("WWW-Authenticate", failure.Challenge)
+			}
+			writeError(response, failure.Status, failure.Code, "Service authentication failed")
+			return
+		}
+	}
 	telemetry.Handler(func(w http.ResponseWriter, r *http.Request) error {
 		adapter := &adapterResponse{ResponseWriter: w}
 		h.mux.ServeHTTP(adapter, r)
@@ -168,16 +190,35 @@ type adminHandler func(http.ResponseWriter, *http.Request, principal.Principal)
 
 func (h *handler) withPrincipal(next adminHandler) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
-		actor, err := principal.FromHeaders(request.Header)
-		if err != nil {
-			writeError(response, http.StatusUnauthorized, "unauthenticated", "Trusted principal is missing")
+		values := request.Header.Values(callercontext.Header)
+		if len(values) == 0 {
+			writeError(response, http.StatusUnauthorized, "caller_context_required", "Caller context is required")
 			return
 		}
+		if len(values) != 1 {
+			writeError(response, http.StatusUnauthorized, "caller_context_invalid", "Caller context verification failed")
+			return
+		}
+		var agent *string
+		if id := request.PathValue("agent_id"); id != "" {
+			agent = &id
+		}
+		claims, err := h.callerContext.Verify(request.Context(), values[0], callercontext.Expected{Consumer: "admin-console", Agent: agent, Tolerance: 30})
+		if err != nil {
+			if errors.Is(err, callercontext.ErrDependency) {
+				writeError(response, http.StatusServiceUnavailable, "identity_dependency_unavailable", "Identity authorization dependency is unavailable")
+			} else {
+				writeError(response, http.StatusUnauthorized, "caller_context_invalid", "Caller context verification failed")
+			}
+			return
+		}
+		actor := principal.Principal{UserID: claims.Subject, OrganizationID: claims.Organization, MembershipID: claims.Membership, SystemRole: claims.SystemRole, OrganizationRole: claims.OrganizationRole}
 		if !actor.Administrator() {
 			writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
 			return
 		}
-		next(response, request.WithContext(principal.WithContext(request.Context(), actor)), actor)
+		ctx := callercontext.WithToken(principal.WithContext(request.Context(), actor), values[0])
+		next(response, request.WithContext(ctx), actor)
 	}
 }
 
@@ -1228,20 +1269,25 @@ func (h *handler) application(response http.ResponseWriter, request *http.Reques
 }
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
-	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	if mediaType != "application/json" {
+	values := request.Header.Values("Content-Type")
+	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	valid := len(values) == 1 && err == nil && mediaType == "application/json"
+	for name, value := range parameters {
+		if name != "charset" || !strings.EqualFold(value, "utf-8") {
+			valid = false
+		}
+	}
+	if !valid {
 		writeError(response, http.StatusUnsupportedMediaType, "invalid_request", "Content-Type must be application/json")
 		return false
 	}
-	decoder := json.NewDecoder(io.LimitReader(request.Body, maximumRequestBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		writeFailure(response, http.StatusBadRequest, "invalid_request", "Request body is invalid", err)
+	raw, err := io.ReadAll(io.LimitReader(request.Body, maximumRequestBytes+1))
+	if err != nil || len(raw) > maximumRequestBytes {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Request body is invalid")
 		return false
 	}
-	var extra json.RawMessage
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request body must contain one object")
+	if err := serviceauth.DecodeObject(raw, target); err != nil {
+		writeFailure(response, http.StatusBadRequest, "invalid_request", "Request body is invalid", err)
 		return false
 	}
 	return true

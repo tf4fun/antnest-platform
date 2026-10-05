@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -30,6 +31,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/authfixture"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
@@ -37,7 +39,6 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/runtimeclient"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
@@ -95,7 +96,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	var egressCalls, runtimeCalls atomic.Int64
+	var egressCalls, runtimeCalls, runtimeConnectionReads atomic.Int64
 	var initializeCalls, updateCalls, disableCalls, enableCalls, deleteCalls atomic.Int64
 	var failNextDeleteInspection atomic.Bool
 	var policyMu sync.Mutex
@@ -218,7 +219,9 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	}))
 	t.Cleanup(egressServer.Close)
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		runtimeCalls.Add(1)
+		if !strings.HasSuffix(request.URL.Path, "/connection") {
+			runtimeCalls.Add(1)
+		}
 		if request.URL.Path == "/internal/runtimes" {
 			_ = json.NewEncoder(response).Encode(map[string]any{"runtimes": []any{}})
 			return
@@ -232,6 +235,28 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			return
 		}
 		path := strings.TrimPrefix(request.URL.Path, "/internal/runtimes/")
+		if request.Method == http.MethodPost && strings.HasSuffix(path, "/connection") {
+			runtimeConnectionReads.Add(1)
+			agentID := strings.TrimSuffix(path, "/connection")
+			var input struct {
+				RuntimeRevision string `json:"runtime_revision"`
+				ExecutionID     string `json:"expected_execution_id"`
+			}
+			require.NoError(t, json.NewDecoder(request.Body).Decode(&input))
+			require.Empty(t, request.Header.Get("Idempotency-Key"))
+			runtimeMu.Lock()
+			defer runtimeMu.Unlock()
+			require.Equal(t, currentRuntimeRevision, input.RuntimeRevision)
+			require.Equal(t, currentRuntimeExecutionID, input.ExecutionID)
+			response.Header().Set("Content-Type", "application/json")
+			response.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(response).Encode(ports.RuntimeConnection{
+				AgentID: agentID, RuntimeRevision: currentRuntimeRevision, RuntimeExecutionID: currentRuntimeExecutionID,
+				MCPEndpoint: currentRuntimeEndpoint, ConnectionID: "rci_11111111111111111111111111111111",
+				Credential: ports.RuntimeCredential{Caller: "agent-acp-service", Token: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"},
+			})
+			return
+		}
 		if request.Method == http.MethodPost && strings.Contains(path, "/skill-sets/preparations/") && strings.HasSuffix(path, "/release") {
 			if request.Header.Get("Idempotency-Key") == "" {
 				t.Fatal("Skill preparation release omitted idempotency key")
@@ -438,15 +463,15 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t.Fatalf("create Runtime client: %v", err)
 	}
 	clock := wallClock{}
-	execution, snapshot := executionPublicationPeer(t, repository, secretBox)
+	execution, snapshot := executionPublicationPeer(t, repository, secretBox, runtime)
 	lifecycle := application.NewLifecycleService(
 		repository, repository, egress, runtime, clock,
 		application.WithSkillPreparation(repository, runtime),
 		application.WithIdentityDirectory(e2eIdentityDirectory{}),
 		application.WithLifecycleExecution(execution),
 	)
-	handler, err := server.NewHandler(
-		application.NewCatalogService(repository, secretBox, clock),
+	handler, err := authfixture.NewHandler(t,
+		fixtureCatalogService(repository, secretBox, clock),
 		lifecycle,
 		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, clock),
 		application.NewAgentQueryService(repository),
@@ -574,7 +599,9 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t.Fatalf("owner Agent projection = %+v", listed)
 	}
 	createEgressCalls, createRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
+	connectionReadsBefore := runtimeConnectionReads.Load()
 	assertAgentConfigurationHTTP(t, handler, agent, execution, snapshot, spanRecorder)
+	require.Greater(t, runtimeConnectionReads.Load(), connectionReadsBefore, "configuration publication must refresh private authority")
 	if egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
 		t.Fatal("Agent defaults or credential publication changed Runtime or Egress")
 	}

@@ -237,6 +237,7 @@ function setup() {
   const supervisor = new RunSupervisor(
     new InstrumentedRunExecutor(
       new RunExecutor({
+        runtimeConnections: { releaseRun: vi.fn() },
         executions: { finish, getState: vi.fn(), listRecoveryWork: vi.fn() },
         events: {
           appendAgentMessage,

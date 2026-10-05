@@ -2,6 +2,15 @@ import { expect, it, vi } from "vitest";
 import { RuntimeSkillCommands } from "../../src/application/runtime-skill-commands.js";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 import { LearningForegroundGate } from "../../src/application/learning-foreground-gate.js";
+import {
+  parseExecutionConfiguration,
+  publicExecutionConfiguration,
+} from "../../src/domain/execution-configuration.js";
+import { executionConfiguration } from "../fixtures/execution-configuration.js";
+
+const publishedRuntime = publicExecutionConfiguration(
+  parseExecutionConfiguration(executionConfiguration()),
+).agents[0]!.runtime!;
 
 it("keeps catalog reads out of a learning/source slot and yields the read before foreground admission", async () => {
   const gate = new LearningForegroundGate(() => false);
@@ -15,11 +24,7 @@ it("keeps catalog reads out of a learning/source slot and yields the read before
       inspect: () => ({
         agent: {
           accepting_runs: true,
-          runtime: {
-            runtime_execution_id: "runtime-execution-1",
-            runtime_revision: "runtime-revision-1",
-            mcp_endpoint: "http://runtime/mcp",
-          },
+          runtime: publishedRuntime,
         },
       }),
     },
@@ -54,11 +59,7 @@ it("keeps catalog reads out of a learning/source slot and yields the read before
 });
 
 it("discovers authorized current Runtime metadata without reading Skill bodies or disturbing an active Run", async () => {
-  const runtime = {
-    runtime_execution_id: "runtime-execution-1",
-    mcp_endpoint: "http://runtime/mcp",
-    runtime_revision: "runtime-1",
-  };
+  const runtime = structuredClone(publishedRuntime);
   const inspect = vi.fn(() => ({ agent: { accepting_runs: true, runtime } }));
   let busy = false;
   const readBinding = vi.fn(() => Promise.resolve(runtimeInformation()));

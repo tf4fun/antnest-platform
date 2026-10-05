@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
@@ -34,7 +35,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Getenv); err != nil {
+	if err := run(ctx, os.LookupEnv); err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error(
 			"Edge Gateway stopped with an error", "error_class", "service_failure",
 		)
@@ -42,13 +43,22 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, lookup func(string) string) (resultErr error) {
-	cfg, err := config.Load(lookup)
+func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
+	getenv := func(name string) string { value, _ := lookup(name); return value }
+	cfg, err := config.Load(getenv)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	internal, err := serviceauth.LoadOutbound("edge-gateway", serviceauth.GatewayHeaders, lookup, map[string]string{
+		"identity-service": cfg.IdentityURL, "admin-console": cfg.AdminConsoleURL,
+		"agent-ui": cfg.AgentUIURL, "agent-controller": cfg.AgentControllerURL, "agent-acp-service": cfg.AgentACPURL,
+	})
+	if err != nil {
+		return fmt.Errorf("load internal authentication: %w", err)
+	}
+	defer internal.CloseIdleConnections()
 	telemetryRuntime, err := telemetry.Setup(ctx, slog.NewJSONHandler(os.Stdout, nil), telemetry.Config{
-		ServiceVersion: version, Environment: lookup("ANTNEST_ENVIRONMENT"),
+		ServiceVersion: version, Environment: getenv("ANTNEST_ENVIRONMENT"),
 	})
 	if err != nil {
 		return fmt.Errorf("start telemetry: %w", err)
@@ -58,7 +68,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	}()
 	logger := telemetryRuntime.Logger()
 
-	httpClient := &http.Client{Transport: telemetry.NewHTTPTransport(http.DefaultTransport)}
+	httpClient := internal.HTTPClient()
+	httpClient.Transport = telemetry.NewHTTPTransport(httpClient.Transport)
 	identityClient, err := identity.NewClient(cfg.IdentityURL, httpClient)
 	if err != nil {
 		return fmt.Errorf("create Identity client: %w", err)
@@ -133,16 +144,17 @@ func serveHTTP(
 }
 
 func checkHealth(lookup func(string) string) error {
-	listen := strings.TrimSpace(lookup("ANTNEST_EDGE_LISTEN"))
-	if listen == "" {
-		listen = ":8080"
-	}
-	_, port, err := net.SplitHostPort(listen)
+	address, err := healthProbeAddress(lookup("ANTNEST_EDGE_LISTEN"))
 	if err != nil {
 		return fmt.Errorf("parse listen address: %w", err)
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get("http://127.0.0.1:" + port + "/status")
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: 2 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	response, err := client.Get("http://" + address + "/status")
 	if err != nil {
 		return err
 	}
@@ -151,4 +163,19 @@ func checkHealth(lookup func(string) string) error {
 		return fmt.Errorf("gateway status returned %s", response.Status)
 	}
 	return nil
+}
+
+func healthProbeAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	if address == "" {
+		address = ":8080"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", err
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port), nil
 }

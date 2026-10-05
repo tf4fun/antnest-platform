@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 )
@@ -86,12 +87,14 @@ func (client *Client) Do(
 		return nil, fmt.Errorf("create upstream request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
+	hasContext := callercontext.Forward(ctx, request.Header)
 	if len(body) > 0 {
 		request.Header.Set("Content-Type", "application/json")
 	}
 	if target == AgentACP {
-		if err := applyAuditPrincipal(request); err != nil {
-			return nil, err
+		actor, ok := principal.FromContext(ctx)
+		if !hasContext || !ok || !actor.Administrator() {
+			return nil, fmt.Errorf("ACP audit request requires verified administrator caller context")
 		}
 	}
 	response, err := client.httpClient.Do(request)
@@ -127,25 +130,10 @@ func (client *Client) target(target Target) (*url.URL, error) {
 	}
 }
 
-func applyAuditPrincipal(request *http.Request) error {
-	actor, ok := principal.FromContext(request.Context())
-	if !ok || !actor.Administrator() {
-		return fmt.Errorf("ACP audit request requires a trusted administrator")
-	}
-	headers, err := actor.Headers()
-	if err != nil {
-		return err
-	}
-	for name, values := range headers {
-		request.Header[name] = values
-	}
-	return nil
-}
-
 func parseServiceURL(name, raw string) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
+		parsed.User != nil || parsed.Opaque != "" || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("%s URL is invalid", name)
 	}
 	return parsed, nil

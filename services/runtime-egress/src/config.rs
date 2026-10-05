@@ -19,6 +19,7 @@ pub struct Config {
     pub database_startup_timeout: Duration,
     pub database_retry_delay: Duration,
     pub control_listen: SocketAddrV4,
+    pub health_listen: SocketAddrV4,
     pub udp_advertise: SocketAddrV4,
     pub tunnel_cidr: Ipv4Net,
     pub resolver_ipv4: Ipv4Addr,
@@ -92,6 +93,13 @@ impl Config {
         {
             return Err(ConfigError::InvalidAdvertisedEndpoint);
         }
+        if control_listen.ip() == udp_advertise.ip() {
+            return Err(ConfigError::Invalid("ANTNEST_EGRESS_CONTROL_LISTEN"));
+        }
+        let health_listen = health_listen_from_values(&values)?;
+        if health_listen == control_listen {
+            return Err(ConfigError::Invalid("ANTNEST_EGRESS_HEALTH_LISTEN"));
+        }
         let tunnel_cidr = parse(&values, "ANTNEST_EGRESS_TUNNEL_CIDR", "100.64.0.0/10")?;
         let resolver_ipv4 = parse(&values, "ANTNEST_EGRESS_RESOLVER_IPV4", "100.64.0.1")?;
         if AddressPool::new("validation", tunnel_cidr, resolver_ipv4, 1).is_err() {
@@ -126,6 +134,7 @@ impl Config {
             database_startup_timeout,
             database_retry_delay,
             control_listen,
+            health_listen,
             udp_advertise,
             tunnel_cidr,
             resolver_ipv4,
@@ -138,6 +147,20 @@ impl Config {
             command_timeout,
         })
     }
+}
+
+pub fn health_listen_from_env() -> Result<SocketAddrV4, ConfigError> {
+    health_listen_from_values(&env::vars().collect())
+}
+
+pub fn health_listen_from_values(
+    values: &HashMap<String, String>,
+) -> Result<SocketAddrV4, ConfigError> {
+    let endpoint: SocketAddrV4 = parse(values, "ANTNEST_EGRESS_HEALTH_LISTEN", "127.0.0.1:8082")?;
+    if !endpoint.ip().is_loopback() || endpoint.port() == 0 {
+        return Err(ConfigError::Invalid("ANTNEST_EGRESS_HEALTH_LISTEN"));
+    }
+    Ok(endpoint)
 }
 
 fn required(values: &HashMap<String, String>, name: &'static str) -> Result<String, ConfigError> {

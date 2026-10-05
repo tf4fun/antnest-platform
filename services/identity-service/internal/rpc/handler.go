@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
@@ -80,10 +83,12 @@ type SCIMService interface {
 }
 
 type Dependencies struct {
-	Directory DirectoryService
-	LocalAuth LocalAuthService
-	OIDC      OIDCService
-	SCIM      SCIMService
+	Directory      DirectoryService
+	LocalAuth      LocalAuthService
+	OIDC           OIDCService
+	SCIM           SCIMService
+	Authentication *serviceauth.Receiver
+	CallerContext  *callercontext.Authority
 }
 
 type Handler struct {
@@ -93,7 +98,7 @@ type Handler struct {
 
 func NewHandler(dependencies Dependencies) (*Handler, error) {
 	if dependencies.Directory == nil || dependencies.LocalAuth == nil ||
-		dependencies.OIDC == nil || dependencies.SCIM == nil {
+		dependencies.OIDC == nil || dependencies.SCIM == nil || dependencies.Authentication == nil || dependencies.CallerContext == nil {
 		return nil, fmt.Errorf("identity RPC handler requires all application services")
 	}
 	handler := &Handler{dependencies: dependencies, mux: http.NewServeMux()}
@@ -120,11 +125,16 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 	handler.mux.HandleFunc("POST /rpc/identity/list-login-methods", handler.listLoginMethods)
 	handler.mux.HandleFunc("POST /rpc/identity/start-oidc-login", handler.startOIDCLogin)
 	handler.mux.HandleFunc("GET /protocol/oidc/callback", handler.oidcCallback)
+	handler.mux.HandleFunc("GET /rpc/identity/jwks", handler.jwks)
 	return handler, nil
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	h.registerObservation(response, request)
+	request, ok := h.authenticate(response, request)
+	if !ok {
+		return
+	}
 	h.mux.ServeHTTP(response, request)
 }
 
@@ -361,6 +371,8 @@ func (h *Handler) localLogin(response http.ResponseWriter, request *http.Request
 
 type resolveTokenRequest struct {
 	AccessToken string `json:"access_token"`
+	Profile     string `json:"profile"`
+	AgentID     string `json:"agent_id,omitempty"`
 }
 
 func (h *Handler) resolveAccessToken(response http.ResponseWriter, request *http.Request) {
@@ -368,8 +380,8 @@ func (h *Handler) resolveAccessToken(response http.ResponseWriter, request *http
 	if !decodeRequest(response, request, &body) || !require(response, body.AccessToken) {
 		return
 	}
-	principal, err := h.dependencies.LocalAuth.Resolve(request.Context(), body.AccessToken)
-	writeResult(response, map[string]any{"principal": principal}, err)
+	principal, token, err := h.dependencies.CallerContext.Issue(request.Context(), body.AccessToken, body.Profile, body.AgentID)
+	writeResult(response, map[string]any{"principal": principal, "caller_context": token}, err)
 }
 
 type revokeAccessTokenRequest struct {
@@ -572,16 +584,49 @@ func (h *Handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 }
 
 func decodeRequest(response http.ResponseWriter, request *http.Request, target any) bool {
-	decoder := json.NewDecoder(io.LimitReader(request.Body, maxRequestBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	values := request.Header.Values("Content-Type")
+	media, params, mediaErr := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if len(values) != 1 || mediaErr != nil || media != "application/json" || len(params) > 1 || len(params) == 1 && !strings.EqualFold(params["charset"], "utf-8") {
+		writeError(response, domain.NewError("unsupported_media_type", "RPC requires application/json with optional UTF-8 charset", false))
+		return false
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(request.Body, maxRequestBytes+1))
+	if readErr != nil || len(raw) > maxRequestBytes || serviceauth.DecodeObject(raw, target) != nil {
 		writeError(response, domain.NewError("bad_request", "Request body is invalid", false))
 		return false
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeError(response, domain.NewError("bad_request", "Request body must contain one JSON object", false))
-		return false
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	if value, present := fields["agent_id"]; present {
+		var id string
+		if json.Unmarshal(value, &id) != nil || !domain.ValidID(id) {
+			writeError(response, domain.NewError("bad_request", "Agent scope is invalid", false))
+			return false
+		}
+	}
+	if claims, ok := request.Context().Value(claimsKey{}).(callercontext.Claims); ok {
+		if actor, present := fields["actor_principal_id"]; present {
+			var id string
+			if json.Unmarshal(actor, &id) != nil || !domain.ValidID(id) {
+				writeError(response, domain.NewError("bad_request", "Identity field is invalid", false))
+				return false
+			}
+			if id != claims.Subject {
+				writeError(response, domain.NewError("actor_mismatch", "Body actor does not match authenticated caller", false))
+				return false
+			}
+		}
+		if org, present := fields["organization_id"]; present {
+			var id string
+			if json.Unmarshal(org, &id) != nil || !domain.ValidID(id) {
+				writeError(response, domain.NewError("bad_request", "Identity field is invalid", false))
+				return false
+			}
+			if id != claims.Organization {
+				writeError(response, callercontext.ErrInvalid)
+				return false
+			}
+		}
 	}
 	telemetry.RequestValue(response, target)
 	return true
@@ -619,6 +664,19 @@ func writeError(response http.ResponseWriter, err error) {
 	telemetry.ProtocolError(response, err)
 	status := http.StatusInternalServerError
 	code, message, retryable := domain.ErrorDetails(err)
+	var failure *serviceauth.Failure
+	if errors.As(err, &failure) {
+		status, code, message, retryable = failure.Status, failure.Code, "Service authentication rejected", false
+		if failure.Challenge != "" {
+			response.Header().Set("WWW-Authenticate", failure.Challenge)
+		}
+	}
+	if errors.Is(err, callercontext.ErrInvalid) {
+		status, code, message, retryable = 401, "caller_context_invalid", "Caller context verification failed", false
+	}
+	if errors.Is(err, callercontext.ErrDependency) {
+		status, code, message, retryable = 503, "identity_dependency_unavailable", "Identity authorization dependency is unavailable", true
+	}
 	switch {
 	case errors.Is(err, domain.ErrInvalidArgument):
 		status = http.StatusBadRequest
@@ -638,6 +696,13 @@ func writeError(response http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	}
 	switch code {
+	case "caller_context_required", "caller_context_invalid":
+		status = http.StatusUnauthorized
+		response.Header().Set("WWW-Authenticate", `Bearer realm="antnest-caller-context"`)
+	case "actor_mismatch":
+		status = http.StatusForbidden
+	case "unsupported_media_type":
+		status = http.StatusUnsupportedMediaType
 	case "bad_request", "oidc_authorization_failed", "oidc_exchange_claim_invalid", "oidc_session_failed":
 		status = http.StatusBadRequest
 	case "inactive_principal", "oidc_membership_required":
@@ -651,7 +716,21 @@ func writeError(response http.ResponseWriter, err error) {
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
-	telemetry.ResponseValue(response, value)
+	if fields, ok := value.(map[string]any); ok {
+		if _, secret := fields["caller_context"]; secret {
+			projection := make(map[string]any, len(fields)-1)
+			for k, v := range fields {
+				if k != "caller_context" {
+					projection[k] = v
+				}
+			}
+			telemetry.ResponseValue(response, projection)
+		} else {
+			telemetry.ResponseValue(response, value)
+		}
+	} else {
+		telemetry.ResponseValue(response, value)
+	}
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(value)

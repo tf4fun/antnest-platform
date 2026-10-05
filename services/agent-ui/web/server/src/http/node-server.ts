@@ -4,6 +4,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -11,9 +12,13 @@ import { join } from "node:path";
 import type { BridgeTelemetry } from "../telemetry.ts";
 import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../protocol/workspace-route.ts";
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
+import type { RequestAuthentication } from "./request-authentication.ts";
+import { bindAuthenticatedRequest, copyAuthenticatedRequest } from "./trusted-identity.ts";
+import { HttpInputError, requireJsonMedia, validateJsonRequest } from "./json-request.ts";
 
 type WorkspaceHandler = { handle(request: Request): Promise<Response | null> };
 type DocumentOptions = {
+  authentication: RequestAuthentication;
   assetRoot?: string;
   requestDeadlineMs?: number;
   isDraining?: () => boolean;
@@ -25,11 +30,12 @@ type DocumentOptions = {
   }): Promise<void>;
 };
 
-export function createWorkspaceHttpServer(runtime: WorkspaceHandler, options: DocumentOptions = {}): Server {
+export function createWorkspaceHttpServer(runtime: WorkspaceHandler, options: DocumentOptions): Server {
+  if (!options?.authentication) throw new Error("Workspace authentication is required");
   const deadlineMs = options.requestDeadlineMs ?? 60_000;
   if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1)
     throw new RangeError("Invalid ordinary HTTP deadline");
-  const server = createServer((incoming, outgoing) => {
+  const listener = (incoming: IncomingMessage, outgoing: ServerResponse) => {
     const work = async () => {
       await serve(runtime, options, incoming, outgoing);
       return outgoing.statusCode;
@@ -44,7 +50,10 @@ export function createWorkspaceHttpServer(runtime: WorkspaceHandler, options: Do
       if (outgoing.headersSent) outgoing.destroy();
       else outgoing.writeHead(503).end();
     });
-  });
+  };
+  const server = options.authentication.workload.serverTLS
+    ? createHttpsServer(options.authentication.workload.serverTLS, listener)
+    : createServer(listener);
   server.requestTimeout = 60_000;
   server.headersTimeout = 65_000;
   return server;
@@ -94,6 +103,20 @@ async function serve(
       outgoing.end(JSON.stringify({ status: "alive", service: "agent-ui-bridge" }));
       return;
     }
+    const admitted = await options.authentication.admit(incoming);
+    if ("status" in admitted) {
+      const failure = workspaceFailure(admitted.status, admitted.code);
+      if (admitted.challenge) failure.headers.set("www-authenticate", admitted.challenge);
+      outgoing.writeHead(failure.status, Object.fromEntries(failure.headers));
+      outgoing.end(await failure.text());
+      return;
+    }
+    if (!admitted.policy.known) {
+      const failure = workspaceFailure(404, "route_not_found");
+      outgoing.writeHead(failure.status, Object.fromEntries(failure.headers));
+      outgoing.end(await failure.text()); return;
+    }
+    if (admitted.policy.json) requireJsonMedia(incoming);
     if (options.isDraining?.()) {
       outgoing.writeHead(503, {
         "content-type": "application/json; charset=utf-8",
@@ -127,9 +150,12 @@ async function serve(
       }
       return;
     }
+    if (assetName) { outgoing.writeHead(404, { "cache-control": "no-store" }).end(); return; }
     const headers = new Headers();
     for (const [name, value] of Object.entries(incoming.headers)) {
-      if (name === "cookie" || value === undefined) continue;
+      if (name === "cookie" || name === "authorization" || value === undefined ||
+        (name.startsWith("x-antnest-") && name !== "x-antnest-organization-slug" && name !== "x-antnest-organization-name") ||
+        name === "antnest-service-authorization" || name === "antnest-caller-context") continue;
       if (Array.isArray(value))
         for (const item of value) headers.append(name, item);
       else headers.set(name, value);
@@ -148,6 +174,7 @@ async function serve(
             duplex: "half",
           }),
     } as RequestInit & { duplex?: "half" });
+    if (admitted.context) bindAuthenticatedRequest(request, admitted.context);
     if (url.startsWith("/workspace/") &&
       (method === "GET" || method === "HEAD") && options.renderDocument) {
       const route = parseWorkspaceDocumentPath(url);
@@ -161,7 +188,10 @@ async function serve(
     const eventStream = method === "GET" &&
       /^\/api\/app\/workspace\/v1\/agents\/[^/]+\/events$/u.test(new URL(request.url).pathname);
     if (!eventStream) {
-      await serveOrdinary(runtime, request, outgoing, disconnect, options.requestDeadlineMs ?? 60_000);
+      const dispatch = admitted.policy.json ? {
+        handle: async (request: Request) => runtime.handle(await validateJsonRequest(request)),
+      } : runtime;
+      await serveOrdinary(dispatch, request, outgoing, disconnect, options.requestDeadlineMs ?? 60_000);
       return;
     }
     const result = await runtime.handle(request);
@@ -189,11 +219,16 @@ async function serve(
       if (!outgoing.write(part)) await waitForDrainOrClose(outgoing);
     }
     if (!outgoing.destroyed) outgoing.end();
-  } catch {
+  } catch (cause) {
     if (outgoing.destroyed) return;
     if (outgoing.headersSent) {
       outgoing.destroy();
       return;
+    }
+    if (cause instanceof HttpInputError) {
+      const failure = workspaceFailure(cause.status, cause.code);
+      outgoing.writeHead(failure.status, Object.fromEntries(failure.headers));
+      outgoing.end(await failure.text()); return;
     }
     outgoing.writeHead(503, {
       "content-type": "application/json",
@@ -209,6 +244,12 @@ async function serve(
       }),
     );
   }
+}
+
+function workspaceFailure(status: number, code: string): Response {
+  return Response.json({ code, message: "Workspace request was rejected", requestId: randomUUID(),
+    retryable: status >= 500, recovery: status === 401 ? "login" : status >= 500 ? "retry_read" : "none" },
+    { status, headers: { "cache-control": "no-store" } });
 }
 
 class HttpDeadlineError extends Error {}
@@ -293,6 +334,7 @@ async function serveDocument(
       headers: request.headers,
       signal: AbortSignal.any([request.signal, controller.signal]),
     });
+    copyAuthenticatedRequest(request, bootstrapRequest);
     const result = await Promise.race([
       runtime.handle(bootstrapRequest).then(async (response) => ({
         status: response?.status,

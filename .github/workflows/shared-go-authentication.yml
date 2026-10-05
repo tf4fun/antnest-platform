@@ -1,0 +1,54 @@
+name: shared-go-authentication
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - modules/service-authentication/**
+      - contracts/platform/**
+      - .golangci.yml
+      - .github/workflows/shared-go-authentication.yml
+  pull_request:
+    paths:
+      - modules/service-authentication/**
+      - contracts/platform/**
+      - .golangci.yml
+      - .github/workflows/shared-go-authentication.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOWORK: "off"
+  GOLANGCI_LINT_VERSION: v2.14.0
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: modules/service-authentication
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: modules/service-authentication/go.mod
+          cache-dependency-path: modules/service-authentication/go.sum
+      - name: Check formatting
+        run: test -z "$(find . -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
+      - name: Install golangci-lint
+        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+      - name: golangci-lint
+        run: golangci-lint run --config ../../.golangci.yml ./...
+      - name: go vet
+        run: go vet ./...
+      - name: Unit and contract vectors
+        run: go test -race -count=1 ./...

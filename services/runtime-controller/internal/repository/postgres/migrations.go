@@ -330,6 +330,11 @@ var schemaMigrations = []migration{
 		checksum: "b0ae23ef2de4674c080a1cdc122e29829ff7abbac81d2f79203d291e3b6d9cc1",
 		sql:      maintenanceVerifierSnapshotSQL,
 	},
+	{
+		version: 12, name: "seal_runtime_instance_authority",
+		checksum: "3c9c1eccad0e59c22c643aee692dfa31d7851334b9e58e34971b7990797c85ea",
+		sql:      instanceAuthenticationSQL,
+	},
 }
 
 func Migrate(ctx context.Context, database *sql.DB) error {

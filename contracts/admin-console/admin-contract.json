@@ -1,7 +1,9 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 48,
+  "version": 49,
   "base_path": "/api/admin",
+  "authentication_contract": "service-authentication.md",
+  "authenticated_actor": "identity_signed_cct_verified_by_console",
   "routes": {
     "search_skill_sources": {"method": "POST", "path": "/skill-sources/search", "schema": "skill-discovery.schema.json#/$defs/search_request"},
     "preview_skill_source": {"method": "POST", "path": "/skill-sources/preview", "schema": "skill-discovery.schema.json#/$defs/selection"},
@@ -324,7 +326,7 @@
     "execution_audit": {
       "authority": "agent_acp_service",
       "authorization": "verified_organization_scoped_administrator",
-      "identity": "same_five_management_headers_no_owner_impersonation",
+      "identity": "verified_workload_and_unchanged_signed_caller_context_no_owner_impersonation",
       "controller_preflight": false,
       "read_side_effects": "none_no_session_load_or_activation",
       "query_identity": "reject",

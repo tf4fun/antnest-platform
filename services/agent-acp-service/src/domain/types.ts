@@ -68,6 +68,7 @@ export type RuntimeBinding = {
   revision: string;
   executionId: string;
   mcpEndpoint: string;
+  connectionId: string;
 };
 
 export type RunExecutionSnapshot = {

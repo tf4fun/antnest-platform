@@ -37,9 +37,11 @@ func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http
 				}
 			}
 			setACPIdentity(headers, principal, request.PathValue("agent_id"))
+			identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
 			proxyRequest.Out.Header = headers
 		},
 		ModifyResponse: func(upstream *http.Response) error {
+			_ = stripCredentialResponse(upstream)
 			upstream.Header.Del("Set-Cookie")
 			upstream.Header.Set("Cache-Control", "no-store")
 			return nil

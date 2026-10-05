@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
@@ -37,7 +38,11 @@ func TestRepositoryFollowerHTTPReadinessMirrorsLeaderWatchLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := rpc.NewHandler(service, observation.NewHub(), time.Second, time.Second)
+	receiver, err := serviceauth.ParseReceiver("runtime-controller", []byte("{}"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := rpc.NewHandler(service, observation.NewHub(), time.Second, time.Second, rpc.Security{Authentication: receiver})
 	if err != nil {
 		t.Fatal(err)
 	}

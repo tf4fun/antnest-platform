@@ -18,10 +18,10 @@ type ExecutionConfiguration struct {
 }
 
 func loadExecutionConfiguration(lookup func(string) string) (ExecutionConfiguration, error) {
-	config := ExecutionConfiguration{URL: strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_SERVICE_URL")), MaxBytes: 16777216}
+	config := ExecutionConfiguration{URL: strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_CONTROL_URL")), MaxBytes: 16777216}
 	endpoint, err := url.Parse(config.URL)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
-		return ExecutionConfiguration{}, fmt.Errorf("ANTNEST_AGENT_ACP_SERVICE_URL must be an HTTP origin")
+		return ExecutionConfiguration{}, fmt.Errorf("ANTNEST_AGENT_ACP_CONTROL_URL must be an HTTP origin")
 	}
 	if raw := strings.TrimSpace(lookup("ANTNEST_ACP_MAX_CONFIGURATION_BYTES")); raw != "" {
 		config.MaxBytes, err = strconv.Atoi(raw)

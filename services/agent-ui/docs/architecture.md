@@ -54,9 +54,10 @@ when Zod catches the exception and falls back to interpretation. Schema
 validation remains enabled; the document's CSP does not allow `unsafe-eval`.
 Server-side parsing keeps its existing configuration.
 
-Bootstrap and SSR share `readWorkspacePrincipal`: it requires verified
-Organization/Principal IDs, the administrator flag and the two display headers
-from Gateway revision 14. Each label must be canonical unpadded Base64URL over
+Bootstrap and SSR share `readWorkspacePrincipal`: it requires private verified
+CCT claims and the two display headers from Gateway revision 15. Signed claims
+determine Organization/Principal IDs and administrator status; raw identity and
+administrator hints grant nothing. Each label must be canonical unpadded Base64URL over
 valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata
 returns `401` before discovery or rendering. The real bootstrap principal uses
 the central `verifiedWorkspacePrincipal` schema, including `organizationSlug`
@@ -344,9 +345,26 @@ covered by automated tests.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/agent-ui/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#26](https://github.com/tf4fun/antnest-platform/issues/26); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+and this service's [caller catalog](../../../contracts/agent-ui/callers.json) are
+enforced before business handling. Native HTTP checks actual raw header fields,
+accepts only Gateway workload identity, and verifies CCT using protected Identity
+JWKS. HTML/bootstrap are Organization-scoped discovery; Agent API paths require
+matching signed `agt`. Assets require workload identity only. Health exceptions
+never construct an owner. Strict JSON media/UTF-8/member checks precede business
+dispatch and share the ordinary HTTP deadline.
+
+Verified delegation lives in private request/scope maps. SSR explicitly carries
+it into bootstrap. Owner reuse accepts context from newer ordinary authenticated
+requests in the same user/Organization/Agent scope; SDK HTTP and observation calls
+use that context unchanged with UI's own workload credentials. Invalid or expired
+context cannot initiate a new upstream request; accepted model work and existing
+notification delivery retain their independent lifetime. #58 owns future
+long-lived renewal. No credential is encoded in a browser cursor or View.
+
+Dependency origins are distinct and pinned, native TLS verifies DNS/chain and
+service URI, and outgoing tokens are validated before listen and reread each
+request. The container health probe uses the configured transport and port. See
+[Agent UI authentication](../../../contracts/agent-ui/service-authentication.md).
+Controller/deployment consumers and final cross-service Docker security and
+business acceptance remain their owning batches in the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json).

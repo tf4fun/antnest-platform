@@ -131,13 +131,20 @@ Feedback and contributions are very welcome.
 
 ## Quick start
 
-Requirements: Linux or macOS with Docker Engine and Compose v2, and GNU Make.
+Requirements: Linux or macOS with Docker Engine and Compose v2, Node.js 24.21.0,
+and GNU Make.
 The stack below is for local evaluation only.
 
 ```bash
 git clone https://github.com/tf4fun/antnest-platform.git
 cd antnest-platform
 cp .env.example .env
+
+# Prepare fresh private workload, Identity CCT and Runtime instance credentials.
+node scripts/dev-service-tokens.mjs
+set -a
+. artifacts/service-authentication/deployment.env
+set +a
 
 # Build all images (sequential builds keep memory use predictable).
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
@@ -152,11 +159,22 @@ Then open:
 
 - Admin Console: <http://127.0.0.1:8090>
 - Agent UI: <http://127.0.0.1:8090/workspace/>
-- Jaeger: <http://127.0.0.1:16686>
 
 Sign in to organization `engineering` as `admin@example.com` with password
 `antnest-admin-dev`. Connect a model provider, create a Template, then create an
-Agent. Only Edge Gateway publishes an application port.
+Agent. The base Compose file publishes only Edge Gateway. PostgreSQL, Temporal
+and Jaeger have no host ports unless you explicitly load `compose.debug.yaml`.
+For local diagnostics, add `-f compose.debug.yaml`
+to the same startup/shutdown commands; Jaeger then opens at
+<http://127.0.0.1:16686>. Keep that overlay out of public deployments.
+Its TCP relay preserves the receiving service's authentication and leaves
+business listeners on their purpose addresses. Product overlay order does not
+change an explicitly selected diagnostic relay.
+
+Credential output is private and never overwritten. To enable optional Skill
+learning and discovery in a fresh deployment, use `--with-skill-learning` when
+preparing credentials. Follow the [deployment authentication and network contract](contracts/platform/development-authentication.md)
+for mounts, key retention and rotation.
 
 > The values in `.env.example` are public development defaults. Replace all
 > passwords, tokens and encryption keys before using any other environment. See

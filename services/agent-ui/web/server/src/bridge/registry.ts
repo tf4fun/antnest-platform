@@ -32,6 +32,7 @@ type RegistryOptions<Owner extends BridgeOwner> = {
 };
 
 type Slot<Owner extends BridgeOwner> = {
+  scope: BridgeScope;
   owner: Promise<Owner>;
   incarnation: string;
   observers: number;
@@ -81,6 +82,7 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
     if (this.draining) throw new Error("Bridge is draining");
     const key = scopeKey(scope);
     let slot = this.slots.get(key);
+    if (slot) refreshScopeContext(slot.scope, scope);
     if (slot?.retiring !== undefined) {
       await slot.retiring;
       return this.observe(scope);
@@ -103,6 +105,7 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         rejectOwner = reject;
       });
       slot = {
+        scope,
         owner,
         incarnation: this.options.incarnation(),
         observers: 0,
@@ -299,3 +302,4 @@ function scopeKey(scope: BridgeScope): string {
     scope.agentId,
   ]);
 }
+import { refreshScopeContext } from "../http/trusted-identity.ts";

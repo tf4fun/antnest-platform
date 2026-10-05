@@ -4,6 +4,7 @@ import { LearningReviewProcessor } from "../../src/application/learning-review-p
 import { learningSkillTextDigest } from "../../src/domain/learning-candidate-package.js";
 import type { LearningPolicy } from "../../src/domain/learning-policy.js";
 import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
+import { snapshot } from "../support/fixtures.js";
 
 const policy: LearningPolicy = {
   organization_id: "org",
@@ -70,7 +71,11 @@ describe("Learning review processor", () => {
       },
       {
         current: () =>
-          Promise.resolve({ executionId: "runtime-1", mcpEndpoint: "http://runtime/mcp" }),
+          Promise.resolve({
+            ...snapshot().runtime,
+            executionId: "runtime-1",
+            mcpEndpoint: "http://runtime/mcp",
+          }),
         readBinding: () =>
           Promise.resolve({ executionId: "runtime-1", skills: [], warnings: [], truncated: false }),
         readPersonalSkill: vi.fn(),
@@ -124,7 +129,11 @@ describe("Learning review processor", () => {
       read: vi.fn(() => Promise.resolve(managedIdentity)),
       list: vi.fn(() => Promise.resolve([managedIdentity])),
     };
-    const binding = { executionId: "runtime-1", mcpEndpoint: "http://runtime/mcp" };
+    const binding = {
+      ...snapshot().runtime,
+      executionId: "runtime-1",
+      mcpEndpoint: "http://runtime/mcp",
+    };
     const runtime = {
       current: vi.fn(() => Promise.resolve(binding)),
       readBinding: vi.fn(() =>
@@ -228,7 +237,11 @@ describe("Learning review processor", () => {
       },
       {
         current: () =>
-          Promise.resolve({ executionId: "runtime-1", mcpEndpoint: "http://runtime/mcp" }),
+          Promise.resolve({
+            ...snapshot().runtime,
+            executionId: "runtime-1",
+            mcpEndpoint: "http://runtime/mcp",
+          }),
         readBinding: () =>
           Promise.resolve({ executionId: "runtime-1", skills: [], warnings: [], truncated: false }),
         readPersonalSkill: vi.fn(),
@@ -301,7 +314,11 @@ describe("Learning review processor", () => {
       },
       {
         current: () =>
-          Promise.resolve({ executionId: "runtime-1", mcpEndpoint: "http://runtime/mcp" }),
+          Promise.resolve({
+            ...snapshot().runtime,
+            executionId: "runtime-1",
+            mcpEndpoint: "http://runtime/mcp",
+          }),
         readBinding: () =>
           Promise.resolve({
             executionId: "runtime-1",

@@ -1,3 +1,7 @@
+import {
+  testAuthentication,
+  testHeaders,
+} from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import {
@@ -73,6 +77,7 @@ async function setup(ready = true) {
       .mockResolvedValue([]),
   };
   const server = new AgentAcpHttpServer({
+    authentication: testAuthentication(),
     application,
     executionAudits: new ExecutionAudits(repository),
     ready: () => Promise.resolve(ready),
@@ -91,7 +96,7 @@ async function setup(ready = true) {
   ) =>
     fetch(`http://127.0.0.1:${address.port}${path}`, {
       method: "POST",
-      headers: { ...headers, ...override },
+      headers: testHeaders({ ...headers, ...override }, "admin-console"),
       body: JSON.stringify(input),
     });
   return {
@@ -291,7 +296,13 @@ describe("administrative audit RPC boundary", () => {
   it("applies the common request-body boundary and readiness checks", async () => {
     const test = await setup(false);
     expect((await test.post()).status).toBe(503);
-    expect((await fetch(test.base + listPath, { headers })).status).toBe(405);
+    expect(
+      (
+        await fetch(test.base + listPath, {
+          headers: testHeaders(headers, "admin-console"),
+        })
+      ).status,
+    ).toBe(403);
     expect(
       (await test.post(listPath, {}, { "content-type": "text/plain" })).status,
     ).toBe(415);

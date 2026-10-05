@@ -1,0 +1,7 @@
+# Explicit dependency-only diagnostics. No application or health listener is published.
+# Load after compose.yaml and compose.debug.yaml; start only the planned dependencies.
+services:
+  diagnostic-relay:
+    ports: !override
+      - 127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:-55432}:5432
+      - 127.0.0.1:${ANTNEST_TEMPORAL_HOST_PORT:-7233}:7233

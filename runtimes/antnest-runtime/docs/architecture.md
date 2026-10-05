@@ -18,7 +18,8 @@ service registry, or an API gateway.
 Runtime is composed from a small domain model before any subsystem starts:
 
 - `RuntimeIdentity`: stable Agent ID plus immutable generation;
-- `RuntimeSpec`: identity, listen address, network spec, and filesystem spec;
+- `RuntimeSpec`: identity, listen/network/filesystem spec, and the verified
+  nonsecret authentication descriptor with its root-only receiver;
 - `NetworkSpec`: the required UDP Egress endpoint plus the TUN and resolver
   addresses assigned to this Agent;
 - `FilesystemSpec`: workspace and system-Skill root locations. Runtime's
@@ -36,19 +37,24 @@ Runtime identity is the pair `(agent_id, generation)`:
 
 - `agent_id` is a stable 1-255 byte visible-ASCII identifier for the Agent and
   its workspace;
-- `generation` is the Controller-assigned deployment generation frozen in RuntimeSpec;
+- `generation` is Runtime Controller's private compute generation frozen in RuntimeSpec;
 - a process restart within that deployment retains its generation but changes
   `execution_id`; recovery/replay of the same lifecycle operation also retains
   its already-allocated target generation;
 - every new Initialize, Update or Enable allocates a new generation, even when
   the requested configuration is unchanged.
 
-Each PID 1 start also generates a fresh `execution_id`, returned by `/status`
+RC issues a separate connection ID and RC/ACP credentials for each generation.
+The Runtime holds only hashes from its verified root-only receiver volume, loaded
+before networking. Restart retains this workload authority while changing the
+execution fence; a new generation receives new authority.
+
+Each PID 1 start also generates a fresh `execution_id`, returned by authenticated `/status`
 and checked against the expected-execution header before MCP dispatch. It
 detects a changed process environment even when the generation is unchanged;
 it is not a credential, connection epoch or deployment generation. There is no
-separate admission/Egress token. Docker or Kubernetes and their internal network
-are trusted infrastructure. Platform resource IDs remain Controller details.
+Egress packet token. The execution ID does not authenticate callers. Platform
+resource IDs remain Controller details.
 
 ## Bootstrap Sequence
 
@@ -77,7 +83,9 @@ opts in its separate test binary.
 
 Bootstrap then proceeds as follows:
 
-1. Require container PID 1 and root, then load the immutable RuntimeSpec.
+1. Require container PID 1 and root, load the immutable RuntimeSpec, and validate
+   its nonsecret authentication descriptor and root-only receiver file. Require
+   exact token/HTTP opt-in and reject unsupported TLS/mTLS before network effects.
 2. Set the Agent home and XDG locations beneath `/workspace`.
 3. Reconcile the Runtime-owned resolver file, TUN, UID policy route, and
    fail-closed nftables rules. The root Supervisor replaces deployment-platform
@@ -97,7 +105,8 @@ Bootstrap then proceeds as follows:
    Controller must allocate the Agent network before creating the Runtime.
 7. Drive the packet loop while starting and discovering the configured stdio
    MCP servers. Required initialization shares a bounded 30-second deadline.
-8. Bind the internal HTTP server and expose `/status` and `/mcp`. Continue
+8. Bind the internal HTTP server with workload/Host admission, full and reduced
+   status, MCP and private Skill routes. Continue
    forwarding packets and monitoring managed processes for the Runtime lifetime.
 
 The PID 1 Supervisor remains root. It owns MCP, TUN, Egress, telemetry, signals,
@@ -114,12 +123,21 @@ same-deployment restart or same-operation recovery retains its allocated value.
 
 ## Internal HTTP Surface
 
-Runtime exposes exactly two internal endpoints:
+Runtime exposes these internal interfaces:
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /status` | Current Runtime identity and application readiness |
-| `POST /mcp` | MCP 2026-07-28 Streamable HTTP endpoint |
+| Endpoint                                    | Purpose                                                                  |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /status`                               | Authenticated Runtime identity and application readiness for RC/ACP      |
+| `GET/HEAD /status/live`                     | Identity-free liveness without execution authority                       |
+| `/mcp`, all methods/subpaths                | ACP-only MCP 2026-07-28 Streamable HTTP mount                            |
+| `POST /internal/skill-maintenance/{action}` | ACP workload authority plus independently signed maintenance tickets     |
+| `POST /internal/skill-temporary/{action}`   | ACP workload authority plus independently signed temporary Skill tickets |
+
+The outer workload middleware authenticates full status, the entire MCP mount
+and private Skill routes before dispatch. It also validates the owned Host/port
+and strict JSON controls, while preserving the two multipart artifact uploads.
+Reduced liveness returns only `status` with 200/503; it cannot verify identity or
+authorize execution.
 
 `/status` returns HTTP 200 only after local bootstrap is complete, every
 fallible local network transport resource is registered, the assigned Egress
@@ -171,12 +189,12 @@ cancellation, discovery, or version negotiation.
 The server advertises tools and its information Resource. These four built-ins
 are always present; configured managed stdio tools extend the discovered list:
 
-| Tool | Effect |
-| --- | --- |
-| `bash` | Run `/bin/bash -lc` in a workspace-relative directory |
-| `read` | Read bounded text from `workspace` or `system_skills` |
-| `write` | Atomically create or replace a workspace text file |
-| `edit` | Replace exactly one matching string in a workspace text file |
+| Tool    | Effect                                                       |
+| ------- | ------------------------------------------------------------ |
+| `bash`  | Run `/bin/bash -lc` in a workspace-relative directory        |
+| `read`  | Read bounded text from `workspace` or `system_skills`        |
+| `write` | Atomically create or replace a workspace text file           |
+| `edit`  | Replace exactly one matching string in a workspace text file |
 
 `tools/list` is the only tool-definition authority. Built-in input and output
 schemas are generated from Rust types by the official SDK; managed stdio MCP
@@ -184,10 +202,10 @@ schemas are discovered from required children and namespaced without replacing
 their parameter/output definitions. There is no separate
 capabilities array or Antnest JSON-RPC schema.
 
-Runtime disables the SDK Host allowlist because the endpoint is deliberately
-reachable through dynamic internal Docker/Kubernetes names. The trusted platform
-network, not application authentication or HTTP Host validation, is the access
-boundary.
+Runtime configures the SDK Host allowlist and the outer middleware with the
+owned `antnest-runtime-<agent_id>` alias and loopback hosts at the exact listener
+port. Workload authority is required independently of network membership and
+Host admission. An arbitrary internal hostname cannot become a trusted alias.
 
 Runtime accepts at most one active tool execution. A second call receives the
 stable `runtime_busy` tool error instead of entering an internal queue. This
@@ -359,31 +377,32 @@ carries packet data and Runtime Egress never carries tool calls.
 
 ## Module Map
 
-| Module | Responsibility |
-| --- | --- |
-| `main` | Explicit subcommand dispatch plus ordered `serve` bootstrap, signal handling, and composition |
-| `spec` | Runtime identity and immutable domain specification |
-| `config` | Strictly decode `ANTNEST_RUNTIME_SPEC` into the domain model |
-| `execution` | Transport-neutral tool requests, results, and invariants |
-| `privilege` / `evidence` | Root Supervisor and Executor privilege verification |
-| `network` / `packet` | TUN, routes, kill switch, packet validation, and local rejection |
-| `network_session` | Single raw-IP-over-UDP TUN tunnel loop |
-| `protocol` | MCP input/output DTOs and generated JSON Schemas |
-| `roots` | Named-root reads and atomic workspace writes |
-| `executor` | Shared subcommand entry, privilege drop, and bounded JSON exchange |
-| `tools` | Four execution operations without transport semantics |
-| `execution_actor` | Single-flight spawn, cancellation, timeout, and process cleanup |
-| `managed_mcp` | Validated stdio configuration, non-root launch, SDK discovery/call dispatch and child lifecycle |
-| `progress` / `mcp_progress` | Transport-neutral bounded previews / request-scoped SDK notification delivery; see [contract](tool-progress.md) |
-| `processes` | Direct-child wait ownership and PID 1 reaping of exited orphans |
-| `startup` | Drive network forwarding during managed MCP initialization before HTTP readiness |
-| `mcp` | Official SDK adapter, `/mcp`, and `/status` HTTP composition |
-| `telemetry` | Structured logs and optional OTLP traces and metrics |
-| `information` | Bounded Runtime information Resource collection |
-| `file_observation` / `file_observation_wire` | File location and diff facts and their bounded wire encoding |
-| `skill_maintenance_*` / `skill_candidate` | Signed maintenance tickets, candidate storage, check, and commit |
-| `skill_temporary_*` / `skill_package_*` | Signed temporary Skill install/release and package validation |
-| `tool_error` | Closed tool error code set and effect projection |
+| Module                                       | Responsibility                                                                                                  |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `main`                                       | Explicit subcommand dispatch plus ordered `serve` bootstrap, signal handling, and composition                   |
+| `spec`                                       | Runtime identity and immutable domain specification                                                             |
+| `config`                                     | Strictly decode `ANTNEST_RUNTIME_SPEC` into the domain model                                                    |
+| `service_auth`                               | Verify the root-only receiver and admit workload, Host and control JSON before HTTP dispatch                    |
+| `execution`                                  | Transport-neutral tool requests, results, and invariants                                                        |
+| `privilege` / `evidence`                     | Root Supervisor and Executor privilege verification                                                             |
+| `network` / `packet`                         | TUN, routes, kill switch, packet validation, and local rejection                                                |
+| `network_session`                            | Single raw-IP-over-UDP TUN tunnel loop                                                                          |
+| `protocol`                                   | MCP input/output DTOs and generated JSON Schemas                                                                |
+| `roots`                                      | Named-root reads and atomic workspace writes                                                                    |
+| `executor`                                   | Shared subcommand entry, privilege drop, and bounded JSON exchange                                              |
+| `tools`                                      | Four execution operations without transport semantics                                                           |
+| `execution_actor`                            | Single-flight spawn, cancellation, timeout, and process cleanup                                                 |
+| `managed_mcp`                                | Validated stdio configuration, non-root launch, SDK discovery/call dispatch and child lifecycle                 |
+| `progress` / `mcp_progress`                  | Transport-neutral bounded previews / request-scoped SDK notification delivery; see [contract](tool-progress.md) |
+| `processes`                                  | Direct-child wait ownership and PID 1 reaping of exited orphans                                                 |
+| `startup`                                    | Drive network forwarding during managed MCP initialization before HTTP readiness                                |
+| `mcp`                                        | Official SDK adapter, `/mcp`, and `/status` HTTP composition                                                    |
+| `telemetry`                                  | Structured logs and optional OTLP traces and metrics                                                            |
+| `information`                                | Bounded Runtime information Resource collection                                                                 |
+| `file_observation` / `file_observation_wire` | File location and diff facts and their bounded wire encoding                                                    |
+| `skill_maintenance_*` / `skill_candidate`    | Signed maintenance tickets, candidate storage, check, and commit                                                |
+| `skill_temporary_*` / `skill_package_*`      | Signed temporary Skill install/release and package validation                                                   |
+| `tool_error`                                 | Closed tool error code set and effect projection                                                                |
 
 Runtime must not import Docker, Kubernetes, PostgreSQL, Agent scheduling,
 templates, Skills Registry, ACP, Channel, or end-user authentication logic.
@@ -424,9 +443,10 @@ it is never transparently retargeted to a restarted process.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/runtime/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#30](https://github.com/tf4fun/antnest-platform/issues/30); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+and this service's [enforced caller catalog](../../../contracts/runtime/callers.json)
+define verified workload identity and route-specific caller context. Native
+listener enforcement uses the [private instance profile](../../../contracts/runtime/instance-connection.md);
+Controller relay and ACP instance-client consumption remain subsequent #30
+owning-service batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json).
+The native admission gate does not replace the final cross-service Docker
+business/security acceptance.

@@ -98,11 +98,14 @@ in the [service README](../README.md#configuration). Required:
 - `ANTNEST_RUNTIME_CONTROLLER_URL`;
 - `ANTNEST_RUNTIME_EGRESS_URL`;
 - `ANTNEST_IDENTITY_SERVICE_URL`;
-- `ANTNEST_AGENT_ACP_SERVICE_URL` (execution configuration/settlement RPC).
+- `ANTNEST_AGENT_ACP_CONTROL_URL` (dedicated execution configuration/settlement control origin).
 
 The Runtime-reachable Egress endpoint is returned by Runtime Egress and is not
-duplicated in Agent Controller configuration. `ANTNEST_SKILL_REGISTRY_URL` and
-`ANTNEST_SKILL_REGISTRY_API_TOKEN` are optional but must be set together.
+duplicated in Agent Controller configuration. `ANTNEST_SKILL_REGISTRY_URL` is
+optional and uses an outgoing receiver-specific service credential. Shared exact
+service-authentication settings are mandatory; see the
+[authentication contract](../../../contracts/agent-controller/service-authentication.md).
+Nonempty legacy workspace URL or Registry bearer configuration fails startup.
 OpenTelemetry uses the standard OTEL environment variables with OTLP
 HTTP/protobuf only.
 

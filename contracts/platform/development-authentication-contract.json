@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "profile": "disposable-development-token-http",
+  "static_services": {
+    "identity-service": "contracts/identity/callers.json",
+    "edge-gateway": "contracts/edge-gateway/callers.json",
+    "admin-console": "contracts/admin-console/callers.json",
+    "agent-ui": "contracts/agent-ui/callers.json",
+    "agent-controller": "contracts/agent-controller/callers.json",
+    "agent-acp-service": "contracts/agent-acp/callers.json",
+    "runtime-controller": "services/runtime-controller/api/callers.json",
+    "skill-registry": "contracts/skill-registry/callers.json",
+    "runtime-egress": "contracts/egress/callers.json"
+  },
+  "dynamic_receivers": ["antnest-runtime"],
+  "host_ports": {
+    "revision": 2,
+    "debug_publisher": "diagnostic-relay",
+    "base_file": "compose.yaml",
+    "debug_file": "compose.debug.yaml",
+    "host_ip": "127.0.0.1",
+    "base_publications": {
+      "edge-gateway": {
+        "target": 8080,
+        "environment": "ANTNEST_EDGE_HOST_PORT",
+        "default": 8090
+      }
+    },
+    "debug_publications": {
+      "postgres": {
+        "target": 5432,
+        "environment": "ANTNEST_POSTGRES_HOST_PORT",
+        "default": 55432
+      },
+      "temporal": {
+        "target": 7233,
+        "environment": "ANTNEST_TEMPORAL_HOST_PORT",
+        "default": 7233
+      },
+      "runtime-controller": {
+        "target": 8080,
+        "environment": "ANTNEST_RUNTIME_CONTROLLER_HOST_PORT",
+        "default": 58080
+      },
+      "agent-acp-service": {
+        "target": 8080,
+        "environment": "ANTNEST_ACP_HOST_PORT",
+        "default": 58081
+      },
+      "identity-service": {
+        "target": 8080,
+        "environment": "ANTNEST_IDENTITY_HOST_PORT",
+        "default": 58082
+      },
+      "agent-controller": {
+        "target": 8080,
+        "environment": "ANTNEST_AGENT_CONTROLLER_HOST_PORT",
+        "default": 58083
+      },
+      "jaeger": {
+        "target": 16686,
+        "environment": "ANTNEST_JAEGER_UI_HOST_PORT",
+        "default": 16686
+      }
+    },
+    "authentication": "unchanged",
+    "stage3_port_suppression": "explicit-test-override",
+    "runtime_management_publications": false,
+    "health_listener_publications": false
+  },
+  "token_provisioning": {
+    "helper": "scripts/dev-service-tokens.mjs",
+    "output_directory": "artifacts/service-authentication/",
+    "output_policy": "fresh-directory-only",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "random_bytes_per_pair": 32,
+    "receiver_file": "<service>/callers.json",
+    "sender_directory": "<service>/tokens/",
+    "sender_file": "<caller>/tokens/<receiver>",
+    "manifest_file": "manifest.json",
+    "environment_file": "deployment.env",
+    "container_uid_environment": "ANTNEST_SERVICE_AUTH_UID",
+    "container_gid_environment": "ANTNEST_SERVICE_AUTH_GID",
+    "receiver_max_bytes": 8192
+  },
+  "bootstrap_keys": {
+    "identity_cct": {
+      "algorithm": "Ed25519",
+      "private_file": "identity-service/cct-signing.pem",
+      "private_format": "PKCS8-PEM",
+      "public_file": "identity-service/cct-jwks.json"
+    },
+    "runtime_instance_master": {
+      "file": "runtime-controller/instance-master.key",
+      "random_bytes": 32,
+      "encoding": "raw"
+    },
+    "skill_maintenance": {
+      "enabled_by_default": false,
+      "cli_flag": "--with-skill-learning",
+      "algorithm": "Ed25519",
+      "private_encoding": "base64-PKCS8-DER",
+      "public_encoding": "base64url-Ed25519"
+    }
+  },
+  "development_pki": {
+    "helper": "scripts/dev-pki.sh",
+    "implementation": "scripts/dev-pki.mjs",
+    "output_directory": "artifacts/dev-pki/",
+    "output_policy": "fresh-directory-only",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "algorithm": "ECDSA-P256",
+    "private_format": "PKCS8-PEM",
+    "manifest_file": "manifest.json",
+    "environment_file": "pki.env",
+    "ca": {
+      "certificate_file": "ca.pem",
+      "private_file": "ca-key.pem",
+      "valid_days": 365,
+      "path_length": 0
+    },
+    "leaf": {
+      "certificate_file": "<service>/cert.pem",
+      "private_file": "<service>/key.pem",
+      "valid_days": 30,
+      "uri_template": "antnest://service/<service>",
+      "extended_key_usages": ["serverAuth", "clientAuth"],
+      "dns_aliases": {
+        "agent-acp-service": ["agent-acp-control", "agent-acp-workspace"]
+      }
+    },
+    "ca_private_key_service_mount": false,
+    "native_runtime_tls_supported": false
+  }
+}

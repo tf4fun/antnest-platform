@@ -437,9 +437,8 @@
             "const": "context-v1"
           },
           "skill_instructions": {
-            "type": "array",
-            "description": "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime.",
             "maxItems": 0,
+            "type": "array",
             "items": {
               "type": "object",
               "properties": {
@@ -463,7 +462,8 @@
                 "instructions"
               ],
               "additionalProperties": false
-            }
+            },
+            "description": "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime."
           },
           "max_model_requests": {
             "type": "integer",
@@ -488,6 +488,31 @@
                   "mcp_endpoint": {
                     "type": "string",
                     "format": "uri"
+                  },
+                  "connection_id": {
+                    "type": "string",
+                    "pattern": "^rci_[0-9a-f]{32}$"
+                  },
+                  "credential": {
+                    "type": "object",
+                    "properties": {
+                      "caller": {
+                        "type": "string",
+                        "const": "agent-acp-service"
+                      },
+                      "token": {
+                        "type": "string",
+                        "minLength": 43,
+                        "maxLength": 86,
+                        "pattern": "^[A-Za-z0-9_-]+$",
+                        "writeOnly": true
+                      }
+                    },
+                    "required": [
+                      "caller",
+                      "token"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -521,7 +546,51 @@
           "max_model_requests",
           "runtime"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "accepting_runs": {
+                  "const": true
+                }
+              },
+              "required": [
+                "accepting_runs"
+              ]
+            },
+            "then": {
+              "properties": {
+                "runtime": {
+                  "type": "object",
+                  "properties": {
+                    "connection_id": {},
+                    "credential": {}
+                  },
+                  "required": [
+                    "connection_id",
+                    "credential"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "runtime": {
+                  "not": {
+                    "type": "object",
+                    "properties": {
+                      "credential": {}
+                    },
+                    "required": [
+                      "credential"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   },

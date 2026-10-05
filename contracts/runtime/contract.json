@@ -6,7 +6,10 @@
     "status_path": "/status",
     "mcp_path": "/mcp",
     "kind": "streamable-http",
-    "trusted_internal_hosts": true,
+    "trusted_internal_hosts": false,
+    "host_policy": "owned-alias-and-loopback-with-exact-port",
+    "instance_connection_contract": "instance-connection-contract.json",
+    "live_status_path": "/status/live",
     "expected_execution_header": "X-Antnest-Expected-Execution-ID"
   },
   "status": {

@@ -8,7 +8,7 @@ network_octet=$((1 + ($$ % 200)))
 export COMPOSE_PROJECT_NAME="antnest-stage2-e2e-$$"
 node "$repository_root/tests/support/storage.mjs" "$repository_root/artifacts/verification/go-integration"
 node "$repository_root/tests/support/storage.mjs" "$repository_root/artifacts/verification/stage2-boundary/$COMPOSE_PROJECT_NAME"
-export COMPOSE_FILE="compose.yaml:tests/e2e/stage2.compose.yaml"
+export COMPOSE_FILE="compose.yaml:compose.debug.yaml:tests/e2e/stage2.compose.yaml"
 export COMPOSE_ENV_FILES=.env.example
 export ANTNEST_POSTGRES_HOST_PORT=$port_base
 export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT=$((port_base + 1))

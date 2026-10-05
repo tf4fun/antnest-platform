@@ -29,7 +29,9 @@ A disabled or temporarily unavailable Agent may still have its default changed
 by its active owner. This does not enable the Agent or grant new access. Existing
 Session overrides remain ACP data and are not written back into the default.
 
-The RPC is owner-scoped, not administrator-only. `request_id` identifies the
+The storage operation is owner-scoped. Its current HTTP entry is Console-only
+and requires a signed administrator CCT whose subject is that owner and whose
+`agt` matches the requested Agent. Workload authentication grants no ownership. `request_id` identifies the
 request; concurrency uses `expected_authorization_revision`. A repeated stale
 write returns a conflict rather than allocating a second revision or event.
 

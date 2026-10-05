@@ -11,12 +11,15 @@ import {
   type PublicExecutionConfiguration,
 } from "../domain/execution-configuration.js";
 import type { ExecutionConfigurationRepository } from "../ports/execution-configuration.js";
+import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
+import type { RuntimeBinding } from "../domain/types.js";
 import type { ProviderClients } from "./provider-clients.js";
 import { InvalidationListeners } from "./invalidation-listeners.js";
 
 export type ExecutionDirectoryDependencies = {
   repository: ExecutionConfigurationRepository;
   clients: ProviderClients;
+  runtimeConnections: RuntimeConnectionAuthority;
   onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
   onPublished?: (organizationId: string) => void;
@@ -70,16 +73,31 @@ export class ExecutionDirectory {
     return this.changes.subscribe(organizationId, changed);
   }
 
+  /** Run acceptance calls this inside withAccess, before its durable acceptance commit. */
+  public retainRuntimeRun(runId: string, binding: RuntimeBinding): void {
+    this.dependencies.runtimeConnections.retainRun(runId, binding);
+  }
+
+  public releaseRuntimeRun(runId: string): void {
+    this.dependencies.runtimeConnections.releaseRun(runId);
+  }
+
   /** Private reconciliation uses an already persisted Agent scope, including closed Agents. */
   public runtimeForCleanup(scope: {
     organizationId: string;
     agentId: string;
-  }): { executionId: string; mcpEndpoint: string } | null {
+  }): RuntimeBinding | null {
     const runtime = this.configurations
       .get(scope.organizationId)
       ?.agents.find((agent) => agent.agent_id === scope.agentId)?.runtime;
     return runtime
-      ? { executionId: runtime.runtime_execution_id, mcpEndpoint: runtime.mcp_endpoint }
+      ? this.dependencies.runtimeConnections.findForCleanup({
+          ...scope,
+          revision: runtime.runtime_revision,
+          executionId: runtime.runtime_execution_id,
+          mcpEndpoint: runtime.mcp_endpoint,
+          ...(runtime.connection_id === undefined ? {} : { connectionId: runtime.connection_id }),
+        })
       : null;
   }
 
@@ -120,28 +138,41 @@ export class ExecutionDirectory {
     this.requireConsistentRevision(current, next);
     this.requireConsistentProviders(current, incoming);
     this.dependencies.clients.validate(incoming);
-    if (applied?.revision === next.revision) {
-      return { organization_id: organizationId, applied_revision: next.revision };
-    }
-    if (current?.revision !== next.revision) {
-      const saved = await this.dependencies.repository.save(next, current?.revision ?? null);
-      if (!saved)
-        throw new DomainError("configuration_conflict", "Execution configuration revision changed");
-    }
-    this.configurations.delete(organizationId);
+    const connections = this.dependencies.runtimeConnections.prepare(incoming);
     try {
-      this.dependencies.clients.apply(incoming);
-      await this.dependencies.onApplied(structuredClone(next));
-      this.configurations.set(organizationId, next);
-      this.changes.invalidate(organizationId);
-      this.dependencies.onPublished?.(organizationId);
-    } catch (error) {
-      try {
-        this.dependencies.onUnavailable(organizationId);
-      } finally {
-        this.changes.invalidate(organizationId);
+      // Equal-revision replay still verifies private identity and sender files.
+      if (applied?.revision === next.revision) {
+        connections.commit();
+        return { organization_id: organizationId, applied_revision: next.revision };
       }
-      throw error;
+      if (current?.revision !== next.revision) {
+        const saved = await this.dependencies.repository.save(next, current?.revision ?? null);
+        if (!saved)
+          throw new DomainError(
+            "configuration_conflict",
+            "Execution configuration revision changed",
+          );
+      }
+      this.configurations.delete(organizationId);
+      try {
+        this.dependencies.clients.apply(incoming);
+        await this.dependencies.onApplied(structuredClone(next));
+        connections.commit();
+        this.configurations.set(organizationId, next);
+        this.changes.invalidate(organizationId);
+        this.dependencies.onPublished?.(organizationId);
+      } catch (error) {
+        this.configurations.delete(organizationId);
+        this.dependencies.runtimeConnections.revokePublication(organizationId);
+        try {
+          this.dependencies.onUnavailable(organizationId);
+        } finally {
+          this.changes.invalidate(organizationId);
+        }
+        throw error;
+      }
+    } finally {
+      connections.rollback();
     }
     return { organization_id: organizationId, applied_revision: next.revision };
   }

@@ -1,10 +1,7 @@
 {
   "service": "agent-controller",
-  "status": "planned",
-  "implementation_issues": [
-    32,
-    28
-  ],
+  "status": "enforced",
+  "implementation_issues": [32, 28],
   "routes": {
     "* /": {
       "callers": [
@@ -23,9 +20,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-events": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -33,9 +28,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-events/watch": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -43,9 +36,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-operations/{request_id}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -53,9 +44,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-skill-preparations/{request_id}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -63,9 +52,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-templates": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -73,9 +60,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-templates/{template_id}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -83,9 +68,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-templates/{template_id}/revisions/{revision}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -93,9 +76,7 @@
       "request_body": "none"
     },
     "GET /internal/agents": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -103,9 +84,7 @@
       "request_body": "none"
     },
     "GET /internal/agents/{agent_id}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -113,9 +92,7 @@
       "request_body": "none"
     },
     "GET /internal/agents/{agent_id}/events": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -123,9 +100,7 @@
       "request_body": "none"
     },
     "GET /internal/agents/{agent_id}/events/watch": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -133,9 +108,7 @@
       "request_body": "none"
     },
     "GET /internal/agents/{agent_id}/network-policy": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -143,9 +116,7 @@
       "request_body": "none"
     },
     "GET /internal/agents/{agent_id}/skill-learning-policy": {
-      "callers": [
-        "agent-acp-service"
-      ],
+      "callers": ["agent-acp-service"],
       "authentication": "workload",
       "caller_context": {
         "agent-acp-service": "operation"
@@ -153,9 +124,7 @@
       "request_body": "none"
     },
     "GET /internal/execution-synchronization": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -163,9 +132,7 @@
       "request_body": "none"
     },
     "GET /internal/model-profiles": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -173,9 +140,7 @@
       "request_body": "none"
     },
     "GET /internal/model-profiles/{model_profile_id}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -183,9 +148,7 @@
       "request_body": "none"
     },
     "GET /internal/provider-connections": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -193,29 +156,31 @@
       "request_body": "none"
     },
     "GET /internal/provider-connections/{connection_id}": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
       },
       "request_body": "none"
     },
-    "GET /internal/provider-connections/{connection_id}/access": {
-      "callers": [
-        "admin-console"
-      ],
+    "POST /internal/provider-connections/{connection_id}/discover-models": {
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
       },
-      "request_body": "none"
+      "request_body": "json"
+    },
+    "POST /internal/provider-discovery/draft": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
     },
     "GET /rpc/agent-controller/status": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -223,9 +188,7 @@
       "request_body": "none"
     },
     "GET /status": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -233,9 +196,7 @@
       "request_body": "none"
     },
     "POST /internal/agent-templates": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -243,9 +204,7 @@
       "request_body": "json"
     },
     "POST /internal/agent-templates/{template_id}/revisions": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -253,9 +212,7 @@
       "request_body": "json"
     },
     "POST /internal/agents": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -263,9 +220,7 @@
       "request_body": "json"
     },
     "POST /internal/agents/{agent_id}/delete": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -273,9 +228,7 @@
       "request_body": "json"
     },
     "POST /internal/agents/{agent_id}/disable": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -283,9 +236,7 @@
       "request_body": "json"
     },
     "POST /internal/agents/{agent_id}/enable": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -293,9 +244,7 @@
       "request_body": "json"
     },
     "POST /internal/agents/{agent_id}/rebuild": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -303,9 +252,7 @@
       "request_body": "json"
     },
     "POST /internal/model-profiles": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -313,9 +260,7 @@
       "request_body": "json"
     },
     "POST /internal/model-profiles/{model_profile_id}/revisions": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -323,9 +268,7 @@
       "request_body": "json"
     },
     "POST /internal/provider-connections": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -333,9 +276,7 @@
       "request_body": "json"
     },
     "POST /internal/provider-connections/{connection_id}/credentials": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -343,10 +284,7 @@
       "request_body": "json"
     },
     "POST /rpc/agent-controller/list-workspace-agents": {
-      "callers": [
-        "edge-gateway",
-        "agent-ui"
-      ],
+      "callers": ["edge-gateway", "agent-ui"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required",
@@ -355,9 +293,7 @@
       "request_body": "json"
     },
     "POST /rpc/agent-controller/set-agent-authorization": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -365,9 +301,7 @@
       "request_body": "json"
     },
     "PUT /internal/agent-templates/{template_id}/availability": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -375,9 +309,7 @@
       "request_body": "json"
     },
     "PUT /internal/agents/{agent_id}/network-policy": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -385,9 +317,7 @@
       "request_body": "json"
     },
     "PUT /internal/agents/{agent_id}/skill-learning-policy": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -395,9 +325,7 @@
       "request_body": "json"
     },
     "PUT /internal/model-profiles/{model_profile_id}/availability": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"
@@ -405,9 +333,7 @@
       "request_body": "json"
     },
     "PUT /internal/provider-connections/{connection_id}/availability": {
-      "callers": [
-        "admin-console"
-      ],
+      "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {
         "admin-console": "required"

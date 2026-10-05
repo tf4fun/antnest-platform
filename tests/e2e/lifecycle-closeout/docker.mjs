@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { discoverNetworkOctet } from "../acp-closeout/network.mjs";
 import { dockerInvocation } from "../acp-closeout/docker.mjs";
+import {
+  fixtureEnvironment,
+  prepareFixtureCredentials,
+} from "../../support/authenticated-e2e.mjs";
 
 export const scopeLabel = "io.antnest.runtime-controller-scope";
 export const lines = (value) => value.trim().split(/\s+/).filter(Boolean);
@@ -88,36 +95,39 @@ export async function configuration(signal, beforeEffects = () => {}) {
   beforeEffects(project);
   const docker = dockerClient(process.env, signal);
   const octet = await networkOctet(docker, 1 + (process.pid % 200));
-  const image = await docker([
+  const image = "antnest/antnest-runtime:local";
+  const resolvedImage = await docker([
     "image",
     "inspect",
     "--format",
     "{{.Id}}",
-    "antnest/antnest-runtime:local",
+    image,
   ]);
-  assert.match(image, /^sha256:[a-f0-9]{64}$/);
+  assert.match(resolvedImage, /^sha256:[a-f0-9]{64}$/);
   const ports = new Set();
   while (ports.size < 4) ports.add(await freePort());
   const [pg, edge, jaeger, model] = [...ports];
   const gateway = `http://127.0.0.1:${edge}`;
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  const prepared = prepareFixtureCredentials(project, root);
   const env = {
-    ...process.env,
-    COMPOSE_PROJECT_NAME: project,
+    ...fixtureEnvironment(process.env, { project, octet }),
+    ...prepared.environment,
     ANTNEST_POSTGRES_HOST_PORT: String(pg),
     ANTNEST_EDGE_HOST_PORT: String(edge),
     ANTNEST_JAEGER_UI_HOST_PORT: String(jaeger),
     ANTNEST_LIFECYCLE_MODEL_HOST_PORT: String(model),
     ANTNEST_EDGE_PUBLIC_BASE_URL: gateway,
-    ANTNEST_RUNTIME_CONTROLLER_SCOPE: project,
-    ANTNEST_RUNTIME_MANAGEMENT_NETWORK: `${project}-runtime-management`,
-    ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: `${project}-system-skills`,
-    ANTNEST_RUNTIME_MANAGEMENT_SUBNET: `10.243.${octet}.0/24`,
-    ANTNEST_EGRESS_IPV4: `10.243.${octet}.3`,
-    ANTNEST_JAEGER_RUNTIME_IPV4: `10.243.${octet}.4`,
-    ANTNEST_EGRESS_CONTROL_SUBNET: `10.242.${octet}.0/24`,
-    ANTNEST_EGRESS_CONTROL_IPV4: `10.242.${octet}.3`,
-    ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT: `http://10.243.${octet}.4:4318`,
     ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: image,
+    ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS: "true",
+    ANTNEST_IDENTITY_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+    ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+    ANTNEST_ACP_CLIENT_MCP_KEY: randomBytes(32).toString("base64"),
+    ANTNEST_TEMPORAL_HOST_PORT: "0",
+    ANTNEST_RUNTIME_CONTROLLER_HOST_PORT: "0",
+    ANTNEST_ACP_HOST_PORT: "0",
+    ANTNEST_IDENTITY_HOST_PORT: "0",
+    ANTNEST_AGENT_CONTROLLER_HOST_PORT: "0",
     ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: "stage3",
     ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: "Lifecycle test",
     ANTNEST_BOOTSTRAP_ADMIN_EMAIL: "stage3-admin@example.com",
@@ -132,6 +142,8 @@ export async function configuration(signal, beforeEffects = () => {}) {
   return {
     project,
     image,
+    resolvedImage,
+    credentials: prepared.credentials,
     env,
     gateway,
     jaeger: `http://127.0.0.1:${jaeger}`,
@@ -149,6 +161,8 @@ export function composeArgs(project, args) {
     project,
     "-f",
     "compose.yaml",
+    "-f",
+    "compose.debug.yaml",
     "-f",
     "compose.stage3.yaml",
     "-f",
@@ -245,4 +259,17 @@ export async function cleanup(
   }
   if (errors.length)
     throw new AggregateError(errors, `Cleanup failed for ${config.project}`);
+  if (config.credentials) {
+    const root = fileURLToPath(new URL("../../../", import.meta.url));
+    assert.equal(
+      config.credentials,
+      resolve(
+        root,
+        "artifacts/verification/authenticated-e2e",
+        config.project,
+        "credentials",
+      ),
+    );
+    rmSync(config.credentials, { recursive: true });
+  }
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -16,9 +17,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 	platformmonitor "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/monitor"
@@ -31,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
-		if err := checkHealth(os.Getenv); err != nil {
+		if err := checkHealth(os.LookupEnv); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -44,17 +48,33 @@ func main() {
 	}
 }
 
-func checkHealth(lookup func(string) string) (resultErr error) {
-	listen := strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_LISTEN"))
+func checkHealth(lookup serviceauth.LookupEnv) (resultErr error) {
+	listen, _ := lookup("ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN")
+	listen = strings.TrimSpace(listen)
 	if listen == "" {
-		listen = ":8080"
+		listen = "127.0.0.1:8082"
 	}
-	_, port, err := net.SplitHostPort(listen)
+	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		return fmt.Errorf("parse Runtime Controller listen address: %w", err)
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get("http://127.0.0.1:" + port + "/status")
+	address, err := netip.ParseAddr(host)
+	if err != nil || !address.IsLoopback() {
+		return errors.New("health listener must be a loopback IP")
+	}
+	tlsConfig, err := serviceauth.HealthTLS("runtime-controller", lookup)
+	if err != nil {
+		return err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy, transport.TLSClientConfig = nil, tlsConfig
+	defer transport.CloseIdleConnections()
+	scheme := "http"
+	if tlsConfig != nil {
+		scheme = "https"
+	}
+	client := &http.Client{Timeout: 2 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Get(scheme + "://" + net.JoinHostPort(host, port) + "/status")
 	if err != nil {
 		return classified("readiness", "healthcheck_transport_failed", err)
 	}
@@ -101,10 +121,11 @@ func run(ctx context.Context) (resultErr error) {
 	slog.SetDefault(telemetryRuntime.Logger())
 	defer func() { finishTelemetry(telemetryRuntime, resultErr) }()
 
-	configuration, err := config.Load(os.Getenv)
+	configuration, err := config.Load(os.LookupEnv)
 	if err != nil {
 		return classified("configuration", "invalid_configuration", err)
 	}
+	defer configuration.Authentication.CloseIdleConnections()
 	database, err := postgresrepository.OpenDatabase(ctx, configuration.DatabaseURL, 20, 5)
 	if err != nil {
 		return classified("repository", "database_connection_failed", err)
@@ -136,12 +157,24 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("skill_preparation", "skill_volume_writer_initialization_failed", err)
 	}
+	instanceVolumes, err := platformdocker.NewInstanceVolumeWriter(dockerClient, configuration.SkillPreparerImage, configuration.InstanceCredentials, configuration.ControllerScope)
+	if err != nil {
+		return classified("instance_authentication", "instance_volume_initialization_failed", err)
+	}
+	senders, err := instanceauth.NewSender("", configuration.InstanceCredentials)
+	if err != nil {
+		return classified("instance_authentication", "instance_sender_initialization_failed", err)
+	}
+	defer joinCloseError(&resultErr, "Runtime instance sender files", senders.Close)
 	driver, err := platformdocker.NewDriver(dockerClient, platformdocker.Config{
-		ControllerScope:    configuration.ControllerScope,
-		ManagementNetwork:  configuration.ManagementNetwork,
-		SystemSkillsVolume: configuration.SystemSkillsVolume,
-		RuntimeOTEL:        configuration.RuntimeOTEL,
-		SkillMountGate:     skillVolumes,
+		AllowedImages:         configuration.AllowedImages,
+		ControllerScope:       configuration.ControllerScope,
+		ManagementNetwork:     configuration.ManagementNetwork,
+		SystemSkillsVolume:    configuration.SystemSkillsVolume,
+		RuntimeOTEL:           configuration.RuntimeOTEL,
+		SkillMountGate:        skillVolumes,
+		InstanceMountGate:     instanceVolumes,
+		RuntimeAuthentication: configuration.RuntimeAuthentication,
 	})
 	if err != nil {
 		return classified("platform", "docker_driver_initialization_failed", err)
@@ -154,7 +187,7 @@ func run(ctx context.Context) (resultErr error) {
 			return classified("skill_preparation", "skill_service_initialization_failed", err)
 		}
 		skillService.SetReadyVerifier(baseRepository, skillVolumes)
-		registry, registryErr := registryclient.New(configuration.SkillRegistryURL, configuration.SkillRegistryToken, 30*time.Second, nil)
+		registry, registryErr := registryclient.New(configuration.SkillRegistryURL, 30*time.Second, configuration.Authentication)
 		if registryErr != nil {
 			return classified("skill_preparation", "skill_registry_client_initialization_failed", registryErr)
 		}
@@ -179,7 +212,13 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("telemetry", "platform_observer_initialization_failed", err)
 	}
-	verifier, err := runtimeclient.New(runtimeStatusHTTPClient(), configuration.RuntimeStatusTimeout)
+	verifier, err := runtimeclient.NewAuthenticated(runtimeStatusHTTPClient(), configuration.RuntimeStatusTimeout, func(ctx context.Context, inspection deployment.Inspection) (string, error) {
+		creator, err := baseRepository.GenerationOperation(ctx, inspection.RuntimeKey())
+		if err != nil || creator.SpecDigest != inspection.SpecDigest || creator.InstanceAuthentication == nil {
+			return "", control.ErrConnectionUnavailable
+		}
+		return senders.Install(instanceauth.Identity{Scope: configuration.ControllerScope, AgentID: inspection.AgentID, Generation: inspection.Generation}, creator.InstanceAuthentication, "runtime-controller")
+	})
 	if err != nil {
 		return classified("runtime_status", "runtime_verifier_initialization_failed", err)
 	}
@@ -194,6 +233,9 @@ func run(ctx context.Context) (resultErr error) {
 	if err := service.SetMaintenanceVerifiers(configuration.MaintenanceVerifiers); err != nil {
 		return classified("control", "maintenance_verifier_initialization_failed", err)
 	}
+	if err := service.SetInstanceCredentials(configuration.ControllerScope, configuration.InstanceCredentials); err != nil {
+		return classified("instance_authentication", "instance_issuer_initialization_failed", err)
+	}
 	service.SetSkillVolumeInspector(skillVolumes)
 	monitor, err := platformmonitor.New(
 		observedPlatform, service, observationHealth, slog.Default(), config.MonitorRetryDelay,
@@ -203,7 +245,7 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("observation", "platform_monitor_initialization_failed", err)
 	}
-	componentErrors := make(chan error, 3)
+	componentErrors := make(chan error, 4)
 	notificationProbe, err := newNotificationProbePayload()
 	if err != nil {
 		return classified("observation", "observation_notification_probe_initialization_failed", err)
@@ -282,7 +324,7 @@ func run(ctx context.Context) (resultErr error) {
 		skillHandler = append(skillHandler, skillService)
 	}
 	handler, err := rpc.NewHandler(
-		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout, skillHandler...,
+		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout, rpc.Security{Authentication: configuration.Authentication.Config.Receiver}, skillHandler...,
 	)
 	if err != nil {
 		return classified("rpc", "rpc_handler_initialization_failed", err)
@@ -293,7 +335,9 @@ func run(ctx context.Context) (resultErr error) {
 		Addr: configuration.ListenAddress, Handler: telemetry.HTTPHandler(handler),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: time.Minute,
 		BaseContext: func(net.Listener) context.Context { return serverContext },
+		TLSConfig:   configuration.Authentication.Config.ServerTLS,
 	}
+	healthServer := &http.Server{Addr: configuration.HealthListenAddress, Handler: handler.HealthHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: time.Minute, TLSConfig: configuration.Authentication.Config.ServerTLS}
 	if err := checkStartupReadiness(ctx, service); err != nil {
 		return classified("readiness", "startup_readiness_failed", err)
 	}
@@ -309,6 +353,9 @@ func run(ctx context.Context) (resultErr error) {
 	}
 	go runSkillCleanupWorker(workerContext, skillCleanup)
 	go func() { componentErrors <- classified("rpc", "http_server_failed", serveHTTP(server)) }()
+	go func() {
+		componentErrors <- classified("readiness", "http_health_server_failed", serveHTTP(healthServer))
+	}()
 	slog.Info("Runtime Controller started",
 		"listen_address", configuration.ListenAddress,
 		"platform", configuration.Platform,
@@ -323,6 +370,7 @@ func run(ctx context.Context) (resultErr error) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	shutdownErr := classified("rpc", "http_shutdown_failed", server.Shutdown(shutdownCtx))
+	shutdownErr = errors.Join(shutdownErr, classified("readiness", "http_health_shutdown_failed", healthServer.Shutdown(shutdownCtx)))
 	if skillWorkerDone != nil {
 		select {
 		case <-skillWorkerDone:
@@ -430,7 +478,12 @@ func runtimeStatusHTTPClient() *http.Client {
 }
 
 func serveHTTP(server *http.Server) error {
-	err := server.ListenAndServe()
+	var err error
+	if server.TLSConfig != nil {
+		err = server.ListenAndServeTLS("", "")
+	} else {
+		err = server.ListenAndServe()
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

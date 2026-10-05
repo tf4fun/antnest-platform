@@ -35,7 +35,9 @@ UID 1000 network traffic is forced through a TUN device to Runtime Egress.
 - Accept signed, Run-bound temporary Skill packages and signed Skill
   maintenance requests through private HTTP endpoints, and apply them as
   UID/GID 1000 inside the workspace.
-- Expose `GET /status` only after bootstrap is complete.
+- Authenticate full status and the entire MCP/private Skill mount with RC-issued,
+  instance-specific workload credentials before SDK dispatch. Expose identity-free
+  `GET/HEAD /status/live` for Docker liveness.
 - Emit structured stderr logs and optionally export traces and metrics over
   OTLP, preserving local trace correlation when export is disabled.
 
@@ -54,14 +56,15 @@ UID 1000 network traffic is forced through a TUN device to Runtime Egress.
 
 ## Interfaces
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | `GET /status` | Runtime identity, `execution_id`, and application readiness for Runtime Controller |
-| Inbound | `POST /mcp` | MCP Streamable HTTP endpoint for Agent ACP Service; requires `X-Antnest-Expected-Execution-ID` |
-| Inbound | `POST /internal/skill-maintenance/{action}` | Signed Skill maintenance requests from Agent ACP Service |
-| Inbound | `POST /internal/skill-temporary/install`, `/release` | Signed temporary Skill delivery from Agent ACP Service |
-| Outbound | Connected UDP socket to Runtime Egress | Raw IPv4/TCP packet tunnel for all UID 1000 traffic |
-| Outbound | OTLP HTTP/protobuf | Optional trace and metric export to a private Collector |
+| Direction | Interface                                            | Purpose                                                                  |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| Inbound   | `GET /status`                                        | Authenticated Runtime identity/readiness for RC and ACP                  |
+| Inbound   | `GET/HEAD /status/live`                              | Only `status`, without identity or execution authority                   |
+| Inbound   | `/mcp`, all methods/subpaths                         | ACP workload admission before SDK dispatch; requires the execution fence |
+| Inbound   | `POST /internal/skill-maintenance/{action}`          | Signed Skill maintenance requests from Agent ACP Service                 |
+| Inbound   | `POST /internal/skill-temporary/install`, `/release` | Signed temporary Skill delivery from Agent ACP Service                   |
+| Outbound  | Connected UDP socket to Runtime Egress               | Raw IPv4/TCP packet tunnel for all UID 1000 traffic                      |
+| Outbound  | OTLP HTTP/protobuf                                   | Optional trace and metric export to a private Collector                  |
 
 All inbound endpoints listen on an internal platform address and must not be
 published outside the trusted Docker or Kubernetes network.
@@ -73,26 +76,45 @@ Skill maintenance verifier key IDs use the shared
 and [accept/reject fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
 Startup rejects invalid IDs and reports duplicate IDs separately.
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_RUNTIME_SPEC` | Yes | none | Immutable RuntimeSpec as a JSON document. Decoded strictly (unknown fields rejected) against [runtime-spec.schema.json](../../contracts/runtime/runtime-spec.schema.json). Supplied by Runtime Controller. |
-| `ANTNEST_RUNTIME_IMAGE_REFERENCE` | No | empty | Configured image name/tag/digest, attached to telemetry resources. |
-| `ANTNEST_RUNTIME_IMAGE_ID` | No | empty | Resolved image ID, attached to telemetry resources. |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` captures complete MCP request/result JSON on RPC spans. May contain secrets. |
-| `RUST_LOG` | No | `info,hyper=warn,reqwest=warn` | Stderr log filter. Only `antnest_runtime` targets are emitted. |
-| `OTEL_SDK_DISABLED` | No | unset | `true` disables trace and metric export. |
-| `OTEL_TRACES_EXPORTER` | No | unset | `otlp` or `none`. When unset, export is enabled only if an OTLP endpoint is set. |
-| `OTEL_METRICS_EXPORTER` | No | unset | `otlp` or `none`, with the same rule as traces. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | `http://127.0.0.1:4318` when export is enabled | Common OTLP base URL. Must be `http` with a literal IPv4 address on the direct platform network. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | No | derived from common endpoint | Trace endpoint override. |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | No | derived from common endpoint | Metric endpoint override. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | No | `http/protobuf` | The only supported protocol is `http/protobuf`. |
-| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | No | common protocol | Trace protocol override. |
-| `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL` | No | common protocol | Metric protocol override. |
+| Variable                                        | Required | Default                                        | Description                                                                                                                                                                                                |
+| ----------------------------------------------- | -------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_RUNTIME_SPEC`                          | Yes      | none                                           | Immutable RuntimeSpec as a JSON document. Decoded strictly (unknown fields rejected) against [runtime-spec.schema.json](../../contracts/runtime/runtime-spec.schema.json). Supplied by Runtime Controller. |
+| `ANTNEST_SERVICE_AUTH_MODE`                     | Yes      | none                                           | Exactly `token`. Native Runtime has no TLS listener; `mtls` fails startup.                                                                                                                                 |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | Yes      | none                                           | Exactly `true`, explicitly permitting the private HTTP-only instance profile.                                                                                                                              |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`             | Yes      | none                                           | Exactly `/run/antnest-auth/callers.json`, in RC's verified read-only receiver volume.                                                                                                                      |
+| `ANTNEST_RUNTIME_IMAGE_REFERENCE`               | No       | empty                                          | Configured image name/tag/digest, attached to telemetry resources.                                                                                                                                         |
+| `ANTNEST_RUNTIME_IMAGE_ID`                      | No       | empty                                          | Resolved image ID, attached to telemetry resources.                                                                                                                                                        |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`         | No       | `false`                                        | `true` captures complete MCP request/result JSON on RPC spans. May contain secrets.                                                                                                                        |
+| `RUST_LOG`                                      | No       | `info,hyper=warn,reqwest=warn`                 | Stderr log filter. Only `antnest_runtime` targets are emitted.                                                                                                                                             |
+| `OTEL_SDK_DISABLED`                             | No       | unset                                          | `true` disables trace and metric export.                                                                                                                                                                   |
+| `OTEL_TRACES_EXPORTER`                          | No       | unset                                          | `otlp` or `none`. When unset, export is enabled only if an OTLP endpoint is set.                                                                                                                           |
+| `OTEL_METRICS_EXPORTER`                         | No       | unset                                          | `otlp` or `none`, with the same rule as traces.                                                                                                                                                            |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                   | No       | `http://127.0.0.1:4318` when export is enabled | Common OTLP base URL. Must be `http` with a literal IPv4 address on the direct platform network.                                                                                                           |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`            | No       | derived from common endpoint                   | Trace endpoint override.                                                                                                                                                                                   |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`           | No       | derived from common endpoint                   | Metric endpoint override.                                                                                                                                                                                  |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`                   | No       | `http/protobuf`                                | The only supported protocol is `http/protobuf`.                                                                                                                                                            |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`            | No       | common protocol                                | Trace protocol override.                                                                                                                                                                                   |
+| `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`           | No       | common protocol                                | Metric protocol override.                                                                                                                                                                                  |
 
 Individual variables such as an Agent ID or Egress endpoint are not alternate
 inputs; RuntimeSpec is the only deployment configuration. Telemetry variables
 are never copied into Executor environments.
+
+Production `serve` additionally requires RuntimeSpec's nonsecret `authentication`
+descriptor: an RC-issued connection ID, the fixed callers path, and the complete
+receiver file digest. Before network setup or HTTP, Runtime validates the root
+directory (UID/GID 0, mode 0700), the sole regular file (UID/GID 0, mode 0600),
+its digest and the strict bounded RC/ACP hash profile. Missing files, links,
+FIFOs, extra entries, duplicate JSON members and unsupported TLS configuration
+fail closed. Neither bearer enters RuntimeSpec, the Runtime environment or tool
+subprocesses. See the [private instance contract](../../contracts/runtime/instance-connection.md).
+
+Requests use the dedicated `Antnest-Service-Authorization` header. Unknown or
+malformed authority returns `401 runtime_unauthorized`; a known wrong caller gets
+`403 caller_not_allowed`. The owned `antnest-runtime-<agent_id>` alias and loopback
+hosts require the exact configured port. MCP remains stateless; execution fences
+and independently signed Skill tickets remain mandatory. JSON POSTs reject
+ambiguous/non-UTF-8 input; the two signed Skill upload routes retain multipart.
 
 The Supervisor sets these internal variables for its own subprocesses. They
 are not operator settings, and managed MCP server `env` entries cannot use the
@@ -174,7 +196,8 @@ release binary. These images must never be published as releases.
 
 Upgrade Runtime Controller's status reader before deploying images with the
 new required field; see the [status contract](../../contracts/runtime/status.md).
-Image admission policy remains separate work in #29.
+RC image admission is delivered in #29; coordinated deployment remains pending
+on `feat/service-authentication`.
 
 - Unit and component tests live in `src/`.
 - The `executor_cli` and `runtime_startup` integration tests and SDK, wire, network, and process
@@ -194,9 +217,9 @@ docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:m
 python3 tests/e2e/antnest-runtime/e2e_managed_mcp.py
 ```
 
-  Only the build stage contains the managed MCP test fixture; it is not
-  shipped in the production image. Override `ANTNEST_RUNTIME_BUILD_IMAGE` and
-  `ANTNEST_RUNTIME_TEST_IMAGE` to select other local tags.
+Only the build stage contains the managed MCP test fixture; it is not
+shipped in the production image. Override `ANTNEST_RUNTIME_BUILD_IMAGE` and
+`ANTNEST_RUNTIME_TEST_IMAGE` to select other local tags.
 
 Test-only build options and variables:
 
@@ -211,6 +234,21 @@ Test-only build options and variables:
 No production image is published yet. Local images use
 `antnest/antnest-runtime:<tag>`. A shared contract change must pass Runtime,
 Runtime Controller, and Runtime Egress before an image is promoted.
+
+The isolated #30 receiver gate builds both release and test-feature binaries,
+uses a readiness-only UDP fixture and the official MCP client, and covers actual
+authentication, Host admission, executor isolation, signed learning/temporary
+uploads, restart and invalid bootstrap:
+
+```sh
+node tests/e2e/service-authentication/runtime/run.mjs
+```
+
+It creates no host ports or real model calls, removes only its owned Docker
+resources and credentials, and saves private evidence under
+`artifacts/verification/`. Controller relay, ACP instance-client adoption and
+cross-service business/security E2E are subsequent owning-service/integration
+batches; this receiver gate does not complete the platform workflow.
 
 ## Documentation
 

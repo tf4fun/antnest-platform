@@ -38,11 +38,18 @@ Registry, Channel Manager and Task Scheduler together.
 | `services/<name>/` | Long-lived control-plane or business service                         | Entrypoints, domain/application code, adapters, private persistence, service tests, image definition |
 | `runtimes/<name>/` | Managed execution process with a distinct trust or resource boundary | Runtime protocol, side effects, privilege and platform code                                          |
 | `contracts/`       | Language-neutral inter-service contracts                             | JSON Schema, RPC schema, examples, compatibility notes                                               |
+| `modules/<name>/`  | Service-independent libraries                                        | Shared protocol/security primitives and their unit tests; no service domain, persistence or route policy |
 | `docs/`            | Cross-service architecture and operations                            | Service map, stage integration, deployment-wide decisions                                            |
 
 A service must not import another service's implementation. Communication
 crosses a language-neutral contract in `contracts/`; shared source code is not
 a substitute for a service boundary.
+
+The [Go authentication module](go-authentication-module.md) shares the existing
+workload/CCT protocol implementation. Services still own route grants, domain
+authorization and error projection. Each Go service must build with `GOWORK=off`
+and declare its own dependency on the module; Docker builds mirror the repository
+layout instead of importing another service's source.
 
 ## Required Service Documentation
 
@@ -63,20 +70,20 @@ under `contracts/`.
 
 ## Target Services
 
-| Component                         | Sole reason to exist                                           | Owned facts/resources                                                                                                                                                                      | Explicitly outside it                                                                                        |
-| --------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Identity Service                  | Enterprise identity authority                                  | Users, organizations, groups, memberships, OIDC, SCIM, sessions, identity events                                                                                                           | Agent authorization, Channel signatures, model credentials                                                   |
-| Admin Console                     | Administrator UI and thin BFF                                  | Page-local presentation state only                                                                                                                                                         | Business records, direct database access, domain workflows                                                   |
-| Agent UI                          | End-user Agent conversation experience                         | Page-local presentation state only                                                                                                                                                         | Agent Core implementation, Runtime endpoints, lifecycle state                                                |
-| Channel Manager (planned)         | Own external-channel interaction and adapt it to ACP semantics | Connectors, bindings, external conversation mapping, inbound receipts, deliveries                                                                                                          | Agent lifecycle, authoritative Sessions/Runs, platform resources                                             |
-| Agent Controller                  | Agent aggregate and lifecycle authority                        | AgentSpec, immutable build/execution revisions, current Provider/model configuration and credentials, Runtime binding, execution publication, lifecycle workflows, management events       | Run admission and execution audit, MCP execution, platform SDKs, packets, Skill package bytes                |
-| Runtime Controller                | Realize and observe one logical Runtime Environment per Agent  | Environment lifecycle head, opaque Runtime revisions, private compute generations, deployment operations, platform associations, bounded Runtime observation journal, platform credentials | Agent desired state, Agent rebuild policy, Agent admission, Tool dispatch, Egress policy                     |
-| Runtime Egress                    | Own Agent network identity and outbound packet decisions       | Tunnel IPv4 allocation, address quarantine, policy revisions and assignments, packet flows and conntrack                                                                                   | Runtime lifecycle, Agent generations, Runs, Tools                                                            |
-| Antnest Runtime                   | Expose one isolated Agent workspace through MCP                | Process-local execution state, TUN, four built-in tools, managed stdio MCP children and bounded Runtime information                                                                        | Durable control state, containers, policy decisions, Agent loop                                              |
-| Agent ACP Service                 | Execute ACP v1/v2 Sessions and Agent Runs                      | Local authorization/admission, Sessions, Runs, Turns, context, checkpoints, Tool attempts, approvals, execution state/audit, volatile Provider clients                                     | Agent construction, Runtime rebuild, Provider administration, platform APIs, Channel objects                 |
-| Skill Registry                    | Host reusable organization Skill packages                      | Skill identity, package, immutable versions, bounded metadata lists, organization isolation and fixed-artifact distribution                                                                | Template selection, Skill execution, Runtime construction, Agent lifecycle, authoritative installation state |
-| Task Scheduler (planned)         | Initiate scheduled Agent usage                                 | Schedules and trigger records; detailed semantics pending                                                                                                                                  | Agent lifecycle, ACP Sessions/Runs, Tool execution, another service's database                               |
-| Edge Gateway                      | Be the sole external application entry                         | Browser sessions, trusted principal projection, external routing, admission, request limits, security headers, and trace propagation                                                       | Business databases and domain state machines                                                                 |
+| Component                 | Sole reason to exist                                           | Owned facts/resources                                                                                                                                                                      | Explicitly outside it                                                                                        |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Identity Service          | Enterprise identity authority                                  | Users, organizations, groups, memberships, OIDC, SCIM, sessions, identity events                                                                                                           | Agent authorization, Channel signatures, model credentials                                                   |
+| Admin Console             | Administrator UI and thin BFF                                  | Page-local presentation state only                                                                                                                                                         | Business records, direct database access, domain workflows                                                   |
+| Agent UI                  | End-user Agent conversation experience                         | Page-local presentation state only                                                                                                                                                         | Agent Core implementation, Runtime endpoints, lifecycle state                                                |
+| Channel Manager (planned) | Own external-channel interaction and adapt it to ACP semantics | Connectors, bindings, external conversation mapping, inbound receipts, deliveries                                                                                                          | Agent lifecycle, authoritative Sessions/Runs, platform resources                                             |
+| Agent Controller          | Agent aggregate and lifecycle authority                        | AgentSpec, immutable build/execution revisions, current Provider/model configuration and credentials, Runtime binding, execution publication, lifecycle workflows, management events       | Run admission and execution audit, MCP execution, platform SDKs, packets, Skill package bytes                |
+| Runtime Controller        | Realize and observe one logical Runtime Environment per Agent  | Environment lifecycle head, opaque Runtime revisions, private compute generations, deployment operations, platform associations, bounded Runtime observation journal, platform credentials | Agent desired state, Agent rebuild policy, Agent admission, Tool dispatch, Egress policy                     |
+| Runtime Egress            | Own Agent network identity and outbound packet decisions       | Tunnel IPv4 allocation, address quarantine, policy revisions and assignments, packet flows and conntrack                                                                                   | Runtime lifecycle, Agent generations, Runs, Tools                                                            |
+| Antnest Runtime           | Expose one isolated Agent workspace through MCP                | Process-local execution state, TUN, four built-in tools, managed stdio MCP children and bounded Runtime information                                                                        | Durable control state, containers, policy decisions, Agent loop                                              |
+| Agent ACP Service         | Execute ACP v1/v2 Sessions and Agent Runs                      | Local authorization/admission, Sessions, Runs, Turns, context, checkpoints, Tool attempts, approvals, execution state/audit, volatile Provider clients                                     | Agent construction, Runtime rebuild, Provider administration, platform APIs, Channel objects                 |
+| Skill Registry            | Host reusable organization Skill packages                      | Skill identity, package, immutable versions, bounded metadata lists, organization isolation and fixed-artifact distribution                                                                | Template selection, Skill execution, Runtime construction, Agent lifecycle, authoritative installation state |
+| Task Scheduler (planned)  | Initiate scheduled Agent usage                                 | Schedules and trigger records; detailed semantics pending                                                                                                                                  | Agent lifecycle, ACP Sessions/Runs, Tool execution, another service's database                               |
+| Edge Gateway              | Be the sole external application entry                         | Browser sessions, trusted principal projection, external routing, admission, request limits, security headers, and trace propagation                                                       | Business databases and domain state machines                                                                 |
 
 The Edge Gateway can be absent during internal development stages. Trusted
 Compose clients may call internal RPCs directly, but those RPCs are not public
@@ -123,7 +130,7 @@ The implemented management and execution paths are separate:
 
 ```text
 Browser -> Edge Gateway -> Console BFF -> Identity / Agent Controller / ACP audit
-Console BFF -> Provider model discovery (current credentials from Controller)
+Console BFF -> Controller model-only discovery -> Provider API
 Agent Controller -> Runtime Controller -> Docker (Kubernetes planned)
 Agent Controller -> Runtime Egress control -> Egress PostgreSQL
 Agent Controller -> ACP configuration publication / Agent settlement
@@ -192,17 +199,21 @@ in a separate deployment service.
 5. Cross-service deletion is a recoverable workflow of idempotent steps, not a
    distributed transaction.
 6. Controller persists encrypted Provider credentials and publishes current
-   authentication to ACP's volatile clients. Console may resolve current
-   credentials internally for model discovery. These secret-bearing boundaries
+   authentication to ACP's volatile clients. Model discovery opens saved keys
+   only inside Controller; Console receives model metadata and forwards draft
+   credentials once. These secret-bearing boundaries
    use metadata-only telemetry; credentials never enter browser responses,
    AgentSpec, RuntimeSpec, audit, Temporal history or durable Runs.
 
 ## Trust Rules
 
 Docker or Kubernetes is trusted infrastructure. Internal control services
-trust the deployment network and do not add service JWT, mTLS, or request
-signatures during the Docker-first stages. Domain authorization remains the
-owner service's responsibility.
+authenticate workloads and, where required, Identity-signed caller context
+under the [platform authentication contract](../contracts/platform/service-authentication.md).
+Purpose-network reachability does not establish identity. Domain authorization
+remains the owner service's responsibility; the
+[rollout ledger](../contracts/platform/service-authentication-rollout.json)
+separates service admission from complete integration acceptance.
 
 The Runtime Supervisor is trusted platform code; Agent-selected operations run
 as a separate UID/GID 1000 Executor with no capabilities.

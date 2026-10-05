@@ -5,9 +5,11 @@ learning, source, discovery and temporary-package contracts. It introduces no
 service API; the [operator guide](../../docs/skill-deployment.md) covers
 configuration in practice.
 
-The standard `compose.yaml` plus `compose.stage3.yaml` configure the complete
-Skill propagation workflow, without test-only overrides for authentication or
-maintenance. Features remain explicitly opt-in through operator-owned values:
+Status: Compose wiring, actual deployment and complete token-profile workflow
+E2E have passed in the
+[rollout ledger](../platform/service-authentication-rollout.json).
+Owning-service protocol peers do not accept the complete propagation workflow.
+The deployment batch must provide the following operator-owned configuration:
 
 - ACP receives `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID` and
   `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY` unchanged. A configured signing key
@@ -15,18 +17,24 @@ maintenance. Features remain explicitly opt-in through operator-owned values:
 - RC receives `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` unchanged and freezes
   the public verifier set into newly created/rebuilt Runtimes. The private key
   is never passed to RC, Runtime, Registry or either frontend.
-- `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN` is one shared source-reader setting.
-  When nonempty, Compose sets ACP's Registry origin to `http://skill-registry:8080`,
-  its Registry bearer to the existing `ANTNEST_SKILL_REGISTRY_API_TOKEN`, and its
-  source bearer to this token. Registry's source origin becomes
-  `http://agent-acp-service:8080`, using the same source bearer.
-- When the source token is absent or empty, both source origins and ACP's three
-  discovery settings are empty. Formal hosting/template delivery continues to
-  use the Registry API token; its presence alone never enables discovery.
-- Service validators remain authoritative for key encoding, key IDs, verifier
-  structure and distinct printable bearers of at least 32 bytes. Partial or
-  malformed opt-in configuration must fail existing startup validation; Compose
-  does not silently supply signing keys or invent an authentication fallback.
+- Discovery requires ACP's `ANTNEST_ACP_SKILL_REGISTRY_URL` and Registry's
+  `ANTNEST_SKILL_REGISTRY_SOURCE_URL`. Each direction uses its own per-pair
+  workload credential. The ACP source origin is its admitted workspace listener,
+  never the Controller-only publication/settlement origin.
+- Registry requires `ANTNEST_IDENTITY_URL` for authenticated, pinned JWKS reads.
+  Console carries its own Registry workload authority and the unchanged
+  Identity-signed organization CCT. Controller/RC/ACP operation routes use the
+  exact grants in the [Registry authentication profile](service-authentication.md).
+- The shared token/TLS profile is mandatory even when discovery and learning are
+  disabled. Token mode mounts read-only receiver hash files and separate outgoing
+  sender files; provisioning must use CSPRNG values, never public conformance
+  credentials. Explicit internal HTTP opt-in is only for disposable development.
+- Nonempty `ANTNEST_SKILL_REGISTRY_API_TOKEN`,
+  `ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN`, `ANTNEST_ACP_SKILL_REGISTRY_TOKEN` or
+  `ANTNEST_ACP_SKILL_SOURCE_TOKEN` fails the corresponding service startup.
+- Service validators remain authoritative for exact authentication settings,
+  key encoding, key IDs and verifier structure. Partial or malformed configuration
+  must fail startup; Compose must not invent a credential fallback.
 
 Signing and verifier key IDs follow the exact `maintenanceKid` definition in
 [RuntimeSpec](../runtime/runtime-spec.schema.json#/$defs/maintenanceKid):
@@ -35,8 +43,9 @@ without dots or whitespace normalization. All four validators use the
 [shared key ID fixtures](../runtime/maintenance-kid-fixtures.json).
 
 Registry stays outside Runtime management and Egress networks and exposes no
-host port. The `compose.stage3.yaml` override removes ACP's direct host port. Agent UI receives
-neither source bearer nor signing material; the browser still uses Gateway and
+host port. ACP has no direct host publication; explicit debug relays only its
+authenticated workspace listener. Agent UI receives
+neither Registry/source sender credentials nor signing material; the browser still uses Gateway and
 the existing Node Bridge HTTP/SSE path.
 
 An existing Runtime does not acquire verifier keys from an RC environment change.
@@ -52,8 +61,11 @@ other services. No token, signer, public port or network change accompanies this
 HTTP Trace wiring. Registry's span behavior is defined in the
 [Trace boundary contract](trace-boundaries.md).
 
-`make test-skill-deployment` runs the Compose contract tests, and
-`make e2e-skill-deployment` runs a disposable Docker workflow using these
-standard environment names and production configuration. Its test overlays may
-choose isolated images, network ranges and a local model, but may not replace
-source/learning authentication environment wiring.
+`make e2e-skill-discovery-registry` admits only Registry, using temporary CSPRNG
+files, signed Console context and explicit Identity/source protocol peers.
+`make test-skill-deployment` covers credential, key/source and network configuration.
+`make e2e-skill-deployment` delegates to the admitted
+`make e2e-service-authentication-integration` workflow.
+Final integration uses actual services, the standard
+environment names and production credential/network wiring. Test overlays may
+choose isolated images, ranges and a local model, but may not bypass admission.

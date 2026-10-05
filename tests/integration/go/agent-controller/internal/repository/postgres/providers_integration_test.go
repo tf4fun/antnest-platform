@@ -22,7 +22,7 @@ func TestProviderModelAndCredentialLifecyclesAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := application.NewCatalogService(repository, box, providerTestClock{})
+	service := fixtureCatalogService(repository, box, providerTestClock{})
 	ctx := context.Background()
 	input := providerTestInput("create", "org")
 	connection, err := service.CreateProviderConnection(ctx, input)
@@ -75,19 +75,20 @@ func TestProviderModelAndCredentialLifecyclesAreIndependent(t *testing.T) {
 	assertProviderModelIsolation(t, service, connection, selected)
 }
 
-func TestProviderAccessDecryptsCurrentStoredCredential(t *testing.T) {
+func TestProviderDiscoveryDecryptsCurrentCredentialInternally(t *testing.T) {
 	repository := providerTestRepository(t)
 	box, err := credentials.NewSecretBox(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := application.NewCatalogService(repository, box, providerTestClock{}, application.WithProviderCredentialReader(repository, box))
+	lister := &storedCredentialLister{}
+	service := fixtureCatalogService(repository, box, providerTestClock{}, application.WithProviderCredentialReader(repository, box), application.WithProviderDiscovery(fixtureProviderValidator{}, lister))
 	connection, err := service.CreateProviderConnection(t.Context(), providerTestInput("access-create", "org"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, err := service.ResolveProviderAccess(t.Context(), "org", connection.ConnectionID)
-	if err != nil || access.Credential.APIKey != "initial-secret" {
+	access, err := service.DiscoverProviderModels(t.Context(), "org", connection.ConnectionID)
+	if err != nil || len(access.Models) != 1 || len(lister.secrets) != 1 || lister.secrets[0] != "initial-secret" {
 		t.Fatalf("read stored access: %v", err)
 	}
 	rotated, err := service.RotateProviderCredential(t.Context(), application.RotateProviderCredentialInput{
@@ -97,8 +98,8 @@ func TestProviderAccessDecryptsCurrentStoredCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, err = service.ResolveProviderAccess(t.Context(), "org", connection.ConnectionID)
-	if err != nil || access.Credential.APIKey != "rotated-secret" || access.Connection.CredentialVersion != rotated.CredentialVersion {
+	access, err = service.DiscoverProviderModels(t.Context(), "org", connection.ConnectionID)
+	if err != nil || len(access.Models) != 1 || len(lister.secrets) != 2 || lister.secrets[1] != "rotated-secret" || rotated.CredentialVersion == connection.CredentialVersion {
 		t.Fatalf("read rotated access: %v", err)
 	}
 	public, err := repository.GetProviderConnection(t.Context(), "org", connection.ConnectionID)
@@ -173,7 +174,7 @@ func TestConcurrentProviderRequestsConverge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := application.NewCatalogService(repository, box, providerTestClock{})
+	service := fixtureCatalogService(repository, box, providerTestClock{})
 	ctx := context.Background()
 	input := providerTestInput("concurrent", "org")
 	const clients = 4
@@ -301,3 +302,10 @@ func providerTestInput(requestID, organizationID string) application.CreateProvi
 type providerTestClock struct{}
 
 func (providerTestClock) Now() time.Time { return time.Unix(1, 123456789).UTC() }
+
+type storedCredentialLister struct{ secrets []string }
+
+func (lister *storedCredentialLister) ListModels(_ context.Context, _ ports.ProviderDiscoveryConnection, secret string) ([]ports.DiscoveredModel, error) {
+	lister.secrets = append(lister.secrets, secret)
+	return []ports.DiscoveredModel{{ModelID: "fixture-model", DisplayName: "Fixture model"}}, nil
+}

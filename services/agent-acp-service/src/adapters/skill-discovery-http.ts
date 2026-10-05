@@ -10,14 +10,12 @@ import type {
   SkillDiscoveryScope,
   SkillDiscoverySearchInput,
 } from "../ports/skill-discovery.js";
-import { tracedFetch } from "../telemetry/http.js";
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 export class RegistrySkillDiscoveryClient implements SkillDiscoveryPort {
   public constructor(
     private readonly origin: string,
-    private readonly token: string,
-    private readonly fetchFn: Fetch = tracedFetch(fetch, "skill_registry"),
+    private readonly fetchFn: Fetch,
   ) {}
 
   public async search(input: SkillDiscoverySearchInput, signal: AbortSignal) {
@@ -84,7 +82,7 @@ export class RegistrySkillDiscoveryClient implements SkillDiscoveryPort {
         new URL(`/internal/skill-discovery/${action}`, this.origin).toString(),
         {
           method: "POST",
-          headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
           redirect: "error",
           signal: operationSignal,

@@ -1161,9 +1161,10 @@ describe.skipIf(url === undefined)("Skill learning completed-Run scan", () => {
       runtimeMcpSourceDigest: "a".repeat(64),
       agentExecutionSpecDigest: "b".repeat(64),
       runtime: {
-        revision: "runtime-1",
+        revision: "rtv_" + "1".repeat(32),
         executionId: "execution-1",
         mcpEndpoint: "http://runtime/mcp",
+        connectionId: "rci_" + "1".repeat(32),
       },
       executionSpec: {
         systemPrompt: "Original Run prompt",

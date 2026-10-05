@@ -62,6 +62,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 		"antnest/runtime:latest", integrationSpecDigest,
 		sql.NullInt64{}, "", int64(0), "", "",
 		[]byte(`{"keys":[{"kid":"current","algorithm":"Ed25519","public_key_base64url":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`),
+		[]byte(nil),
 	}}
 
 	operation, err := scanOperation(row)

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -15,11 +15,24 @@ import {
 import { Pool } from "../../../services/agent-acp-service/node_modules/pg/esm/index.mjs";
 import { z } from "../../../services/agent-acp-service/node_modules/zod/index.js";
 import { executionConfiguration } from "../../../services/agent-acp-service/test/fixtures/execution-configuration.ts";
+import {
+  createFixture,
+  headers as authenticatedHeaders,
+} from "../service-authentication/acp/auth-fixture.mjs";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { providerPolicyChecks } from "../service-authentication/acp/provider-policy-docker.mjs";
 
 // Service-owned Docker E2E: the production image and its migrations execute
 // against isolated PostgreSQL, with controlled HTTP model/MCP dependencies.
 const execute = promisify(execFile);
 const prefix = `antnest-acp-sdk-${randomUUID().slice(0, 8)}`;
+const credentials = resolve(
+  "artifacts/verification/acp-authentication",
+  prefix,
+  "credentials",
+);
+const authentication = createFixture(credentials);
 const image =
   process.env.ANTNEST_ACP_AUDIT_IMAGE ?? "antnest/agent-acp-service:sdk-fixes";
 const stop = new AbortController();
@@ -29,11 +42,22 @@ process.once("SIGINT", interrupt);
 process.once("SIGTERM", interrupt);
 const deadline = setTimeout(
   () => stop.abort(new Error("Docker SDK regression deadline")),
-  90_000,
+  180_000,
 );
 const cleanup = [];
 const connections = [];
 const modelRequests = [];
+const runtimeRequests = [];
+const runtimeReference = {
+  runtime_revision: "rtv_" + randomBytes(16).toString("hex"),
+  runtime_execution_id: "runtime-execution-1",
+  connection_id: "rci_" + randomBytes(16).toString("hex"),
+  credential: {
+    caller: "agent-acp-service",
+    token: randomBytes(32).toString("base64url"),
+  },
+};
+let runtimeChecks = 0;
 const toolStarted = Promise.withResolvers();
 const toolRelease = Promise.withResolvers();
 let toolCalls = 0;
@@ -119,11 +143,52 @@ try {
     { legacy: "reject" },
   );
   server = createServer((request, response) => {
+    if (request.url === "/rpc/identity/jwks") {
+      assert.equal(
+        request.headers["antnest-service-authorization"],
+        `Bearer ${authentication.outgoing}`,
+      );
+      assert.equal(request.headers["antnest-caller-context"], undefined);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(authentication.jwks));
+      return;
+    }
+    if (request.url.startsWith("/mcp")) {
+      if (
+        request.headers["antnest-service-authorization"] !==
+        "Bearer " + runtimeReference.credential.token
+      ) {
+        response.writeHead(401, {
+          "content-type": "application/json",
+          "www-authenticate": 'Bearer realm="antnest-service"',
+        });
+        response.end(
+          JSON.stringify({
+            code: "runtime_unauthorized",
+            message: "Runtime request rejected",
+            retryable: false,
+          }),
+        );
+        return;
+      }
+    }
     void (async () => {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
       if (request.url.startsWith("/mcp")) {
+        assert.equal(
+          request.headers["x-antnest-expected-execution-id"],
+          runtimeReference.runtime_execution_id,
+        );
+        for (const header of [
+          "authorization",
+          "antnest-caller-context",
+          "cookie",
+          "baggage",
+        ])
+          assert.equal(request.headers[header], undefined);
+        runtimeRequests.push(request.method);
         const answer = await handler.fetch(
           new Request(`http://${request.headers.host}${request.url}`, {
             method: request.method,
@@ -237,17 +302,36 @@ try {
     prefix,
     "--add-host",
     "host.docker.internal:host-gateway",
+    "--user",
+    `${process.getuid()}:${process.getgid()}`,
+    "--volume",
+    `${credentials}:/run/auth:ro`,
     "-p",
     "127.0.0.1::8080",
+    "-p",
+    "127.0.0.1::8081",
     "-e",
     `ANTNEST_ACP_DATABASE_URL=postgres://acp_audit:fixture@${postgres}:5432/acp_audit`,
+    "-e",
+    "ANTNEST_SERVICE_AUTH_MODE=token",
+    "-e",
+    "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true",
+    "-e",
+    "ANTNEST_SERVICE_AUTH_CALLERS_FILE=/run/auth/callers.json",
+    "-e",
+    "ANTNEST_SERVICE_AUTH_TOKEN_DIR=/run/auth/outgoing",
+    "-e",
+    `ANTNEST_ACP_IDENTITY_URL=${fixtureOrigin}`,
     "-e",
     "ANTNEST_ACP_CLIENT_MCP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "-e",
     "OTEL_SDK_DISABLED=true",
+    "-e",
+    "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS=true",
     image,
   ]);
   let origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  let controlOrigin = `http://127.0.0.1:${await hostPort(service, 8081)}`;
   await waitFor(async () => {
     try {
       return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
@@ -255,23 +339,241 @@ try {
       return false;
     }
   });
+  const provider = await providerPolicyChecks({
+    docker,
+    service,
+    prefix,
+    cleanup,
+    signal: stop.signal,
+    fixtureOrigin,
+  });
   const config = executionConfiguration();
-  config.providers[0].base_url = `${fixtureOrigin}/v1`;
+  config.providers[0].base_url = provider.baseUrl;
+  config.providers[0].credential.secret = "synthetic-provider-secret";
   config.agents[0].default_authorization.mode = "auto";
-  config.agents[0].runtime.mcp_endpoint = `${fixtureOrigin}/mcp`;
-  async function publish() {
-    const response = await fetch(
-      `${origin}/rpc/agent-acp/apply-execution-snapshot`,
-      {
+  config.agents[0].runtime = {
+    ...runtimeReference,
+    mcp_endpoint: `${fixtureOrigin}/mcp`,
+  };
+  let authenticationChecks = 0;
+  for (const operation of ["apply-execution-snapshot", "settle-agent"]) {
+    for (const base of [origin, controlOrigin]) {
+      const response = await fetch(`${base}/rpc/agent-acp/${operation}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(config),
+        body: "{}",
+        signal: stop.signal,
+      });
+      assert.equal(response.status, base === origin ? 404 : 401);
+      await response.text();
+      authenticationChecks++;
+    }
+    const hidden = await fetch(`${origin}/rpc/agent-acp/${operation}`, {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(authentication, "agent-controller"),
+        "content-type": "application/json",
+      },
+      body: "{}",
+      signal: stop.signal,
+    });
+    assert.equal(hidden.status, 404);
+    await hidden.text();
+    authenticationChecks++;
+  }
+  for (const [headers, status, code] of [
+    [{}, 401, "service_unauthenticated"],
+    [
+      authenticatedHeaders(authentication, "runtime-controller"),
+      403,
+      "caller_not_allowed",
+    ],
+    [
+      authenticatedHeaders(authentication, "edge-gateway"),
+      401,
+      "caller_context_invalid",
+    ],
+    [
+      authenticatedHeaders(authentication, "edge-gateway", {
+        agt: "agent-1",
+        aud: ["agent-ui"],
+      }),
+      401,
+      "caller_context_invalid",
+    ],
+    [
+      authenticatedHeaders(authentication, "edge-gateway", {
+        agt: "agent-1",
+        iat: 1,
+        exp: 61,
+      }),
+      401,
+      "caller_context_invalid",
+    ],
+  ]) {
+    const response = await fetch(
+      `${origin}/rpc/agent-acp/get-agent-execution-state`,
+      {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+          "x-antnest-agent-id": "agent-1",
+          "x-antnest-organization-id": "organization-1",
+          "x-antnest-principal-id": "principal-1",
+        },
+        body: "{}",
         signal: stop.signal,
       },
     );
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, status);
+    assert.equal((await response.json()).code, code);
+    authenticationChecks++;
   }
+  const denied = await fetch(
+    `${controlOrigin}/rpc/agent-acp/apply-execution-snapshot`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(authentication, "edge-gateway", {
+          agt: "agent-1",
+        }),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(config),
+      signal: stop.signal,
+    },
+  );
+  assert.equal(denied.status, 403);
+  await denied.text();
+  authenticationChecks++;
+  for (const [body, media, status] of [
+    ['{"organization_id":"a","organization_id":"b"}', "application/json", 400],
+    ["{}", "application/json; charset=latin1", 415],
+  ]) {
+    const response = await fetch(
+      `${controlOrigin}/rpc/agent-acp/apply-execution-snapshot`,
+      {
+        method: "POST",
+        headers: {
+          ...authenticatedHeaders(authentication, "agent-controller"),
+          "content-type": media,
+        },
+        body,
+        signal: stop.signal,
+      },
+    );
+    assert.equal(response.status, status);
+    await response.text();
+    authenticationChecks++;
+  }
+  async function publish(publication = config, status = 200) {
+    const response = await fetch(
+      `${controlOrigin}/rpc/agent-acp/apply-execution-snapshot`,
+      {
+        method: "POST",
+        headers: {
+          ...authenticatedHeaders(authentication, "agent-controller"),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(publication),
+        signal: stop.signal,
+      },
+    );
+    assert.equal(response.status, status, await response.text());
+  }
+  const missingConnection = structuredClone(config);
+  delete missingConnection.agents[0].runtime.connection_id;
+  await publish(missingConnection, 400);
+  const wrongCaller = structuredClone(config);
+  wrongCaller.agents[0].runtime.credential.caller = "runtime-controller";
+  await publish(wrongCaller, 400);
+  const closedWithCredential = structuredClone(config);
+  closedWithCredential.agents[0].accepting_runs = false;
+  await publish(closedWithCredential, 400);
+  runtimeChecks += 3;
   await publish();
+  await publish();
+  for (const revision of [config.revision, config.revision + 1]) {
+    const changedToken = structuredClone(config);
+    changedToken.revision = revision;
+    changedToken.agents[0].runtime.credential.token =
+      randomBytes(32).toString("base64url");
+    await publish(changedToken, 409);
+    runtimeChecks++;
+  }
+  async function privateFiles() {
+    // Report only metadata and hashes; never move a sender bearer into exec argv.
+    return JSON.parse(
+      await docker([
+        "exec",
+        service,
+        "node",
+        "--input-type=module",
+        "-e",
+        `import {readdirSync,statSync,readFileSync} from "node:fs";
+       import {createHash} from "node:crypto";
+       const roots=readdirSync("/tmp").filter(n=>n.startsWith("antnest-acp-runtime-"));
+       const records=roots.map(n=>{const root="/tmp/"+n;
+         return {root,mode:statSync(root).mode&0o7777,uid:statSync(root).uid,
+           files:readdirSync(root).map(id=>{const directory=root+"/"+id;const path=directory+"/antnest-runtime";
+             const file=statSync(path);return {id,mode:file.mode&0o7777,uid:file.uid,
+               directoryMode:statSync(directory).mode&0o7777,
+               digest:createHash("sha256").update(readFileSync(path)).digest("hex")};})};});
+       process.stdout.write(JSON.stringify(records));`,
+      ]),
+    );
+  }
+  function verifyPrivateFiles(records, populated) {
+    assert.equal(records.length, 1);
+    const record = records[0];
+    assert.equal(record.mode, 0o700);
+    assert.equal(record.uid, process.getuid());
+    assert.equal(record.files.length, populated ? 1 : 0);
+    if (populated) {
+      const file = record.files[0];
+      assert.equal(file.id, runtimeReference.connection_id);
+      assert.equal(file.mode, 0o600);
+      assert.equal(file.uid, process.getuid());
+      assert.equal(file.directoryMode, 0o700);
+      assert.equal(
+        file.digest,
+        createHash("sha256")
+          .update(runtimeReference.credential.token)
+          .digest("hex"),
+      );
+    }
+    runtimeChecks++;
+    return record.root;
+  }
+  const originalPrivateRoot = verifyPrivateFiles(await privateFiles(), true);
+  async function assertPublicStorage() {
+    const rows = (
+      await pool.query(
+        "SELECT revision, configuration FROM execution_configurations",
+      )
+    ).rows;
+    assert.equal(rows.length, 1);
+    const storedRuntime = rows[0].configuration.agents[0].runtime;
+    assert(!("credential" in storedRuntime));
+    assert(!JSON.stringify(rows).includes(runtimeReference.credential.token));
+    assert(
+      !JSON.stringify(modelRequests).includes(
+        runtimeReference.credential.token,
+      ),
+    );
+    assert(
+      !JSON.stringify(
+        await pool
+          .query("SELECT execution_snapshot FROM runs")
+          .then((r) => r.rows),
+      ).includes(runtimeReference.credential.token),
+    );
+    const logs = await docker(["logs", service]);
+    assert(!logs.includes(runtimeReference.credential.token));
+    runtimeChecks++;
+  }
+  await assertPublicStorage();
   function connect() {
     const updates = [];
     const connection = acp
@@ -282,6 +584,9 @@ try {
       .connect(
         createHttpStream(`${origin}/v1/acp`, {
           headers: {
+            ...authenticatedHeaders(authentication, "agent-ui", {
+              agt: "agent-1",
+            }),
             "x-antnest-organization-id": "organization-1",
             "x-antnest-principal-id": "principal-1",
             "x-antnest-agent-id": "agent-1",
@@ -358,6 +663,18 @@ try {
   assert.deepEqual(await prompt(sessionId, "safe-earlier"), {
     stopReason: "end_turn",
   });
+  const storedRun = (
+    await pool.query(
+      "SELECT execution_snapshot FROM runs ORDER BY created_at LIMIT 1",
+    )
+  ).rows[0].execution_snapshot;
+  assert.deepEqual(storedRun.runtime, {
+    revision: runtimeReference.runtime_revision,
+    executionId: runtimeReference.runtime_execution_id,
+    mcpEndpoint: config.agents[0].runtime.mcp_endpoint,
+    connectionId: runtimeReference.connection_id,
+  });
+  runtimeChecks++;
   assert.equal((await metadata(sessionId)).title, "safe-earlier");
   assert.deepEqual(await prompt(sessionId, "refused-user-marker"), {
     stopReason: "refusal",
@@ -378,6 +695,7 @@ try {
   await docker(["restart", service]);
   // Docker may allocate a different ephemeral published port on restart.
   origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  controlOrigin = `http://127.0.0.1:${await hostPort(service, 8081)}`;
   await waitFor(async () => {
     try {
       return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
@@ -387,7 +705,25 @@ try {
   });
   // Credentials are republished by Controller after a cold ACP start. The
   // same revision must restore readiness without changing Session activity.
+  const coldPrivateRoot = verifyPrivateFiles(await privateFiles(), false);
+  assert.notEqual(coldPrivateRoot, originalPrivateRoot);
+  const unavailable = await fetch(
+    `${origin}/rpc/agent-acp/get-agent-execution-state`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(authentication, "agent-ui", { agt: "agent-1" }),
+        "content-type": "application/json",
+      },
+      body: "{}",
+      signal: stop.signal,
+    },
+  );
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).code, "execution_state_unavailable");
+  runtimeChecks++;
   await publish();
+  verifyPrivateFiles(await privateFiles(), true);
   client = connect();
   observer = connect();
   for (const current of [client, observer])
@@ -528,6 +864,13 @@ try {
   await client.request("session/set_mode", { sessionId, modeId: "auto" });
   const active = prompt(sessionId, "cancel-tool-marker");
   await bounded(toolStarted.promise);
+  const closed = structuredClone(config);
+  closed.revision++;
+  closed.agents[0].accepting_runs = false;
+  delete closed.agents[0].runtime.credential;
+  delete closed.agents[0].runtime.connection_id;
+  await publish(closed);
+  verifyPrivateFiles(await privateFiles(), true);
   await observer.notify("session/cancel", { sessionId });
   assert.deepEqual(await active, { stopReason: "cancelled" });
   assert.equal(toolCalls, 1);
@@ -538,10 +881,23 @@ try {
     { state: "unresolved", tool_effect_state: "unknown" },
   ]);
   await assert.rejects(
+    prompt(sessionId, "closed-must-not-start"),
+    (error) => error.data?.code === "agent_unavailable",
+  );
+  runtimeChecks++;
+  config.revision = closed.revision + 1;
+  await publish();
+  await assert.rejects(
     prompt(sessionId, "must-remain-protected"),
     (error) => error.data?.code === "runtime_barrier_required",
   );
   assert.equal(toolCalls, 1);
+  await assertPublicStorage();
+  assert(
+    runtimeRequests.length > 0,
+    "No authenticated official MCP request reached the peer",
+  );
+  runtimeChecks++;
   assert.equal(
     (
       await pool.query(
@@ -550,6 +906,27 @@ try {
     ).rows[0].n,
     1,
   );
+  // The unresolved Run keeps its original authority until the owning process
+  // closes. Normal shutdown must still delete those volatile sender files.
+  for (const connection of connections) connection.close();
+  await Promise.allSettled(connections.map((connection) => connection.closed));
+  toolRelease.resolve();
+  const beforeShutdown = verifyPrivateFiles(await privateFiles(), true);
+  await docker(["stop", "--time", "10", service]);
+  await docker(["start", service]);
+  origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  await waitFor(async () => {
+    try {
+      return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
+    } catch {
+      return false;
+    }
+  });
+  assert.notEqual(
+    verifyPrivateFiles(await privateFiles(), false),
+    beforeShutdown,
+  );
+  runtimeChecks++;
   result = {
     status: "passed",
     image,
@@ -562,6 +939,10 @@ try {
     ],
     modelRequests: modelRequests.length,
     toolCalls,
+    authenticationChecks,
+    providerChecks: provider.checks,
+    runtimeChecks,
+    runtimeRequests: runtimeRequests.length,
   };
 } catch (error) {
   failures.push(error);
@@ -599,6 +980,7 @@ try {
       failures.push(error);
     }
   }
+  rmSync(credentials, { recursive: true, force: true });
   process.removeListener("SIGINT", interrupt);
   process.removeListener("SIGTERM", interrupt);
 }

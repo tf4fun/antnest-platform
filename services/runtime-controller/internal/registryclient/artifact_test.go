@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
@@ -48,8 +47,8 @@ func TestDownloadUsesExactScopedVersionAndChecksFrozenArtifact(t *testing.T) {
 	org := "org_00000000000000000000000000000000"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/internal/skills/"+frozen.SkillID+"/versions/7/artifact" || r.URL.Query().Get("organization_id") != org ||
-			r.Header.Get("Authorization") != "Bearer secret-test-token" {
-			t.Errorf("wrong Registry request: %s %s %q", r.Method, r.URL, r.Header.Get("Authorization"))
+			r.Header.Get("Antnest-Service-Authorization") != "Bearer "+registryTestToken || r.Header.Get("Authorization") != "" {
+			t.Error("wrong scoped/authenticated Registry request")
 		}
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Length", strconv.Itoa(len(artifact)))
@@ -57,7 +56,7 @@ func TestDownloadUsesExactScopedVersionAndChecksFrozenArtifact(t *testing.T) {
 		_, _ = w.Write(artifact)
 	}))
 	defer server.Close()
-	client, err := New(server.URL, "secret-test-token", time.Second, nil)
+	client, err := newAuthenticatedRegistry(t, server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +85,7 @@ func TestDownloadRejectsRedirectAndClassifiesMissingAndTemporary(t *testing.T) {
 		w.WriteHeader(status)
 	}))
 	defer server.Close()
-	client, err := New(server.URL, "secret-test-token", time.Second, nil)
+	client, err := newAuthenticatedRegistry(t, server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

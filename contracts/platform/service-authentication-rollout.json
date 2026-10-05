@@ -1,6 +1,51 @@
 {
-  "status": "contract-only",
+  "status": "integration-admitted",
   "issue": 32,
+  "delivery": {
+    "branch": "feat/service-authentication",
+    "service_owners_per_commit": 1,
+    "pull_requests": "final-integration-only",
+    "service_gates": "before-each-service-commit",
+    "cross_service_e2e": "final-integration-before-main-merge"
+  },
+  "token_provisioning": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "admitted",
+    "helper": "scripts/dev-service-tokens.mjs",
+    "output_directory": "artifacts/service-authentication/",
+    "ignore_before_generation": true,
+    "service_test_credentials": "Owning-service isolated harnesses generate and clean up temporary CSPRNG credentials before deployment wiring exists; never install public conformance tokens.",
+    "contract": "development-authentication.md",
+    "admission": {
+      "unit_contract_component": "22 contract, catalog-derived token/key, issuer JWKS schema, private permission/ownership, CLI privacy, fresh-deployment, overwrite/alias rejection and failure cleanup tests; zero skips/failures. Actual Identity startup accepts the generated issuer metadata.",
+      "docker": "node tests/e2e/service-authentication/deployment-credentials/run.mjs (13 private read-only mount and atomic sender-replacement checks; nonroot generating UID/GID; no container network or published ports; owned containers and credentials cleaned). This is credential preparation evidence, not platform business/security E2E."
+    }
+  },
+  "development_pki": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "admitted",
+    "helper": "scripts/dev-pki.sh",
+    "output_directory": "artifacts/dev-pki/",
+    "contract": "development-authentication.md",
+    "admission": {
+      "unit_contract_component": "Eight native/CLI tests: exact independent P-256 certificates, strict OpenSSL purposes, actual mutual TLS and peer/name/trust rejection, private permissions, overwrite/alias rejection, inherited umask, failure cleanup and normal cancellation; zero skips/failures. Token helper's 20 tests also pass after private-filesystem reuse.",
+      "docker": "node tests/e2e/service-authentication/development-pki/run.mjs (18 private read-only mount and actual loopback TLS checks across nine nonroot network-none containers; no host ports or CA private mount; owned containers/keys cleaned). Token mount/atomic-replacement regression also passed. This is generated credential evidence, not production route/mTLS or business acceptance."
+    }
+  },
+  "host_port_publication": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "admitted",
+    "contract": "development-authentication.md#host-ports-and-explicit-diagnostics",
+    "admission": {
+      "unit_contract_component": "44 rendered Compose/wiring, v3 HTTP query, dependency planner, diagnostic-port, bootstrap/source and related deployment checks pass without skips/failures; revision 2 uses one bounded relay and explicit dependency overrides.",
+      "docker": "node tests/e2e/service-authentication/deployment-ports/run.mjs (three real PostgreSQL query / Temporal GetSystemInfo / DescribeNamespace checks through assigned loopback ports; isolated project initialization and owned container/network/volume cleanup passed).",
+      "scope": "Purpose-network relay, actual production-service diagnostic admission and complete per-network route authorization/browser/lifecycle/Skill acceptance passed."
+    },
+    "topology": "purpose-network-diagnostic-relay"
+  },
   "audience_profiles": {
     "console": [
       "admin-console",
@@ -9,175 +54,343 @@
       "skill-registry",
       "agent-acp-service"
     ],
-    "workspace": [
-      "agent-ui",
-      "agent-acp-service",
-      "agent-controller"
-    ],
-    "acp": [
-      "agent-acp-service"
-    ]
+    "workspace": ["agent-ui", "agent-acp-service", "agent-controller"],
+    "acp": ["agent-acp-service"]
   },
   "batches": [
     {
       "owner": "platform-contracts",
-      "issues": [
-        32
-      ],
+      "issues": [32, 101],
       "status": "foundation",
       "deliverables": [
         "shared identity and CCT schemas",
         "per-service caller catalogs",
-        "route coverage and shared negative test helpers"
+        "route coverage and shared negative test helpers",
+        "exact interim service-token configuration, wire profile and shared conformance vectors"
       ]
     },
     {
       "owner": "identity-service",
-      "issues": [
-        25
-      ],
-      "status": "pending",
+      "issues": [25],
+      "status": "service-admitted",
       "deliverables": [
         "workload verification",
         "CCT issuer and JWKS",
         "administrative actor and JSON media-type checks"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; node tests/integration/go/run.mjs identity-service -- -race",
+        "postgres": "make test-identity-postgres (172 tests, 246 subtests, zero skips/failures)",
+        "docker": "node tests/e2e/service-authentication/identity/run.mjs (43 checks; configured non-loopback health with unreachable environment proxies, rejected loopback substitution and normal shutdown; deterministic 3-second PostgreSQL initialization window waits for TCP readiness; owned containers/volumes/network and test credentials cleaned)",
+        "purpose_listener_health": "go test -race -count=1 ./...; go vet ./...; go-lint; real IPv4/IPv6 and redirect rejection through the root cmd overlay (one package / five tests / 11 subtests; zero skips/failures). Existing TLS server identity remains required; wildcard listeners retain loopback probing. Docker reproduces the socket-only PostgreSQL readiness race before the fixture TCP-health fix and passes afterward. Compose binding and cross-service network acceptance passed in the final integration batch.",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+      }
     },
     {
       "owner": "edge-gateway",
-      "issues": [
-        26
-      ],
-      "status": "pending",
+      "issues": [26],
+      "status": "service-admitted",
       "deliverables": [
         "authenticated clients",
         "server-selected audience profile and Agent scope",
         "CCT forwarding; strip untrusted identity/context headers"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; go-lint; node tests/integration/go/run.mjs edge-gateway -- -race (nine packages / 147 tests / 358 subtests; zero skips/failures); authenticated WebSocket rotation and account-switch CAS regressions passed",
+        "docker": "node tests/e2e/service-authentication/gateway/run.mjs (61 authentication and purpose-listener checks; unreachable environment proxies, rejected loopback substitution, normal stop and owned candidate-image cleanup); node tests/e2e/edge-gateway/shutdown-docker.mjs (previous SIGTERM/SIGINT, restart, five receive routes, ten upstream cancellations; cleaned)",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "purpose_listener_health": "Native race/vet/lint and root Go HTTP/TCP integration pass without skips; configured IPv4/IPv6 probes and redirect rejection retain the public local HTTP readiness contract. Docker binds only its own address and proves proxy isolation, loopback rejection and normal shutdown. Compose binding and cross-service network acceptance passed in the final integration batch."
+      }
     },
     {
       "owner": "admin-console",
-      "issues": [
-        25,
-        26
-      ],
-      "status": "pending",
+      "issues": [25, 26, 28],
+      "status": "service-admitted",
       "deliverables": [
         "workload and CCT verification",
         "verified actor forwarding",
-        "JSON media-type checks"
-      ]
+        "JSON media-type checks",
+        "thin proxy to Controller model-only discovery; remove Provider client and saved credential reads"
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs admin-console; node tests/integration/go/run.mjs admin-console -- -race (eight packages / 191 tests / 347 subtests, zero skips/failures); real HTTP signed-scope and model-only proxy checks passed",
+        "docker": "node tests/e2e/service-authentication/console/run.mjs (76 configured-listener health, proxy isolation, rejected loopback, authentication, model-only discovery, safe error/projection, unchanged CCT, lifecycle-progress and SIGTERM/SIGINT/restart checks; cleaned)",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "purpose_listener_health": "Native race/vet/lint, full root HTTP/TCP integration and owning-service Docker acceptance retain TLS identity and wildcard loopback behavior; configured IPv4/IPv6, redirect rejection and unreachable health-process proxies are covered. Compose binding and cross-service network acceptance passed in the final integration batch."
+      }
     },
     {
       "owner": "agent-acp-service",
-      "issues": [
-        26,
-        27
-      ],
-      "status": "pending",
+      "issues": [26, 27, 28, 30],
+      "status": "service-admitted",
       "deliverables": [
         "workload and CCT verification",
         "Controller route allowlists",
-        "JSON media-type checks"
-      ]
+        "JSON media-type checks",
+        "separate Controller-only listener; workspace 404 for publication/settlement",
+        "shared Provider destination policy, literal-IP socket pinning and bounded model transport",
+        "RC-issued per-instance Runtime sender authority; private/public publication and original accepted-operation retention",
+        "authenticated MCP, status, source observation, maintenance and temporary Skill clients with full durable connection identity"
+      ],
+      "admission": {
+        "unit_contract_component": "132 unit files / 1616 tests; 25 component files / 201 tests; zero skips/failures; regenerated frozen publication fixtures, real HTTP/TLS/SSE/cancellation, instance file/privacy/retention and learning checks passed; TypeScript, lint, schema and route catalog gates passed",
+        "postgres": "38 files / 330 tests; zero skips/failures; full-reference maintenance replay/settlement and temporary scope substitution guards; isolated database cleaned",
+        "docker": "node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs (14 authentication/listener, 23 Provider, 18 Runtime-instance checks, 56 authenticated official-MCP requests and five SDK business scenarios; closure, unknown effects, cold republishing and normal shutdown/restart verified; cleaned). Runtime/Identity/model are explicitly ACP-owned protocol peers.",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "runtime_instance_client": "#30 private/public separation, volatile per-instance sender files and all Runtime clients are admitted. Execution fences, independent signed tickets and unknown-effect barriers remain enforced; deployment/cross-service E2E is admitted.",
+        "provider_policy": "Controller, Console and ACP #28 owning-service batches are admitted; coordinated deployment and cross-service acceptance are admitted."
+      }
     },
     {
       "owner": "agent-ui",
-      "issues": [
-        26
-      ],
-      "status": "pending",
+      "issues": [26],
+      "status": "service-admitted",
       "deliverables": [
         "workload and CCT verification",
         "bridge context forwarding",
         "JSON media-type checks"
-      ]
+      ],
+      "admission": {
+        "unit_contract_component": "430 server unit tests; 162 frontend unit tests; 148 frontend component tests; 43 HTTP/SDK/TLS/memory component tests; browser and dev-entry gates passed; zero skips/failures",
+        "docker": "node --test tests/e2e/agent-ui/bridge-container.test.mjs (14 authentication checks, official ACP SDK, SSR, replay, commands, SSE, memory, idle recovery and normal-stop telemetry; cleaned)",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+      }
     },
     {
       "owner": "agent-controller",
-      "issues": [
-        32,
-        28
-      ],
-      "status": "pending",
+      "issues": [32, 28, 30],
+      "status": "service-admitted",
       "deliverables": [
         "workload and delegated context checks",
         "authenticated dependency clients",
-        "JSON media-type checks"
-      ]
+        "JSON media-type checks",
+        "model-only saved/draft discovery; creation/discovery destination guard; remove credential export",
+        "resolve and verify private current-instance Runtime authority outside source transactions; relay only to ACP control",
+        "closed Agent publications omit credentials and require no resolver; safe Runtime connection Trace classifications"
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs agent-controller; configured native clients for all five dependencies and per-request token rotation passed",
+        "postgres": "21 packages / 662 tests / 1310 subtests; zero skips/failures; private Runtime HTTP relay, binding mismatch/outage rejection, ACK integrity, closure and database/Trace privacy; later targeted private Trace revalidation passed; isolated PostgreSQL/Temporal and PostgreSQL resources cleaned",
+        "docker": "node tests/e2e/service-authentication/controller/run.mjs (91 configured-listener/proxy/empty-TLS health, loopback and Provider-interface isolation, native authentication, discovery/SSRF, catalog, unchanged CCT, actual production Runtime handoff, mismatch rejection, disable during resolver outage, private/public privacy, custom health, startup rejection and SIGTERM/SIGINT/fresh-resolution restart checks; complete; owned resources and credentials cleaned). RC/ACP/Egress are explicitly Controller-owned protocol peers.",
+        "pending_consumers": [],
+        "pending_dependencies": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "provider_unit_contract_component": "Shared 52 address / 18 URL / 6 DNS decisions, literal-IP socket pinning, original HTTPS/SNI/Host, mixed answers, rebinding, proxy isolation, deadlines, strict private opt-in and HTTP schema/error/retired-route regressions passed.",
+        "runtime_instance_relay": "Native race/vet/lint, shared private/public publication and canonical token/endpoint vectors, strict duplicate/UTF-8/8KiB/cache/encoding checks, exact persisted binding, origin/no-proxy/no-redirect isolation and known safe dependency classifications passed. Receiver adoption and cross-service acceptance are admitted.",
+        "purpose_listener_health": "Native race/vet/lint, targeted cmd HTTP/TCP overlay (one package / six tests / 11 subtests; zero skips/failures) and owning-service Docker acceptance cover configured IPv4/IPv6 and empty TLS settings in explicit token/HTTP development; existing TLS identity, proxy isolation and redirect rejection remain enforced. Docker binds only the primary network address and rejects its loopback and Provider interface. Compose binding and cross-service network acceptance passed in the final integration batch.",
+        "provider_discovery": "#28 Controller revision 38, Console thin proxy and ACP model destination guard are admitted; coordinated deployment and cross-service acceptance are admitted."
+      }
     },
     {
       "owner": "runtime-controller",
-      "issues": [
-        29
-      ],
-      "status": "pending",
+      "issues": [29, 30],
+      "status": "service-admitted",
       "deliverables": [
         "workload verification and image policy",
         "management listener isolation",
         "JSON media-type checks",
-        "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc"
-      ]
+        "reject exported Go wrappers that forward their own route-pattern parameters to Handle/HandleFunc",
+        "atomic sealed per-generation RC/ACP Runtime credentials and verified root-only receiver volume",
+        "private current-binding connection resolution; never project or capture credentials",
+        "authenticated full-status client and reduced Docker liveness"
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs runtime-controller; real HTTP route matrix, strict JSON, local readiness, native Registry credential rotation/redirect/proxy isolation; shared 115 token/TLS vectors and exported Go wrapper regressions passed",
+        "postgres": "16 packages / 327 tests / 504 subtests; zero skips/failures; atomic credential/operation/generation rollback and exact replay; isolated database/resources cleaned",
+        "docker": "node tests/e2e/service-authentication/runtime-controller/run.mjs (130 authentication, image, private connection, root-only actual receiver mount, restart/replay, new-generation authority, Disable/Delete cleanup and normal shutdown checks; cleaned). Uses an explicitly RC-owned Runtime protocol double; native receiver is a separate batch.",
+        "pending_dependencies": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "runtime_volume_component": "Direct Docker archive preparation into a never-started helper: directory UID/GID 0 mode 0700, file 0600, idempotent readback and auto-created empty-volume race rejection; zero skips/failures; resources cleaned.",
+        "runtime_instance_clients": "#30 RC issuer/resolver/status client, native Runtime receiver, Controller private relay and ACP consumers are admitted. Coordinated deployment and complete business/security E2E are admitted."
+      }
     },
     {
       "owner": "skill-registry",
-      "issues": [
-        31
-      ],
-      "status": "pending",
+      "issues": [31],
+      "status": "service-admitted",
       "deliverables": [
-        "per-caller credentials and authorization",
-        "JSON media-type checks"
-      ]
+        "exact workload token/mTLS admission and per-route caller grants",
+        "Identity-signed administrator CCT; derive Console organization/actor before effects and replay",
+        "strict JSON/query/multipart carriers and duplicate/unknown-field rejection",
+        "authenticated pinned Identity JWKS and ACP source clients; per-request credential rotation",
+        "reject legacy shared API/source bearer settings at startup"
+      ],
+      "admission": {
+        "unit_contract_component": "go test -race -count=1 ./...; go vet ./...; node tests/support/go-lint.mjs skill-registry; frozen Registry/token/CCT and route catalog gates; real HTTP ambiguity, Console signed scope, JSON/multipart and source/TLS/proxy/redirect checks passed",
+        "postgres": "Full isolated suite: five packages / 75 tests / 370 subtests; zero skips/failures. Verified Console upload/promotion persist signed actor; forged replay cannot add receipts.",
+        "docker": "node tests/e2e/skill-registry/discovery-docker.mjs (66 authentication and two configured-listener/proxy/loopback health checks plus metadata-only mapping, owner/organization scope, drift/offline/revocation, promotion/provenance/CAS, restart and source-removal cases; production image; owned resources and credentials cleaned). Identity and ACP source are explicitly Registry-owned protocol peers.",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "deployment": "Private Compose credential and isolated purpose-network wiring is deployment-admitted; complete security and business integration is admitted.",
+        "purpose_listener_health": "Native race/vet/lint, targeted cmd HTTP/TCP overlay (one package / five tests / 11 subtests; zero skips/failures) and owning-service PostgreSQL/Docker acceptance cover configured IPv4/IPv6 while retaining TLS identity, proxy isolation, redirect rejection and wildcard loopback behavior. Compose binding and cross-service network acceptance passed in the final integration batch."
+      }
     },
     {
       "owner": "antnest-runtime",
-      "issues": [
-        30
-      ],
-      "status": "pending",
+      "issues": [30],
+      "status": "service-admitted",
       "deliverables": [
-        "authenticated MCP and status probes",
-        "retain execution fence and maintenance tickets"
-      ]
+        "strict root-only receiver bootstrap and exact HTTP token opt-in",
+        "authenticated whole MCP/private Skill mounts and full status; identity-free liveness",
+        "exact owned Host/port policy and strict JSON controls with retained multipart uploads",
+        "retain execution fences, signed tickets and executor isolation"
+      ],
+      "admission": {
+        "unit_contract_component": "151 portable tests; shared token/JSON/route-catalog conformance; real HTTP ordering and multipart/header privacy; native Clippy passed. Linux release: 200 unit/component, five executor, one startup and one managed fixture tests; feature build: 200 unit/component, five executor and two startup tests; zero failures/ignored.",
+        "docker": "node tests/e2e/service-authentication/runtime/run.mjs (349 native admission, official MCP tools/info, signed learning/temporary uploads, restart, receiver owner/mode/missing/extra/link/FIFO/digest and unsupported configuration checks; complete; owned resources and credentials cleaned)",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+      }
     },
     {
       "owner": "runtime-egress",
-      "issues": [
-        32,
-        34,
-        36
-      ],
-      "status": "pending",
+      "issues": [32],
+      "status": "service-admitted",
       "deliverables": [
-        "authenticated control calls",
-        "management/data-plane isolation"
-      ]
+        "authenticated Controller-only control calls using the exact token/mTLS profile",
+        "separate purpose-address control and loopback health listeners",
+        "strict JSON/media/no-body/query hygiene without changing packet format",
+        "native, real HTTP/PostgreSQL and isolated production Docker admission"
+      ],
+      "authentication_contract": "../egress/service-authentication.md",
+      "control_contract_revision": 5,
+      "independent_packet_dns_issues": [34, 36],
+      "admission": {
+        "unit_contract_component": "143 native and 144 Linux tests; real HTTP/TLS/mTLS, field multiplicity, strict carriers, startup/health/shutdown and no-effect admission; full fmt/Clippy and frozen token/TLS/media/route gates passed. Database-dependent cases are executed separately below.",
+        "postgres": "Full isolated suite: three library and eight PostgreSQL HTTP/repository tests; zero skips/failures. Rejected requests preserve complete rows, allocator cursors, snapshot revision, packet gates and kernel cleanup counts; owned database resources cleaned.",
+        "docker": "node tests/e2e/service-authentication/egress/run.mjs (173 authentication, purpose-listener, request carrier, actual policy/attachment CAS and replay, current/next rotation, database-loss health, startup-before-effects and normal SIGTERM/SIGINT recovery checks; production image, real TUN/nftables/PostgreSQL; temporary credentials and owned resources cleaned). Controller requests are explicitly Egress-owned protocol probes.",
+        "pending_consumers": [],
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)",
+        "deployment": "Private Compose credential and isolated purpose-network wiring is deployment-admitted; complete security and business integration is admitted."
+      }
     },
     {
       "owner": "deployment",
-      "issues": [
-        32
-      ],
-      "status": "pending",
+      "issues": [32],
+      "status": "deployment-admitted",
       "deliverables": [
         "development PKI helper",
+        "development service-token provisioning helper",
         "purpose-specific internal networks",
         "Gateway-only base ports and explicit debug overlay"
-      ]
+      ],
+      "admitted_substeps": [
+        "development service-token provisioning helper",
+        "development PKI helper",
+        "owning-service purpose-listener health prerequisites (Identity, Gateway, Console, Controller, Registry)",
+        "Gateway-only base ports, explicit loopback debug overlay and dependency/E2E diagnostic selection",
+        "native/Docker bounded diagnostic and OTLP transports",
+        "purpose-specific internal networks and exact listener/health/client destinations",
+        "per-workload credentials, CCT and Runtime instance master mounts with generating UID/GID",
+        "actual production Compose health/authentication/OTLP and ordered normal shutdown",
+        "isolated gateway mode on all private bridges; Engine 28+; repeated 51-check actual production gate after hardening"
+      ],
+      "pending_substeps": [],
+      "admission": {
+        "unit_contract_component": "44 rendered Compose/wiring, v3 HTTP query, dependency planner, diagnostic-port, bootstrap/source and related deployment checks pass without skips/failures; revision 2 uses one bounded relay and explicit dependency overrides.",
+        "docker": "node tests/integration/deployment/compose-runtime-docker.mjs: 51 checks across 14 actual production services/helpers. Startup/health, separate read-only credentials, fixed interfaces, unauthenticated diagnostic rejection, genuine issuer JWKS, management business/query isolation, actual Jaeger OTLP persistence and every normal exit zero pass. Unique candidate images, keys and owned project resources cleaned; retained container/network/volume identities unchanged. No Provider calls.",
+        "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+      }
     },
     {
       "owner": "integration",
-      "issues": [
-        32,
-        80
-      ],
-      "status": "pending",
+      "issues": [25, 26, 27, 28, 29, 30, 31, 32, 101],
+      "status": "integration-admitted",
       "deliverables": [
         "Docker probes on every service network",
         "forged context/actor rejection",
         "normal browser and lifecycle regressions"
-      ]
+      ],
+      "admission": {
+        "date": "2026-10-04",
+        "profile": "disposable-development-token-http",
+        "unit_contract_component": "make test-service-authentication-integration: 25 fixture, routing, authority-file, actual HTTP-isolation, deterministic-model discovery and retired-route tests; zero skips/failures. Included in make test-repo and repository CI.",
+        "docker": "make e2e-service-authentication-integration: real Gateway login and issuer CCT; all created networks; forged/missing authority; per-caller grants; authenticated native Runtime; default Provider rejection and saved/draft model discovery; automatic learning, notice replay, source discovery, temporary use/cancel/ACP restart/retry, browser promotion, frozen Templates, read-only presets, explicit two-Agent rebuild, source removal and complete business/learning Trace topology. Passed with owned candidate images and disposable credentials.",
+        "networks": 24,
+        "network_checks": 560,
+        "authenticated_checks": 30,
+        "external_provider_requests": 0,
+        "cleanup": "owned resources removed; retained state unchanged",
+        "scope": "Complete token/HTTP development deployment. Owning-service TLS/mTLS gates are separate; no full-platform mTLS claim.",
+        "independent_followups": [35, 58, 77]
+      }
     }
-  ]
+  ],
+  "provider_destination_policy": {
+    "issue": 28,
+    "version": 1,
+    "contract": "provider-destination-policy.md",
+    "fixtures": "provider-destination-fixtures.json",
+    "status": "integration-admitted",
+    "pending_service_batches": [],
+    "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+  },
+  "runtime_instance_connection": {
+    "issue": 30,
+    "version": 1,
+    "contract": "../runtime/instance-connection.md",
+    "machine_contract": "../runtime/instance-connection-contract.json",
+    "schema": "../runtime/instance-connection.schema.json",
+    "fixtures": "../runtime/instance-connection-fixtures.json",
+    "status": "integration-admitted",
+    "issuer": "runtime-controller",
+    "pending_service_batches": [],
+    "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+  },
+  "purpose_network_deployment": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "integration-admitted",
+    "contract": "development-networks.md",
+    "machine_contract": "development-network-contract.json",
+    "admission": {
+      "contract": "Seven catalog/Compose-derived topology/destination, address, management/OTLP, diagnostics, outbound/database and peer-name checks pass; the four existing provisioning-contract checks also pass. No skipped tests. Peer names use the existing temporal-namespace service.",
+      "docker_observation": "node tests/integration/deployment/purpose-listener-docker.mjs: three isolated internal/unicast/multihomed observations reproduce unpublished, unreachable and outbound-targeted host ports. Primary health and normal exit pass; own labelled resources are cleaned and retained container/network/volume IDs remain unchanged.",
+      "scope": "Actual Compose address/DNS/key/user wiring, isolated private bridges, startup/diagnostics/OTLP/normal-stop and all-network authorization/login/workspace/lifecycle/Skill acceptance passed.",
+      "docker": "node tests/integration/deployment/compose-runtime-docker.mjs: 51 checks across 14 actual production services/helpers. Startup/health, separate read-only credentials, fixed interfaces, unauthenticated diagnostic rejection, genuine issuer JWKS, management business/query isolation, actual Jaeger OTLP persistence and every normal exit zero pass. Unique candidate images, keys and owned project resources cleaned; retained container/network/volume identities unchanged. No Provider calls.",
+      "cross_service_e2e": "admitted: make e2e-service-authentication-integration (disposable-development-token-http)"
+    }
+  },
+  "deployment_transports": {
+    "owner": "deployment",
+    "issue": 32,
+    "status": "component-admitted",
+    "contract": "development-networks.md",
+    "implementation": "../../scripts/deployment/README.md",
+    "admission": {
+      "unit_contract_component": "17 native TCP/HTTP/CLI tests pass without skips: exact fixed routes, binary/half-close/backpressure preservation, global budgets, selected-target failure, privacy, partial-listen rollback, OTLP path/method/query/CONNECT/upgrade rejection, authority-header removal, declared/chunked wire limits, response limit, timeout and normal cancellation.",
+      "docker": "node tests/integration/deployment/transports-docker.mjs: 21 isolated production-helper/fixture boundary checks pass. Nonroot/read-only containers, host-loopback diagnostics, purpose interface rejection, no injected authority, fixed management OTLP-only forwarding, actual 8 MiB CLI cap and SIGINT/SIGTERM exit zero. Owned resources removed; retained container/network/volume identities unchanged.",
+      "scope": "Standalone transport checks, actual Compose/Jaeger/normal-stop admission and complete route authorization/business integration passed."
+    }
+  },
+  "go_authentication_module": {
+    "owner": "platform-authentication",
+    "pull_request": 102,
+    "status": "integration-admitted",
+    "module": "../../modules/service-authentication",
+    "implementation": "../../docs/go-authentication-module.md",
+    "consumers": [
+      "identity-service",
+      "edge-gateway",
+      "admin-console",
+      "agent-controller",
+      "runtime-controller",
+      "skill-registry"
+    ],
+    "admission": {
+      "date": "2026-10-05",
+      "unit_contract_component": "Each consumer passed standalone GOWORK=off race/unit, vet and build; owning-service component and lint gates passed. Shared unit/token/CCT vectors, actual HTTP/socket header and proxy regressions, all five outbound identities in token/TLS and mTLS, and 13 repository ownership/build checks passed. ACP has 1,620 unit and 201 component tests; Agent UI missing/invalid-context HTTP regressions passed.",
+      "repository": "make test-service-authentication; make test-repo; root format/lint/type/link checks passed. Shared module CI and all six consumer workflows are wired.",
+      "docker": "make e2e-service-authentication-integration: 560 network checks on 24 networks and 30 real issuer/context/permission/Runtime checks; normal login, automatic learning/notices, discovery, temporary use, publication, frozen Templates, two-Agent rebuild and complete learning/business Trace topology passed.",
+      "deployment": "make e2e-deployment-wiring: all 51 actual production Compose checks passed, including Jaeger ingestion and normal exit zero.",
+      "external_provider_requests": 0,
+      "cleanup": "both runs cleaned owned resources, candidate images and credentials; retained Docker identities unchanged",
+      "scope": "Disposable token/HTTP development deployment; common and owning-service TLS/mTLS evidence does not claim full-platform mTLS acceptance."
+    }
+  }
 }

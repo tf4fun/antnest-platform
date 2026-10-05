@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 14,
+  "version": 15,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -88,7 +88,7 @@
     "workspace_state": {
       "method": "GET",
       "path": "/api/app/agents/{agent_id}/state",
-      "authentication": "browser_session; ACP authorizes trusted organization/principal/agent",
+      "authentication": "browser_session; verified Gateway workload and signed Agent-scoped workspace CCT at ACP",
       "scope": "original authenticated organization and principal only; no query fields",
       "success_status": 200,
       "response_required": [
@@ -161,7 +161,7 @@
         "/api/app/agents/{agent_id}/v2/acp"
       ],
       "same_origin_required": true,
-      "message_admission": "resolve original cookie token before forwarding each complete client message; require active original User/Organization/Membership",
+      "message_admission": "resolve original cookie token before each complete client message; require original User/Organization/Membership and an unexpired handshake CCT; reconnect after expiry (#58 owns renewal)",
       "message_payload": "opaque; no ACP translation or login credential forwarding",
       "invalid_session_close": 1008,
       "identity_unavailable_close": 1013,
@@ -208,7 +208,7 @@
         "X-Antnest-Organization-Slug",
         "X-Antnest-Organization-Name"
       ],
-      "trust": "strip all incoming X-Antnest identity fields before injecting verified values",
+      "trust": "verified Gateway workload and signed CCT; principal headers are presentation hints only",
       "identity_failure": "401 or 503; do not contact Node",
       "body_limit": "at least existing negotiated ACP multimodal input limit",
       "upstream": "internal agent-ui Node, not ACP"
@@ -235,7 +235,7 @@
       "html_cache": "private, no-store",
       "asset_cache": "public immutable by content hash",
       "prefix": "preserved",
-      "html_identity": "verified Gateway principal headers",
+      "html_identity": "signed organization-scoped workspace CCT plus verified presentation hints; SSR discovery only",
       "upstream": "internal agent-ui Node via ANTNEST_AGENT_UI_URL",
       "return_to": "validated same-origin /workspace/ path preserving agent and session query"
     }
@@ -265,12 +265,12 @@
     "X-Antnest-Organization-Name"
   ],
   "organization_display": {
-    "source": "Identity revision-13 principal.organization_slug and principal.organization_name",
+    "source": "Identity revision-14 principal.organization_slug and principal.organization_name",
     "transport": "X-Antnest-Organization-Slug and X-Antnest-Organization-Name; one canonical unpadded Base64URL value per header, encoding the exact UTF-8 string",
     "scope": "authenticated Agent UI Workspace API and SSR HTML only; anonymous assets and other upstreams receive neither header",
     "validation": "required non-whitespace strings; Node rejects missing, duplicate, non-canonical Base64URL or invalid UTF-8 values with 401 before discovery",
     "bootstrap_principal_schema": "../agent-ui/workspace-api.schema.json#/$defs/verifiedWorkspacePrincipal",
-    "authorization": "display only; organization_id, user_id, membership_id, roles and active state retain authorization authority",
+    "authorization": "display only; signed caller-context identities/roles and existing consumer business authorization determine access",
     "freshness": "no metadata cache; each authenticated request resolves Identity again; re-bootstrap and SSR reload observe the current name without changing session scope",
     "deployment": "Gateway producer #92 first; Agent UI bootstrap consumer #93 then activates the verifiedWorkspacePrincipal schema; full integration follows both local admissions"
   },
@@ -288,5 +288,18 @@
       "workspace_unavailable",
       "agent_unavailable"
     ]
+  },
+  "service_authentication": {
+    "contract": "service-authentication.md",
+    "workload": "Every internal dependency uses the exact platform token/mTLS mode; raw service credentials are re-read per new request or connection and never follow redirects.",
+    "caller_context": "Identity revision 14 issues a route-selected profile and Agent scope; forward the unchanged CCT in one Antnest-Caller-Context field, keep it outside browser JSON.",
+    "browser_sanitization": "Remove both Antnest authentication headers and the case-insensitive X-Antnest-* namespace; retain CSRF privately for Gateway validation only.",
+    "pending_consumers": [
+      "admin-console",
+      "agent-ui",
+      "agent-acp-service",
+      "agent-controller"
+    ],
+    "integration": "pending final coordinated service-authentication batch"
   }
 }

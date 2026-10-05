@@ -40,10 +40,11 @@ func TestDiscoveryHTTPResponsesMatchSharedSchemaAndRejectMixedAuthority(t *testi
 		}
 	}
 	d, store, _, source, load := discoveryFixture(t)
-	handler := NewHandler(NewService(store), testToken, nil, d)
+	handler := newTestHandler(t, NewService(store), d)
 	invoke := func(method, path string, value any) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(mustJSON(t, value)))
-		req.Header.Set("Authorization", "Bearer "+testToken)
+		handler.Authenticate(req)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		return rec

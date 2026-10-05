@@ -1,13 +1,15 @@
 # Agent Controller Lifecycle And Management Contract
 
-This contract is owned by Agent Controller and transported as trusted internal
-JSON over HTTP. This document describes control contract revision 36, the
+This contract is owned by Agent Controller and transported as authenticated internal
+JSON over HTTP. This document describes control contract revision 38, the
 `revision` value in [`control-contract.json`](control-contract.json).
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
 global Agent status projection, and Agent events. It is internal RPC, not a
 public OpenAPI. Edge Gateway decides which management operations are
-externally available and performs transport authentication.
+externally available. Controller independently verifies workload identity and the
+Identity-signed caller context under [its authentication contract](service-authentication.md);
+Gateway authentication and raw identity hints never replace this check.
 
 ## Execution Boundary
 
@@ -49,8 +51,8 @@ the caller submits a new intent instead of silently rebasing it.
 `GET /internal/execution-synchronization?organization_id=org-1` reads the
 Controller's current configuration revision and persisted ACP acknowledgement.
 Only one nonempty `organization_id` query parameter is accepted. As with other
-management reads, the trusted caller supplies its verified organization scope;
-Gateway/Console enforce external administrator access. This method does not
+management reads, Controller compares this scope with the signed CCT Organization
+and verifies an administrator role; the Console workload alone grants no user authority. This method does not
 perform another identity lookup or return configuration/credential payloads.
 
 ```json
@@ -101,9 +103,9 @@ Chat admission remains ACP-owned.
 `GET /internal/agents/{agent_id}/network-policy?organization_id=org-1`
 reads the desired policy and independent Runtime attachment. Organization scope
 is mandatory. Unknown, cross-organization and deleting/deleted Agents return
-`agent_not_found` before any Egress call. Gateway/Console enforce administrator
-authorization on the external management entry; this trusted internal service
-does not implement another transport authentication scheme.
+`agent_not_found` before any Egress call. Controller independently verifies the
+Console workload and signed administrator CCT, including requested Organization
+and Agent scope, before applying the domain checks.
 
 ```json
 {
@@ -502,3 +504,28 @@ The machine-readable route catalog is in
 [`control-contract.json`](control-contract.json), and message definitions are
 in [`control-api.schema.json`](control-api.schema.json). It includes the retained
 Agent-default and workspace-list RPCs; there is no Controller Run admission API.
+
+## Provider discovery and destination admission (revision 38)
+
+The former `GET /internal/provider-connections/{connection_id}/access` is removed,
+including its credential response schema. The saved
+`POST /internal/provider-connections/{connection_id}/discover-models` takes
+`{"organization_id":"..."}`. The draft `POST /internal/provider-discovery/draft`
+takes `organization_id`, `provider_key`, `base_url` and write-only
+`credential:{"method":"api_key","api_key":"..."}`. Draft supports DeepSeek,
+OpenRouter and OpenAI-compatible discovery; persisted connections retain their
+existing supported Provider set. Both routes require Console workload and signed
+administrator CCT, return only `{models:[...]}` with `Cache-Control: no-store`,
+and never capture RPC payloads even when development capture is enabled.
+
+Creation validates the destination before sealing/persistence; committed replays
+need no DNS. Saved discovery validates before decryption and rereads the current
+credential each time. Draft discovery neither reads nor stores credentials.
+Both use the shared [destination policy](../platform/provider-destination-policy.md):
+all DNS answers checked, verified literal-IP dial with original TLS/Host, no
+redirects/proxy, bounded deadline and 8 MiB discovery body limit. The exact
+operator-only private-endpoint flag defaults false and never permits permanently
+denied ranges. Static policy rejection is 422 `provider_endpoint_forbidden`;
+DNS unavailability is retryable 503 `provider_endpoint_unavailable`; discovery
+transport/status/body failure is retryable 502 `provider_discovery_failed`.
+Console thin-proxy and ACP model-call adoption remain later service batches.

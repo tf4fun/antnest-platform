@@ -238,9 +238,11 @@ export async function checkRepository({
         );
       if (
         access.authentication === "health" &&
-        (!/^GET \/(?:status|live|rpc\/agent-controller\/status)$/u.test(
-          route,
-        ) ||
+        (!(service === "antnest-runtime"
+          ? /^(?:GET|HEAD) \/status\/live$/u.test(route)
+          : /^GET \/(?:status|live|rpc\/agent-controller\/status)$/u.test(
+              route,
+            )) ||
           JSON.stringify(callers) !== '["local-healthcheck"]')
       )
         errors.push(`${service}: ${route} invalid health exception`);
@@ -266,7 +268,7 @@ if (
     const result = await checkRepository();
     for (const error of result.errors) console.error(error);
     console.log(
-      `checked ${result.services} service catalogs and ${result.routes} route caller policies (planned enforcement)`,
+      `checked ${result.services} service catalogs and ${result.routes} route caller policies`,
     );
     globalThis.process.exitCode = result.errors.length ? 1 : 0;
   } catch (error) {

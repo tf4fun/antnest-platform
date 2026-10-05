@@ -1,8 +1,10 @@
+import { createTestWorkspaceHttpServer as createWorkspaceHttpServer, testFetch as fetch } from "./support/auth-fixture.ts";
+import { testScope } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { test } from "node:test";
-import { createWorkspaceHttpServer } from "../src/http/node-server.ts";
+
 import { discoverWorkspaceAgents } from "../src/adapters/controller-workspace.ts";
 import { startBridgeTelemetry, withActiveHttpTrace } from "../src/telemetry.ts";
 
@@ -63,7 +65,7 @@ test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on 
       await telemetry.observeHttp("GET", "/workspace/", async () => {
         await discoverWorkspaceAgents({
           baseUrl: new URL("http://controller.internal"),
-          scope: { organizationId: "org-1", principalId: "user-1" },
+          scope: testScope({ organizationId: "org-1", principalId: "user-1" }),
           fetchImpl: async (_url, init) => {
             controllerTraceparent = new Headers(init?.headers).get("traceparent");
             return Response.json({ agents: [], next_cursor: null });

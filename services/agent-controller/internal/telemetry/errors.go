@@ -49,10 +49,14 @@ func SafeCode(code string) string {
 		"configuration_conflict", "lifecycle_conflict", "dependency_invalid_response",
 		"request_id_conflict", "lifecycle_timeout", "dependency_unavailable", "internal_error",
 		"runtime_image_invalid", "not_found", "bad_request", "invalid_argument", "resource_version_conflict",
-		"agent_network_not_found", "policy_revision_not_found", "agent_network_unavailable", "cleanup_failed":
+		"agent_network_not_found", "policy_revision_not_found", "agent_network_unavailable", "cleanup_failed",
+		"provider_endpoint_forbidden", "provider_endpoint_unavailable", "provider_discovery_failed":
 		return code
 	case "invalid_execution_configuration", "configuration_too_large", "configuration_unavailable",
 		"invalid_agent_settlement", "agent_operation_conflict", "settlement_unavailable":
+		return code
+	case "runtime_not_found", "runtime_connection_stale", "runtime_connection_unavailable",
+		"service_unauthenticated", "caller_not_allowed":
 		return code
 	default:
 		return "unclassified_error"

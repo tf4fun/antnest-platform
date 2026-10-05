@@ -25,26 +25,19 @@ execution facts from Controller events or reconstruct an execution state machine
 
 ## Identity And Transport
 
-`ANTNEST_AGENT_ACP_SERVICE_URL` is the required internal ACP base URL. Gateway
-overwrites browser identity headers before forwarding to Console. Console
-validates the five management headers and places the resulting principal in
-the request context. Its ACP HTTP adapter explicitly reconstructs only:
+`ANTNEST_AGENT_ACP_SERVICE_URL` is the required internal ACP base URL. Console
+first authenticates Gateway, then verifies the Identity signature, Console
+audience, lifetime and route scope of `Antnest-Caller-Context`. Administrator
+roles come from those claims; browser or Gateway presentation hints are not
+an authorization source. The unchanged CCT and separately authenticated Console
+workload connection reach ACP. No legacy management identity headers are emitted;
+valid signed identities are not restricted by the old header encoding.
 
-- `X-Antnest-User-ID`
-- `X-Antnest-Organization-ID`
-- `X-Antnest-Membership-ID`
-- `X-Antnest-System-Role`
-- `X-Antnest-Organization-Role`
-
-ACP dispatch without this administrator context fails before making a request.
-Opaque ASCII header IDs, including internal spaces and punctuation, are
-forwarded unchanged. Padded values, duplicate/coalesced headers, commas, control
-characters and unknown roles are rejected. Non-ASCII header IDs remain outside
-the Console transport contract; there is no implicit encoding conversion.
-There is no Agent-owner impersonation, browser
-cookie/token forwarding, or browser-selectable upstream. Redirects are not
-followed. Normal HTTP client instrumentation propagates the incoming trace.
-`/status` remains local and never probes ACP or another dependency.
+There is no Agent-owner impersonation, browser cookie/token forwarding or
+browser-selected upstream. Redirects are not followed. Normal HTTP client
+instrumentation propagates the incoming trace without capturing credentials.
+`/status` remains local and never probes ACP or another dependency. See the
+[authentication contract](../../../contracts/admin-console/service-authentication.md).
 
 Unknown/duplicate query fields are rejected. Body/query identity cannot replace
 the principal. Audit input, non-secret execution snapshots, Tool payloads and

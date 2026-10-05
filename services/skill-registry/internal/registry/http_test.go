@@ -39,7 +39,7 @@ func publishRequest(t *testing.T, metadata any, archive []byte) *http.Request {
 }
 
 func TestHTTPRequiresTokenAndPublishesBoundedPackage(t *testing.T) {
-	handler := NewHandler(NewService(&memoryStore{}), testToken, nil)
+	handler := newTestHandler(t, NewService(&memoryStore{}))
 	unauthorized := httptest.NewRequest(http.MethodGet, "/internal/skills?organization_id="+testOrg, nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, unauthorized)
@@ -50,7 +50,7 @@ func TestHTTPRequiresTokenAndPublishesBoundedPackage(t *testing.T) {
 	archive := skillZIP(t, "---\nname: code-review\ndescription: Review code\n---\n")
 	request := publishRequest(t, map[string]any{"request_id": "r1", "organization_id": testOrg, "actor_id": testActor}, archive)
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(response, handler.Authenticate(request))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("publish status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -64,11 +64,11 @@ func TestHTTPRequiresTokenAndPublishesBoundedPackage(t *testing.T) {
 }
 
 func TestHTTPRejectsUnknownMetadataField(t *testing.T) {
-	handler := NewHandler(NewService(&memoryStore{}), testToken, nil)
+	handler := newTestHandler(t, NewService(&memoryStore{}))
 	request := publishRequest(t, map[string]any{"request_id": "r1", "organization_id": testOrg, "actor_id": testActor, "admin": true},
 		skillZIP(t, "---\nname: code-review\ndescription: Review code\n---\n"))
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(response, handler.Authenticate(request))
 	if response.Code != http.StatusBadRequest || !bytes.Contains(response.Body.Bytes(), []byte("invalid_request")) {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
@@ -76,11 +76,11 @@ func TestHTTPRejectsUnknownMetadataField(t *testing.T) {
 
 func TestHTTPListsResolvesAndDownloadsOnlyWithinOrganization(t *testing.T) {
 	store := &memoryStore{}
-	handler := NewHandler(NewService(store), testToken, nil)
+	handler := newTestHandler(t, NewService(store))
 	archive := skillZIP(t, "---\nname: code-review\ndescription: Review code\n---\n")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, publishRequest(t,
-		map[string]any{"request_id": "r2", "organization_id": testOrg, "actor_id": testActor}, archive))
+	handler.ServeHTTP(response, handler.Authenticate(publishRequest(t,
+		map[string]any{"request_id": "r2", "organization_id": testOrg, "actor_id": testActor}, archive)))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("publish: %d %s", response.Code, response.Body.String())
 	}
@@ -91,7 +91,7 @@ func TestHTTPListsResolvesAndDownloadsOnlyWithinOrganization(t *testing.T) {
 	get := func(target string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, target, nil)
-		req.Header.Set("Authorization", "Bearer "+testToken)
+		handler.Authenticate(req)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		return rec
@@ -106,7 +106,7 @@ func TestHTTPListsResolvesAndDownloadsOnlyWithinOrganization(t *testing.T) {
 		download.Header().Get("X-Antnest-Artifact-Digest") != version.ArtifactDigest {
 		t.Fatalf("bad artifact: %d headers=%v", download.Code, download.Header())
 	}
-	if other := get(target + testOther); other.Code != http.StatusNotFound {
+	if other := get(target + testOther); other.Code != http.StatusForbidden {
 		t.Fatalf("cross-org artifact leaked: %d", other.Code)
 	}
 }

@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 	"os"
 	"testing"
 	"time"
@@ -38,7 +40,7 @@ func TestInstalledImageResolution(t *testing.T) {
 		t.Fatalf("resolved image cannot be addressed by its immutable ID: %q, %v", pinned, err)
 	}
 	byID, err := driver.ResolveImage(ctx, result.ImageRef)
-	if err != nil || byID.ImageRef != result.ImageRef {
+	if !errors.Is(err, platform.ErrImageNotAllowed) || byID.ImageRef != "" {
 		t.Fatalf("immutable image lookup changed identity: %+v %v", byID, err)
 	}
 }

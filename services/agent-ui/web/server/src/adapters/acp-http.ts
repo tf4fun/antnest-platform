@@ -6,6 +6,7 @@ import { initialSkillCommands, type WorkspaceCommand } from "../protocol/availab
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ConfigurationConflictError } from "../bridge/configuration-token.ts";
 import { withActiveHttpTrace } from "../telemetry.ts";
+import { scopeHeaders } from "../http/trusted-identity.ts";
 
 const BRIDGE_CAPABILITY = "antnest.dev/bridge";
 const DELIVERY = "antnest.dev/delivery";
@@ -183,26 +184,7 @@ export function sessionRequestFailure(cause: unknown): SessionNotFoundError | un
 }
 
 export function bridgeHeaders(scope: BridgeScope): Record<string, string> {
-  for (const value of [
-    scope.organizationId,
-    scope.principalId,
-    scope.agentId,
-  ]) {
-    if (
-      value.length === 0 ||
-      value.length > 200 ||
-      value.trim() !== value ||
-      value.includes(",") ||
-      value.includes("\t") ||
-      /[\r\n]/u.test(value)
-    )
-      throw new BridgeCapabilityError("Invalid trusted Bridge scope");
-  }
-  return {
-    "x-antnest-organization-id": scope.organizationId,
-    "x-antnest-principal-id": scope.principalId,
-    "x-antnest-agent-id": scope.agentId,
-  };
+  return scopeHeaders(scope, "agent-acp-service");
 }
 
 export function requireBridgeCapabilities(
@@ -280,10 +262,17 @@ export class AcpHttpBridge {
     baseUrl: URL;
     scope: BridgeScope;
     callbacks: AcpBridgeCallbacks;
-    fetchImpl?: typeof fetch;
+    fetchImpl: typeof fetch;
   }): Promise<AcpHttpBridge> {
     const headers = bridgeHeaders(input.scope);
-    const tracedFetch = withActiveHttpTrace(input.fetchImpl ?? fetch);
+    if (!input.fetchImpl) throw new BridgeCapabilityError("Authenticated ACP client is required");
+    const tracedFetch = withActiveHttpTrace(async (url, init) => {
+      const request = new Request(url, init);
+      for (const name of [...request.headers.keys()])
+        if (name.startsWith("x-antnest-") || name === "cookie" || name === "authorization") request.headers.delete(name);
+      for (const [name, value] of Object.entries(bridgeHeaders(input.scope))) request.headers.set(name, value);
+      return input.fetchImpl(request);
+    });
     const application = acp
       .client({ name: "antnest-agent-ui-bridge" })
       .onNotification(acp.methods.client.session.update, ({ params }) =>

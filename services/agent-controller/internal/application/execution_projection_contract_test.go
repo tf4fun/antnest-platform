@@ -43,6 +43,8 @@ func TestExecutionProjectionConformsToSharedACPContract(t *testing.T) {
 			change.apply(&source)
 			value, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
 			require.NoError(t, err)
+			publisher := &ExecutionPublisher{runtime: fixtureExecutionRuntimeResolver()}
+			require.NoError(t, publisher.resolveRuntimeAuthority(t.Context(), &value))
 			body, err := json.Marshal(value)
 			require.NoError(t, err)
 			instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))

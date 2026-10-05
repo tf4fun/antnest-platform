@@ -54,7 +54,7 @@ func TestExecutionPublisherPostgresAndHTTPResendCurrentCredentials(t *testing.T)
 	repository := providerTestRepository(t)
 	box, err := credentials.NewSecretBox(make([]byte, 32))
 	require.NoError(t, err)
-	catalog := application.NewCatalogService(repository, box, providerTestClock{})
+	catalog := fixtureCatalogService(repository, box, providerTestClock{})
 	input := providerTestInput("create-publication", "org1")
 	input.Credential.APIKey = "synthetic-publication-secret-first"
 	connection, err := catalog.CreateProviderConnection(t.Context(), input)

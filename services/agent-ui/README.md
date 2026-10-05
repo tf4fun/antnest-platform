@@ -45,17 +45,23 @@ permissions.
 
 | Direction | Interface | Purpose |
 | --- | --- | --- |
-| Inbound | `/workspace/*` via Edge Gateway | SSR HTML (with verified identity) and hashed assets (anonymous) |
+| Inbound | `/workspace/*` via Edge Gateway | Signed SSR identity; browser-anonymous assets with Gateway workload authentication |
 | Inbound | `/api/app/workspace/v1/*` via Edge Gateway | Workspace HTTP commands, bootstrap and Agent SSE; see the [Workspace API](../../contracts/agent-ui/workspace-api.md) |
 | Inbound | `GET /status`, `GET /live` | Readiness (503 while draining) and liveness; neither opens an ACP owner |
 | Outbound | Agent ACP Service (official SDK over HTTP, execution-state RPC) | Sessions, prompts, replay, permissions, execution state |
 | Outbound | Agent Controller | Principal-scoped Agent directory for bootstrap |
+| Outbound | Identity Service | Workload-authenticated public JWKS discovery |
 
-Edge Gateway resolves the browser session through Identity Service, injects the
-verified Organization, Principal, User, Membership, administrator flag and
-Agent ID headers, and enforces CSRF and Origin rules before forwarding. Node
-rejects Bootstrap requests without the `X-Antnest-Administrator` flag. The
-Gateway route and trusted-header inventory is in the
+Edge Gateway resolves the browser session through Identity Service and enforces
+CSRF and Origin before forwarding. Node verifies Gateway workload identity and
+Identity-signed CCT. A missing CCT returns `401 caller_context_required`; an
+empty, duplicate or invalid CCT returns `401 caller_context_invalid`, before
+business dispatch. Signed subject, Organization and roles determine authority;
+raw identity/administrator headers grant nothing. HTML and bootstrap use
+Organization-scoped CCT for discovery; Agent API paths match signed `agt`.
+Organization slug/name remain presentation hints. See the
+[service-authentication contract](../../contracts/agent-ui/service-authentication.md).
+The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
@@ -65,6 +71,12 @@ follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.m
 | --- | --- | --- | --- |
 | `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | Agent ACP Service origin (HTTP(S), no path, credentials, query or fragment) |
 | `ANTNEST_AGENT_CONTROLLER_URL` | for discovery | unset | Agent Controller origin; without it bootstrap returns `503 workspace_unavailable` |
+| `ANTNEST_AGENT_UI_IDENTITY_URL` | yes | - | Authenticated Identity JWKS origin, distinct from ACP/Controller |
+| `ANTNEST_SERVICE_AUTH_MODE` | yes | - | Exactly `token` or `mtls`; no fallback |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | no | `false` | Exactly `true` permits disposable token-mode HTTP; production uses TLS |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | token mode | - | Read-only caller-to-SHA256 JSON, loaded once; restart to reload |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | token mode | - | Read-only per-receiver Identity, ACP and configured Controller token files, reread each request |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS/mTLS | - | Complete native TLS 1.3; own URI SAN `antnest://service/agent-ui` |
 | `ANTNEST_AGENT_UI_BRIDGE_HOST` | no | `0.0.0.0` | Listen host |
 | `ANTNEST_AGENT_UI_BRIDGE_PORT` | no | `8080` | Listen port (1-65535) |
 | `ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES` | no | `16777216` | Serialized Prompt limit, 1024 to 67108864; must equal ACP's `ANTNEST_ACP_MAX_PROMPT_BYTES` (Compose sets both) |
@@ -86,7 +98,9 @@ semantics are described in [Architecture](docs/architecture.md#bridge-capacity-a
 ## Dependencies
 
 - Edge Gateway: the only supported caller; supplies verified identity.
-- Organization display: Gateway revision 14 supplies verified slug/name as
+- Identity: CCT keys fetched only from its authenticated configured origin;
+  cached trust expires after 30 seconds and fails closed during an outage.
+- Organization display: Gateway revision 15 supplies verified slug/name as
   canonical UTF-8 Base64URL headers. Node decodes and validates the same
   principal for bootstrap and SSR; both frontend bootstrap mappings require
   these labels. The chooser and account footer render the real name with the
@@ -100,6 +114,13 @@ semantics are described in [Architecture](docs/architecture.md#bridge-capacity-a
 
 Deployment is single-replica. Multi-replica ownership would need a separate
 lease and fencing design.
+
+Bridge forwards received CCT unchanged with its own workload credential. A later
+ordinary authenticated request in the same owner scope supplies context for
+subsequent upstream requests. Expiry denies new operations without cancelling
+accepted model work; #58 owns future long-lived renewal. Credentials never enter
+Views or cursors. Invalid security configuration fails before listening. The
+production health probe supports the configured port and TLS/mTLS transport.
 
 ## Build and test
 
@@ -131,15 +152,25 @@ node --test tests/e2e/agent-ui/fullstack-history.test.mjs
 
 For local development, run Node directly; it serves SSR, assets, the Workspace
 API and SSE on port 8080. Open the workspace through Edge Gateway so Node
-receives verified identity headers; a direct unauthenticated `/workspace/`
+receives workload credentials and signed CCT; a direct unauthenticated `/workspace/`
 request returns 401. Restart the command after source changes.
 
 ```sh
 cd services/agent-ui/web
 ANTNEST_AGENT_ACP_SERVICE_URL=http://127.0.0.1:8081 \
 ANTNEST_AGENT_CONTROLLER_URL=http://127.0.0.1:8082 \
+ANTNEST_AGENT_UI_IDENTITY_URL=http://127.0.0.1:8083 \
+ANTNEST_SERVICE_AUTH_MODE=token \
+ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true \
+ANTNEST_SERVICE_AUTH_CALLERS_FILE=/absolute/private/ui-callers.json \
+ANTNEST_SERVICE_AUTH_TOKEN_DIR=/absolute/private/ui-tokens \
 npm run dev
 ```
+
+Provision private credentials following the [token contract](../../contracts/platform/service-authentication.md)
+before starting; public test-vector tokens are never deployment credentials.
+Credential/network deployment and full cross-service Docker acceptance follow
+owning-service admissions on `feat/service-authentication`.
 
 Test-only variables: `ANTNEST_UI_SSE_SOAK` (enables the extended SSE soak) and
 `ANTNEST_UI_DOCKER_SOAK` (enables the Docker soak); the npm scripts set them.

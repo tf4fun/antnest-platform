@@ -5,6 +5,7 @@ import { buildLearningCandidatePackage } from "../../src/domain/learning-candida
 import { LearningPolicyChangedError } from "../../src/domain/learning-maintenance-errors.js";
 import type { LearningPolicy } from "../../src/domain/learning-policy.js";
 import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
+import { snapshot } from "../support/fixtures.js";
 
 const evidenceId = `evidence_${"e".repeat(32)}`;
 const candidatePackage = buildLearningCandidatePackage(
@@ -50,7 +51,11 @@ const claim: LearningTaskClaim = {
   sourceRunId: "run-1",
   frozenPolicy: policy,
 };
-const binding = { executionId: "execution-1", mcpEndpoint: "http://runtime.test/mcp" };
+const binding = {
+  ...snapshot().runtime,
+  executionId: "execution-1",
+  mcpEndpoint: "http://runtime.test/mcp",
+};
 const information = {
   executionId: binding.executionId,
   environment: { os: "linux", arch: "x64", home: "/home/agent", workspace: "/workspace" },

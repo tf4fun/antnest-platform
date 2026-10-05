@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runtimeConnectionIdSchema } from "./runtime-connection.js";
 
 import { thinkingEffortSchema } from "./model-thinking.js";
 import { admittedConfigurationSchema } from "./session-configuration.js";
@@ -34,7 +35,12 @@ const schema = z.strictObject({
   executionRevision: id,
   runtimeMcpSourceDigest: digest,
   agentExecutionSpecDigest: digest,
-  runtime: z.strictObject({ revision: id, executionId: id, mcpEndpoint: z.url() }),
+  runtime: z.strictObject({
+    revision: id,
+    executionId: id,
+    mcpEndpoint: z.url(),
+    connectionId: runtimeConnectionIdSchema,
+  }),
   executionSpec: z.strictObject({
     configuration: admittedConfigurationSchema.optional(),
     systemPrompt: z.string(),

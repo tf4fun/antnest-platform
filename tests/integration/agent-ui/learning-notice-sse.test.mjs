@@ -1,10 +1,14 @@
+import {
+  createTestWorkspaceHttpServer as createWorkspaceHttpServer,
+  testFetch as fetch,
+  testHeaders,
+} from "./auth-fixture.mjs";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
 
 import { applyAgentDelta } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
-import { createWorkspaceHttpServer } from "../../../services/agent-ui/web/server/dist/http/node-server.js";
 
 const headers = {
   "x-antnest-organization-id": "org-1",

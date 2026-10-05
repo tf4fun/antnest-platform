@@ -16,11 +16,15 @@ const claim: LearningTaskClaim = {
 };
 const digest = `sha256:${"a".repeat(64)}`;
 const binding = {
+  revision: `rtv_${"a".repeat(32)}`,
+  connectionId: `rci_${"b".repeat(32)}`,
   mcpEndpoint: "http://runtime.test:8093/mcp",
   executionId: "execution-1",
   acceptingRuns: true,
 };
 const effect = {
+  revision: binding.revision,
+  connectionId: binding.connectionId,
   requestId: "commit-1",
   action: "commit" as const,
   executionId: binding.executionId,
@@ -62,6 +66,18 @@ function harness() {
 }
 
 describe("Skill learning effect recovery", () => {
+  it.each(["revision", "connectionId"] as const)(
+    "does not observe through a forged %s on the same execution",
+    async (field) => {
+      const { recovery, runtime, bindings } = harness();
+      bindings.current.mockResolvedValue({
+        ...binding,
+        [field]: `${field === "revision" ? "rtv" : "rci"}_${"f".repeat(32)}`,
+      });
+      expect(await recovery.recover(claim, new AbortController().signal)).toBe("binding_changed");
+      expect(runtime.observe).not.toHaveBeenCalled();
+    },
+  );
   it("observes a lost commit against its original execution binding and settles by observation", async () => {
     const { recovery, ledger, runtime } = harness();
     expect(await recovery.recover(claim, new AbortController().signal)).toBe("settled");

@@ -1,15 +1,10 @@
 {
   "service": "admin-console",
-  "status": "planned",
-  "implementation_issues": [
-    25,
-    26
-  ],
+  "status": "enforced",
+  "implementation_issues": [25, 26],
   "routes": {
     "* /{path...}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "none"
@@ -23,9 +18,7 @@
       "request_body": "none"
     },
     "GET /api/admin/account": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -33,9 +26,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agent-skill-preparations/{request_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -43,9 +34,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agent-skill-preparations/by-idempotency-key": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -53,9 +42,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agents": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -63,9 +50,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agents/{agent_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -73,9 +58,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agents/{agent_id}/events": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -83,9 +66,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agents/{agent_id}/events/watch": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -93,9 +74,7 @@
       "request_body": "none"
     },
     "GET /api/admin/agents/{agent_id}/network-policy": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -103,9 +82,7 @@
       "request_body": "none"
     },
     "GET /api/admin/directory": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -113,9 +90,7 @@
       "request_body": "none"
     },
     "GET /api/admin/execution-audits": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -123,9 +98,7 @@
       "request_body": "none"
     },
     "GET /api/admin/execution-audits/{run_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -133,9 +106,7 @@
       "request_body": "none"
     },
     "GET /api/admin/execution-audits/{run_id}/events": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -143,9 +114,7 @@
       "request_body": "none"
     },
     "GET /api/admin/execution-synchronization": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -153,9 +122,7 @@
       "request_body": "none"
     },
     "GET /api/admin/model-catalog": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -163,9 +130,7 @@
       "request_body": "none"
     },
     "GET /api/admin/model-profiles": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -173,9 +138,7 @@
       "request_body": "none"
     },
     "GET /api/admin/model-profiles/{model_profile_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -183,9 +146,7 @@
       "request_body": "none"
     },
     "GET /api/admin/operations/{request_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -193,9 +154,7 @@
       "request_body": "none"
     },
     "GET /api/admin/overview": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -203,9 +162,7 @@
       "request_body": "none"
     },
     "GET /api/admin/provider-connections": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -213,9 +170,7 @@
       "request_body": "none"
     },
     "GET /api/admin/provider-connections/{connection_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -223,9 +178,7 @@
       "request_body": "none"
     },
     "GET /api/admin/provider-connections/{connection_id}/models/discovery": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -233,9 +186,7 @@
       "request_body": "none"
     },
     "GET /api/admin/provisioning/oidc-providers": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -243,9 +194,7 @@
       "request_body": "none"
     },
     "GET /api/admin/provisioning/scim-tokens": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -253,9 +202,7 @@
       "request_body": "none"
     },
     "GET /api/admin/skills": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -263,9 +210,7 @@
       "request_body": "none"
     },
     "GET /api/admin/skills/{skill_id}/versions": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -273,9 +218,7 @@
       "request_body": "none"
     },
     "GET /api/admin/skills/{skill_id}/versions/{version}/artifact": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -283,9 +226,7 @@
       "request_body": "none"
     },
     "GET /api/admin/template-defaults": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -293,9 +234,7 @@
       "request_body": "none"
     },
     "GET /api/admin/templates": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -303,9 +242,7 @@
       "request_body": "none"
     },
     "GET /api/admin/templates/{template_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -313,9 +250,7 @@
       "request_body": "none"
     },
     "GET /api/admin/templates/{template_id}/revisions/{revision}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -323,9 +258,7 @@
       "request_body": "none"
     },
     "GET /status": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -333,9 +266,7 @@
       "request_body": "none"
     },
     "POST /api/admin/account/password": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -343,9 +274,7 @@
       "request_body": "json"
     },
     "POST /api/admin/agents": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -353,9 +282,7 @@
       "request_body": "json"
     },
     "POST /api/admin/agents/{agent_id}/delete": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -363,9 +290,7 @@
       "request_body": "json"
     },
     "POST /api/admin/agents/{agent_id}/disable": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -373,9 +298,7 @@
       "request_body": "json"
     },
     "POST /api/admin/agents/{agent_id}/enable": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -383,9 +306,7 @@
       "request_body": "json"
     },
     "POST /api/admin/agents/{agent_id}/rebuild": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -393,9 +314,7 @@
       "request_body": "json"
     },
     "POST /api/admin/directory/memberships/{membership_id}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -403,9 +322,7 @@
       "request_body": "json"
     },
     "POST /api/admin/directory/users": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -413,9 +330,7 @@
       "request_body": "json"
     },
     "POST /api/admin/directory/users/{user_id}/active": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -423,9 +338,7 @@
       "request_body": "json"
     },
     "POST /api/admin/model-profiles": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -433,9 +346,7 @@
       "request_body": "json"
     },
     "POST /api/admin/model-profiles/{model_profile_id}/revisions": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -443,9 +354,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provider-connections": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -453,9 +362,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provider-connections/{connection_id}/credentials": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -463,9 +370,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provider-models/discovery": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -473,9 +378,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provisioning/oidc-providers": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -483,9 +386,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provisioning/oidc-providers/{name}/enabled": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -493,9 +394,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provisioning/scim-tokens": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -503,9 +402,7 @@
       "request_body": "json"
     },
     "POST /api/admin/provisioning/scim-tokens/{token_id}/revoke": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -513,9 +410,7 @@
       "request_body": "json"
     },
     "POST /api/admin/skill-sources/preview": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -523,9 +418,7 @@
       "request_body": "json"
     },
     "POST /api/admin/skill-sources/promote": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -533,9 +426,7 @@
       "request_body": "json"
     },
     "POST /api/admin/skill-sources/search": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -543,9 +434,7 @@
       "request_body": "json"
     },
     "POST /api/admin/skills": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -553,9 +442,7 @@
       "request_body": "multipart"
     },
     "POST /api/admin/skills/{skill_id}/versions": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -563,9 +450,7 @@
       "request_body": "multipart"
     },
     "POST /api/admin/templates": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -573,9 +458,7 @@
       "request_body": "json"
     },
     "POST /api/admin/templates/{template_id}/revisions": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -583,9 +466,7 @@
       "request_body": "json"
     },
     "PUT /api/admin/agents/{agent_id}/network-policy": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -593,9 +474,7 @@
       "request_body": "json"
     },
     "PUT /api/admin/model-profiles/{model_profile_id}/availability": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -603,9 +482,7 @@
       "request_body": "json"
     },
     "PUT /api/admin/provider-connections/{connection_id}/availability": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -613,9 +490,7 @@
       "request_body": "json"
     },
     "PUT /api/admin/templates/{template_id}/availability": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"

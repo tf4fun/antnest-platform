@@ -1,0 +1,167 @@
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: antnest_test_admin
+      POSTGRES_PASSWORD: ${CONTROLLER_TEST_DATABASE_PASSWORD:?}
+      POSTGRES_DB: controller_auth_test
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          "pg_isready -h 127.0.0.1 -U antnest_test_admin -d controller_auth_test",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+  temporal-databases:
+    image: postgres:17.11-bookworm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: antnest_test_admin
+      PGPASSWORD: ${CONTROLLER_TEST_DATABASE_PASSWORD:?}
+      ANTNEST_TEMPORAL_POSTGRES_PASSWORD: ${CONTROLLER_TEST_TEMPORAL_PASSWORD:?}
+    entrypoint: [sh, /scripts/init-databases.sh]
+    volumes:
+      - ../../../../scripts/temporal/init-databases.sh:/scripts/init-databases.sh:ro
+  temporal-schema:
+    image: temporalio/admin-tools:1.32.0
+    depends_on:
+      temporal-databases:
+        condition: service_completed_successfully
+    environment:
+      SQL_PASSWORD: ${CONTROLLER_TEST_TEMPORAL_PASSWORD:?}
+    entrypoint: [sh, /scripts/setup-schema.sh]
+    volumes:
+      - ../../../../scripts/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
+  temporal:
+    image: antnest/temporal:local
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      DBNAME: antnest_temporal
+      VISIBILITY_DBNAME: antnest_temporal_visibility
+      POSTGRES_USER: antnest_temporal
+      POSTGRES_PWD: ${CONTROLLER_TEST_TEMPORAL_PASSWORD:?}
+      POSTGRES_SEEDS: postgres
+      BIND_ON_IP: 0.0.0.0
+      TEMPORAL_BROADCAST_ADDRESS: 127.0.0.1
+      NUM_HISTORY_SHARDS: 4
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/docker.yaml
+    volumes:
+      - ../../../../scripts/temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro
+    healthcheck:
+      test: [CMD, sh, /etc/temporal/readiness.sh]
+      interval: 2s
+      timeout: 10s
+      retries: 90
+    stop_grace_period: 30s
+  temporal-namespace:
+    image: temporalio/admin-tools:1.32.0
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    entrypoint: [sh, /scripts/setup-namespace.sh]
+    volumes:
+      - ../../../../scripts/temporal/setup-namespace.sh:/scripts/setup-namespace.sh:ro
+  dependencies:
+    image: node:24.21.0-bookworm-slim
+    user: "${CONTROLLER_TEST_UID:?}:${CONTROLLER_TEST_GID:?}"
+    command: [node, /fixture/dependencies.mjs]
+    volumes:
+      - ./dependencies.mjs:/fixture/dependencies.mjs:ro
+      - ./execution-fixture.mjs:/fixture/execution-fixture.mjs:ro
+      - ${CONTROLLER_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8101/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  agent-controller:
+    build:
+      context: ../../../..
+      dockerfile: services/agent-controller/Dockerfile
+    user: "${CONTROLLER_TEST_UID:?}:${CONTROLLER_TEST_GID:?}"
+    networks:
+      default:
+        gw_priority: 1
+        aliases: [controller-primary]
+      provider: {}
+    environment:
+      ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_test_admin:${CONTROLLER_TEST_DATABASE_PASSWORD:?}@postgres:5432/controller_auth_test?sslmode=disable
+      ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${CONTROLLER_TEST_ENCRYPTION_KEY:?}
+      ANTNEST_TEMPORAL_ADDRESS: temporal:7233
+      ANTNEST_IDENTITY_SERVICE_URL: http://dependencies:8101
+      ANTNEST_AGENT_ACP_CONTROL_URL: http://dependencies:8102
+      ANTNEST_RUNTIME_CONTROLLER_URL: http://dependencies:8103
+      ANTNEST_RUNTIME_EGRESS_URL: http://dependencies:8104
+      ANTNEST_SKILL_REGISTRY_URL: http://dependencies:8105
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /run/auth/outgoing
+      ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL: 200ms
+      ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL: 200ms
+      ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL: 200ms
+      ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT: 5s
+      ANTNEST_AGENT_CONTROLLER_LISTEN: controller-primary:8120
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ${CONTROLLER_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    ports:
+      - "127.0.0.1::8120"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      temporal-namespace:
+        condition: service_completed_successfully
+      dependencies:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /usr/local/bin/agent-controller, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  provider:
+    image: node:24.21.0-bookworm-slim
+    user: "${CONTROLLER_TEST_UID:?}:${CONTROLLER_TEST_GID:?}"
+    command: [node, /fixture/provider.mjs]
+    networks: [provider]
+    volumes:
+      - ./provider.mjs:/fixture/provider.mjs:ro
+      - ${CONTROLLER_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8110/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+networks:
+  provider:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${CONTROLLER_TEST_PROVIDER_SUBNET:?}

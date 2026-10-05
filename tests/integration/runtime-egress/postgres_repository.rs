@@ -1,4 +1,14 @@
-use std::{env, sync::Arc, time::Duration};
+#[path = "../../support/egress-auth.rs"]
+mod auth;
+
+use std::{
+    env,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use antnest_runtime_egress::{
     application::{ControlConfig, ControlService, KernelCleanup},
@@ -24,6 +34,221 @@ impl KernelCleanup for ReadOnlyKernel {
     async fn clear_agent(&self, _: std::net::Ipv4Addr) -> Result<(), String> {
         panic!("policy inspection must not clean network state");
     }
+}
+
+#[derive(Default)]
+struct CountingKernel(AtomicUsize);
+
+#[async_trait]
+impl KernelCleanup for CountingKernel {
+    async fn clear_agent(&self, _: std::net::Ipv4Addr) -> Result<(), String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+async fn durable_control_state(client: &tokio_postgres::Client) -> Vec<serde_json::Value> {
+    let mut state = Vec::new();
+    // Static, service-owned names: compare complete rows, including allocator
+    // cursors, resource versions and timestamps, rather than only row counts.
+    for table in [
+        "address_pools",
+        "agent_networks",
+        "policy_revisions",
+        "agent_policy_assignments",
+        "runtime_attachments",
+    ] {
+        let row = client
+            .query_one(
+                &format!(
+                    "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb)
+                     FROM runtime_egress.{table} t"
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+        state.push(row.get(0));
+    }
+    state
+}
+
+#[tokio::test]
+#[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
+async fn control_admission_rejections_have_no_postgres_or_packet_gate_effects() {
+    let database_url =
+        env::var("ANTNEST_EGRESS_TEST_DATABASE_URL").expect("ANTNEST_EGRESS_TEST_DATABASE_URL");
+    let suffix = format!("{}-{}", std::process::id(), monotonic_suffix());
+    let repository = Arc::new(
+        PostgresRepository::connect(
+            &database_url,
+            DatabaseTlsMode::Disable,
+            RepositoryConfig {
+                pool_id: format!("admission-{suffix}"),
+                tunnel_cidr: "100.64.8.0/29".parse().unwrap(),
+                resolver_ipv4: "100.64.8.1".parse().unwrap(),
+                quarantine: Duration::from_secs(300),
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    let kernel = Arc::new(CountingKernel::default());
+    let control = Arc::new(ControlService::new(
+        repository,
+        kernel.clone(),
+        ControlConfig {
+            advertised_udp_endpoint: "10.20.0.8:8092".parse().unwrap(),
+            resolver_ipv4: "100.64.8.1".parse().unwrap(),
+            max_flows: 32,
+            max_agent_flows: 16,
+            flow_idle: Duration::from_secs(60),
+        },
+    ));
+    control.recover().await.unwrap();
+    let agent = AgentId::parse(format!("agent-admission-{suffix}")).unwrap();
+    control.ensure_agent_network(agent.clone()).await.unwrap();
+    control
+        .set_runtime_attachment(agent.clone(), AttachmentState::Open, 1)
+        .await
+        .unwrap();
+    let policy = format!("admission-policy-{suffix}");
+    let routes = [
+        (
+            "GET",
+            format!("/internal/agent-networks/{}", agent.as_str()),
+            "",
+        ),
+        ("PUT", format!("/internal/agent-networks/new-{suffix}"), ""),
+        (
+            "PUT",
+            format!("/internal/agent-network-attachments/{}", agent.as_str()),
+            r#"{"state":"closed","expected_resource_version":2}"#,
+        ),
+        (
+            "POST",
+            format!("/internal/agent-networks/{}/release", agent.as_str()),
+            r#"{"expected_resource_version":1}"#,
+        ),
+        (
+            "PUT",
+            format!("/internal/policies/{policy}/revisions/1"),
+            r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#,
+        ),
+        (
+            "GET",
+            format!("/internal/policies/{policy}/revisions/1"),
+            "",
+        ),
+        (
+            "GET",
+            format!("/internal/agent-policy-assignments/{}", agent.as_str()),
+            "",
+        ),
+        (
+            "PUT",
+            format!("/internal/agent-policy-assignments/{}", agent.as_str()),
+            r#"{"policy_id":"builtin/allow-all","revision":1,"expected_resource_version":1}"#,
+        ),
+    ];
+    let accepted = router(
+        control.clone(),
+        EgressMetrics::default(),
+        auth::admission_for("agent-controller"),
+    );
+    let forbidden = router(
+        control.clone(),
+        EgressMetrics::default(),
+        auth::admission_for("skill-registry"),
+    );
+    let (observer, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    let connection_task = tokio::spawn(connection);
+    let before = durable_control_state(&observer).await;
+    let snapshot = control.status().snapshot_revision;
+    let cleanups = kernel.0.load(Ordering::SeqCst);
+    for (method, path, body) in &routes {
+        for (app, authenticate, expected) in [
+            (&accepted, false, StatusCode::UNAUTHORIZED),
+            (&forbidden, true, StatusCode::FORBIDDEN),
+        ] {
+            let mut request = Request::builder()
+                .method(*method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", auth::workload_header())
+                .header("x-antnest-service", "agent-controller")
+                .header("antnest-caller-context", "forged-user-context");
+            if authenticate {
+                request = request.header("antnest-service-authorization", auth::workload_header());
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::from(*body)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{method} {path}");
+            assert_eq!(
+                response.headers().contains_key("www-authenticate"),
+                expected == StatusCode::UNAUTHORIZED
+            );
+        }
+        let response = accepted
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(*method)
+                    .uri(format!("{path}?unexpected=1"))
+                    .header("antnest-service-authorization", auth::workload_header())
+                    .header("content-type", "application/json")
+                    .body(Body::from(*body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "{method} {path}"
+        );
+    }
+    for (body, content_type, expected) in [
+        (
+            r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#,
+            "text/plain",
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        ),
+        (
+            r#"{"spec":{"schema_version":1,"action":"allow_all","act\u0069on":"deny_all"}}"#,
+            "application/json",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            r#"{"spec":{"schema_version":1,"action":"allow_all","extra":true}}"#,
+            "application/json",
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let response = accepted
+            .clone()
+            .oneshot(
+                Request::put(format!("/internal/policies/{policy}/revisions/1"))
+                    .header("antnest-service-authorization", auth::workload_header())
+                    .header("content-type", content_type)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+    assert_eq!(durable_control_state(&observer).await, before);
+    assert_eq!(control.status().snapshot_revision, snapshot);
+    assert_eq!(kernel.0.load(Ordering::SeqCst), cleanups);
+    assert!(!control.dataplane().lock().unwrap().is_agent_fenced(&agent));
+    drop(observer);
+    connection_task.await.unwrap().unwrap();
 }
 
 #[tokio::test]
@@ -203,7 +428,11 @@ async fn postgres_preserves_network_and_policy_semantics() {
         },
     ));
     let snapshot = control.status().snapshot_revision;
-    let app = router(control.clone(), EgressMetrics::default());
+    let app = router(
+        control.clone(),
+        EgressMetrics::default(),
+        auth::admission_for("agent-controller"),
+    );
     for expected in [first_policy, second_policy] {
         let response = app
             .clone()
@@ -213,6 +442,7 @@ async fn postgres_preserves_network_and_policy_semantics() {
                     expected.policy_id.as_str(),
                     expected.revision
                 ))
+                .header("antnest-service-authorization", auth::workload_header())
                 .body(Body::empty())
                 .unwrap(),
             )

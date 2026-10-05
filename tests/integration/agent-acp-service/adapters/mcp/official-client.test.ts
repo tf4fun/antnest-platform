@@ -12,6 +12,9 @@ import {
 } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { runtimeAuthority } from "../../support/runtime-authority.js";
 
 import { OfficialMcpDialer } from "../../../../../services/agent-acp-service/src/adapters/mcp/official-client.js";
 
@@ -27,8 +30,10 @@ describe("OfficialMcpDialer", () => {
     fixture = await startMcpFixture();
     const connection = await new OfficialMcpDialer({
       trust: "runtime",
+      connections: fixture.authority.connections,
     }).connect({
       endpoint: fixture.endpoint,
+      runtimeBinding: fixture.authority.binding,
       headers: { "x-antnest-expected-execution-id": "execution-1" },
       signal: AbortSignal.timeout(5_000),
     });
@@ -86,14 +91,75 @@ describe("OfficialMcpDialer", () => {
       await connection.close();
     }
   });
+  it("requires a complete trusted binding before making any SDK request", async () => {
+    fixture = await startMcpFixture();
+    const dialer = new OfficialMcpDialer({
+      trust: "runtime",
+      connections: fixture.authority.connections,
+    });
+    await expect(
+      dialer.connect({
+        endpoint: fixture.endpoint,
+        headers: {},
+        signal: AbortSignal.timeout(5000),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      dialer.connect({
+        endpoint: new URL("/unlisted", fixture.endpoint),
+        runtimeBinding: fixture.authority.binding,
+        headers: {},
+        signal: AbortSignal.timeout(5000),
+      }),
+    ).rejects.toThrow();
+    expect(fixture.executionIds).toEqual([]);
+    expect(fixture.requests).toEqual([]);
+  });
+  it("re-reads instance credentials for later SDK requests and never falls back after deletion", async () => {
+    fixture = await startMcpFixture();
+    const connection = await new OfficialMcpDialer({
+      trust: "runtime",
+      connections: fixture.authority.connections,
+    }).connect({
+      endpoint: fixture.endpoint,
+      runtimeBinding: fixture.authority.binding,
+      headers: {},
+      signal: AbortSignal.timeout(5000),
+    });
+    try {
+      await connection.listTools(AbortSignal.timeout(5000));
+      const before = fixture.executionIds.length;
+      const requestsBefore = fixture.requests.length;
+      unlinkSync(
+        join(
+          fixture.authority.connections.directory,
+          fixture.authority.binding.connectionId,
+          "antnest-runtime",
+        ),
+      );
+      await expect(
+        connection.callTool(
+          { name: "echo", arguments: { text: "never dispatched" } },
+          AbortSignal.timeout(5000),
+        ),
+      ).rejects.toThrow();
+      expect(fixture.executionIds).toHaveLength(before);
+      expect(fixture.requests).toHaveLength(requestsBefore);
+    } finally {
+      await connection.close();
+    }
+  });
 });
 
 async function startMcpFixture(): Promise<{
   endpoint: URL;
+  authority: ReturnType<typeof runtimeAuthority>;
   executionIds: string[];
+  requests: string[];
   close(): Promise<void>;
 }> {
   const executionIds: string[] = [];
+  const requests: string[] = [];
   let resourceReads = 0;
   const handler = createMcpHandler(
     (context) => {
@@ -144,6 +210,8 @@ async function startMcpFixture(): Promise<{
     { legacy: "reject" },
   );
   const server = createServer((request, response) => {
+    requests.push(request.url ?? "/");
+    if (!authority.admit(request, response)) return;
     void forwardRequest(request, response, handler);
   });
   await listen(server);
@@ -151,12 +219,17 @@ async function startMcpFixture(): Promise<{
   if (address === null || typeof address === "string") {
     throw new Error("MCP fixture has no TCP address");
   }
+  const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
+  const authority = runtimeAuthority(endpoint);
   return {
-    endpoint: new URL(`http://127.0.0.1:${address.port}/mcp`),
+    endpoint,
+    authority,
     executionIds,
+    requests,
     close: async () => {
       await handler.close();
       await closeServer(server);
+      await authority.connections.close();
     },
   };
 }

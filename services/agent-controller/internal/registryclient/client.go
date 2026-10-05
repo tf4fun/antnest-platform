@@ -11,21 +11,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type Client struct {
 	baseURL string
-	token   string
 	http    *http.Client
 }
 
-func New(baseURL, token string, timeout time.Duration, transport http.RoundTripper) (*Client, error) {
+func New(baseURL string, timeout time.Duration, transport http.RoundTripper) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
-		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" || token == "" {
-		return nil, fmt.Errorf("skill registry endpoint or token is invalid")
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" || transport == nil {
+		return nil, fmt.Errorf("skill registry endpoint and authenticated transport are required")
 	}
 	if timeout <= 0 {
 		return nil, fmt.Errorf("skill registry timeout must be positive")
@@ -33,7 +33,7 @@ func New(baseURL, token string, timeout time.Duration, transport http.RoundTripp
 	client := &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), token: token, http: client}, nil
+	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), http: client}, nil
 }
 
 func (client *Client) Resolve(ctx context.Context, organizationID string, refs []domain.SkillReference) ([]domain.FrozenSkill, error) {
@@ -49,7 +49,7 @@ func (client *Client) Resolve(ctx context.Context, organizationID string, refs [
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+client.token)
+	callercontext.Forward(ctx, request.Header)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.http.Do(request)
 	if err != nil {

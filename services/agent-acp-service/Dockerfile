@@ -25,6 +25,6 @@ COPY --from=build --chown=node:node /workspace/services/agent-acp-service/dist .
 COPY --chown=node:node services/agent-acp-service/migrations ./migrations
 
 USER node
-EXPOSE 8080
+EXPOSE 8080 8081
 
 CMD ["node", "dist/main.js"]

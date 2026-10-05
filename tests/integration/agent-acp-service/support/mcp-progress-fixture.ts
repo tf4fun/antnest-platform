@@ -13,6 +13,7 @@ import {
   type ServerContext,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { runtimeAuthority } from "./runtime-authority.js";
 
 // Official SDK server with streaming HTTP forwarding, shared by adapter and ACP/PG tests.
 export async function startProgressFixture(
@@ -72,6 +73,7 @@ export async function startProgressFixture(
     { legacy: "reject" },
   );
   const server = createServer((request, response) => {
+    if (!authority.admit(request, response)) return;
     void forward(request, response, handler);
   });
   await new Promise<void>((resolve, reject) => {
@@ -84,8 +86,11 @@ export async function startProgressFixture(
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Missing MCP address");
+  const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
+  const authority = runtimeAuthority(endpoint, "runtime-execution-1");
   return {
-    endpoint: new URL(`http://127.0.0.1:${address.port}/mcp`),
+    endpoint,
+    authority,
     ready: ready.promise,
     executionIds,
     receivedArguments,
@@ -117,6 +122,7 @@ export async function startProgressFixture(
           error === undefined ? resolve() : reject(error),
         );
       });
+      await authority.connections.close();
     },
   };
 }

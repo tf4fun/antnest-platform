@@ -14,10 +14,10 @@ func TestRegistryHTTPServerPreservesParentAndUsesRouteTemplate(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	recorder, ctx, caller := sourceSpans(t)
 	d, store, _, _, _ := discoveryFixture(t)
-	h := NewHandler(NewService(store), testToken, nil, d)
+	h := newTestHandler(t, NewService(store), d)
 	req := httptest.NewRequest(http.MethodGet, "/internal/skills/skill_00000000000000000000000000000001/versions/1/artifact?organization_id="+testOrg+"&private-query=secret", nil)
 	propagation.TraceContext{}.Inject(ctx, propagation.HeaderCarrier(req.Header))
-	req.Header.Set("Authorization", "Bearer "+testToken)
+	h.Authenticate(req)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 404 {
@@ -36,7 +36,7 @@ func TestRegistryHTTPUnauthorizedAndUnmatchedRequestsRemainObservable(t *testing
 	for _, path := range []string{"/internal/skills", "/unregistered/private-value"} {
 		t.Run(path, func(t *testing.T) {
 			recorder, _, _ := sourceSpans(t)
-			h := NewHandler(NewService(&memoryStore{}), testToken, nil)
+			h := newTestHandler(t, NewService(&memoryStore{}))
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 			spans := recorder.Ended()
@@ -44,6 +44,9 @@ func TestRegistryHTTPUnauthorizedAndUnmatchedRequestsRemainObservable(t *testing
 				t.Fatalf("missing rejected HTTP span: %v", spans)
 			}
 			expected := "HTTP GET /internal/skills"
+			if path == "/unregistered/private-value" {
+				expected = "HTTP GET unmatched"
+			}
 			if rec.Code == 404 {
 				expected = "HTTP GET unmatched"
 			} else if rec.Code != 401 {

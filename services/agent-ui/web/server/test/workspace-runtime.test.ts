@@ -1,3 +1,4 @@
+import { TestRequest as Request } from "./support/auth-fixture.ts";
 import { applyAgentDelta } from "../src/protocol/agent-view-delta.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";

@@ -6,6 +6,7 @@ import {
 } from "../../src/adapters/skill-source-http.js";
 import { RuntimeSkillMaintenanceSigner } from "../../src/adapters/runtime-skill-maintenance-signer.js";
 import { learningSkillTextPackage } from "../../src/domain/learning-candidate-package.js";
+import type { RuntimeBinding } from "../../src/domain/types.js";
 
 const projection = {
   organization_id: `org_${"a".repeat(32)}`,
@@ -22,11 +23,7 @@ it("sends only metadata to the fixed Registry route, bounds acknowledgements and
   const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
     Promise.resolve(Response.json({ outcome: "applied", sequence: 3 })),
   );
-  const client = new RegistrySkillProjectionClient(
-    "http://registry/",
-    "registry-test-token",
-    fetchFn,
-  );
+  const client = new RegistrySkillProjectionClient("http://registry/", fetchFn);
   await client.send(projection, new AbortController().signal);
   expect(fetchFn.mock.calls[0]?.[0]).toBe("http://registry/internal/skill-projections");
   const init = fetchFn.mock.calls[0]?.[1];
@@ -74,10 +71,32 @@ it("observes the current complete package with an execution-bound read-only tick
       }),
     );
   });
-  const verifier = new RuntimeSkillSourceVerifier(signer, fetchFn);
-  const binding = { runtime_execution_id: "current-execution", mcp_endpoint: "http://runtime/mcp" };
+  const connections = {
+    fetchFor: vi.fn<(binding: RuntimeBinding) => typeof fetch>(
+      () =>
+        (url, init = {}) =>
+          fetchFn(
+            url instanceof Request ? url.url : typeof url === "string" ? url : url.href,
+            init,
+          ),
+    ),
+    retainOperation: vi.fn<(id: string, binding: RuntimeBinding) => void>(),
+    releaseOperation: vi.fn<(id: string) => void>(),
+  };
+  const verifier = new RuntimeSkillSourceVerifier(signer, connections);
+  const binding = {
+    revision: `rtv_${"a".repeat(32)}`,
+    executionId: "current-execution",
+    mcpEndpoint: "http://runtime:8080/mcp",
+    connectionId: `rci_${"b".repeat(32)}`,
+  };
   expect(await verifier.verify(record, binding, new AbortController().signal)).toBe("current");
-  expect(fetchFn.mock.calls[0]?.[0]).toBe("http://runtime/internal/skill-maintenance/observe");
+  expect(connections.fetchFor).toHaveBeenCalledWith(binding);
+  expect(connections.retainOperation).toHaveBeenCalledWith(expect.any(String), binding);
+  expect(connections.releaseOperation).toHaveBeenCalledWith(
+    connections.retainOperation.mock.calls[0]![0],
+  );
+  expect(fetchFn.mock.calls[0]?.[0]).toBe("http://runtime:8080/internal/skill-maintenance/observe");
   const init = fetchFn.mock.calls[0]![1];
   const request: unknown = JSON.parse(Buffer.from(init.body as Uint8Array).toString());
   expect(request).toMatchObject({
@@ -87,9 +106,9 @@ it("observes the current complete package with an execution-bound read-only tick
     effect_request_id: "commit-1",
     expected_target_digest: pkg.targetDigest,
   });
-  const headers = init.headers as Record<string, string>;
-  expect(headers["X-Antnest-Expected-Execution-ID"]).toBe("current-execution");
-  expect(headers.Authorization).toMatch(/^AntnestMaintenance /u);
+  const headers = new Headers(init.headers);
+  expect(headers.get("X-Antnest-Expected-Execution-ID")).toBe("current-execution");
+  expect(headers.get("Authorization")).toMatch(/^AntnestMaintenance /u);
   outcome = "conflict";
   expect(await verifier.verify(record, binding, new AbortController().signal)).toBe("changed");
   outcome = "unknown";

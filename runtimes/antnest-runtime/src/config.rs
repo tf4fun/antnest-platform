@@ -34,6 +34,8 @@ pub(crate) struct RuntimeSpecInput {
     pub(crate) mcp_servers: Vec<crate::managed_mcp::spec::ServerInput>,
     #[serde(default)]
     pub(crate) skill_maintenance_verifiers: SkillMaintenanceVerifiersInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) authentication: Option<crate::service_auth::BootstrapDescriptor>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -85,10 +87,25 @@ pub(crate) fn load() -> Result<RuntimeSpec, ConfigError> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .ok_or(ConfigError::Missing(RUNTIME_SPEC_ENV))?;
-    decode_runtime_spec(&encoded)
+    let spec = decode_runtime_spec(&encoded)?;
+    let descriptor = spec
+        .authentication()
+        .ok_or(ConfigError::Missing("authentication"))?;
+    let receiver =
+        crate::service_auth::load_instance(descriptor).map_err(|error| ConfigError::Invalid {
+            name: "authentication",
+            message: error.to_string(),
+        })?;
+    Ok(spec.with_receiver(receiver))
 }
 
 fn decode_runtime_spec(encoded: &str) -> Result<RuntimeSpec, ConfigError> {
+    if !crate::service_auth::valid_json_body(encoded.as_bytes()) {
+        return Err(ConfigError::Invalid {
+            name: RUNTIME_SPEC_ENV,
+            message: "bounded unique UTF-8 JSON is required".into(),
+        });
+    }
     let input = serde_json::from_str::<RuntimeSpecInput>(encoded).map_err(|error| {
         ConfigError::Invalid {
             name: RUNTIME_SPEC_ENV,
@@ -118,6 +135,14 @@ pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
 
 impl RuntimeSpecInput {
     pub(crate) fn try_into_runtime_spec(self) -> Result<RuntimeSpec, ConfigError> {
+        if let Some(descriptor) = &self.authentication {
+            descriptor
+                .validate()
+                .map_err(|error| ConfigError::Invalid {
+                    name: "authentication",
+                    message: error.to_string(),
+                })?;
+        }
         let maintenance_verifiers =
             validate_maintenance_verifiers(&self.skill_maintenance_verifiers.keys)?;
         if self.network.packet_contract_revision != crate::packet::PACKET_CONTRACT_REVISION {
@@ -148,6 +173,7 @@ impl RuntimeSpecInput {
                     .map(|servers| {
                         spec.with_mcp_servers(servers)
                             .with_maintenance_verifiers(maintenance_verifiers)
+                            .with_authentication(self.authentication)
                     })
                     .map_err(|error| ConfigError::Invalid {
                         name: "mcp_servers",
@@ -406,6 +432,7 @@ mod tests {
     fn valid_input() -> RuntimeSpecInput {
         RuntimeSpecInput {
             agent_id: "agent-config-test".into(),
+            authentication: None,
             mcp_servers: Vec::new(),
             skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
             generation: 7,
@@ -427,5 +454,40 @@ mod tests {
                 system_skills: "/skills".into(),
             },
         }
+    }
+
+    #[test]
+    fn authentication_descriptor_roundtrips_identity_only_and_rejects_ambiguity() {
+        let descriptor = serde_json::json!({
+            "connection_id":"rci_00000000000000000000000000000001",
+            "callers_file":"/run/antnest-auth/callers.json",
+            "receiver_digest":format!("sha256:{}", "0".repeat(64)),
+        });
+        let mut value = serde_json::to_value(valid_input()).unwrap();
+        value["authentication"] = descriptor.clone();
+        let spec = decode_runtime_spec(&value.to_string()).unwrap();
+        assert_eq!(
+            serde_json::to_value(spec.authentication().unwrap()).unwrap(),
+            descriptor
+        );
+        for (name, invalid) in [
+            ("connection_id", serde_json::json!("rci_wrong")),
+            ("callers_file", serde_json::json!("/workspace/callers.json")),
+            ("receiver_digest", serde_json::json!("SHA256:invalid")),
+            ("token", serde_json::json!("forbidden-private-field")),
+        ] {
+            value["authentication"] = descriptor.clone();
+            value["authentication"][name] = invalid;
+            assert!(decode_runtime_spec(&value.to_string()).is_err(), "{name}");
+        }
+        let duplicate = serde_json::to_string(&descriptor).unwrap().replace(
+            "\"callers_file\":",
+            "\"callers_file\":\"/run/antnest-auth/callers.json\",\"callers_file\":",
+        );
+        value["authentication"] = descriptor;
+        let encoded = value
+            .to_string()
+            .replace(&value["authentication"].to_string(), &duplicate);
+        assert!(decode_runtime_spec(&encoded).is_err());
     }
 }

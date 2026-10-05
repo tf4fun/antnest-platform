@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: antnest_identity
+      POSTGRES_PASSWORD: ${IDENTITY_TEST_DATABASE_PASSWORD:?}
+      POSTGRES_DB: identity_auth_test
+    volumes:
+      - ./hold-initialization.sh:/docker-entrypoint-initdb.d/99-hold-initialization.sh:ro
+    healthcheck:
+      # The entrypoint's temporary initialization server only accepts sockets.
+      test:
+        [
+          CMD-SHELL,
+          "pg_isready -h 127.0.0.1 -U antnest_identity -d identity_auth_test",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  identity-service:
+    build:
+      context: ../../../..
+      dockerfile: services/identity-service/Dockerfile
+    user: "${IDENTITY_TEST_UID:?}:${IDENTITY_TEST_GID:?}"
+    environment:
+      ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${IDENTITY_TEST_DATABASE_PASSWORD:?}@postgres:5432/identity_auth_test?sslmode=disable
+      ANTNEST_IDENTITY_ENCRYPTION_KEY: ${IDENTITY_TEST_ENCRYPTION_KEY:?}
+      ANTNEST_IDENTITY_PUBLIC_BASE_URL: http://127.0.0.1
+      ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: auth-test
+      ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: Authentication Test
+      ANTNEST_BOOTSTRAP_ADMIN_EMAIL: admin@example.test
+      ANTNEST_BOOTSTRAP_ADMIN_PASSWORD: ${IDENTITY_TEST_ADMIN_PASSWORD:?}
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_IDENTITY_CCT_SIGNING_KID: current
+      ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE: /run/auth/cct.pem
+      ANTNEST_IDENTITY_CCT_JWKS_FILE: /run/auth/jwks.json
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ${IDENTITY_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    ports:
+      - "127.0.0.1::8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /usr/local/bin/identity-service, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 60

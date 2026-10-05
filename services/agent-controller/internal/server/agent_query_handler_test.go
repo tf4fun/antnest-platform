@@ -24,7 +24,7 @@ func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.
 		}},
 		NextCursor: "next-workspace",
 	}}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -72,7 +72,7 @@ func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 		LifecycleState: domain.AgentDeleted, AccessRevision: "access-1",
 		AggregateSequence: 12, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 	}}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -130,7 +130,7 @@ func TestAgentQueryHandlerReturnsSafeExecutableConfigurationLineage(t *testing.T
 		},
 		AggregateSequence: 9, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 	}}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -168,7 +168,7 @@ func TestAgentQueryHandlerPreservesConfiguredTargetWithoutExecution(t *testing.T
 		RuntimeRevision: "retained-runtime-revision", AggregateSequence: 5,
 		CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 	}}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -197,7 +197,7 @@ func TestAgentQueryHandlerRejectsQueryOnExactGet(t *testing.T) {
 	t.Parallel()
 
 	queries := &agentQueryServiceStub{}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -227,7 +227,7 @@ func TestAgentQueryHandlerListsWithStrictFilters(t *testing.T) {
 		}},
 		NextCursor: "next-cursor",
 	}}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
@@ -286,7 +286,7 @@ func TestAgentQueryHandlerRejectsAmbiguousOrUnknownQuery(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
 			queries := &agentQueryServiceStub{}
-			handler, err := NewHandler(
+			handler, err := newBusinessHandler(t,
 				&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 				&agentEventServiceStub{}, &networkPolicyServiceStub{},
 				func(context.Context) error { return nil },
@@ -307,7 +307,7 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 	t.Parallel()
 
 	queries := &agentQueryServiceStub{err: application.ErrAgentNotFound}
-	handler, err := NewHandler(
+	handler, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },

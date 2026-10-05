@@ -15,6 +15,7 @@ import {
   packageWithFiles,
   packageWithFilesDigest,
 } from "../../../../services/agent-acp-service/test/fixtures/skill-discovery-package.js";
+import { runtimeAuthority } from "../support/runtime-authority.js";
 const schema = JSON.parse(
   readFileSync(
     new URL(
@@ -116,16 +117,18 @@ describe("ACP consumer of shared Runtime temporary wire contract", () => {
     };
     const installedPath = `/workspace/.antnest/skill-temporary/v1/${"b".repeat(64)}/${packageWithFilesDigest.slice(7)}/package`;
     let hold = false;
+    let authority: ReturnType<typeof runtimeAuthority> | undefined;
     const dispatched = Promise.withResolvers<void>(),
       disconnected = Promise.withResolvers<void>(),
       checked: string[] = [];
     const server = createServer((request, response) => {
+      if (!authority || !authority.admit(request, response)) return;
       if (request.url === "/status") {
         response.setHeader("Content-Type", "application/json");
         response.end(
           JSON.stringify({
             status: "ready",
-            agent_id: "agent_1",
+            agent_id: authority.configuration.agents[0]!.agent_id,
             execution_id: "execution-1",
           }),
         );
@@ -189,14 +192,19 @@ describe("ACP consumer of shared Runtime temporary wire contract", () => {
       const address = server.address();
       if (!address || typeof address === "string")
         throw new Error("Missing fixture port");
+      authority = runtimeAuthority(
+        new URL(`http://127.0.0.1:${address.port}/mcp`),
+      );
       const scope = {
-        organizationId: "org_1",
-        agentId: "agent_1",
+        ...authority.binding,
+        organizationId: authority.configuration.organization_id,
+        agentId: authority.configuration.agents[0]!.agent_id,
         runId: "run_1",
-        executionId: "execution-1",
-        mcpEndpoint: `http://127.0.0.1:${address.port}/mcp`,
       };
-      const client = new RuntimeSkillTemporaryClient(signer);
+      const client = new RuntimeSkillTemporaryClient(
+        signer,
+        authority.connections,
+      );
       expect(
         await client.install(scope, loaded, new AbortController().signal),
       ).toEqual({ path: installedPath, unpacked_size: 10 });
@@ -218,6 +226,7 @@ describe("ACP consumer of shared Runtime temporary wire contract", () => {
         "/internal/skill-temporary/install",
       ]);
     } finally {
+      await authority?.connections.close();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

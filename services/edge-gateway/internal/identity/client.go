@@ -17,14 +17,16 @@ import (
 const maximumResponseBytes = 2 << 20
 
 type Principal struct {
-	UserID           string `json:"user_id"`
-	OrganizationID   string `json:"organization_id"`
-	OrganizationSlug string `json:"organization_slug"`
-	OrganizationName string `json:"organization_name"`
-	MembershipID     string `json:"membership_id"`
-	SystemRole       string `json:"system_role"`
-	OrganizationRole string `json:"organization_role"`
-	Active           bool   `json:"active"`
+	UserID           string    `json:"user_id"`
+	OrganizationID   string    `json:"organization_id"`
+	OrganizationSlug string    `json:"organization_slug"`
+	OrganizationName string    `json:"organization_name"`
+	MembershipID     string    `json:"membership_id"`
+	SystemRole       string    `json:"system_role"`
+	OrganizationRole string    `json:"organization_role"`
+	Active           bool      `json:"active"`
+	CallerContext    string    `json:"-"`
+	ContextExpiresAt time.Time `json:"-"`
 }
 
 func (principal Principal) Administrator() bool {
@@ -170,14 +172,35 @@ func (client *Client) CompleteOIDCLogin(
 
 func (client *Client) Resolve(ctx context.Context, accessToken string) (Principal, error) {
 	var result struct {
-		Principal *principalResponse `json:"principal"`
+		Principal     *principalResponse `json:"principal"`
+		CallerContext string             `json:"caller_context"`
+	}
+	selection, ok := ctx.Value(resolutionKey{}).(resolution)
+	if !ok {
+		selection.Profile = "workspace"
+	}
+	if selection.Profile != "workspace" && selection.Profile != "console" && selection.Profile != "acp" {
+		return Principal{}, fmt.Errorf("invalid server-owned audience profile")
+	}
+	input := map[string]string{"access_token": accessToken, "profile": selection.Profile}
+	if selection.Agent != "" {
+		input["agent_id"] = selection.Agent
 	}
 	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/resolve-access-token",
-		map[string]string{"access_token": accessToken}, &result)
+		input, &result)
 	if err != nil {
 		return Principal{}, err
 	}
-	return result.Principal.verified()
+	principal, err := result.Principal.verified()
+	if err != nil {
+		return Principal{}, err
+	}
+	expires, err := issuerContextExpiration(result.CallerContext)
+	if err != nil {
+		return Principal{}, err
+	}
+	principal.CallerContext, principal.ContextExpiresAt = result.CallerContext, expires
+	return principal, nil
 }
 
 type principalResponse struct {

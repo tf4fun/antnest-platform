@@ -59,8 +59,8 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
             ("PUT", "/internal/agent-policy-assignments/agent-42", json!({"policy_id":"team-deny","revision":7,"expected_resource_version":1}).to_string(), 200),
             ("PUT", "/internal/policies/team-deny/revisions/8", json!({"spec":{"schema_version":1,"action":"allow_all","provider":{"access_token":"NESTED_CANARY"}}}).to_string(), 400),
             ("PUT", "/internal/policies/team-deny/revisions/8", "{\"spec\":{\"token\":\"PARTIAL_CANARY".to_owned(), 400),
-            ("PUT", "/internal/policies/team-deny/revisions/8", format!("{}{}", " ".repeat(16 * 1024), json!({"spec":{"schema_version":1,"action":"allow_all"}})), 200),
-            ("GET", "/status?access_token=QUERY_CANARY", "".to_owned(), 200),
+            ("PUT", "/internal/policies/team-deny/revisions/8", format!("{}{}", " ".repeat(16 * 1024), json!({"spec":{"schema_version":1,"action":"allow_all"}})), 413),
+            ("GET", "/status?access_token=QUERY_CANARY", "".to_owned(), 404),
             ("POST", "/unknown/URL_CANARY", "{\"token\":\"UNKNOWN_CANARY\"}".to_owned(), 404),
             ("PUT", "/internal/agent-policy-assignments/agent-42", json!({"policy_id":"team-deny","revision":7,"expected_resource_version":99}).to_string(), 409),
         ];
@@ -71,7 +71,7 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
                 .header("authorization", "Bearer AUTH_CANARY")
                 .header("cookie", "session=COOKIE_CANARY")
                 .header("baggage", "secret=BAGGAGE_CANARY")
-                .body(Body::from(body)).unwrap()).await.unwrap();
+                .header("antnest-service-authorization", support::workload_header()).body(Body::from(body)).unwrap()).await.unwrap();
             assert_eq!(response.status().as_u16(), status);
             let bytes = response.into_body().collect().await.unwrap().to_bytes();
             assert!(serde_json::from_slice::<Value>(&bytes).is_ok());
@@ -79,17 +79,26 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
         let response = app.oneshot(Request::put("/internal/policies/team-deny/revisions/9")
             .header("content-type", "application/json")
             .header("content-encoding", "gzip")
-            .body(Body::from(json!({"spec":{"schema_version":1,"action":"allow_all"}}).to_string())).unwrap())
+            .header("antnest-service-authorization", support::workload_header()).body(Body::from(json!({"spec":{"schema_version":1,"action":"allow_all"}}).to_string())).unwrap())
             .await.unwrap();
-        // Observation must not add a decoder or change the existing handler semantics.
-        assert_eq!(response.status().as_u16(), 200);
+        // Encoding is rejected before typed content capture or policy mutation.
+        assert_eq!(response.status().as_u16(), 415);
         response.into_body().collect().await.unwrap();
 
         let metadata_app = support::app().await;
         let response = metadata_app.oneshot(Request::put("/internal/agent-networks/agent-meta")
-            .body(Body::empty()).unwrap()).await.unwrap();
+            .header("antnest-service-authorization", support::workload_header()).body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status().as_u16(), 200);
         response.into_body().collect().await.unwrap();
+        let denied = support::app_with_capture_rpc_content(true).await
+            .oneshot(Request::put("/internal/policies/DENIED_AGENT_CANARY/revisions/1")
+                .header("antnest-service-authorization", "Bearer WORKLOAD_AUTH_CANARY")
+                .header("antnest-caller-context", "CCT_CANARY")
+                .header("x-antnest-role", "ADMIN_CANARY")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"spec":{"secret":"DENIED_BODY_CANARY"}}"#)).unwrap()).await.unwrap();
+        assert_eq!(denied.status().as_u16(), 401);
+        denied.into_body().collect().await.unwrap();
     }.with_subscriber(subscriber).await;
     provider.force_flush().unwrap();
     let spans = exporter.get_finished_spans().unwrap();
@@ -97,7 +106,7 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
         .iter()
         .filter(|span| span.span_kind == SpanKind::Server)
         .collect();
-    assert_eq!(requests.len(), 12);
+    assert_eq!(requests.len(), 13);
     for span in &requests[..10] {
         assert_eq!(span.parent_span_id.to_string(), "00f067aa0ba902b7");
         assert_eq!(
@@ -144,16 +153,12 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
         attribute(requests[3], "antnest.policy.revision").as_deref(),
         Some("7")
     );
-    for index in [4, 5, 7, 8, 11] {
+    for index in [4, 5, 6, 7, 8, 10, 11, 12] {
         assert!(
             event_attribute(requests[index], "antnest.request", "antnest.payload.json").is_none()
         );
     }
-    assert_eq!(
-        payload(requests[6], "antnest.request")["spec"]["action"],
-        "allow_all"
-    );
-    assert_eq!(requests[7].name, "HTTP GET /status");
+    assert_eq!(requests[7].name, "HTTP GET unmatched");
     assert!(event_attribute(requests[7], "antnest.response", "antnest.payload.json").is_none());
     assert_eq!(
         attribute(requests[9], "antnest.outcome").as_deref(),
@@ -192,8 +197,12 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
         );
     }
     assert_eq!(
-        payload(requests[10], "antnest.request")["spec"]["action"],
-        "allow_all"
+        payload(requests[10], "antnest.response")["code"],
+        "unsupported_media_type"
+    );
+    assert_eq!(
+        payload(requests[12], "antnest.response")["code"],
+        "service_unauthenticated"
     );
     assert!(event_attribute(requests[11], "antnest.response", "antnest.payload.json").is_none());
     let debug = format!("{spans:?}");
@@ -206,6 +215,12 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
         "AUTH_CANARY",
         "COOKIE_CANARY",
         "BAGGAGE_CANARY",
+        "WORKLOAD_AUTH_CANARY",
+        "CCT_CANARY",
+        "ADMIN_CANARY",
+        "DENIED_BODY_CANARY",
+        "DENIED_AGENT_CANARY",
+        support::workload_token(),
     ] {
         assert!(!debug.contains(canary), "leaked {canary}");
     }
@@ -236,6 +251,7 @@ async fn no_exporter_keeps_business_responses_and_context_available() {
             .await
             .oneshot(
                 Request::put("/internal/agent-networks/export-disabled")
+                    .header("antnest-service-authorization", support::workload_header())
                     .body(Body::empty())
                     .unwrap(),
             )

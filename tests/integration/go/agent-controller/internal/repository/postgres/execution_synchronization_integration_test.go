@@ -16,15 +16,15 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/authfixture"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func synchronizationBoundary(t *testing.T, repository *Repository) http.Handler {
 	t.Helper()
 	unused := &unusedCatalogDependencies{}
-	boundary, err := server.NewHandler(nilCatalog{}, unused, application.NewAgentConfigurationService(repository, nil, nil),
+	boundary, err := authfixture.NewHandler(t, nilCatalog{}, unused, application.NewAgentConfigurationService(repository, nil, nil),
 		unused, unused, unused, repository.Ping)
 	require.NoError(t, err)
 	return telemetry.HTTPHandler(boundary, slog.New(slog.NewTextHandler(io.Discard, nil)))

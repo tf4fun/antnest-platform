@@ -347,7 +347,7 @@ func TestMutationCoordinationFailuresUseStableErrors(t *testing.T) {
 
 func TestFiniteRPCUsesServerExecutionBudget(t *testing.T) {
 	service := &fakeService{blockListUntilCanceled: true}
-	handler, err := NewHandler(service, observation.NewHub(), time.Second, 5*time.Millisecond)
+	handler, err := newAuthenticatedHandler(service, observation.NewHub(), time.Second, 5*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestWatchTerminationDistinguishesServerShutdown(t *testing.T) {
 
 func newTestHandler(t *testing.T, service Service) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(service, observation.NewHub(), time.Second, time.Minute)
+	handler, err := newAuthenticatedHandler(service, observation.NewHub(), time.Second, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

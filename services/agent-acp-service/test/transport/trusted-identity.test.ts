@@ -1,101 +1,54 @@
-import { describe, expect, it } from "vitest";
-import { trustedAuditPrincipal, trustedIdentity } from "../../src/transport/trusted-identity.js";
-
-const headers = {
-  "x-antnest-organization-id": "organization-1",
-  "x-antnest-principal-id": "principal-1",
-  "x-antnest-agent-id": "agent-1",
-};
-
-describe("trusted Gateway identity", () => {
-  it("takes one complete identity tuple, not an Agent access subject", () => {
-    expect(trustedIdentity(headers)).toEqual({
-      organizationId: "organization-1",
-      principalId: "principal-1",
-      agentId: "agent-1",
-    });
-    expect(trustedIdentity({ "x-antnest-agent-access-subject": "old-subject" })).toBeNull();
-  });
-
-  it.each(Object.keys(headers))("preserves opaque values in %s", (key) => {
-    for (const value of [
-      "principal+service@example.org",
-      "agent/department:1",
-      "id~[opaque]",
-      "department member",
-      "x",
-      "x".repeat(200),
-    ]) {
-      const input = { ...headers, [key]: value };
-      expect(trustedIdentity(input)).toEqual({
-        organizationId: input["x-antnest-organization-id"],
-        principalId: input["x-antnest-principal-id"],
-        agentId: input["x-antnest-agent-id"],
-      });
-    }
-  });
-
-  it.each(Object.keys(headers))("requires %s", (key) => {
-    expect(trustedIdentity({ ...headers, [key]: undefined })).toBeNull();
-  });
-
-  it.each([
-    "",
-    " ",
-    " padded",
-    "padded ",
-    "a,b",
-    "x".repeat(201),
-    "a\nb",
-    "a\rb",
-    "a\tb",
-    "a\u0000b",
-    "a\u007fb",
-    "unrepresentable\u0100",
-    ["first", "second"],
-  ])("rejects ambiguous or invalid identity %j", (value) => {
-    expect(trustedIdentity({ ...headers, "x-antnest-principal-id": value })).toBeNull();
-  });
-});
-
-describe("trusted management identity", () => {
-  const managementHeaders = {
-    "x-antnest-user-id": "admin+operations@example.org",
-    "x-antnest-organization-id": "org+department@example.org",
-    "x-antnest-membership-id": "membership+[1]",
-    "x-antnest-system-role": "user",
+import { IncomingMessage } from "node:http";
+import { Socket } from "node:net";
+import { expect, it } from "vitest";
+import {
+  bindAuthenticatedRequest,
+  trustedAuditPrincipal,
+  trustedIdentity,
+} from "../../src/transport/trusted-identity.js";
+import { type CallerClaims } from "../../src/adapters/caller-context.js";
+it("never trusts wire identity hints", () => {
+  const headers = {
+    "x-antnest-organization-id": "forged-org",
+    "x-antnest-principal-id": "forged-user",
+    "x-antnest-agent-id": "forged-agent",
+    "x-antnest-user-id": "admin",
+    "x-antnest-system-role": "admin",
     "x-antnest-organization-role": "admin",
+    "x-antnest-membership-id": "member",
   };
-
-  it("preserves opaque identifiers without interpreting them as roles", () => {
-    expect(trustedAuditPrincipal(managementHeaders)).toEqual({
-      principalId: managementHeaders["x-antnest-user-id"],
-      organizationId: managementHeaders["x-antnest-organization-id"],
-      membershipId: managementHeaders["x-antnest-membership-id"],
-      systemRole: "user",
-      organizationRole: "admin",
-    });
-    expect(
-      trustedAuditPrincipal({ ...managementHeaders, "x-antnest-system-role": "root" }),
-    ).toBeNull();
+  expect(trustedIdentity(headers)).toBeNull();
+  expect(trustedAuditPrincipal(headers)).toBeNull();
+});
+it("projects only the context bound by authenticated ingress", () => {
+  const request = new IncomingMessage(new Socket());
+  request.headers = { "x-antnest-organization-id": "forged" };
+  const claims: CallerClaims = {
+    iss: "antnest://service/identity-service",
+    sub: "用户,operator",
+    org: "org-1",
+    mbr: "mbr-1",
+    sys_role: "user",
+    org_role: "admin",
+    sid: "sid-1",
+    aud: ["agent-acp-service"],
+    iat: 1,
+    exp: 61,
+    jti: "jti-1",
+    agt: "agent-1",
+  };
+  bindAuthenticatedRequest(request, "edge-gateway", claims);
+  expect(trustedIdentity(request.headers)).toEqual({
+    organizationId: "org-1",
+    principalId: "用户,operator",
+    agentId: "agent-1",
   });
-
-  it.each(["x-antnest-user-id", "x-antnest-organization-id", "x-antnest-membership-id"])(
-    "rejects ambiguous values in %s",
-    (key) => {
-      for (const value of [
-        undefined,
-        "",
-        " padded",
-        "padded ",
-        "a,b",
-        "a\tb",
-        "a\nb",
-        "x".repeat(201),
-        ["first", "second"],
-      ]) {
-        expect(trustedAuditPrincipal({ ...managementHeaders, [key]: value })).toBeNull();
-      }
-    },
-  );
+  expect(trustedAuditPrincipal(request.headers)).toEqual({
+    organizationId: "org-1",
+    principalId: "用户,operator",
+    membershipId: "mbr-1",
+    systemRole: "user",
+    organizationRole: "admin",
+  });
+  expect(trustedIdentity({ ...request.headers })).toBeNull();
 });

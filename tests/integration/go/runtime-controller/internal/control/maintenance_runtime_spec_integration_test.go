@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
@@ -43,7 +44,19 @@ func TestGeneratedMaintenanceRuntimeSpecs(t *testing.T) {
 			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":          "fixture-management",
 			"ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS": string(bootstrap),
 		}
-		loaded, err := config.Load(func(key string) string { return values[key] })
+		callers := filepath.Join(t.TempDir(), "callers.json")
+		if err := os.WriteFile(callers, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		values["ANTNEST_SERVICE_AUTH_MODE"] = "token"
+		values["ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT"] = "true"
+		values["ANTNEST_SERVICE_AUTH_CALLERS_FILE"] = callers
+		master := filepath.Join(t.TempDir(), "instance-master")
+		if err := os.WriteFile(master, make([]byte, 32), 0600); err != nil {
+			t.Fatal(err)
+		}
+		values["ANTNEST_RUNTIME_INSTANCE_KEY_FILE"] = master
+		loaded, err := config.Load(func(key string) (string, bool) { value, present := values[key]; return value, present })
 		if err != nil {
 			t.Fatal(err)
 		}

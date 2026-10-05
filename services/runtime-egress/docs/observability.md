@@ -25,7 +25,7 @@ unwind never claims a committed transaction.
 - One SERVER span per HTTP request, named by method and matched route template.
   W3C context is extracted before span creation, including successful `/status`.
   Query strings, baggage, credentials, and unrecognized headers are not captured.
-- `/status` remains a local snapshot of initialization and own repository health;
+- `/status` on the separate loopback health listener remains a local snapshot of initialization and own repository health;
   it does not query another service or change the readiness response.
 - The span ends on response EOF, body failure, or drop. Request cancellation and
   unwinding are recorded without inventing an HTTP response. Body wrappers count
@@ -74,10 +74,14 @@ unwind never claims a committed transaction.
 
 The single switch `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` defaults to false.
 When enabled, the control RPC adapter records complete decoded parameters and
-results, without DTO allowlists, identifier-based body filtering, or a custom
-16 KiB limit. Unknown fields rejected by the real protocol remain rejected;
-telemetry never changes decoding. Content can include credentials as the
-protocol evolves, so restrict collector access and retention.
+results after workload admission and strict carrier validation. The business
+JSON limit is 4 KiB; telemetry adds no separate truncation or decoding rule.
+Unknown and duplicate fields rejected by the real protocol remain rejected.
+Workload, user Authorization, Cookie, caller-context and unsigned identity
+headers are never payload data and are removed before business handling.
+Authentication, media and pre-decode refusals record only bounded error
+classification, route/status and observed sizes, even with capture enabled.
+Restrict collector access and retention for admitted business content.
 
 Database SQL statement capture is independent of this RPC switch. SQL text is
 always eligible for capture; bind arguments and query results are never captured.

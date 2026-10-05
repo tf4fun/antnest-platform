@@ -9,6 +9,8 @@ on:
       - tests/integration/antnest-runtime/**
       - tests/integration/skill-registry/package-rules-v1.json
       - contracts/runtime/**
+      - contracts/platform/service-token-fixtures.json
+      - tests/e2e/service-authentication/runtime/**
       - .github/workflows/runtime.yml
       - .github/workflows/_rust-crate.yml
       - .github/workflows/_image.yml
@@ -18,6 +20,8 @@ on:
       - tests/integration/antnest-runtime/**
       - tests/integration/skill-registry/package-rules-v1.json
       - contracts/runtime/**
+      - contracts/platform/service-token-fixtures.json
+      - tests/e2e/service-authentication/runtime/**
       - .github/workflows/runtime.yml
       - .github/workflows/_rust-crate.yml
       - .github/workflows/_image.yml

@@ -1,0 +1,1324 @@
+{
+  "version": 1,
+  "description": "Public synthetic conformance data only. These deterministic tokens and hashes MUST NOT be installed as working service credentials. Header fields are separate, uncombined field values exposed by the HTTP adapter after framing OWS removal; 200 means fixture admission, not a required business response status.",
+  "public_tokens": {
+    "current": {
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "hash": "sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0"
+    },
+    "next": {
+      "token": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+      "hash": "sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55"
+    },
+    "other": {
+      "token": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw",
+      "hash": "sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3"
+    },
+    "unknown": {
+      "token": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8",
+      "hash": "sha256:63df81ba993d73b5f3b5771babada7eb75f1573054ed995da264441e2e7fbb6b"
+    },
+    "url-safe": {
+      "token": "-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s",
+      "hash": "sha256:d11835ca7edbd11d612c89ccda97f8054dde4f78485ff5b589336e8bd9e35315"
+    }
+  },
+  "receiver_configurations": {
+    "baseline": {
+      "agent-controller": [
+        "sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0",
+        "sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55"
+      ],
+      "skill-registry": [
+        "sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3"
+      ]
+    },
+    "rotated": {
+      "agent-controller": [
+        "sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55"
+      ],
+      "skill-registry": [
+        "sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3"
+      ]
+    },
+    "url-safe": {
+      "agent-controller": [
+        "sha256:d11835ca7edbd11d612c89ccda97f8054dde4f78485ff5b589336e8bd9e35315"
+      ]
+    }
+  },
+  "configuration_vectors": [
+    {
+      "name": "current-hash",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": true,
+      "valid": true,
+      "expected_error": null
+    },
+    {
+      "name": "current-and-next",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"],\"skill-registry\":[\"sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3\"]}",
+      "schema_valid": true,
+      "valid": true,
+      "expected_error": null
+    },
+    {
+      "name": "empty-map-grants-no-callers",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{}",
+      "schema_valid": true,
+      "valid": true,
+      "expected_error": null
+    },
+    {
+      "name": "json-framing-whitespace",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "\n {\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"],\"skill-registry\":[\"sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3\"]} \t\n",
+      "schema_valid": true,
+      "valid": true,
+      "expected_error": null
+    },
+    {
+      "name": "unknown-service",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"unknown-service\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "browser-is-not-a-workload",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"browser\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "service-name-case",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"Agent-Controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "ungranted-self",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"runtime-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": true,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "explicit-catalog-self-grant",
+      "receiver": "runtime-controller",
+      "self_allowed": true,
+      "callers_json": "{\"runtime-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": true,
+      "valid": true,
+      "expected_error": null
+    },
+    {
+      "name": "empty-hash-array",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "three-hashes",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\",\"sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "duplicate-hashes-within-caller",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "duplicate-hashes-across-callers",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"],\"skill-registry\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": true,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "uppercase-hash",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"SHA256:EA866A757E4C38BABFA8127CBE9A409D3E1F93A00FF1488FF735FCF917AFFFD0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "uppercase-digest",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:EA866A757E4C38BABFA8127CBE9A409D3E1F93A00FF1488FF735FCF917AFFFD0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "missing-hash-prefix",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "short-digest",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "hash-trailing-newline",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\\n\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "raw-token-instead-of-hash",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "scalar-instead-of-array",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "object-instead-of-array",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":{\"current\":\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"}}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "unknown-root-member",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"],\"skill-registry\":[\"sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3\"],\"version\":1}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "null-root",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "null",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "array-root",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "[]",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "malformed-json",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "json-bom",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "﻿{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"],\"skill-registry\":[\"sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "second-json-document",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\",\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"],\"skill-registry\":[\"sha256:f97bcf05ea92bb20a22a56d7a2277860ff639fe2aef171dd7a7e06a29072b0f3\"]}\n{}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "duplicate-json-member",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"],\"agent-controller\":[\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    },
+    {
+      "name": "escaped-duplicate-json-member",
+      "receiver": "runtime-controller",
+      "self_allowed": false,
+      "callers_json": "{\"agent-controller\":[\"sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0\"],\"agent\\u002dcontroller\":[\"sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55\"]}",
+      "schema_valid": false,
+      "valid": false,
+      "expected_error": "invalid_configuration"
+    }
+  ],
+  "token_vectors": [
+    {
+      "name": "minimum-32-random-bytes",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "valid": true
+    },
+    {
+      "name": "33-random-bytes",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g",
+      "valid": true
+    },
+    {
+      "name": "maximum-64-random-bytes",
+      "token": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw",
+      "valid": true
+    },
+    {
+      "name": "base64url-dash-and-underscore",
+      "token": "-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s",
+      "valid": true
+    },
+    {
+      "name": "empty",
+      "token": "",
+      "valid": false
+    },
+    {
+      "name": "31-bytes",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg",
+      "valid": false
+    },
+    {
+      "name": "65-bytes",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A",
+      "valid": false
+    },
+    {
+      "name": "impossible-base64url-length",
+      "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "valid": false
+    },
+    {
+      "name": "noncanonical-unused-bits",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh9",
+      "valid": false
+    },
+    {
+      "name": "padding",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "valid": false
+    },
+    {
+      "name": "standard-base64-plus",
+      "token": "+_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s",
+      "valid": false
+    },
+    {
+      "name": "standard-base64-slash",
+      "token": "-/v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s",
+      "valid": false
+    },
+    {
+      "name": "dot",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh.",
+      "valid": false
+    },
+    {
+      "name": "tilde",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh~",
+      "valid": false
+    },
+    {
+      "name": "newline",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n",
+      "valid": false
+    },
+    {
+      "name": "crlf",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\r\n",
+      "valid": false
+    },
+    {
+      "name": "leading-space",
+      "token": " AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "valid": false
+    },
+    {
+      "name": "trailing-space",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 ",
+      "valid": false
+    },
+    {
+      "name": "embedded-space",
+      "token": "AAECAwQF BgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "valid": false
+    },
+    {
+      "name": "tab",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\t",
+      "valid": false
+    },
+    {
+      "name": "nul",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\u0000",
+      "valid": false
+    },
+    {
+      "name": "non-ascii",
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHhé",
+      "valid": false
+    },
+    {
+      "name": "bom",
+      "token": "﻿AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "valid": false
+    }
+  ],
+  "header_vectors": [
+    {
+      "name": "current-token-accepted",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "next-token-accepted",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "next-token-after-removal",
+      "configuration": "rotated",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "old-token-after-removal",
+      "configuration": "rotated",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "url-safe-token-accepted",
+      "configuration": "url-safe",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer -_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "missing-header",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "empty-header",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": ""
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "duplicate-identical-lines",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "duplicate-mixed-case-lines",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        {
+          "name": "antnest-service-authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "duplicate-different-callers",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "duplicate-with-empty-line",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": ""
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "comma-joined-values",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8, Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "comma-joined-tokens",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8,ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "wrong-scheme",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Basic AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "lowercase-scheme",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "mixed-case-scheme",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "bEaReR AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "lowercase-field-name",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "antnest-service-authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "mixed-case-field-name",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "aNtNeSt-SeRvIcE-aUtHoRiZaTiOn",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "missing-separator-space",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "BearerAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "extra-separator-space",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer  AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "tab-separator",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer\tAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "unicode-separator",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "leading-value-space",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": " Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "trailing-token-space",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 "
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "leading-value-tab",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "\tBearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "token-with-newline",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "empty-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer "
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "quoted-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer \"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\""
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "padded-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "noncanonical-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh9"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "invalid-token-character",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh!"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "token68-plus-is-outside-profile",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer +_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "token-case-is-byte-exact",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer aaecawqfbgcicqolda0odxarehmufryxgbkagxwdhh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "short-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "oversized-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "unconfigured-token",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "caller-not-on-route",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw"
+        }
+      ],
+      "expected": {
+        "code": "caller_not_allowed",
+        "http_status": 403,
+        "caller": "skill-registry",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "caller-allowed-on-another-route",
+      "configuration": "baseline",
+      "allowed_callers": ["skill-registry"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "skill-registry",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "valid-caller-empty-route-allowlist",
+      "configuration": "baseline",
+      "allowed_callers": [],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "caller_not_allowed",
+        "http_status": 403,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "standard-authorization-does-not-authenticate-service",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "claimed-caller-header-cannot-authenticate",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "X-Antnest-Service-Name",
+          "value": "agent-controller"
+        }
+      ],
+      "expected": {
+        "code": "service_unauthenticated",
+        "http_status": 401,
+        "caller": null,
+        "www_authenticate": "Bearer realm=\"antnest-service\""
+      }
+    },
+    {
+      "name": "claimed-caller-header-cannot-change-identity",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        {
+          "name": "X-Antnest-Service-Name",
+          "value": "skill-registry"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    },
+    {
+      "name": "end-user-authorization-remains-separate",
+      "configuration": "baseline",
+      "allowed_callers": ["agent-controller"],
+      "fields": [
+        {
+          "name": "Antnest-Service-Authorization",
+          "value": "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer user-session-token"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "http_status": 200,
+        "caller": "agent-controller",
+        "www_authenticate": null
+      }
+    }
+  ],
+  "mode_vectors": [
+    {
+      "name": "token-with-tls",
+      "mode": "token",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": true
+    },
+    {
+      "name": "token-with-tls-explicit-false",
+      "mode": "token",
+      "allow_insecure_transport": "false",
+      "transport": "https",
+      "valid": true
+    },
+    {
+      "name": "token-disposable-http-opt-in",
+      "mode": "token",
+      "allow_insecure_transport": "true",
+      "transport": "http",
+      "valid": true
+    },
+    {
+      "name": "token-http-without-opt-in",
+      "mode": "token",
+      "allow_insecure_transport": null,
+      "transport": "http",
+      "valid": false
+    },
+    {
+      "name": "token-http-false",
+      "mode": "token",
+      "allow_insecure_transport": "false",
+      "transport": "http",
+      "valid": false
+    },
+    {
+      "name": "missing-mode",
+      "mode": null,
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "empty-mode",
+      "mode": "",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "uppercase-mode",
+      "mode": "TOKEN",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "mode-leading-space",
+      "mode": " token",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "mode-trailing-space",
+      "mode": "token ",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "unknown-mode",
+      "mode": "none",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "uppercase-true",
+      "mode": "token",
+      "allow_insecure_transport": "TRUE",
+      "transport": "http",
+      "valid": false
+    },
+    {
+      "name": "numeric-true",
+      "mode": "token",
+      "allow_insecure_transport": "1",
+      "transport": "http",
+      "valid": false
+    },
+    {
+      "name": "true-leading-space",
+      "mode": "token",
+      "allow_insecure_transport": " true",
+      "transport": "http",
+      "valid": false
+    },
+    {
+      "name": "true-trailing-space",
+      "mode": "token",
+      "allow_insecure_transport": "true ",
+      "transport": "http",
+      "valid": false
+    },
+    {
+      "name": "empty-insecure-flag",
+      "mode": "token",
+      "allow_insecure_transport": "",
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "mtls-with-tls",
+      "mode": "mtls",
+      "allow_insecure_transport": null,
+      "transport": "https",
+      "valid": true
+    },
+    {
+      "name": "mtls-explicit-false",
+      "mode": "mtls",
+      "allow_insecure_transport": "false",
+      "transport": "https",
+      "valid": true
+    },
+    {
+      "name": "mtls-cannot-disable-tls",
+      "mode": "mtls",
+      "allow_insecure_transport": "true",
+      "transport": "https",
+      "valid": false
+    },
+    {
+      "name": "mtls-cannot-use-http",
+      "mode": "mtls",
+      "allow_insecure_transport": null,
+      "transport": "http",
+      "valid": false
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { syntheticProviderDestination } from "../../support/model-network.js";
 import { describe, expect, it } from "vitest";
 import { OpenAICompatibleModel } from "../../../src/adapters/model/openai-compatible.js";
 import type { AuthenticatedModelRequest } from "../../../src/ports/model.js";
@@ -35,6 +36,7 @@ async function complete(usage: unknown, streaming: boolean, withPrice = true) {
   };
   if (withPrice) request.snapshot.executionSpec.model.pricing = pricing;
   return new OpenAICompatibleModel({
+    destination: syntheticProviderDestination,
     fetchFn: () => Promise.resolve(response(usage, streaming)),
   }).complete(request);
 }
@@ -69,7 +71,10 @@ describe.each([false, true])("model costs streaming=%s", (streaming) => {
           headers: { "content-type": "text/event-stream" },
         })
       : Response.json({ choices: [], usage });
-    const model = new OpenAICompatibleModel({ fetchFn: () => Promise.resolve(body) });
+    const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
+      fetchFn: () => Promise.resolve(body),
+    });
     await expect(
       model.complete({
         snapshot: snapshot(),
@@ -161,7 +166,10 @@ describe("stream usage snapshots", () => {
       `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 123 } }], usage: { prompt_tokens: 10, completion_tokens: 2, cost: 0.01 } })}\n\n`,
       { headers: { "content-type": "text/event-stream" } },
     );
-    const model = new OpenAICompatibleModel({ fetchFn: () => Promise.resolve(body) });
+    const model = new OpenAICompatibleModel({
+      destination: syntheticProviderDestination,
+      fetchFn: () => Promise.resolve(body),
+    });
     await expect(
       model.complete({
         snapshot: snapshot(),
@@ -207,6 +215,7 @@ describe("stream usage snapshots", () => {
       };
       request.snapshot.executionSpec.model.pricing = pricing;
       const result = await new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
         fetchFn: () => Promise.resolve(body),
       }).complete(request);
       expect(result.usage).toMatchObject({
@@ -236,7 +245,10 @@ describe("stream usage snapshots", () => {
         }),
         { headers: { "content-type": "text/event-stream" } },
       );
-      const model = new OpenAICompatibleModel({ fetchFn: () => Promise.resolve(body) });
+      const model = new OpenAICompatibleModel({
+        destination: syntheticProviderDestination,
+        fetchFn: () => Promise.resolve(body),
+      });
       await expect(
         model.complete({
           snapshot: snapshot(),

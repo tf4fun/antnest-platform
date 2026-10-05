@@ -27,6 +27,60 @@ afterAll(async () => {
 });
 
 describe("learning review HTTP Trace", () => {
+  it.each(["provider_endpoint_forbidden", "provider_endpoint_unavailable"])(
+    "identifies %s without capturing credentials or DNS details",
+    async (code) => {
+      exporter.reset();
+      configureBoundaries({ captureRpcContent: true, disabled: false });
+      const lines: string[] = [];
+      const telemetry = new ServiceTelemetry("provider-policy-test", (line) =>
+        lines.push(line),
+      );
+      const fetchFn = vi.fn();
+      const model = new InstrumentedModel(
+        new OpenAICompatibleModel({
+          fetchFn,
+          destination: {
+            resolve: () => {
+              if (code === "provider_endpoint_unavailable")
+                return Promise.reject(
+                  new Error("synthetic-provider-secret in private DNS details"),
+                );
+              return Promise.resolve(["8.8.8.8", "127.0.0.1"]);
+            },
+          },
+        }),
+        telemetry,
+      );
+      const source = snapshot();
+      source.executionSpec.model.baseUrl = "https://provider.fixture/v1";
+      await expect(
+        model.complete({
+          snapshot: source,
+          messages: [],
+          tools: [],
+          purpose: "skill_learning",
+          credential: "synthetic-provider-secret",
+          signal: AbortSignal.timeout(3000),
+        }),
+      ).rejects.toMatchObject({ code });
+      expect(fetchFn).not.toHaveBeenCalled();
+      const spans = exporter.getFinishedSpans();
+      const span = spans.find((item) => item.name === "model.complete");
+      expect(span?.attributes["antnest.error.code"]).toBe(code);
+      expect(span?.attributes["model.purpose"]).toBe("skill_learning");
+      const evidence = JSON.stringify({
+        spans: spans.map((item) => ({
+          attributes: item.attributes,
+          events: item.events,
+        })),
+        lines,
+      });
+      expect(evidence).not.toContain("synthetic-provider-secret");
+      expect(evidence).not.toContain("private DNS details");
+      expect(evidence).not.toContain("https://provider.fixture");
+    },
+  );
   it.each([1, 2] as const)(
     "identifies validation failure and repair through the production adapter (prompt %i)",
     async (version) => {
@@ -93,7 +147,9 @@ describe("learning review HTTP Trace", () => {
         const source = snapshot();
         source.executionSpec.model.baseUrl = `http://127.0.0.1:${address.port}`;
         const transport = new InstrumentedModel(
-          new OpenAICompatibleModel(),
+          new OpenAICompatibleModel({
+            destination: { allowPrivateEndpoints: true },
+          }),
           telemetry,
         );
         const claim: LearningTaskClaim = {

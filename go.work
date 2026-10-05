@@ -3,6 +3,7 @@ go 1.27.0
 toolchain go1.27.1
 
 use (
+	./modules/service-authentication
 	./services/admin-console
 	./services/agent-controller
 	./services/edge-gateway

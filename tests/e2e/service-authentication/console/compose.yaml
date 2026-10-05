@@ -1,0 +1,48 @@
+services:
+  dependencies:
+    image: node:24.21.0-bookworm-slim
+    user: "${CONSOLE_TEST_UID:?}:${CONSOLE_TEST_GID:?}"
+    command: [node, /fixture/dependencies.mjs]
+    volumes:
+      - ./dependencies.mjs:/fixture/dependencies.mjs:ro
+      - ${CONSOLE_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8101/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  admin-console:
+    build:
+      context: ../../../..
+      dockerfile: services/admin-console/Dockerfile
+    user: "${CONSOLE_TEST_UID:?}:${CONSOLE_TEST_GID:?}"
+    environment:
+      ANTNEST_ADMIN_CONSOLE_LISTEN: admin-console:8080
+      ANTNEST_IDENTITY_SERVICE_URL: http://dependencies:8101
+      ANTNEST_AGENT_CONTROLLER_URL: http://dependencies:8102
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://dependencies:8103
+      ANTNEST_SKILL_REGISTRY_URL: http://dependencies:8104
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /run/auth/outgoing
+      ANTNEST_ADMIN_SHUTDOWN_TIMEOUT: 2s
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ${CONSOLE_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+    ports:
+      - "127.0.0.1::8080"
+    depends_on:
+      dependencies:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /usr/local/bin/admin-console, --healthcheck]
+      interval: 1s
+      timeout: 3s
+      retries: 60

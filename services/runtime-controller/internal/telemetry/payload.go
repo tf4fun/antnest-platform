@@ -12,6 +12,15 @@ import (
 )
 
 type observationKey struct{}
+
+// SuppressRPCContent is mandatory for private credential handoffs, regardless
+// of the debug capture setting. It disables both request and response capture.
+func SuppressRPCContent(ctx context.Context) {
+	if state, ok := ctx.Value(observationKey{}).(*httpObservation); ok {
+		state.captureRPC = false
+	}
+}
+
 type httpObservation struct {
 	span         trace.Span
 	captureRPC   bool

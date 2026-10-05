@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 )
@@ -130,11 +131,26 @@ func (a *LocalAuthAdapter) ResolveToken(
 	digest string,
 	now time.Time,
 ) (principal domain.Principal, resultErr error) {
+	session, err := a.ResolveTokenSession(ctx, digest, now)
+	return session.Principal, err
+}
+
+func (a *LocalAuthAdapter) ResolveTokenSession(ctx context.Context, digest string, now time.Time) (callercontext.Session, error) {
+	return a.resolveSession(ctx, "token_hash", digest, now, true)
+}
+
+func (a *LocalAuthAdapter) ResolveSession(ctx context.Context, id string, now time.Time) (callercontext.Session, error) {
+	return a.resolveSession(ctx, "id", id, now, false)
+}
+
+func (a *LocalAuthAdapter) resolveSession(ctx context.Context, column, value string, now time.Time, touch bool) (callercontext.Session, error) {
+	// column is selected only by the two private, fixed query profiles above.
+	var session callercontext.Session
+	principal := &session.Principal
 	var userActive, membershipActive, organizationActive bool
-	var tokenID string
 	var lastUsedAt *time.Time
 	err := a.store.pool.QueryRow(ctx, `
-		SELECT t.id, t.last_used_at,
+		SELECT t.id, t.last_used_at, t.expires_at,
 		       u.id, m.organization_id, m.id, u.system_role, m.role,
 		       u.active, m.active, o.active, o.slug, o.name
 		FROM api_tokens t
@@ -142,23 +158,23 @@ func (a *LocalAuthAdapter) ResolveToken(
 		JOIN organization_memberships m
 		  ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id
 		JOIN organizations o ON o.id = t.organization_id
-		WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > $2
-		  AND m.scim_deleted_at IS NULL`, digest, now,
+		WHERE t.`+column+` = $1 AND t.revoked_at IS NULL AND t.expires_at > $2
+		  AND m.scim_deleted_at IS NULL`, value, now,
 	).Scan(
-		&tokenID, &lastUsedAt,
+		&session.ID, &lastUsedAt, &session.ExpiresAt,
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
 		&principal.SystemRole, &principal.OrganizationRole,
 		&userActive, &membershipActive, &organizationActive,
 		&principal.OrganizationSlug, &principal.OrganizationName,
 	)
 	if err != nil {
-		return domain.Principal{}, normalizeError(err)
+		return callercontext.Session{}, normalizeError(err)
 	}
-	if shouldTouchTokenLastUsed(lastUsedAt, now) {
-		_ = a.touchTokenLastUsed(ctx, tokenID, now)
+	if touch && shouldTouchTokenLastUsed(lastUsedAt, now) {
+		_ = a.touchTokenLastUsed(ctx, session.ID, now)
 	}
 	principal.Active = userActive && membershipActive && organizationActive
-	return principal, nil
+	return session, nil
 }
 
 func shouldTouchTokenLastUsed(lastUsedAt *time.Time, now time.Time) bool {

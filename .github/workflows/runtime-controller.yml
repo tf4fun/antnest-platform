@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
     paths:
       - services/runtime-controller/**
+      - modules/service-authentication/**
       - tests/integration/go/runtime-controller/**
       - tests/support/**
       - contracts/**
@@ -19,6 +20,7 @@ on:
   pull_request:
     paths:
       - services/runtime-controller/**
+      - modules/service-authentication/**
       - tests/integration/go/runtime-controller/**
       - tests/support/**
       - contracts/**

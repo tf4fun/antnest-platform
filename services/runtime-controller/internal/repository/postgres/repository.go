@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
@@ -159,6 +160,9 @@ func (r *Repository) BeginTransition(
 	if _, err := tx.ExecContext(ctx, insertOperationSQL, arguments...); err != nil {
 		if strings.Contains(err.Error(), "operations_agent_nonterminal_unique") {
 			return deployment.Operation{}, false, repository.ErrConcurrentMutation
+		}
+		if strings.Contains(err.Error(), "operations_compute_generation_unique") {
+			return deployment.Operation{}, false, repository.ErrInvariantConflict
 		}
 		return deployment.Operation{}, false, fmt.Errorf("insert Runtime operation: %w", err)
 	}
@@ -661,6 +665,7 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 	var operation deployment.Operation
 	var inspection []byte
 	var maintenanceVerifiers []byte
+	var instanceAuthentication []byte
 	var preparedSetID sql.NullInt64
 	err := row.Scan(
 		&operation.RequestID, &operation.RequestDigest, &operation.Kind, &operation.AgentID,
@@ -673,6 +678,7 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		&preparedSetID, &operation.PreparedVolumeName, &operation.PreparedMaterialization,
 		&operation.PreparedManifestDigest, &operation.PreparedReferenceID,
 		&maintenanceVerifiers,
+		&instanceAuthentication,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -689,6 +695,13 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		operation.Inspection = &environment
 	}
 	operation.PreparedSetID = preparedSetID.Int64
+	if len(instanceAuthentication) > 0 {
+		accepted, err := instanceauth.Decode(instanceAuthentication)
+		if err != nil {
+			return deployment.Operation{}, err
+		}
+		operation.InstanceAuthentication = accepted
+	}
 	if len(maintenanceVerifiers) > 0 {
 		decoder := json.NewDecoder(bytes.NewReader(maintenanceVerifiers))
 		decoder.DisallowUnknownFields()
@@ -744,6 +757,20 @@ func scanObservation(row scanner) (deployment.Observation, error) {
 }
 
 func operationArguments(operation deployment.Operation) ([]any, error) {
+	var instanceSnapshot any
+	if operation.InstanceAuthentication != nil {
+		encoded, err := json.Marshal(operation.InstanceAuthentication)
+		if err != nil {
+			return nil, fmt.Errorf("encode accepted instance authority failed")
+		}
+		if _, err := instanceauth.Decode(encoded); err != nil {
+			return nil, err
+		}
+		if !operation.CreatesCompute() {
+			return nil, fmt.Errorf("instance authority belongs only to a compute creator")
+		}
+		instanceSnapshot = encoded
+	}
 	var verifierSnapshot any
 	if operation.MaintenanceVerifiers != nil {
 		canonical, err := operation.MaintenanceVerifiers.Normalize()
@@ -769,6 +796,7 @@ func operationArguments(operation deployment.Operation) ([]any, error) {
 		nullablePreparedSetID(operation.PreparedSetID), operation.PreparedVolumeName,
 		operation.PreparedMaterialization, operation.PreparedManifestDigest, operation.PreparedReferenceID,
 		verifierSnapshot,
+		instanceSnapshot,
 	}, nil
 }
 
@@ -786,8 +814,8 @@ INSERT INTO runtime_controller.operations (
     target_generation, target_spec_digest, attempt, state, effect,
     error_code, error_detail, created_at, updated_at, image_reference, image_id,
     skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id,
-    maintenance_verifiers
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`
+    maintenance_verifiers, instance_authentication
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`
 
 const claimOperationAttemptSQL = `
 UPDATE runtime_controller.operations
@@ -806,12 +834,21 @@ expected_revision, source_state, source_revision, source_generation, source_spec
 target_generation, target_spec_digest, attempt, state, effect, inspection,
 error_code, error_detail, created_at, updated_at, image_reference, image_id,
 skill_set_id,skill_volume_name,skill_materialization,skill_manifest_digest,skill_reference_id,
-maintenance_verifiers`
+maintenance_verifiers, instance_authentication`
 
 const selectOperationSQL = `SELECT ` + operationColumns + `
 FROM runtime_controller.operations WHERE request_id = $1`
 
 const selectOperationForUpdateSQL = selectOperationSQL + ` FOR UPDATE`
+
+func (r *Repository) GenerationOperation(ctx context.Context, key deployment.Key) (deployment.Operation, error) {
+	if err := key.Validate(); err != nil {
+		return deployment.Operation{}, err
+	}
+	return scanOperation(r.database.QueryRowContext(ctx, `SELECT `+operationColumns+`
+FROM runtime_controller.operations WHERE agent_id = $1 AND target_generation = $2
+AND kind IN ('initialize_runtime', 'update_runtime', 'enable_runtime')`, key.AgentID, key.Generation))
+}
 
 const environmentColumns = `agent_id, runtime_revision, lifecycle_state, generation,
 spec_digest, operation_id, updated_at`

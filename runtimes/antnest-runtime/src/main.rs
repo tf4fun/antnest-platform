@@ -30,6 +30,16 @@ mod progress;
 mod progress_tests;
 mod protocol;
 mod roots;
+mod service_auth;
+#[cfg(test)]
+mod service_auth_tests;
+#[cfg(test)]
+mod service_admission_component_tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/integration/antnest-runtime/service_admission_http.rs"
+    ));
+}
 mod skill_candidate;
 mod skill_maintenance_auth;
 #[cfg(test)]
@@ -658,6 +668,7 @@ async fn serve_runtime(
         metrics.clone(),
         managed.catalog(),
         spec.maintenance_verifiers().to_vec(),
+        spec.receiver().clone(),
     );
     tracing::info!(
         listen = %spec.listen(),

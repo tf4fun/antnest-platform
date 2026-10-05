@@ -126,7 +126,9 @@ func executionAgentCapacityEnvelope(agent ports.ExecutionAgent) ports.ExecutionA
 	agent.UnavailableReason = &reason
 	agent.AcceptingRuns = false
 	agent.AuthorizationRevision = ports.MaximumExecutionRevision
-	agent.Runtime = &ports.ExecutionRuntime{RuntimeRevision: id, RuntimeExecutionID: id, MCPEndpoint: strings.Repeat("\x00", ports.MaximumExecutionEndpointBytes)}
+	agent.Runtime = &ports.ExecutionRuntime{RuntimeRevision: id, RuntimeExecutionID: id, MCPEndpoint: strings.Repeat("\x00", ports.MaximumExecutionEndpointBytes),
+		ConnectionID: "rci_" + strings.Repeat("f", 32),
+		Credential:   &ports.RuntimeCredential{Caller: "agent-acp-service", Token: strings.Repeat("A", 86)}}
 	return agent
 }
 

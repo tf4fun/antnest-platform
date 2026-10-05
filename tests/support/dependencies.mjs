@@ -4,7 +4,10 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { dockerClient } from "../e2e/lifecycle-closeout/docker.mjs";
+import {
+  dockerClient,
+  networkOctet,
+} from "../e2e/lifecycle-closeout/docker.mjs";
 import { runCommand } from "./run-command.mjs";
 import { durablePath } from "./storage.mjs";
 
@@ -25,11 +28,20 @@ export function dependencyPlan(profile, inherited = process.env) {
   );
   const project = `antnest-dependencies-${randomUUID()}`;
   const env = {
-    ...inherited,
+    ...Object.fromEntries(
+      Object.entries(inherited).filter(
+        ([key]) => !/^(?:ANTNEST_|COMPOSE_|OTEL_)/u.test(key),
+      ),
+    ),
     COMPOSE_PROJECT_NAME: project,
     ANTNEST_POSTGRES_HOST_PORT: "0",
     ANTNEST_TEMPORAL_HOST_PORT: "0",
     ANTNEST_POSTGRES_ADMIN_PASSWORD: "integration-admin",
+    // Render inactive workload declarations without opening any credential files.
+    ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-dependency-credentials",
+    ANTNEST_SERVICE_AUTH_UID: "65532",
+    ANTNEST_SERVICE_AUTH_GID: "65532",
+    ANTNEST_IDENTITY_CCT_SIGNING_KID: "dependency-unused",
   };
   for (const key of Object.keys(roles))
     env[`ANTNEST_${key}_POSTGRES_PASSWORD`] =
@@ -37,7 +49,10 @@ export function dependencyPlan(profile, inherited = process.env) {
   return {
     project,
     env,
-    services: profile === "temporal" ? ["postgres", "temporal"] : ["postgres"],
+    services:
+      profile === "temporal"
+        ? ["postgres", "temporal", "diagnostic-relay"]
+        : ["postgres", "diagnostic-relay"],
     compose: [
       "compose",
       "--env-file",
@@ -46,6 +61,10 @@ export function dependencyPlan(profile, inherited = process.env) {
       project,
       "-f",
       resolve(root, "compose.yaml"),
+      "-f",
+      resolve(root, "compose.debug.yaml"),
+      "-f",
+      resolve(root, "tests/support/compose.dependencies.yaml"),
       "--profile",
       "stage3",
     ],
@@ -93,6 +112,7 @@ export async function withDependencies({
     stage = "starting",
     cleaned = false;
   try {
+    plan.env.ANTNEST_SERVICE_NETWORK_PREFIX = `10.242.${await networkOctet(docker, 1 + (process.pid % 200))}`;
     await docker(
       [
         ...plan.compose,
@@ -118,9 +138,11 @@ export async function withDependencies({
       .split(/\s+/)
       .filter(Boolean);
     const rows = JSON.parse(await docker(["inspect", ...ids]));
-    const port = (service, internal) => {
+    const port = (internal) => {
       const row = rows.find(
-        (item) => item.Config.Labels["com.docker.compose.service"] === service,
+        (item) =>
+          item.Config.Labels["com.docker.compose.service"] ===
+          "diagnostic-relay",
       );
       const bindings = row?.NetworkSettings.Ports[`${internal}/tcp`];
       assert(
@@ -129,7 +151,7 @@ export async function withDependencies({
       );
       return bindings[0].HostPort;
     };
-    const pg = port("postgres", 5432);
+    const pg = port(5432);
     const env = {
       ...plan.env,
       GOCACHE: resolve(root, ".cache/go-build"),
@@ -201,7 +223,7 @@ export async function withDependencies({
     ]);
     env.ANTNEST_ACP_AUDIT_DATABASE_URL = `postgres://antnest_agent_acp:${env.ANTNEST_AGENT_ACP_POSTGRES_PASSWORD}@127.0.0.1:${pg}/antnest_agent_acp_audit?sslmode=disable`;
     if (profile === "temporal")
-      env.ANTNEST_TEMPORAL_TEST_ADDRESS = `127.0.0.1:${port("temporal", 7233)}`;
+      env.ANTNEST_TEMPORAL_TEST_ADDRESS = `127.0.0.1:${port(7233)}`;
     controller.signal.throwIfAborted();
     stage = "running";
     result = await runCommand({

@@ -3,6 +3,8 @@ import { learningStatusRoute, serveLearningStatus } from "./learning-status.js";
 import { randomUUID } from "node:crypto";
 import { skillSourceRoute, serveSkillSource } from "./skill-sources.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createSecureServer } from "node:https";
+import type { RequestAuthentication, AuthenticationFailure } from "./request-authentication.js";
 import type { Duplex } from "node:stream";
 
 import { context } from "@opentelemetry/api";
@@ -46,6 +48,7 @@ import {
 } from "./execution-configuration.js";
 
 export type AgentAcpHttpServerOptions = {
+  authentication: RequestAuthentication;
   skillSources?: Parameters<typeof serveSkillSource>[3];
   outputs?: SessionOutputStreams;
   executionConfiguration?: ExecutionConfigurationPort;
@@ -71,6 +74,7 @@ export type AgentAcpHttpServerOptions = {
 export class AgentAcpHttpServer {
   private readonly outputs: SessionOutputStreams;
   private readonly server: Server;
+  private readonly controlServer: Server;
   private readonly webSockets: WebSocketServer;
   private readonly connections = new Set<WebSocket>();
   private readonly id: () => string;
@@ -79,12 +83,37 @@ export class AgentAcpHttpServer {
   private closePromise: Promise<void> | undefined;
 
   public constructor(private readonly options: AgentAcpHttpServerOptions) {
+    // JavaScript callers must also fail closed before any listener is opened.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    if (!options.authentication) throw new Error("Request authentication is required");
     this.outputs = options.outputs ?? new SessionOutputStreams();
     this.id = options.id ?? randomUUID;
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
     this.httpTransport = new AcpHttpTransport({ ...options, outputs: this.outputs });
-    this.server = createServer((request, response) => {
-      void observeHttpRequest(request, response, () => this.handleHttp(request, response));
+    const handler = (request: IncomingMessage, response: ServerResponse) => {
+      void observeHttpRequest(request, response, () =>
+        this.handleHttp(request, response, "workspace"),
+      );
+    };
+    this.server =
+      options.authentication.workload.serverTLS === undefined
+        ? createServer(handler)
+        : createSecureServer(options.authentication.workload.serverTLS, handler);
+    const control = (request: IncomingMessage, response: ServerResponse) => {
+      void observeHttpRequest(
+        request,
+        response,
+        () => this.handleHttp(request, response, "control"),
+        "control",
+      );
+    };
+    this.controlServer =
+      options.authentication.workload.serverTLS === undefined
+        ? createServer(control)
+        : createSecureServer(options.authentication.workload.serverTLS, control);
+    this.controlServer.on("upgrade", (request, socket) => {
+      const boundary = startHttpBoundary(request, "control");
+      boundary.finish(rejectUpgrade(socket, 404, "Not Found"));
     });
     this.webSockets = new WebSocketServer({
       noServer: true,
@@ -126,6 +155,20 @@ export class AgentAcpHttpServer {
     return this.server.address();
   }
 
+  public listenControl(host: string, port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.controlServer.once("error", reject);
+      this.controlServer.listen(port, host, () => {
+        this.controlServer.off("error", reject);
+        resolve();
+      });
+    });
+  }
+
+  public controlAddress(): ReturnType<Server["address"]> {
+    return this.controlServer.address();
+  }
+
   public close(): Promise<void> {
     this.closePromise ??= this.closeOnce();
     return this.closePromise;
@@ -139,16 +182,54 @@ export class AgentAcpHttpServer {
     await new Promise<void>((resolve) => {
       this.webSockets.close(() => resolve());
     });
-    if (!this.server.listening) {
-      return;
-    }
-    await new Promise<void>((resolve, reject) => {
-      this.server.close((error) => (error === undefined ? resolve() : reject(error)));
-      this.server.closeAllConnections();
-    });
+    const results = await Promise.allSettled(
+      [this.server, this.controlServer].map(async (server) => {
+        if (!server.listening) return;
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error === undefined ? resolve() : reject(error)));
+          server.closeAllConnections();
+        });
+      }),
+    );
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (errors.length)
+      throw new AggregateError(
+        errors.map((result) => result.reason as unknown),
+        "Listener shutdown failed",
+      );
   }
 
-  private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async handleHttp(
+    request: IncomingMessage,
+    response: ServerResponse,
+    listener: "workspace" | "control",
+  ): Promise<void> {
+    const path = (request.url ?? "").split("?", 1)[0];
+    const control = path === AGENT_SETTLEMENT_PATH || path === EXECUTION_CONFIGURATION_PATH;
+    if (
+      (listener === "workspace" && control) ||
+      (listener === "control" &&
+        !control &&
+        !(request.method === "GET" && request.url === "/status"))
+    ) {
+      response.setHeader("Connection", "close");
+      json(response, 404, { status: "not_found" });
+      return;
+    }
+    const admission = await this.options.authentication.admit(request);
+    if ("status" in admission) {
+      if (admission.challenge !== undefined)
+        response.setHeader("WWW-Authenticate", admission.challenge);
+      response.setHeader("Connection", "close");
+      json(response, admission.status, {
+        code: admission.code,
+        message: "Request authentication failed",
+        retryable: admission.status === 503,
+      });
+      return;
+    }
     const sourceRoute = skillSourceRoute(request.url);
     if (sourceRoute !== undefined) {
       await serveSkillSource(
@@ -258,6 +339,8 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<number> {
+    const admission = await this.options.authentication.admit(request, true);
+    if ("status" in admission) return rejectAuthenticatedUpgrade(socket, admission);
     const protocol = acpProtocol(request.url);
     if (protocol === null) {
       this.telemetry.count("antnest.acp.connections", { result: "rejected", reason: "not_found" });
@@ -312,7 +395,13 @@ export class AgentAcpHttpServer {
               ...(this.options.permissions === undefined
                 ? {}
                 : { permissions: this.options.permissions }),
-            }).connect(createAcpV1WebSocketStream(webSocket));
+            }).connect(
+              createAcpV1WebSocketStream(
+                webSocket,
+                () =>
+                  admission.claims === undefined || Date.now() < (admission.claims.exp + 30) * 1000,
+              ),
+            );
             this.observeConnection(connection, protocol);
           } else {
             const connection = createAcpV2Agent({
@@ -323,7 +412,13 @@ export class AgentAcpHttpServer {
               ...(this.options.permissions === undefined
                 ? {}
                 : { permissions: this.options.permissions }),
-            }).connect(createAcpV2WebSocketWireStream(webSocket));
+            }).connect(
+              createAcpV2WebSocketWireStream(
+                webSocket,
+                () =>
+                  admission.claims === undefined || Date.now() < (admission.claims.exp + 30) * 1000,
+              ),
+            );
             this.observeConnection(connection, protocol);
           }
         } catch (error) {
@@ -391,4 +486,16 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string): number {
     socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
   }
   return status;
+}
+
+function rejectAuthenticatedUpgrade(socket: Duplex, failure: AuthenticationFailure): number {
+  if (!socket.destroyed) {
+    const body = JSON.stringify({ code: failure.code, retryable: failure.status === 503 });
+    const challenge =
+      failure.challenge === undefined ? "" : `WWW-Authenticate: ${failure.challenge}\r\n`;
+    socket.end(
+      `HTTP/1.1 ${failure.status} Authentication Failed\r\n${challenge}Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+    );
+  }
+  return failure.status;
 }

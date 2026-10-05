@@ -1013,6 +1013,7 @@ function createApplicationSnapshot(): AcceptedAcpRun["snapshot"] {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
       mcpEndpoint: "http://runtime-1:8080/mcp",
+      connectionId: "rci_11111111111111111111111111111111",
     },
     executionSpec: {
       systemPrompt: "system",

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
@@ -53,6 +54,8 @@ type SkillVolumeInspector interface {
 }
 
 type Service struct {
+	instanceCredentials  *instanceauth.Manager
+	instanceScope        string
 	repository           repositoryport.Store
 	locker               repositoryport.MutationLocker
 	observations         ObservationReadiness
@@ -63,6 +66,14 @@ type Service struct {
 	skillScope           string
 	skillInspector       SkillVolumeInspector
 	maintenanceVerifiers deployment.MaintenanceVerifiers
+}
+
+func (s *Service) SetInstanceCredentials(scope string, manager *instanceauth.Manager) error {
+	if manager == nil || (instanceauth.Identity{Scope: scope, AgentID: "validation", Generation: 1}).Validate() != nil {
+		return fmt.Errorf("instance credential issuer and Controller scope are required")
+	}
+	s.instanceCredentials, s.instanceScope = manager, scope
+	return nil
 }
 
 func (s *Service) SetMaintenanceVerifiers(input deployment.MaintenanceVerifiers) error {
@@ -229,6 +240,11 @@ func (s *Service) lifecycle(ctx context.Context, input lifecycleRequest) (deploy
 			if input.Configuration == nil {
 				return deployment.Operation{}, fmt.Errorf("%w: Runtime configuration is required", ErrInvalidRequest)
 			}
+			if s.instanceCredentials != nil {
+				if _, authErr := s.instanceCredentials.Receiver(instanceauth.Identity{Scope: s.instanceScope, AgentID: operation.AgentID, Generation: operation.Generation}, operation.InstanceAuthentication); authErr != nil {
+					return deployment.Operation{}, fmt.Errorf("%w: accepted instance authority is unavailable", ErrRequestConflict)
+				}
+			}
 			physical, err = deploymentForOperation(*input.Configuration, operation)
 			if err != nil {
 				return deployment.Operation{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
@@ -377,6 +393,20 @@ func (s *Service) prepareOperation(
 					return deployment.Operation{}, false, ErrPreparedSkillSetInvalidated
 				}
 				return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrSkillPreflightUnavailable, err)
+			}
+		}
+		if s.instanceCredentials != nil {
+			candidate.InstanceAuthentication, err = s.instanceCredentials.Issue(instanceauth.Identity{Scope: s.instanceScope, AgentID: input.AgentID, Generation: generation})
+			if err != nil {
+				return deployment.Operation{}, false, err
+			}
+			physical, err := deploymentForOperation(*input.Configuration, candidate)
+			if err != nil {
+				return deployment.Operation{}, false, err
+			}
+			candidate.SpecDigest, err = s.platform.DeploymentDigest(physical)
+			if err != nil {
+				return deployment.Operation{}, false, err
 			}
 		}
 	}

@@ -58,7 +58,9 @@ export class ModelError extends Error {
       | "model_unsupported_content"
       | "model_unavailable"
       | "model_http_error"
-      | "model_invalid_response",
+      | "model_invalid_response"
+      | "provider_endpoint_forbidden"
+      | "provider_endpoint_unavailable",
     message: string,
     public readonly retryable: boolean,
     public readonly status?: number,

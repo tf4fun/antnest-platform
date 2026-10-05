@@ -4,6 +4,14 @@ import {
   type LearningCleanupItem,
 } from "../../src/application/learning-candidate-cleanup.js";
 import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
+import type { RuntimeBinding } from "../../src/domain/types.js";
+
+const binding: RuntimeBinding = {
+  revision: `rtv_${"a".repeat(32)}`,
+  connectionId: `rci_${"b".repeat(32)}`,
+  executionId: "execution",
+  mcpEndpoint: "http://runtime:8080/mcp",
+};
 
 const claim: LearningTaskClaim = {
   taskId: "task",
@@ -28,9 +36,7 @@ function fixture() {
     next: vi.fn<() => Promise<LearningCleanupItem | null>>(() => Promise.resolve(item)),
   };
   const bindings = {
-    current: vi.fn<() => Promise<{ executionId: string; mcpEndpoint: string } | null>>(() =>
-      Promise.resolve({ executionId: "execution", mcpEndpoint: "http://runtime/mcp" }),
-    ),
+    current: vi.fn<() => Promise<RuntimeBinding | null>>(() => Promise.resolve(binding)),
   };
   const runtime = {
     release: vi.fn<(input: { signal: AbortSignal }) => Promise<{ outcome: "released" }>>(() =>
@@ -105,7 +111,7 @@ describe("settled learning candidate cleanup", () => {
     expect(await f.cleanup.tick(signal)).toBe("released");
     expect(f.runtime.release.mock.calls[0]?.[0]).toMatchObject({
       ...f.item,
-      binding: { executionId: "execution", mcpEndpoint: "http://runtime/mcp" },
+      binding,
       storageClass: "candidate",
     });
     expect(f.runtime.release.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);

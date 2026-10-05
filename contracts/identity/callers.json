@@ -1,6 +1,6 @@
 {
   "service": "identity-service",
-  "status": "planned",
+  "status": "enforced",
   "implementation_issues": [
     25
   ],
@@ -24,13 +24,19 @@
       "callers": [
         "edge-gateway",
         "admin-console",
-        "agent-controller"
+        "agent-ui",
+        "agent-acp-service",
+        "agent-controller",
+        "skill-registry"
       ],
       "authentication": "delegate",
       "caller_context": {
         "edge-gateway": "none",
         "admin-console": "none",
-        "agent-controller": "none"
+        "agent-ui": "none",
+        "agent-acp-service": "none",
+        "agent-controller": "none",
+        "skill-registry": "none"
       },
       "request_body": "none",
       "notes": "Dispatch only; the exact inner route policy is authoritative."
@@ -538,6 +544,27 @@
       },
       "request_body": "json",
       "notes": "SCIM keeps application/scim+json and its own bearer authorization."
+    },
+    "GET /rpc/identity/jwks": {
+      "callers": [
+        "edge-gateway",
+        "admin-console",
+        "agent-ui",
+        "agent-acp-service",
+        "agent-controller",
+        "skill-registry"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "none",
+        "admin-console": "none",
+        "agent-ui": "none",
+        "agent-acp-service": "none",
+        "agent-controller": "none",
+        "skill-registry": "none"
+      },
+      "request_body": "none",
+      "notes": "Public verification keys require immediate workload identity; never a caller context."
     }
   },
   "guarded_sources": {}

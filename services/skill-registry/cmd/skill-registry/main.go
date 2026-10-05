@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/registry"
 	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/telemetry"
 )
@@ -22,19 +25,18 @@ import (
 type config struct {
 	listenAddress string
 	databaseURL   string
-	apiToken      string
 	sourceURL     string
-	sourceToken   string
+	identityURL   string
+	clients       *serviceauth.Clients
+	security      registry.Security
 }
 
-func loadConfig(lookup func(string) string) (config, error) {
-	value := config{
-		listenAddress: strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_LISTEN")),
-		databaseURL:   strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_DATABASE_URL")),
-		apiToken:      lookup("ANTNEST_SKILL_REGISTRY_API_TOKEN"),
-		sourceURL:     strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_SOURCE_URL")),
-		sourceToken:   lookup("ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN"),
+func loadConfig(lookup serviceauth.LookupEnv) (config, error) {
+	if lookup == nil {
+		return config{}, fmt.Errorf("registry environment lookup is required")
 	}
+	get := func(k string) string { v, _ := lookup(k); return v }
+	value := config{listenAddress: strings.TrimSpace(get("ANTNEST_SKILL_REGISTRY_LISTEN")), databaseURL: strings.TrimSpace(get("ANTNEST_SKILL_REGISTRY_DATABASE_URL")), sourceURL: strings.TrimSpace(get("ANTNEST_SKILL_REGISTRY_SOURCE_URL")), identityURL: strings.TrimSpace(get("ANTNEST_IDENTITY_URL"))}
 	if value.listenAddress == "" {
 		value.listenAddress = ":8080"
 	}
@@ -44,20 +46,46 @@ func loadConfig(lookup func(string) string) (config, error) {
 	if value.databaseURL == "" {
 		return config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_DATABASE_URL is required")
 	}
-	if len(value.apiToken) < 32 || strings.TrimSpace(value.apiToken) != value.apiToken {
-		return config{}, fmt.Errorf("ANTNEST_SKILL_REGISTRY_API_TOKEN must be at least 32 non-whitespace bytes")
+	if value.identityURL == "" {
+		return config{}, fmt.Errorf("ANTNEST_IDENTITY_URL is required")
 	}
-	if value.sourceURL != "" || value.sourceToken != "" {
-		if _, err := registry.NewHTTPAgentSource(value.sourceURL, value.sourceToken); err != nil {
+	for _, name := range []string{"ANTNEST_SKILL_REGISTRY_API_TOKEN", "ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN"} {
+		if get(name) != "" {
+			return config{}, fmt.Errorf("%s is retired; use service authentication files", name)
+		}
+	}
+	endpoints := map[string]string{"identity-service": value.identityURL}
+	if value.sourceURL != "" {
+		endpoints["agent-acp-service"] = value.sourceURL
+	}
+	clients, err := serviceauth.LoadOutbound("skill-registry", serviceauth.WorkloadOnlyHeaders, lookup, endpoints)
+	if err != nil {
+		return config{}, err
+	}
+	valid := false
+	defer func() {
+		if !valid {
+			clients.CloseIdleConnections()
+		}
+	}()
+	verifier, err := callercontext.NewVerifier(value.identityURL, clients.HTTPClient(), 5*time.Second)
+	if err != nil {
+		return config{}, fmt.Errorf("invalid Registry Identity configuration")
+	}
+	if value.sourceURL != "" {
+		if _, err := registry.NewHTTPAgentSource(value.sourceURL, clients.HTTPClient()); err != nil {
 			return config{}, fmt.Errorf("invalid Registry source-reader configuration")
 		}
 	}
+	value.clients = clients
+	value.security = registry.Security{Authentication: clients.Config.Receiver, CallerContext: verifier}
+	valid = true
 	return value, nil
 }
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
-		if err := healthcheck(os.Getenv); err != nil {
+		if err := healthcheck(os.LookupEnv); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -65,23 +93,30 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Getenv); err != nil {
+	if err := run(ctx, os.LookupEnv); err != nil {
 		slog.Error("Skill Registry stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func healthcheck(lookup func(string) string) error {
-	address := strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_LISTEN"))
-	if address == "" {
-		address = ":8080"
-	}
-	_, port, err := net.SplitHostPort(address)
+func healthcheck(lookup serviceauth.LookupEnv) error {
+	rawAddress, _ := lookup("ANTNEST_SKILL_REGISTRY_LISTEN")
+	address, err := healthProbeAddress(rawAddress)
 	if err != nil {
 		return fmt.Errorf("invalid healthcheck listen address")
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get("http://127.0.0.1:" + port + "/status")
+	tlsConfig, err := serviceauth.HealthTLS("skill-registry", lookup)
+	if err != nil {
+		return err
+	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig, Proxy: nil}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	scheme := "http"
+	if tlsConfig != nil {
+		scheme = "https"
+	}
+	response, err := client.Get(scheme + "://" + address + "/status")
 	if err != nil {
 		return fmt.Errorf("registry healthcheck request failed")
 	}
@@ -92,11 +127,27 @@ func healthcheck(lookup func(string) string) error {
 	return nil
 }
 
-func run(ctx context.Context, lookup func(string) string) error {
+func healthProbeAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	if address == "" {
+		address = ":8080"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", err
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+func run(ctx context.Context, lookup serviceauth.LookupEnv) error {
 	cfg, err := loadConfig(lookup)
 	if err != nil {
 		return err
 	}
+	defer cfg.clients.CloseIdleConnections()
 	observability, err := telemetry.Setup(ctx)
 	if err != nil {
 		return err
@@ -126,23 +177,31 @@ func run(ctx context.Context, lookup func(string) string) error {
 	if err != nil {
 		return fmt.Errorf("registry listener failed: %w", err)
 	}
+	defer func() { _ = listener.Close() }()
 	store := registry.NewPostgresStore(pool)
 	service := registry.NewService(store)
 	var source registry.AgentSkillSource
 	if cfg.sourceURL != "" {
-		source, err = registry.NewHTTPAgentSource(cfg.sourceURL, cfg.sourceToken)
+		source, err = registry.NewHTTPAgentSource(cfg.sourceURL, cfg.clients.HTTPClient())
 		if err != nil {
 			return err
 		}
 	}
 	discovery := registry.NewDiscovery(service, store, source)
+	handler, err := registry.NewHandler(service, cfg.security, pool.Ping, discovery)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
 	server := &http.Server{
-		Handler:           registry.NewHandler(service, cfg.apiToken, pool.Ping, discovery),
+		Handler:           handler,
+		TLSConfig:         cfg.clients.Config.ServerTLS,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	defer func() { _ = server.Close() }()
 	serveCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	shutdown := make(chan error, 1)
@@ -152,6 +211,9 @@ func run(ctx context.Context, lookup func(string) string) error {
 		defer stopCancel()
 		shutdown <- server.Shutdown(stopCtx)
 	}()
+	if server.TLSConfig != nil {
+		listener = tls.NewListener(listener, server.TLSConfig)
+	}
 	err = server.Serve(listener)
 	cancel()
 	if shutdownErr := <-shutdown; shutdownErr != nil {

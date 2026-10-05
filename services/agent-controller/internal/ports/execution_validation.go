@@ -108,7 +108,9 @@ func (agent ExecutionAgent) validRuntime() bool {
 
 func (runtime ExecutionRuntime) valid() bool {
 	return executionIdentifier.MatchString(runtime.RuntimeRevision) && executionIdentifier.MatchString(runtime.RuntimeExecutionID) &&
-		len(runtime.MCPEndpoint) <= MaximumExecutionEndpointBytes && executionEndpoint(runtime.MCPEndpoint)
+		len(runtime.MCPEndpoint) <= MaximumExecutionEndpointBytes && executionEndpoint(runtime.MCPEndpoint) &&
+		(runtime.ConnectionID == "" || runtimeConnectionID.MatchString(runtime.ConnectionID)) &&
+		(runtime.Credential == nil || runtime.Credential.Valid())
 }
 
 func (request AgentSettlementRequest) Validate() error {

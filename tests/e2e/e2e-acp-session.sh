@@ -13,7 +13,7 @@ export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()
 docker() { node "$root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 compose() {
   if [ "$1" = up ]; then lifecycle=--lifecycle; else lifecycle=; fi
-  docker $lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f tests/e2e/identity-closeout/oidc-compose.yaml \
+  docker $lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/e2e/identity-closeout/oidc-compose.yaml \
     -f tests/e2e/identity-closeout/compose.yaml --profile stage3 --profile observability "$@"
 }
 identity=$(compose ps -q identity-service)

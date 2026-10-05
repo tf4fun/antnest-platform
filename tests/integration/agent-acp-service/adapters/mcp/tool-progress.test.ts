@@ -8,9 +8,14 @@ describe("Official MCP Tool progress", () => {
     const fixture = await startProgressFixture();
     const connection = await new OfficialMcpDialer({
       trust: "runtime",
+      connections: fixture.authority.connections,
     }).connect({
       endpoint: fixture.endpoint,
-      headers: { "x-antnest-expected-execution-id": "execution-1" },
+      runtimeBinding: fixture.authority.binding,
+      headers: {
+        "x-antnest-expected-execution-id":
+          fixture.authority.binding.executionId,
+      },
       signal: AbortSignal.timeout(5000),
     });
     const progress = vi.fn();
@@ -38,7 +43,9 @@ describe("Official MCP Tool progress", () => {
       expect(await pending).toMatchObject({
         content: [{ type: "text", text: "final result" }],
       });
-      expect(fixture.executionIds).toEqual(["execution-1"]);
+      expect(fixture.executionIds).toEqual([
+        fixture.authority.binding.executionId,
+      ]);
     } finally {
       fixture.finish();
       await observed;

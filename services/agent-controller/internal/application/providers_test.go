@@ -13,7 +13,7 @@ import (
 func TestProviderCreationSharesOneCredentialAcrossInitialModels(t *testing.T) {
 	store := &providerStoreStub{}
 	sealer := &sealerStub{sealed: ports.SealedSecret{Ciphertext: []byte("sealed")}}
-	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := providerTestCatalog(store, sealer, fixedClock{now: time.Unix(1, 0).UTC()})
 	input := providerCreateInput()
 	input.Models = append(input.Models, input.Models[0])
 	input.Models[1].ProfileKey = "second"
@@ -59,7 +59,7 @@ func TestProviderRejectsUnsupportedOrDuplicateInputBeforeSealing(t *testing.T) {
 			sealer := &sealerStub{}
 			input := providerCreateInput()
 			change(&input)
-			_, err := NewCatalogService(store, sealer, fixedClock{}).CreateProviderConnection(context.Background(), input)
+			_, err := providerTestCatalog(store, sealer, fixedClock{}).CreateProviderConnection(context.Background(), input)
 			if !errors.Is(err, ErrInvalidInput) || sealer.calls != 0 || store.writes != 0 {
 				t.Fatalf("invalid input had side effects: error=%v seals=%d writes=%d", err, sealer.calls, store.writes)
 			}
@@ -70,7 +70,7 @@ func TestProviderRejectsUnsupportedOrDuplicateInputBeforeSealing(t *testing.T) {
 func TestModelEditRejectsChangingAPIIdentityAndDisabledProvider(t *testing.T) {
 	ctx := context.Background()
 	store := &providerStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{})
+	service := providerTestCatalog(store, &sealerStub{}, fixedClock{})
 	input := providerCreateInput()
 	connection, err := service.CreateProviderConnection(ctx, input)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestModelEditRejectsChangingAPIIdentityAndDisabledProvider(t *testing.T) {
 func TestProviderCredentialRotationIsIndependentAndReplayable(t *testing.T) {
 	store := &providerStoreStub{}
 	sealer := &sealerStub{}
-	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := providerTestCatalog(store, sealer, fixedClock{now: time.Unix(1, 0).UTC()})
 	created, err := service.CreateProviderConnection(context.Background(), providerCreateInput())
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestProviderRotationRejectsCrossOrganizationAndStaleVersion(t *testing.T) {
 				CredentialMethod: "api_key", CredentialVersion: "current", Enabled: true,
 			}}
 			sealer := &sealerStub{}
-			_, err := NewCatalogService(store, sealer, fixedClock{}).RotateProviderCredential(context.Background(), RotateProviderCredentialInput{
+			_, err := providerTestCatalog(store, sealer, fixedClock{}).RotateProviderCredential(context.Background(), RotateProviderCredentialInput{
 				RequestID: "rotate", OrganizationID: organization, ConnectionID: "connection", ExpectedVersion: "stale",
 				Credential: ProviderCredentialInput{Method: "api_key", APIKey: "key"},
 			})
@@ -205,4 +205,8 @@ func (store *providerStoreStub) GetProviderConnection(_ context.Context, organiz
 		return ports.ProviderConnectionRecord{}, ports.ErrNotFound
 	}
 	return store.connection, nil
+}
+
+func providerTestCatalog(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock, options ...CatalogOption) *CatalogService {
+	return NewCatalogService(store, sealer, clock, append([]CatalogOption{WithProviderDiscovery(&providerEndpointStub{}, nil)}, options...)...)
 }

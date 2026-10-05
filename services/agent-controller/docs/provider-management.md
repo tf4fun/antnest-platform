@@ -4,18 +4,50 @@ This document describes how Agent Controller stores Provider connections,
 encrypted credentials and model parameters, how availability and references are
 enforced, and where the execution boundary lies.
 
-Model discovery belongs entirely to Console. The internal, organization-scoped
-`GET /internal/provider-connections/{connection_id}/access?organization_id=...`
-returns the enabled connection and its current credential to a trusted service.
-It performs no writes, caching, or provider HTTP calls. This route is metadata-only
-for tracing and returns `Cache-Control: no-store`; it is never a browser API.
-The dedicated `ProviderAccessReader` reads the credential version and ciphertext
-in one database snapshot. Normal connection reads continue selecting metadata
-only. Integration tests cover initial decryption and post-rotation reads.
-Console owns discovery, candidate merging and explicit user selection. See
-[discovery flow](../../../docs/model-discovery.md).
+Model discovery runs inside Controller, next to its encrypted credentials.
+`POST /internal/provider-connections/{connection_id}/discover-models` takes only
+`organization_id`; `POST /internal/provider-discovery/draft` accepts Organization,
+Provider, endpoint and an ephemeral API-key credential. Both return only
+`{models:[...]}` with `Cache-Control: no-store`. The former `/access` credential
+export route is removed and returns 404 after workload admission. No discovery
+reply or schema includes a credential.
 
-Provider creation and credential rotation are metadata-only HTTP boundaries,
+The dedicated `ProviderAccessReader` reads current credential identity and
+ciphertext in one database snapshot. Saved discovery checks scope, availability
+and destination before opening the key, then sends it only to the checked Provider.
+It performs no writes or credential caching; rotation is visible on the next
+discovery. Draft discovery neither reads nor stores a credential. Normal
+connection reads select metadata only. Model response normalization is the former
+Console discovery adapter, including optional context/pricing metadata; builtin
+candidate defaults and user selection remain Console responsibilities.
+
+Creation and each discovery apply the shared
+[Provider destination policy](../../../contracts/platform/provider-destination-policy.md).
+Defaults deny loopback, private, CGNAT, link-local/metadata and reserved addresses.
+All A/AAAA answers are checked; mixed results fail. Actual sockets dial verified
+literal IPs and retain original TLS hostname/SNI and HTTP Host. Provider transport
+has no workload credentials, environment proxy or redirects. Calls retain the
+configured dependency deadline and discovery's 8 MiB cap. Creation resolves only:
+it sends no HTTP request or credential, and committed command replay is independent
+of later DNS availability. Unconfigured policy fails closed.
+
+Only the operator's exact `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS=true` permits
+local/private model servers; absent or exact false means deny. Present empty,
+padded or other values fail startup. This unsafe option also permits metadata
+addresses in private ranges and should not be enabled for multi-tenant deployment.
+Reserved/scoped/multicast addresses remain denied. Browser and Template input
+cannot enable the option. Policy denial is `422 provider_endpoint_forbidden`;
+DNS failure is retryable `503 provider_endpoint_unavailable`; bounded transport,
+status or body failure is retryable `502 provider_discovery_failed`. Responses,
+logs and spans never include the key, complete URL or upstream error body.
+
+This is the Controller producer batch for #28. Console's thin-proxy adoption and
+ACP's independent actual-model transport guard remain separate owning-service
+batches; the browser flow and final cross-service E2E are pending in the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json).
+See the planned [discovery flow](../../../docs/model-discovery.md).
+
+Provider creation, credential rotation and both discovery routes are metadata-only HTTP boundaries,
 including validation and dependency failures. Even when development RPC content
 capture is enabled, their request and response DTOs are not serialized to spans.
 The common HTTP boundary still records method, route, status and typed errors.
@@ -29,6 +61,8 @@ names, context limits, prices, or defaults.
 
 ## Management Contract
 
+- `POST /internal/provider-connections/{id}/discover-models`: saved model discovery.
+- `POST /internal/provider-discovery/draft`: ephemeral draft model discovery.
 - `POST /internal/provider-connections`: create a DeepSeek or OpenRouter connection, one API key,
   and the explicitly submitted initial models in a single transaction.
 - `GET /internal/provider-connections?organization_id=...`: paginated connections.
@@ -168,7 +202,7 @@ with version CAS in the transaction. An outer read is not a conflict authority:
 the same command may have committed between the first receipt check and that read.
 
 Deleting secret rows does not remove data that was already exported to
-telemetry. Provider creation, credential rotation and credential access routes
+telemetry. Provider creation, credential rotation and both discovery routes
 are metadata-only, so their credential DTOs are not captured even when
 development RPC payload capture is enabled. Other catalog routes follow the
 normal capture policy; see the telemetry policy above.

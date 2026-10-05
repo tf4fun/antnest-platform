@@ -24,14 +24,21 @@ flows must be added explicitly.
 
 ## Workflows
 
-Discovery happens in Console, never Controller. The provider adapter
-(`internal/providerdiscovery`) makes a bounded `GET {base_url}/models` with the
-connection's Bearer key, no redirects, the dependency timeout and an 8 MiB
-response limit. The base URL is administrator-supplied and is not restricted to
-an allowlist of hosts, so Console needs outbound HTTP(S) network access to
-Provider endpoints. Its HTTP spans record metadata, not keys or payloads. Existing connections resolve their current credential through an
-internal, organization-scoped read. Draft connections use the entered key without
-creating a connection or model. Candidate state exists only in the open dialog.
+Discovery belongs to Controller. Console forwards one authenticated request,
+with the unchanged signed administrator CCT and its verified Organization scope,
+then projects the model-only response. Saved credentials are opened only inside
+Controller; Console has no plaintext credential read or Provider HTTP client.
+Draft credentials are forwarded once without creating a connection or model.
+Candidate state exists only in the open dialog.
+
+Controller validates all resolved destination addresses and pins the socket,
+disables redirects and proxies, and bounds the Provider response to 8 MiB. The
+[shared destination policy](../../../contracts/platform/provider-destination-policy.md)
+defaults to denying private endpoints. Only an operator can enable the exact
+private-endpoint option in Controller and ACP; browser input cannot enable it.
+Console retains its dependency deadline, response bound and `no-store` policy.
+Discovery failures use bounded codes and static messages, never raw upstream
+bodies, addresses or credentials. HTTP telemetry is metadata-only.
 
 Candidates merge remote results, builtin defaults, and all saved model pages by
 API model ID within the selected connection. Remote values enrich new drafts;
@@ -44,7 +51,7 @@ retries only the remaining selection.
 
 1. Open Model providers. List connections, not model revisions disguised as
    providers. Connect DeepSeek or OpenRouter with an API key and an editable endpoint. Select
-   models after Console discovers candidates using the draft key, without saving
+   models after Controller discovers candidates using the draft key, without saving
    the connection first. No model is selected automatically; choosing none is valid.
 2. Expand a connection to inspect its models. Add a listed or unlisted model,
    editing limits, capabilities and rates only when necessary. Adding models
@@ -72,27 +79,27 @@ retries only the remaining selection.
 
 ## BFF contract
 
-The BFF contract (revision 41) has no model-history reads. Each command scope has one
+The BFF contract (revision 49) has no model-history reads. Each command scope has one
 pending intent: an identical retry reuses its key; changing the payload abandons
 that intent. Returning to an earlier payload is a new command, not replay of an
 older successful response. Browser storage contains only opaque keys and hashes,
 not request bodies or credentials.
 
-All routes require the existing administrator principal. Organization IDs come
-from trusted gateway context, never browser payloads. No service database is
+All routes require a verified signed administrator CCT. Organization IDs come
+from verified claims, never browser payloads. No service database is
 accessed by Console. Calls use the existing instrumented upstream client.
 
-| Browser route | Controller route | Purpose |
-| --- | --- | --- |
-| GET/POST `/api/admin/provider-connections` | GET/POST `/internal/provider-connections` | List or create connection with initial models |
-| POST `/api/admin/provider-models/discovery` | None | Discover using an unsaved connection draft |
-| GET `/api/admin/provider-connections/{id}/models/discovery` | GET `/internal/provider-connections/{id}/access` | Resolve current credential internally, then discover in Console |
-| GET `/api/admin/provider-connections/{id}` | GET `/internal/provider-connections/{id}` | Refresh connection and credential version |
-| POST `/api/admin/provider-connections/{id}/credentials` | POST `/internal/provider-connections/{id}/credentials` | CAS credential rotation |
-| POST `/api/admin/model-profiles` | POST `/internal/model-profiles` | Add a model to a connection |
-| POST `/api/admin/model-profiles/{id}/revisions` | POST `/internal/model-profiles/{id}/revisions` | Publish metadata without credentials |
-| POST `/api/admin/templates` | POST `/internal/agent-templates` | Create a template referencing `model_profile_id` |
-| POST `/api/admin/templates/{id}/revisions` | POST `/internal/agent-templates/{id}/revisions` | Publish template configuration with a stable model reference |
+| Browser route                                               | Controller route                                           | Purpose                                                      |
+| ----------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| GET/POST `/api/admin/provider-connections`                  | GET/POST `/internal/provider-connections`                  | List or create connection with initial models                |
+| POST `/api/admin/provider-models/discovery`                 | POST `/internal/provider-discovery/draft`                  | Discover using an unsaved connection draft                   |
+| GET `/api/admin/provider-connections/{id}/models/discovery` | POST `/internal/provider-connections/{id}/discover-models` | Discover inside Controller using its current credential      |
+| GET `/api/admin/provider-connections/{id}`                  | GET `/internal/provider-connections/{id}`                  | Refresh connection and credential version                    |
+| POST `/api/admin/provider-connections/{id}/credentials`     | POST `/internal/provider-connections/{id}/credentials`     | CAS credential rotation                                      |
+| POST `/api/admin/model-profiles`                            | POST `/internal/model-profiles`                            | Add a model to a connection                                  |
+| POST `/api/admin/model-profiles/{id}/revisions`             | POST `/internal/model-profiles/{id}/revisions`             | Publish metadata without credentials                         |
+| POST `/api/admin/templates`                                 | POST `/internal/agent-templates`                           | Create a template referencing `model_profile_id`             |
+| POST `/api/admin/templates/{id}/revisions`                  | POST `/internal/agent-templates/{id}/revisions`            | Publish template configuration with a stable model reference |
 
 Connection creation accepts `provider_key`, `display_name`, `base_url`, typed
 `credential: {method: api_key, api_key}`, and explicit `models` array. Each initial

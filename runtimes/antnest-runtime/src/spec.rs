@@ -46,6 +46,8 @@ pub(crate) struct RuntimeSpec {
     filesystem: FilesystemSpec,
     mcp_servers: Vec<crate::managed_mcp::spec::ServerSpec>,
     maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
+    authentication: Option<crate::service_auth::BootstrapDescriptor>,
+    receiver: Option<crate::service_auth::Receiver>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,6 +87,8 @@ impl RuntimeSpec {
             filesystem,
             mcp_servers: Vec::new(),
             maintenance_verifiers: Vec::new(),
+            authentication: None,
+            receiver: None,
         })
     }
 
@@ -126,6 +130,29 @@ impl RuntimeSpec {
 
     pub(crate) fn maintenance_verifiers(&self) -> &[SkillMaintenanceVerifier] {
         &self.maintenance_verifiers
+    }
+
+    pub(crate) fn with_authentication(
+        mut self,
+        descriptor: Option<crate::service_auth::BootstrapDescriptor>,
+    ) -> Self {
+        self.authentication = descriptor;
+        self
+    }
+
+    pub(crate) fn authentication(&self) -> Option<&crate::service_auth::BootstrapDescriptor> {
+        self.authentication.as_ref()
+    }
+
+    pub(crate) fn with_receiver(mut self, receiver: crate::service_auth::Receiver) -> Self {
+        self.receiver = Some(receiver);
+        self
+    }
+
+    pub(crate) fn receiver(&self) -> &crate::service_auth::Receiver {
+        self.receiver
+            .as_ref()
+            .expect("serve bootstrap validates the private receiver before network setup")
     }
 }
 

@@ -1,5 +1,7 @@
 .cache/
 artifacts/verification/
+artifacts/service-authentication/
+artifacts/dev-pki/
 bin/
 coverage/
 dist/

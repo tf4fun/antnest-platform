@@ -126,7 +126,7 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
   it.each([true, false])(
     "persists Runtime stopping independently from unknown tool effects: %s",
     async (runtimeCallStopped) => {
-      const { runId } = await accept();
+      const { runId, snapshot } = await accept();
       await events.startToolAttempt({
         id: randomUUID(),
         runId,
@@ -180,7 +180,7 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
       const scope = {
         organizationId: "organization-1",
         agentId: "agent-1",
-        runtimeRevision: "runtime-1",
+        runtimeRevision: snapshot.runtime.revision,
       };
       expect(await executions.hasUnstoppedRuntimeCalls(scope)).toBe(
         !runtimeCallStopped,
@@ -206,11 +206,11 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
   );
 
   it("retains stopping uncertainty through interruption without treating an ended Run as proof", async () => {
-    const { runId } = await accept();
+    const { runId, snapshot } = await accept();
     const scope = {
       organizationId: "organization-1",
       agentId: "agent-1",
-      runtimeRevision: "runtime-1",
+      runtimeRevision: snapshot.runtime.revision,
     };
     expect(await executions.hasUnstoppedRuntimeCalls(scope)).toBe(false);
     await events.startToolAttempt({
@@ -243,12 +243,12 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
   });
 
   it("rolls back stopping proof when the terminal event cannot commit", async () => {
-    const { runId } = await accept();
+    const { runId, snapshot } = await accept();
     const eventId = randomUUID();
     const scope = {
       organizationId: "organization-1",
       agentId: "agent-1",
-      runtimeRevision: "runtime-1",
+      runtimeRevision: snapshot.runtime.revision,
     };
     await events.startToolAttempt({
       id: eventId,

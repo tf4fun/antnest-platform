@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"io"
 	"mime"
 	"net/http"
@@ -79,6 +80,7 @@ func (client *Client) workspaceStateRequest(ctx context.Context, input Workspace
 	}
 	request.Header.Set("Accept", kind)
 	request.Header.Set("Content-Type", "application/json")
+	identity.ForwardCallerContext(ctx, request.Header)
 	request.Header.Set("X-Antnest-Organization-Id", input.OrganizationID)
 	request.Header.Set("X-Antnest-Principal-Id", input.PrincipalID)
 	request.Header.Set("X-Antnest-Agent-Id", input.AgentID)

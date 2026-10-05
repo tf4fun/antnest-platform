@@ -9,8 +9,9 @@ import { learningApplyRequestId } from "../domain/learning-apply-request-id.js";
 import type { LearningPolicy } from "../domain/learning-policy.js";
 import type { LearningScanScope, LearningTaskClaim } from "../domain/learning-scan.js";
 import type { RuntimeInformation } from "../domain/runtime-information.js";
+import type { RuntimeBinding } from "../domain/types.js";
 
-type Binding = { executionId: string; mcpEndpoint: string };
+type Binding = RuntimeBinding;
 type Candidate = {
   candidateId: string;
   state: string;

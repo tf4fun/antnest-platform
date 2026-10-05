@@ -38,6 +38,7 @@ func displayPrincipal(t *testing.T, name string, administrator bool) identity.Pr
 	if err := json.Unmarshal(data, &principal); err != nil {
 		t.Fatal(err)
 	}
+	principal.CallerContext = "trusted-issuer-context"
 	return principal
 }
 

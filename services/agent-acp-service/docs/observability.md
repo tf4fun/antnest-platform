@@ -84,6 +84,13 @@ optional RPC content capture, PostgreSQL tracing, span names and known limits.
   transaction outcomes, SQL metadata, failures and absence of bind/result data.
   In-memory kernel mocks alone cannot establish driver instrumentation coverage.
 
+Provider destination denials and DNS failures retain bounded
+`provider_endpoint_forbidden` / `provider_endpoint_unavailable` classifications
+in `model.complete` (including Skill learning) and logs. Provider credentials,
+raw resolver errors, submitted bodies and rejected URLs are never captured,
+even with RPC content capture enabled. The real HTTP/TLS and PostgreSQL component
+checks cover these decisions and connection cleanup.
+
 ## Verification And Remaining Limits
 
 Service-owned tests specify exact parent IDs, concurrent request isolation,

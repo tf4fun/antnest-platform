@@ -66,7 +66,8 @@ ConnectionBinding
   agent_id
 ```
 
-Gateway supplies the trusted identity tuple after authentication. ACP does not
+ACP verifies Gateway/UI workload and Identity-signed CCT before deriving the
+identity tuple. Raw identity headers never authenticate the caller. ACP does not
 query Controller to establish a connection. Each resource method authorizes
 against the current local organization configuration. Access revision is a fact
 of the published grant and the accepted Run, not a frozen connection credential.
@@ -188,6 +189,11 @@ stored context reconstruction; see [Model reasoning history](model-reasoning-his
    See [Runtime context](runtime-context.md) and [Structured plans](structured-plan.md).
 3. Use the logical Provider handle acquired before Runtime setup. The model
    transport, not the Run or Tool loop, receives current volatile authentication.
+   It applies the shared destination policy to each request, checks all DNS
+   answers and pins the socket with the original TLS/Host identity. Its bounded
+   dispatcher lives through streaming body consumption and is destroyed in
+   `finally`; it has no service credentials, redirects or environment proxy.
+   Foreground, permission-judge and learning calls use this same adapter.
 4. Check the complete model-input budget before each model request.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
    calls are retained as one assistant response. Before persistence, derive each
@@ -321,7 +327,7 @@ src/domain/               pure state and value rules
 src/application/          Session commands, prompt admission, Tool loop
 src/ports/                execution configuration, repository, model, MCP, telemetry
 src/adapters/postgres/    private migrations and repository
-src/adapters/model/       OpenAI-compatible model adapter
+src/adapters/model/       OpenAI-compatible model adapter, destination policy and pinned transport
 src/adapters/mcp/         platform Runtime MCP client and network helpers
 src/adapters/*.ts         Controller policy, Registry, Skill source and Runtime
                           Skill maintenance/temporary-Skill HTTP clients
@@ -421,7 +427,8 @@ are listed in the [Bridge contract](../../../contracts/agent-acp/workspace-bridg
 The emitted classifications include:
 
 - Model/provider: `model_unsupported_content`, `model_unavailable`,
-  `model_http_error`, `model_invalid_response`, `provider_unavailable`.
+  `model_http_error`, `model_invalid_response`, `provider_unavailable`,
+  `provider_endpoint_forbidden`, `provider_endpoint_unavailable`.
 - Execution/budget: `run_deadline_exceeded`, `run_failed`, `run_setup_failed`,
   `context_budget_exhausted`.
 - Tool/recovery: `tool_outcome_unknown`, `cancelled_tool_outcome_unknown`,
@@ -513,13 +520,14 @@ exits non-zero for platform replacement.
 
 ## Connection Identity
 
-Gateway supplies a trusted organization/principal/Agent tuple in internal
-headers (`X-Antnest-Organization-ID`, `X-Antnest-Principal-ID`,
-`X-Antnest-Agent-ID`). It authenticates external users and must strip spoofed
-identity headers. ACP authorizes resource methods against the locally applied
-current organization snapshot; there is no opaque subject or outbound identity
-lookup. It advertises no ACP `authMethods` because authentication completed at
-the transport boundary.
+Gateway/UI forwards the unchanged Identity-signed CCT with its own workload
+credential. ACP verifies both and derives organization/principal/Agent from
+signed claims, then authorizes against the locally applied current snapshot.
+Unsigned identity hints and the old opaque subject grant nothing. Identity's
+bounded public JWKS comes from its fixed authenticated origin; there is no
+per-operation Controller access lookup. ACP advertises no `authMethods` because
+authentication completed at the transport boundary. Expired context rejects new
+operations without cancelling accepted Runs; #58 owns long-lived renewal.
 
 ## Runtime Rebuild Integration
 
@@ -544,7 +552,7 @@ cancellation, scoped execution/intent observation, and sequenced replay/live
 delivery marks. A client opts in through `antnest.dev/bridge` in initialize
 `_meta`; standard ACP clients do not negotiate the extension and keep their
 existing wire behavior. The internal `GET /rpc/agent-acp/workspace/...` routes
-require trusted organization, principal and Agent headers and repeat
+require verified workload and an Agent-scoped signed CCT and repeat
 authorization before reading; they are not browser endpoints. ACP remains the
 execution and history authority when the Agent UI Node Bridge reconnects.
 
@@ -611,29 +619,38 @@ Unsupported surfaces are not stubbed with false success responses.
     context reconstruction never exposes a partial Tool batch to the next model
     request.
 
-### Trusted Identity Header Values
+### Verified Caller Identity
 
-The execution tuple uses opaque IDs, not an ACP-owned naming convention.
-The HTTP adapter accepts one header-safe value per Organization/Principal/Agent,
-up to 200 characters, preserving punctuation such as `+` and `@` exactly.
-Missing/duplicate, comma-joined, control-character and padded values are rejected
-before protocol/state handling. Protocol connection identity and local resource
-authorization remain separate; a well-formed tuple grants no Agent access.
-
-The same adapter check applies to management audit identity headers. Audit role
-checks and organization scoping remain in the application service. Configuration,
-audit and settlement JSON schemas preserve opaque identifiers without importing
-HTTP concerns into the domain. The Runtime MCP adapter rejects a binding whose
-execution ID cannot be represented unchanged in its outbound header before any
-connection or Tool dispatch. PostgreSQL representation errors fail configuration
-application without publishing or acknowledging the failed revision.
+The execution tuple uses opaque IDs carried in signed JSON claims, preserving
+punctuation and Unicode under the shared CCT grammar. One canonical signed
+carrier avoids individual HTTP-field representation restrictions. Duplicate
+workload/CCT fields, invalid signatures, scope or expiry are rejected before
+protocol/state handling. Local Agent/Session grants and audit administrator role
+checks remain separate and mandatory. The Runtime MCP fence header still must
+carry its execution ID unchanged before dispatch. PostgreSQL representation
+errors fail configuration publication without acknowledging a failed revision.
 
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [planned caller catalog](../../../contracts/agent-acp/callers.json) define verified
-workload identity and route-specific caller context. Listener enforcement is
-pending in [#26](https://github.com/tf4fun/antnest-platform/issues/26), [#27](https://github.com/tf4fun/antnest-platform/issues/27); this foundation does not change the current HTTP
-authorization behavior. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-and run the shared route/media-type checks in the owning-service batch before
-the cross-service Docker security acceptance.
+and this service's [caller catalog](../../../contracts/agent-acp/callers.json) define verified
+workload identity and route-specific caller context. The
+[ACP authentication contract](../../../contracts/agent-acp/service-authentication.md)
+places publication and settlement on a separate Controller listener. Workspace
+returns 404 for those paths; state get/watch remain available only to verified
+Gateway/UI plus signed user context. TLS and exact per-receiver credentials are
+mandatory before listening. JSON parsing fails before effects on ambiguous media,
+duplicate members, malformed UTF-8 or extra documents.
+
+This ACP batch authenticates outgoing Identity, optional Controller policy and
+Registry clients. MCP/status, Skill source observation, maintenance and temporary
+clients use the RC-issued instance reference privately relayed by Controller
+(#30). ACP stages volatile per-instance files before publication, keeps tokens out
+of database/Run/audit projections, and retains original accepted authority through
+closure until durable settlement or process cleanup. Execution fences and signed
+maintenance tickets remain independent checks. See
+[execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission).
+Registry receiver adoption and separate-network deployment wiring remain their
+owning batches. Follow the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json);
+final cross-service security E2E runs after all service gates pass.

@@ -12,7 +12,19 @@ private to this service. Docker is the only implemented platform adapter; a
 Kubernetes adapter is planned and would be added in-process, not as a separate
 service.
 
+
+Workload authentication and configured Registry transport use the
+[shared Go module](../../modules/service-authentication/README.md), with the
+caller-context forwarding policy. RC retains its Controller-only route grants,
+Docker boundary and separate Runtime instance credential lifecycle.
+
 ## Responsibilities
+
+- Issue and atomically seal distinct RC/ACP Runtime tokens with each private
+  compute generation. Deliver only caller hashes through a verified root-only,
+  read-only receiver volume; exact recovery retains credentials. Privately
+  resolve ACP's current connection for Controller; ordinary projections remain
+  secret-free. See [the instance connection contract](../../contracts/runtime/instance-connection.md).
 
 - Idempotently `Initialize`, `Update`, `Disable`, `Enable`, `Inspect`, and
   `Delete` one Agent Runtime Environment.
@@ -52,51 +64,71 @@ service.
   configuration.
 - It does not run a Runtime reverse-connection server.
 - It does not authenticate end users or expose a public API.
+
+## Runtime instance bootstrap
+
+`ANTNEST_RUNTIME_INSTANCE_KEY_FILE` is required: a private regular mode-0600
+file containing exactly 32 raw CSPRNG bytes, mounted read-only by deployment.
+Retain it with RC's journal across restarts. It is separate from Controller's
+credential key and the workload-token directory; losing or changing it makes
+existing instance authority unavailable. There is no automatic reissue during
+recovery. Development has no legacy data to migrate; rebuild a fresh test stack.
+
+The first instance receiver supports token mode with the explicit
+`ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true` opt-in on its isolated
+internal network. Native Runtime TLS/mTLS is unsupported and unsupported profiles
+fail RC startup; no opt-in is synthesized. The control-service TLS library still
+validates TLS when configured. Production transport expansion is separate work.
+Runtime, Controller relay and ACP consumption remain the next #30 owning batches.
+
 - It does not read another service's database.
 - It does not hold the Skill maintenance signing key; that belongs to Agent ACP
   Service.
 
 ## Interfaces
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | Internal JSON-over-HTTP RPC ([control API](api/control-api.md)) | Image resolution, lifecycle commands, Inspect/List, operation queries, observation List/Watch, Skill set preparation |
-| Inbound | `GET /status` | Liveness and readiness (database, journal/notifications, adapter initialization and cached monitor state) |
-| Outbound | Docker Engine API `v1.47` over a Unix socket | Containers, volumes, networks, events, image inspection |
-| Outbound | Runtime `GET /status` | Bounded verification of Runtime identity and `execution_id` |
-| Outbound | Skill Registry internal API | Resolve and download exact Skill versions for preparation |
-| Persistence | Private PostgreSQL schema `runtime_controller` | Environment heads, operations, generation claims, observation journal, Skill sets and references |
+| Direction   | Interface                                                       | Purpose                                                                                                              |
+| ----------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Inbound     | Internal JSON-over-HTTP RPC ([control API](api/control-api.md)) | Image resolution, lifecycle commands, Inspect/List, operation queries, observation List/Watch, Skill set preparation |
+| Inbound     | Local-loopback `GET /status`                                    | Liveness and readiness (database, journal/notifications, adapter initialization and cached monitor state)            |
+| Outbound    | Docker Engine API `v1.47` over a Unix socket                    | Containers, volumes, networks, events, image inspection                                                              |
+| Outbound    | Runtime `GET /status`                                           | Bounded verification of Runtime identity and `execution_id`                                                          |
+| Outbound    | Authenticated Skill Registry artifact API                       | Download already-frozen exact Skill versions for preparation                                                         |
+| Persistence | Private PostgreSQL schema `runtime_controller`                  | Environment heads, operations, generation claims, observation journal, Skill sets and references                     |
 
 The Runtime status reader recognizes the compiled `test_features` array while
 retaining strict unknown-field decoding. Deploy this reader before upgrading
 Runtime images to the [required-field status contract](../../contracts/runtime/status.md).
 It also accepts the previous status shape during rollout. This change does not
-alter readiness criteria or reject test-feature images; image admission remains
-separate work in #29.
+alter readiness criteria or reject test-feature images; image admission is enforced by the operator repository/digest policy in #29.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL` | yes | none | Controller-private PostgreSQL DSN |
-| `ANTNEST_RUNTIME_MANAGEMENT_NETWORK` | yes | none | Private Docker network shared with Runtimes and internal callers |
-| `ANTNEST_RUNTIME_CONTROLLER_LISTEN` | no | `:8080` | HTTP listen address |
-| `ANTNEST_RUNTIME_PLATFORM` | no | `docker` | Platform adapter; `docker` is the only accepted value |
-| `ANTNEST_DOCKER_HOST` | no | `unix:///var/run/docker.sock` | Docker Engine URL; only `unix://` is accepted. Access to this socket is full control of the Docker daemon |
-| `ANTNEST_RUNTIME_CONTROLLER_SCOPE` | no | management network name | Ownership scope label written to every managed resource |
-| `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME` | no | `antnest-system-skills` | Read-only Skill volume mounted when a request carries no prepared Skill set |
-| `ANTNEST_SKILL_REGISTRY_URL` | paired | none | Skill Registry base URL; set together with the token |
-| `ANTNEST_SKILL_REGISTRY_API_TOKEN` | paired | none | Skill Registry bearer token. Without the URL/token pair the Skill preparation worker is disabled and the preparation routes return `503 skill_preparation_unavailable` |
-| `ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE` | no | `antnest/runtime-controller:local` | Installed image used for never-started, network-less Skill volume preparation containers |
-| `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS` | no | empty set | JSON `{"keys":[...]}` with at most two Ed25519 public keys; empty disables Runtime Skill maintenance |
-| `ANTNEST_RUNTIME_STATUS_TIMEOUT` | no | `5s` | Bound for one Runtime `/status` request |
-| `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | `2m` | Complete mutation bound, including lock wait |
-| `ANTNEST_RUNTIME_RPC_TIMEOUT` | no | `3m` | Internal RPC bound; must exceed the mutation timeout |
-| `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT` | no | `2m` | Inventory reconciliation bound |
-| `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no | `30s` | Maximum observation retry delay, including jitter; must be at least `1s` |
-| `ANTNEST_OBSERVATION_RETENTION` | no | `168h` | Observation journal retention |
-| `ANTNEST_RUNTIME_SSE_HEARTBEAT` | no | `15s` | Observation Watch heartbeat interval |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no | `false` | `true` or `false`; `true` records complete RPC bodies, including credentials, and is forwarded to new Runtimes |
+| Variable                                             | Required               | Default                            | Description                                                                                                                          |
+| ---------------------------------------------------- | ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL`            | yes                    | none                               | Controller-private PostgreSQL DSN                                                                                                    |
+| `ANTNEST_RUNTIME_MANAGEMENT_NETWORK`                 | yes                    | none                               | Outbound private Docker network shared with Runtimes; the control listener binds a separate Controller network                       |
+| `ANTNEST_RUNTIME_CONTROLLER_LISTEN`                  | no                     | `127.0.0.1:8080`                   | Explicit unicast control IP and port; bind the Controller-purpose network in deployment                                              |
+| `ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN`           | no                     | `127.0.0.1:8082`                   | Separate loopback-only readiness listener                                                                                            |
+| `ANTNEST_RUNTIME_ALLOWED_IMAGES`                     | no                     | `["antnest/antnest-runtime"]`      | Operator JSON array of allowed repositories or exact repository SHA256 manifests; disallowed new selections return 422 before Docker |
+| `ANTNEST_RUNTIME_PLATFORM`                           | no                     | `docker`                           | Platform adapter; `docker` is the only accepted value                                                                                |
+| `ANTNEST_DOCKER_HOST`                                | no                     | `unix:///var/run/docker.sock`      | Docker Engine URL; only `unix://` is accepted. Access to this socket is full control of the Docker daemon                            |
+| `ANTNEST_RUNTIME_CONTROLLER_SCOPE`                   | no                     | management network name            | Ownership scope label written to every managed resource                                                                              |
+| `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME`               | no                     | `antnest-system-skills`            | Read-only Skill volume mounted when a request carries no prepared Skill set                                                          |
+| `ANTNEST_SKILL_REGISTRY_URL`                         | no                     | none                               | Private Skill Registry origin; requires native service sender credentials when set. Unset disables preparation with 503              |
+| `ANTNEST_SERVICE_AUTH_MODE`                          | yes                    | none                               | Exact `token` or `mtls`; shared TLS/receiver/sender configuration applies                                                            |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                  | token mode             | none                               | Startup-loaded per-caller SHA256 JSON; only Controller may use control routes                                                        |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                     | Registry in token mode | none                               | Private per-receiver sender files, read on each request                                                                              |
+| `ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE`               | no                     | `antnest/runtime-controller:local` | Installed image used for never-started, network-less Skill volume preparation containers                                             |
+| `ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS`        | no                     | empty set                          | JSON `{"keys":[...]}` with at most two Ed25519 public keys; empty disables Runtime Skill maintenance                                 |
+| `ANTNEST_RUNTIME_STATUS_TIMEOUT`                     | no                     | `5s`                               | Bound for one Runtime `/status` request                                                                                              |
+| `ANTNEST_RUNTIME_MUTATION_TIMEOUT`                   | no                     | `2m`                               | Complete mutation bound, including lock wait                                                                                         |
+| `ANTNEST_RUNTIME_RPC_TIMEOUT`                        | no                     | `3m`                               | Internal RPC bound; must exceed the mutation timeout                                                                                 |
+| `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT`             | no                     | `2m`                               | Inventory reconciliation bound                                                                                                       |
+| `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no                     | `30s`                              | Maximum observation retry delay, including jitter; must be at least `1s`                                                             |
+| `ANTNEST_OBSERVATION_RETENTION`                      | no                     | `168h`                             | Observation journal retention                                                                                                        |
+| `ANTNEST_RUNTIME_SSE_HEARTBEAT`                      | no                     | `15s`                              | Observation Watch heartbeat interval                                                                                                 |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`              | no                     | `false`                            | `true` or `false`; `true` records complete RPC bodies, including credentials, and is forwarded to new Runtimes                       |
 
 Standard `OTEL_*` variables configure OTLP `http/protobuf` export. Selected
 `OTEL_*` keys, optionally overridden by `ANTNEST_RUNTIME_OTEL_*`, are forwarded
@@ -133,6 +165,8 @@ thresholds. See [operations](docs/operations.md#observation-dependency-recovery)
 
 ## Build and test
 
+All control routes require verified Controller workload identity; RC never calls its own API. The [workload boundary](api/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. Deployment wiring and complete token-profile cross-service E2E passed the final integration batch, recorded in the [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
+
 Service-local checks, from `services/runtime-controller`:
 
 ```bash
@@ -148,6 +182,7 @@ From the repository root:
 ```bash
 make test-go                           # unit tests with root integration overlays
 make test-runtime-controller-postgres  # repository tests against disposable PostgreSQL
+node tests/e2e/service-authentication/runtime-controller/run.mjs # isolated native authentication/network/image/lifecycle gate
 make e2e-runtime-controller            # builds images and runs the lifecycle E2E
 make e2e-runtime-controller-observation-retry # isolated Docker socket outage/recovery
 make integration-stage4-skill-prepare  # Registry to Runtime Controller Skill preparation

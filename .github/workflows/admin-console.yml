@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
     paths:
       - services/admin-console/**
+      - modules/service-authentication/**
       - tests/integration/go/admin-console/**
       - tests/integration/admin-console/**
       - tests/support/**
@@ -20,6 +21,7 @@ on:
   pull_request:
     paths:
       - services/admin-console/**
+      - modules/service-authentication/**
       - tests/integration/go/admin-console/**
       - tests/integration/admin-console/**
       - tests/support/**

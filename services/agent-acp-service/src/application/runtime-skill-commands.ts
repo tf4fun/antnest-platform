@@ -1,7 +1,7 @@
 import type { AgentConfiguration } from "../domain/execution-configuration.js";
 import type { RuntimeInformation } from "../domain/runtime-information.js";
 import { skillCommands } from "../domain/skill-commands.js";
-import type { ConnectionBinding } from "../domain/types.js";
+import type { ConnectionBinding, RuntimeBinding } from "../domain/types.js";
 import type { SkillCommandsPort } from "../ports/skill-commands.js";
 
 export class RuntimeSkillCommands implements SkillCommandsPort {
@@ -23,17 +23,19 @@ export class RuntimeSkillCommands implements SkillCommandsPort {
         };
       };
       runtime: {
-        readBinding(
-          binding: { executionId: string; mcpEndpoint: string },
-          signal: AbortSignal,
-        ): Promise<RuntimeInformation>;
+        readBinding(binding: RuntimeBinding, signal: AbortSignal): Promise<RuntimeInformation>;
       };
     },
   ) {}
 
   public async read(binding: ConnectionBinding, signal: AbortSignal) {
     const { agent } = this.dependencies.directory.inspect(binding);
-    if (!agent.accepting_runs || agent.runtime === null) return { executionId: null, commands: [] };
+    if (
+      !agent.accepting_runs ||
+      agent.runtime === null ||
+      agent.runtime.connection_id === undefined
+    )
+      return { executionId: null, commands: [] };
     const executionId = agent.runtime.runtime_execution_id;
     if (this.dependencies.busy(binding)) return { executionId, commands: null };
     let lease: { signal: AbortSignal; finish(quiescent: boolean): void } | undefined;
@@ -45,7 +47,12 @@ export class RuntimeSkillCommands implements SkillCommandsPort {
     let information: RuntimeInformation | undefined;
     try {
       information = await this.dependencies.runtime.readBinding(
-        { executionId, mcpEndpoint: agent.runtime.mcp_endpoint },
+        {
+          executionId,
+          mcpEndpoint: agent.runtime.mcp_endpoint,
+          revision: agent.runtime.runtime_revision,
+          connectionId: agent.runtime.connection_id,
+        },
         // Finish an already dispatched read before foreground handoff. Catalog
         // refreshes must not occupy Runtime during a maintenance write.
         AbortSignal.any([signal, AbortSignal.timeout(5000)]),

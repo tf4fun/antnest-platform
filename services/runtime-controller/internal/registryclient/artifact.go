@@ -24,22 +24,19 @@ var (
 )
 
 type Client struct {
-	baseURL, token string
-	http           *http.Client
+	baseURL string
+	http    *http.Client
 }
 
-func New(baseURL, token string, timeout time.Duration, transport http.RoundTripper) (*Client, error) {
+func New(baseURL string, timeout time.Duration, transport http.RoundTripper) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" || parsed.Scheme != "http" && parsed.Scheme != "https" ||
-		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" || token == "" || timeout <= 0 {
-		return nil, fmt.Errorf("skill Registry endpoint, token or timeout is invalid")
-	}
-	if transport == nil {
-		transport = http.DefaultTransport
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" || transport == nil || timeout <= 0 {
+		return nil, fmt.Errorf("skill Registry endpoint, authenticated transport or timeout is invalid")
 	}
 	client := &http.Client{Timeout: timeout, Transport: telemetry.NewTransport(transport, "skill-registry"),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), token: token, http: client}, nil
+	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), http: client}, nil
 }
 
 // Download accepts only the exact frozen ZIP bytes from the scoped immutable
@@ -54,7 +51,6 @@ func (c *Client) Download(ctx context.Context, organizationID string, frozen ski
 	if err != nil {
 		return nil, skillset.Package{}, fmt.Errorf("%w: create artifact request: %w", ErrUnavailable, err)
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, skillset.Package{}, fmt.Errorf("%w: artifact request: %w", ErrUnavailable, err)

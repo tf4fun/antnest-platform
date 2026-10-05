@@ -9,11 +9,12 @@ import (
 )
 
 type ExecutionPublisher struct {
-	store  ports.ExecutionPublicationStore
-	opener ports.CredentialOpener
-	client ports.ExecutionClient
-	mu     sync.Mutex
-	active map[string]*executionPublicationGate
+	store   ports.ExecutionPublicationStore
+	opener  ports.CredentialOpener
+	client  ports.ExecutionClient
+	runtime ports.RuntimeConnectionResolver
+	mu      sync.Mutex
+	active  map[string]*executionPublicationGate
 }
 
 type executionPublicationGate struct {
@@ -21,8 +22,12 @@ type executionPublicationGate struct {
 	users int
 }
 
-func NewExecutionPublisher(store ports.ExecutionPublicationStore, opener ports.CredentialOpener, client ports.ExecutionClient) *ExecutionPublisher {
-	return &ExecutionPublisher{store: store, opener: opener, client: client, active: make(map[string]*executionPublicationGate)}
+func NewExecutionPublisher(store ports.ExecutionPublicationStore, opener ports.CredentialOpener, client ports.ExecutionClient, options ...ExecutionPublicationOption) *ExecutionPublisher {
+	publisher := &ExecutionPublisher{store: store, opener: opener, client: client, active: make(map[string]*executionPublicationGate)}
+	for _, option := range options {
+		option(publisher)
+	}
+	return publisher
 }
 
 func (publisher *ExecutionPublisher) Publish(ctx context.Context, organizationID string) (ports.ExecutionAcknowledgement, error) {
@@ -60,6 +65,9 @@ func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organiz
 	}
 	snapshot, err := BuildExecutionSnapshot(ctx, source, publisher.opener)
 	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	if err := publisher.resolveRuntimeAuthority(ctx, &snapshot); err != nil {
 		return ports.ExecutionAcknowledgement{}, err
 	}
 	acknowledgement, err := publisher.client.ApplyExecutionSnapshot(ctx, snapshot)

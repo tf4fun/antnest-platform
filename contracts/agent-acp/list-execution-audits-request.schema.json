@@ -48,5 +48,5 @@
   "additionalProperties": false,
   "$id": "https://antnest.local/contracts/agent-acp/list-execution-audits-request.schema.json",
   "title": "Administrative audit list request",
-  "description": "Organization and role derive from trusted management headers, never from this body."
+  "description": "Organization and role derive from verified Identity-signed caller context and Console workload, never from this body."
 }

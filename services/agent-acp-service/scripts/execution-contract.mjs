@@ -28,7 +28,7 @@ const contracts = [
     definition: listAuditsSchema,
     title: "Administrative audit list request",
     description:
-      "Organization and role derive from trusted management headers, never from this body.",
+      "Organization and role derive from verified Identity-signed caller context and Console workload, never from this body.",
   },
   {
     name: "get-execution-audit-request",

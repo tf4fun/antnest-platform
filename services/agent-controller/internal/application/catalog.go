@@ -34,16 +34,19 @@ const (
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 
 type CatalogService struct {
-	store         ports.CatalogStore
-	sealer        ports.CredentialSealer
-	clock         ports.Clock
-	opener        ports.CredentialOpener
-	accessReader  ports.ProviderAccessReader
-	skillResolver ports.SkillVersionResolver
+	store             ports.CatalogStore
+	sealer            ports.CredentialSealer
+	clock             ports.Clock
+	opener            ports.CredentialOpener
+	accessReader      ports.ProviderAccessReader
+	skillResolver     ports.SkillVersionResolver
+	providerValidator ports.ProviderEndpointValidator
+	providerLister    ports.ProviderModelLister
+	providerTimeout   time.Duration
 }
 
 func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock, options ...CatalogOption) *CatalogService {
-	service := &CatalogService{store: store, sealer: sealer, clock: clock}
+	service := &CatalogService{store: store, sealer: sealer, clock: clock, providerTimeout: 30 * time.Second}
 	for _, option := range options {
 		option(service)
 	}

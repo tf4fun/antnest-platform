@@ -20,5 +20,5 @@ COPY --from=ui-build --chown=node:node /app/dist/ssr/ ./dist/ssr/
 USER node
 
 EXPOSE 8080
-HEALTHCHECK --interval=10s --timeout=2s --retries=5 CMD node -e "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=10s --timeout=2s --retries=5 CMD node server/dist/healthcheck.js
 CMD ["node", "server/dist/main.js"]

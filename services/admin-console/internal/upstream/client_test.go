@@ -8,11 +8,60 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+func TestClientForwardsVerifiedCallerContextUnchanged(t *testing.T) {
+	actor := principal.Principal{UserID: "admin", OrganizationID: "org-1", MembershipID: "membership-1", SystemRole: "admin", OrganizationRole: "member"}
+	ctx := callercontext.WithToken(principal.WithContext(t.Context(), actor), "verified-context-from-private-request-state")
+	for _, target := range []Target{Identity, AgentController, AgentACP} {
+		client, err := NewClient(Config{IdentityURL: "http://identity.internal", AgentControllerURL: "http://controller.internal", AgentACPURL: "http://acp.internal", HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Header.Get(callercontext.Header) != "verified-context-from-private-request-state" {
+				t.Error("verified context was lost or replaced")
+			}
+			if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+				t.Error("user credentials were leaked")
+			}
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+		})}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := client.Do(ctx, target, "POST", "/rpc/test", "", []byte("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+	}
+}
+
+func TestAuditUsesSignedContextWithoutLegacyHeaderEncoding(t *testing.T) {
+	actor := principal.Principal{UserID: "用户,admin", OrganizationID: "组织-1", MembershipID: "成员-1", SystemRole: "user", OrganizationRole: "admin"}
+	client, err := NewClient(Config{IdentityURL: "http://identity.internal", AgentControllerURL: "http://controller.internal", AgentACPURL: "http://acp.internal", HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get(callercontext.Header) != "verified-context" {
+			t.Error("signed context was changed")
+		}
+		for name := range r.Header {
+			if strings.HasPrefix(strings.ToLower(name), "x-antnest-") {
+				t.Error("legacy identity headers were emitted")
+			}
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := callercontext.WithToken(principal.WithContext(t.Context(), actor), "verified-context")
+	res, err := client.Do(ctx, AgentACP, "POST", "/rpc/agent-acp/list-execution-audits", "", []byte("{}"))
+	if err != nil {
+		t.Fatal("verified actor was restricted by legacy header encoding")
+	}
+	_ = res.Body.Close()
+}
 
 func TestClientTargetsOnlyConfiguredServiceAndPropagatesTrace(t *testing.T) {
 	var received *http.Request

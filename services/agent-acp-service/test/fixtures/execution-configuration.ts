@@ -49,14 +49,35 @@ export function executionConfiguration(): Omit<ExecutionConfiguration, "provider
         context_policy_version: "context-v1" as const,
         skill_instructions: [],
         max_model_requests: 8,
-        runtime: {
-          runtime_revision: "runtime-1",
-          runtime_execution_id: "runtime-execution-1",
-          mcp_endpoint: "http://runtime-1:8080/mcp",
-        },
+        runtime: runtimeConfiguration(),
       },
     ],
   };
+}
+
+/** Public synthetic conformance credentials; never install this fixture in a deployment. */
+export function runtimeConfiguration(generation = 1) {
+  const suffix = generation.toString(16).padStart(1, "0").repeat(32);
+  return {
+    runtime_revision: "rtv_" + suffix,
+    runtime_execution_id: "runtime-execution-" + generation,
+    mcp_endpoint: "http://runtime-" + generation + ":8080/mcp",
+    connection_id: "rci_" + suffix,
+    credential: {
+      caller: "agent-acp-service" as const,
+      token:
+        generation === 1
+          ? "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+          : Buffer.alloc(32, generation).toString("base64url"),
+    },
+  };
+}
+
+export function closedExecutionAgent(agent: ExecutionConfiguration["agents"][number]) {
+  const closed = structuredClone(agent);
+  closed.accepting_runs = false;
+  if (closed.runtime !== null) delete closed.runtime.credential;
+  return closed;
 }
 
 export function executionIdentity() {

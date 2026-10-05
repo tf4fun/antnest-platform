@@ -55,6 +55,7 @@ describe.skipIf(!databaseUrl)(
       });
       const frozen = {
         ...snapshot(),
+        runtime: { ...snapshot().runtime, revision: `rtv_${"a".repeat(32)}` },
         organizationId: "org_1",
         clientMcpRevisionId: revision,
       };
@@ -88,6 +89,8 @@ describe.skipIf(!databaseUrl)(
         agentId: "agent_1",
         executionId: value.snapshot.runtime.executionId,
         mcpEndpoint: value.snapshot.runtime.mcpEndpoint,
+        revision: value.snapshot.runtime.revision,
+        connectionId: value.snapshot.runtime.connectionId,
       });
       expect(await store.reserve(value)).toEqual(scope);
       await expect(
@@ -100,6 +103,38 @@ describe.skipIf(!databaseUrl)(
       expect(await store.forRun(value.runId, signal)).toBeNull();
       await expect(store.reserve(value)).rejects.toThrow();
     });
+    it.each(["revision", "connectionId"] as const)(
+      "rejects substituted %s before reserving or releasing a temporary scope",
+      async (field) => {
+        const value = await input();
+        const changed = `${field === "revision" ? "rtv" : "rci"}_${"f".repeat(32)}`;
+        await expect(
+          store.reserve({
+            ...value,
+            snapshot: {
+              ...value.snapshot,
+              runtime: { ...value.snapshot.runtime, [field]: changed },
+            },
+          }),
+        ).rejects.toThrow();
+        expect(await store.forRun(value.runId, signal)).toBeNull();
+        const original = await store.reserve(value);
+        await expect(
+          store.released({ ...original, [field]: changed }),
+        ).rejects.toThrow();
+        expect(await store.forRun(value.runId, signal)).toEqual(original);
+        expect(
+          await store.forAgent(
+            {
+              organizationId: original.organizationId,
+              agentId: original.agentId,
+            },
+            signal,
+          ),
+        ).toContainEqual(original);
+        await store.released(original);
+      },
+    );
     it("pending scopes fence the same Runtime but not another Agent or replacement revision", async () => {
       const value = await input(),
         scope = await store.reserve(value),

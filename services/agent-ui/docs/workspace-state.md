@@ -8,7 +8,7 @@ execution state, and how the browser recovers when observation is lost.
 The chooser obtains the full authorized Agent list from the Node Bridge at
 `GET /api/app/workspace/v1/bootstrap`. Node reads it from Agent Controller's
 principal-scoped workspace directory (`ANTNEST_AGENT_CONTROLLER_URL`) using the
-trusted identity injected by Edge Gateway. Each entry carries Controller
+Gateway workload identity and Identity-signed caller context. Each entry carries Controller
 lifecycle/runtime state and, when created, activation state. The browser
 stores these as management state, separate from ACP execution `status`, and
 shows the last observed management condition without creating per-card

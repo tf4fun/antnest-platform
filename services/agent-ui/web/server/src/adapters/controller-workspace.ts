@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { BootstrapScope } from "../http/bootstrap-routes.ts";
+import { scopeHeaders } from "../http/trusted-identity.ts";
 import { withActiveHttpTrace } from "../telemetry.ts";
 
 const pageLimit = 200;
@@ -23,10 +24,11 @@ export type ControllerWorkspaceAgent = z.infer<typeof agentSchema>;
 export async function discoverWorkspaceAgents(input: {
   baseUrl: URL;
   scope: BootstrapScope;
-  fetchImpl?: typeof fetch;
+  fetchImpl: typeof fetch;
 }): Promise<ControllerWorkspaceAgent[]> {
   const target = new URL("/rpc/agent-controller/list-workspace-agents", input.baseUrl);
-  const fetcher = withActiveHttpTrace(input.fetchImpl ?? fetch);
+  if (!input.fetchImpl) throw new Error("Authenticated Controller client is required");
+  const fetcher = withActiveHttpTrace(input.fetchImpl);
   const agents: ControllerWorkspaceAgent[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -34,7 +36,7 @@ export async function discoverWorkspaceAgents(input: {
   for (let page = 0; page < maximumPages; page++) {
     const response = await fetcher(target, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
+      headers: { ...scopeHeaders(input.scope, "agent-controller"), accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({
         request_id: `${randomUUID()}-page-${page + 1}`,
         organization_id: input.scope.organizationId,

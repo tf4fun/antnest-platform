@@ -23,6 +23,8 @@ import { PostgresSessionConfiguration } from "./adapters/postgres/session-config
 import { newResourceId } from "./domain/resource-id.js";
 
 import { Pool } from "pg";
+import { RuntimeConnections } from "./adapters/runtime-connections.js";
+import type { RuntimeConnectionAuthority } from "./ports/runtime-connections.js";
 
 import { PostgresExecutionConfiguration } from "./adapters/postgres/execution-configuration.js";
 import { ExecutionDirectory } from "./application/execution-directory.js";
@@ -82,6 +84,7 @@ import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
 import { LearningChangeCursor } from "./domain/learning-change-cursor.js";
 import { ControllerLearningPolicyClient } from "./adapters/controller-learning-policy.js";
+import { tracedFetch } from "./telemetry/http.js";
 import { DirectoryLearningRuntimeBinding } from "./adapters/learning-runtime-binding.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
 import { RuntimeSkillMaintenanceClient } from "./adapters/runtime-skill-maintenance-client.js";
@@ -115,6 +118,7 @@ import { InstrumentedToolPermissions } from "./telemetry/instrumented-permission
 export type RunningAgentAcpService = {
   failure: Promise<Error>;
   address(): ReturnType<AgentAcpHttpServer["address"]>;
+  controlAddress(): ReturnType<AgentAcpHttpServer["controlAddress"]>;
   shutdown(): Promise<void>;
 };
 
@@ -123,6 +127,8 @@ export async function startAgentAcpService(
   telemetry: TelemetryPort,
   reportOwnershipLoss: (error: WorkerOwnershipLostError) => void,
 ): Promise<RunningAgentAcpService> {
+  if (config.providerAllowPrivateEndpoints)
+    telemetry.log("warn", "provider_private_endpoints_enabled");
   if (config.skillLearningDebugAgentId !== undefined)
     telemetry.log("warn", "Skill learning debug mode is active", {
       agent_id: config.skillLearningDebugAgentId,
@@ -130,10 +136,12 @@ export async function startAgentAcpService(
   const pool = new Pool(postgresPoolOptions(config.databaseUrl, config.databaseTimeoutMs));
   pool.on("error", (error) => telemetry.log("error", "postgres_pool_error", {}, error));
   let workerLock: PostgresWorkerLock | undefined;
+  let runtimeConnections: RuntimeConnections | undefined;
   const failure = Promise.withResolvers<Error>();
   let serving = false;
   let requestedFailure: Error | undefined;
   let components: ReturnType<typeof buildComponents> | undefined;
+  let listeningServer: AgentAcpHttpServer | undefined;
   const ownership = new AbortController();
   const recoveryRequired = (error: Error): void => {
     requestedFailure ??= error;
@@ -145,6 +153,11 @@ export async function startAgentAcpService(
   };
 
   try {
+    const ownedRuntimeConnections = new RuntimeConnections({
+      ...config.authentication.workload.runtimeTransport(),
+      reportCleanupFailure: () => telemetry.log("warn", "runtime_connection_cleanup_failed"),
+    });
+    runtimeConnections = ownedRuntimeConnections;
     await telemetry.span("postgres.migrate", { "db.system.name": "postgresql" }, () =>
       migrate(pool),
     );
@@ -155,7 +168,14 @@ export async function startAgentAcpService(
       () => PostgresWorkerLock.acquire(pool),
     );
     workerLock = acquiredWorkerLock;
-    const built = buildComponents(pool, config, telemetry, recoveryRequired, ownership.signal);
+    const built = buildComponents(
+      pool,
+      config,
+      telemetry,
+      recoveryRequired,
+      ownership.signal,
+      ownedRuntimeConnections,
+    );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
       telemetry.log("error", "worker_lock_lost", {}, error);
@@ -185,6 +205,7 @@ export async function startAgentAcpService(
     }
 
     const server = new AgentAcpHttpServer({
+      authentication: config.authentication,
       executionConfiguration: built.directory,
       settlement: built.settlement,
       executionState: built.executionState,
@@ -205,6 +226,8 @@ export async function startAgentAcpService(
       ready: async () =>
         serving && acquiredWorkerLock.isHeld() && (await dependenciesReady(pool, telemetry)),
     });
+    listeningServer = server;
+    await server.listenControl(config.controlListen.host, config.controlListen.port);
     await server.listen(config.listen.host, config.listen.port);
     serving = true;
     built.learningNotices.start();
@@ -224,6 +247,8 @@ export async function startAgentAcpService(
     telemetry.log("info", "service_started", {
       listen_host: config.listen.host,
       listen_port: config.listen.port,
+      control_listen_host: config.controlListen.host,
+      control_listen_port: config.controlListen.port,
     });
 
     let shutdownPromise: Promise<void> | undefined;
@@ -239,7 +264,12 @@ export async function startAgentAcpService(
           ...(projectionRun === undefined ? [] : [projectionRun]),
           temporaryCleanupRun,
         ]);
-        results.push(await settle(acquiredWorkerLock.release()), await settle(pool.end()));
+        results.push(
+          await settle(ownedRuntimeConnections.close()),
+          await settle(acquiredWorkerLock.release()),
+          await settle(pool.end()),
+          await settle(config.authentication.workload.close()),
+        );
         telemetry.log("info", "service_stopped");
         const failures = results
           .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -250,18 +280,27 @@ export async function startAgentAcpService(
       })();
       return shutdownPromise;
     };
-    return { failure: failure.promise, shutdown, address: () => server.address() };
+    return {
+      failure: failure.promise,
+      shutdown,
+      address: () => server.address(),
+      controlAddress: () => server.controlAddress(),
+    };
   } catch (error) {
     const startupError = asError(error);
     ownership.abort(startupError);
     if (startupError instanceof WorkerOwnershipLostError) {
+      await runtimeConnections?.close().catch(() => undefined);
       throw startupError;
     }
     components?.supervisor.stop(startupError);
     components?.learningNotices.stop();
+    await listeningServer?.close().catch(() => undefined);
     await components?.supervisor.shutdown().catch(() => undefined);
+    await runtimeConnections?.close().catch(() => undefined);
     await workerLock?.release().catch(() => undefined);
     await pool.end().catch(() => undefined);
+    await config.authentication.workload.close().catch(() => undefined);
     throw startupError;
   }
 }
@@ -279,6 +318,7 @@ export function buildComponents(
   telemetry: TelemetryPort,
   recoveryRequired: (error: Error) => void,
   ownershipSignal: AbortSignal,
+  runtimeConnections: RuntimeConnectionAuthority,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(config.clientMcpKey));
@@ -287,7 +327,12 @@ export function buildComponents(
   const executions = new PostgresExecutionRepository(kernel);
   const events = new PostgresRunEventRepository(kernel);
 
-  const model = new InstrumentedModel(new OpenAICompatibleModel(), telemetry);
+  const model = new InstrumentedModel(
+    new OpenAICompatibleModel({
+      destination: { allowPrivateEndpoints: config.providerAllowPrivateEndpoints },
+    }),
+    telemetry,
+  );
   const providers = new ProviderClients(model);
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
@@ -302,6 +347,7 @@ export function buildComponents(
   const directory = new ExecutionDirectory({
     repository: new PostgresExecutionConfiguration(kernel),
     clients: providers,
+    runtimeConnections,
     onPublished: (organizationId) => outputs.invalidateOrganization(organizationId),
     onApplied: (snapshot) => {
       revokeAccess(snapshot);
@@ -321,7 +367,7 @@ export function buildComponents(
   // Cleanup survives configuration disabling discovery; persisted scopes remain authoritative.
   const temporarySkills = new TemporarySkills(
     new PostgresTemporarySkills(kernel),
-    new RuntimeSkillTemporaryClient(signer, undefined, undefined, (scope) =>
+    new RuntimeSkillTemporaryClient(signer, runtimeConnections, undefined, (scope) =>
       directory.runtimeForCleanup(scope),
     ),
     telemetry,
@@ -332,7 +378,7 @@ export function buildComponents(
     report: (outcome) => telemetry.count("antnest.acp.skill_temporary_cleanup", { outcome }),
   });
   const rawTools = new McpToolCatalog({
-    runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+    runtimeDialer: new OfficialMcpDialer({ trust: "runtime", connections: runtimeConnections }),
     revisions: sessions,
     reportConnectionCloseFailure: (source, sourceId, error) => {
       telemetry.count("antnest.acp.mcp.close_failures", { source });
@@ -351,7 +397,7 @@ export function buildComponents(
           runtime: rawTools,
           registry: new RegistrySkillDiscoveryClient(
             config.skillDiscovery.registryUrl,
-            config.skillDiscovery.registryToken,
+            tracedFetch(config.dependencyFetchers.registry!, "skill_registry"),
           ),
           authority: new PostgresSkillDiscoveryAuthority(kernel, directory),
           temporary: temporarySkills,
@@ -367,6 +413,7 @@ export function buildComponents(
     telemetry,
   );
   const executor = new RunExecutor({
+    runtimeConnections,
     temporarySkills,
     permissions,
     executions,
@@ -441,6 +488,7 @@ export function buildComponents(
     telemetry,
     onCommitted: () => learningNotices.wake(),
     temporarySkills,
+    runtimeConnections,
   });
   const sourceRepository = new PostgresSkillSourceProjections(kernel);
   const discovery = config.skillDiscovery;
@@ -449,12 +497,12 @@ export function buildComponents(
       ? undefined
       : new RuntimeSkillSourceVerifier(
           new RuntimeSkillMaintenanceSigner(signing.kid, signing.privateKey),
+          runtimeConnections,
         );
   const skillSources =
     discovery === undefined || sourceVerifier === undefined
       ? undefined
       : {
-          token: discovery.sourceToken,
           service: new SkillSources({
             directory,
             repository: sourceRepository,
@@ -478,7 +526,10 @@ export function buildComponents(
   const projectionClient =
     discovery === undefined
       ? undefined
-      : new RegistrySkillProjectionClient(discovery.registryUrl, discovery.registryToken);
+      : new RegistrySkillProjectionClient(
+          discovery.registryUrl,
+          tracedFetch(config.dependencyFetchers.registry!, "skill_registry"),
+        );
   const skillProjectionWorker =
     projectionClient === undefined
       ? undefined
@@ -556,6 +607,7 @@ function buildLearningWorker(input: {
   telemetry: TelemetryPort;
   onCommitted: () => void;
   temporarySkills: TemporarySkills;
+  runtimeConnections: RuntimeConnectionAuthority;
 }): LearningWorker | undefined {
   const { config, kernel, directory, providers, rawTools, gate, telemetry, onCommitted } = input;
   if (
@@ -563,23 +615,29 @@ function buildLearningWorker(input: {
     config.skillMaintenanceSigning === undefined
   )
     return undefined;
-  const policy = new ControllerLearningPolicyClient(config.skillLearningControllerUrl);
+  const policy = new ControllerLearningPolicyClient(
+    config.skillLearningControllerUrl,
+    tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
+  );
   const scanStore = new PostgresLearningScan(kernel);
   const evidence = new PostgresLearningEvidence(kernel);
   const budget = new PostgresLearningBudget(kernel);
   const candidates = new PostgresLearningCandidates(kernel);
   const managed = new PostgresLearningManagedSkills(kernel);
   const outcomes = new PostgresLearningTaskOutcomes(kernel);
-  const intents = new PostgresLearningMaintenanceLedger(kernel);
+  const intents = new PostgresLearningMaintenanceLedger(kernel, (requestId) =>
+    input.runtimeConnections.releaseOperation(requestId),
+  );
   const commitRequests = new PostgresLearningCommitRequests(kernel);
   const bases = new PostgresLearningApplyBases(kernel);
   const changes = new PostgresLearningChanges(kernel, onCommitted);
   const binding = new DirectoryLearningRuntimeBinding(directory);
+  const cleanupBinding = { current: binding.forCleanup.bind(binding) };
   const signer = new RuntimeSkillMaintenanceSigner(
     config.skillMaintenanceSigning.kid,
     config.skillMaintenanceSigning.privateKey,
   );
-  const runtime = new RuntimeSkillMaintenanceClient(signer, intents);
+  const runtime = new RuntimeSkillMaintenanceClient(signer, intents, input.runtimeConnections);
   const guard = new LearningMaintenanceGuard(gate, intents, (scope, signal) =>
     input.temporarySkills.assertClearAgent(scope, signal),
   );
@@ -621,7 +679,7 @@ function buildLearningWorker(input: {
     new LearningTaskProcessor(review, new InstrumentedLearningApply(apply, telemetry), outcomes),
     telemetry,
   );
-  const effectRecovery = new LearningEffectRecovery(intents, runtime, binding);
+  const effectRecovery = new LearningEffectRecovery(intents, runtime, cleanupBinding);
   const applyRecovery = new LearningApplyRecovery(effectRecovery, commitRequests, changes);
   const paused = new LearningPausedRecovery(
     outcomes,
@@ -679,7 +737,7 @@ function buildLearningWorker(input: {
     (error) => telemetry.log("warn", "skill_learning_cycle_failed", {}, error),
     new LearningCandidateCleanup(
       new PostgresLearningCandidateCleanup(kernel),
-      binding,
+      cleanupBinding,
       runtime,
       guard,
     ),

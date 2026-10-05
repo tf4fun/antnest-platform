@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/authfixture"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/repository/postgres"
-	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
 )
 
 func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
@@ -41,8 +41,8 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create SecretBox: %v", err)
 	}
-	handler, err := server.NewHandler(
-		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
+	handler, err := authfixture.NewHandler(t,
+		fixtureCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
 		catalogOnlyLifecycle{},
 		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, fixedClock{now: time.Unix(1, 0).UTC()}),
 		application.NewAgentQueryService(repository),

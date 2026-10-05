@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "status": {
+    "full": {
+      "path": "/status",
+      "authentication": "instance-workload",
+      "callers": ["runtime-controller", "agent-acp-service"]
+    },
+    "live": {
+      "path": "/status/live",
+      "authentication": "none",
+      "schema": "instance-connection.schema.json#/$defs/live_status"
+    }
+  },
+  "issue": 30,
+  "authentication_contract": "../platform/service-authentication.md",
+  "schema": "instance-connection.schema.json",
+  "fixtures": "instance-connection-fixtures.json",
+  "credential_issuer": "runtime-controller",
+  "credential_scope": "controller-scope/agent/compute-generation/caller",
+  "runtime_callers": ["runtime-controller", "agent-acp-service"],
+  "token_header": "Antnest-Service-Authorization",
+  "invalid_token": {
+    "status": 401,
+    "code": "runtime_unauthorized",
+    "challenge": "Bearer realm=\"antnest-service\"",
+    "retryable": false
+  },
+  "executor_credentials": "none",
+  "bootstrap": {
+    "receiver_file": "/run/antnest-auth/callers.json",
+    "file_contents": "per-caller SHA256 only; no raw bearer",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "owner_uid": 0,
+    "mount": "generation-specific read-only named volume",
+    "raw_token_environment": false,
+    "raw_token_runtime_spec": false
+  },
+  "resolve": {
+    "method": "POST",
+    "path": "/internal/runtimes/{agent_id}/connection",
+    "callers": ["agent-controller"],
+    "request_schema": "instance-connection.schema.json#/$defs/resolve_request",
+    "response_schema": "instance-connection.schema.json#/$defs/private_connection",
+    "cache_control": "no-store",
+    "capture_payload": false
+  },
+  "controller_relay": {
+    "schema": "../agent-acp/execution-snapshot.schema.json",
+    "fixtures": "../agent-acp/runtime-publication-fixtures.json",
+    "executable_binding": "verified-private-connection-required",
+    "closed_binding": "fence-only-no-resolve-no-credential",
+    "capture_payload": false,
+    "persist_token": false,
+    "resolve_response_limit_bytes": 8192,
+    "exact_binding_fields": [
+      "agent_id",
+      "runtime_revision",
+      "runtime_execution_id",
+      "mcp_endpoint"
+    ]
+  },
+  "delivery_batches": [
+    "runtime-controller",
+    "antnest-runtime",
+    "agent-controller",
+    "agent-acp-service",
+    "integration"
+  ],
+  "acceptance": [
+    "wrong-agent",
+    "wrong-generation",
+    "wrong-caller",
+    "credential-not-in-environment",
+    "executor-cannot-read",
+    "restart-retains-credential",
+    "rebuild-rotates-credential",
+    "private-publication-not-in-audit",
+    "no-proxy-or-redirect",
+    "host-header-rejection",
+    "full-status-requires-credential",
+    "liveness-hides-identity",
+    "credential-and-journal-atomicity",
+    "receiver-volume-ownership-and-readback",
+    "unknown-effect-replay-keeps-credential",
+    "unsupported-authentication-fails-startup"
+  ]
+}

@@ -1,3 +1,8 @@
+import {
+  createTestWorkspaceHttpServer as createWorkspaceHttpServer,
+  testFetch as fetch,
+  testHeaders,
+} from "./auth-fixture.mjs";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -10,7 +15,6 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { StreamJournal } from "../../../services/agent-ui/web/server/dist/bridge/stream-journal.js";
 import { createEventHandler } from "../../../services/agent-ui/web/server/dist/http/event-routes.js";
-import { createWorkspaceHttpServer } from "../../../services/agent-ui/web/server/dist/http/node-server.js";
 
 const soak = process.env.ANTNEST_UI_SSE_SOAK === "1";
 const waves = soak ? Number(process.env.ANTNEST_UI_SSE_SOAK_WAVES ?? 36) : 12;
@@ -90,7 +94,7 @@ test(
       };
       for (const [index, interval] of slowIntervals.entries()) {
         const response = await new Promise((resolve, reject) => {
-          const request = get(url, { headers }, resolve);
+          const request = get(url, { headers: testHeaders(headers) }, resolve);
           slowRequests.push(request);
           request.once("error", reject);
         });
@@ -370,7 +374,7 @@ test(
         const response = await new Promise((resolve, reject) => {
           const request = get(
             connection.url,
-            { headers: connection.headers },
+            { headers: testHeaders(connection.headers) },
             resolve,
           );
           slowRequests.push(request);

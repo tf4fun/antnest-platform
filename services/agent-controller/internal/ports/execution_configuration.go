@@ -63,9 +63,11 @@ type ExecutionModel struct {
 }
 
 type ExecutionRuntime struct {
-	RuntimeRevision    string `json:"runtime_revision"`
-	RuntimeExecutionID string `json:"runtime_execution_id"`
-	MCPEndpoint        string `json:"mcp_endpoint"`
+	RuntimeRevision    string             `json:"runtime_revision"`
+	RuntimeExecutionID string             `json:"runtime_execution_id"`
+	MCPEndpoint        string             `json:"mcp_endpoint"`
+	ConnectionID       string             `json:"connection_id,omitempty"`
+	Credential         *RuntimeCredential `json:"credential,omitempty"`
 }
 
 type ExecutionAgent struct {

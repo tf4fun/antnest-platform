@@ -10,12 +10,15 @@ import (
 
 func TestDiscoveryHTTPRejectsContentProjectionAndRequiresActor(t *testing.T) {
 	d, store, _, source, load := discoveryFixture(t)
-	h := NewHandler(NewService(store), testToken, nil, d)
+	h := newTestHandler(t, NewService(store), d)
 	request := func(path string, in any, token string) *httptest.ResponseRecorder {
 		t.Helper()
 		body, _ := json.Marshal(in)
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
-		req.Header.Set("Authorization", token)
+		if token != "" {
+			h.Authenticate(req)
+		}
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec
@@ -25,7 +28,8 @@ func TestDiscoveryHTTPRejectsContentProjectionAndRequiresActor(t *testing.T) {
 	_ = json.Unmarshal(bad, &metadata)
 	metadata["artifact"] = "ZIP"
 	req := httptest.NewRequest(http.MethodPut, "/internal/skill-projections", bytes.NewReader(mustJSON(t, metadata)))
-	req.Header.Set("Authorization", "Bearer "+testToken)
+	h.Authenticate(req)
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 400 {
@@ -68,11 +72,12 @@ func TestDiscoveryHTTPCallerSearchKeepsFormalResultsWithoutInspectingBusyCaller(
 		t.Fatal(err)
 	}
 	source.err = failure("source_unavailable", "the foreground caller is busy")
-	handler := NewHandler(NewService(store), testToken, nil, d)
+	handler := newTestHandler(t, NewService(store), d)
 	invoke := func(input map[string]any) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/internal/skill-discovery/search", bytes.NewReader(mustJSON(t, input)))
-		req.Header.Set("Authorization", "Bearer "+testToken)
+		handler.Authenticate(req)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		return rec

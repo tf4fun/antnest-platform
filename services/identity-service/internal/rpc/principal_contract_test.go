@@ -13,6 +13,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
@@ -45,18 +46,23 @@ func TestPrincipalResponsesValidateAgainstContract(t *testing.T) {
 		replayed                 bool
 	}{
 		{"local_login", http.MethodPost, ContractRoutes["local_login"], `{"request_id":"login-1","organization_slug":"engineering","email":"member@example.com","password":"password"}`, false},
-		{"resolve_access_token", http.MethodPost, ContractRoutes["resolve_access_token"], `{"access_token":"ant_api_contract"}`, false},
+		{"resolve_access_token", http.MethodPost, ContractRoutes["resolve_access_token"], `{"access_token":"ant_api_contract","profile":"console"}`, false},
 		{"oidc_initial", http.MethodGet, "/protocol/oidc/callback?state=state&code=code", "", false},
 		{"oidc_replay", http.MethodGet, "/protocol/oidc/callback?state=state&code=code", "", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			services := &principalContractServices{rpcServicesStub: &rpcServicesStub{}, principal: principal, replayed: test.replayed}
-			handler, err := NewHandler(Dependencies{Directory: services, LocalAuth: services, OIDC: services, SCIM: services})
+			deps, sessions := authenticationDependencies(t, Dependencies{Directory: services, LocalAuth: services, OIDC: services, SCIM: services})
+			sessions.session.Principal = principal
+			handler, err := NewHandler(deps)
 			if err != nil {
 				t.Fatal(err)
 			}
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(test.method, test.path, strings.NewReader(test.body)))
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.Header.Set(serviceauth.Header, "Bearer "+gatewayTestToken)
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusOK {
 				t.Fatalf("HTTP %d: %s", response.Code, response.Body.String())
 			}

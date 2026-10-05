@@ -1,10 +1,11 @@
+import { TestRequest as Request, createTestWorkspaceHttpServer as createWorkspaceHttpServer, testFetch as fetch } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { createBootstrapHandler } from "../src/http/bootstrap-routes.ts";
-import { createWorkspaceHttpServer } from "../src/http/node-server.ts";
+
 import { workspaceFromBridgeBootstrap } from "../../src/lib/bootstrap.ts";
 
 const requireAcp = createRequire(new URL("../../../../agent-acp-service/package.json", import.meta.url));
