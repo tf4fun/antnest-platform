@@ -16,4 +16,7 @@ assert(
 
 process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));
 const { runFoundation } = await import("./foundation-run.mjs");
-await runFoundation(profile);
+await runFoundation(profile, {
+  runtimeImage: process.env.ANTNEST_E2E_RUNTIME_IMAGE,
+  candidateTag: process.env.ANTNEST_E2E_CANDIDATE_TAG,
+});

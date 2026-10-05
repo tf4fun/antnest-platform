@@ -393,7 +393,7 @@ try {
     [
       authenticatedHeaders(authentication, "edge-gateway"),
       401,
-      "caller_context_invalid",
+      "caller_context_required",
     ],
     [
       authenticatedHeaders(authentication, "edge-gateway", {

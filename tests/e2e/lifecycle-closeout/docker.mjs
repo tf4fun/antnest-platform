@@ -90,12 +90,15 @@ async function freePort() {
   return port;
 }
 
-export async function configuration(signal, beforeEffects = () => {}) {
+export async function configuration(
+  signal,
+  beforeEffects = () => {},
+  image = "antnest/antnest-runtime:local",
+) {
   const project = `antnest-lifecycle-${randomUUID().slice(0, 8)}`;
   beforeEffects(project);
   const docker = dockerClient(process.env, signal);
   const octet = await networkOctet(docker, 1 + (process.pid % 200));
-  const image = "antnest/antnest-runtime:local";
   const resolvedImage = await docker([
     "image",
     "inspect",

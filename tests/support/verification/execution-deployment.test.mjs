@@ -2,12 +2,31 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { verifyExecutionDeployment } from "./execution-deployment.mjs";
 
+test("publication and Console audit use separate authenticated ACP listeners", () => {
+  const config = fixture();
+  config.services[
+    "agent-controller"
+  ].environment.ANTNEST_AGENT_ACP_CONTROL_URL = "http://agent-acp-control:8081";
+  config.services["admin-console"] = {
+    environment: {
+      ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-workspace:8080",
+    },
+  };
+  verifyExecutionDeployment(config);
+  config.services["admin-console"].environment.ANTNEST_AGENT_ACP_SERVICE_URL =
+    "http://agent-acp-control:8081";
+  assert.throws(() => verifyExecutionDeployment(config));
+  config.services["admin-console"].environment.ANTNEST_AGENT_ACP_SERVICE_URL =
+    "http://agent-acp-control:8081/";
+  assert.throws(() => verifyExecutionDeployment(config));
+});
+
 function fixture() {
   return {
     services: {
       "agent-controller": {
         environment: {
-          ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-service:8080",
+          ANTNEST_AGENT_ACP_CONTROL_URL: "http://agent-acp-service:8080",
           ANTNEST_ACP_MAX_CONFIGURATION_BYTES: "16777216",
         },
         depends_on: { postgres: { condition: "service_healthy" } },
@@ -39,7 +58,7 @@ for (const [name, mutate] of [
     "missing publication URL",
     (f) =>
       delete f.services["agent-controller"].environment
-        .ANTNEST_AGENT_ACP_SERVICE_URL,
+        .ANTNEST_AGENT_ACP_CONTROL_URL,
   ],
   [
     "reverse Controller lookup",
@@ -119,7 +138,7 @@ test("deployment diagnostics never echo environment secrets", () => {
   const secret = "synthetic-secret-never-print";
   config.services[
     "agent-controller"
-  ].environment.ANTNEST_AGENT_ACP_SERVICE_URL =
+  ].environment.ANTNEST_AGENT_ACP_CONTROL_URL =
     `http://user:${secret}@agent-acp-service:8080`;
   assert.throws(
     () => verifyExecutionDeployment(config),
@@ -132,10 +151,10 @@ test("optional Console audit consumer must target the configured ACP origin", ()
   config.services["admin-console"] = { environment: {} };
   assert.throws(() => verifyExecutionDeployment(config));
   config.services["admin-console"].environment.ANTNEST_AGENT_ACP_SERVICE_URL =
-    "http://agent-controller:8080";
+    "http://agent-acp-service:8080";
   assert.throws(() => verifyExecutionDeployment(config));
   config.services["admin-console"].environment.ANTNEST_AGENT_ACP_SERVICE_URL =
-    "http://agent-acp-service:8080";
+    "http://agent-acp-workspace:8080";
   verifyExecutionDeployment(config);
 });
 
@@ -157,7 +176,7 @@ test("publication origin cannot rely on WHATWG path normalization", () => {
   ]) {
     config.services[
       "agent-controller"
-    ].environment.ANTNEST_AGENT_ACP_SERVICE_URL = value;
+    ].environment.ANTNEST_AGENT_ACP_CONTROL_URL = value;
     assert.throws(() => verifyExecutionDeployment(config));
   }
 });

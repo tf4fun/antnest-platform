@@ -24,7 +24,6 @@ services:
     user: "${IDENTITY_TEST_UID:?}:${IDENTITY_TEST_GID:?}"
     environment:
       ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${IDENTITY_TEST_DATABASE_PASSWORD:?}@postgres:5432/identity_auth_test?sslmode=disable
-      ANTNEST_ALLOW_PUBLIC_DEV_SECRETS: "true"
       ANTNEST_IDENTITY_ENCRYPTION_KEY: ${IDENTITY_TEST_ENCRYPTION_KEY:?}
       ANTNEST_IDENTITY_PUBLIC_BASE_URL: http://127.0.0.1
       ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: auth-test

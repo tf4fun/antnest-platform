@@ -32,6 +32,8 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
       ...{
         ANTNEST_ACP_DATABASE_URL: url ?? "postgres://unused/unused",
         ANTNEST_ACP_CLIENT_MCP_KEY: key.toString("base64"),
+        ANTNEST_ALLOW_PUBLIC_DEV_SECRETS:
+          process.env.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS ?? "false",
       },
     }),
     listen: { host: "127.0.0.1", port: 0 },

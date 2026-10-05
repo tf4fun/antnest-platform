@@ -1,9 +1,49 @@
 services:
+  agent-controller:
+    environment:
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true"
+  agent-acp-service:
+    environment:
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true"
   stage2-model:
     environment:
       ANTNEST_STAGE2_MODEL_CONTROLS: "true"
     ports:
       - 127.0.0.1:${ANTNEST_STAGE2_MODEL_HOST_PORT:?}:8080
-  jaeger:
+  stage2-client-telemetry:
+    profiles: [stage2-e2e]
+    image: node:24.21.0-bookworm-slim
+    user: 65532:65532
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      jaeger:
+        condition: service_started
+    command: [node, /opt/antnest/scripts/deployment/runtime-telemetry-ingress.mjs]
+    environment:
+      ANTNEST_SERVICE_NETWORK_PREFIX: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}
+      ANTNEST_RUNTIME_OTLP_INGRESS_IPV4: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.147
+    volumes:
+      - ./scripts/deployment:/opt/antnest/scripts/deployment:ro
+      - ./contracts/platform/development-network-contract.json:/opt/antnest/contracts/platform/development-network-contract.json:ro
     ports:
       - 127.0.0.1:${ANTNEST_STAGE2_OTLP_HOST_PORT:?}:4318
+    networks:
+      diagnostic-ingress:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.147
+        gw_priority: 1
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.126
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://'+process.env.ANTNEST_RUNTIME_OTLP_INGRESS_IPV4+':4318/v1/traces').then(r=>{if(r.status!==405)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    stop_grace_period: 10s

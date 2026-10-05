@@ -1,5 +1,23 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
+import { traceTopology } from "../observability/trace-tree.mjs";
+import { clockWarningsOnly } from "../stage3-base/trace.mjs";
+
+export function reviewStage2Trace(trace) {
+  traceTopology(trace);
+  const warnings = [
+    ...(trace.warnings ?? []),
+    ...trace.spans.flatMap((span) => span.warnings ?? []),
+  ];
+  const review = {
+    trace_id: trace.traceID,
+    strict_trace: warnings.length ? "failed" : "passed",
+    warning_count: warnings.length,
+    warnings,
+  };
+  assert(clockWarningsOnly([review]), "unreviewed Jaeger warnings");
+  return review;
+}
 
 export async function waitForTraceParents(
   read,

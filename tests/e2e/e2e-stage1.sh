@@ -4,24 +4,26 @@ set -eu
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repository_root"
 . "$repository_root/tests/support/public-development-secrets.sh"
-export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.debug.yaml}:tests/support/compose.public-development-secrets.yaml"
+export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}:tests/support/compose.public-development-secrets.yaml"
 node tests/support/storage.mjs "$repository_root/artifacts/verification/stage1"
 
-export COMPOSE_PROJECT_NAME="antnest-stage1-e2e-$$"
-export ANTNEST_POSTGRES_HOST_PORT=$((30000 + ($$ % 10000)))
-export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-antnest-stage1-e2e-$$}"
+export ANTNEST_POSTGRES_HOST_PORT="${ANTNEST_POSTGRES_HOST_PORT:-$((30000 + ($$ % 10000)))}"
+export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-${COMPOSE_PROJECT_NAME}-runtime-management}"
 network_octet=$((1 + ($$ % 200)))
-export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="10.253.${network_octet}.0/24"
-export ANTNEST_EGRESS_IPV4="10.253.${network_octet}.3"
-export ANTNEST_EGRESS_CONTROL_SUBNET="10.252.${network_octet}.0/24"
-export ANTNEST_EGRESS_CONTROL_IPV4="10.252.${network_octet}.3"
+export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-10.253.${network_octet}.0/24}"
+export ANTNEST_EGRESS_IPV4="${ANTNEST_EGRESS_IPV4:-10.253.${network_octet}.3}"
+export ANTNEST_EGRESS_CONTROL_SUBNET="${ANTNEST_EGRESS_CONTROL_SUBNET:-10.252.${network_octet}.0/24}"
+export ANTNEST_EGRESS_CONTROL_IPV4="${ANTNEST_EGRESS_CONTROL_IPV4:-10.252.${network_octet}.3}"
 
 control_url="http://${ANTNEST_EGRESS_CONTROL_IPV4}:8081"
 runtime_name="${COMPOSE_PROJECT_NAME}-runtime"
-mcp_url="http://${runtime_name}:8093/mcp"
+mcp_url="http://antnest-runtime-agent-stage1-e2e:8093/mcp"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage1-e2e.XXXXXX")
 workspace="$temporary_root/workspace"
 runtime_execution_id=""
+auth_volume="${COMPOSE_PROJECT_NAME}-native-receiver"
+runtime_image="${ANTNEST_E2E_RUNTIME_IMAGE:?use make e2e-stage1 to build an authenticated disposable fixture}"
 
 cleanup() {
   status=$?
@@ -34,6 +36,7 @@ cleanup() {
     fi
   fi
   docker rm -f "$runtime_name" >/dev/null 2>&1 || true
+  docker volume rm "$auth_volume" >/dev/null 2>&1 || true
   docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -rf -- "${temporary_root:?}"
   exit "$status"
@@ -41,7 +44,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 control_request() {
-  docker compose exec -T runtime-egress curl --fail-with-body -sS "$@"
+  printf 'Antnest-Service-Authorization: Bearer %s\n' "$(cat "${ANTNEST_SERVICE_AUTH_DIRECTORY:?}/agent-controller/tokens/runtime-egress")" \
+    | docker compose exec -T runtime-egress curl --header @- --fail-with-body -sS "$@"
 }
 
 network_version() {
@@ -59,7 +63,7 @@ mcp_request() {
   method=$2
   name=${3:-}
   response_file=/tmp/antnest-stage1-mcp-response
-  status=$(docker compose exec -T runtime-egress curl -sS \
+  status=$(cat "$temporary_root/runtime-auth/mcp.headers" | docker compose exec -T runtime-egress curl --header @- -sS \
     -o "$response_file" \
     -w '%{http_code}' \
     -X POST \
@@ -87,7 +91,7 @@ chmod 0777 "$workspace"
 
 docker compose up -d --wait postgres runtime-egress
 
-control_request "$control_url/status" | grep -q '"status":"ready"'
+docker compose exec -T runtime-egress curl --fail-with-body -sS http://127.0.0.1:8082/status | grep -q '"status":"ready"'
 network=$(control_request -X PUT \
   "$control_url/internal/agent-networks/agent-stage1-e2e")
 printf '%s' "$network" | grep -q '"tunnel_ipv4":"100.64.0.2"'
@@ -105,10 +109,18 @@ control_request -X PUT \
   "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
   >/dev/null
 
-runtime_spec="{\"agent_id\":\"agent-stage1-e2e\",\"generation\":1,\"listen\":{\"host\":\"0.0.0.0\",\"port\":8093},\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"filesystem\":{\"workspace\":\"/workspace\",\"system_skills\":\"/skills\"}}"
+authentication=$(node tests/support/runtime-receiver-fixture.mjs "$temporary_root/runtime-auth")
+docker volume create --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" "$auth_volume" >/dev/null
+docker run --rm -i --network none --entrypoint sh \
+  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
+  --mount "type=volume,src=$auth_volume,dst=/run/antnest-auth" \
+  "$runtime_image" -c 'chmod 700 /run/antnest-auth; umask 077; cat > /run/antnest-auth/callers.json; chmod 600 /run/antnest-auth/callers.json' \
+  < "$temporary_root/runtime-auth/callers.json"
+runtime_spec="{\"agent_id\":\"agent-stage1-e2e\",\"generation\":1,\"listen\":{\"host\":\"0.0.0.0\",\"port\":8093},\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"filesystem\":{\"workspace\":\"/workspace\",\"system_skills\":\"/skills\"},\"authentication\":${authentication}}"
 
 docker run -d \
   --name "$runtime_name" \
+  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
   --cap-drop ALL \
   --cap-add CHOWN \
   --cap-add DAC_OVERRIDE \
@@ -122,16 +134,21 @@ docker run -d \
   --dns 100.64.0.1 \
   --dns-option use-vc \
   --mount "type=bind,src=$workspace,dst=/workspace" \
+  --mount "type=volume,src=$auth_volume,dst=/run/antnest-auth,readonly" \
   --network "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" \
+  --network-alias antnest-runtime-agent-stage1-e2e \
   --env "ANTNEST_RUNTIME_SPEC=$runtime_spec" \
+  --env ANTNEST_SERVICE_AUTH_MODE=token \
+  --env ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true \
+  --env ANTNEST_SERVICE_AUTH_CALLERS_FILE=/run/antnest-auth/callers.json \
   --env OTEL_SDK_DISABLED=true \
-  antnest/antnest-runtime:local \
+  "$runtime_image" \
   >/dev/null
 
 wait_runtime_ready() {
   attempt=0
   while [ "$attempt" -lt 30 ]; do
-    runtime_status=$(docker exec "$runtime_name" curl -fsS http://127.0.0.1:8093/status 2>/dev/null || true)
+    runtime_status=$(cat "$temporary_root/runtime-auth/status.headers" | docker exec -i "$runtime_name" curl --header @- -fsS http://127.0.0.1:8093/status 2>/dev/null || true)
     runtime_execution_id=$(printf '%s' "$runtime_status" | sed -n 's/.*"execution_id":"\([^"]*\)".*/\1/p')
     if printf '%s' "$runtime_status" | grep -q '"generation":1' &&
       printf '%s' "$runtime_status" | grep -q '"status":"ready"' &&
@@ -152,13 +169,13 @@ mcp_tools=$(mcp_request '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":
 for tool_name in bash edit read write; do
   printf '%s' "$mcp_tools" | grep -q "\"name\":\"$tool_name\""
 done
-mcp_request '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"write","arguments":{"path":{"root":"workspace","path":"stage1-mcp.txt"},"content":"before"}}}' 'tools/call' 'write' \
+mcp_request '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"write","arguments":{"path":"stage1-mcp.txt","content":"before"}}}' 'tools/call' 'write' \
   >/dev/null
-mcp_request '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"edit","arguments":{"path":{"root":"workspace","path":"stage1-mcp.txt"},"old_string":"before","new_string":"after"}}}' 'tools/call' 'edit' \
+mcp_request '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"edit","arguments":{"path":"stage1-mcp.txt","old_string":"before","new_string":"after"}}}' 'tools/call' 'edit' \
   >/dev/null
-mcp_read=$(mcp_request '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"read","arguments":{"path":{"root":"workspace","path":"stage1-mcp.txt"},"offset":0,"limit":1024}}}' 'tools/call' 'read')
+mcp_read=$(mcp_request '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"read","arguments":{"path":"stage1-mcp.txt"}}}' 'tools/call' 'read')
 printf '%s' "$mcp_read" | grep -q '"content":"after"'
-mcp_bash=$(mcp_request '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"bash","arguments":{"command":"printf '\''%s:%s:'\'' \"$(id -u)\" \"$(id -g)\"; cat stage1-mcp.txt","working_dir":{"root":"workspace","path":"."},"env":[],"timeout_ms":1000}}}' 'tools/call' 'bash')
+mcp_bash=$(mcp_request '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"bash","arguments":{"command":"printf '\''%s:%s:'\'' \"$(id -u)\" \"$(id -g)\"; cat stage1-mcp.txt","working_dir":".","env":[],"timeout_ms":1000}}}' 'tools/call' 'bash')
 printf '%s' "$mcp_bash" | grep -q '"stdout":"1000:1000:after"'
 
 echo "Checking crash-only Runtime restart in the retained container network"
@@ -199,14 +216,14 @@ docker exec --user 1000 "$runtime_name" \
 echo "Checking control-plane isolation with an open allow_all attachment"
 for control_address in "$ANTNEST_EGRESS_IPV4" "$ANTNEST_EGRESS_CONTROL_IPV4"; do
   if docker exec --user 1000 "$runtime_name" \
-    curl -fsS --connect-timeout 1 --max-time 2 \
+    curl -sS --connect-timeout 1 --max-time 2 \
     "http://${control_address}:8081/status" \
     >/dev/null 2>&1; then
     echo "Runtime reached Egress control address ${control_address}" >&2
     exit 1
   fi
   if docker exec "$runtime_name" \
-    curl -fsS --connect-timeout 1 --max-time 2 \
+    curl -sS --connect-timeout 1 --max-time 2 \
     "http://${control_address}:8081/status" \
     >/dev/null 2>&1; then
     echo "Runtime root route reached Egress control address ${control_address}" >&2

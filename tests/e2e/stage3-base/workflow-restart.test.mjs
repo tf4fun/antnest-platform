@@ -78,7 +78,7 @@ function restart() {
   client.operationName = "HTTP POST agent-acp-service";
   for (const [key, value] of Object.entries({
     "rpc.method": "settle_agent",
-    "server.address": "agent-acp-service",
+    "server.address": "agent-acp-control",
     "antnest.outcome": "canceled",
     "error.type": "canceled",
     "antnest.error.code": "canceled",
@@ -169,6 +169,15 @@ for (const [name, mutate] of [
   [
     "wrong cancellation",
     (f) => f.set(f.get("settle-agent-client"), "error.type", "timeout"),
+  ],
+  [
+    "retired ACP listener",
+    (f) =>
+      f.set(
+        f.get("settle-agent-client"),
+        "server.address",
+        "agent-acp-service",
+      ),
   ],
   [
     "foreign canceled operation",

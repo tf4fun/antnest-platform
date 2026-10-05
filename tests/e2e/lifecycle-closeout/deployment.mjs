@@ -19,12 +19,19 @@ export function assertDeployment(config, rows, images) {
     "postgres",
     "jaeger",
     "stage3-model",
+    "temporal",
+    "diagnostic-relay",
+    "runtime-telemetry-ingress",
   ];
   const published = {
-    postgres: ["5432/tcp", config.env.ANTNEST_POSTGRES_HOST_PORT],
-    "edge-gateway": ["8080/tcp", config.env.ANTNEST_EDGE_HOST_PORT],
-    jaeger: ["16686/tcp", config.env.ANTNEST_JAEGER_UI_HOST_PORT],
-    "stage3-model": ["8080/tcp", config.env.ANTNEST_LIFECYCLE_MODEL_HOST_PORT],
+    "diagnostic-relay": [
+      ["5432/tcp", config.env.ANTNEST_POSTGRES_HOST_PORT],
+      ["16686/tcp", config.env.ANTNEST_JAEGER_UI_HOST_PORT],
+    ],
+    "edge-gateway": [["8080/tcp", config.env.ANTNEST_EDGE_HOST_PORT]],
+    "stage3-model": [
+      ["8080/tcp", config.env.ANTNEST_LIFECYCLE_MODEL_HOST_PORT],
+    ],
   };
   const names = rows.map((row) => row.labels["com.docker.compose.service"]);
   assert.deepEqual(
@@ -58,15 +65,20 @@ export function assertDeployment(config, rows, images) {
     );
     const expected = published[name];
     assert.deepEqual(
-      actual,
-      expected ? [[expected[0], "127.0.0.1", expected[1]]] : [],
+      actual.sort(),
+      expected
+        ? expected.map(([port, value]) => [port, "127.0.0.1", value]).sort()
+        : [],
       `${name} host exposure`,
     );
   }
   return {
     services: services.length,
     applicationImages: applicationServices.length,
-    publishedPorts: Object.keys(published).length,
+    publishedPorts: Object.values(published).reduce(
+      (count, entries) => count + entries.length,
+      0,
+    ),
   };
 }
 

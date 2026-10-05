@@ -168,7 +168,7 @@ test-lifecycle-fixtures:
 	node --test --test-concurrency=1 tests/e2e/lifecycle-closeout/*.test.mjs
 
 e2e-lifecycle:
-	node tests/e2e/lifecycle-closeout/run.mjs
+	node tests/support/authenticated-shell-e2e.mjs lifecycle
 
 .PHONY: e2e-organization-display
 e2e-organization-display:
@@ -435,11 +435,11 @@ compose-up: docker-build-runtime-controller
 compose-down:
 	docker compose down --remove-orphans
 
-e2e-stage1: docker-build-runtime-controller
-	sh tests/e2e/e2e-stage1.sh
+e2e-stage1:
+	node tests/support/authenticated-shell-e2e.mjs stage1
 
-e2e-stage2: docker-build
-	sh tests/e2e/e2e-stage2.sh
+e2e-stage2:
+	node tests/support/authenticated-shell-e2e.mjs stage2
 
 e2e-stage3: docker-build-stage3
 	sh tests/e2e/e2e-stage3a.sh
@@ -585,8 +585,8 @@ e2e-acp-closeout:
 e2e-agent-access:
 	ANTNEST_E2E_AGENT_ACCESS=true sh tests/e2e/e2e-stage3a.sh
 
-e2e-runtime-controller: docker-build-runtime-controller
-	sh tests/e2e/runtime-controller/run.sh
+e2e-runtime-controller:
+	node tests/support/authenticated-shell-e2e.mjs runtime-controller
 
 .PHONY: e2e-runtime-controller-observation-retry
 e2e-runtime-controller-observation-retry:

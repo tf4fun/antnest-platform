@@ -85,6 +85,15 @@ known credentials or all-zero keys (#13). PostgreSQL password checks use each
 driver's parser, including supported URL escaping/query and keyword forms,
 without exposing credentials in rejection messages or startup warnings.
 
+The Chinese quick start now includes both private development provisioners and
+the generated administrator password. ACP operations no longer describe a
+usable all-zero example key. Identity/Controller authentication fixtures use
+their random secrets without the public-secret exception. Stage1, Stage2 and
+RC's older shell acceptance entrances now provision workload/Runtime credentials
+and use the current private listeners and approved image references. These
+targets and Lifecycle build isolated candidate images from the checkout and
+verify cleanup; Stage1 no longer selects debug Compose by default.
+
 Gateway and Console private authenticated HTTP requests now bypass environment
 and default-transport proxies, including Gateway's ACP WebSocket handshakes.
 Console removes unrelated `X-Antnest-*`, Cookie and Authorization headers while

@@ -1,6 +1,39 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { waitForTraceParents } from "./stage2-trace-read.mjs";
+import {
+  waitForTraceParents,
+  reviewStage2Trace,
+} from "./stage2-trace-read.mjs";
+
+test("Stage2 accepts only reviewed clock warnings without changing raw trace evidence", () => {
+  const trace = {
+    traceID: "trace",
+    processes: { app: { serviceName: "app" } },
+    spans: [
+      {
+        traceID: "trace",
+        spanID: "root",
+        processID: "app",
+        operationName: "request",
+        warnings: [
+          "clock skew adjustment disabled; not applying calculated delta of 407.25µs",
+        ],
+      },
+    ],
+  };
+  const original = structuredClone(trace);
+  assert.equal(reviewStage2Trace(trace).strict_trace, "failed");
+  assert.deepEqual(trace, original);
+  trace.spans[0].warnings = [
+    "parent span ID=missing is not in the trace; skipping clock skew adjustment",
+  ];
+  assert.throws(() => reviewStage2Trace(trace));
+  trace.spans[0].warnings = [];
+  trace.spans[0].references = [
+    { refType: "CHILD_OF", traceID: "trace", spanID: "missing" },
+  ];
+  assert.throws(() => reviewStage2Trace(trace));
+});
 
 const span = (id, parent) => ({
   spanID: id,

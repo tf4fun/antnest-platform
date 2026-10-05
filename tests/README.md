@@ -13,6 +13,32 @@ Fixed disposable workflows explicitly select `tests/support/compose.public-devel
 and opt in through their fixture environment. This setting is absent from standard
 Compose and never inherited from a retained deployment.
 
+`make e2e-stage1`, `make e2e-stage2`, `make e2e-runtime-controller` and
+`make e2e-lifecycle` use `tests/support/authenticated-shell-e2e.mjs`. It builds
+uniquely tagged images from the current checkout, provisions private workload
+tokens/CCT keys for an isolated project, and removes its containers, volumes,
+networks, credentials and candidate tags afterward. Stage1 selects base Compose
+without the debug overlay; Stage2 and RC select the diagnostic relay explicitly.
+Direct private API probes use the fixture's allowed caller identity, real
+Identity login session and organization/Agent scope. Native
+Runtime probes also supply the per-instance credential before checking execution
+fences. Stage2 uses deterministic model replies and never calls a real Provider.
+Private logs and cleanup results live under `artifacts/verification/shell-*`.
+Stage2 starts the bounded Runtime OTLP ingress and a separate loopback ingress
+for its host-side test client's spans; Jaeger remains on the isolated
+observability network. It records the established clock-only warning review
+without changing raw spans. Missing parents and
+unknown warnings still fail normal scenarios. Its explicit SIGKILL diagnostic
+keeps business recovery assertions but excludes the killed Run and its source
+trace from stable Trace admission. Expected-503 fault probes outlive the
+standard 150-second dependency deadline.
+Lifecycle waits up to 60 seconds for RC's asynchronous Skill-volume cleanup
+after Delete, then requires every owned Runtime container and volume to be gone.
+Its Trace review also checks preparation retries, expected busy rejections and
+the deliberate graceful Controller restart against their complete topology and
+exact error classes. Raw warnings and error spans remain in the evidence;
+unrelated errors or missing parents fail admission.
+
 ## Layout
 
 Tests are placed by the boundary they exercise, not by filename suffix.

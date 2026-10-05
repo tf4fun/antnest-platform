@@ -2,6 +2,65 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertEventPage } from "./evidence.mjs";
 
+export async function waitForDeletedRuntimeResources(
+  read,
+  { timeout = 60000, interval = 250, signal } = {},
+) {
+  const deadline = AbortSignal.timeout(timeout);
+  const bounded = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let physical;
+  try {
+    while (true) {
+      bounded.throwIfAborted();
+      physical = await read();
+      bounded.throwIfAborted();
+      assert(
+        Array.isArray(physical.containers) && Array.isArray(physical.volumes),
+      );
+      if (!physical.containers.length && !physical.volumes.length) {
+        assert.deepEqual(physical, { containers: [], volumes: [] });
+        return physical;
+      }
+      await delay(interval, undefined, { signal: bounded });
+    }
+  } catch (error) {
+    if (deadline.aborted && physical)
+      throw new Error(
+        `Runtime resources remain: ${physical.containers.length} containers, ${physical.volumes.length} volumes`,
+        { cause: error },
+      );
+    throw error;
+  }
+}
+
+export function assertRuntimeStorage(physical, agentID) {
+  assert.equal(physical.containers.length, 1);
+  const mounts = physical.containers[0].Mounts;
+  const storage = Object.fromEntries(
+    [
+      ["workspace", "/workspace", true],
+      ["skills", "/skills", false],
+      ["receiver", "/run/antnest-auth", false],
+    ].map(([kind, path, writable]) => {
+      const matching = mounts.filter((mount) => mount.Destination === path);
+      assert.equal(matching.length, 1, `${kind} mount missing or ambiguous`);
+      const mount = matching[0];
+      assert.equal(mount.Type, "volume", `${kind} must use a named volume`);
+      assert.equal(mount.RW, writable, `${kind} mount permissions`);
+      assert(mount.Name, `${kind} volume identity missing`);
+      return [kind, mount.Name];
+    }),
+  );
+  assert.equal(storage.workspace, `antnest-workspace-${agentID}`);
+  assert.equal(new Set(Object.values(storage)).size, 3);
+  assert.deepEqual(
+    [...physical.volumes].sort(),
+    Object.values(storage).sort(),
+    "unmounted or unowned Runtime storage",
+  );
+  return storage;
+}
+
 export function assertStartupFailure({
   operation,
   agent,
@@ -30,7 +89,7 @@ export function assertStartupFailure({
   assert.equal(physical.containers.length, 1);
   assert.equal(physical.containers[0].Image, image);
   assert.notEqual(physical.containers[0].State.Health?.Status, "healthy");
-  assert.deepEqual(physical.volumes, [`antnest-workspace-${agentID}`]);
+  assertRuntimeStorage(physical, agentID);
 }
 
 export function assertMCPStartupLog(text, agentID, generation) {
@@ -75,6 +134,7 @@ export async function exerciseStartupFailure({
   templateBody,
   agentBody,
   image,
+  resolvedImage = image,
   docker,
 }) {
   const template = await json("/api/admin/templates", {
@@ -121,7 +181,7 @@ export async function exerciseStartupFailure({
     agent,
     physical,
     agentID,
-    image,
+    image: resolvedImage,
   });
   const container = physical.containers[0];
   assertMCPStartupLog(
@@ -130,11 +190,7 @@ export async function exerciseStartupFailure({
     container.Config.Labels["io.antnest.runtime-generation"],
   );
   const deleted = await command("delete", agentID, {});
-  assert.deepEqual(
-    await resources(agentID),
-    { containers: [], volumes: [] },
-    "business Delete left failed Runtime resources",
-  );
+  await waitForDeletedRuntimeResources(() => resources(agentID));
   assert.equal((await json(path)).lifecycle_state, "deleted");
   assert(
     !(await json("/api/admin/agents")).items.some(

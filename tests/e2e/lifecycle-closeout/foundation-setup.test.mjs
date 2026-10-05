@@ -7,6 +7,81 @@ import {
   inspectFoundationDeployment,
 } from "./foundation-setup.mjs";
 
+test("foundation uses current isolated candidates and keeps PostgreSQL/Jaeger behind the diagnostic relay", () => {
+  const config = {
+    project: "antnest-lifecycle-01234567",
+    env: {
+      ANTNEST_ADMISSION_TAG: "shell-01234567",
+      ANTNEST_EGRESS_CONTROL_SUBNET: "10.242.7.0/24",
+      ANTNEST_RUNTIME_MANAGEMENT_SUBNET: "10.243.7.0/24",
+      ANTNEST_POSTGRES_HOST_PORT: "45001",
+      ANTNEST_EDGE_HOST_PORT: "45002",
+      ANTNEST_JAEGER_UI_HOST_PORT: "45003",
+      ANTNEST_LIFECYCLE_MODEL_HOST_PORT: "45004",
+    },
+  };
+  configureFoundation(config);
+  assert.equal(
+    config.images["runtime-egress"],
+    "antnest/runtime-egress:shell-01234567",
+  );
+  assert(
+    config
+      .compose(["up"])
+      .includes("tests/integration/deployment/compose.admission.yaml"),
+  );
+  const rows = [
+    "postgres",
+    "jaeger",
+    "edge-gateway",
+    "temporal",
+    "runtime-controller",
+    "agent-acp-service",
+    "identity-service",
+    "agent-controller",
+    "admin-console",
+    "agent-ui",
+    "runtime-egress",
+    "skill-registry",
+    "stage3-model",
+    "diagnostic-relay",
+    "runtime-telemetry-ingress",
+  ].map((name) => ({
+    Config: {
+      Labels: {
+        "com.docker.compose.project": config.project,
+        "com.docker.compose.service": name,
+      },
+    },
+    State: { Running: true, Health: { Status: "healthy" } },
+    HostConfig: {
+      PortBindings:
+        name === "diagnostic-relay"
+          ? {
+              "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "45001" }],
+              "16686/tcp": [{ HostIp: "127.0.0.1", HostPort: "45003" }],
+            }
+          : ["edge-gateway", "stage3-model"].includes(name)
+            ? {
+                "8080/tcp": [
+                  {
+                    HostIp: "127.0.0.1",
+                    HostPort: name === "edge-gateway" ? "45002" : "45004",
+                  },
+                ],
+              }
+            : {},
+    },
+  }));
+  assert.equal(inspectFoundationDeployment(rows, config).services, 15);
+  rows.find(
+    (r) => r.Config.Labels["com.docker.compose.service"] === "postgres",
+  ).HostConfig.PortBindings = {
+    "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "45001" }],
+  };
+  assert.throws(() => inspectFoundationDeployment(rows, config));
+});
+
 test("foundation Skill preparation uses the selected Runtime Controller candidate", async () => {
   const compose = await readFile(
     new URL("./foundation.compose.yaml", import.meta.url),
@@ -102,6 +177,8 @@ test("foundation deployment rejects a missing Temporal service or published Temp
     "runtime-egress",
     "skill-registry",
     "stage3-model",
+    "diagnostic-relay",
+    "runtime-telemetry-ingress",
   ].map((name) => ({
     Config: {
       Labels: {
@@ -111,17 +188,18 @@ test("foundation deployment rejects a missing Temporal service or published Temp
     },
     State: { Running: true, Health: { Status: "healthy" } },
     HostConfig: {
-      PortBindings: [
-        "postgres",
-        "jaeger",
-        "edge-gateway",
-        "stage3-model",
-      ].includes(name)
-        ? { "80/tcp": [{ HostIp: "127.0.0.1" }] }
-        : {},
+      PortBindings:
+        name === "diagnostic-relay"
+          ? {
+              "5432/tcp": [{ HostIp: "127.0.0.1" }],
+              "16686/tcp": [{ HostIp: "127.0.0.1" }],
+            }
+          : ["edge-gateway", "stage3-model"].includes(name)
+            ? { "80/tcp": [{ HostIp: "127.0.0.1" }] }
+            : {},
     },
   }));
-  assert.equal(inspectFoundationDeployment(rows, config).services, 13);
+  assert.equal(inspectFoundationDeployment(rows, config).services, 15);
   assert.throws(() =>
     inspectFoundationDeployment(
       rows.filter(

@@ -138,8 +138,10 @@ trailing whitespace is removed; empty or whitespace-only values mean unset.
 conversion: `"true"` is valid, but `" true "` and `"TRUE"` fail configuration.
 
 Durations accept a positive integer followed by `ms`, `s` or `m`. Invalid
-values fail startup before the database or network is used. The all-zero key
-in the repository's `.env.example` is for disposable local data only. See
+values fail startup before the database or network is used. The repository's
+`.env.example` leaves encryption keys empty; generate private values with
+`scripts/generate-dev-env.sh`. Published passwords and uniform 32-byte keys
+are rejected by default. See
 [operations](docs/operations.md) for key handling and failure behavior.
 
 ## Dependencies

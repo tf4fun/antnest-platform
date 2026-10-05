@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { registerFixturePrincipal } from "./stage2-transport.mjs";
 
 export async function gatewayLogin(origin, organizationSlug, email, password) {
   const response = await fetch(`${origin}/api/session/login`, {
@@ -13,6 +14,7 @@ export async function gatewayLogin(origin, organizationSlug, email, password) {
   });
   assert.equal(response.status, 200, "Gateway login failed");
   const payload = await response.json();
+  registerFixturePrincipal(payload.principal);
   const pairs = response.headers
     .getSetCookie()
     .map((value) => value.split(";")[0]);

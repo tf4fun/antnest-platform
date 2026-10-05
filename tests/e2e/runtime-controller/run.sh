@@ -6,16 +6,16 @@ cd "$repository_root"
 . "$repository_root/tests/support/public-development-secrets.sh"
 export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.debug.yaml}:tests/support/compose.public-development-secrets.yaml"
 
-export COMPOSE_PROJECT_NAME="antnest-runtime-controller-e2e-$$"
-export ANTNEST_POSTGRES_HOST_PORT=$((30000 + ($$ % 5000)))
-export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT=$((40000 + ($$ % 5000)))
-export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
-export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${COMPOSE_PROJECT_NAME}-system-skills"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-antnest-runtime-controller-e2e-$$}"
+export ANTNEST_POSTGRES_HOST_PORT="${ANTNEST_POSTGRES_HOST_PORT:-$((30000 + ($$ % 5000)))}"
+export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT="${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-$((40000 + ($$ % 5000)))}"
+export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-${COMPOSE_PROJECT_NAME}-runtime-management}"
+export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-${COMPOSE_PROJECT_NAME}-system-skills}"
 network_octet=$((1 + ($$ % 200)))
-export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="10.253.${network_octet}.0/24"
-export ANTNEST_EGRESS_IPV4="10.253.${network_octet}.3"
-export ANTNEST_EGRESS_CONTROL_SUBNET="10.252.${network_octet}.0/24"
-export ANTNEST_EGRESS_CONTROL_IPV4="10.252.${network_octet}.3"
+export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-10.253.${network_octet}.0/24}"
+export ANTNEST_EGRESS_IPV4="${ANTNEST_EGRESS_IPV4:-10.253.${network_octet}.3}"
+export ANTNEST_EGRESS_CONTROL_SUBNET="${ANTNEST_EGRESS_CONTROL_SUBNET:-10.252.${network_octet}.0/24}"
+export ANTNEST_EGRESS_CONTROL_IPV4="${ANTNEST_EGRESS_CONTROL_IPV4:-10.252.${network_octet}.3}"
 
 agent_id="agent-runtime-controller-e2e-$$"
 runtime_name="antnest-runtime-${agent_id}"
@@ -40,17 +40,23 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 egress_request() {
-  docker compose exec -T runtime-egress curl --fail-with-body -sS "$@"
+  printf 'Antnest-Service-Authorization: Bearer %s\n' "$(cat "${ANTNEST_SERVICE_AUTH_DIRECTORY:?}/agent-controller/tokens/runtime-egress")" \
+    | docker compose exec -T runtime-egress curl --header @- --fail-with-body -sS "$@"
 }
 
 controller_request() {
-  curl --fail-with-body -sS "$@"
+  response=$(printf 'Antnest-Service-Authorization: Bearer %s\n' "$(cat "${ANTNEST_SERVICE_AUTH_DIRECTORY:?}/agent-controller/tokens/runtime-controller")" \
+    | curl --header @- --fail-with-body -sS "$@") || {
+      printf '%s\n' "$response" >&2
+      return 1
+    }
+  printf '%s' "$response"
 }
 
 wait_for_controller() {
   attempt=0
   while [ "$attempt" -lt 60 ]; do
-    if controller_request "$controller_url/status" 2>/dev/null | grep -q '"status":"ready"'; then
+    if docker compose exec -T runtime-controller runtime-controller --healthcheck >/dev/null 2>&1; then
       return 0
     fi
     attempt=$((attempt + 1))
@@ -61,8 +67,9 @@ wait_for_controller() {
 }
 
 docker compose up -d --wait postgres runtime-egress runtime-controller
+docker compose up -d --no-deps --wait diagnostic-relay
 
-runtime_image=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
+runtime_image=$(docker image inspect --format '{{.Id}}' "${ANTNEST_E2E_RUNTIME_IMAGE:?use make e2e-runtime-controller}")
 case "$runtime_image" in
   sha256:*) ;;
   *) echo "Runtime image did not resolve to an immutable sha256 ID" >&2; exit 1 ;;
@@ -72,7 +79,7 @@ if [ "${#runtime_image}" -ne 71 ]; then
   exit 1
 fi
 
-egress_request "$egress_url/status" | grep -q '"status":"ready"'
+docker compose exec -T runtime-egress curl --fail-with-body -sS http://127.0.0.1:8082/status | grep -q '"status":"ready"'
 egress_request -X PUT "$egress_url/internal/agent-networks/${agent_id}" | grep -q '"tunnel_ipv4":"100.64.0.2"'
 egress_request -X PUT -H 'content-type: application/json' \
   -d '{"spec":{"schema_version":1,"action":"allow_all"}}' \
@@ -82,13 +89,19 @@ egress_request -X PUT -H 'content-type: application/json' \
   "$egress_url/internal/agent-policy-assignments/${agent_id}" >/dev/null
 
 wait_for_controller
-runtime_configuration=$(printf '%s' "{\"image_ref\":\"${runtime_image}\",\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"resources\":{\"memory_bytes\":536870912,\"pids_limit\":256,\"tmpfs_bytes\":67108864}}")
+resolution=$(controller_request --get --data-urlencode "reference=${ANTNEST_E2E_RUNTIME_IMAGE}" \
+  "$controller_url/internal/runtime-images/resolve")
+printf '%s' "$resolution" | grep -q "\"image_ref\":\"${runtime_image}\""
+# The configured repository reference passes operator policy; RC freezes its
+# immutable image ID for each accepted operation.
+runtime_configuration=$(printf '%s' "{\"image_ref\":\"${ANTNEST_E2E_RUNTIME_IMAGE}\",\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"resources\":{\"memory_bytes\":536870912,\"pids_limit\":256,\"tmpfs_bytes\":67108864}}")
 initialize_payload=$(printf '%s' "{\"configuration\":${runtime_configuration}}")
 created=$(controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: initialize-${agent_id}" -d "$initialize_payload" \
   "$controller_url/internal/runtimes/${agent_id}/initialize")
 printf '%s' "$created" | grep -q '"state":"completed"'
 printf '%s' "$created" | grep -q '"lifecycle_state":"provisioned"'
+printf '%s' "$created" | grep -q "\"image_id\":\"${runtime_image}\""
 if printf '%s' "$created" | grep -q '"runtime_execution_id":'; then
   echo "Creation incorrectly asserted an execution identity" >&2
   exit 1
@@ -149,7 +162,11 @@ if [ -z "$second_execution" ] || [ "$second_execution" = "$first_execution" ]; t
   echo "Runtime restart did not produce a new execution observation" >&2
   exit 1
 fi
-stale_status=$(docker exec "$runtime_name" curl -sS -o /dev/null -w '%{http_code}' \
+connection=$(controller_request -X POST -H 'content-type: application/json' \
+  -d "{\"runtime_revision\":\"${runtime_revision}\",\"expected_execution_id\":\"${second_execution}\"}" \
+  "$controller_url/internal/runtimes/${agent_id}/connection")
+stale_status=$(printf '%s' "$connection" | node -e 'let text="";process.stdin.on("data",part=>text+=part);process.stdin.on("end",()=>{const value=JSON.parse(text);if(value.credential?.caller!=="agent-acp-service")throw new Error("private Runtime connection missing");process.stdout.write("Antnest-Service-Authorization: Bearer "+value.credential.token+"\n");});' \
+  | docker exec -i "$runtime_name" curl --header @- -sS -o /dev/null -w '%{http_code}' \
   -X POST -H 'content-type: application/json' \
   -H "X-Antnest-Expected-Execution-ID: ${first_execution}" \
   -d '{}' http://127.0.0.1:8093/mcp)

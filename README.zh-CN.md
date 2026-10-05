@@ -113,13 +113,21 @@ Antnest 仍在积极开发中，尚未发布正式版本，接口和存储结构
 
 ## 快速开始
 
-环境要求：Linux 或 macOS，安装 Docker Engine、Compose v2 和 GNU Make。
+环境要求：Linux 或 macOS，安装 Docker Engine、Compose v2、Node.js 24.21.0、
+OpenSSL 和 GNU Make。
 以下步骤仅用于本地体验。
 
 ```bash
 git clone https://github.com/tf4fun/antnest-platform.git
 cd antnest-platform
-cp .env.example .env
+# 生成独立的随机密码和加密密钥，仅打印一次管理员密码。
+scripts/generate-dev-env.sh
+
+# 生成私有的服务间认证、Identity CCT 和 Runtime 实例凭据。
+node scripts/dev-service-tokens.mjs
+set -a
+. artifacts/service-authentication/deployment.env
+set +a
 
 # 构建全部镜像（串行构建，内存占用更可控）
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
@@ -134,13 +142,21 @@ ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
 
 - Admin Console：<http://127.0.0.1:8090>
 - Agent UI：<http://127.0.0.1:8090/workspace/>
-- Jaeger：<http://127.0.0.1:16686>
 
-使用组织 `engineering`、邮箱 `admin@example.com`、密码 `antnest-admin-dev` 登录。
-先连接模型提供商，再创建模板，最后创建 Agent。只有 Edge Gateway 对外发布应用端口。
+使用组织 `engineering`、邮箱 `admin@example.com` 和生成器打印的管理员密码登录；
+密码也保存在私有 `.env` 中。先连接模型提供商，再创建模板，最后创建 Agent。
+基础 Compose 只发布 Edge Gateway 端口。PostgreSQL、Temporal 和 Jaeger 不发布宿主机端口。
+本地诊断时，在同一组启动和停止命令中显式添加 `-f compose.debug.yaml`，
+即可通过 <http://127.0.0.1:16686> 访问 Jaeger；公开部署不应加载该文件。
+诊断转发保留接收服务的认证规则，业务监听地址仍由对应服务管理。
 
-> `.env.example` 中的值是公开的开发默认值。在任何其他环境中使用前，请替换全部
-> 密码、令牌和加密密钥，详见 [SECURITY.md](SECURITY.md)。
+服务凭据输出保持私有，生成器不会覆盖已有凭据。若要在新部署中启用可选的 Skill
+学习与发现能力，生成服务凭据时添加 `--with-skill-learning`。挂载、密钥保留和轮换规则
+见 [部署认证与网络合同](contracts/platform/development-authentication.md)（英文）。
+
+`.env.example` 的密码和加密密钥均为空，Compose 要求显式配置；服务启动时拒绝公开
+凭据和重复字节密钥。生成器默认拒绝覆盖已有 `.env`，`--force` 仅用于一次性环境，
+不能轮换已有数据的凭据，详见 [SECURITY.md](SECURITY.md)。
 
 停止：`docker compose -f compose.yaml -f compose.stage3.yaml --profile stage3
 --profile observability down`，加 `-v` 会同时删除数据。
