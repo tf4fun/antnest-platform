@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { provisionTokens } from "../../scripts/dev-service-tokens.mjs";
 import { durablePath } from "./storage.mjs";
+import { publicDevelopmentSecrets } from "./public-development-secrets.mjs";
 
 export function fixtureEnvironment(inherited, { project, octet }) {
   assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/u);
@@ -14,6 +15,7 @@ export function fixtureEnvironment(inherited, { project, octet }) {
         ([key]) => !/^(?:ANTNEST_|COMPOSE_|OTEL_)/u.test(key),
       ),
     ),
+    ...publicDevelopmentSecrets(),
     COMPOSE_PROJECT_NAME: project,
     ANTNEST_SERVICE_NETWORK_PREFIX: `10.244.${octet}`,
     ANTNEST_RUNTIME_CONTROLLER_SCOPE: project,

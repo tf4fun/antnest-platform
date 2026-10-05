@@ -323,6 +323,8 @@ try {
     "-e",
     `ANTNEST_ACP_IDENTITY_URL=${fixtureOrigin}`,
     "-e",
+    "ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true",
+    "-e",
     "ANTNEST_ACP_CLIENT_MCP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "-e",
     "OTEL_SDK_DISABLED=true",

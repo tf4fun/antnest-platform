@@ -3,6 +3,8 @@ set -eu
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repository_root"
+. "$repository_root/tests/support/public-development-secrets.sh"
+export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.debug.yaml}:tests/support/compose.public-development-secrets.yaml"
 node tests/support/storage.mjs "$repository_root/artifacts/verification/stage1"
 
 export COMPOSE_PROJECT_NAME="antnest-stage1-e2e-$$"

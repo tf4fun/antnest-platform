@@ -78,7 +78,7 @@ export async function openPropagationFlow({
     });
     console.log(`Propagation ${config.project}: ${label}`);
   };
-  const request = async (path, body, key = randomUUID()) => {
+  const request = async (path, body, key = randomUUID(), timeout = 15000) => {
     signal.throwIfAborted();
     const cookies = await context.cookies(config.gateway);
     return context.request.fetch(config.gateway + path, {
@@ -90,11 +90,11 @@ export async function openPropagationFlow({
         "Idempotency-Key": key,
       },
       ...(body === undefined ? {} : { data: body }),
-      timeout: 15000,
+      timeout,
     });
   };
-  const json = async (path, body, status = 200, key) => {
-    const response = await request(path, body, key);
+  const json = async (path, body, status = 200, key, timeout) => {
+    const response = await request(path, body, key, timeout);
     assert.equal(response.status(), status, `${path}: unexpected HTTP status`);
     return response.json();
   };
@@ -543,10 +543,14 @@ export async function openPropagationFlow({
         );
       },
       async duringRegistryOutage() {
+        // Standard Compose permits 150 s dependency requests. Keep this fault
+        // probe alive past that deadline so it can assert the HTTP rejection.
         await json(
           "/api/admin/skill-sources/search",
           { query: skillName },
           503,
+          undefined,
+          165000,
         );
         const ready = await json(`/api/admin/agents/${createdId}`);
         await volume(createdId, revision1, v1);

@@ -6,12 +6,12 @@ services:
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: antnest_test_admin
-      POSTGRES_PASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}
-      ANTNEST_EGRESS_POSTGRES_PASSWORD: ${ANTNEST_EGRESS_POSTGRES_PASSWORD:-antnest-egress-dev}
-      ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}
-      ANTNEST_AGENT_ACP_POSTGRES_PASSWORD: ${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}
-      ANTNEST_IDENTITY_POSTGRES_PASSWORD: ${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}
-      ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}
+      POSTGRES_PASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:?ANTNEST_POSTGRES_ADMIN_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_EGRESS_POSTGRES_PASSWORD: ${ANTNEST_EGRESS_POSTGRES_PASSWORD:?ANTNEST_EGRESS_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:?ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_AGENT_ACP_POSTGRES_PASSWORD: ${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:?ANTNEST_AGENT_ACP_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_IDENTITY_POSTGRES_PASSWORD: ${ANTNEST_IDENTITY_POSTGRES_PASSWORD:?ANTNEST_IDENTITY_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:?ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
     healthcheck:
       test: [
           "CMD-SHELL",
@@ -46,8 +46,8 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: antnest_test_admin
-      PGPASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}
-      ANTNEST_TEMPORAL_POSTGRES_PASSWORD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
+      PGPASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:?ANTNEST_POSTGRES_ADMIN_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_TEMPORAL_POSTGRES_PASSWORD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:?ANTNEST_TEMPORAL_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
     entrypoint: [sh, /scripts/init-databases.sh]
     volumes:
       - ./scripts/temporal/init-databases.sh:/scripts/init-databases.sh:ro
@@ -61,7 +61,7 @@ services:
       temporal-databases:
         condition: service_completed_successfully
     environment:
-      SQL_PASSWORD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
+      SQL_PASSWORD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:?ANTNEST_TEMPORAL_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
     entrypoint: [sh, /scripts/setup-schema.sh]
     volumes:
       - ./scripts/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
@@ -83,7 +83,7 @@ services:
       DBNAME: antnest_temporal
       VISIBILITY_DBNAME: antnest_temporal_visibility
       POSTGRES_USER: antnest_temporal
-      POSTGRES_PWD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
+      POSTGRES_PWD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:?ANTNEST_TEMPORAL_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
       POSTGRES_SEEDS: postgres
       BIND_ON_IP: 0.0.0.0
       # All Temporal server roles share this container; keep gossip independent
@@ -135,7 +135,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ANTNEST_EGRESS_DATABASE_URL: postgres://antnest_egress:${ANTNEST_EGRESS_POSTGRES_PASSWORD:-antnest-egress-dev}@postgres:5432/antnest_egress
+      ANTNEST_EGRESS_DATABASE_URL: postgres://antnest_egress:${ANTNEST_EGRESS_POSTGRES_PASSWORD:?ANTNEST_EGRESS_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_egress
       ANTNEST_EGRESS_DATABASE_TLS_MODE: disable
       ANTNEST_EGRESS_CONTROL_LISTEN: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081
       ANTNEST_EGRESS_UDP_ADVERTISE: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}:8092
@@ -209,7 +209,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL: postgres://antnest_runtime_controller:${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}@postgres:5432/antnest_runtime_controller
+      ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL: postgres://antnest_runtime_controller:${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:?ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_runtime_controller
       ANTNEST_RUNTIME_CONTROLLER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50:8080
       ANTNEST_RUNTIME_PLATFORM: docker
       ANTNEST_DOCKER_HOST: unix:///var/run/docker.sock
@@ -302,8 +302,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ANTNEST_ACP_DATABASE_URL: postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp
-      ANTNEST_ACP_CLIENT_MCP_KEY: ${ANTNEST_ACP_CLIENT_MCP_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      ANTNEST_ACP_DATABASE_URL: postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:?ANTNEST_AGENT_ACP_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_agent_acp
+      ANTNEST_ACP_CLIENT_MCP_KEY: ${ANTNEST_ACP_CLIENT_MCP_KEY:?ANTNEST_ACP_CLIENT_MCP_KEY is required; run scripts/generate-dev-env.sh}
       ANTNEST_ACP_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5:8080
       ANTNEST_ACP_RUN_TIMEOUT: ${ANTNEST_ACP_RUN_TIMEOUT:-30m}
       ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:+http://agent-controller:8080}
@@ -445,14 +445,14 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}@postgres:5432/antnest_identity
-      ANTNEST_IDENTITY_ENCRYPTION_KEY: ${ANTNEST_IDENTITY_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${ANTNEST_IDENTITY_POSTGRES_PASSWORD:?ANTNEST_IDENTITY_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_identity
+      ANTNEST_IDENTITY_ENCRYPTION_KEY: ${ANTNEST_IDENTITY_ENCRYPTION_KEY:?ANTNEST_IDENTITY_ENCRYPTION_KEY is required; run scripts/generate-dev-env.sh}
       ANTNEST_IDENTITY_PUBLIC_BASE_URL: ${ANTNEST_EDGE_PUBLIC_BASE_URL:-http://127.0.0.1:8090}
       ANTNEST_IDENTITY_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66:8080
       ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: ${ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG:-engineering}
       ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: ${ANTNEST_BOOTSTRAP_ORGANIZATION_NAME:-Engineering}
       ANTNEST_BOOTSTRAP_ADMIN_EMAIL: ${ANTNEST_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
-      ANTNEST_BOOTSTRAP_ADMIN_PASSWORD: ${ANTNEST_BOOTSTRAP_ADMIN_PASSWORD:-antnest-admin-dev}
+      ANTNEST_BOOTSTRAP_ADMIN_PASSWORD: ${ANTNEST_BOOTSTRAP_ADMIN_PASSWORD:?ANTNEST_BOOTSTRAP_ADMIN_PASSWORD is required; run scripts/generate-dev-env.sh}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
@@ -547,8 +547,8 @@ services:
         condition: service_healthy
     environment:
       ANTNEST_TEMPORAL_ADDRESS: temporal:7233
-      ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@postgres:5432/antnest_agent_controller
-      ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:?ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_agent_controller
+      ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:?ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY is required; run scripts/generate-dev-env.sh}
       ANTNEST_AGENT_CONTROLLER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18:8080
       ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT:-5m}
@@ -642,8 +642,8 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: antnest_test_admin
-      PGPASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}
-      ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD: ${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:-antnest-skill-registry-dev}
+      PGPASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:?ANTNEST_POSTGRES_ADMIN_PASSWORD is required; run scripts/generate-dev-env.sh}
+      ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD: ${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:?ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}
     entrypoint: [sh, /scripts/init-database.sh]
     volumes:
       - ./scripts/skill-registry/init-database.sh:/scripts/init-database.sh:ro
@@ -664,7 +664,7 @@ services:
         condition: service_completed_successfully
     environment:
       ANTNEST_SKILL_REGISTRY_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82:8080
-      ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://antnest_skill_registry:${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:-antnest-skill-registry-dev}@postgres:5432/antnest_skill_registry
+      ANTNEST_SKILL_REGISTRY_DATABASE_URL: postgres://antnest_skill_registry:${ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD:?ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_skill_registry
       ANTNEST_SKILL_REGISTRY_SOURCE_URL: ${ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:+http://agent-acp-workspace:8080}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}

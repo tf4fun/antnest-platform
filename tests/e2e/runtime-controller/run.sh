@@ -3,6 +3,8 @@ set -eu
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../../" && pwd)
 cd "$repository_root"
+. "$repository_root/tests/support/public-development-secrets.sh"
+export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.debug.yaml}:tests/support/compose.public-development-secrets.yaml"
 
 export COMPOSE_PROJECT_NAME="antnest-runtime-controller-e2e-$$"
 export ANTNEST_POSTGRES_HOST_PORT=$((30000 + ($$ % 5000)))

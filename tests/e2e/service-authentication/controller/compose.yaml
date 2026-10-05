@@ -103,6 +103,7 @@ services:
       provider: {}
     environment:
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_test_admin:${CONTROLLER_TEST_DATABASE_PASSWORD:?}@postgres:5432/controller_auth_test?sslmode=disable
+      ANTNEST_ALLOW_PUBLIC_DEV_SECRETS: "true"
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${CONTROLLER_TEST_ENCRYPTION_KEY:?}
       ANTNEST_TEMPORAL_ADDRESS: temporal:7233
       ANTNEST_IDENTITY_SERVICE_URL: http://dependencies:8101

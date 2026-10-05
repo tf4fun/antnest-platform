@@ -162,6 +162,8 @@ export function composeArgs(project, args) {
     "-f",
     "compose.yaml",
     "-f",
+    "tests/support/compose.public-development-secrets.yaml",
+    "-f",
     "compose.debug.yaml",
     "-f",
     "compose.stage3.yaml",

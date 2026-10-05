@@ -132,13 +132,14 @@ Feedback and contributions are very welcome.
 ## Quick start
 
 Requirements: Linux or macOS with Docker Engine and Compose v2, Node.js 24.21.0,
-and GNU Make.
+OpenSSL and GNU Make.
 The stack below is for local evaluation only.
 
 ```bash
 git clone https://github.com/tf4fun/antnest-platform.git
 cd antnest-platform
-cp .env.example .env
+# Generate independent passwords and encryption keys; prints the admin password once.
+scripts/generate-dev-env.sh
 
 # Prepare fresh private workload, Identity CCT and Runtime instance credentials.
 node scripts/dev-service-tokens.mjs
@@ -160,9 +161,10 @@ Then open:
 - Admin Console: <http://127.0.0.1:8090>
 - Agent UI: <http://127.0.0.1:8090/workspace/>
 
-Sign in to organization `engineering` as `admin@example.com` with password
-`antnest-admin-dev`. Connect a model provider, create a Template, then create an
-Agent. The base Compose file publishes only Edge Gateway. PostgreSQL, Temporal
+Sign in to organization `engineering` as `admin@example.com` with the administrator
+password printed by the generator (also stored in the private `.env`). Connect a
+model provider, create a Template, then create an Agent. The base Compose file
+publishes only Edge Gateway. PostgreSQL, Temporal
 and Jaeger have no host ports unless you explicitly load `compose.debug.yaml`.
 For local diagnostics, add `-f compose.debug.yaml`
 to the same startup/shutdown commands; Jaeger then opens at
@@ -176,9 +178,10 @@ learning and discovery in a fresh deployment, use `--with-skill-learning` when
 preparing credentials. Follow the [deployment authentication and network contract](contracts/platform/development-authentication.md)
 for mounts, key retention and rotation.
 
-> The values in `.env.example` are public development defaults. Replace all
-> passwords, tokens and encryption keys before using any other environment. See
-> [SECURITY.md](SECURITY.md).
+`.env.example` leaves all passwords and encryption keys empty. Compose requires
+them, and services reject published credentials and uniform keys at startup.
+The generator refuses an existing `.env`; `--force` is only for a disposable
+environment and does not rotate credentials of retained data. See [SECURITY.md](SECURITY.md).
 
 Stop the stack with `docker compose -f compose.yaml -f compose.stage3.yaml
 --profile stage3 --profile observability down`. Add `-v` to delete its data.

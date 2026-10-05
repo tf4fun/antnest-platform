@@ -11,6 +11,10 @@ Docker inspection is used only as independent physical evidence and to place
 or read a synthetic workspace sentinel. It never updates service databases or
 fabricates lifecycle outcomes.
 
+The fixture environment explicitly supplies fixed database passwords and the
+`ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in through a test-only Compose override.
+Operator deployments use the [random environment generator](../../../contracts/platform/development-secrets.md).
+
 ## Running
 
 Run serially from the repository root:

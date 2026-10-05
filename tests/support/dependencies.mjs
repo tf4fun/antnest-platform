@@ -10,6 +10,7 @@ import {
 } from "../e2e/lifecycle-closeout/docker.mjs";
 import { runCommand } from "./run-command.mjs";
 import { durablePath } from "./storage.mjs";
+import { publicDevelopmentSecrets } from "./public-development-secrets.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const roles = {
@@ -33,6 +34,9 @@ export function dependencyPlan(profile, inherited = process.env) {
         ([key]) => !/^(?:ANTNEST_|COMPOSE_|OTEL_)/u.test(key),
       ),
     ),
+    // Only dependencies start; required inactive application fields are fixture
+    // values and are never mounted into running application containers.
+    ...publicDevelopmentSecrets(),
     COMPOSE_PROJECT_NAME: project,
     ANTNEST_POSTGRES_HOST_PORT: "0",
     ANTNEST_TEMPORAL_HOST_PORT: "0",

@@ -22,10 +22,14 @@ test("an E2E deployment cannot inherit retained credentials, providers or topolo
   for (const key of [
     "ANTNEST_SERVICE_AUTH_DIRECTORY",
     "ANTNEST_SKILL_REGISTRY_API_TOKEN",
-    "ANTNEST_IDENTITY_ENCRYPTION_KEY",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
   ])
     assert.equal(env[key], undefined, key);
+  assert.equal(env.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS, "true");
+  assert.equal(
+    env.ANTNEST_IDENTITY_ENCRYPTION_KEY,
+    Buffer.alloc(32).toString("base64"),
+  );
   assert.equal(env.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS, "false");
   assert.equal(env.ANTNEST_SERVICE_NETWORK_PREFIX, "10.244.45");
   assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_MANAGEMENT_IPV4, "10.243.45.5");

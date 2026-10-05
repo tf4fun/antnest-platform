@@ -56,18 +56,20 @@ test("deployment example names every service-owned database password and encrypt
     "ANTNEST_AGENT_ACP_POSTGRES_PASSWORD",
     "ANTNEST_IDENTITY_POSTGRES_PASSWORD",
     "ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD",
+    "ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD",
+    "ANTNEST_TEMPORAL_POSTGRES_PASSWORD",
     "ANTNEST_BOOTSTRAP_ADMIN_PASSWORD",
     "ANTNEST_IDENTITY_ENCRYPTION_KEY",
     "ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY",
     "ANTNEST_ACP_CLIENT_MCP_KEY",
   ])
-    assert(env[key], `missing deployment variable ${key}`);
+    assert.equal(env[key], "", `secret placeholder ${key}`);
   for (const key of [
     "ANTNEST_IDENTITY_ENCRYPTION_KEY",
     "ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY",
     "ANTNEST_ACP_CLIENT_MCP_KEY",
   ])
-    assert.equal(Buffer.from(env[key], "base64").length, 32);
+    assert.equal(env[key], "", `secret placeholder ${key}`);
   assert.equal(
     env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF,
     "antnest/antnest-runtime:local",

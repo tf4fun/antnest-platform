@@ -4,6 +4,15 @@ This document describes where tests live, how to run them from the repository
 root, which external dependencies each level needs, and the resource-hygiene
 rules every test runner follows.
 
+Deployment secret regression is in `tests/integration/deployment/development-secrets.test.mjs`:
+the generator, file mode/non-overwrite checks and all twelve unset/empty Compose
+fields run in `make test-repo` / `make test-deployment-wiring` with Compose CLI,
+without an Engine. `make e2e-deployment-wiring` uses a fresh generated `.env` and
+verifies administrator login and public-password rejection in the actual stack.
+Fixed disposable workflows explicitly select `tests/support/compose.public-development-secrets.yaml`
+and opt in through their fixture environment. This setting is absent from standard
+Compose and never inherited from a retained deployment.
+
 ## Layout
 
 Tests are placed by the boundary they exercise, not by filename suffix.
