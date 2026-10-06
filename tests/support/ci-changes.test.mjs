@@ -16,6 +16,7 @@ import {
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
+const enabled = suites.filter((suite) => !suite.disabled);
 
 test("documentation-only changes select no suites", () => {
   assert.deepEqual(
@@ -38,7 +39,7 @@ test("workflow, shared tooling, contract and Makefile changes select every suite
     "contracts/runtime/README.md",
     "Makefile",
   ])
-    assert.equal(selectSuites([file]).length, suites.length, file);
+    assert.equal(selectSuites([file]).length, enabled.length, file);
 });
 
 test("a service change selects only suites that exercise that service", () => {
@@ -46,7 +47,6 @@ test("a service change selects only suites that exercise that service", () => {
   for (const id of [
     "egress-postgres",
     "auth-egress",
-    "observation-retry",
     "shell-stage1",
     "shell-runtime-controller",
     "deployment-contracts",
@@ -78,8 +78,17 @@ test("test sources select the suites that run them", () => {
   );
 });
 
-test("an explicit full run selects every suite without any changes", () => {
-  assert.equal(selectSuites([], { all: true }).length, suites.length);
+test("an explicit full run selects every enabled suite without any changes", () => {
+  assert.deepEqual(selectSuites([], { all: true }), enabled);
+});
+
+test("disabled suites name their breakage and are never selected", () => {
+  const disabled = suites.filter((suite) => suite.disabled);
+  assert(disabled.length > 0);
+  for (const suite of disabled) {
+    assert.equal(typeof suite.disabled, "string");
+    assert(!selectSuites(["Makefile"], { all: true }).includes(suite));
+  }
 });
 
 test("the catalog is unique and refers to existing entry points", () => {
@@ -117,16 +126,19 @@ test("matrix entries carry the tier and scalar setup flags", () => {
     new Set(["A", "B"]),
   );
   const entry = matrixEntry(
-    suites.find((suite) => suite.id === "observation-retry"),
+    suites.find((suite) => suite.id === "auth-runtime-controller"),
   );
   assert.equal(entry.setup_go, false);
   assert.equal(entry.setup_chromium, false);
+  assert.equal(entry.images, "antnest-runtime");
   assert.equal(
-    entry.images,
-    "antnest-runtime,agent-acp-service,runtime-egress",
+    entry.pull,
+    "postgres:17.11-bookworm node:24.21.0-bookworm-slim",
   );
-  assert.equal(entry.pull, "postgres:17.11-bookworm");
-  assert.equal(entry.run, "make e2e-runtime-controller-observation-retry");
+  assert.equal(
+    entry.run,
+    "node tests/e2e/service-authentication/runtime-controller/run.mjs",
+  );
   for (const row of include)
     for (const value of Object.values(row))
       assert(["string", "boolean"].includes(typeof value));

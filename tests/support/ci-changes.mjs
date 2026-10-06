@@ -26,10 +26,16 @@ const compose = [
 const service = (...names) => names.map((name) => `services/${name}/**`);
 const runtime = ["runtimes/antnest-runtime/**", ...rust];
 
+// Compose dependencies start with --pull never, so third-party images are
+// pulled before the suite runs.
+const base = ["postgres:17.11-bookworm", "node:24.21.0-bookworm-slim"];
+const temporal = [...base, "temporalio/admin-tools:1.32.0"];
+
 // Prose never changes test behavior; contract and test sources may be parsed.
 const ignored = ["**/*.md", "LICENSE"];
 const parsedProse = ["contracts/**", "tests/**"];
 
+// A `disabled` suite is never selected; the reason names the known breakage.
 // `images` are prebuilt as antnest/<image>:local before `run`, for runners
 // that start them with `--no-build` or inspect them without building.
 export const suites = [
@@ -44,6 +50,7 @@ export const suites = [
       ...rust,
       ...compose,
     ],
+    pull: base,
     run: ["make test-egress-postgres"],
   },
   {
@@ -57,6 +64,7 @@ export const suites = [
       ...go,
       ...compose,
     ],
+    pull: base,
     run: ["make test-runtime-controller-postgres"],
   },
   {
@@ -70,6 +78,7 @@ export const suites = [
       ...go,
       ...compose,
     ],
+    pull: base,
     run: ["make test-identity-postgres"],
   },
   {
@@ -83,6 +92,8 @@ export const suites = [
       ...go,
       ...compose,
     ],
+    images: ["temporal"],
+    pull: temporal,
     run: ["make test-agent-controller-postgres"],
   },
   {
@@ -95,6 +106,7 @@ export const suites = [
       "tests/integration/agent-acp-service/**",
       ...compose,
     ],
+    pull: base,
     run: ["make test-agent-acp-postgres", "make test-agent-acp-audit"],
   },
   {
@@ -169,7 +181,11 @@ export const suites = [
     name: `${title} service authentication`,
     tier: "b",
     setup: [],
-    images: name === "controller" ? ["temporal"] : [],
+    images: {
+      controller: ["temporal"],
+      "runtime-controller": ["antnest-runtime"],
+    }[name],
+    pull: name === "controller" ? temporal : base,
     paths: [
       ...paths,
       `tests/e2e/service-authentication/${name}/**`,
@@ -189,6 +205,8 @@ export const suites = [
       "tests/integration/deployment/**",
       ...compose,
     ],
+    images: ["temporal"],
+    pull: temporal,
     run: [
       "node tests/e2e/service-authentication/deployment-credentials/run.mjs",
       "node tests/e2e/service-authentication/development-pki/run.mjs",
@@ -202,7 +220,9 @@ export const suites = [
     tier: "b",
     setup: [],
     images: ["antnest-runtime", "agent-acp-service", "runtime-egress"],
-    pull: ["postgres:17.11-bookworm"],
+    pull: base,
+    disabled:
+      "its Compose override still joins the `development` network that #32 removed",
     paths: [
       ...service("runtime-controller", "runtime-egress", "agent-acp-service"),
       ...runtime,
@@ -224,6 +244,7 @@ export const suites = [
     name,
     tier: "b",
     setup: [],
+    pull: base,
     paths: [
       ...service(...owners),
       ...runtime,
@@ -260,6 +281,7 @@ export const suites = [
       "skill-registry",
       "admin-console",
     ],
+    pull: temporal,
     paths: [
       "services/**",
       ...runtime,
@@ -278,6 +300,7 @@ export const suites = [
     name: "Skill Registry discovery",
     tier: "b",
     setup: [],
+    pull: base,
     paths: [
       ...service("skill-registry"),
       "tests/e2e/skill-registry/**",
@@ -292,6 +315,7 @@ export const suites = [
     name: "Skill Registry Admin Console discovery",
     tier: "b",
     setup: ["admin-web", "chromium"],
+    pull: base,
     paths: [
       ...service("skill-registry", "admin-console"),
       "tests/e2e/skill-registry/**",
@@ -306,6 +330,9 @@ export const suites = [
     name: "Skill Registry temporary runtime",
     tier: "b",
     setup: [],
+    pull: base,
+    disabled:
+      "the Runtime container exits before publishing its port, also outside CI",
     paths: [
       ...runtime,
       "tests/e2e/skill-registry/**",
@@ -318,6 +345,9 @@ export const suites = [
     name: "Skill learning runtime preparation",
     tier: "b",
     setup: [],
+    pull: base,
+    disabled:
+      "the Runtime container exits before publishing its port, as in the temporary runtime suite",
     paths: [...runtime, "tests/e2e/skill-learning/**"],
     run: ["make e2e-skill-learning-runtime"],
   },
@@ -370,11 +400,12 @@ export function selectSuites(files, { all = false } = {}) {
   );
   return suites.filter(
     (suite) =>
-      all ||
-      global ||
-      changed.some((file) =>
-        suite.paths.some((glob) => matchesGlob(file, glob)),
-      ),
+      !suite.disabled &&
+      (all ||
+        global ||
+        changed.some((file) =>
+          suite.paths.some((glob) => matchesGlob(file, glob)),
+        )),
   );
 }
 
@@ -438,7 +469,7 @@ function main() {
     "",
     ...suites.map(
       (suite) =>
-        `- ${selected.includes(suite) ? "run" : "skip"}: ${suite.name} (tier ${suite.tier.toUpperCase()})`,
+        `- ${suite.disabled ? "disabled" : selected.includes(suite) ? "run" : "skip"}: ${suite.name} (tier ${suite.tier.toUpperCase()})${suite.disabled ? `: ${suite.disabled}` : ""}`,
     ),
   ].join("\n");
   if (process.env.GITHUB_STEP_SUMMARY)

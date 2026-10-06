@@ -187,7 +187,8 @@ Each suite uploads `artifacts/verification/` (without fixture credentials) as
 the `evidence-<suite>` artifact. The `Integration checks` job is the single
 required status; it fails if suite selection or any selected suite fails. Add a
 suite by extending the catalog; its unit tests check that every `make` target
-and runner it names exists.
+and runner it names exists. A suite with a `disabled` reason stays in the
+catalog but is never selected until its known breakage is fixed.
 
 ## Resource hygiene
 
