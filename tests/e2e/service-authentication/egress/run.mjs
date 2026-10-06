@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
+  chmodSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -26,7 +27,12 @@ const evidence = resolve(
   project,
 );
 const directory = resolve(evidence, "credentials");
-mkdirSync(directory, { recursive: true, mode: 0o700 });
+mkdirSync(evidence, { recursive: true, mode: 0o700 });
+// Runtime Egress runs as root with every capability dropped, so it cannot
+// bypass permissions on files owned by the invoking user. The credentials are
+// group-readable and the container joins that group instead.
+mkdirSync(directory, { mode: 0o750 });
+chmodSync(directory, 0o750);
 const keys = Object.fromEntries(
   ["current", "next", "wrong", "context"].map((name) => [
     name,
@@ -34,8 +40,9 @@ const keys = Object.fromEntries(
   ]),
 );
 writeFileSync(resolve(directory, "fixture.json"), JSON.stringify(keys), {
-  mode: 0o600,
+  mode: 0o640,
 });
+chmodSync(resolve(directory, "fixture.json"), 0o640);
 const saveCallers = (tokens) => {
   const digest = (value) =>
     "sha256:" + createHash("sha256").update(value).digest("hex");
@@ -45,8 +52,9 @@ const saveCallers = (tokens) => {
       "agent-controller": tokens.map(digest),
       "skill-registry": [digest(keys.wrong)],
     }),
-    { mode: 0o600 },
+    { mode: 0o640 },
   );
+  chmodSync(resolve(directory, "callers.next.json"), 0o640);
   renameSync(
     resolve(directory, "callers.next.json"),
     resolve(directory, "callers.json"),
@@ -126,6 +134,7 @@ try {
     ...process.env,
     EGRESS_AUTH_IMAGE: image,
     EGRESS_AUTH_DIRECTORY: directory,
+    EGRESS_AUTH_GID: String(process.getegid()),
     EGRESS_AUTH_DATABASE_PASSWORD: randomBytes(32).toString("hex"),
     EGRESS_AUTH_CONTROL_SUBNET: `10.242.${octet}.0/24`,
     EGRESS_AUTH_CONTROL_IP: `10.242.${octet}.10`,

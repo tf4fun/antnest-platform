@@ -189,10 +189,6 @@ export const suites = [
       "runtime-controller": ["antnest-runtime"],
     }[name],
     pull: name === "controller" ? temporal : base,
-    disabled:
-      name === "egress"
-        ? "fixture credentials are unreadable by the capability-dropped Egress on a native Linux daemon (#118)"
-        : undefined,
     paths: [
       ...paths,
       `tests/e2e/service-authentication/${name}/**`,
