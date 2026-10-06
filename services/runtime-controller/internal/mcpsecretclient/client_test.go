@@ -2,8 +2,6 @@ package mcpsecretclient
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +12,11 @@ import (
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
-func TestResolverPinsLocationAndRejectsWrongOrUnboundedValues(t *testing.T) {
+func TestResolverPinsLocationAndRejectsWrongNamesOrUnboundedValues(t *testing.T) {
 	secret := "synthetic-private-resolver-canary"
-	digest := sha256.Sum256([]byte(secret))
-	servers := []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "sha256:" + hex.EncodeToString(digest[:4])}}}}
+	servers := []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef"}}}}
 	source := &deployment.MCPTemplateSource{OrganizationID: "org", TemplateID: "template", Revision: 7}
-	for _, body := range []string{`{"docs":{"API_KEY":"` + secret + `"}}`, `{"docs":{"API_KEY":"wrong"}}`, `{"docs":{"OTHER":"` + secret + `"}}`, `{"docs":{"API_KEY":"` + secret + `"},"other":{}}`, `{"docs":{"API_KEY":"` + secret + `","API_KEY":"` + secret + `"}}`, strings.Repeat(" ", 65537)} {
+	for _, body := range []string{`{"docs":{"API_KEY":"` + secret + `"}}`, `{"docs":{"API_KEY":"\u0000"}}`, `{"docs":{"OTHER":"` + secret + `"}}`, `{"docs":{"API_KEY":"` + secret + `"},"other":{}}`, `{"docs":{"API_KEY":"` + secret + `","API_KEY":"` + secret + `"}}`, strings.Repeat(" ", 65537)} {
 		t.Run(body[:min(20, len(body))], func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != "POST" || r.URL.Path != "/internal/managed-mcp-secrets/resolve" {

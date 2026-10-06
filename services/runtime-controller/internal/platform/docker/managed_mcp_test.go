@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
@@ -39,5 +40,8 @@ func TestManagedMCPIsOnlyInjectedIntoRuntimeBootstrapAndChangesPhysicalDigest(t 
 	}
 	if !engine.created.Mounts["/skills"].ReadOnly || engine.created.Mounts["/workspace"].ReadOnly {
 		t.Fatal("MCP altered workspace/Skill mount ownership")
+	}
+	if got := engine.created.Tmpfs["/run/antnest-mcp-home"]; got != fmt.Sprintf("rw,noexec,nosuid,nodev,size=%d,mode=0711,uid=0,gid=0", value.Resources.TmpfsBytes) {
+		t.Fatal("managed MCP private cache tmpfs missing or not bounded", got)
 	}
 }

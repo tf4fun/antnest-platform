@@ -407,6 +407,8 @@ When any are present, `managed_mcp_template` pins organization_id, template_id
 and revision; inline values and keep actions are rejected at this boundary.
 These descriptors and source are frozen in the deployment digest and journal.
 RC resolves values only through its authenticated Controller bootstrap client.
+Controller verifies AEAD and the opaque HMAC fingerprint; RC checks exact names
+and resolved size/encoding bounds, without deriving or exposing the HMAC key.
 `ANTNEST_AGENT_CONTROLLER_URL` must be configured for such deployments; RC's
 service-token directory must include the Controller token.
 
@@ -416,6 +418,9 @@ after container creation and before start. A Docker-created unlabeled empty
 replacement is refused. Replay rechecks the actual mount. Disable, replacement
 and Delete remove the owned generation's private volume; Enable resolves the
 Agent's retained frozen source. No value enters RuntimeSpec, Docker environment,
-labels or deployment digests. The private volume survives ordinary container
+labels or deployment digests. MCP cache HOME/TMPDIR/XDG directories use a separate root-owned
+0711 noexec/nosuid/nodev tmpfs at `/run/antnest-mcp-home`, bounded by
+`resources.tmpfs_bytes` across all servers. Runtime creates UID-owned 0700
+children. This cache resets on container restart. The bootstrap volume survives ordinary container
 restarts; it is excluded from workspace backup and rebuilt from Controller on
 restore. See the [shared contract](../../../contracts/runtime/managed-mcp-secrets.md).

@@ -54,15 +54,15 @@ func TestLifecycleRPCPinsManagedSecretSourceAndRejectsInlineWrites(t *testing.T)
 		if action != "initialize" {
 			revision = `"expected_revision":"` + string(testRuntimeRevision) + `",`
 		}
-		body := `{` + revision + `"configuration":{"managed_mcp_template":{"organization_id":"org","template_id":"template","revision":3},"mcp_servers":[{"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":"sha256:1234abcd"}}}]}}`
+		body := `{` + revision + `"configuration":{"managed_mcp_template":{"organization_id":"org","template_id":"template","revision":3},"mcp_servers":[{"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}}}]}}`
 		r := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/"+action, strings.NewReader(body))
 		r.Header.Set("Idempotency-Key", "secret-request")
 		w := httptest.NewRecorder()
 		newTestHandler(t, service).ServeHTTP(w, r)
-		if w.Code != 200 || service.configuration.ManagedMCPTemplate == nil || service.configuration.ManagedMCPTemplate.Revision != 3 || service.configuration.MCPServers[0].SecretEnv["API_KEY"].Fingerprint != "sha256:1234abcd" {
+		if w.Code != 200 || service.configuration.ManagedMCPTemplate == nil || service.configuration.ManagedMCPTemplate.Revision != 3 || service.configuration.MCPServers[0].SecretEnv["API_KEY"].Fingerprint != "hmac-sha256:0123456789abcdef0123456789abcdef" {
 			t.Fatal("frozen secret metadata lost at RPC boundary", w.Code)
 		}
-		bad := strings.Replace(body, `{"set":true,"fingerprint":"sha256:1234abcd"}`, `{"value":"private-value"}`, 1)
+		bad := strings.Replace(body, `{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}`, `{"value":"private-value"}`, 1)
 		r = httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/"+action, strings.NewReader(bad))
 		r.Header.Set("Idempotency-Key", "secret-invalid")
 		w = httptest.NewRecorder()

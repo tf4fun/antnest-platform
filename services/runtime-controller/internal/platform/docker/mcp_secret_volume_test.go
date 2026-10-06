@@ -4,8 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -42,8 +40,7 @@ func mcpSecretArchive(t *testing.T, data []byte, mode int64) []byte {
 func TestManagedMCPMountChecksPermissionsContentAndActualVolume(t *testing.T) {
 	key := deployment.Key{AgentID: "agent-1", Generation: 7}
 	source := &deployment.MCPTemplateSource{OrganizationID: "org", TemplateID: "template", Revision: 1}
-	digest := sha256.Sum256([]byte("mcp-private-canary"))
-	servers := []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "sha256:" + hex.EncodeToString(digest[:4])}}}}
+	servers := []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef"}}}}
 	data := []byte(`{"docs":{"API_KEY":"mcp-private-canary"}}`)
 	engine := &instanceArchiveEngine{fakeEngine: newFakeEngine(), archive: mcpSecretArchive(t, data, 0400)}
 	writer, err := NewMCPVolumeWriter(engine, "preparer:local", "test-controller", mcpResolverStub{})
@@ -67,9 +64,9 @@ func TestManagedMCPMountChecksPermissionsContentAndActualVolume(t *testing.T) {
 	if err := writer.VerifyRuntimeMount(t.Context(), key, source, servers, engine.container.ID); err == nil {
 		t.Fatal("world-readable secret file admitted")
 	}
-	engine.archive = mcpSecretArchive(t, []byte(`{"docs":{"API_KEY":"different"}}`), 0400)
+	engine.archive = mcpSecretArchive(t, []byte(`{"docs":{"OTHER":"different"}}`), 0400)
 	if err := writer.VerifyRuntimeMount(t.Context(), key, source, servers, engine.container.ID); err == nil {
-		t.Fatal("changed secret content admitted")
+		t.Fatal("wrong secret names admitted")
 	}
 	engine.archive = mcpSecretArchive(t, data, 0400)
 	engine.container.Mounts[0].ReadWrite = true
@@ -95,7 +92,7 @@ func TestRuntimeNeverStartsBeforeManagedMCPMountAdmission(t *testing.T) {
 	driver.config.MCPMountGate = rejectingMCPGate{}
 	value := testDeployment()
 	value.ManagedMCPTemplate = &deployment.MCPTemplateSource{OrganizationID: "org", TemplateID: "template", Revision: 1}
-	value.RuntimeSpec.MCPServers = []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "sha256:1234abcd"}}}}
+	value.RuntimeSpec.MCPServers = []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef"}}}}
 	digest, err := driver.DeploymentDigest(value)
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +107,7 @@ func TestManagedSecretDeploymentDigestPinsTemplateRevision(t *testing.T) {
 	driver := newTestDriver(t, newFakeEngine())
 	value := testDeployment()
 	value.ManagedMCPTemplate = &deployment.MCPTemplateSource{OrganizationID: "org", TemplateID: "template", Revision: 1}
-	value.RuntimeSpec.MCPServers = []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "sha256:1234abcd"}}}}
+	value.RuntimeSpec.MCPServers = []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef"}}}}
 	first, err := driver.DeploymentDigest(value)
 	if err != nil {
 		t.Fatal(err)

@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"strings"
@@ -40,8 +39,7 @@ func TestManagedMCPSecretsPreparedInStoppedDockerVolume(t *testing.T) {
 	scope := "rc-mcp-test-" + hex.EncodeToString(nonce[:])
 	key := deployment.Key{AgentID: "agent-" + hex.EncodeToString(nonce[:]), Generation: 1}
 	source := &deployment.MCPTemplateSource{OrganizationID: "org", TemplateID: "template", Revision: 1}
-	digest := sha256.Sum256([]byte("docker-managed-secret-canary"))
-	servers := []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "sha256:" + hex.EncodeToString(digest[:4])}}}}
+	servers := []deployment.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]deployment.MCPSecretDescriptor{"API_KEY": {Set: true, Fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef"}}}}
 	resolver := &volumeSecretResolver{}
 	writer, err := NewMCPVolumeWriter(client, image, scope, resolver)
 	if err != nil {
