@@ -30,6 +30,13 @@ Wrapping AAD length-prefixes that complete payload AAD and the exact master-key
 ID. This binds key labels without preventing re-wrapping of an unchanged payload.
 Only NULL wrapped keys with ID `local-v1` use historical, unmodified identity AAD.
 
+`Authenticate` verifies an envelope before deriving a domain-separated HMAC key
+from its protected data key. It never exports that key. MACs bind the record,
+service purpose, caller-supplied MAC purpose and value; master-key re-wrapping
+preserves them. A fresh envelope has an independent key. This supports opaque
+credential fingerprints and request receipts without unkeyed secret hashes.
+Legacy records must be converted to envelopes before using this operation.
+
 Run standalone checks with `GOWORK=off go test -race -count=1 ./...` and
 `GOWORK=off go vet ./...`. Tests cover mixed rings, same-key relabeling,
 cross-record/service tampering, malformed metadata, legacy conversion, key
