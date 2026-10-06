@@ -10,7 +10,7 @@ No external model or operator credential is used.
 An existing Agent/Runtime and saved Provider are created before rotation. The
 fixture then adds a second key to Controller and Identity, switches their active
 IDs, runs each real binary's `rekey --batch-size 1`, repeats the commands, verifies
-all three sealed tables finish at zero, and removes the old key. Historical OIDC
+all four sealed tables finish at zero, and removes the old key. Historical OIDC
 rows are generated only from the fixture's synthetic key/data. Business fields
 and the native Runtime's container, start time, restart count and spec digest
 must remain unchanged. Existing Gateway sessions and a new login still work;

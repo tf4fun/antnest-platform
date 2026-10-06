@@ -31,7 +31,11 @@ configuration, and then Runtime replacement completes. The accepted Run keeps
 its captured execution. The existing connection can use the newly published
 Runtime, and reconnect replays unchanged history. Alpha's counter is reused
 before the Rebuild; beta starts at one afterwards. Both children run as
-UID/GID 1000 with an explicit environment allowlist. Agent deletion removes the
+UID 2000/GID 1000 with an explicit environment allowlist. Model Bash stays UID
+1000 and must be denied environ/memory/fd inspection and ptrace. Secret values
+must not appear in Template reads, Runtime specs or traces; reads are descriptors,
+writes are value/keep, and omission clears only the new head. Disable/Enable
+must retain the Agent's frozen secret revision. Agent deletion removes the
 container and its storage.
 
 ## Trace rules
@@ -41,5 +45,7 @@ connection. The Provider `traceparent` identifies the HTTP CLIENT span under
 `model.complete`. Per-Run preparation, dispatch, Runtime descendants and durable
 closure must be present. Only the deliberately invoked alpha failure Tool and
 the exact busy rejection may have expected error spans. Lifecycle absence probes,
-Trace warnings and invalid timing are strict failures. Topology and business
-results never turn a failed strict gate into a pass.
+Unknown Trace warnings and invalid logical timing are failures. Only the shared,
+reviewed clock-skew warning class can be reported as a timing-only limitation;
+strict diagnostics remain explicit. Missing parents, privacy and topology never
+become passes because business results succeeded.

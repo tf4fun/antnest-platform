@@ -64,9 +64,15 @@ Admin Console edits managed MCP settings in Templates; see the service-local
   name, description, source and manifest path, not complete Skill bodies or
   executables. Missing optional content is allowed; truncation and unreadable
   content have bounded diagnostics.
-- Managed stdio processes run as UID/GID 1000 with the existing privilege and
-  network isolation. Only their explicit environment plus the minimal executor
-  environment is inherited, never the Supervisor's credentials or RuntimeSpec.
+- Managed stdio processes run as distinct UIDs 2000..2007 with workspace GID
+  1000, the Executor's tunnel policy and no capabilities. The root entry reads
+  only its own values from RC's root-only read-only bootstrap, then injects them
+  immediately before exec. Public environment and minimal process defaults are
+  explicit; Supervisor credentials and RuntimeSpec are never inherited. UID
+  1000 tools cannot inspect another UID's environ, memory, descriptors or ptrace
+  it. MCP implementations and executable dependencies remain trusted; UID
+  isolation does not prevent a server deliberately leaking its own secrets.
+  See the [secret contract](../contracts/runtime/managed-mcp-secrets.md).
 - A completed Tool/turn/Run does not end the Runtime environment. Ordinary Bash
   background jobs and managed MCP processes can both persist across calls.
   There is no per-call container-wide process termination, and MCP processes

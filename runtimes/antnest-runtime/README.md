@@ -283,6 +283,6 @@ batches; this receiver gate does not complete the platform workflow.
 Managed MCP processes use dedicated reserved identities (UIDs 2000..2007),
 sharing only workspace GID 1000. Secret configuration is read from an RC-owned
 root-only bootstrap mount, never the Runtime/launcher environment. See the
-[managed secret contract](../../contracts/runtime/managed-mcp-secrets.md). RC
-private-volume delivery and Console consumption follow separate owner batches
-before the complete cross-service regression.
+[managed secret contract](../../contracts/runtime/managed-mcp-secrets.md). RC owns
+private-volume delivery and Console the write-only editor; root managed-MCP
+acceptance verifies the complete cross-service flow.

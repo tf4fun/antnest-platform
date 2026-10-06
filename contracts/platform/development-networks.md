@@ -1,7 +1,7 @@
 # Development purpose networks
 
 This deployment contract belongs to [#32](https://github.com/tf4fun/antnest-platform/issues/32).
-The [machine contract](development-network-contract.json) is frozen at version 1;
+The [machine contract](development-network-contract.json) is version 2;
 Compose wiring, actual deployment and full cross-service acceptance have passed
 for the disposable-development token/HTTP profile. The
 [deployment transports](../../scripts/deployment/README.md) separately passed
@@ -65,7 +65,7 @@ never disconnect or remove another project's network to make room.
 | Network                | Fixed peers and purpose                                                              |
 | ---------------------- | ------------------------------------------------------------------------------------ |
 | `edge`                 | Gateway, Console, UI, ACP workspace, Registry source client and optional diagnostics |
-| `controller-clients`   | Controller, Gateway, Console, UI, ACP and optional diagnostics                       |
+| `controller-clients`   | Controller, Gateway, Console, UI, ACP, RC bootstrap and optional diagnostics          |
 | `controller-acp`       | Controller and ACP's separate control listener                                       |
 | `controller-runtime`   | Controller, RC and optional diagnostics                                              |
 | `identity-clients`     | Identity and its authenticated consumers, plus optional diagnostics                  |
@@ -92,8 +92,11 @@ Every workload destination uses a canonical receiver name mapped through
 multihomed peer must not select its observation, database or outbound interface.
 ACP uses the already declared `agent-acp-workspace` and `agent-acp-control`
 aliases. Only `apply-execution-snapshot` and `settle-agent` use the control alias.
-The contract tests derive all 23 current caller/receiver pairs from the owning
+The contract tests derive all 24 current caller/receiver pairs from the owning
 catalogs, and verify both network membership and destination selection.
+Version 2 adds RC at suffix 24 so its authenticated secret resolver reaches
+Controller's primary listener at suffix 18. It does not expose Controller on
+Runtime management or add a circular startup dependency.
 
 The existing Controller/Egress and Runtime management subnet settings remain
 separate from the `/28` prefix. Management reserves fixed infrastructure addresses

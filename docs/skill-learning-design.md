@@ -611,8 +611,8 @@ Run" or a single process listing does not substitute for this mechanism. Waiting
 not hold the execution slot, does not kill user processes, and does not stop idle
 managed MCP servers.
 
-An idle managed MCP server still runs as UID 1000 like the other executors, so in
-principle it can write files outside protocol calls. Blocking dispatch does not revoke
+An idle managed MCP server has its own UID but shares workspace GID 1000, so in
+principle it can write group-writable workspace paths outside protocol calls. Blocking dispatch does not revoke
 its file permissions. The design therefore accepts **managed-call quiescence plus
 before/after content verification**. It does not promise strong filesystem isolation
 or an atomic compare-and-swap. The post-commit digest must match the target content.
@@ -977,4 +977,3 @@ The following remain open:
   periodic curation, and one-click Registry publishing are outside v1 and are
   planned as separate projects. The handoff to manual export, administrator
   upload, and template rebuild can be validated separately.
-

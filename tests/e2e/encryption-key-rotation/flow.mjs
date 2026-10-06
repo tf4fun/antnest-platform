@@ -123,12 +123,24 @@ export async function rotatePlatformKeys({ config, docker, compose, fixture }) {
       "kid2",
       tables,
     );
-  assert.equal(await rekey("agent-controller", ["provider_connections"]), 1);
+  assert.equal(
+    await rekey("agent-controller", [
+      "provider_connections",
+      "managed_mcp_secrets",
+    ]),
+    1,
+  );
   assert.equal(
     await rekey("identity-service", ["oidc_providers", "oidc_auth_sessions"]),
     2,
   );
-  assert.equal(await rekey("agent-controller", ["provider_connections"]), 0);
+  assert.equal(
+    await rekey("agent-controller", [
+      "provider_connections",
+      "managed_mcp_secrets",
+    ]),
+    0,
+  );
   assert.equal(
     await rekey("identity-service", ["oidc_providers", "oidc_auth_sessions"]),
     0,

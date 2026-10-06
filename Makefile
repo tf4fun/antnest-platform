@@ -602,10 +602,10 @@ e2e-runtime-controller-observation-retry:
 
 .PHONY: e2e-managed-mcp-v1 e2e-managed-mcp-v2
 e2e-managed-mcp-v1:
-	ANTNEST_E2E_MANAGED_MCP=true ANTNEST_E2E_MANAGED_MCP_VERSION=1 sh tests/e2e/e2e-stage3a.sh
+	node tests/e2e/managed-mcp/secrets-docker.mjs 1
 
 e2e-managed-mcp-v2:
-	ANTNEST_E2E_MANAGED_MCP=true ANTNEST_E2E_MANAGED_MCP_VERSION=2 sh tests/e2e/e2e-stage3a.sh
+	node tests/e2e/managed-mcp/secrets-docker.mjs 2
 
 .PHONY: test-acp-persistence-fixtures e2e-acp-persistence
 test-acp-persistence-fixtures:

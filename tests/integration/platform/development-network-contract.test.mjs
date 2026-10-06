@@ -44,7 +44,7 @@ test("private bridge isolation is an explicit contract independent of token iden
 
 test("every current workload pair shares the receiver's explicitly bound purpose network", () => {
   const contract = readContract();
-  assert.equal(contract.version, 1);
+  assert.equal(contract.version, 2);
   assert.equal(contract.status, "integration-admitted");
   assert.equal(
     contract.service_prefix_environment,
@@ -74,7 +74,7 @@ test("every current workload pair shares the receiver's explicitly bound purpose
       }
     }
   }
-  assert.equal(pairs.size, 23);
+  assert.equal(pairs.size, 24);
   assert.deepEqual(contract.control_routes, {
     "agent-acp-service": [
       "POST /rpc/agent-acp/apply-execution-snapshot",

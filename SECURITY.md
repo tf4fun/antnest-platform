@@ -30,7 +30,7 @@ cluster network. Before exposing a deployment, understand these boundaries:
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
   `unix:///var/run/docker.sock`, which is equivalent to root on the host. Its
-  revision 16 control boundary admits only verified Controller workloads and
+  revision 17 control boundary admits only verified Controller workloads and
   enforces an operator image repository/digest policy before new Docker effects.
   Control uses an explicit purpose-network IP and readiness a separate loopback
   listener. These limits do not contain a compromised RC process. A useful
@@ -47,6 +47,17 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.
+- **Managed MCP credentials have a separate boundary (#37).** Controller stores
+  write-only values encrypted with location-bound AAD; Template reads expose only
+  set/fingerprint metadata. Only authenticated RC resolves the frozen revision.
+  Its generation-private bootstrap is root-owned 0700/0400 and mounted read-only,
+  outside workspace backups. Dedicated server UIDs 2000..2007 block UID 1000 tool
+  reads of their environ, memory, descriptors and ptrace. Each server receives
+  only its own secrets. MCP code is trusted: it can disclose its own credentials,
+  and mutable workspace executables/dependencies can undermine this boundary.
+  Use administrator-controlled image or read-only preset code for credentialed
+  servers. Host/Docker administrators remain trusted. See the
+  [shared contract](contracts/runtime/managed-mcp-secrets.md).
 - **The network cutover has one OTLP infrastructure exception.** A bounded
   ingestion-only transport preserves Runtime telemetry while moving Jaeger
   entirely off management. It has no business credentials, query/control API or
@@ -94,7 +105,7 @@ Keep workload credentials in the private directory prepared by
 rejected, including with the development opt-in. Never commit either generated
 configuration. Controller and Identity now use authenticated envelopes with an
 active master key and decrypt-only ring entries. Their independent `rekey`
-commands rotate stored credentials and OIDC session secrets online (#42).
+commands rotate stored Provider/managed MCP credentials and OIDC session secrets online (#42, #37).
 Every ring member passes the same admission policy, and unknown or relabeled
 keys fail authentication. See [Rotating encryption keys](docs/encryption-key-rotation.md)
 for the coordinated initial binary upgrade, add/activate/rekey/retire order,

@@ -34,6 +34,13 @@ test(
       .addSchema(
         JSON.parse(
           await readFile(
+            resolve(root, "contracts/runtime/managed-mcp.schema.json"),
+          ),
+        ),
+      )
+      .addSchema(
+        JSON.parse(
+          await readFile(
             resolve(root, "contracts/runtime/instance-connection.schema.json"),
           ),
         ),

@@ -21,7 +21,8 @@ const echo = (phase, calls) =>
   JSON.stringify({
     value: phase,
     calls,
-    uid: 1000,
+    uid: 2000,
+    pid: 4242,
     gid: 1000,
     explicit_env: true,
     supervisor_env: false,
@@ -89,7 +90,14 @@ test("model fixture drives error recovery, child reuse and rebuilt catalog", () 
     "mcp__alpha__echo",
   );
   for (const [phase, results] of [
-    ["managed-exercise", ["fixture tool failed", echo("managed-exercise", 1)]],
+    [
+      "managed-exercise",
+      [
+        "fixture tool failed",
+        echo("managed-exercise", 1),
+        "MANAGED_CREDENTIAL_ISOLATION_OK",
+      ],
+    ],
     ["managed-fresh", [echo("managed-fresh", 2)]],
     ["managed-rebuilt", [echo("managed-rebuilt", 1)]],
   ])
@@ -113,8 +121,24 @@ test("model fixture rejects stale guidance, full Skill injection, wrong UID and 
     () => complete(payload("managed-fresh", [echo("managed-fresh", 1)])),
     /restarted/,
   );
-  const root = echo("managed-rebuilt", 1).replace('"uid":1000', '"uid":0');
+  const root = echo("managed-rebuilt", 1).replace('"uid":2000', '"uid":0');
   assert.throws(() => complete(payload("managed-rebuilt", [root])));
+});
+
+test("managed credential isolation is checked by a normal Bash call after child execution", () => {
+  const results = ["fixture tool failed", echo("managed-exercise", 1)];
+  const call = complete(payload("managed-exercise", results)).choices[0].message
+    .tool_calls[0].function;
+  assert.equal(call.name, "bash");
+  assert.match(JSON.parse(call.arguments).command, /\/proc/);
+  assert.match(JSON.parse(call.arguments).command, /ptrace/);
+  assert.throws(
+    () =>
+      complete(
+        payload("managed-exercise", [...results, "secret was readable"]),
+      ),
+    /isolation/,
+  );
 });
 
 function trace() {

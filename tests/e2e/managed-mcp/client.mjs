@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { commandConnection } from "../acp-commands/connection.mjs";
@@ -9,7 +10,7 @@ import {
   assertAgentDeleted,
 } from "../../support/verification/agent-state.mjs";
 import { collectTrace } from "./trace.mjs";
-import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import { inspectLifecycle, clockWarningsOnly } from "../stage3-base/trace.mjs";
 import {
   runtimeCommandId,
   assertRuntimeOperation,
@@ -31,7 +32,14 @@ import {
 } from "./protocol.mjs";
 import { collectManagedTrace, inspectManagedTrace } from "./request-trace.mjs";
 
-const gateway = "http://edge-gateway:8080";
+const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
+const modelURL = process.env.TEST_MODEL_URL ?? "http://managed-model:8080";
+const jaegerURL = process.env.TEST_JAEGER_URL ?? "http://jaeger:16686";
+const output = process.env.TEST_EVIDENCE_DIRECTORY;
+const businessFile = output
+  ? join(output, "business.json")
+  : "/tmp/managed-business.json";
+const traceDirectory = output ? join(output, "traces") : "/tmp/managed-traces";
 const version = parseVersion(process.env.TEST_ACP_VERSION);
 const profile = { name: `managed-v${version}`, version };
 const admin = new GatewayClient(gateway),
@@ -57,15 +65,23 @@ const agent = () => api(`/api/admin/agents/${agentId}`);
 const state = async () =>
   (await member.request(`/api/app/agents/${agentId}/state`)).body;
 async function internal(path) {
-  const response = await fetch(`http://runtime-controller:8080${path}`, {
-    signal: AbortSignal.timeout(15000),
-  });
+  const response = await fetch(
+    `${process.env.TEST_RUNTIME_CONTROLLER_URL ?? "http://runtime-controller:8080"}${path}`,
+    {
+      headers: process.env.TEST_RC_TOKEN_FILE
+        ? {
+            "Antnest-Service-Authorization": `Bearer ${readFileSync(process.env.TEST_RC_TOKEN_FILE, "utf8").trim()}`,
+          }
+        : {},
+      signal: AbortSignal.timeout(15000),
+    },
+  );
   assert.equal(response.status, 200, "Runtime inspection failed");
   return response.json();
 }
 const runtime = () => internal(`/internal/runtimes/${agentId}`);
 async function modelState() {
-  const response = await fetch("http://managed-model:8080/status", {
+  const response = await fetch(`${modelURL}/status`, {
     signal: AbortSignal.timeout(5000),
   });
   assert.equal(response.status, 200);
@@ -81,7 +97,7 @@ async function waitHeld(step) {
   );
 }
 async function release(step) {
-  const response = await fetch(`http://managed-model:8080/release/${step}`, {
+  const response = await fetch(`${modelURL}/release/${step}`, {
     method: "POST",
     signal: AbortSignal.timeout(5000),
   });
@@ -183,7 +199,10 @@ async function audits(sessionId) {
   return result.items;
 }
 async function main() {
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[a-z0-9-]+$/,
+  );
   await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
@@ -206,6 +225,11 @@ async function main() {
   });
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
   const template = await seedManaged(api, process.env.TEST_RUNTIME_IMAGE);
+  const secretDescriptor =
+    template.runtime.mcp_servers[0].secret_env.FIXTURE_SECRET;
+  assert.equal(secretDescriptor.set, true);
+  assert.match(secretDescriptor.fingerprint, /^sha256:[0-9a-f]{8}$/);
+  assert(!JSON.stringify(template).includes("managed-env-canary"));
   stage = "create";
   const created = await admin.request("/api/admin/agents", {
     status: 202,
@@ -223,6 +247,7 @@ async function main() {
     agentId,
     requestId: createId,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await waitOperation(createId, "create");
   const ready = await waitForAgentReady(agent);
@@ -306,6 +331,7 @@ async function main() {
     agentId,
     requestId,
     traceID: rebuilding.traceID,
+    skillPreparation: true,
   });
   await until(
     async () => (await state()).unavailable_reason === "agent_unavailable",
@@ -396,6 +422,50 @@ async function main() {
   const model = await modelState();
   assertModelSequence(model);
   assert.equal((await audits(sessionId)).length, 6);
+  stage = "secret-keep-clear";
+  const keptBody = templateBody(
+    template.model_profile_id,
+    process.env.TEST_RUNTIME_IMAGE,
+    "beta",
+  );
+  keptBody.runtime.mcp_servers[0].secret_env.FIXTURE_SECRET = { keep: true };
+  const kept = await api(
+    `/api/admin/templates/${template.template_id}/revisions`,
+    keptBody,
+    201,
+  );
+  assert.deepEqual(
+    kept.runtime.mcp_servers[0].secret_env,
+    next.runtime.mcp_servers[0].secret_env,
+  );
+  assert(!JSON.stringify(kept).includes("managed-env-canary"));
+  const clearedBody = templateBody(
+    template.model_profile_id,
+    process.env.TEST_RUNTIME_IMAGE,
+    "beta",
+  );
+  delete clearedBody.runtime.mcp_servers[0].secret_env;
+  const cleared = await api(
+    `/api/admin/templates/${template.template_id}/revisions`,
+    clearedBody,
+    201,
+  );
+  assert.equal(cleared.runtime.mcp_servers[0].secret_env, undefined);
+  stage = "frozen-secret-enable";
+  const disabled = await api(`/api/admin/agents/${agentId}/disable`, {}, 202);
+  await waitOperation(disabled.request_id, "disable");
+  const enabled = await api(`/api/admin/agents/${agentId}/enable`, {}, 202);
+  await waitOperation(enabled.request_id, "enable");
+  const reenabled = await waitForAgentReady(agent);
+  assert.equal(
+    reenabled.configuration.template.revision,
+    next.revision,
+    "Enable consumed today's cleared head instead of the frozen revision",
+  );
+  await until(
+    async () => (await state()).availability === "ready",
+    "reenabled publication",
+  );
   stage = "delete";
   const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
     body: {},
@@ -422,16 +492,23 @@ async function main() {
     runtime_operations: journals,
     existing_connection_refreshed: true,
     history_preserved: true,
+    secret_keep_clear: true,
+    frozen_secret_enable: true,
+    bash_credential_isolation: true,
   };
-  await writeFile("/tmp/managed-business.json", JSON.stringify(business), {
+  await writeFile(businessFile, JSON.stringify(business), {
     mode: 0o600,
   });
   console.log(JSON.stringify(business));
-  await mkdir("/tmp/managed-traces", { mode: 0o700 });
+  await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
   const save = (label) => (trace) =>
-    writeFileSync(`/tmp/managed-traces/${label}.json`, JSON.stringify(trace), {
-      mode: 0o600,
-    });
+    writeFileSync(
+      join(traceDirectory, `${label}.json`),
+      JSON.stringify(trace),
+      {
+        mode: 0o600,
+      },
+    );
   const lifecycleTraces = [],
     sessionTraces = [],
     sessionRaw = [];
@@ -439,7 +516,7 @@ async function main() {
   for (const expected of lifecycle) {
     stage = `trace:${expected.kind}`;
     lifecycleTraces.push(
-      await collectTrace("http://jaeger:16686", expected.traceID, (trace) => {
+      await collectTrace(jaegerURL, expected.traceID, (trace) => {
         if (trace) save(expected.kind)(trace);
         return inspectLifecycle(trace, expected, secrets);
       }),
@@ -449,7 +526,7 @@ async function main() {
     stage = `trace:${expected.label}`;
     sessionRaw.push(
       await collectManagedTrace(
-        "http://jaeger:16686",
+        jaegerURL,
         expected,
         secrets,
         model.requests,
@@ -475,7 +552,7 @@ async function main() {
   );
   assert.equal(
     sessionTraces.reduce((n, t) => n + (t.runtime_tool_calls ?? 0), 0),
-    9,
+    10,
   );
   const strict = [...lifecycleTraces, ...sessionTraces].some(
     (t) => t.strict_trace === "failed",
@@ -487,11 +564,18 @@ async function main() {
       status: "topology_passed",
       version,
       strict_trace: strict,
+      timing_warning_only:
+        strict === "failed" &&
+        clockWarningsOnly([...lifecycleTraces, ...sessionTraces]),
       lifecycle_traces: lifecycleTraces,
       session_traces: sessionTraces,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (
+    strict === "failed" &&
+    !clockWarningsOnly([...lifecycleTraces, ...sessionTraces])
+  )
+    process.exitCode = 1;
 }
 try {
   await main();
@@ -511,6 +595,11 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  for (const connection of connections)
-    await connection.close().catch(() => {});
+  for (const connection of connections) {
+    try {
+      await connection.close();
+    } catch {
+      /* Already closed SDK transports need no retry. */
+    }
+  }
 }

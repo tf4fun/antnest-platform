@@ -9,7 +9,7 @@ import { observeSocket, requestWithin } from "../acp-closeout/connection.mjs";
 import { until } from "../acp-closeout/support.mjs";
 import { observeStream, observeFetch } from "./transport.mjs";
 
-const gateway = "http://edge-gateway:8080";
+const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 export function commandConnection(profile, agentId, browser) {
   const sdk = profile.version === 1 ? v1 : v2;
   const connectionTraceID = randomBytes(16).toString("hex");

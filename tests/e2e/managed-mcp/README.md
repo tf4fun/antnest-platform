@@ -4,17 +4,15 @@ This disposable scenario verifies managed stdio MCP servers inside the Runtime,
 together with Agent Rebuild while a Run is active. It uses the real Controllers,
 PostgreSQL, Temporal, Runtime, ACP service, Gateway and Jaeger; only the
 Provider is deterministic. The stdio child uses the installed Rust MCP SDK and
-runs inside the Runtime as UID/GID 1000. The [fixture contract](contracts.md)
+runs inside the Runtime as UID 2000/GID 1000. The [fixture contract](contracts.md)
 defines the required behavior.
 
 ## Running
 
-Run serially, with the current local service images (`make docker-build-stage3`)
-and Docker available:
+Run serially with Docker available. Each target builds isolated source-based
+candidate images, provisions private workload credentials and cleans its resources:
 
 ```sh
-docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build .
-docker build -f tests/e2e/managed-mcp/Dockerfile -t antnest/antnest-runtime:managed-integration .
 make test-managed-mcp-fixtures
 make e2e-managed-mcp-v1
 make e2e-managed-mcp-v2
@@ -28,9 +26,8 @@ protocol; legacy handshake fallback is covered by separate Runtime tests. The
 same image is used by the [Tool progress](../acp-progress/README.md) and
 [Tool permission](../acp-permissions/README.md) scenarios.
 
-The flags `ANTNEST_E2E_MANAGED_MCP=true` and
-`ANTNEST_E2E_MANAGED_MCP_VERSION=1|2` select this profile; v1 is the default.
-The parent creates an isolated Compose project with separate service databases,
+`secrets-docker.mjs 1|2` selects the SDK protocol version. The parent creates an
+isolated authenticated Compose project with separate service databases,
 uses synthetic local accounts, reads no `.env` or `.secret` file and calls no
 external LLM. Temporal has no host port; Gateway, PostgreSQL and Jaeger bind only
 to dynamically selected loopback ports. Do not run another build or test profile
@@ -44,12 +41,13 @@ No fixture writes another service's database. Read-only Runtime operation
 inspection corroborates Create, Rebuild and Delete; the Console execution audit
 corroborates ACP Runs.
 
-Six successful Runs make 15 Provider requests and nine real Tool calls:
+Six successful Runs make 16 Provider requests and ten real Tool calls:
 
 1. `managed-bootstrap` writes workspace guidance and a Personal Skill.
 2. `managed-exercise` sees the guidance and the Skill summary and locator
    without its full body, handles an ordinary alpha Tool error, then calls alpha
-   successfully.
+   successfully. A normal UID 1000 Bash call then verifies the child's environ,
+   memory, descriptors and ptrace are inaccessible, as is the root-only bootstrap.
 3. `managed-mutate` edits the guidance. `managed-fresh` sees that edit
    immediately and proves child reuse through the next process counter.
 4. A new beta Template revision leaves the Agent's built configuration intact.
@@ -68,6 +66,13 @@ Six successful Runs make 15 Provider requests and nine real Tool calls:
    acknowledgement. Delete reclaims the Agent's Runtime container and workspace
    volume.
 
+Template secret reads expose only set/fingerprint metadata. An unchanged secret
+is kept in the next immutable revision and then cleared from the head. Disable
+and Enable still use the Agent's earlier frozen revision, whose required MCP
+process initializes successfully. Final deletion checks all RC-owned containers
+and volumes, including private MCP bootstrap volumes. Retained Docker identities
+are compared before and after cleanup.
+
 The drain checks use explicit barriers and service-owned observations, never
 comparisons between independent clocks.
 
@@ -85,10 +90,11 @@ full Skill content. This profile uses the per-request oracle in
 scenarios.
 
 Business and topology diagnostics are reported separately from the strict gate.
-Clock warnings and lifecycle Docker absence-probe ERROR spans keep the strict
-gate nonzero, and the script never reports an overall pass when strict checks
-fail. Raw evidence stays in the private
-`artifacts/verification/managed-mcp/<project>/managed-traces/` directory.
+Strict timing warnings remain recorded as `strict_trace: failed`; the shared
+`clockWarningsOnly` rule permits only the previously reviewed clock-skew warning
+class, with no platform probe or restart errors. Topology, privacy, unexpected
+errors and missing parent spans remain blocking. Raw evidence stays in the private
+`artifacts/verification/managed-mcp-secrets/v<version>-<tag>/traces/` directory.
 
 ## Cleanup
 

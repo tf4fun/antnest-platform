@@ -15,13 +15,17 @@ children, or allow ACP clients to start processes on the ACP service host.
     {
       "id": "documents",
       "command": "node",
-      "args": ["/workspace/mcp/documents.js"],
+      "args": ["/skills/documents/server.js"],
       "env": {"DOCUMENTS_URL": "https://documents.example.test"},
       "secret_env": {"API_KEY": {"value": "write-only-on-create"}}
     }
   ]
 }
 ```
+
+Credentialed MCP code and dependencies must be administrator-controlled image
+or read-only preset content. Using model-writable workspace code would let the
+model change how that trusted server uses its own credentials.
 
 ## Ownership and lifecycle
 
@@ -67,8 +71,9 @@ The [shared secret contract](../../../contracts/runtime/managed-mcp-secrets.md)
 defines dedicated process identities, private read-only bootstrap delivery and
 the coordinated pre-release upgrade. Old disposable configurations must be
 explicitly re-entered/rebuilt; their plaintext snapshots and backups cannot be
-silently made safe by returning a redacted view. Runtime, RC, Console consumption
-and end-to-end admission follow their own delivery batches.
+silently made safe by returning a redacted view. Runtime, RC and Console consume
+this boundary in their owning implementations; the root managed-MCP acceptance
+verifies the complete flow separately.
 
 ## Verification
 

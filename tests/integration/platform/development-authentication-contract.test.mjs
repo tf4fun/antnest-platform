@@ -16,7 +16,7 @@ const contract = JSON.parse(
   ),
 );
 
-test("development provisioning derives 23 static pairs from the nine owning catalogs", () => {
+test("development provisioning derives 24 static pairs from the nine owning catalogs", () => {
   assert.equal(contract.version, 1);
   assert.equal(contract.profile, "disposable-development-token-http");
   const services = Object.keys(contract.static_services);
@@ -41,7 +41,7 @@ test("development provisioning derives 23 static pairs from the nine owning cata
       }
     }
   }
-  assert.equal(pairs.size, 23);
+  assert.equal(pairs.size, 24);
   assert(pairs.has("agent-controller->runtime-egress"));
   assert(pairs.has("runtime-controller->skill-registry"));
   assert(![...pairs].some((pair) => pair.includes("antnest-runtime")));

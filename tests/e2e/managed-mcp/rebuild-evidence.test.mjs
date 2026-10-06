@@ -96,7 +96,7 @@ test("rebuild publishes a new execution but need not change a logical endpoint",
 test("model sequence detects missing, duplicate, denied and reordered requests", () => {
   const phases = [
     ["managed-bootstrap", 3],
-    ["managed-exercise", 3],
+    ["managed-exercise", 4],
     ["managed-mutate", 2],
     ["managed-fresh", 2],
     ["managed-draining", 3],

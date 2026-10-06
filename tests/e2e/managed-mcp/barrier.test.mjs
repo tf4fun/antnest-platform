@@ -17,7 +17,7 @@ function payload(step) {
         content: JSON.stringify({
           value: "managed-draining",
           calls: 3 + index,
-          uid: 1000,
+          uid: 2000,
           gid: 1000,
           explicit_env: true,
           supervisor_env: false,
