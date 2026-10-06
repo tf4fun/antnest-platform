@@ -106,10 +106,8 @@ impl ChildRegistry {
         let mut children = BTreeSet::new();
         for task in std::fs::read_dir("/proc/self/task")? {
             let path = task?.path().join("children");
-            let contents = match std::fs::read_to_string(path) {
-                Ok(value) => value,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
+            let Some(contents) = procfs_entry(std::fs::read_to_string(path))? else {
+                continue;
             };
             for value in contents.split_whitespace() {
                 let pid = value.parse::<u32>().map_err(io::Error::other)?;
@@ -188,10 +186,8 @@ impl ChildRegistry {
         let mut candidates = BTreeSet::new();
         for task in std::fs::read_dir("/proc/self/task")? {
             let path = task?.path().join("children");
-            let children = match std::fs::read_to_string(path) {
-                Ok(value) => value,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
+            let Some(children) = procfs_entry(std::fs::read_to_string(path))? else {
+                continue;
             };
             candidates.extend(
                 children
@@ -226,12 +222,26 @@ impl ChildRegistry {
     }
 }
 
+/// A process or thread that exits after its /proc directory was listed reads
+/// as ENOENT, or as ESRCH once the open file outlives the task.
+#[cfg(any(test, target_os = "linux"))]
+fn procfs_entry(read: io::Result<String>) -> io::Result<Option<String>> {
+    match read {
+        Ok(value) => Ok(Some(value)),
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn process_is_live(pid: u32) -> io::Result<bool> {
-    let status = match std::fs::read_to_string(format!("/proc/{pid}/status")) {
-        Ok(value) => value,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
+    let Some(status) = procfs_entry(std::fs::read_to_string(format!("/proc/{pid}/status")))? else {
+        return Ok(false);
     };
     let state = status.lines().find_map(|line| line.strip_prefix("State:"));
     // Unknown or unreadable states are blockers; only a confirmed terminal
@@ -262,10 +272,8 @@ fn has_ancestor(processes: &BTreeMap<u32, ProcessInfo>, mut parent: u32, ancesto
 
 #[cfg(target_os = "linux")]
 fn live_process_info(pid: u32) -> io::Result<Option<ProcessInfo>> {
-    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(value) => value,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+    let Some(stat) = procfs_entry(std::fs::read_to_string(format!("/proc/{pid}/stat")))? else {
+        return Ok(None);
     };
     // The command name in parentheses may contain spaces or closing parentheses.
     let suffix = stat
