@@ -198,6 +198,10 @@ Identity Service PostgreSQL revocation tests pass on Linux: their fixtures now
 create versions at PostgreSQL's microsecond precision instead of the Linux
 clock's nanoseconds, which failed later optimistic checks (#117).
 
+The Runtime Egress service-authentication E2E fixture makes its credentials
+group-readable and adds the capability-dropped Egress container to that group,
+so the suite passes on a native Linux Docker daemon (#118).
+
 Runtime Egress rejects tunnel datagrams from an outer IPv4 other than the
 Agent's bound Runtime peer, before policy checks or victim-attributed flows.
 An aggregate `antnest.egress.peer_mismatch.drops` counter records these drops.
