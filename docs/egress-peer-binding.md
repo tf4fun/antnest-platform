@@ -47,13 +47,16 @@ evidence even when a test writer bypasses the userspace policy.
 
 ## Delivery and acceptance
 
-1. Shared contract and schema tests: passed; service implementation is pending.
+1. Shared contract and schema tests: passed.
 2. RC producer: unit/race/lint/vet and PostgreSQL/component gates pass; real
    Docker address comparisons and 134 owner checks pass, with fixtures cleaned.
 3. Egress owner gates pass: native and Linux unit/contract/component/Clippy,
    eight PostgreSQL integration tests, 182 Docker checks, and the real Linux
    userspace-bypass kernel test. Both Docker runs cleaned their resources.
-4. Controller lifecycle/observation consumer and owner gates: pending.
+4. Controller consumer: unit/race/lint/vet pass; PostgreSQL/Temporal component
+   coverage passes (675 tests, 1,222 subtests, no skips), and 105 Docker owner
+   checks pass with fixture cleanup. Fresh addresses, source restoration,
+   lost-response CAS, restart rebinding and readiness fencing are covered.
 5. Integration: real Linux kernel bypass test, crafted-UDP peer impersonation,
    metric export, policy/CAS recovery and create/rebuild/enable/restart regression.
 

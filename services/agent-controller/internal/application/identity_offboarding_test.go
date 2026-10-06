@@ -134,7 +134,7 @@ func (scheduler *revocationSchedulerStub) DisableAgent(_ context.Context, input 
 func TestCompensationObservesRevocationDuringNetworkRead(t *testing.T) {
 	base := disableLifecycleBase(t)
 	store := &disableLifecycleStoreStub{base: base}
-	store.state.Operation = ports.LifecycleOperationRecord{RequestID: "restore", AgentID: base.Agent.AgentID, State: domain.OperationRunning, Phase: domain.PhaseRuntimeDisable}
+	store.state.Operation = ports.LifecycleOperationRecord{RequestID: "restore", AgentID: base.Agent.AgentID, SourceRuntimeRevision: base.Agent.RuntimeRevision, State: domain.OperationRunning, Phase: domain.PhaseRuntimeDisable}
 	deps := newDisableDependencies(base, ports.RuntimeOperation{})
 	deps.attachmentClosed = true
 	egress := &revokingNetworkRead{disableDependenciesStub: deps, revoke: func() { store.base.Agent.IdentityRevocationSequence = 7 }}
@@ -163,7 +163,7 @@ func (deps *revokingNetworkRead) GetAgentNetwork(ctx context.Context, id string)
 func TestCompensationReclosesWhenRevocationCommitsDuringOpen(t *testing.T) {
 	base := disableLifecycleBase(t)
 	store := &disableLifecycleStoreStub{base: base}
-	store.state.Operation = ports.LifecycleOperationRecord{RequestID: "restore", AgentID: base.Agent.AgentID, State: domain.OperationRunning, Phase: domain.PhaseRuntimeDisable}
+	store.state.Operation = ports.LifecycleOperationRecord{RequestID: "restore", AgentID: base.Agent.AgentID, SourceRuntimeRevision: base.Agent.RuntimeRevision, State: domain.OperationRunning, Phase: domain.PhaseRuntimeDisable}
 	deps := newDisableDependencies(base, ports.RuntimeOperation{})
 	deps.attachmentClosed = true
 	egress := &revokingNetworkOpen{disableDependenciesStub: deps, revoke: func() { store.base.Agent.IdentityRevocationSequence = 7 }}
@@ -173,7 +173,7 @@ func TestCompensationReclosesWhenRevocationCommitsDuringOpen(t *testing.T) {
 	if err := service.restoreNetworkUnlessRevoked(context.Background(), store.state.Operation, 0); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(deps.calls, []string{"egress.get", "egress.attachment.open", "egress.attachment.closed"}) || !deps.attachmentClosed {
+	if !slices.Equal(deps.calls, []string{"egress.get", "runtime.inspect", "egress.attachment.open", "egress.attachment.closed"}) || !deps.attachmentClosed {
 		t.Fatalf("compensation did not reclose: %v", deps.calls)
 	}
 }
@@ -183,8 +183,8 @@ type revokingNetworkOpen struct {
 	revoke func()
 }
 
-func (deps *revokingNetworkOpen) SetAgentNetworkAttachment(ctx context.Context, id, state string, version uint64) (ports.NetworkAttachment, error) {
-	result, err := deps.disableDependenciesStub.SetAgentNetworkAttachment(ctx, id, state, version)
+func (deps *revokingNetworkOpen) SetAgentNetworkAttachment(ctx context.Context, id, state string, version uint64, runtimeEndpoint string) (ports.NetworkAttachment, error) {
+	result, err := deps.disableDependenciesStub.SetAgentNetworkAttachment(ctx, id, state, version, runtimeEndpoint)
 	if state == ports.NetworkAttachmentOpen {
 		deps.revoke()
 	}

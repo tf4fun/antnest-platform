@@ -40,7 +40,7 @@ func TestCreateLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing.
 	steps := []lifecycleRecoveryStepExpectation{
 		{domain.PhaseRuntimeInitialize, domain.OperationRunning, false, []string{"egress.ensure"}},
 		{domain.PhasePublish, domain.OperationRunning, false, []string{"runtime.initialize"}},
-		{domain.PhaseCompleted, domain.OperationCompleted, true, []string{"egress.attachment.open"}},
+		{domain.PhaseCompleted, domain.OperationCompleted, true, []string{"runtime.inspect", "egress.attachment.open"}},
 	}
 	assertLifecycleActivitiesPlan(t, domain.OperationCreate, steps)
 	for _, step := range steps {
@@ -93,7 +93,7 @@ func TestRebuildLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing
 		{domain.PhaseNetworkEnsure, domain.OperationRunning, false,
 			[]string{"runtime.update"}},
 		{domain.PhasePublish, domain.OperationRunning, false,
-			[]string{"egress.attachment.open"}},
+			[]string{"runtime.inspect", "egress.attachment.open"}},
 		{domain.PhaseCompleted, domain.OperationCompleted, true, nil},
 	}
 	assertLifecycleActivitiesPlan(t, domain.OperationRebuild, steps)
@@ -174,7 +174,7 @@ func TestEnableLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing.
 			[]string{"egress.ensure"}},
 		{domain.PhaseNetworkRestore, domain.OperationRunning, false, []string{"runtime.enable"}},
 		{domain.PhasePublish, domain.OperationRunning, false,
-			[]string{"egress.attachment.open"}},
+			[]string{"runtime.inspect", "egress.attachment.open"}},
 		{domain.PhaseCompleted, domain.OperationCompleted, true, nil},
 	}
 	assertLifecycleActivitiesPlan(t, domain.OperationEnable, steps)

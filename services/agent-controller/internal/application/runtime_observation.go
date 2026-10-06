@@ -21,6 +21,7 @@ var runtimeObservationTracer = otel.Tracer("github.com/tf4fun/antnest-platform/a
 type RuntimeObservationWorker struct {
 	source       ports.RuntimeObservationSource
 	store        ports.RuntimeObservationStore
+	egress       ports.EgressClient
 	pollInterval time.Duration
 	logger       *slog.Logger
 }
@@ -28,17 +29,18 @@ type RuntimeObservationWorker struct {
 func NewRuntimeObservationWorker(
 	source ports.RuntimeObservationSource,
 	store ports.RuntimeObservationStore,
+	egress ports.EgressClient,
 	pollInterval time.Duration,
 	logger *slog.Logger,
 ) (*RuntimeObservationWorker, error) {
-	if source == nil || store == nil || pollInterval <= 0 {
+	if source == nil || store == nil || egress == nil || pollInterval <= 0 {
 		return nil, fmt.Errorf("runtime observation worker dependencies are incomplete")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &RuntimeObservationWorker{
-		source: source, store: store, pollInterval: pollInterval, logger: logger,
+		source: source, store: store, egress: egress, pollInterval: pollInterval, logger: logger,
 	}, nil
 }
 

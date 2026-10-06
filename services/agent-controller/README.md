@@ -11,6 +11,12 @@ leases. Resource creation completes separately from executable availability:
 an Agent becomes runnable only after independent healthy Runtime observation
 publishes its execution binding.
 
+Before opening an Egress attachment, Controller reads RC's current inspection,
+checks the target Runtime revision, and binds its management-network IPv4.
+Observation reconciles a changed address on an already-open attachment before
+publishing readiness; it never opens a lifecycle-closed attachment. See
+[Egress peer binding](../../docs/egress-peer-binding.md).
+
 
 Workload transport and signed CCT verification use the
 [shared Go module](../../modules/service-authentication/README.md). Controller

@@ -88,7 +88,7 @@ func TestCreateAgentMaterializesSpecAndCompletesWithoutRuntimeReadiness(t *testi
 
 	if !reflect.DeepEqual(
 		dependencies.calls,
-		[]string{"egress.ensure", "runtime.initialize", "egress.attachment.open"},
+		[]string{"egress.ensure", "runtime.initialize", "runtime.inspect", "egress.attachment.open"},
 	) {
 		t.Fatalf("dependency order = %v", dependencies.calls)
 	}
@@ -514,7 +514,7 @@ func (dependency *lifecycleDependenciesStub) GetAgentNetwork(
 }
 
 func (dependency *lifecycleDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, _ uint64,
+	_ context.Context, agentID string, state string, _ uint64, runtimeEndpoint string,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	result := dependency.network
@@ -524,6 +524,7 @@ func (dependency *lifecycleDependenciesStub) SetAgentNetworkAttachment(
 	dependency.networkIndex++
 	result.AgentID = agentID
 	result.AttachmentState = state
+	result.RuntimeEndpoint = runtimeEndpoint
 	if result.AttachmentResourceVersion == 0 {
 		result.AttachmentResourceVersion = 1
 	}
@@ -572,9 +573,15 @@ func (dependency *lifecycleDependenciesStub) DeleteRuntime(
 }
 
 func (dependency *lifecycleDependenciesStub) InspectRuntime(
-	context.Context, string,
+	_ context.Context, agentID string,
 ) (ports.RuntimeInspection, error) {
-	return ports.RuntimeInspection{}, errors.New("unexpected Runtime inspection")
+	dependency.calls = append(dependency.calls, "runtime.inspect")
+	return peerInspectionForTest(agentID, dependency.runtime.RuntimeRevision), nil
+}
+
+func peerInspectionForTest(agentID, revision string) ports.RuntimeInspection {
+	return ports.RuntimeInspection{AgentID: agentID, RuntimeRevision: revision,
+		Phase: "running", LifecycleState: "provisioned", Health: "unknown", RuntimeEndpoint: "10.20.0.9"}
 }
 
 type lifecycleStoreStub struct {

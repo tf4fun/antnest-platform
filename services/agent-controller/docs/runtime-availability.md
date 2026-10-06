@@ -11,6 +11,12 @@ persistence. Their result is `completed` / `provisioned`, not a ready execution
 identity. Agent Controller saves that target and completes its lifecycle
 operation. No Temporal Activity waits for readiness.
 
+Opening the network separately requires a fresh RC inspection of the completed
+target Runtime revision. Its canonical management-network IPv4 becomes Egress's
+outer-peer binding; health and execution identity are still independent. A retry
+does not reuse an address from a durable compute receipt. Source restoration
+likewise inspects the exact source Runtime revision before reopening traffic.
+
 There are two independent facts:
 
 1. Configured Agent: immutable AgentSpec plus the current Runtime revision.
@@ -41,6 +47,12 @@ bindings against fresh Inspect results. It scans only configured pending Agents,
 with pagination; it does not inspect every Agent on every Run. Early/missed healthy
 events and worker restart therefore converge without an additional queue, table,
 workflow or dependence on one event arriving at the right time.
+
+Before execution publication the worker confirms the current peer on the open
+Egress attachment. Journal observations also reconcile address changes after
+restart, without publishing an execution themselves. Both paths use attachment
+CAS; neither opens an attachment closed by a lifecycle operation. A failed
+confirmation prevents readiness publication and is retried on the next pass.
 
 Publication compares the current Agent revision, aggregate sequence, desired
 state and active operation under the database lock and rechecks the identity

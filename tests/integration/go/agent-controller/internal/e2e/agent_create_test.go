@@ -161,9 +161,15 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			var payload struct {
 				State                   string `json:"state"`
 				ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+				RuntimeEndpoint         string `json:"runtime_endpoint,omitempty"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode Egress attachment payload: %v", err)
+			}
+			if payload.State == ports.NetworkAttachmentOpen {
+				require.Equal(t, "10.20.0.9", payload.RuntimeEndpoint)
+			} else {
+				require.Empty(t, payload.RuntimeEndpoint)
 			}
 			policyMu.Lock()
 			state := stateForAgent(agentID)
@@ -293,6 +299,8 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			}
 			if currentRuntimeHealth == "absent" {
 				inspection["phase"] = "absent"
+			} else if currentRuntimeLifecycle == "provisioned" {
+				inspection["runtime_endpoint"] = "10.20.0.9"
 			}
 			if currentRuntimeExecutionID != "" {
 				inspection["runtime_execution_id"] = currentRuntimeExecutionID
@@ -513,7 +521,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			if err != nil || (pending.LifecycleState != domain.AgentCreated || pending.ActivationState != domain.ActivationEnabled || pending.RuntimeState != domain.RuntimeUnknown) || pending.ExecutionRevisionID != "" || pending.ActiveOperationRequestID != "" {
 				t.Fatalf("creation must finish before readiness: %+v error=%v", pending, err)
 			}
-			observer, err := application.NewRuntimeObservationWorker(runtime, repository, time.Second, logger)
+			observer, err := application.NewRuntimeObservationWorker(runtime, repository, egress, time.Second, logger)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -871,7 +879,7 @@ func egressNetworkResponse(
 	attachmentState string,
 	attachmentResourceVersion uint64,
 ) map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"agent_id": agentID, "tunnel_ipv4": "100.64.0.2",
 		"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 1,
 		"egress_endpoint":             map[string]any{"ipv4": "10.20.0.8", "port": 8092},
@@ -880,6 +888,10 @@ func egressNetworkResponse(
 		"attachment_state":            attachmentState,
 		"attachment_resource_version": attachmentResourceVersion,
 	}
+	if attachmentState == ports.NetworkAttachmentOpen {
+		result["runtime_endpoint"] = "10.20.0.9"
+	}
+	return result
 }
 
 type wallClock struct{}

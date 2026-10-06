@@ -42,6 +42,9 @@ func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx context.Cont
 		return nil
 	}
 	inspection, err := worker.source.InspectRuntime(ctx, pending.Agent.AgentID)
+	if err == nil {
+		err = worker.bindObservedPeer(ctx, pending, inspection)
+	}
 	if err != nil {
 		_, saveErr := worker.store.RecordRuntimeCondition(ctx, ports.RecordRuntimeCondition{
 			ExpectedAggregateSequence: pending.Agent.AggregateSequence, TraceID: currentTraceID(ctx),
@@ -109,6 +112,11 @@ func (worker *RuntimeObservationWorker) applyObservation(ctx context.Context, ob
 		}
 		if current.AgentID != observation.AgentID {
 			return errors.New("runtime observation inspection belongs to another Agent")
+		}
+		if current.LifecycleState == "provisioned" && current.Phase == "running" {
+			if err := worker.bindCurrentOpenPeer(ctx, current, false, false); err != nil {
+				return err
+			}
 		}
 		observation.Current = &current
 	}

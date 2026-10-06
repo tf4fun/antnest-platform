@@ -51,7 +51,7 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 	assertResourceID(t, "event", store.published.RebuiltEvent.EventID)
 	assertResourceID(t, "accessrev", store.published.AccessRevision)
 	wantCalls := []string{
-		"egress.get", "egress.attachment.closed", "runtime.update", "egress.attachment.open",
+		"egress.get", "egress.attachment.closed", "runtime.update", "runtime.inspect", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -114,7 +114,7 @@ func TestRebuildAgentTreatsAlreadyClosedAttachmentAsLostResponseReplay(t *testin
 	if err != nil {
 		t.Fatalf("rebuild Agent after lost close response: %v", err)
 	}
-	wantCalls := []string{"egress.get", "runtime.update", "egress.attachment.open"}
+	wantCalls := []string{"egress.get", "runtime.update", "runtime.inspect", "egress.attachment.open"}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
 	}
@@ -255,7 +255,8 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 			RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID,
 			MCPEndpoint:        base.SourceExecution.RuntimeMCPEndpoint,
-			LifecycleState:     "provisioned", Health: "healthy",
+			Phase:              "running", RuntimeEndpoint: "10.20.0.9",
+			LifecycleState: "provisioned", Health: "healthy",
 		},
 	}
 	service := newTestLifecycleService(
@@ -278,7 +279,7 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 	}
 	wantCalls := []string{
 		"egress.get", "egress.attachment.closed", "runtime.update", "runtime.inspect",
-		"egress.get", "egress.attachment.open",
+		"egress.get", "runtime.inspect", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -587,7 +588,7 @@ func (dependency *rebuildDependenciesStub) GetAgentNetwork(
 }
 
 func (dependency *rebuildDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	if state == ports.NetworkAttachmentClosed && dependency.fenceErr != nil {
@@ -600,6 +601,7 @@ func (dependency *rebuildDependenciesStub) SetAgentNetworkAttachment(
 	result.AgentID = agentID
 	result.State = ports.NetworkStateActive
 	result.AttachmentState = state
+	result.RuntimeEndpoint = runtimeEndpoint
 	result.AttachmentResourceVersion = expectedResourceVersion + 1
 	dependency.network = result
 	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed
@@ -627,6 +629,9 @@ func (dependency *rebuildDependenciesStub) UpdateRuntime(
 	dependency.runtimeAgentID = agentID
 	dependency.expectedRuntimeRevision = expectedRevision
 	dependency.runtimeConfiguration = configuration
+	if dependency.runtimeErr == nil && completedProvisionedRuntime(dependency.runtime) {
+		dependency.inspection = peerInspectionForTest(agentID, dependency.runtime.RuntimeRevision)
+	}
 	return dependency.runtime, dependency.runtimeErr
 }
 

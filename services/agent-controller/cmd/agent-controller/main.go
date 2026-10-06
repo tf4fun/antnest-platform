@@ -208,7 +208,7 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 		return classifyFailure("service_composition", err)
 	}
 	runtimeObservationWorker, err := application.NewRuntimeObservationWorker(
-		runtime, repository, cfg.ObservationPollInterval, logger,
+		runtime, repository, egress, cfg.ObservationPollInterval, logger,
 	)
 	if err != nil {
 		return classifyFailure("service_composition", err)

@@ -79,8 +79,12 @@ func newRuntimeObservationWorkerForTest(
 	t *testing.T, source ports.RuntimeObservationSource, store ports.RuntimeObservationStore,
 ) *RuntimeObservationWorker {
 	t.Helper()
+	network := validLifecycleNetwork()
+	network.AgentID = "agent-1"
+	network.AttachmentState = ports.NetworkAttachmentOpen
+	network.RuntimeEndpoint = "10.20.0.9"
 	worker, err := NewRuntimeObservationWorker(
-		source, store, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		source, store, &enableDependenciesStub{network: network}, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
 		t.Fatalf("NewRuntimeObservationWorker: %v", err)
@@ -196,7 +200,8 @@ func TestRuntimeReadinessReconcilesWithoutANewEvent(t *testing.T) {
 		t.Run(fmtErrorName(journalError), func(t *testing.T) {
 			source := &runtimeObservationSourceStub{
 				inspection: ports.RuntimeInspection{AgentID: "agent-1", RuntimeRevision: "runtime-1",
-					LifecycleState: "provisioned", Phase: "running", Health: "healthy", RuntimeExecutionID: "process-1", MCPEndpoint: "http://runtime:8091/mcp", ObservedAt: time.Now().UTC()},
+					RuntimeEndpoint: "10.20.0.9",
+					LifecycleState:  "provisioned", Phase: "running", Health: "healthy", RuntimeExecutionID: "process-1", MCPEndpoint: "http://runtime:8091/mcp", ObservedAt: time.Now().UTC()},
 				pageErrors: []error{journalError},
 			}
 			store := &runtimeObservationStoreStub{

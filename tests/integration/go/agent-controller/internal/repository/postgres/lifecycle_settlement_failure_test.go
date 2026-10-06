@@ -20,7 +20,7 @@ func TestLifecycleSettlementBoundarySurvivesWorkerRestartAndPlatformRejection(t 
 				deps.network.AttachmentState = ports.NetworkAttachmentOpen
 				deps.rejectDisable = true
 				deps.runtime = ports.RuntimeOperation{State: "failed", Effect: "not_started", ErrorCode: "image_not_found"}
-				deps.inspection = &ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID, MCPEndpoint: base.SourceExecution.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy"}
+				deps.inspection = &ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID, MCPEndpoint: base.SourceExecution.RuntimeMCPEndpoint, LifecycleState: "provisioned", Phase: "running", RuntimeEndpoint: "10.20.0.9", Health: "healthy"}
 				service := newIntegratedLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 				requestID := "settlement-restart"
 				if kind == domain.OperationRebuild {
