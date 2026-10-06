@@ -307,6 +307,27 @@ test("every workload destination maps to its receiving interface and owns an all
   );
 });
 
+test("RC secret bootstrap reaches Controller only through its authenticated purpose interface", () => {
+  const service = base.services["runtime-controller"];
+  assert.equal(
+    service.environment.ANTNEST_AGENT_CONTROLLER_URL,
+    "http://agent-controller:8080",
+  );
+  assert.equal(
+    service.networks["controller-clients"].ipv4_address,
+    "10.241.0.24",
+  );
+  assert(service.extra_hosts.includes("agent-controller=10.241.0.18"));
+  assert.equal(
+    topology.networks["controller-clients"].members["runtime-controller"],
+    24,
+  );
+  assert(
+    !service.depends_on["agent-controller"],
+    "secret resolver must not introduce a startup dependency cycle",
+  );
+});
+
 test("management, owner databases, Provider and gateway ingress have exact memberships", () => {
   const members = (network) =>
     Object.entries(base.services)

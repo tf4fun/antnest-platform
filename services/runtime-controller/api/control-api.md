@@ -399,3 +399,36 @@ credentials, environment values, Runtime output, or physical resource names:
   "retryable": false
 }
 ```
+
+## Managed MCP secret bootstrap
+
+`mcp_servers[].secret_env` accepts only frozen set/fingerprint descriptors.
+When any are present, `managed_mcp_template` pins organization_id, template_id
+and revision; inline values and keep actions are rejected at this boundary.
+These descriptors and source are frozen in the deployment digest and journal.
+RC resolves values only through its authenticated Controller bootstrap client.
+Controller verifies AEAD and the opaque HMAC fingerprint; RC checks exact names
+and resolved size/encoding bounds, without deriving or exposing the HMAC key.
+`ANTNEST_AGENT_CONTROLLER_URL` must be configured for such deployments; RC's
+service-token directory must include the Controller token.
+
+RC prepares a generation-private root-only bootstrap volume, then verifies the
+actual read-only/nocopy mount, labels, file ownership, permissions and contents
+after container creation and before start. A Docker-created unlabeled empty
+replacement is refused. Replay rechecks the actual mount. Disable, replacement
+and Delete remove the owned generation's private volume; Enable resolves the
+Agent's retained frozen source. No value enters RuntimeSpec, Docker environment,
+labels or deployment digests. MCP cache HOME/TMPDIR/XDG directories use a separate root-owned
+0711 exec/nosuid/nodev tmpfs at `/run/antnest-mcp-home`, bounded by
+`resources.tmpfs_bytes` across all servers. Runtime creates UID-owned 0700
+children. This cache resets on container restart. The bootstrap volume survives ordinary container
+restarts; it is excluded from workspace backup and rebuilt from Controller on
+restore. See the [shared contract](../../../contracts/runtime/managed-mcp-secrets.md).
+
+`resources.tmpfs_bytes` is the size limit of each mount, not a single combined
+budget for `/tmp` and MCP HOME. All MCP servers share the HOME mount without
+per-server quotas; one server filling it can prevent others from writing caches.
+The mounts grow on demand and their actual usage shares the existing
+`resources.memory_bytes` limit with all Runtime processes. Configuring two equal
+mount limits neither reserves twice that RAM nor increases the container memory
+limit; insufficient memory can trigger OOM before the filesystem size limits.

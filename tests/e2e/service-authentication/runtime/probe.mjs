@@ -383,6 +383,84 @@ async function sdk() {
   });
 }
 
+async function managedCaches() {
+  return withSdk(async (client) => {
+    const call = async (name, args) => {
+      const result = await client.callTool(
+        { name, arguments: args },
+        { signal: AbortSignal.timeout(20000) },
+      );
+      assert(!result.isError, "managed cache probe failed");
+      assert(
+        !JSON.stringify(result).includes("disk-cache-canary"),
+        "cache contents leaked into tool output",
+      );
+      checks++;
+      return result;
+    };
+    const first = (
+      await call("mcp__alpha__echo", { value: "disk-alpha", cache_probe: true })
+    ).structuredContent;
+    const other = (
+      await call("mcp__zeta__echo", {
+        value: "disk-zeta",
+        cache_probe: true,
+        probe_paths: first.cache_paths,
+      })
+    ).structuredContent;
+    assert.deepEqual(
+      other.peer_cache_readable,
+      first.cache_paths.map(() => false),
+      "another MCP can read cached credentials",
+    );
+    assert.equal(first.uid, 2000);
+    assert.equal(other.uid, 2001);
+    for (const server of [first, other]) {
+      assert.equal(server.cache_paths.length, 5);
+      assert.equal(server.home, "/run/antnest-mcp-home/" + server.uid);
+      assert.equal(server.cwd, "/workspace");
+      assert.equal(server.gid, 1000);
+      assert.equal(server.cache_owned_and_readable, true);
+      assert.equal(server.cache_executable_ok, true);
+      assert.deepEqual(
+        server.cache_modes,
+        server.cache_paths.map(() => 0o600),
+      );
+      checks += 6;
+    }
+    const peers = (
+      await call("mcp__alpha__echo", {
+        value: "disk-alpha-again",
+        cache_probe: true,
+        probe_paths: other.cache_paths,
+      })
+    ).structuredContent;
+    assert.deepEqual(
+      peers.peer_cache_readable,
+      other.cache_paths.map(() => false),
+    );
+    const bash = await call("bash", {
+      command: `python3 - <<'PY'
+import os
+assert os.getuid() == 1000 and os.getgid() == 1000
+for path in ${JSON.stringify([...first.cache_paths, ...other.cache_paths])}:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except PermissionError:
+        continue
+    os.close(fd)
+    raise AssertionError('Bash can read MCP cached credentials')
+print('MCP_PRIVATE_CACHES_OK')
+PY`,
+      working_dir: ".",
+      env: [],
+      timeout_ms: 5000,
+    });
+    assert(JSON.stringify(bash).includes("MCP_PRIVATE_CACHES_OK"));
+    checks += 2;
+  });
+}
+
 function archive() {
   const path = Buffer.from("SKILL.md");
   const contents = Buffer.from(
@@ -649,6 +727,9 @@ try {
       break;
     case "sdk":
       await sdk();
+      break;
+    case "managed-caches":
+      await managedCaches();
       break;
     case "skills":
       await skills();

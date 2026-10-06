@@ -1,7 +1,7 @@
 # Stored-secret encryption and rotation
 
 Revision 1, issue [#42](https://github.com/tf4fun/antnest-platform/issues/42).
-This contract covers Agent Controller Provider credentials and Identity OIDC
+This contract covers Agent Controller Provider/managed MCP credentials and Identity OIDC
 client secrets and login-session secrets. ACP's client-MCP encryption is outside
 this change. The services own their tables and migration/rotation commands.
 

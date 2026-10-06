@@ -21,6 +21,7 @@ import (
 const MonitorRetryDelay = time.Second
 
 type Config struct {
+	AgentControllerURL        string
 	InstanceCredentials       *instanceauth.Manager
 	RuntimeAuthentication     map[string]string
 	Authentication            *serviceauth.Clients
@@ -110,6 +111,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 			strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
 		),
 		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
+		AgentControllerURL:    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
 		SkillRegistryURL:      strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
 		SkillPreparerImage:    valueOr(lookup, "ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE", "antnest/runtime-controller:local"),
 		RuntimeStatusTimeout:  statusTimeout,
@@ -162,6 +164,9 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_ALLOWED_IMAGES: %w", err)
 	}
 	endpoints := map[string]string{}
+	if config.AgentControllerURL != "" {
+		endpoints["agent-controller"] = config.AgentControllerURL
+	}
 	if config.SkillRegistryURL != "" {
 		endpoints["skill-registry"] = config.SkillRegistryURL
 	}

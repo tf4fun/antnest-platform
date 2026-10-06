@@ -58,6 +58,15 @@ telemetry backend is that backend's separate operational responsibility.
 Container IDs, sockets, PID values, `/tmp` and in-memory Tool processes are not
 restored. Required images must remain available by the saved immutable digest.
 
+Managed MCP values belong to Controller's encrypted `managed_mcp_secrets` table
+and key backup. RC's generation-private `antnest-runtime-mcp-*` bootstrap volumes
+are excluded from ordinary workspace archives, as are instance-authentication
+volumes. After restoring the owners and keys, recreate/rebuild through RC to
+resolve the frozen Template and rematerialize its protected bootstrap. Missing
+or corrupt bootstrap content is rejected; never substitute an empty volume.
+Old pre-#37 snapshots/journals and recovery copies may contain plaintext env
+credentials and require protected handling.
+
 ### Skill Registry and per-Agent Skill state
 
 The recovery set must also include:

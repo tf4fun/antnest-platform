@@ -3,6 +3,22 @@
   "$id": "https://antnest.local/agent-controller/control-api.schema.json",
   "title": "Antnest Agent Controller lifecycle messages",
   "$defs": {
+    "managed_mcp_secret_request": {
+      "$ref": "../runtime/managed-mcp.schema.json#/$defs/template_source"
+    },
+    "managed_mcp_secret_response": {
+      "type": "object",
+      "maxProperties": 8,
+      "additionalProperties": {
+        "type": "object",
+        "maxProperties": 64,
+        "additionalProperties": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      }
+    }
+  ,
     "agent_skill_preparation_status": {
       "type": "object",
       "additionalProperties": false,
@@ -682,7 +698,10 @@
     "runtime_draft": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image_ref", "resources"],
+      "required": [
+        "image_ref",
+        "resources"
+      ],
       "properties": {
         "image_ref": {
           "type": "string",
@@ -694,12 +713,31 @@
           "$ref": "#/$defs/runtime_resources"
         },
         "mcp_servers": {
-          "$ref": "../runtime/runtime-spec.schema.json#/properties/mcp_servers"
+          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_write"
         }
       }
     },
     "runtime_input": {
-      "$ref": "#/$defs/runtime_draft"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image_ref",
+        "resources"
+      ],
+      "properties": {
+        "image_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Caller-selected image reference, preserved verbatim. Syntax is validated; image availability is checked at Runtime creation."
+        },
+        "resources": {
+          "$ref": "#/$defs/runtime_resources"
+        },
+        "mcp_servers": {
+          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_read"
+        }
+      }
     },
     "model_pricing": {
       "type": "object",

@@ -233,3 +233,8 @@ and is unsafe for multi-tenant use; empty, padded or other values fail startup.
 See [Provider management](docs/provider-management.md) for DNS pinning, error
 classes and model-only saved/draft discovery. Consumer and final integration
 admission are recorded in the rollout ledger.
+
+Managed MCP secret_env is write-only. Template reads show only set state and
+fingerprints; ciphertext is stored separately and bound to its immutable location.
+The [managed MCP contract](../../contracts/runtime/managed-mcp-secrets.md) defines
+keep/clear, RC-only bootstrap delivery and coordinated pre-release upgrade.

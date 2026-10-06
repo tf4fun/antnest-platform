@@ -49,6 +49,7 @@ var (
 		{version: 17, name: "skill_preparation_attempts", sql: mustMigration("migrations/0017_skill_preparation_attempts.sql")},
 		{version: 24, name: "skill_learning_policy", sql: mustMigration("migrations/0024_skill_learning_policy.sql")},
 		{version: 25, name: "encryption_key_rotation", sql: mustMigration("migrations/0025_encryption_key_rotation.sql")},
+		{version: 26, name: "managed_mcp_secrets", sql: mustMigration("migrations/0026_managed_mcp_secrets.sql")},
 	}
 )
 

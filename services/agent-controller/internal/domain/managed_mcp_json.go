@@ -8,6 +8,34 @@ import (
 	"unicode/utf8"
 )
 
+func (secret *MCPSecret) UnmarshalJSON(data []byte) error {
+	if !validMCPJSONUnicode(data) {
+		return errors.New("invalid managed MCP secret encoding")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return errors.New("invalid managed MCP secret")
+	}
+	type plain MCPSecret
+	var decoded plain
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return errors.New("invalid managed MCP secret")
+	}
+	_, value := fields["value"]
+	_, keep := fields["keep"]
+	_, set := fields["set"]
+	_, fingerprint := fields["fingerprint"]
+	validWrite := len(fields) == 1 && (value && decoded.Value != nil || keep && decoded.Keep)
+	validRead := len(fields) == 2 && set && decoded.Set && fingerprint && managedFingerprintPattern.MatchString(decoded.Fingerprint)
+	if !validWrite && !validRead {
+		return errors.New("invalid managed MCP secret shape")
+	}
+	*secret = MCPSecret(decoded)
+	return nil
+}
+
 func (server *MCPServer) UnmarshalJSON(data []byte) error {
 	// encoding/json replaces malformed Unicode. Process configuration must be
 	// preserved exactly instead; validate encoding before decoding the structure.

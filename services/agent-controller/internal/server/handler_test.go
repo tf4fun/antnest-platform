@@ -903,3 +903,7 @@ func sampleTemplateView() application.TemplateView {
 		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
 	}
 }
+
+func (service *catalogServiceStub) ResolveMCPSecrets(context.Context, ports.MCPTemplateSource) (map[string]map[string]string, error) {
+	return map[string]map[string]string{"docs": {"API_KEY": "synthetic-bootstrap"}}, nil
+}

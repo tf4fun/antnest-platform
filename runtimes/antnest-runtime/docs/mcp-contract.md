@@ -245,16 +245,19 @@ resource.
 ### Managed stdio Tools
 
 `RuntimeSpec.mcp_servers` is an optional array (empty by default) of at most eight
-objects: `{id, command, args, env}`. IDs contain 1-16 lowercase ASCII letters,
+objects: `{id, command, args, env, secret_env}` (the latter contains only
+set/fingerprint descriptors). IDs contain 1-16 lowercase ASCII letters,
 digits or hyphens and start with a letter. `command` names an executable;
 `args` and `env` default to empty. No shell interpolation is performed. The
-working directory and HOME are the persistent workspace. Explicit environment
+working directory is the persistent workspace. HOME, TMPDIR/TMP/TEMP and XDG
+cache/config/data/state/runtime directories are private ephemeral directories
+below `/run/antnest-mcp-home/<uid>`, owned by that UID with mode 0700. Explicit environment
 values are applied only after privilege reduction, never to the root launcher.
 The encoded configuration array is limited to 64 KiB, leaving room for the
 rest of RuntimeSpec within the Linux per-environment-string execution limit.
 
-Runtime starts these processes through its `mcp-stdio` subcommand as UID/GID
-1000, clears inherited descriptors and privileges, and uses the official MCP
+Runtime starts these processes through its `mcp-stdio` subcommand as a distinct UID 2000..2007 (rank of sorted server IDs),
+with workspace GID 1000, clears inherited descriptors and privileges, and uses the official MCP
 client SDK on stdin/stdout. Completion of a tool request never clears container
 processes. Background jobs may outlive a request, turn, or Run, regardless of
 whether they originated from Bash or a managed MCP server. PID 1 reaps exited
@@ -364,7 +367,7 @@ human-readable text block plus structured content:
 { "exit_code": 0, "stdout": "", "stderr": "", "truncated": false }
 ```
 
-The child starts from an empty environment. Runtime injects `HOME` and `PATH`;
+The child starts from an empty environment. Runtime injects the private `HOME`, temporary/XDG directories and `PATH`;
 callers may add command-scoped variables but cannot override those two reserved
 names or repeat an environment-variable name. Command text must be non-empty
 and contain no NUL. A successful command may leave background jobs running;
@@ -508,3 +511,29 @@ express the complete filesystem invariant.
 Relative filesystem paths may appear in structured diagnostic logs. Commands,
 environment values, file contents, stdout, and stderr must not be logged by the
 Runtime request layer.
+
+## Managed MCP secret environment
+
+Managed servers have dedicated UIDs 2000..2007 and workspace GID 1000; they do
+not share the UID 1000 tools' identity. RuntimeSpec carries only secret_env
+set/fingerprint descriptors. The trusted entry reads the RC-owned private
+`/run/antnest-mcp/secrets.json` before privilege drop and execs with that server's
+values, never another server's values or supervisor configuration. The file is
+root-owned 0400 in a 0700 directory on a read-only private mount. Secret values
+are absent from Docker Config.Env and the launcher environment. File tools and
+Bash use group-writable workspace defaults; explicit private file modes may
+exclude managed servers. Every managed UID uses the Executor tunnel and kill
+switch. MCP uses umask 077: default new files are 0600 and directories 0700,
+including files created in shared `/tmp` by programs ignoring TMPDIR. Tools
+retain umask 007; MCP must explicitly grant group permissions for intended
+shared output. The root entry requires an RC-provisioned, bounded tmpfs with
+root-owned 0711 base and refuses unsafe owners/modes or a persistent filesystem.
+Cache data resets on container restart and is excluded from workspace backups.
+Fingerprints are opaque HMAC identifiers authenticated by Controller AEAD, not
+checksums Runtime can recompute; the root-only mount and exact names/bounds
+protect bootstrap delivery. No host ptrace_scope change or hidepid remount is required.
+
+The [shared contract](../../../contracts/runtime/managed-mcp-secrets.md) and
+[Linux execve manual](https://man7.org/linux/man-pages/man2/execve.2.html) explain
+why dumpability alone does not survive an ordinary exec and cannot isolate
+same-UID servers from model-driven tools.

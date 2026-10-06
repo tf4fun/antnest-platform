@@ -46,3 +46,29 @@ func TestManagedMCPRPCRejectsUnknownConnectionFields(t *testing.T) {
 		t.Fatal("unknown child endpoint field accepted")
 	}
 }
+
+func TestLifecycleRPCPinsManagedSecretSourceAndRejectsInlineWrites(t *testing.T) {
+	for _, action := range []string{"initialize", "update", "enable"} {
+		service := &fakeService{operation: deployment.Operation{State: deployment.OperationCompleted}}
+		revision := ""
+		if action != "initialize" {
+			revision = `"expected_revision":"` + string(testRuntimeRevision) + `",`
+		}
+		body := `{` + revision + `"configuration":{"managed_mcp_template":{"organization_id":"org","template_id":"template","revision":3},"mcp_servers":[{"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}}}]}}`
+		r := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/"+action, strings.NewReader(body))
+		r.Header.Set("Idempotency-Key", "secret-request")
+		w := httptest.NewRecorder()
+		newTestHandler(t, service).ServeHTTP(w, r)
+		if w.Code != 200 || service.configuration.ManagedMCPTemplate == nil || service.configuration.ManagedMCPTemplate.Revision != 3 || service.configuration.MCPServers[0].SecretEnv["API_KEY"].Fingerprint != "hmac-sha256:0123456789abcdef0123456789abcdef" {
+			t.Fatal("frozen secret metadata lost at RPC boundary", w.Code)
+		}
+		bad := strings.Replace(body, `{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}`, `{"value":"private-value"}`, 1)
+		r = httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/"+action, strings.NewReader(bad))
+		r.Header.Set("Idempotency-Key", "secret-invalid")
+		w = httptest.NewRecorder()
+		newTestHandler(t, service).ServeHTTP(w, r)
+		if w.Code != 400 || strings.Contains(w.Body.String(), "private-value") {
+			t.Fatal("inline value accepted or echoed")
+		}
+	}
+}

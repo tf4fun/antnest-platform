@@ -2,7 +2,7 @@
 
 Agent Controller owns the desired configuration, not MCP processes, protocol
 sessions, tool discovery, or Runtime context reads. Templates accept optional
-`runtime.mcp_servers` entries with `id`, `command`, `args`, and `env`, matching the
+`runtime.mcp_servers` entries with `id`, `command`, `args`, public `env` and write-only `secret_env`, matching the
 [Runtime contract](../../../contracts/runtime/runtime-spec.schema.json).
 
 The command must already be available in the Runtime image or persistent
@@ -15,12 +15,17 @@ children, or allow ACP clients to start processes on the ACP service host.
     {
       "id": "documents",
       "command": "node",
-      "args": ["/workspace/mcp/documents.js"],
-      "env": {"DOCUMENTS_URL": "https://documents.example.test"}
+      "args": ["/skills/documents/server.js"],
+      "env": {"DOCUMENTS_URL": "https://documents.example.test"},
+      "secret_env": {"API_KEY": {"value": "write-only-on-create"}}
     }
   ]
 }
 ```
+
+Credentialed MCP code and dependencies must be administrator-controlled image
+or read-only preset content. Using model-writable workspace code would let the
+model change how that trusted server uses its own credentials.
 
 ## Ownership and lifecycle
 
@@ -28,7 +33,7 @@ children, or allow ACP clients to start processes on the ACP service host.
    There are at most eight unique IDs (`[a-z][a-z0-9-]{0,15}`), 64 arguments and
    64 environment entries per server, 32 KiB raw data per server and 64 KiB of
    encoded configuration overall. NUL and invalid UTF-8 are rejected; `HOME`,
-   `PATH` and `ANTNEST_*` environment keys are reserved. Exact field bounds are
+   `PATH`, temporary/XDG cache directory variables and `ANTNEST_*` environment keys are reserved. Exact field bounds are
    in the linked contract.
 2. A template revision and the materialized Agent spec freeze independent deep
    copies of the configuration. It participates in the Agent spec digest.
@@ -42,22 +47,45 @@ children, or allow ACP clients to start processes on the ACP service host.
    the process command, arguments or environment through configuration publication. It
    discovers tools and reads Runtime information through that endpoint.
 
-There are no extra tables, lifecycle states, desired-state replicas or
-cross-service database access. The `agent_controller.agent_template_revisions`
-and `agent_controller.agent_spec_revisions` JSON snapshots own persistence.
-Runtime deployment itself remains the responsibility of Runtime Controller.
+Controller stores only secret descriptors in Template/Agent Runtime snapshots.
+`agent_controller.managed_mcp_secrets` stores authenticated envelopes in the same
+Template transaction. The AAD binds organization, Template, revision, server and
+name. `keep: true` reads that exact predecessor and reseals under the new revision;
+omission clears only the new revision. Reads, receipts and execution audits never
+return values or ciphertext. Every read shows set state and an opaque 128-bit HMAC-SHA-256
+fingerprint derived from the protected envelope data key. New revisions may
+change it even when keeping the value. Requests with value writes use a separate
+full envelope-keyed HMAC; identical retries use the original revision's key,
+including after master-key re-wrapping and retirement. Concurrent retries
+recompute against the committed winner before reporting a conflict. Every active/decrypt-only master key policy still applies; the existing
+`agent-controller rekey` now covers Provider and managed MCP rows under one lock.
+
+The credential adapter rejects empty identities and bounds each organization,
+credential reference and credential version field to 1024 UTF-8 bytes before
+encoding AAD or performing encryption/authentication. Its existing big-endian
+length-prefixed AAD format is unchanged, so valid stored envelopes and HMAC
+identities remain compatible.
 
 ## Configuration privacy
 
-Explicit MCP environment values are deployment configuration. They are stored
-with immutable revisions in Agent Controller's own database, not a new secret
-manager. Trusted internal administrative catalog/configuration RPCs return this
-configuration; they must not be exposed as public user APIs. Database access and
-backups therefore require the same protection as other sensitive configuration.
-Operational observations, lifecycle events, ACP Agent configuration and prompts
-must not copy this configuration. Diagnostic formatting displays server IDs only.
-Credential references could later replace inline values without changing process
-ownership. There is no Console MCP configuration editor.
+`env` is public configuration and must never carry credentials, including URLs
+with passwords. Use `secret_env` for sensitive values regardless of variable
+name. Create/revise and the workload-only bootstrap route are metadata-only in
+telemetry, even when RPC content capture is enabled. Only authenticated RC can
+call `POST /internal/managed-mcp-secrets/resolve`, pinning organization, Template
+and revision. It is not bound to a particular Agent or lifecycle operation:
+authenticated RC may resolve any organization's frozen revision, consistent with
+its Docker/host-root trust. Console, ACP, UI and Gateway cannot access it. RC resolves values at
+startup; its journal and deployment identity contain only descriptors and a
+frozen Template source. No master key is sent to RC or Runtime.
+
+The [shared secret contract](../../../contracts/runtime/managed-mcp-secrets.md)
+defines dedicated process identities, private read-only bootstrap delivery and
+the coordinated pre-release upgrade. Old disposable configurations must be
+explicitly re-entered/rebuilt; their plaintext snapshots and backups cannot be
+silently made safe by returning a redacted view. Runtime, RC and Console consume
+this boundary in their owning implementations; the root managed-MCP acceptance
+verifies the complete flow separately.
 
 ## Verification
 

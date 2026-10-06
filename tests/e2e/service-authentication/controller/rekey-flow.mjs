@@ -98,12 +98,16 @@ export async function rotateControllerFixture({
     ]);
     const progress = output.split("\n").map((line) => JSON.parse(line));
     assert(progress.every((p) => p.active_kid === "kid2"));
-    assert.equal(progress.at(-1).table, "provider_connections");
+    assert.deepEqual(
+      new Set(progress.map((p) => p.table)),
+      new Set(["provider_connections", "managed_mcp_secrets"]),
+    );
+    assert.equal(progress.at(-1).table, "managed_mcp_secrets");
     assert.equal(progress.at(-1).remaining, 0);
     assert.equal(progress.at(-1).updated, 0);
     return progress.reduce((sum, p) => sum + p.updated, 0);
   };
-  assert.equal(await rekey(), 1);
+  assert.equal(await rekey(), 2);
   assert.equal(await rekey(), 0);
   assert.equal(await fingerprint(), before);
   assert.equal(

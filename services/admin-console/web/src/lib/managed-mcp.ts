@@ -1,6 +1,6 @@
-import type { ManagedMCPServer } from "./types.ts";
+import type { ManagedMCPServerWrite, ManagedMCPSecretWrite } from "./types.ts";
 
-export type MCPDraft = { id: string; command: string; args: string[]; env: Array<{ name: string; value: string }> };
+export type MCPDraft = { id: string; command: string; args: string[]; env: Array<{ name: string; value: string }>; secret_env?: Array<{ name: string } & ManagedMCPSecretWrite> };
 const size = (value: string) => new TextEncoder().encode(value).length;
 
 // Textareas normalize CRLF/CR to LF. Preserve untouched text and its line endings.
@@ -16,7 +16,7 @@ export function editMultiline(previous: string, next: string): string {
   return units.slice(0, start).join("") + next.slice(start, nextEnd).replaceAll("\n", newline) + units.slice(end).join("");
 }
 
-export function managedMCPInput(form: FormData): ManagedMCPServer[] {
+export function managedMCPInput(form: FormData): ManagedMCPServerWrite[] {
   const raw: unknown = JSON.parse(String(form.get("managed_mcp") ?? "[]"));
   if (!Array.isArray(raw) || raw.length > 8) throw new Error("A template can have at most 8 MCP servers.");
   const seen = new Set<string>();
@@ -29,8 +29,20 @@ export function managedMCPInput(form: FormData): ManagedMCPServer[] {
     if (!draft.command.trim()) throw new Error(`${label}: Command is required.`);
     if (!Array.isArray(draft.args) || draft.args.length > 64) throw new Error(`${label}: At most 64 arguments are allowed.`);
     draft.args.forEach((argument) => bounded(argument, 8192, `${label} argument`));
-    const env = environment(draft.env, label);
-    const server = { id: draft.id, command: draft.command, args: draft.args, env };
+    const seenNames = new Set<string>();
+    const env = environment(draft.env, label, seenNames);
+    const secretEntries = draft.secret_env ?? [];
+    if (!Array.isArray(secretEntries) || draft.env.length + secretEntries.length > 64) throw new Error(`${label}: At most 64 environment variables are allowed.`);
+    const secret_env = Object.fromEntries(secretEntries.map((item) => {
+      environmentName(item.name, label, seenNames);
+      if ("keep" in item) {
+        if (item.keep !== true || "value" in item) throw new Error(`${label}: Invalid secret action.`);
+        return [item.name, { keep: true }];
+      }
+      bounded(item.value, 8192, `${label} secret value`);
+      return [item.name, { value: item.value }];
+    })) as Record<string, ManagedMCPSecretWrite>;
+    const server = { id: draft.id, command: draft.command, args: draft.args, env, ...(secretEntries.length ? { secret_env } : {}) };
     if (size(JSON.stringify(server)) > 32768) throw new Error(`${label}: Configuration exceeds 32 KiB.`);
     return server;
   });
@@ -38,17 +50,20 @@ export function managedMCPInput(form: FormData): ManagedMCPServer[] {
   return servers;
 }
 
-function environment(values: MCPDraft["env"], label: string): Record<string, string> {
+function environment(values: MCPDraft["env"], label: string, seen: Set<string>): Record<string, string> {
   if (!Array.isArray(values) || values.length > 64) throw new Error(`${label}: At most 64 environment variables are allowed.`);
-  const seen = new Set<string>();
   for (const item of values) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(item.name)) throw new Error(`${label}: Invalid environment variable name.`);
-    if (item.name === "HOME" || item.name === "PATH" || item.name.startsWith("ANTNEST_")) throw new Error(`${label}: ${item.name} is reserved by Runtime.`);
-    if (seen.has(item.name)) throw new Error(`${label}: Duplicate environment variable ${item.name}.`);
-    seen.add(item.name);
+    environmentName(item.name, label, seen);
     bounded(item.value, 8192, `${label} environment value`);
   }
   return Object.fromEntries(values.map(({ name, value }) => [name, value]));
+}
+
+function environmentName(name: string, label: string, seen: Set<string>) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) throw new Error(`${label}: Invalid environment variable name.`);
+  if (["HOME", "PATH", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"].includes(name) || name.startsWith("ANTNEST_")) throw new Error(`${label}: ${name} is reserved by Runtime.`);
+  if (seen.has(name)) throw new Error(`${label}: Duplicate environment variable ${name}.`);
+  seen.add(name);
 }
 
 function bounded(value: string, maximum: number, label: string) {

@@ -12,7 +12,7 @@ import { collectTrace } from "./trace.mjs";
 
 const plans = {
   "managed-bootstrap": ["write", "write"],
-  "managed-exercise": ["mcp__alpha__fail", "mcp__alpha__echo"],
+  "managed-exercise": ["mcp__alpha__fail", "mcp__alpha__echo", "bash"],
   "managed-mutate": ["write"],
   "managed-fresh": ["mcp__alpha__echo"],
   "managed-draining": ["mcp__alpha__echo", "mcp__alpha__echo"],

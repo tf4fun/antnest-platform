@@ -221,6 +221,7 @@ services:
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
       ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
       ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY: ${ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY:-30s}
@@ -281,6 +282,8 @@ services:
     networks:
       controller-runtime:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.24
       registry-clients:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.85
       observability:
@@ -291,6 +294,7 @@ services:
     stop_grace_period: 30s
     extra_hosts:
       skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
+      agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
       jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   agent-acp-service:

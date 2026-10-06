@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "status": "integration-admitted",
   "profile": "disposable-development-token-http",
   "private_bridge": {
@@ -32,7 +32,8 @@
         "admin-console": 20,
         "agent-ui": 21,
         "agent-acp-service": 22,
-        "diagnostic-relay": 23
+        "diagnostic-relay": 23,
+        "runtime-controller": 24
       }
     },
     "controller-acp": {
@@ -378,6 +379,10 @@
       }
     },
     "runtime-controller": {
+      "agent-controller": {
+        "receiver": "agent-controller",
+        "listener": "primary"
+      },
       "skill-registry": {
         "receiver": "skill-registry",
         "listener": "primary"

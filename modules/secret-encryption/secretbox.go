@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"slices"
 )
@@ -133,6 +135,38 @@ func (box *Box) Rekey(ctx context.Context, sealed SealedSecret, identity []byte)
 	}
 	sealed.KeyID, sealed.WrappedDataKey = box.activeKID, wrapped
 	return sealed, nil
+}
+
+// Authenticate computes a domain-separated MAC without exporting a data key.
+// The envelope must authenticate before its key is used. Re-wrapping its master
+// key preserves this MAC, while a new envelope has an independent MAC key.
+func (box *Box) Authenticate(ctx context.Context, sealed SealedSecret, identity []byte, purpose string, value []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validRecord(sealed, identity); err != nil {
+		return nil, err
+	}
+	if purpose == "" || len(sealed.WrappedDataKey) == 0 {
+		return nil, ErrMetadata
+	}
+	key, err := box.wrapper.UnwrapDataKey(ctx, sealed.KeyID, sealed.WrappedDataKey, box.wrapAAD(identity, sealed.KeyID))
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key)
+	plaintext, err := box.openPayload(key, sealed, identity)
+	if err != nil {
+		return nil, err
+	}
+	clear(plaintext)
+	derive := hmac.New(sha256.New, key)
+	_, _ = derive.Write(frame([]byte("antnest-envelope-mac-key-v1"), box.payloadAAD(identity), []byte(purpose)))
+	subkey := derive.Sum(nil)
+	defer clear(subkey)
+	mac := hmac.New(sha256.New, subkey)
+	_, _ = mac.Write(value)
+	return mac.Sum(nil), nil
 }
 
 func validRecord(sealed SealedSecret, identity []byte) error {

@@ -359,6 +359,10 @@ func (store *catalogStoreStub) ReplayTemplateRequest(
 	return store.templateReplay, store.replayFound, nil
 }
 
+func (store *catalogStoreStub) LookupTemplateRequest(_ context.Context, _ ports.CatalogRequestKind, _ string) (ports.TemplateRecord, bool, error) {
+	return store.templateReplay, store.replayFound, nil
+}
+
 func (store *catalogStoreStub) PutModelProfile(_ context.Context, record ports.ModelProfileRecord) (ports.ModelProfileRecord, error) {
 	store.modelRecord = record
 	return record, nil

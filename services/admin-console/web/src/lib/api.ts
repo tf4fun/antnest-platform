@@ -31,7 +31,7 @@ import type {
   ProviderConnectionList,
   ProviderCredential,
   ProviderModelInput,
-  ManagedMCPServer,
+  ManagedMCPServerWrite,
   Overview,
   OIDCLoginStart,
   OIDCProviderList,
@@ -347,7 +347,7 @@ export const api = {
     system_prompt: string;
     max_model_requests: number;
     skill_refs?: SkillReference[];
-    runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServer[] };
+    runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServerWrite[] };
   }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
     fallback_model_profile_ids?: string[];
@@ -359,7 +359,7 @@ export const api = {
     runtime: {
       image_ref: string;
       resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
-      mcp_servers?: ManagedMCPServer[];
+      mcp_servers?: ManagedMCPServerWrite[];
     };
   }) => idempotentRequest<AgentTemplate>(
     `revise-template:${templateID}`,

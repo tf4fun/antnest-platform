@@ -32,3 +32,11 @@ Credentials are fresh CSPRNG values in ignored private evidence storage, never
 public conformance fixtures. The harness removes only resources carrying its
 unique ownership label, generated images and temporary credentials in `finally`.
 Logs/results remain under `artifacts/verification/runtime-instance-admission/`.
+
+The same gate also runs two real stdio MCP servers. Their disk cache probes
+cover HOME, TMPDIR, XDG configuration/cache and hardcoded `/tmp`; the peer MCP
+and normal UID 1000 Bash must fail to read them. The cache owner must remain
+able to read its files, with cwd unchanged and default modes 0600. Restart
+recreates the private cache tree. World-writable or non-root-owned base mounts
+fail before managed programs execute. A focused reproduction is available with
+`node tests/e2e/service-authentication/runtime/run.mjs --managed-caches-only`.

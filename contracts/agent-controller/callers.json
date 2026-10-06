@@ -8,14 +8,16 @@
         "admin-console",
         "edge-gateway",
         "agent-ui",
-        "agent-acp-service"
+        "agent-acp-service",
+        "runtime-controller"
       ],
       "authentication": "delegate",
       "caller_context": {
         "admin-console": "none",
         "edge-gateway": "none",
         "agent-ui": "none",
-        "agent-acp-service": "none"
+        "agent-acp-service": "none",
+        "runtime-controller": "none"
       },
       "request_body": "none"
     },
@@ -265,6 +267,12 @@
       "caller_context": {
         "admin-console": "required"
       },
+      "request_body": "json"
+    },
+    "POST /internal/managed-mcp-secrets/resolve": {
+      "callers": ["runtime-controller"],
+      "authentication": "workload",
+      "caller_context": {"runtime-controller": "operation"},
       "request_body": "json"
     },
     "POST /internal/provider-connections": {

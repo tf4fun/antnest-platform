@@ -352,6 +352,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
     );
     report_bootstrap_stage(BootstrapStage::NetworkReady, Some(&identity));
     for path in [
+        spec.filesystem().workspace().to_path_buf(),
         spec.filesystem().workspace().join(".antnest"),
         spec.filesystem().workspace().join(".antnest/skills"),
         spec.filesystem().workspace().join(".cache"),
@@ -360,6 +361,26 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
         spec.filesystem().workspace().join(".local/share"),
     ] {
         fs::create_dir_all(&path).map_err(|error| {
+            bootstrap_failure(
+                BootstrapStage::Filesystem,
+                BootstrapErrorCode::WorkspaceInitializationFailed,
+                Some(identity.clone()),
+                error,
+            )
+        })?;
+        // CAP_CHOWN is already required; take ownership before chmod rather than
+        // granting the supervisor CAP_FOWNER. All workspace actors use GID 1000,
+        // so no setgid bit or additional capability is necessary.
+        chown(&path, Some(Uid::from_raw(0)), None).map_err(|error| {
+            bootstrap_failure(
+                BootstrapStage::Filesystem,
+                BootstrapErrorCode::WorkspaceOwnershipFailed,
+                Some(identity.clone()),
+                std::io::Error::from_raw_os_error(error as i32),
+            )
+        })?;
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o770)).map_err(|error| {
             bootstrap_failure(
                 BootstrapStage::Filesystem,
                 BootstrapErrorCode::WorkspaceInitializationFailed,

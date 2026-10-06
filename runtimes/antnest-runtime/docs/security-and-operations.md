@@ -166,7 +166,7 @@ or shell operations. Each built-in tool call starts its matching explicit
 subcommand clears supplementary groups, drops irreversibly to UID/GID 1000,
 clears all capability sets, enables `no_new_privileges`, and verifies the final
 process state. Managed tool calls instead forward through their already-running
-UID/GID 1000 stdio server, started by the `mcp-stdio` launcher; discovery/status
+dedicated UID 2000..2007 / workspace GID 1000 stdio server, started by the `mcp-stdio` launcher; discovery/status
 requests do not create a one-shot Executor.
 
 Bootstrap verifies that every required Supervisor capability is present,
@@ -193,10 +193,10 @@ to Egress. Each datagram contains one complete, unfragmented IPv4/TCP packet;
 there is no WebSocket or tunnel authentication protocol.
 
 The root Supervisor retains the platform main routing table for MCP replies,
-Egress UDP, and OTLP. A UID-based policy rule sends UID 1000 traffic to an Agent
+Egress UDP, and OTLP. UID-based policy rules send UID 1000 and 2000..2007 traffic to an Agent
 table whose only default path is TUN and whose terminal unreachable route
 prevents fallback to the main table. nftables is the fail-closed backstop: it
-rejects UID 1000 bypass traffic, access to Runtime's own listen port, and IPv6.
+rejects UID 1000 and 2000..2007 bypass traffic, access to Runtime's own listen port, and IPv6.
 Internal destinations needed by an Agent are therefore reached through Egress
 policy instead of direct platform routes. The deployment must not publish the
 MCP port outside the trusted Docker or Kubernetes network.
@@ -284,3 +284,22 @@ endpoint unavailable and the container platform restarts or replaces it:
 
 Runtime does not implement restart, drain, retire, purge, or rollback methods.
 Those are Runtime Controller and Agent Controller lifecycle effects.
+
+Managed MCP secret values are read from the root-only private bootstrap mount
+before dropping to the server UID; only that server receives them at exec. The
+launcher and Docker environment contain descriptors only. Ordinary tools and
+other managed server UIDs cannot read its proc environment or ptrace it. Use
+trusted image-controlled MCP code when assigning credentials: mutable workspace
+code and the server's own tool semantics are part of the administrator-selected
+server's trust boundary. See the [shared secret contract](../../../contracts/runtime/managed-mcp-secrets.md).
+
+Managed servers use UID-owned 0700 HOME/TMPDIR/XDG directories under the
+root-owned 0711 tmpfs `/run/antnest-mcp-home`. RC sets exec/nosuid/nodev and
+bounds all server caches together by `tmpfs_bytes`; standalone operators must
+provide the same mount. The entry verifies its tmpfs type and ownership before
+dropping privileges. MCP umask is 077, while cwd remains workspace. This also
+protects default `/tmp` files from the common GID. Caches reset on restart and
+may require OAuth reauthentication. UID rank uses sorted IDs; only reordering is
+stable, not additions/removals. Trusted MCP code can still deliberately share
+credentials or execute mutable workspace code; private cache isolation does not
+contain those actions.

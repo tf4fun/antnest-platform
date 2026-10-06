@@ -23,6 +23,7 @@ import {
 import { runCommand } from "../../../support/run-command.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
+const cacheOnly = process.argv.includes("--managed-caches-only");
 const scope = "antnest-native-auth-" + randomUUID();
 const evidence = resolve(
   root,
@@ -34,6 +35,7 @@ mkdirSync(directory, { recursive: true, mode: 0o700 });
 chmodSync(directory, 0o700);
 const image = "antnest/antnest-runtime:auth-instance-" + scope.slice(-8);
 const gatedImage = image + "-gated";
+const fixtureImage = image + "-fixture";
 const network = scope + "-network",
   workspace = scope + "-workspace",
   receiver = scope + "-receiver",
@@ -203,32 +205,34 @@ try {
     0,
     "native Linux release gates failed; see private evidence",
   );
-  const featureBuild = await runCommand({
-    name: "linux-feature-build",
-    command: [
-      "docker",
-      "build",
-      "--progress=plain",
-      "--target",
-      "e2e",
-      "--build-arg",
-      "ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate",
-      "-f",
-      "runtimes/antnest-runtime/Dockerfile",
-      "-t",
-      gatedImage,
-      ".",
-    ],
-    cwd: root,
-    output: evidence,
-    timeoutMs: 1200000,
-    graceMs: 30000,
-  });
-  assert.equal(
-    featureBuild.exit_code,
-    0,
-    "native Linux feature gates failed; see private evidence",
-  );
+  if (!cacheOnly) {
+    const featureBuild = await runCommand({
+      name: "linux-feature-build",
+      command: [
+        "docker",
+        "build",
+        "--progress=plain",
+        "--target",
+        "e2e",
+        "--build-arg",
+        "ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate",
+        "-f",
+        "runtimes/antnest-runtime/Dockerfile",
+        "-t",
+        gatedImage,
+        ".",
+      ],
+      cwd: root,
+      output: evidence,
+      timeoutMs: 1200000,
+      graceMs: 30000,
+    });
+    assert.equal(
+      featureBuild.exit_code,
+      0,
+      "native Linux feature gates failed; see private evidence",
+    );
+  }
   const [releasedImage] = JSON.parse(await invoke(["image", "inspect", image]));
   assert.equal(
     releasedImage.Config.Labels["dev.antnest.runtime.test-features"],
@@ -347,146 +351,271 @@ try {
     "-e",
     "setInterval(() => {}, 1000)",
   ]);
-  const current = await probes("ready");
-  await probes("matrix");
-  await probes("sdk");
-  await probes("skills");
-  const [nativeContainer] = JSON.parse(await invoke(["inspect", runtime]));
-  assert.deepEqual(nativeContainer.NetworkSettings.Ports, {});
-  const actualMount = nativeContainer.Mounts.find(
-    (mount) => mount.Destination === "/run/antnest-auth",
-  );
-  assert.equal(actualMount.Name, receiver);
-  assert.equal(actualMount.RW, false);
-  for (const token of Object.values(tokens))
-    assert(!JSON.stringify(nativeContainer.Config.Env).includes(token));
-  checks += 4;
-  await invoke([
-    "exec",
-    "--user",
-    "1000:1000",
+  if (!cacheOnly) {
+    const current = await probes("ready");
+    await probes("matrix");
+    await probes("sdk");
+    await probes("skills");
+    const [nativeContainer] = JSON.parse(await invoke(["inspect", runtime]));
+    assert.deepEqual(nativeContainer.NetworkSettings.Ports, {});
+    const actualMount = nativeContainer.Mounts.find(
+      (mount) => mount.Destination === "/run/antnest-auth",
+    );
+    assert.equal(actualMount.Name, receiver);
+    assert.equal(actualMount.RW, false);
+    for (const token of Object.values(tokens))
+      assert(!JSON.stringify(nativeContainer.Config.Env).includes(token));
+    checks += 4;
+    await invoke([
+      "exec",
+      "--user",
+      "1000:1000",
+      runtime,
+      "python",
+      "-c",
+      "import os; assert not os.access('/run/antnest-auth/callers.json', os.R_OK); assert not os.access('/run/antnest-auth', os.W_OK)",
+    ]);
+    checks++;
+    await invoke(["restart", "-t", "15", runtime], true);
+    await probes("ready");
+    await probes("matrix", { previousExecution: current.execution_id });
+    await probes("sdk");
+    const invalidStartup = async (
+      mode,
+      env = {},
+      changedSpec = spec,
+      mount = true,
+    ) => {
+      await prepare(invalidReceiver, mode);
+      const name = scope + "-invalid-" + checks;
+      await invoke([
+        "run",
+        "-d",
+        "--name",
+        name,
+        ...labelArgs,
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        ...[
+          "CHOWN",
+          "DAC_OVERRIDE",
+          "KILL",
+          "NET_ADMIN",
+          "SETGID",
+          "SETPCAP",
+          "SETUID",
+        ].flatMap((capability) => ["--cap-add", capability]),
+        ...(mount
+          ? [
+              "--mount",
+              "type=volume,src=" +
+                invalidReceiver +
+                ",dst=/run/antnest-auth,readonly",
+            ]
+          : []),
+        ...envArgs({
+          ...validEnv(),
+          ANTNEST_RUNTIME_SPEC: JSON.stringify(changedSpec),
+          ...env,
+        }),
+        image,
+      ]);
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const [details] = JSON.parse(await invoke(["inspect", name]));
+        if (!details.State.Running) break;
+        await delay(100);
+      }
+      const [details] = JSON.parse(await invoke(["inspect", name]));
+      assert.equal(
+        details.State.Running,
+        false,
+        "invalid bootstrap must not hang",
+      );
+      assert.equal(details.State.ExitCode, 78);
+      const logs = await captureLogs(name);
+      const events = logs.split("\n").flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      });
+      assert(
+        events.some(
+          (event) =>
+            event["lifecycle.event"] === "process_exit" &&
+            event.phase === "bootstrap" &&
+            event["bootstrap.stage"] === "runtime_spec",
+        ),
+        "invalid receiver must fail before network/bootstrap effects",
+      );
+      for (const token of Object.values(tokens)) assert(!logs.includes(token));
+      await invoke(["rm", "-f", "-v", name]);
+      checks++;
+    };
+    for (const mode of [
+      "empty",
+      "directory-mode",
+      "file-mode",
+      "owner",
+      "link",
+      "fifo",
+      "extra",
+    ])
+      await invalidStartup(mode);
+    for (const env of [
+      { ANTNEST_SERVICE_AUTH_MODE: undefined },
+      { ANTNEST_SERVICE_AUTH_MODE: "mtls" },
+      { ANTNEST_SERVICE_AUTH_MODE: " token" },
+      { ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: undefined },
+      { ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "false" },
+      { ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: " true" },
+      { ANTNEST_SERVICE_AUTH_CALLERS_FILE: "/workspace/callers.json" },
+      { ANTNEST_TLS_CA_FILE: "" },
+    ])
+      await invalidStartup("valid", env);
+    await invalidStartup("valid", {}, { ...spec, authentication: undefined });
+    await invalidStartup(
+      "valid",
+      {},
+      {
+        ...spec,
+        authentication: {
+          ...descriptor,
+          receiver_digest: hash("different receiver"),
+        },
+      },
+    );
+    await invalidStartup("valid", {}, spec, false);
+    const logs = await captureLogs(runtime);
+    for (const token of Object.values(tokens)) assert(!logs.includes(token));
+    checks++;
+  }
+  const fixtureBuild = await runCommand({
+    name: "managed-fixture-build",
+    command: [
+      "docker",
+      "build",
+      "--target",
+      "build",
+      "-f",
+      "runtimes/antnest-runtime/Dockerfile",
+      "-t",
+      fixtureImage,
+      ".",
+    ],
+    cwd: root,
+    output: evidence,
+    timeoutMs: 1200000,
+    graceMs: 30000,
+  });
+  assert.equal(fixtureBuild.exit_code, 0, "managed fixture build failed");
+  const source = scope + "-managed-source";
+  try {
+    await invoke([
+      "create",
+      "--name",
+      source,
+      ...labelArgs,
+      fixtureImage,
+      "/bin/true",
+    ]);
+    await invoke([
+      "cp",
+      source + ":/tmp/managed-mcp-fixture",
+      resolve(directory, "managed-mcp-fixture"),
+    ]);
+    chmodSync(resolve(directory, "managed-mcp-fixture"), 0o755);
+  } finally {
+    await invoke(["rm", "-f", "-v", source]);
+  }
+  await invoke(["stop", "-t", "15", runtime], true);
+  await invoke(["rm", "-f", "-v", runtime]);
+  spec.mcp_servers = ["alpha", "zeta"].map((id) => ({
+    id,
+    command: "/opt/managed-mcp-fixture",
+    env: { FIXTURE_SECRET: "disk-cache-canary" },
+  }));
+  const managedRuntimeArgs = [
+    "run",
+    "-d",
+    "--name",
     runtime,
-    "python",
-    "-c",
-    "import os; assert not os.access('/run/antnest-auth/callers.json', os.R_OK); assert not os.access('/run/antnest-auth', os.W_OK)",
-  ]);
-  checks++;
+    ...labelArgs,
+    "--network",
+    network,
+    "--network-alias",
+    alias,
+    "--cap-drop",
+    "ALL",
+    "--device",
+    "/dev/net/tun",
+    "--dns",
+    "100.64.0.1",
+    "--dns-option",
+    "use-vc",
+    "--stop-timeout",
+    "15",
+    ...[
+      "CHOWN",
+      "DAC_OVERRIDE",
+      "KILL",
+      "NET_ADMIN",
+      "SETGID",
+      "SETPCAP",
+      "SETUID",
+    ].flatMap((cap) => ["--cap-add", cap]),
+    "--mount",
+    "type=volume,src=" + workspace + ",dst=/workspace",
+    "--mount",
+    "type=volume,src=" + receiver + ",dst=/run/antnest-auth,readonly",
+    "--mount",
+    "type=bind,src=" +
+      resolve(directory, "managed-mcp-fixture") +
+      ",dst=/opt/managed-mcp-fixture,readonly",
+    "--tmpfs",
+    "/tmp:rw,nosuid,nodev,size=64m",
+    "--tmpfs",
+    "/run/antnest-mcp-home:rw,exec,nosuid,nodev,size=64m,mode=0711,uid=0,gid=0",
+    ...envArgs(validEnv()),
+    image,
+  ];
+  await invoke(managedRuntimeArgs);
+  await probes("ready");
+  await probes("managed-caches");
   await invoke(["restart", "-t", "15", runtime], true);
   await probes("ready");
-  await probes("matrix", { previousExecution: current.execution_id });
-  await probes("sdk");
-  const invalidStartup = async (
-    mode,
-    env = {},
-    changedSpec = spec,
-    mount = true,
-  ) => {
-    await prepare(invalidReceiver, mode);
-    const name = scope + "-invalid-" + checks;
-    await invoke([
-      "run",
-      "-d",
-      "--name",
-      name,
-      ...labelArgs,
-      "--network",
-      "none",
-      "--cap-drop",
-      "ALL",
-      ...[
-        "CHOWN",
-        "DAC_OVERRIDE",
-        "KILL",
-        "NET_ADMIN",
-        "SETGID",
-        "SETPCAP",
-        "SETUID",
-      ].flatMap((capability) => ["--cap-add", capability]),
-      ...(mount
-        ? [
-            "--mount",
-            "type=volume,src=" +
-              invalidReceiver +
-              ",dst=/run/antnest-auth,readonly",
-          ]
-        : []),
-      ...envArgs({
-        ...validEnv(),
-        ANTNEST_RUNTIME_SPEC: JSON.stringify(changedSpec),
-        ...env,
-      }),
-      image,
-    ]);
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const [details] = JSON.parse(await invoke(["inspect", name]));
+  await probes("managed-caches");
+  const goodTmpfs =
+    "/run/antnest-mcp-home:rw,exec,nosuid,nodev,size=64m,mode=0711,uid=0,gid=0";
+  for (const badTmpfs of [
+    goodTmpfs.replace("mode=0711", "mode=0777"),
+    goodTmpfs.replace("uid=0", "uid=1000"),
+  ]) {
+    await invoke(["stop", "-t", "15", runtime], true);
+    await invoke(["rm", "-f", "-v", runtime]);
+    await invoke(
+      managedRuntimeArgs.map((value) =>
+        value === goodTmpfs ? badTmpfs : value,
+      ),
+    );
+    let details;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      [details] = JSON.parse(await invoke(["inspect", runtime]));
       if (!details.State.Running) break;
       await delay(100);
     }
-    const [details] = JSON.parse(await invoke(["inspect", name]));
     assert.equal(
       details.State.Running,
       false,
-      "invalid bootstrap must not hang",
+      "unsafe private cache mount must fail closed",
     );
-    assert.equal(details.State.ExitCode, 78);
-    const logs = await captureLogs(name);
-    const events = logs.split("\n").flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    });
-    assert(
-      events.some(
-        (event) =>
-          event["lifecycle.event"] === "process_exit" &&
-          event.phase === "bootstrap" &&
-          event["bootstrap.stage"] === "runtime_spec",
-      ),
-      "invalid receiver must fail before network/bootstrap effects",
-    );
-    for (const token of Object.values(tokens)) assert(!logs.includes(token));
-    await invoke(["rm", "-f", "-v", name]);
-    checks++;
-  };
-  for (const mode of [
-    "empty",
-    "directory-mode",
-    "file-mode",
-    "owner",
-    "link",
-    "fifo",
-    "extra",
-  ])
-    await invalidStartup(mode);
-  for (const env of [
-    { ANTNEST_SERVICE_AUTH_MODE: undefined },
-    { ANTNEST_SERVICE_AUTH_MODE: "mtls" },
-    { ANTNEST_SERVICE_AUTH_MODE: " token" },
-    { ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: undefined },
-    { ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "false" },
-    { ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: " true" },
-    { ANTNEST_SERVICE_AUTH_CALLERS_FILE: "/workspace/callers.json" },
-    { ANTNEST_TLS_CA_FILE: "" },
-  ])
-    await invalidStartup("valid", env);
-  await invalidStartup("valid", {}, { ...spec, authentication: undefined });
-  await invalidStartup(
-    "valid",
-    {},
-    {
-      ...spec,
-      authentication: {
-        ...descriptor,
-        receiver_digest: hash("different receiver"),
-      },
-    },
-  );
-  await invalidStartup("valid", {}, spec, false);
-  const logs = await captureLogs(runtime);
-  for (const token of Object.values(tokens)) assert(!logs.includes(token));
-  checks++;
+    assert.notEqual(details.State.ExitCode, 0);
+    assert(!(await captureLogs(runtime)).includes("disk-cache-canary"));
+    checks += 3;
+  }
   complete = true;
 } finally {
   clearTimeout(timer);
@@ -519,7 +648,7 @@ try {
       await cleanupDocker([kind, "rm", id]);
     }
   }
-  for (const candidate of [image, gatedImage]) {
+  for (const candidate of [image, gatedImage, fixtureImage]) {
     try {
       await cleanupDocker(["image", "rm", candidate]);
     } catch {

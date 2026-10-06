@@ -66,7 +66,7 @@ export function assertModelSequence(model) {
   assert.equal(model.held, null, "model response still held");
   const expected = [
     ["managed-bootstrap", 3],
-    ["managed-exercise", 3],
+    ["managed-exercise", 4],
     ["managed-mutate", 2],
     ["managed-fresh", 2],
     ["managed-draining", 3],

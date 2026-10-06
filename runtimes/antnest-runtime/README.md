@@ -279,3 +279,14 @@ batches; this receiver gate does not complete the platform workflow.
   [packet-contract.json](../../contracts/runtime/packet-contract.json), and
   [packet-fixtures.json](../../contracts/runtime/packet-fixtures.json) - raw
   IP over UDP tunnel contract and examples.
+
+Managed MCP processes use dedicated reserved identities (UIDs 2000..2007),
+assigned by sorted server IDs, sharing only workspace GID 1000. Each server has
+0700 HOME/TMPDIR/XDG directories in a bounded private tmpfs and uses umask 077;
+cwd remains workspace. Reordering IDs preserves their UID; adding/removing IDs
+may reassign it, so shared workspace files have no persistent per-server ownership
+guarantee. Cache data resets on restart. Secret configuration is read from an RC-owned
+root-only bootstrap mount, never the Runtime/launcher environment. See the
+[managed secret contract](../../contracts/runtime/managed-mcp-secrets.md). RC owns
+private-volume delivery and Console the write-only editor; root managed-MCP
+acceptance verifies the complete cross-service flow.

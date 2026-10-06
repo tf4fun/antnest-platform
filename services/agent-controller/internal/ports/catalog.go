@@ -54,6 +54,10 @@ type CredentialOpener interface {
 	Open(context.Context, CredentialIdentity, SealedSecret) (string, error)
 }
 
+type CredentialAuthenticator interface {
+	Authenticate(context.Context, CredentialIdentity, SealedSecret, string, []byte) ([]byte, error)
+}
+
 type ModelProfileRecord struct {
 	ProviderConnectionID string
 	RequestID            string
@@ -69,6 +73,7 @@ type ModelProfileRecord struct {
 }
 
 type TemplateRecord struct {
+	MCPSecrets         []MCPSecretRecord `json:"-"`
 	RequestID          string
 	RequestFingerprint string
 	TemplateID         string
@@ -91,6 +96,7 @@ type CatalogStore interface {
 	GetModelProfile(ctx context.Context, id string) (ModelProfileRecord, error)
 	ListModelProfiles(ctx context.Context, organizationID string, afterID string, limit int) ([]ModelProfileRecord, string, error)
 	ReplayTemplateRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (TemplateRecord, bool, error)
+	LookupTemplateRequest(ctx context.Context, kind CatalogRequestKind, requestID string) (TemplateRecord, bool, error)
 	PutTemplate(ctx context.Context, record TemplateRecord) (TemplateRecord, error)
 	ReviseTemplate(ctx context.Context, expectedRevision int64, record TemplateRecord) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, id string) (TemplateRecord, error)

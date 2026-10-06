@@ -1,6 +1,6 @@
 # Rotating encryption keys
 
-Agent Controller encrypts Provider credentials; Identity encrypts OIDC client
+Agent Controller encrypts Provider and managed MCP credentials; Identity encrypts OIDC client
 secrets and login-session secrets. Each service owns its database, independent
 key ring and `rekey` command. ACP's client-MCP key and workload/CCT/Skill signing
 keys are separate and are not rotated by these commands.
@@ -80,7 +80,7 @@ existing ID.
    Use the exact Compose files, profiles, environment and project of the intended
    deployment. Do not run either command against a different recovery database.
 4. Require exit zero and terminal JSON progress `updated: 0, remaining: 0` for
-   Controller's `provider_connections` and **both** Identity tables
+   Controller's `provider_connections` and `managed_mcp_secrets`, and **both** Identity tables
    `oidc_providers`/`oidc_auth_sessions`. Intermediate rows report committed batch
    counts. A zero count from only one table is insufficient. If an old writer was
    still active, fix its configuration and repeat the final sweep.

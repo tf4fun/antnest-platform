@@ -10,7 +10,7 @@ test("Managed setup uses Provider connections, stable Models and returned Templa
       return { items: [{ model_profile_id: "model-stable" }] };
     return { template_id: "template", revision: 7 };
   };
-  const result = await seedManaged(api, "sha256:image");
+  const result = await seedManaged(api, "antnest/antnest-runtime:fixture");
   assert.equal(result.revision, 7);
   assert.deepEqual(
     calls.map((c) => c.path),
@@ -25,13 +25,17 @@ test("Managed setup uses Provider connections, stable Models and returned Templa
   assert.equal(calls[0].body.credential.api_key, "managed-model-test");
   assert.equal(calls[2].body.model_profile_id, "model-stable");
   assert(!Object.hasOwn(calls[2].body, "model_profile_revision_id"));
-  assert.equal(calls[2].body.runtime.image_ref, "sha256:image");
+  assert.equal(
+    calls[2].body.runtime.image_ref,
+    "antnest/antnest-runtime:fixture",
+  );
   assert.deepEqual(calls[2].body.runtime.mcp_servers, [
     {
       id: "alpha",
       command: "/usr/local/bin/managed-mcp-fixture",
       args: [],
-      env: { FIXTURE_SECRET: "managed-env-canary" },
+      env: {},
+      secret_env: { FIXTURE_SECRET: { value: "managed-env-canary" } },
     },
   ]);
   assert.equal(

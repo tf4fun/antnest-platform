@@ -59,6 +59,24 @@ func (repository *Repository) RekeyProviderCredentials(ctx context.Context, box 
 			}
 		}
 		if count == 0 && remaining == 0 {
+			break
+		}
+	}
+	for {
+		count, err := rekeyMCPBatch(ctx, connection, box, batchSize)
+		if err != nil {
+			return err
+		}
+		var remaining int64
+		if err := connection.QueryRow(ctx, `SELECT count(*) FROM agent_controller.managed_mcp_secrets WHERE key_version<>$1`, box.ActiveKeyID()).Scan(&remaining); err != nil {
+			return err
+		}
+		if progress != nil {
+			if err := progress(secretencryption.Progress{Table: "managed_mcp_secrets", ActiveKID: box.ActiveKeyID(), Updated: count, Remaining: remaining}); err != nil {
+				return err
+			}
+		}
+		if count == 0 && remaining == 0 {
 			return nil
 		}
 	}
@@ -110,4 +128,49 @@ FROM agent_controller.provider_connections WHERE key_version<>$1 OR wrapped_data
 		return 0, err
 	}
 	return int64(len(records)), nil
+}
+
+func rekeyMCPBatch(ctx context.Context, connection *pgxpool.Conn, box ports.CredentialRekeyer, batchSize int) (int64, error) {
+	tx, err := connection.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}()
+	rows, err := tx.Query(ctx, `SELECT organization_id, template_id, revision, server_id, name, ciphertext, nonce, key_version, wrapped_data_key FROM agent_controller.managed_mcp_secrets WHERE key_version<>$1 ORDER BY organization_id, template_id, revision, server_id, name LIMIT $2 FOR UPDATE`, box.ActiveKeyID(), batchSize)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var records []ports.MCPSecretRecord
+	for rows.Next() {
+		var record ports.MCPSecretRecord
+		l := &record.Location
+		if err := rows.Scan(&l.OrganizationID, &l.TemplateID, &l.Revision, &l.ServerID, &l.Name, &record.Sealed.Ciphertext, &record.Sealed.Nonce, &record.Sealed.KeyVersion, &record.Sealed.WrappedDataKey); err != nil {
+			return 0, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	rows.Close()
+	for _, record := range records {
+		sealed, err := box.Rekey(ctx, record.Location.CredentialIdentity(), record.Sealed)
+		if err != nil {
+			return 0, err
+		}
+		l := record.Location
+		result, err := tx.Exec(ctx, `UPDATE agent_controller.managed_mcp_secrets SET ciphertext=$6, nonce=$7, key_version=$8, wrapped_data_key=$9 WHERE organization_id=$1 AND template_id=$2 AND revision=$3 AND server_id=$4 AND name=$5`, l.OrganizationID, l.TemplateID, l.Revision, l.ServerID, l.Name, sealed.Ciphertext, sealed.Nonce, sealed.KeyVersion, sealed.WrappedDataKey)
+		if err != nil {
+			return 0, err
+		}
+		if result.RowsAffected() != 1 {
+			return 0, errors.New("managed MCP rotation row disappeared")
+		}
+	}
+	return int64(len(records)), tx.Commit(ctx)
 }

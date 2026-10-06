@@ -26,10 +26,10 @@ impl ManagedProcess {
         command
             .arg("mcp-stdio")
             .env_clear()
-            .env("HOME", workspace)
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
             .env("ANTNEST_RUNTIME_WORKSPACE", workspace)
             .env(CHILD_CONFIG_ENV, encoded)
+            .env("ANTNEST_MANAGED_MCP_UID", spec.uid().to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -71,7 +71,22 @@ export function complete(payload) {
     ],
     "managed-exercise": [
       { name: "mcp__alpha__fail", arguments: {} },
-      { name: "mcp__alpha__echo", arguments: { value: "managed-exercise" } },
+      {
+        name: "mcp__alpha__echo",
+        arguments: { value: "managed-exercise", cache_probe: true },
+      },
+      {
+        name: "bash",
+        arguments: {
+          command:
+            phase === "managed-exercise" && results.length >= 2
+              ? isolationCommand(results[1].content)
+              : "",
+          working_dir: ".",
+          env: [],
+          timeout_ms: 5000,
+        },
+      },
     ],
     "managed-mutate": [write("AGENTS.md", guidance(2))],
     "managed-fresh": [
@@ -96,9 +111,16 @@ export function complete(payload) {
   if (phase === "managed-draining") {
     for (const [index, content] of results.entries())
       assertEcho(content.content, phase, 3 + index);
+  } else if (phase === "managed-exercise" && results.length >= 2) {
+    assertEcho(results[1].content, phase, 1);
+    if (results.length === 3)
+      assert(
+        results[2].content.includes("MANAGED_CREDENTIAL_ISOLATION_OK"),
+        "managed credential isolation failed",
+      );
   } else if (
     results.length === plan.length &&
-    ["managed-exercise", "managed-fresh", "managed-rebuilt"].includes(phase)
+    ["managed-fresh", "managed-rebuilt"].includes(phase)
   ) {
     assertEcho(
       results.at(-1).content,
@@ -136,12 +158,53 @@ export function complete(payload) {
 function assertEcho(content, phase, calls) {
   const result = JSON.parse(content.slice(content.indexOf("{")));
   assert.equal(result.value, phase);
-  assert.equal(result.uid, 1000);
+  assert.equal(result.uid, 2000);
   assert.equal(result.gid, 1000);
   assert.equal(result.explicit_env, true);
   assert.equal(result.supervisor_env, false);
   assert.equal(result.launcher_env, false);
   assert.equal(result.calls, calls, "child process was restarted or replayed");
+  assert.equal(result.home, "/run/antnest-mcp-home/2000");
+  assert.equal(result.cwd, "/workspace");
+  if (phase === "managed-exercise") {
+    assert.equal(result.cache_paths.length, 5);
+    assert.equal(result.cache_owned_and_readable, true);
+    assert.equal(result.cache_executable_ok, true);
+    assert.deepEqual(
+      result.cache_modes,
+      result.cache_paths.map(() => 0o600),
+    );
+  }
+}
+
+function isolationCommand(content) {
+  const { pid, cache_paths } = JSON.parse(content.slice(content.indexOf("{")));
+  assert(
+    Number.isSafeInteger(pid) && pid > 1,
+    "managed process identity missing",
+  );
+  return `python - <<'PY'
+import ctypes, errno, os
+pid = ${pid}
+assert os.getuid() == 1000 and os.getgid() == 1000
+with open('/proc/%d/status' % pid) as status:
+    assert any(line.startswith('Uid:') and line.split()[1] == '2000' for line in status)
+def denied(action):
+    try:
+        action()
+        return False
+    except PermissionError:
+        return True
+def try_open(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    os.close(fd)
+for path in ['/proc/%d/environ' % pid, '/proc/%d/mem' % pid, '/run/antnest-mcp/secrets.json'] + ${JSON.stringify(cache_paths)}:
+    assert denied(lambda: try_open(path))
+assert denied(lambda: os.readlink('/proc/%d/fd/0' % pid))
+libc = ctypes.CDLL(None, use_errno=True)
+assert libc.ptrace(16, pid, None, None) == -1 and ctypes.get_errno() in [errno.EPERM, errno.EACCES]
+print('MANAGED_CREDENTIAL_ISOLATION_OK')
+PY`;
 }
 
 export function createModelFixture({ timeoutMs = 60000 } = {}) {

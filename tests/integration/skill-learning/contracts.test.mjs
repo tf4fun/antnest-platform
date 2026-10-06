@@ -55,6 +55,15 @@ const instanceSchema = JSON.parse(
   ),
 );
 const runtimeValidator = new Ajv2020({ strict: true, validateFormats: false });
+const managedSchema = JSON.parse(
+  await readFile(
+    new URL(
+      "../../../contracts/runtime/managed-mcp.schema.json",
+      import.meta.url,
+    ),
+  ),
+);
+runtimeValidator.addSchema(managedSchema);
 runtimeValidator.addSchema(instanceSchema);
 runtimeValidator.addSchema(runtimeSchema);
 const validateVerifiers = runtimeValidator.getSchema(
@@ -699,6 +708,7 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
   const [bridge, runtime, workspace] = related;
   const compile = (document, name) => {
     const validator = new Ajv2020({ strict: true, validateFormats: false });
+    validator.addSchema(managedSchema);
     validator.addSchema(instanceSchema);
     validator.addSchema(document);
     return validator.getSchema(`${document.$id}#/$defs/${name}`);

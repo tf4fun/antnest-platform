@@ -805,7 +805,7 @@ mod platform {
             };
             let value = CString::new(component.as_encoded_bytes())
                 .map_err(|_| RootError::InvalidPath(path.to_owned()))?;
-            let result = unsafe { libc::mkdirat(current.as_raw_fd(), value.as_ptr(), 0o700) };
+            let result = unsafe { libc::mkdirat(current.as_raw_fd(), value.as_ptr(), 0o770) };
             if result != 0 {
                 let source = io::Error::last_os_error();
                 if source.kind() != io::ErrorKind::AlreadyExists {
@@ -1049,7 +1049,7 @@ mod platform {
                 parent_fd.as_raw_fd(),
                 temp_name.as_ptr(),
                 libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_CREAT | libc::O_EXCL,
-                0o600,
+                0o660,
             )
         };
         if temp_raw < 0 {

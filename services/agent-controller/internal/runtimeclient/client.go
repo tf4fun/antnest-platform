@@ -374,12 +374,13 @@ func oneOf(value string, allowed ...string) bool {
 }
 
 type runtimeConfigurationDTO struct {
-	ImageRef            string                  `json:"image_ref"`
-	MCPServers          []domain.MCPServer      `json:"mcp_servers,omitempty"`
-	OrganizationID      string                  `json:"organization_id,omitempty"`
-	SystemSkills        *[]domain.FrozenSkill   `json:"system_skills,omitempty"`
-	PreparedSkillSet    *ports.PreparedSkillSet `json:"prepared_skill_set,omitempty"`
-	PreparedReferenceID string                  `json:"prepared_reference_id,omitempty"`
+	ManagedMCPTemplate  *ports.MCPTemplateSource `json:"managed_mcp_template,omitempty"`
+	ImageRef            string                   `json:"image_ref"`
+	MCPServers          []domain.MCPServer       `json:"mcp_servers,omitempty"`
+	OrganizationID      string                   `json:"organization_id,omitempty"`
+	SystemSkills        *[]domain.FrozenSkill    `json:"system_skills,omitempty"`
+	PreparedSkillSet    *ports.PreparedSkillSet  `json:"prepared_skill_set,omitempty"`
+	PreparedReferenceID string                   `json:"prepared_reference_id,omitempty"`
 	Network             struct {
 		PacketContractRevision uint32 `json:"packet_contract_revision"`
 		EgressEndpoint         struct {
@@ -399,6 +400,11 @@ type runtimeConfigurationDTO struct {
 func runtimeConfigurationPayload(configuration ports.RuntimeConfiguration) runtimeConfigurationDTO {
 	var payload runtimeConfigurationDTO
 	payload.ImageRef = configuration.ImageRef
+	payload.ManagedMCPTemplate = configuration.ManagedMCPTemplate
+	if payload.ManagedMCPTemplate != nil {
+		value := *payload.ManagedMCPTemplate
+		payload.ManagedMCPTemplate = &value
+	}
 	payload.MCPServers = domain.CloneMCPServers(configuration.MCPServers)
 	payload.OrganizationID = configuration.OrganizationID
 	if configuration.SystemSkills != nil {

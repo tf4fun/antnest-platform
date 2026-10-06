@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 )
 
 // Browser projections are allowlists. Adding a field to an internal RPC
@@ -207,11 +208,19 @@ type managedMCPSummary struct {
 }
 
 type managedMCPServer struct {
-	ID      string            `json:"id"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env"`
+	ID        string                      `json:"id"`
+	Command   string                      `json:"command"`
+	Args      []string                    `json:"args"`
+	Env       map[string]string           `json:"env"`
+	SecretEnv map[string]managedMCPSecret `json:"secret_env,omitempty"`
 }
+
+type managedMCPSecret struct {
+	Set         bool   `json:"set"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+var managedMCPFingerprint = regexp.MustCompile(`^hmac-sha256:[0-9a-f]{32}$`)
 
 type templateRuntimeConfigurationSource struct {
 	runtimeConfigurationSource
@@ -384,6 +393,11 @@ func projectTemplate(payload []byte) ([]byte, error) {
 		}
 		if server.Env == nil {
 			server.Env = map[string]string{}
+		}
+		for _, secret := range server.SecretEnv {
+			if !secret.Set || !managedMCPFingerprint.MatchString(secret.Fingerprint) {
+				return nil, fmt.Errorf("invalid managed MCP secret descriptor")
+			}
 		}
 	}
 	return encodeBrowserResponse(result)

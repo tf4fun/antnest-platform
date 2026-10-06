@@ -23,6 +23,10 @@ struct Fixture {
 #[derive(Deserialize, JsonSchema)]
 struct Echo {
     value: String,
+    #[serde(default)]
+    probe_paths: Vec<String>,
+    #[serde(default)]
+    cache_probe: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -85,6 +89,38 @@ impl Fixture {
 
     #[tool(description = "Echo a value and report the isolated process identity")]
     async fn echo(&self, Parameters(input): Parameters<Echo>) -> CallToolResult {
+        use std::os::unix::fs::MetadataExt as _;
+        let uid = nix::unistd::getuid().as_raw();
+        let home = std::env::var("HOME").unwrap();
+        let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+        let config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
+        let cache = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| format!("{home}/.cache"));
+        let filename = format!("mcp-{uid}-credential.cache");
+        let paths = if input.cache_probe {
+            [&home, &tmp, &config, &cache, &"/tmp".into()]
+                .map(|directory| {
+                    std::fs::create_dir_all(directory).unwrap();
+                    format!("{directory}/{filename}")
+                })
+                .to_vec()
+        } else {
+            Vec::new()
+        };
+        let secret = std::env::var("FIXTURE_SECRET").unwrap_or_else(|_| "cache-canary".into());
+        for path in &paths {
+            std::fs::write(path, &secret).unwrap();
+        }
+        let cached_execution = if input.cache_probe {
+            use std::os::unix::fs::PermissionsExt as _;
+            let executable = format!("{cache}/mcp-{uid}-program");
+            std::fs::write(&executable, b"#!/bin/sh\nprintf cache-exec-ok\n").unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::process::Command::new(executable)
+                .output()
+                .is_ok_and(|result| result.status.success() && result.stdout == b"cache-exec-ok")
+        } else {
+            false
+        };
         CallToolResult::structured(json!({
             "value": input.value,
             "calls": self.calls.fetch_add(1, Ordering::SeqCst) + 1,
@@ -93,6 +129,12 @@ impl Fixture {
             "explicit_env": std::env::var("FIXTURE_SECRET").is_ok(),
             "supervisor_env": std::env::var("ANTNEST_RUNTIME_SPEC").is_ok(),
             "launcher_env": std::env::var("ANTNEST_MANAGED_MCP_CONFIG").is_ok(),
+            "cwd": std::env::current_dir().unwrap(),
+            "cache_paths": paths,
+            "cache_executable_ok": cached_execution,
+            "cache_modes": paths.iter().map(|path| std::fs::metadata(path).unwrap().mode() & 0o777).collect::<Vec<_>>(),
+            "cache_owned_and_readable": paths.iter().all(|path| std::fs::metadata(path).unwrap().uid() == uid && std::fs::read_to_string(path).unwrap() == secret),
+            "peer_cache_readable": input.probe_paths.iter().map(|path| std::fs::read(path).is_ok()).collect::<Vec<_>>(),
         }))
     }
 

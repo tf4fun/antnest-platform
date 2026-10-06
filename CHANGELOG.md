@@ -4,6 +4,24 @@
 
 ### Upgrade requirement
 
+**#37 requires a coordinated Controller → RC → Runtime → Console cutover with
+Agent admission stopped; mixed contracts are unsupported.** Reconfigure managed
+MCP credentials as `secret_env`, then recreate/rebuild development Agents.
+There is no heuristic migration of old public `env` values. Old snapshots,
+journals and backups can still contain plaintext; discard disposable old data
+and handle retained copies as secrets. Fingerprints now use opaque HMAC identifiers;
+keeping a secret in a new revision may change its fingerprint. MCP HOME/TMPDIR/
+XDG caches are private and ephemeral; OAuth caches may need reauthentication on
+restart. MCP default files are 0600 (umask 077); explicitly grant group permissions
+when sharing new MCP output in workspace. Remove overridden cache-directory
+environment variables from Templates. See the
+[managed MCP secret contract](contracts/runtime/managed-mcp-secrets.md).
+
+The MCP cache tmpfs shares one `tmpfs_bytes` capacity across all servers, separate
+from the equally sized `/tmp` mount. There are no per-server cache quotas;
+one server can exhaust that filesystem. These are on-demand size limits, not
+reserved RAM, and all actual usage shares the Runtime's existing memory limit.
+
 **The first #42 upgrade requires downtime for Controller and Identity; rolling
 old/new binaries is unsupported, even when retaining single-key configuration.**
 Back up each owned database with its keys and matching binary, then stop all old
@@ -15,6 +33,17 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Managed MCP configuration separates public `env` from write-only `secret_env`
+(#37). Console supports set/keep/clear and reads only set/fingerprint metadata.
+Controller contract revision 39, RC revision 17 and Console revision 50 freeze
+the boundary. RC resolves the frozen Template using its authenticated workload,
+then mounts a generation-private root-only file read-only; values do not enter
+Docker or launcher environments. Each managed server runs as UID 2000..2007 with
+shared workspace GID 1000. Model tools remain UID 1000. Development network
+contract version 2 adds RC to Controller's purpose network; regenerated private
+token files include that pair. Controller rekey now covers managed MCP secrets
+alongside Provider credentials.
 
 Controller and Identity support active/decrypt-only master-key rings and online
 `rekey --batch-size N` commands (#42). New writes use authenticated per-record
@@ -120,6 +149,24 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Managed MCP credentials no longer enter Template/Agent snapshots as plaintext
+or appear in configuration reads (#37). Encrypted immutable revisions bind
+organization, Template, revision, server and name; keeping a value reseals it
+at the new location. Private Runtime bootstrap and distinct managed-process
+UIDs prevent direct credential inspection by ordinary model tools. Each server
+now has private 0700 HOME/TMPDIR/XDG cache directories; umask 077 also protects
+default shared `/tmp` files. Public secret fingerprints and secret-bearing
+Template request receipts use protected envelope-keyed HMAC, preventing offline
+plaintext guessing and preserving replay after master-key rotation. List reordering
+no longer changes server UIDs. The secret editor browser test is registered in
+package scripts and root `test-integration-node`, covering desktop/mobile keep,
+replace and clear operations.
+
+Controller bounds credential identity fields to 1024 bytes before AAD encoding,
+removing unchecked allocation arithmetic and length-prefix conversion reported
+by CodeQL. Existing valid AAD encoding, encrypted records and HMAC identifiers
+remain unchanged (#37).
 
 Standard Compose single-key configuration now also renders with Compose 2.38.2,
 used by repository CI. Removed nested required-value interpolation that evaluated

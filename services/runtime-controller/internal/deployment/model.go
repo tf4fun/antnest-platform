@@ -43,6 +43,7 @@ func (k Key) Validate() error {
 }
 
 type Deployment struct {
+	ManagedMCPTemplate      *MCPTemplateSource                `json:"managed_mcp_template,omitempty"`
 	InstanceAuthentication  *instanceauth.Record              `json:"-"`
 	ImageReference          string                            `json:"image_reference,omitempty"`
 	ImageRef                string                            `json:"image_ref"`
@@ -55,6 +56,7 @@ type Deployment struct {
 // Configuration is the caller-owned policy input. Deployment identity and
 // Runtime image invariants are injected by Runtime Controller.
 type Configuration struct {
+	ManagedMCPTemplate  *MCPTemplateSource     `json:"managed_mcp_template,omitempty"`
 	MCPServers          []MCPServer            `json:"mcp_servers,omitempty"`
 	ImageRef            string                 `json:"image_ref"`
 	Network             NetworkSpec            `json:"network"`
@@ -80,6 +82,10 @@ func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, e
 			Filesystem: FilesystemSpec{Workspace: "/workspace", SystemSkills: "/skills"},
 		},
 		Resources: c.Resources,
+	}
+	if c.ManagedMCPTemplate != nil {
+		source := *c.ManagedMCPTemplate
+		value.ManagedMCPTemplate = &source
 	}
 	if c.PreparedSkillSet != nil {
 		value.PreparedSkills = &skillset.PreparedReference{Scope: c.SkillScope, OrganizationID: c.OrganizationID, AgentID: agentID,
@@ -186,6 +192,13 @@ func (d Deployment) ValidateFor(key Key) error {
 	}
 	if err := validateMCPServers(d.RuntimeSpec.MCPServers); err != nil {
 		return err
+	}
+	if HasMCPSecrets(d.RuntimeSpec.MCPServers) {
+		if err := d.ManagedMCPTemplate.Validate(); err != nil {
+			return err
+		}
+	} else if d.ManagedMCPTemplate != nil {
+		return invalid("managed MCP Template source without secrets")
 	}
 	if verifiers := d.RuntimeSpec.SkillMaintenanceVerifiers; verifiers != nil {
 		canonical, err := verifiers.Normalize()

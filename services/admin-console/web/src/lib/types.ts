@@ -190,7 +190,10 @@ export type ModelProfileList = {
 };
 
 export type ManagedMCPSummary = { id: string; command: string };
-export type ManagedMCPServer = ManagedMCPSummary & { args: string[]; env: Record<string, string> };
+export type ManagedMCPSecret = { set: true; fingerprint: string };
+export type ManagedMCPSecretWrite = { value: string } | { keep: true };
+export type ManagedMCPServer = ManagedMCPSummary & { args: string[]; env: Record<string, string>; secret_env?: Record<string, ManagedMCPSecret> };
+export type ManagedMCPServerWrite = Omit<ManagedMCPServer, "secret_env"> & { secret_env?: Record<string, ManagedMCPSecretWrite> };
 
 export type RuntimeSpec = {
   image_ref: string;
