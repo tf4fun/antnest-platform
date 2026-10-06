@@ -69,6 +69,7 @@ type ModelProfileRecord struct {
 }
 
 type TemplateRecord struct {
+	MCPSecrets         []MCPSecretRecord `json:"-"`
 	RequestID          string
 	RequestFingerprint string
 	TemplateID         string

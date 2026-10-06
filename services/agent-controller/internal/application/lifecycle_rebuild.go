@@ -251,8 +251,9 @@ func (service *LifecycleService) updateRebuildRuntime(
 	runtimeInput := state.TargetSpec.Snapshot.Runtime
 	configuration := ports.RuntimeConfiguration{
 		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
-		Resources:  runtimeInput.Resources,
-		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
+		Resources:          runtimeInput.Resources,
+		MCPServers:         domain.CloneMCPServers(runtimeInput.MCPServers),
+		ManagedMCPTemplate: mcpTemplateSource(state.Agent.OrganizationID, state.TargetSpec.Snapshot),
 	}
 	if err := service.attachPreparedSkills(ctx, state.Operation.RequestID, state.Agent.AgentID, state.Agent.OrganizationID, state.TargetSpec.Snapshot, &configuration); err != nil {
 		return state, err

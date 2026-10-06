@@ -529,3 +529,12 @@ denied ranges. Static policy rejection is 422 `provider_endpoint_forbidden`;
 DNS unavailability is retryable 503 `provider_endpoint_unavailable`; discovery
 transport/status/body failure is retryable 502 `provider_discovery_failed`.
 Console thin-proxy and ACP model-call adoption remain later service batches.
+
+## Managed MCP secret bootstrap
+
+Revision 39 separates Template write-only secret_env values from read fingerprints.
+See [the shared contract](../runtime/managed-mcp-secrets.md). Only authenticated
+Runtime Controller may POST `/internal/managed-mcp-secrets/resolve` with a frozen
+organization_id, template_id and revision. The route requires no end-user CCT,
+rejects all other workloads, uses no-store responses and never captures bodies.
+Template reads and Agent snapshots expose descriptors only.

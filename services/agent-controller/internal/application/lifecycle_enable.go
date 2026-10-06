@@ -192,8 +192,9 @@ func (service *LifecycleService) enableRuntime(
 	runtimeInput := state.Spec.Snapshot.Runtime
 	configuration := ports.RuntimeConfiguration{
 		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
-		Resources:  runtimeInput.Resources,
-		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
+		Resources:          runtimeInput.Resources,
+		MCPServers:         domain.CloneMCPServers(runtimeInput.MCPServers),
+		ManagedMCPTemplate: mcpTemplateSource(state.Agent.OrganizationID, state.Spec.Snapshot),
 	}
 	if err := service.attachPreparedSkills(ctx, state.Operation.RequestID, state.Agent.AgentID, state.Agent.OrganizationID, state.Spec.Snapshot, &configuration); err != nil {
 		return state, err

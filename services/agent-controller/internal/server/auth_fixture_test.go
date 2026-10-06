@@ -126,6 +126,8 @@ func (f *businessFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller = "agent-ui"
 	} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/skill-learning-policy") {
 		caller = "agent-acp-service"
+	} else if r.URL.Path == "/internal/managed-mcp-secrets/resolve" {
+		caller = "runtime-controller"
 	}
 	claims := map[string]any{}
 	for key, claim := range map[string]string{"organization_id": "org", "principal_id": "sub"} {

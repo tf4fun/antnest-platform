@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 38,
+  "revision": 39,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -17,6 +17,15 @@
     "success_status": 200
   },
   "resources": {
+    "managed_mcp_secrets": {
+      "resolve": {
+        "method": "POST",
+        "path": "/internal/managed-mcp-secrets/resolve",
+        "success_status": 200,
+        "request": "control-api.schema.json#/$defs/managed_mcp_secret_request",
+        "response": "control-api.schema.json#/$defs/managed_mcp_secret_response"
+      }
+    },
     "execution_synchronization": {
       "get": {
         "method": "GET",

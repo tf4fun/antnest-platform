@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 38 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 39 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -353,6 +353,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
+		"POST /internal/managed-mcp-secrets/resolve":                          ports.MCPTemplateSource{OrganizationID: "org-1", TemplateID: "template-1", Revision: 1},
 		"POST /internal/provider-connections/{connection_id}/discover-models": discoverProviderModelsRequest{OrganizationID: "org-1"},
 		"POST /internal/provider-discovery/draft":                             application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
 		"POST /rpc/agent-controller/set-agent-authorization":                  application.SetAgentAuthorizationInput{RequestID: "set-defaults", AgentID: "agent-1", PrincipalID: "user-1", ExpectedAccessRevision: "access-1", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationApprove, ToolRules: []domain.ToolRule{}}},
@@ -823,6 +824,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.schema.json"), &instanceConnectionContract)
 	if err := compiler.AddResource("https://antnest.local/contracts/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
 		t.Fatalf("load Runtime instance connection contract: %v", err)
+	}
+	var managedSecretContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/managed-mcp.schema.json"), &managedSecretContract)
+	if err := compiler.AddResource("https://antnest.local/runtime/managed-mcp.schema.json", managedSecretContract); err != nil {
+		t.Fatal(err)
 	}
 	var runtimeContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)

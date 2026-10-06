@@ -10,16 +10,32 @@ import (
 
 // MCPServer describes a Runtime-owned process, not an ACP client connection.
 type MCPServer struct {
-	ID      string            `json:"id"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env"`
+	ID        string               `json:"id"`
+	Command   string               `json:"command"`
+	Args      []string             `json:"args"`
+	Env       map[string]string    `json:"env"`
+	SecretEnv map[string]MCPSecret `json:"secret_env,omitempty"`
 }
+
+// Value and Keep are accepted only at the catalog write boundary. Persisted
+// Runtime input contains Set/Fingerprint only; secret ciphertext lives separately.
+type MCPSecret struct {
+	Value       *string `json:"value,omitempty"`
+	Keep        bool    `json:"keep,omitempty"`
+	Set         bool    `json:"set,omitempty"`
+	Fingerprint string  `json:"fingerprint,omitempty"`
+}
+
+func (secret MCPSecret) String() string   { return "MCPSecret(redacted)" }
+func (secret MCPSecret) GoString() string { return secret.String() }
+
+func ValidateMCPServers(servers []MCPServer) error { return validateMCPServers(servers) }
 
 func (server MCPServer) String() string   { return "MCPServer(" + server.ID + ")" }
 func (server MCPServer) GoString() string { return server.String() }
 
 var managedIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
+var managedFingerprintPattern = regexp.MustCompile(`^sha256:[0-9a-f]{8}$`)
 var managedEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 func CloneMCPServers(servers []MCPServer) []MCPServer {
@@ -33,6 +49,14 @@ func CloneMCPServers(servers []MCPServer) []MCPServer {
 		result[index].Env = make(map[string]string, len(server.Env))
 		for key, value := range server.Env {
 			result[index].Env[key] = value
+		}
+		result[index].SecretEnv = make(map[string]MCPSecret, len(server.SecretEnv))
+		for key, value := range server.SecretEnv {
+			if value.Value != nil {
+				copyValue := *value.Value
+				value.Value = &copyValue
+			}
+			result[index].SecretEnv[key] = value
 		}
 	}
 	return result
@@ -75,7 +99,7 @@ func (server MCPServer) validate() error {
 		}
 		size += len(argument)
 	}
-	if len(server.Env) > 64 {
+	if len(server.Env)+len(server.SecretEnv) > 64 {
 		return errors.New("too many MCP environment variables")
 	}
 	for key, value := range server.Env {
@@ -83,6 +107,13 @@ func (server MCPServer) validate() error {
 			return errors.New("invalid or reserved MCP environment variable")
 		}
 		size += len(key) + len(value)
+	}
+	for key, value := range server.SecretEnv {
+		_, overlap := server.Env[key]
+		if overlap || !managedEnvPattern.MatchString(key) || key == "HOME" || key == "PATH" || strings.HasPrefix(key, "ANTNEST_") || value.Value != nil || value.Keep || !value.Set || !managedFingerprintPattern.MatchString(value.Fingerprint) {
+			return errors.New("invalid managed MCP secret descriptor")
+		}
+		size += len(key)
 	}
 	if size > 32*1024 {
 		return errors.New("MCP server configuration exceeds 32 KiB")

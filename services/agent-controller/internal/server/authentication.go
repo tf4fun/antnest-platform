@@ -52,7 +52,7 @@ func (boundary *authenticatedMux) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if _, trusted := r.Context().Value(workloadContextKey{}).(string); !trusted {
-		caller, err := security.Authentication.Authorize(r, []string{"admin-console", "edge-gateway", "agent-ui", "agent-acp-service"})
+		caller, err := security.Authentication.Authorize(r, []string{"admin-console", "edge-gateway", "agent-ui", "agent-acp-service", "runtime-controller"})
 		if err != nil {
 			writeAuthenticationError(w, err)
 			return
@@ -69,8 +69,11 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		caller, _ := r.Context().Value(workloadContextKey{}).(string)
 		allowed := []string{"admin-console"}
+		bootstrap := pattern == "POST /internal/managed-mcp-secrets/resolve"
 		operation := pattern == "GET /internal/agents/{agent_id}/skill-learning-policy"
-		if operation {
+		if bootstrap {
+			allowed = []string{"runtime-controller"}
+		} else if operation {
 			allowed = []string{"agent-acp-service"}
 		} else if pattern == "POST /rpc/agent-controller/list-workspace-agents" {
 			allowed = []string{"edge-gateway", "agent-ui"}
@@ -102,7 +105,7 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 				return
 			}
 		}
-		if operation {
+		if operation || bootstrap {
 			// The learning policy service resolves the persisted Agent, exact
 			// owner, access revision and live owner membership before returning
 			// policy. ACP cannot manufacture a user delegation with body hints.

@@ -453,6 +453,13 @@ try {
         max_model_requests: 4,
         context_policy_version: "context-v1",
         runtime: {
+          mcp_servers: [
+            {
+              id: "docs",
+              command: "node",
+              secret_env: { API_KEY: { value: providerSecret } },
+            },
+          ],
           image_ref: "antnest/antnest-runtime:local",
           resources: {
             memory_bytes: 536870912,
@@ -466,6 +473,65 @@ try {
       status: 201,
     })
   ).json;
+  const descriptor = {
+    set: true,
+    fingerprint:
+      "sha256:" +
+      createHash("sha256").update(providerSecret).digest("hex").slice(0, 8),
+  };
+  assert.deepEqual(
+    template.runtime.mcp_servers[0].secret_env.API_KEY,
+    descriptor,
+  );
+  for (const path of [
+    `/internal/agent-templates/${template.template_id}?organization_id=org-1`,
+    `/internal/agent-templates/${template.template_id}/revisions/1?organization_id=org-1`,
+  ]) {
+    const view = await request(path);
+    assert.deepEqual(
+      view.json.runtime.mcp_servers[0].secret_env.API_KEY,
+      descriptor,
+    );
+  }
+  const bootstrapBody = JSON.stringify({
+    organization_id: "org-1",
+    template_id: template.template_id,
+    revision: 1,
+  });
+  for (const service of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-ui",
+    "edge-gateway",
+  ])
+    await request("/internal/managed-mcp-secrets/resolve", {
+      method: "POST",
+      service,
+      context: null,
+      headers: { "Content-Type": "application/json" },
+      body: bootstrapBody,
+      status: 403,
+      code: "caller_not_allowed",
+    });
+  const bootstrap = await fetch(
+    base + "/internal/managed-mcp-secrets/resolve",
+    {
+      method: "POST",
+      headers: {
+        "Antnest-Service-Authorization":
+          "Bearer " + fixture.incoming["runtime-controller"],
+        "Content-Type": "application/json",
+      },
+      body: bootstrapBody,
+      signal: abort.signal,
+    },
+  );
+  assert.equal(bootstrap.status, 200);
+  assert.equal(bootstrap.headers.get("Cache-Control"), "no-store");
+  const materialized = await bootstrap.json();
+  assert.equal(materialized.docs.API_KEY, providerSecret);
+  checks += 3;
+
   const stats = async () =>
     JSON.parse(
       await docker([

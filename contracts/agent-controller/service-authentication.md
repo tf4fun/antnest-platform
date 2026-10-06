@@ -66,3 +66,8 @@ at creation and discovery. Console/ACP consumer and RC/Registry/Egress receiver
 batches, deployment wiring and final token-profile business/security E2E have
 passed their gates, recorded in the
 [rollout ledger](../platform/service-authentication-rollout.json).
+
+Managed MCP bootstrap is a separate workload operation: only Runtime Controller
+may POST `/internal/managed-mcp-secrets/resolve` without an end-user CCT. It resolves
+an exact immutable Template source, never its current head. No Console, ACP,
+Gateway or Agent UI route delegates this capability.

@@ -317,7 +317,7 @@ INSERT INTO agent_controller.agent_template_revisions (
 	); err != nil {
 		return fmt.Errorf("insert Template revision: %w", err)
 	}
-	return nil
+	return insertMCPSecrets(ctx, transaction, record)
 }
 
 func insertTemplate(ctx context.Context, transaction *databaseTransaction, record ports.TemplateRecord) error {

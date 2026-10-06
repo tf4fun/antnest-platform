@@ -34,13 +34,13 @@ docker compose exec -T agent-controller /usr/local/bin/agent-controller rekey --
 The command needs only the owned database URL and encryption configuration.
 It starts no HTTP listener, Temporal worker, bootstrap or dependency clients.
 Progress is JSON with table, active ID, committed batch count and remaining
-rows. Require a final successful `remaining: 0` result before removing the old
+rows for both `provider_connections` and `managed_mcp_secrets`. Require a final successful `remaining: 0` result for each table before removing the old
 key and recreating the service. Keep retired keys with historical backups.
 
 Each batch locks and authenticates its rows, then updates only encryption
 columns. Concurrent reads continue and concurrent Provider credential changes
 serialize on the same row. Rekey never advances Provider versions, execution
-revisions, timestamps or receipts. Cancellation leaves committed batches intact;
+revisions, immutable Template fingerprints/snapshots, timestamps or receipts. Cancellation leaves committed batches intact;
 rerun with the same active key to resume. Unknown IDs, tampered records or storage
 failures fail the batch and command; overlapping rotation commands are rejected.
 Do not retire a key on a partial/failed result or run against old active writers.

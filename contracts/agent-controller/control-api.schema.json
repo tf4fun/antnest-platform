@@ -3,6 +3,22 @@
   "$id": "https://antnest.local/agent-controller/control-api.schema.json",
   "title": "Antnest Agent Controller lifecycle messages",
   "$defs": {
+    "managed_mcp_secret_request": {
+      "$ref": "../runtime/managed-mcp.schema.json#/$defs/template_source"
+    },
+    "managed_mcp_secret_response": {
+      "type": "object",
+      "maxProperties": 8,
+      "additionalProperties": {
+        "type": "object",
+        "maxProperties": 64,
+        "additionalProperties": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      }
+    }
+  ,
     "agent_skill_preparation_status": {
       "type": "object",
       "additionalProperties": false,

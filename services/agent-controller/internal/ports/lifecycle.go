@@ -58,6 +58,7 @@ type NetworkAttachment struct {
 }
 
 type RuntimeConfiguration struct {
+	ManagedMCPTemplate  *MCPTemplateSource
 	ImageRef            string
 	Network             NetworkAttachment
 	Resources           domain.RuntimeResources
