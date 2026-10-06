@@ -57,8 +57,19 @@ evidence even when a test writer bypasses the userspace policy.
    coverage passes (675 tests, 1,222 subtests, no skips), and 105 Docker owner
    checks pass with fixture cleanup. Fresh addresses, source restoration,
    lost-response CAS, restart rebinding and readiness fencing are covered.
-5. Integration: real Linux kernel bypass test, crafted-UDP peer impersonation,
-   metric export, policy/CAS recovery and create/rebuild/enable/restart regression.
+5. Cross-service integration passes: six real Runs and 16 local fixture Provider
+   requests, create/rebuild/enable Docker–RC–Egress address equality, disable
+   clearing, and graceful restart from `.128` to `.40` with attachment CAS
+   advancing from 6 to 7. Business/topology/privacy gates pass; only the existing
+   reviewed clock-skew warnings remain in strict Trace evidence. The complete
+   fixture was cleaned and retained Docker identities were unchanged.
+6. The updated standalone Stage1 Docker entrypoint passes, including real
+   outbound allow/deny, attachment close, Egress restart and persisted policy.
+   Its disposable fixture cleanup was verified.
+
+Reproduce the cross-service case with
+[`make e2e-egress-peer-binding`](../tests/e2e/runtime-egress/README.md). Egress's
+owner gate supplies the crafted-UDP and direct-TUN kernel proofs separately.
 
 Integration runs after the three service batches pass their own gates. Update
 each service in its own commit, then submit one reviewable PR; do not merge it.

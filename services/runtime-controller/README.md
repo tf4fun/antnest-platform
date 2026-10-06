@@ -42,8 +42,9 @@ Startup rejects published PostgreSQL passwords under the [development secret pol
 - Report the current Docker IPv4 from the configured management-network
   attachment as `runtime_endpoint` in Inspect/List (contract revision 18).
   Controller reads this address before binding Egress traffic; it is independent
-  of MCP URLs and execution readiness. Controller/Egress consumers are delivered
-  in subsequent #34 batches; see [peer binding](../../docs/egress-peer-binding.md).
+  of MCP URLs and execution readiness. Controller forwards the fresh address
+  for Egress attachment opens and restart rebinding; see
+  [peer binding](../../docs/egress-peer-binding.md).
 - Consume platform health and List/Watch events, verify Runtime `/status` on
   Healthy observations and explicit reads, and normalize the facts into an
   ordered, time-retained observation journal.

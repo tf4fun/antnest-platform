@@ -31,6 +31,10 @@ import {
   assertReplay,
 } from "./protocol.mjs";
 import { collectManagedTrace, inspectManagedTrace } from "./request-trace.mjs";
+import {
+  assertLivePeer,
+  restartWithNewPeer,
+} from "../runtime-egress/live-peer.mjs";
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 const modelURL = process.env.TEST_MODEL_URL ?? "http://managed-model:8080";
@@ -48,6 +52,7 @@ const connections = [],
   requests = [],
   lifecycle = [],
   journals = [];
+const peerChecks = [];
 const secrets = [
   "managed-env-canary",
   "managed-model-test",
@@ -251,6 +256,10 @@ async function main() {
   });
   await waitOperation(createId, "create");
   const ready = await waitForAgentReady(agent);
+  if (process.env.TEST_DOCKER_PROJECT)
+    peerChecks.push(
+      await assertLivePeer(agentId, await runtime(), "open", "create"),
+    );
   await until(
     async () => (await state()).availability === "ready",
     "ACP ready",
@@ -389,6 +398,10 @@ async function main() {
   stage = "rebuilt";
   await waitOperation(requestId, "rebuild");
   const rebuilt = await waitForAgentReady(agent);
+  if (process.env.TEST_DOCKER_PROJECT)
+    peerChecks.push(
+      await assertLivePeer(agentId, await runtime(), "open", "rebuild"),
+    );
   await until(
     async () => (await state()).availability === "ready",
     "rebuilt publication",
@@ -458,9 +471,15 @@ async function main() {
   stage = "frozen-secret-enable";
   const disabled = await api(`/api/admin/agents/${agentId}/disable`, {}, 202);
   await waitOperation(disabled.request_id, "disable");
+  if (process.env.TEST_DOCKER_PROJECT)
+    peerChecks.push(await assertLivePeer(agentId, null, "closed", "disable"));
   const enabled = await api(`/api/admin/agents/${agentId}/enable`, {}, 202);
   await waitOperation(enabled.request_id, "enable");
   const reenabled = await waitForAgentReady(agent);
+  if (process.env.TEST_DOCKER_PROJECT)
+    peerChecks.push(
+      await assertLivePeer(agentId, await runtime(), "open", "enable"),
+    );
   assert.equal(
     reenabled.configuration.template.revision,
     next.revision,
@@ -471,6 +490,11 @@ async function main() {
     "reenabled publication",
   );
   stage = "delete";
+  if (process.env.TEST_DOCKER_PROJECT) {
+    stage = "restart-new-peer";
+    peerChecks.push(await restartWithNewPeer(agentId, runtime));
+    stage = "delete";
+  }
   const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
     body: {},
     status: 202,
@@ -492,6 +516,7 @@ async function main() {
     deleted,
     model_requests: model.requests.length,
     runs: 6,
+    peer_binding: peerChecks,
     drain,
     runtime_operations: journals,
     existing_connection_refreshed: true,

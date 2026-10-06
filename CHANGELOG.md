@@ -4,6 +4,14 @@
 
 ### Upgrade requirement
 
+**#34 requires a coordinated RC → Egress → Controller cutover with Agent
+admission stopped.** Disable active development Agents before upgrading, then
+enable/rebuild them after all three services are updated. RC inspection contract
+revision 18 reports the current Runtime management IPv4; Egress revision 6
+requires that address on every attachment open. Older Controller requests are
+rejected, and previously open attachments without a peer drop traffic. Mixed
+contracts are unsupported. See [Egress peer binding](docs/egress-peer-binding.md).
+
 **#37 requires a coordinated Controller → RC → Runtime → Console cutover with
 Agent admission stopped; mixed contracts are unsupported.** Reconfigure managed
 MCP credentials as `secret_env`, then recreate/rebuild development Agents.
@@ -33,6 +41,13 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Controller reads the current RC Runtime address before opening create/rebuild/
+enable traffic or restoring a source. The observation worker rebinds changed
+addresses on open attachments before readiness publication and never reopens
+lifecycle-closed attachments (#34). Address binding uses the existing managed
+network trust model; authenticated datagrams and replay protection remain a
+separate Phase 2.
 
 Managed MCP configuration separates public `env` from write-only `secret_env`
 (#37). Console supports set/keep/clear and reads only set/fingerprint metadata.
@@ -149,6 +164,14 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Runtime Egress rejects tunnel datagrams from an outer IPv4 other than the
+Agent's bound Runtime peer, before policy checks or victim-attributed flows.
+An aggregate `antnest.egress.peer_mismatch.drops` counter records these drops.
+Independent nft destination rules block special-use ranges, the tunnel pool
+and all connected IPv4 subnets, even if userspace permits a packet (#34).
+TUN input admits DNS only to the virtual resolver; rule/subnet discovery
+failures prevent startup.
 
 Managed MCP credentials no longer enter Template/Agent snapshots as plaintext
 or appear in configuration reads (#37). Encrypted immutable revisions bind

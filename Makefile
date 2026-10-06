@@ -602,6 +602,10 @@ e2e-runtime-controller-observation-retry:
 	node tests/e2e/runtime-controller/observation-retry-e2e.mjs
 
 .PHONY: e2e-managed-mcp-v1 e2e-managed-mcp-v2
+.PHONY: e2e-egress-peer-binding
+e2e-egress-peer-binding:
+	node tests/e2e/managed-mcp/secrets-docker.mjs 1
+
 e2e-managed-mcp-v1:
 	node tests/e2e/managed-mcp/secrets-docker.mjs 1
 
