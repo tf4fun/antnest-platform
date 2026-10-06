@@ -6,6 +6,17 @@ const draft = () => [{ id: "documents", command: "node", args: ["server.js", "tw
   env: [{ name: "TOKEN", value: "synthetic value" }, { name: "EMPTY", value: "" }] }];
 const form = (value: unknown) => { const data = new FormData(); data.set("managed_mcp", JSON.stringify(value)); return data; };
 
+test("managed MCP secret fields write values, preserve by keep and clear by omission", () => {
+  const base = { id: "documents", command: "node", args: [], env: [] };
+  for (const [secret_env, expected] of [
+    [[{ name: "API_KEY", value: "new-private-canary" }], { API_KEY: { value: "new-private-canary" } }],
+    [[{ name: "API_KEY", keep: true }], { API_KEY: { keep: true } }],
+    [[{ name: "API_KEY", value: "" }], { API_KEY: { value: "" } }],
+  ] as const) assert.deepEqual(managedMCPInput(form([{ ...base, secret_env }]))[0], { id: "documents", command: "node", args: [], env: {}, secret_env: expected });
+  assert.deepEqual(managedMCPInput(form([{ ...base, secret_env: [] }]))[0], { id: "documents", command: "node", args: [], env: {} });
+  assert.throws(() => managedMCPInput(form([{ ...base, env: [{ name: "API_KEY", value: "public" }], secret_env: [{ name: "API_KEY", value: "private" }] }])), /Duplicate environment/);
+});
+
 test("multiline edits preserve existing line endings and explicit empty values", () => {
   for (const newline of ["\n", "\r\n", "\r"]) {
     assert.equal(editMultiline(`a${newline}b`, "a\nbc"), `a${newline}bc`);

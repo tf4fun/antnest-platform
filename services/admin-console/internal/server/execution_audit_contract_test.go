@@ -27,7 +27,7 @@ func TestAdminContractRegistersAuditAndSynchronizationReads(t *testing.T) {
 		Dependencies map[string][]string `json:"dependencies"`
 	}
 	require.NoError(t, json.Unmarshal(body, &contract))
-	require.Equal(t, 49, contract.Version)
+	require.Equal(t, 50, contract.Version)
 	require.Equal(t, []string{"list_execution_audits", "get_execution_audit", "list_execution_events"}, contract.Dependencies["agent_acp"])
 	require.Contains(t, contract.Dependencies["agent_controller"], "execution_synchronization")
 	require.Contains(t, contract.Dependencies["agent_controller"], "catalog_availability")

@@ -79,7 +79,7 @@ retries only the remaining selection.
 
 ## BFF contract
 
-The BFF contract (revision 49) has no model-history reads. Each command scope has one
+The BFF contract (revision 50) has no model-history reads. Each command scope has one
 pending intent: an identical retry reuses its key; changing the payload abandons
 that intent. Returning to an earlier payload is a new command, not replay of an
 older successful response. Browser storage contains only opaque keys and hashes,

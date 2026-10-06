@@ -17,9 +17,10 @@ Managed stdio MCP is part of the immutable Template Runtime configuration, not a
 Console-owned service catalog. The BFF forwards bounded JSON to Agent Controller
 for validation and storage, never starts processes or accesses another service's
 tables. Only administrator Template detail/write responses expose arguments and
-environment values; list/Overview omit them, and Agent configurations project
+public environment values and secret fingerprints; list/Overview omit them, and Agent configurations project
 server ID/command summaries. All responses are `no-store`. See
 [Managed MCP](managed-mcp.md) for the editor and explicit rebuild workflow.
+Secret values are write-only; revisions send keep, replace or omission for clear.
 
 ## Modules
 

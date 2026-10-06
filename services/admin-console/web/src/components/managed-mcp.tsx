@@ -7,7 +7,8 @@ import { Field, Input, Textarea } from "./ui/input";
 
 type Argument = { key: string; value: string };
 type Variable = Argument & { name: string };
-type Draft = { key: string; id: string; command: string; args: Argument[]; env: Variable[] };
+type Secret = Variable & { keep?: true; fingerprint?: string };
+type Draft = { key: string; id: string; command: string; args: Argument[]; env: Variable[]; secret_env: Secret[] };
 const keyed = (value: string): Argument => ({ key: crypto.randomUUID(), value });
 const textRows = (value: string) => Math.min(6, Math.max(1, value.split(/\r\n|\r|\n/).length));
 
@@ -16,13 +17,15 @@ function draft(server: ManagedMCPServer): Draft {
     key: crypto.randomUUID(), id: server.id, command: server.command,
     args: (server.args ?? []).map(keyed),
     env: Object.entries(server.env ?? {}).map(([name, value]) => ({ ...keyed(value), name })),
+    secret_env: Object.entries(server.secret_env ?? {}).map(([name, secret]) => ({ ...keyed(""), name, keep: true, fingerprint: secret.fingerprint })),
   };
 }
 
 export function ManagedMCPEditor({ initial = [], disabled = false }: { initial?: ManagedMCPServer[]; disabled?: boolean }) {
   const [servers, setServers] = useState(() => initial.map(draft));
-  const value = servers.map(({ id, command, args, env }) => ({
+  const value = servers.map(({ id, command, args, env, secret_env }) => ({
     id, command, args: args.map((argument) => argument.value), env: env.map(({ name, value }) => ({ name, value })),
+    secret_env: secret_env.map(({ name, value, keep }) => keep ? { name, keep: true } : { name, value }),
   }));
   return (
     <fieldset disabled={disabled} className="min-w-0 border-t border-border pt-4">
@@ -66,13 +69,30 @@ function ServerEditor({ value, index, onChange, onRemove }: { value: Draft; inde
         {value.env.map((variable, position) => (
           <div key={variable.key} className="grid min-w-0 gap-2 border-t border-border pt-3">
             <div className="flex items-end gap-2">
-              <div className="min-w-0 flex-1"><Field label={`Variable ${position + 1} name`}><Input autoComplete="off" required value={variable.name} placeholder="API_KEY" onChange={(event) => onChange({ ...value, env: value.env.map((item) => item.key === variable.key ? { ...item, name: event.target.value } : item) })} /></Field></div>
+              <div className="min-w-0 flex-1"><Field label={`Variable ${position + 1} name`}><Input autoComplete="off" required value={variable.name} placeholder="LOG_LEVEL" onChange={(event) => onChange({ ...value, env: value.env.map((item) => item.key === variable.key ? { ...item, name: event.target.value } : item) })} /></Field></div>
               <IconButton label={`Remove variable ${position + 1}`} onClick={() => onChange({ ...value, env: value.env.filter((item) => item.key !== variable.key) })}><X className="h-4 w-4" /></IconButton>
             </div>
             <SecretValue label={`Variable ${position + 1} value`} value={variable.value} onChange={(next) => onChange({ ...value, env: value.env.map((item) => item.key === variable.key ? { ...item, value: next } : item) })} />
           </div>
         ))}
-        <Button type="button" size="sm" variant="ghost" className="w-fit" disabled={value.env.length >= 64} onClick={() => onChange({ ...value, env: [...value.env, { ...keyed(""), name: "" }] })}><Plus className="h-4 w-4" />Add environment variable</Button>
+        <Button type="button" size="sm" variant="ghost" className="w-fit" disabled={value.env.length + value.secret_env.length >= 64} onClick={() => onChange({ ...value, env: [...value.env, { ...keyed(""), name: "" }] })}><Plus className="h-4 w-4" />Add environment variable</Button>
+      </div>
+      <div className="mt-4 grid gap-3 border-t border-border pt-3">
+        <p className="text-xs text-muted-foreground">Use secrets for credentials. Stored values are never returned; unchanged entries are kept.</p>
+        {value.secret_env.map((secret, position) => {
+          const change = (patch: Partial<Secret>) => onChange({ ...value, secret_env: value.secret_env.map((item) => item.key === secret.key ? { ...item, ...patch } : item) });
+          return <div key={secret.key} className="grid min-w-0 gap-2">
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1"><Field label={`Secret ${position + 1} name`}><Input autoComplete="off" required readOnly={secret.keep} value={secret.name} placeholder="API_KEY" onChange={(event) => change({ name: event.target.value })} /></Field></div>
+              <IconButton label={`Remove secret ${position + 1}`} onClick={() => onChange({ ...value, secret_env: value.secret_env.filter((item) => item.key !== secret.key) })}><X className="h-4 w-4" /></IconButton>
+            </div>
+            {secret.keep ? <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">Stored · {secret.fingerprint}</p>
+              <Button type="button" variant="ghost" size="sm" aria-label={`Replace secret ${position + 1}`} onClick={() => change({ keep: undefined, value: "", fingerprint: undefined })}>Replace</Button>
+            </div> : <SecretInput label={`Secret ${position + 1} value`} value={secret.value} onChange={(next) => change({ value: next })} />}
+          </div>;
+        })}
+        <Button type="button" size="sm" variant="ghost" className="w-fit" disabled={value.env.length + value.secret_env.length >= 64} onClick={() => onChange({ ...value, secret_env: [...value.secret_env, { ...keyed(""), name: "" }] })}><Plus className="h-4 w-4" />Add secret</Button>
       </div>
     </fieldset>
   );
@@ -95,6 +115,17 @@ function SecretValue({ label, value, onChange }: { label: string; value: string;
   );
 }
 
+function SecretInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [visible, setVisible] = useState(false);
+  return <div className="flex min-w-0 items-end gap-2">
+    <div className="min-w-0 flex-1"><Field label={label}>{visible
+      ? <Textarea className="min-h-10" rows={textRows(value)} autoComplete="off" value={value} onChange={(event) => onChange(editMultiline(value, event.target.value))} />
+      : <Input type="password" autoComplete="new-password" value={value} onChange={(event) => onChange(event.target.value)} />
+    }</Field></div>
+    <IconButton label={`${visible ? "Hide" : "Show"} ${label}`} onClick={() => setVisible(!visible)}>{visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</IconButton>
+  </div>;
+}
+
 export function ManagedMCPDetails({ servers = [] }: { servers?: ManagedMCPServer[] }) {
   if (servers.length === 0) return <p className="text-sm text-muted-foreground">No MCP servers</p>;
   return (
@@ -104,6 +135,7 @@ export function ManagedMCPDetails({ servers = [] }: { servers?: ManagedMCPServer
           <ServerSummary server={server} />
           {server.args?.length ? <ol className="grid gap-1 text-sm">{server.args.map((arg, index) => <li key={index} className="flex min-w-0 gap-3"><span className="shrink-0 text-muted-foreground">{index + 1}.</span><code className="whitespace-pre-wrap break-all">{JSON.stringify(arg)}</code></li>)}</ol> : null}
           {Object.entries(server.env ?? {}).map(([name, value]) => <SecretValue key={name} label={`${name} value`} value={value} />)}
+          {Object.entries(server.secret_env ?? {}).map(([name, secret]) => <p key={name} className="text-sm"><code>{name}</code><span className="ml-2 text-xs text-muted-foreground">Stored · {secret.fingerprint}</span></p>)}
         </div>
       ))}
     </div>
