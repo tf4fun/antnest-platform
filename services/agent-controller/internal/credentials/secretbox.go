@@ -11,6 +11,8 @@ import (
 
 const LocalKeyVersion = secretencryption.LegacyKeyID
 
+const maximumCredentialIdentityFieldBytes = 1024
+
 type SecretBox struct{ box *secretencryption.Box }
 
 func NewSecretBox(key []byte) (*SecretBox, error) {
@@ -80,9 +82,11 @@ func credentialAAD(identity ports.CredentialIdentity) ([]byte, error) {
 		if value == "" {
 			return nil, errors.New("provider credential identity is incomplete")
 		}
+		if len(value) > maximumCredentialIdentityFieldBytes {
+			return nil, errors.New("provider credential identity exceeds 1024 bytes per field")
+		}
 	}
-	length := 4*len(values) + len(values[0]) + len(values[1]) + len(values[2])
-	result := make([]byte, 0, length)
+	var result []byte
 	var encodedLength [4]byte
 	for _, value := range values {
 		binary.BigEndian.PutUint32(encodedLength[:], uint32(len(value)))

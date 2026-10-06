@@ -163,6 +163,11 @@ no longer changes server UIDs. The secret editor browser test is registered in
 package scripts and root `test-integration-node`, covering desktop/mobile keep,
 replace and clear operations.
 
+Controller bounds credential identity fields to 1024 bytes before AAD encoding,
+removing unchecked allocation arithmetic and length-prefix conversion reported
+by CodeQL. Existing valid AAD encoding, encrypted records and HMAC identifiers
+remain unchanged (#37).
+
 Standard Compose single-key configuration now also renders with Compose 2.38.2,
 used by repository CI. Removed nested required-value interpolation that evaluated
 the unused ring branch. The existing service startup checks still reject missing

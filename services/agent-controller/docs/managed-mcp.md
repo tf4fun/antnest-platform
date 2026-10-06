@@ -60,6 +60,12 @@ including after master-key re-wrapping and retirement. Concurrent retries
 recompute against the committed winner before reporting a conflict. Every active/decrypt-only master key policy still applies; the existing
 `agent-controller rekey` now covers Provider and managed MCP rows under one lock.
 
+The credential adapter rejects empty identities and bounds each organization,
+credential reference and credential version field to 1024 UTF-8 bytes before
+encoding AAD or performing encryption/authentication. Its existing big-endian
+length-prefixed AAD format is unchanged, so valid stored envelopes and HMAC
+identities remain compatible.
+
 ## Configuration privacy
 
 `env` is public configuration and must never carry credentials, including URLs
