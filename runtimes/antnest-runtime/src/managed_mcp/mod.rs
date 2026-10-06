@@ -3,6 +3,7 @@ pub(crate) mod entry;
 pub(crate) mod manager;
 mod process;
 mod progress;
+mod secrets;
 mod session;
 pub(crate) mod spec;
 

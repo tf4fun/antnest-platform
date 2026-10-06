@@ -450,3 +450,10 @@ Controller relay and ACP instance-client consumption remain subsequent #30
 owning-service batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json).
 The native admission gate does not replace the final cross-service Docker
 business/security acceptance.
+
+Managed MCP launch differs from one-shot tools: each frozen server position has
+a dedicated reserved UID 2000..2007 and workspace GID 1000. The root launcher
+validates its private secret bootstrap file, then irreversibly drops to that UID
+and execs. The supervisor and launcher environments contain only read descriptors.
+File/Bash defaults allow shared-group workspace access; every managed UID uses
+the same Agent tunnel table and kill switch as UID 1000.

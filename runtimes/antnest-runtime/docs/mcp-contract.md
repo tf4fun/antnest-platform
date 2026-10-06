@@ -508,3 +508,21 @@ express the complete filesystem invariant.
 Relative filesystem paths may appear in structured diagnostic logs. Commands,
 environment values, file contents, stdout, and stderr must not be logged by the
 Runtime request layer.
+
+## Managed MCP secret environment
+
+Managed servers have dedicated UIDs 2000..2007 and workspace GID 1000; they do
+not share the UID 1000 tools' identity. RuntimeSpec carries only secret_env
+set/fingerprint descriptors. The trusted entry reads the RC-owned private
+`/run/antnest-mcp/secrets.json` before privilege drop and execs with that server's
+values, never another server's values or supervisor configuration. The file is
+root-owned 0400 in a 0700 directory on a read-only private mount. Secret values
+are absent from Docker Config.Env and the launcher environment. File tools and
+Bash use group-writable workspace defaults; explicit private file modes may
+exclude managed servers. Every managed UID uses the Executor tunnel and kill
+switch. No host ptrace_scope change or hidepid remount is required.
+
+The [shared contract](../../../contracts/runtime/managed-mcp-secrets.md) and
+[Linux execve manual](https://man7.org/linux/man-pages/man2/execve.2.html) explain
+why dumpability alone does not survive an ordinary exec and cannot isolate
+same-UID servers from model-driven tools.

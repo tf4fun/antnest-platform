@@ -361,6 +361,16 @@ mod platform {
                 AGENT_ROUTE_TABLE,
             ]),
             command(&[
+                "rule",
+                "del",
+                "pref",
+                AGENT_RULE_PRIORITY,
+                "uidrange",
+                "2000-2007",
+                "lookup",
+                AGENT_ROUTE_TABLE,
+            ]),
+            command(&[
                 "route",
                 "del",
                 "table",
@@ -441,6 +451,16 @@ mod platform {
                 "lookup",
                 AGENT_ROUTE_TABLE,
             ]),
+            command(&[
+                "rule",
+                "add",
+                "pref",
+                AGENT_RULE_PRIORITY,
+                "uidrange",
+                "2000-2007",
+                "lookup",
+                AGENT_ROUTE_TABLE,
+            ]),
         ]
     }
 
@@ -508,6 +528,11 @@ mod platform {
                  meta skuid 1000 oifname \"lo\" counter accept; \
                  meta skuid 1000 oifname \"{}\" counter accept; \
                  meta skuid 1000 counter drop; \
+                 meta skuid 2000-2007 meta nfproto ipv6 counter drop; \
+                 meta skuid 2000-2007 tcp dport {mcp_port} counter drop; \
+                 meta skuid 2000-2007 oifname \"lo\" counter accept; \
+                 meta skuid 2000-2007 oifname \"{tun_name}\" counter accept; \
+                 meta skuid 2000-2007 counter drop; \
                }}\n\
                chain input {{ type filter hook input priority -100; policy accept; \
                  iifname \"{}\" tcp dport {} counter drop; \
@@ -726,6 +751,11 @@ mod platform {
                 "metric",
                 "32767",
             ])));
+            assert!(
+                commands
+                    .iter()
+                    .any(|command| command.contains(&"2000-2007".to_owned()))
+            );
             assert!(!commands.iter().flatten().any(|value| value == "main"));
             let cleanup = route_cleanup_commands("antnest0");
             assert!(
@@ -756,6 +786,9 @@ mod platform {
             assert!(rules.contains("meta skuid 1000 oifname \"antnest0\" counter accept"));
             assert!(rules.contains("meta skuid 1000 counter drop"));
             assert!(rules.contains("iifname \"antnest0\" tcp dport 8093 counter drop"));
+            assert!(rules.contains("meta skuid 2000-2007 tcp dport 8093 counter drop"));
+            assert!(rules.contains("meta skuid 2000-2007 oifname \"antnest0\" counter accept"));
+            assert!(rules.contains("meta skuid 2000-2007 counter drop"));
             assert!(!rules.contains("meta mark"));
             assert!(!rules.contains("172.30.0.0/16"));
         }

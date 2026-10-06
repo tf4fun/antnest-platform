@@ -68,6 +68,19 @@ mod platform {
     }
 
     pub fn enter_executor_state() -> Result<ProcessSnapshot, PrivilegeError> {
+        enter_unprivileged_state(EXECUTOR_UID)
+    }
+
+    pub fn enter_managed_state(uid: u32) -> Result<ProcessSnapshot, PrivilegeError> {
+        if !(2000..=2007).contains(&uid) {
+            return Err(PrivilegeError::Verification(
+                "managed MCP UID outside reserved range".into(),
+            ));
+        }
+        enter_unprivileged_state(uid)
+    }
+
+    fn enter_unprivileged_state(uid: u32) -> Result<ProcessSnapshot, PrivilegeError> {
         require_root()?;
         ensure_single_threaded()?;
         set_dumpable(false)?;
@@ -80,12 +93,8 @@ mod platform {
             Gid::from_raw(EXECUTOR_GID),
         )
         .map_err(|error| system_nix("drop executor gid", error))?;
-        setresuid(
-            Uid::from_raw(EXECUTOR_UID),
-            Uid::from_raw(EXECUTOR_UID),
-            Uid::from_raw(EXECUTOR_UID),
-        )
-        .map_err(|error| system_nix("drop executor uid", error))?;
+        setresuid(Uid::from_raw(uid), Uid::from_raw(uid), Uid::from_raw(uid))
+            .map_err(|error| system_nix("drop executor uid", error))?;
         set_capabilities_raw(&[]).map_err(|source| PrivilegeError::System {
             operation: "clear executor capabilities",
             source,
@@ -100,7 +109,10 @@ mod platform {
         )?;
         set_dumpable(false)?;
         let final_state = snapshot()?;
-        verify_executor(&final_state)?;
+        verify_unprivileged(&final_state, uid)?;
+        unsafe {
+            libc::umask(0o007);
+        }
         Ok(final_state)
     }
 
@@ -167,10 +179,10 @@ mod platform {
         })
     }
 
-    fn verify_executor(snapshot: &ProcessSnapshot) -> Result<(), PrivilegeError> {
-        if snapshot.uid != EXECUTOR_UID || snapshot.gid != EXECUTOR_GID {
+    fn verify_unprivileged(snapshot: &ProcessSnapshot, uid: u32) -> Result<(), PrivilegeError> {
+        if snapshot.uid != uid || snapshot.gid != EXECUTOR_GID {
             return Err(PrivilegeError::Verification(format!(
-                "executor identity is {}:{}, expected {EXECUTOR_UID}:{EXECUTOR_GID}",
+                "executor identity is {}:{}, expected {uid}:{EXECUTOR_GID}",
                 snapshot.uid, snapshot.gid
             )));
         }
@@ -430,6 +442,10 @@ mod platform {
     }
 
     pub fn enter_executor_state() -> Result<ProcessSnapshot, PrivilegeError> {
+        Err(PrivilegeError)
+    }
+
+    pub fn enter_managed_state(_uid: u32) -> Result<ProcessSnapshot, PrivilegeError> {
         Err(PrivilegeError)
     }
 

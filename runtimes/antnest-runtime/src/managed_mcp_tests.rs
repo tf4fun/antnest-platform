@@ -4,6 +4,38 @@ use crate::managed_mcp::catalog::exposed_name;
 use crate::managed_mcp::spec::{ServerInput, validate_servers};
 
 #[test]
+fn managed_servers_never_share_the_tools_identity_or_each_other() {
+    let inputs = (0..8)
+        .map(|index| {
+            serde_json::from_value(json!({"id":format!("server-{index}"),"command":"node"}))
+                .unwrap()
+        })
+        .collect();
+    let servers = validate_servers(inputs).unwrap();
+    for (index, server) in servers.iter().enumerate() {
+        assert_eq!(server.uid(), 2000 + index as u32);
+        assert_ne!(server.uid(), 1000);
+    }
+}
+
+#[test]
+fn managed_secrets_bootstrap_accepts_descriptors_and_never_inline_values() {
+    let fingerprint = format!("sha256:{}", "1234abcd");
+    let value = json!({"id":"docs", "command":"node", "secret_env":{"API_KEY":{"set":true,"fingerprint":fingerprint}}});
+    let input: ServerInput =
+        serde_json::from_value(value).expect("frozen secret descriptor is supported");
+    assert!(validate_servers(vec![input]).is_ok());
+    for invalid in [
+        json!({"value":"private-canary"}),
+        json!({"keep":true}),
+        json!({"set":false,"fingerprint":"sha256:1234abcd"}),
+    ] {
+        let value = json!({"id":"docs","command":"node","secret_env":{"API_KEY":invalid}});
+        assert!(serde_json::from_value::<ServerInput>(value).is_err());
+    }
+}
+
+#[test]
 fn managed_config_is_bounded_and_redacts_command_and_credentials() {
     let input: ServerInput = serde_json::from_value(json!({
         "id": "docs", "command": "secret-command", "args": ["secret-arg"],
