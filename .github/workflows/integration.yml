@@ -74,12 +74,6 @@ jobs:
           go-version-file: services/runtime-controller/go.mod
           cache-dependency-path: "**/go.sum"
 
-      # Host builds in this suite run with GOPROXY=off against the repository
-      # module cache.
-      - name: Populate repository Go module cache
-        if: matrix.setup_go_offline
-        run: GOMODCACHE="$PWD/.cache/go-mod" go mod download
-
       # rust-toolchain.toml pins the channel and components.
       - name: Install Rust toolchain
         if: matrix.setup_rust
@@ -95,8 +89,9 @@ jobs:
             services/runtime-egress -> target
             tests/integration/antnest-runtime/sdk-probes/elicitation -> target
 
+      # Shared test tooling loads yaml, ipaddr.js and ajv from the ACP
+      # service's locked installation.
       - name: Install Agent ACP packages
-        if: matrix.setup_acp
         run: npm --prefix services/agent-acp-service ci
 
       - name: Install Admin Console packages

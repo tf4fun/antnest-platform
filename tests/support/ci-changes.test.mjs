@@ -119,8 +119,8 @@ test("matrix entries carry the tier and scalar setup flags", () => {
   const entry = matrixEntry(
     suites.find((suite) => suite.id === "observation-retry"),
   );
-  assert.equal(entry.setup_acp, true);
-  assert.equal(entry.setup_go_offline, false);
+  assert.equal(entry.setup_go, false);
+  assert.equal(entry.setup_chromium, false);
   assert.equal(
     entry.images,
     "antnest-runtime,agent-acp-service,runtime-egress",

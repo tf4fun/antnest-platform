@@ -89,7 +89,7 @@ export const suites = [
     id: "agent-acp-postgres",
     name: "Agent ACP PostgreSQL and audit",
     tier: "a",
-    setup: ["acp"],
+    setup: [],
     paths: [
       ...service("agent-acp-service"),
       "tests/integration/agent-acp-service/**",
@@ -200,7 +200,7 @@ export const suites = [
     id: "observation-retry",
     name: "Runtime Controller observation retry",
     tier: "b",
-    setup: ["acp"],
+    setup: [],
     images: ["antnest-runtime", "agent-acp-service", "runtime-egress"],
     pull: ["postgres:17.11-bookworm"],
     paths: [
@@ -244,7 +244,7 @@ export const suites = [
     [
       "agent-ui-receipt",
       "Agent UI receipt contract",
-      ["agent-ui-web", "acp", "chromium"],
+      ["agent-ui-web", "chromium"],
       "make e2e-agent-ui-receipt-contract",
     ],
   ].map(([id, name, setup, run]) => ({
@@ -305,26 +305,13 @@ export const suites = [
     id: "skill-temporary-runtime",
     name: "Skill Registry temporary runtime",
     tier: "b",
-    setup: ["acp"],
+    setup: [],
     paths: [
       ...runtime,
       "tests/e2e/skill-registry/**",
       "tests/e2e/antnest-runtime/**",
     ],
     run: ["make e2e-skill-temporary-runtime"],
-  },
-  {
-    id: "skill-rc-prepare",
-    name: "Skill preparation through Runtime Controller",
-    tier: "b",
-    setup: ["go", "go-offline"],
-    pull: ["postgres:17.11-bookworm"],
-    paths: [
-      ...service("skill-registry", "runtime-controller"),
-      "tests/integration/skill-registry/**",
-      ...go,
-    ],
-    run: ["make integration-stage4-skill-prepare"],
   },
   {
     id: "skill-learning-runtime",
@@ -336,15 +323,7 @@ export const suites = [
   },
 ];
 
-export const setups = [
-  "go",
-  "go-offline",
-  "rust",
-  "acp",
-  "admin-web",
-  "agent-ui-web",
-  "chromium",
-];
+export const setups = ["go", "rust", "admin-web", "agent-ui-web", "chromium"];
 
 export const images = {
   "antnest-runtime": "runtimes/antnest-runtime/Dockerfile",
