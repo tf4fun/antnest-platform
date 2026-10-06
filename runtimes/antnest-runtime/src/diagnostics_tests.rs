@@ -22,6 +22,7 @@ fn rpc_capture_preserves_nested_new_fields_without_a_payload_cap() {
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("capture")));
     let value =
         json!({"new_field": {"token": "x".repeat(24 * 1024)}, "content": ["not projected"]});
+    crate::test_tracing::stabilize_callsite_registry();
     tracing::subscriber::with_default(subscriber, || {
         let span = tracing::info_span!("rpc");
         rpc_content(&span, "antnest.request", true, &value);

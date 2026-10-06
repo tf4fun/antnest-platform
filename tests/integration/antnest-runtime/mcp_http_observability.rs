@@ -31,6 +31,7 @@ async fn successful_mcp_result_then_client_close_before_eof_is_not_an_error() {
         .build();
     let subscriber = tracing_subscriber::registry()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("mcp-close-component")));
+    crate::test_tracing::stabilize_callsite_registry();
     let _guard = tracing::subscriber::set_default(subscriber);
     let workspace = tempfile::tempdir().unwrap();
     let skills = tempfile::tempdir().unwrap();
@@ -146,6 +147,7 @@ async fn real_http_health_and_mcp_keep_exact_client_parent_and_rpc_values() {
                 crate::telemetry::is_runtime_trace,
             )),
     );
+    crate::test_tracing::stabilize_callsite_registry();
     let _guard = tracing::subscriber::set_default(subscriber);
     let workspace = tempfile::tempdir().unwrap();
     let skills = tempfile::tempdir().unwrap();

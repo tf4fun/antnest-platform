@@ -1256,6 +1256,7 @@ mod tests {
         let subscriber = tracing_subscriber::Registry::default().with(EventCounter(events.clone()));
         let metrics = RuntimeMetrics::default();
 
+        crate::test_tracing::stabilize_callsite_registry();
         tracing::subscriber::with_default(subscriber, || {
             let identity = RuntimeIdentity::new("agent-test", 1).unwrap();
             let success = tracing::info_span!("executor-success");

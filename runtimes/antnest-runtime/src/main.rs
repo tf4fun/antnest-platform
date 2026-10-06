@@ -68,6 +68,8 @@ mod spec;
 #[cfg(target_os = "linux")]
 mod startup;
 mod telemetry;
+#[cfg(test)]
+mod test_tracing;
 mod tool_error;
 mod tools;
 
