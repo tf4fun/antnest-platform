@@ -126,7 +126,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if config.IdentityServiceURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_IDENTITY_SERVICE_URL is required")
 	}
-	config.Encryption, err = loadEncryption(lookup, policy)
+	config.Encryption, err = secretencryption.LoadConfig(lookup, "ANTNEST_AGENT_CONTROLLER", policy.CheckKey)
 	if err != nil {
 		return Config{}, err
 	}

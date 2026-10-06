@@ -12,10 +12,16 @@ always carry a wrapped data key. See the
 [shared encryption contract](../../../contracts/platform/encryption-key-rotation.md)
 for exact parsing, associated data and deployment ordering.
 
+Startup and `rekey` use the shared encryption configuration loader with
+Controller's variable prefix and its `devsecrets.Policy.CheckKey` callback. The
+callback checks active and decrypt-only keys and retains variable-only WARNs
+under the existing explicit development opt-in.
+
 Back up first and stop old replicas before starting the new binary and additive
-migration with the existing key. This initial coordinated binary cutover avoids
-mixing readers that cannot accept the migration journal or new envelopes;
-rollback requires the matching pre-upgrade recovery set. Add
+migration with the existing key. **The first upgrade requires downtime; rolling
+old/new binaries is unsupported even with a single key.** Old binaries cannot
+accept the migration journal or new envelopes; rollback requires the matching
+pre-upgrade database, keys and binary. Add
 `kid2` to every Controller replica's `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS`
 ring while retaining `local-v1`, then switch every writer's
 `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_ACTIVE_KID` to `kid2`. Unset/empty the
