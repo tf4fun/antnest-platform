@@ -229,8 +229,6 @@ export const suites = [
     setup: [],
     paths: ["tests/integration/deployment/**", ...compose],
     pull: base,
-    disabled:
-      "the telemetry ingress can reset an over-limit upload instead of answering 413 (#116)",
     run: ["make e2e-deployment-transports"],
   },
   {
