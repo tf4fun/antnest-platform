@@ -78,7 +78,7 @@
   },
   "guarded_sources": {
     "services/runtime-egress/src/control.rs": {
-      "sha256": "efd95318e64c67cf209a4fb89c55fbf0bb10101ec9f8a3ca123b273a3f12de91",
+      "sha256": "3e4d8f613d8e250204e56187ad373acf9332d19fafe3f3c982aa0444e8ce53cc",
       "routes": [
         "GET /status",
         "GET /internal/agent-networks/{agent_id}",

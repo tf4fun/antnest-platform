@@ -291,6 +291,7 @@ where
                     flow.capacity_rejections = metrics.flow_capacity_rejections,
                     flow.reverse_misses = metrics.reverse_flow_misses,
                     peer_output.failures = metrics.peer_output_failures,
+                    peer.mismatches = metrics.peer_mismatches,
                     udp.receive_errors.unattributed = metrics.unattributed_udp_receive_errors,
                     dns.connections.accepted = dns.accepted_connections,
                     dns.connections.rejected = dns.rejected_connections,

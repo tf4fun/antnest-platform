@@ -71,6 +71,7 @@ async fn packet_loop_moves_uplink_and_downlink_without_an_application_envelope()
         assignment_version: 1,
         policy: PolicySpec::allow_all().compile(RESOLVER),
         gate: RouteGate::Open,
+        runtime_endpoint: Some(Ipv4Addr::LOCALHOST),
     };
     let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
         NetworkSnapshot::from_routes([route]),
@@ -118,6 +119,7 @@ async fn deny_policy_fails_the_runtime_connection_fast() {
         assignment_version: 1,
         policy: PolicySpec::deny_all().compile(RESOLVER),
         gate: RouteGate::Open,
+        runtime_endpoint: Some(Ipv4Addr::LOCALHOST),
     };
     let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
         NetworkSnapshot::from_routes([route]),
@@ -160,6 +162,7 @@ async fn output_barrier_is_held_until_the_packet_write_completes() {
         assignment_version: 1,
         policy: PolicySpec::allow_all().compile(RESOLVER),
         gate: RouteGate::Open,
+        runtime_endpoint: Some(Ipv4Addr::LOCALHOST),
     };
     let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
         NetworkSnapshot::from_routes([route]),

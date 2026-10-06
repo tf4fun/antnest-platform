@@ -1,4 +1,11 @@
-use std::{env, time::Duration};
+use std::{
+    env,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use opentelemetry::{
     KeyValue, global,
@@ -53,6 +60,7 @@ pub struct EgressMetrics {
     quarantine_removed: Counter<u64>,
     quarantine_cleanup_failures: Counter<u64>,
     data_plane: DataPlaneInstruments,
+    observed_peer_mismatches: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +81,7 @@ struct DataPlaneInstruments {
     flow_capacity_rejections: Gauge<u64>,
     reverse_flow_misses: Gauge<u64>,
     peer_output_failures: Gauge<u64>,
+    peer_mismatches: Counter<u64>,
     unattributed_udp_receive_errors: Gauge<u64>,
     dns_accepted: Gauge<u64>,
     dns_rejected: Gauge<u64>,
@@ -229,6 +238,7 @@ impl EgressMetrics {
                 .with_description("Agent-local kernel cleanup failures during quarantine sweeps")
                 .build(),
             data_plane: DataPlaneInstruments::new(&meter),
+            observed_peer_mismatches: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -261,6 +271,13 @@ impl EgressMetrics {
         dns: crate::dns::DnsMetricsSnapshot,
     ) {
         let instruments = &self.data_plane;
+        let previous = self
+            .observed_peer_mismatches
+            .fetch_max(data.peer_mismatches, Ordering::Relaxed);
+        let delta = data.peer_mismatches.saturating_sub(previous);
+        if delta != 0 {
+            instruments.peer_mismatches.add(delta, &[]);
+        }
         instruments.uplink_packets.record(data.uplink_packets, &[]);
         instruments.uplink_bytes.record(data.uplink_bytes, &[]);
         instruments
@@ -375,6 +392,12 @@ impl DataPlaneInstruments {
             flow_capacity_rejections: gauge(meter, "antnest.egress.flow.capacity_rejections"),
             reverse_flow_misses: gauge(meter, "antnest.egress.flow.reverse_misses"),
             peer_output_failures: gauge(meter, "antnest.egress.peer_output.failures"),
+            peer_mismatches: meter
+                .u64_counter("antnest.egress.peer_mismatch.drops")
+                .with_description(
+                    "Packets dropped because the outer IPv4 differs from the bound Runtime peer",
+                )
+                .build(),
             unattributed_udp_receive_errors: gauge(
                 meter,
                 "antnest.egress.udp.receive_errors.unattributed",
@@ -595,6 +618,49 @@ mod tests {
         assert!(names.contains(&"antnest.egress.health.transitions".to_owned()));
         assert!(names.contains(&"antnest.egress.quarantine.removed".to_owned()));
         assert!(names.contains(&"antnest.egress.quarantine.cleanup_failures".to_owned()));
+        provider.shutdown().unwrap();
+    }
+
+    #[test]
+    fn peer_mismatch_is_a_monotonic_content_free_counter_without_double_counting() {
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = EgressMetrics::new(provider.meter(SERVICE_NAME));
+        for value in [2, 2, 4, 3] {
+            metrics.clone().data_plane(
+                DataPlaneMetrics {
+                    peer_mismatches: value,
+                    ..Default::default()
+                },
+                DnsMetricsSnapshot {
+                    accepted_connections: 0,
+                    rejected_connections: 0,
+                    completed_connections: 0,
+                    proxy_failures: 0,
+                    client_to_upstream_bytes: 0,
+                    upstream_to_client_bytes: 0,
+                },
+            );
+        }
+        provider.force_flush().unwrap();
+        let exported = exporter.get_finished_metrics().unwrap();
+        let metric = exported
+            .iter()
+            .flat_map(|resource| resource.scope_metrics())
+            .flat_map(|scope| scope.metrics())
+            .find(|metric| metric.name() == "antnest.egress.peer_mismatch.drops")
+            .expect("peer mismatch counter missing");
+        let AggregatedMetrics::U64(MetricData::Sum(sum)) = metric.data() else {
+            panic!("peer mismatch is not a counter");
+        };
+        assert!(sum.is_monotonic());
+        let points: Vec<_> = sum.data_points().collect();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].value(), 4);
+        assert_eq!(points[0].attributes().count(), 0);
         provider.shutdown().unwrap();
     }
 }

@@ -109,7 +109,12 @@ async fn control_admission_rejections_have_no_postgres_or_packet_gate_effects() 
     let agent = AgentId::parse(format!("agent-admission-{suffix}")).unwrap();
     control.ensure_agent_network(agent.clone()).await.unwrap();
     control
-        .set_runtime_attachment(agent.clone(), AttachmentState::Open, 1)
+        .set_runtime_attachment(
+            agent.clone(),
+            AttachmentState::Open,
+            1,
+            Some("10.20.0.9".parse().unwrap()),
+        )
         .await
         .unwrap();
     let policy = format!("admission-policy-{suffix}");
@@ -281,13 +286,29 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
     }));
 
     let opened = repository
-        .compare_and_swap_attachment(&agent, AttachmentState::Open, 1)
+        .compare_and_swap_attachment(
+            &agent,
+            AttachmentState::Open,
+            1,
+            Some("10.20.0.9".parse().unwrap()),
+        )
         .await
         .unwrap();
     assert_eq!(opened.resource_version, 2);
+    assert_eq!(opened.runtime_endpoint, Some("10.20.0.9".parse().unwrap()));
+    let recovered = repository.active_bindings().await.unwrap();
+    assert!(recovered.iter().any(|binding| {
+        binding.network.agent_id == agent
+            && binding.attachment.runtime_endpoint == opened.runtime_endpoint
+    }));
     assert_eq!(
         repository
-            .compare_and_swap_attachment(&agent, AttachmentState::Open, 1)
+            .compare_and_swap_attachment(
+                &agent,
+                AttachmentState::Open,
+                1,
+                Some("10.20.0.9".parse().unwrap()),
+            )
             .await
             .unwrap(),
         opened
@@ -299,20 +320,30 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
         Err(RepositoryError::AgentNetworkUnavailable)
     );
     let first_close = repository
-        .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2)
+        .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2, None)
         .await
         .unwrap();
     let reopened = repository
-        .compare_and_swap_attachment(&agent, AttachmentState::Open, first_close.resource_version)
+        .compare_and_swap_attachment(
+            &agent,
+            AttachmentState::Open,
+            first_close.resource_version,
+            Some("10.20.0.9".parse().unwrap()),
+        )
         .await
         .unwrap();
     repository
-        .compare_and_swap_attachment(&agent, AttachmentState::Closed, reopened.resource_version)
+        .compare_and_swap_attachment(
+            &agent,
+            AttachmentState::Closed,
+            reopened.resource_version,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(
         repository
-            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2)
+            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2, None,)
             .await,
         Err(RepositoryError::ResourceVersionConflict)
     );
@@ -339,6 +370,7 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
                     .await
                     .unwrap()
                     .resource_version,
+                Some("10.20.0.9".parse().unwrap()),
             )
             .await,
         Err(RepositoryError::AgentNetworkUnavailable)
@@ -837,13 +869,18 @@ async fn production_repository_automatically_observes_each_database_primitive_on
             .await
             .unwrap();
         repository
-            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 1)
+            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 1, None)
             .instrument(tracing::info_span!("cas_attachment", otel.kind = "server"))
             .await
             .unwrap();
         assert_eq!(
             repository
-                .compare_and_swap_attachment(&agent, AttachmentState::Open, 99)
+                .compare_and_swap_attachment(
+                    &agent,
+                    AttachmentState::Open,
+                    99,
+                    Some("10.20.0.9".parse().unwrap()),
+                )
                 .instrument(tracing::info_span!("rejected", otel.kind = "server"))
                 .await,
             Err(RepositoryError::ResourceVersionConflict)

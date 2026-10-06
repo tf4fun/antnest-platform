@@ -5,9 +5,9 @@ import { test } from "node:test";
 const base = new URL("../../../contracts/egress/", import.meta.url);
 const read = (name) => JSON.parse(readFileSync(new URL(name, base), "utf8"));
 
-test("Egress revision 5 freezes Controller workload admission without changing packet identity", () => {
+test("Egress revision 6 preserves Controller workload admission and the packet framing", () => {
   const contract = read("control-contract.json");
-  assert.equal(contract.revision, 5);
+  assert.equal(contract.revision, 6);
   assert.equal(contract.trust_boundary, "verified-controller-workload");
   assert.equal(contract.transport, "json-over-http");
   assert.deepEqual(contract.status_values, ["ready", "degraded"]);

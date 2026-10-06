@@ -44,6 +44,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "initial",
         sql: include_str!("../../migrations/0001_initial.sql"),
     },
+    Migration {
+        version: 2,
+        name: "runtime_peer",
+        sql: include_str!("../../migrations/0002_runtime_peer.sql"),
+    },
 ];
 
 const MAX_POOL_SIZE: usize = 8;
@@ -853,7 +858,11 @@ impl Repository for PostgresRepository {
         agent_id: &AgentId,
         desired: AttachmentState,
         expected_resource_version: u64,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<RuntimeAttachment, RepositoryError> {
+        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint) {
+            return Err(RepositoryError::InvalidRuntimeEndpoint);
+        }
         let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let transaction = client
@@ -869,7 +878,7 @@ impl Repository for PostgresRepository {
             let current = select_attachment(&transaction, agent_id, true)
                 .await?
                 .ok_or(RepositoryError::AgentNetworkNotFound)?;
-            if current.state == desired {
+            if current.state == desired && current.runtime_endpoint == runtime_endpoint {
                 if !retry_version_matches(current.resource_version, expected_resource_version) {
                     return Err(RepositoryError::ResourceVersionConflict);
                 }
@@ -886,17 +895,21 @@ impl Repository for PostgresRepository {
                 agent_id: agent_id.clone(),
                 state: desired,
                 resource_version: current.resource_version + 1,
+                runtime_endpoint,
             };
             transaction
                 .execute(
                     "UPDATE runtime_egress.runtime_attachments
-                     SET state = $2, resource_version = $3,
+                     SET state = $2, resource_version = $3, runtime_endpoint = $4::text::inet,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE agent_id = $1",
                     &[
                         &agent_id.as_str(),
                         &attachment_state(attachment.state),
                         &u64_to_i64(attachment.resource_version)?,
+                        &attachment
+                            .runtime_endpoint
+                            .map(|address| address.to_string()),
                     ],
                 )
                 .await
@@ -1057,7 +1070,7 @@ impl Repository for PostgresRepository {
                             n.resource_version, n.quarantine_until,
                             t.state, t.resource_version,
                             a.policy_id, a.revision, a.resource_version,
-                            p.canonical_spec, p.digest
+                            p.canonical_spec, p.digest, host(t.runtime_endpoint)
                      FROM runtime_egress.agent_networks n
                      JOIN runtime_egress.runtime_attachments t USING (agent_id)
                      JOIN runtime_egress.agent_policy_assignments a USING (agent_id)
@@ -1127,6 +1140,7 @@ fn binding_from_row(row: Row) -> Result<ActiveBinding, RepositoryError> {
         agent_id: network.agent_id.clone(),
         state: parse_attachment_state(row.get(6))?,
         resource_version: i64_to_u64(row.get(7))?,
+        runtime_endpoint: parse_runtime_endpoint(row.get(13))?,
     };
     let policy_id = PolicyId::parse(row.get::<_, String>(8)).map_err(operation_failed)?;
     let revision_number = i64_to_u64(row.get(9))?;
@@ -1307,7 +1321,7 @@ async fn select_attachment_client(
 ) -> Result<Option<RuntimeAttachment>, RepositoryError> {
     client
         .query_opt(
-            "SELECT state, resource_version
+            "SELECT state, resource_version, host(runtime_endpoint)
              FROM runtime_egress.runtime_attachments WHERE agent_id = $1",
             &[&agent_id.as_str()],
         )
@@ -1324,7 +1338,7 @@ async fn select_attachment(
 ) -> Result<Option<RuntimeAttachment>, RepositoryError> {
     let suffix = if for_update { " FOR UPDATE" } else { "" };
     let query = format!(
-        "SELECT state, resource_version
+        "SELECT state, resource_version, host(runtime_endpoint)
          FROM runtime_egress.runtime_attachments WHERE agent_id = $1{suffix}"
     );
     transaction
@@ -1340,7 +1354,14 @@ fn attachment_from_row(agent_id: AgentId, row: &Row) -> Result<RuntimeAttachment
         agent_id,
         state: parse_attachment_state(row.get(0))?,
         resource_version: i64_to_u64(row.get(1))?,
+        runtime_endpoint: parse_runtime_endpoint(row.get(2))?,
     })
+}
+
+fn parse_runtime_endpoint(value: Option<String>) -> Result<Option<Ipv4Addr>, RepositoryError> {
+    value
+        .map(|address| address.parse().map_err(operation_failed))
+        .transpose()
 }
 
 fn retry_version_matches(current: u64, expected: u64) -> bool {

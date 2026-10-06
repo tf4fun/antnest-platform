@@ -67,9 +67,25 @@ joining control and external networks does not expose the packet socket on
 those interfaces. Runtime cannot reach Egress PostgreSQL or the control
 listener.
 
-The UDP source address is a return locator, not a durable or cryptographic
-identity. Egress still validates every inner packet and requires its source
-address to be an active Agent Tunnel IPv4.
+Control revision 6 persists the expected outer Runtime IPv4 together with the
+attachment state and CAS version. Open routes require that address before
+policy or flow effects; reverse output also checks the binding. Rebinding
+clears flows and conntrack before publication. Ensure, policy changes and
+restart recovery preserve the address. UDP source ports remain return locators
+owned by individual flows. Closed routes answer only the fixed local readiness
+probe and cannot write to TUN.
+
+This is Phase 1 address binding, protected by Controller workload admission.
+Ordinary Runtime executors cannot spoof outer IPv4 because they lack raw-network
+privileges. A host with raw-packet authority on the management network remains
+trusted; encrypted per-generation datagrams and replay protection are Phase 2.
+
+Kernel forwarding separately denies the shared special-use CIDR set, Egress's
+connected IPv4 subnets and the selected tunnel range. Subnet discovery and nft
+installation must succeed before startup. TUN input permits only the virtual
+resolver's TCP port 53, then drops other TUN input. This destination backstop
+does not depend on the userspace allow/deny decision. See
+[peer binding](../../../docs/egress-peer-binding.md).
 
 ## 3. Rust Module Boundaries
 
@@ -149,6 +165,13 @@ agent_policy_assignments
   resource_version bigint not null
   updated_at timestamptz not null
   foreign key (policy_id, revision) references policy_revisions
+
+runtime_attachments
+  agent_id text primary key references agent_networks
+  state text not null
+  resource_version bigint not null
+  runtime_endpoint inet null -- canonical IPv4; absent while closed
+  updated_at timestamptz not null
 ```
 
 `schema_migrations` records every ordered migration, including bootstrap, by

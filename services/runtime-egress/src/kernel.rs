@@ -103,18 +103,39 @@ fn strings<const N: usize>(values: [String; N]) -> Vec<String> {
     values.into_iter().collect()
 }
 
-pub fn nft_rules(tun_name: &str, tunnel_cidr: Ipv4Net) -> String {
+pub fn nft_rules(
+    tun_name: &str,
+    tunnel_cidr: Ipv4Net,
+    resolver_ipv4: Ipv4Addr,
+    connected: &[Ipv4Net],
+) -> String {
+    let mut networks = crate::policy::PROTECTED_IPV4_NETWORKS.to_vec();
+    networks.push(tunnel_cidr);
+    networks.extend_from_slice(connected);
+    networks.sort_by_key(|network| (network.prefix_len(), network.network()));
+    let mut protected: Vec<Ipv4Net> = Vec::new();
+    for network in networks {
+        if !protected.iter().any(|existing| existing.contains(&network)) {
+            protected.push(network);
+        }
+    }
+    let destinations = protected
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         r#"table ip antnest_egress {{
   chain forward {{
     type filter hook forward priority filter; policy drop;
+    iifname "{tun_name}" ip daddr {{ {destinations} }} counter drop
     iifname "{tun_name}" ip saddr {tunnel_cidr} meta l4proto tcp accept
     oifname "{tun_name}" ip daddr {tunnel_cidr} ct state established,related accept
   }}
   chain input {{
     type filter hook input priority filter; policy accept;
-    iifname "{tun_name}" ip saddr {tunnel_cidr} tcp dport 53 accept
-    iifname "{tun_name}" ip saddr {tunnel_cidr} drop
+    iifname "{tun_name}" ip saddr {tunnel_cidr} ip daddr {resolver_ipv4} tcp dport 53 accept
+    iifname "{tun_name}" drop
   }}
   chain postrouting {{
     type nat hook postrouting priority srcnat; policy accept;
@@ -123,6 +144,46 @@ pub fn nft_rules(tun_name: &str, tunnel_cidr: Ipv4Net) -> String {
 }}
 "#
     )
+}
+
+pub fn connected_ipv4_subnets(routes: &str) -> Result<Vec<Ipv4Net>, KernelError> {
+    let mut lines = routes.lines();
+    if lines
+        .next()
+        .is_none_or(|header| !header.starts_with("Iface"))
+    {
+        return Err(KernelError::Command(
+            "invalid IPv4 route table header".to_owned(),
+        ));
+    }
+    let invalid = || KernelError::Command("invalid IPv4 connected route".to_owned());
+    let mut networks = Vec::new();
+    for line in lines.filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() < 8 {
+            return Err(invalid());
+        }
+        let destination = u32::from_str_radix(fields[1], 16).map_err(|_| invalid())?;
+        let gateway = u32::from_str_radix(fields[2], 16).map_err(|_| invalid())?;
+        let flags = u32::from_str_radix(fields[3], 16).map_err(|_| invalid())?;
+        if destination == 0 || gateway != 0 || flags & 1 == 0 {
+            continue;
+        }
+        let mask = u32::from_str_radix(fields[7], 16)
+            .map_err(|_| invalid())?
+            .to_ne_bytes();
+        let mask = u32::from_be_bytes(mask);
+        let prefix = mask.leading_ones();
+        if mask != u32::MAX.checked_shl(32 - prefix).unwrap_or(0) {
+            return Err(invalid());
+        }
+        let address = Ipv4Addr::from(destination.to_ne_bytes());
+        let network = Ipv4Net::new(address, prefix as u8)
+            .map_err(|_| invalid())?
+            .trunc();
+        networks.push(network);
+    }
+    Ok(networks)
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -316,7 +377,20 @@ mod platform {
             "antnest_egress".to_owned(),
         ];
         run("nft", &delete, None, command_timeout, true).await?;
-        let rules = nft_rules(plan.tun_name(), plan.tunnel_cidr());
+        let routes = timeout(
+            command_timeout,
+            tokio::fs::read_to_string("/proc/net/route"),
+        )
+        .await
+        .map_err(|_| KernelError::Command("IPv4 subnet discovery timed out".to_owned()))?
+        .map_err(|_| KernelError::Command("IPv4 subnet discovery failed".to_owned()))?;
+        let connected = super::connected_ipv4_subnets(&routes)?;
+        let rules = nft_rules(
+            plan.tun_name(),
+            plan.tunnel_cidr(),
+            plan.resolver_ipv4,
+            &connected,
+        );
         run(
             "nft",
             &["-f".to_owned(), "-".to_owned()],

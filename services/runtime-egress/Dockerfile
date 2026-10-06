@@ -13,6 +13,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo fmt --all --check \
     && cargo clippy --locked --all-targets -- -D warnings \
     && cargo test --locked \
+    && cargo test --locked --test kernel_backstop --no-run --message-format=json > /tmp/kernel-backstop-artifacts.json \
+    && sed -n 's/.*"executable":"\([^"]*kernel_backstop-[^"]*\)".*/\1/p' /tmp/kernel-backstop-artifacts.json | while IFS= read -r test_binary; do cp "$test_binary" /tmp/kernel-backstop-test; done \
+    && test -f /tmp/kernel-backstop-test \
     && cargo build --locked --release \
     && cp target/release/antnest-runtime-egress /tmp/runtime-egress
 
