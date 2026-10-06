@@ -292,3 +292,14 @@ other managed server UIDs cannot read its proc environment or ptrace it. Use
 trusted image-controlled MCP code when assigning credentials: mutable workspace
 code and the server's own tool semantics are part of the administrator-selected
 server's trust boundary. See the [shared secret contract](../../../contracts/runtime/managed-mcp-secrets.md).
+
+Managed servers use UID-owned 0700 HOME/TMPDIR/XDG directories under the
+root-owned 0711 tmpfs `/run/antnest-mcp-home`. RC sets exec/nosuid/nodev and
+bounds all server caches together by `tmpfs_bytes`; standalone operators must
+provide the same mount. The entry verifies its tmpfs type and ownership before
+dropping privileges. MCP umask is 077, while cwd remains workspace. This also
+protects default `/tmp` files from the common GID. Caches reset on restart and
+may require OAuth reauthentication. UID rank uses sorted IDs; only reordering is
+stable, not additions/removals. Trusted MCP code can still deliberately share
+credentials or execute mutable workspace code; private cache isolation does not
+contain those actions.

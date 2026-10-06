@@ -49,7 +49,7 @@ RUN useradd --uid 1000 --home-dir /workspace --no-create-home agent \
 	&& mkdir -p /workspace /skills \
 	&& chown 1000:1000 /workspace \
 	&& chmod 0555 /skills \
-    && for index in 0 1 2 3 4 5 6 7; do useradd --uid "$((2000 + index))" --gid 1000 --home-dir /workspace --no-create-home "mcp-$index"; done \
+    && for index in 0 1 2 3 4 5 6 7; do useradd --uid "$((2000 + index))" --gid 1000 --home-dir "/run/antnest-mcp-home/$((2000 + index))" --no-create-home "mcp-$index"; done \
     && python --version \
     && node --version \
     && npm --version

@@ -1,6 +1,7 @@
 pub(crate) mod catalog;
 pub(crate) mod entry;
 pub(crate) mod manager;
+mod private_home;
 mod process;
 mod progress;
 mod secrets;

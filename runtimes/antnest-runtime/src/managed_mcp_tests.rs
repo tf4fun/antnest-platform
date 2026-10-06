@@ -19,8 +19,47 @@ fn managed_servers_never_share_the_tools_identity_or_each_other() {
 }
 
 #[test]
+fn managed_server_identities_survive_list_reordering() {
+    let inputs: Vec<ServerInput> = ["zeta", "alpha"]
+        .iter()
+        .map(|id| serde_json::from_value(json!({"id":id,"command":"node"})).unwrap())
+        .collect();
+    let forward = validate_servers(inputs.clone()).unwrap();
+    let reverse = validate_servers(inputs.into_iter().rev().collect()).unwrap();
+    for server in &forward {
+        assert_eq!(
+            server.uid(),
+            reverse
+                .iter()
+                .find(|other| other.id() == server.id())
+                .unwrap()
+                .uid()
+        );
+    }
+}
+
+#[test]
+fn managed_servers_cannot_redirect_private_caches() {
+    for name in [
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_RUNTIME_DIR",
+    ] {
+        let mut input: ServerInput =
+            serde_json::from_value(json!({"id":"docs","command":"node"})).unwrap();
+        input.env.insert(name.into(), "/workspace".into());
+        assert!(validate_servers(vec![input]).is_err(), "{name}");
+    }
+}
+
+#[test]
 fn managed_secrets_bootstrap_accepts_descriptors_and_never_inline_values() {
-    let fingerprint = format!("sha256:{}", "1234abcd");
+    let fingerprint = String::from("hmac-sha256:0123456789abcdef0123456789abcdef");
     let value = json!({"id":"docs", "command":"node", "secret_env":{"API_KEY":{"set":true,"fingerprint":fingerprint}}});
     let input: ServerInput =
         serde_json::from_value(value).expect("frozen secret descriptor is supported");
@@ -28,7 +67,7 @@ fn managed_secrets_bootstrap_accepts_descriptors_and_never_inline_values() {
     for invalid in [
         json!({"value":"private-canary"}),
         json!({"keep":true}),
-        json!({"set":false,"fingerprint":"sha256:1234abcd"}),
+        json!({"set":false,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}),
     ] {
         let value = json!({"id":"docs","command":"node","secret_env":{"API_KEY":invalid}});
         assert!(serde_json::from_value::<ServerInput>(value).is_err());

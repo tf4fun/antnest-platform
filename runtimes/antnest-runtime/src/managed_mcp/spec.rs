@@ -80,10 +80,17 @@ pub(crate) fn validate_servers(inputs: Vec<ServerInput>) -> Result<Vec<ServerSpe
     {
         return Err(ConfigError("encoded server configurations exceed 64 KiB"));
     }
-    Ok(inputs
+    let identities: BTreeMap<String, u32> = ids
         .into_iter()
         .enumerate()
-        .map(|(index, input)| ServerSpec(input, 2000 + index as u32))
+        .map(|(index, id)| (id.clone(), 2000 + index as u32))
+        .collect();
+    Ok(inputs
+        .into_iter()
+        .map(|input| {
+            let uid = identities[&input.id];
+            ServerSpec(input, uid)
+        })
         .collect())
 }
 
@@ -114,8 +121,7 @@ fn validate(input: &ServerInput) -> Result<(), ConfigError> {
                 || name.bytes().enumerate().any(|(i, b)| {
                     !(b.is_ascii_alphabetic() || b == b'_' || i > 0 && b.is_ascii_digit())
                 })
-                || matches!(name.as_str(), "HOME" | "PATH")
-                || name.starts_with("ANTNEST_")
+                || reserved_environment(name)
                 || !bounded(value, 8192)
         })
     {
@@ -128,14 +134,13 @@ fn validate(input: &ServerInput) -> Result<(), ConfigError> {
                 .bytes()
                 .enumerate()
                 .all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || i > 0 && b.is_ascii_digit());
-        let fingerprint = secret.fingerprint.strip_prefix("sha256:");
+        let fingerprint = secret.fingerprint.strip_prefix("hmac-sha256:");
         if !valid_name
-            || matches!(name.as_str(), "HOME" | "PATH")
-            || name.starts_with("ANTNEST_")
+            || reserved_environment(name)
             || input.env.contains_key(name)
             || !secret.set
             || !fingerprint.is_some_and(|v| {
-                v.len() == 8
+                v.len() == 32
                     && v.bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             })
@@ -158,4 +163,20 @@ fn validate(input: &ServerInput) -> Result<(), ConfigError> {
 
 fn bounded(value: &str, limit: usize) -> bool {
     value.len() <= limit && !value.contains('\0')
+}
+
+fn reserved_environment(name: &str) -> bool {
+    matches!(
+        name,
+        "HOME"
+            | "PATH"
+            | "TMPDIR"
+            | "TMP"
+            | "TEMP"
+            | "XDG_CACHE_HOME"
+            | "XDG_CONFIG_HOME"
+            | "XDG_DATA_HOME"
+            | "XDG_STATE_HOME"
+            | "XDG_RUNTIME_DIR"
+    ) || name.starts_with("ANTNEST_")
 }

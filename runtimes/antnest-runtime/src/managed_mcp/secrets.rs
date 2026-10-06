@@ -1,4 +1,3 @@
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -62,32 +61,16 @@ fn load_file(
     Ok(values.clone())
 }
 
-fn secret_fingerprint(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    format!(
-        "sha256:{}",
-        digest
-            .iter()
-            .take(4)
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    )
-}
-
 fn verify(input: &ServerInput, values: &BTreeMap<String, String>) -> Result<(), &'static str> {
     if values.len() != input.secret_env.len() {
         return Err("private MCP bootstrap names differ");
     }
-    for (name, descriptor) in &input.secret_env {
+    for name in input.secret_env.keys() {
         let value = values
             .get(name)
             .ok_or("private MCP bootstrap name missing")?;
         if value.len() > 8192 || value.contains('\0') {
             return Err("private MCP bootstrap value invalid");
-        }
-        let fingerprint = secret_fingerprint(value);
-        if fingerprint != descriptor.fingerprint {
-            return Err("private MCP bootstrap fingerprint differs");
         }
     }
     // Apply the existing resolved limits, including JSON escaping overhead.
@@ -103,16 +86,16 @@ fn verify(input: &ServerInput, values: &BTreeMap<String, String>) -> Result<(), 
 mod tests {
     use super::*;
     #[test]
-    fn private_bootstrap_requires_exact_names_and_content() {
+    fn private_bootstrap_requires_exact_names_and_resolved_bounds() {
         let value = "synthetic-secret-canary";
-        let fingerprint = secret_fingerprint(value);
-        let input:ServerInput=serde_json::from_value(serde_json::json!({"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":&fingerprint[..15]}}})).unwrap();
+        let fingerprint = "hmac-sha256:0123456789abcdef0123456789abcdef";
+        let input:ServerInput=serde_json::from_value(serde_json::json!({"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":fingerprint}}})).unwrap();
         let mut values = BTreeMap::from([("API_KEY".into(), value.into())]);
         assert!(verify(&input, &values).is_ok());
         values.insert("OTHER".into(), value.into());
         assert!(verify(&input, &values).is_err());
         values.remove("OTHER");
-        values.insert("API_KEY".into(), "changed".into());
+        values.insert("API_KEY".into(), "\0".into());
         assert!(verify(&input, &values).is_err());
     }
 }

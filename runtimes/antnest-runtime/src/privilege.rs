@@ -77,7 +77,11 @@ mod platform {
                 "managed MCP UID outside reserved range".into(),
             ));
         }
-        enter_unprivileged_state(uid)
+        let state = enter_unprivileged_state(uid)?;
+        unsafe {
+            libc::umask(0o077);
+        }
+        Ok(state)
     }
 
     fn enter_unprivileged_state(uid: u32) -> Result<ProcessSnapshot, PrivilegeError> {

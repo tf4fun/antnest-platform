@@ -24,6 +24,7 @@ pub(crate) fn run() -> Result<(), &'static str> {
     if !Path::new(&workspace).is_absolute() {
         return Err("managed MCP workspace must be absolute");
     }
+    let cache_environment = super::private_home::prepare(uid)?;
     crate::privilege::enter_managed_state(uid)
         .map_err(|_| "managed MCP privilege transition failed")?;
     crate::privilege::close_untrusted_fds()
@@ -33,10 +34,10 @@ pub(crate) fn run() -> Result<(), &'static str> {
     let _error = std::process::Command::new(&input.command)
         .args(&input.args)
         .env_clear()
-        .env("HOME", &workspace)
         .env("PATH", "/usr/local/bin:/usr/bin:/bin")
         .envs(&input.env)
         .envs(&secrets)
+        .envs(cache_environment)
         .current_dir(&workspace)
         .exec();
     Err("managed MCP executable could not be started")
