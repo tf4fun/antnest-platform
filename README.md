@@ -244,7 +244,8 @@ read each other's tables.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 development workflow and review expectations. Report security issues privately
-as described in [SECURITY.md](SECURITY.md).
+as described in [SECURITY.md](SECURITY.md). Everyone taking part in the project
+follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
