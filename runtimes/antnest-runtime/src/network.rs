@@ -133,7 +133,7 @@ mod platform {
             let platform_routes = read_platform_routes(route_target)?;
             configure_resolver(spec.resolver_ipv4())?;
             let tun = create_tun(TUN_NAME, crate::packet::INNER_MTU, spec.tunnel_ipv4())?;
-            install_routes(TUN_NAME)?;
+            install_routes(TUN_NAME, spec.tunnel_ipv4())?;
             install_kill_switch(TUN_NAME, mcp_port)?;
             let platform = PlatformNetwork::new(platform_routes);
             Ok(Self {
@@ -306,8 +306,8 @@ mod platform {
             .map_err(|error| NetworkError::Invalid(format!("parse route {field}: {error}")))
     }
 
-    fn install_routes(tun_name: &str) -> Result<(), NetworkError> {
-        for arguments in route_cleanup_commands(tun_name) {
+    fn install_routes(tun_name: &str, tunnel_ipv4: Ipv4Addr) -> Result<(), NetworkError> {
+        for arguments in route_cleanup_commands(tun_name, tunnel_ipv4) {
             let _ = run_ip(&arguments, true)?;
         }
         let rule_output = run_ip(&reserved_rule_query(), false)?;
@@ -322,7 +322,7 @@ mod platform {
                 "Runtime-owned routing table identifier is already used".into(),
             ));
         }
-        for arguments in agent_route_commands(tun_name) {
+        for arguments in agent_route_commands(tun_name, tunnel_ipv4) {
             let _ = run_ip(&arguments, false)?;
         }
         Ok(())
@@ -346,9 +346,10 @@ mod platform {
         )))
     }
 
-    fn route_cleanup_commands(tun_name: &str) -> Vec<Vec<String>> {
+    fn route_cleanup_commands(tun_name: &str, tunnel_ipv4: Ipv4Addr) -> Vec<Vec<String>> {
         let command =
             |arguments: &[&str]| arguments.iter().map(|value| (*value).to_owned()).collect();
+        let tunnel_ipv4 = tunnel_ipv4.to_string();
         vec![
             command(&[
                 "rule",
@@ -357,6 +358,16 @@ mod platform {
                 AGENT_RULE_PRIORITY,
                 "uidrange",
                 "1000-1000",
+                "lookup",
+                AGENT_ROUTE_TABLE,
+            ]),
+            command(&[
+                "rule",
+                "del",
+                "pref",
+                AGENT_RULE_PRIORITY,
+                "from",
+                &tunnel_ipv4,
                 "lookup",
                 AGENT_ROUTE_TABLE,
             ]),
@@ -416,9 +427,10 @@ mod platform {
         })
     }
 
-    fn agent_route_commands(tun_name: &str) -> Vec<Vec<String>> {
+    fn agent_route_commands(tun_name: &str, tunnel_ipv4: Ipv4Addr) -> Vec<Vec<String>> {
         let command =
             |arguments: &[&str]| arguments.iter().map(|value| (*value).to_owned()).collect();
+        let tunnel_ipv4 = tunnel_ipv4.to_string();
         vec![
             command(&[
                 "route",
@@ -458,6 +470,20 @@ mod platform {
                 AGENT_RULE_PRIORITY,
                 "uidrange",
                 "2000-2007",
+                "lookup",
+                AGENT_ROUTE_TABLE,
+            ]),
+            // Reverse-path filtering validates a reply arriving on TUN with a
+            // uid-less lookup sourced from the Tunnel IPv4. Without this rule
+            // that lookup misses the uid rules, finds no route in main, and
+            // the kernel drops the reply when rp_filter is 1 or 2.
+            command(&[
+                "rule",
+                "add",
+                "pref",
+                AGENT_RULE_PRIORITY,
+                "from",
+                &tunnel_ipv4,
                 "lookup",
                 AGENT_ROUTE_TABLE,
             ]),
@@ -721,7 +747,7 @@ mod platform {
 
         #[test]
         fn uid_policy_route_never_replaces_the_platform_default_route() {
-            let commands = agent_route_commands("antnest0");
+            let commands = agent_route_commands("antnest0", Ipv4Addr::new(100, 64, 0, 2));
             let expected = |values: &[&str]| {
                 values
                     .iter()
@@ -757,7 +783,7 @@ mod platform {
                     .any(|command| command.contains(&"2000-2007".to_owned()))
             );
             assert!(!commands.iter().flatten().any(|value| value == "main"));
-            let cleanup = route_cleanup_commands("antnest0");
+            let cleanup = route_cleanup_commands("antnest0", Ipv4Addr::new(100, 64, 0, 2));
             assert!(
                 !cleanup
                     .iter()
@@ -775,6 +801,21 @@ mod platform {
             assert!(!reserved_route_table_is_used(
                 b"default via 172.30.0.1 dev eth0\nlocal 127.0.0.0/8 dev lo table local\n"
             ));
+        }
+
+        #[test]
+        fn tunnel_replies_pass_reverse_path_filtering_through_the_agent_table() {
+            let tunnel = Ipv4Addr::new(100, 64, 0, 2);
+            let rule = ["pref", "18953", "from", "100.64.0.2", "lookup", "18953"];
+            let with_action = |action: &str| {
+                ["rule", action]
+                    .iter()
+                    .chain(rule.iter())
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>()
+            };
+            assert!(agent_route_commands("antnest0", tunnel).contains(&with_action("add")));
+            assert!(route_cleanup_commands("antnest0", tunnel).contains(&with_action("del")));
         }
 
         #[test]

@@ -358,6 +358,10 @@ the existing operation must reconcile before another lifecycle mutation.
 - root Supervisor traffic uses the unchanged platform main routing table;
 - locally generated UID 1000 traffic is selected by an Agent policy route and
   sent to TUN instead of inheriting direct platform routes;
+- a source rule for the Tunnel IPv4 sends reverse-path checks for replies
+  arriving on TUN to the same Agent table, so hosts with strict or loose
+  `rp_filter` (Ubuntu defaults to 2) do not drop them; unbound root sockets
+  still use the main table;
 - nftables rejects UID 1000 traffic that bypasses TUN, reaches Runtime's own
   MCP port, or uses unsupported IPv6;
 - every structurally valid supported packet is carried to Runtime Egress, which

@@ -173,6 +173,13 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Agent TCP through the Runtime tunnel now completes on hosts with strict or
+loose reverse-path filtering (`rp_filter=1` or `2`, the Ubuntu default that
+container namespaces inherit). Previously the kernel dropped every reply
+arriving on `antnest0` because its reverse-path lookup carries no Agent uid
+and found no route; a Tunnel IPv4 source rule now resolves it through the Agent
+table (#114).
+
 Runtime tests that capture tracing spans no longer lose spans or deadlock when
 run in parallel with other tests, a test-only workaround for
 [tokio-rs/tracing#3611](https://github.com/tokio-rs/tracing/issues/3611) (#123).
