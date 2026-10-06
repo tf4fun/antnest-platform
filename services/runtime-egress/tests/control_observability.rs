@@ -300,6 +300,7 @@ fn forwarding_and_policy_decisions_are_unchanged_and_create_no_spans() {
                     assignment_version: 1,
                     policy: policy.compile("100.64.0.1".parse().unwrap()),
                     gate: RouteGate::Open,
+                    runtime_endpoint: Some("10.0.0.2".parse().unwrap()),
                 }]),
                 1400,
                 32,

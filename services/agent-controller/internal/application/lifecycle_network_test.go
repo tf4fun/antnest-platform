@@ -39,7 +39,7 @@ type lostOpenResponse struct {
 	versions []uint64
 }
 
-func (dependency *lostOpenResponse) SetAgentNetworkAttachment(ctx context.Context, agentID, state string, expected uint64) (ports.NetworkAttachment, error) {
+func (dependency *lostOpenResponse) SetAgentNetworkAttachment(ctx context.Context, agentID, state string, expected uint64, runtimeEndpoint string) (ports.NetworkAttachment, error) {
 	dependency.versions = append(dependency.versions, expected)
 	if dependency.lost {
 		current := dependency.network
@@ -48,7 +48,7 @@ func (dependency *lostOpenResponse) SetAgentNetworkAttachment(ctx context.Contex
 		}
 		return current, nil
 	}
-	result, err := dependency.enableDependenciesStub.SetAgentNetworkAttachment(ctx, agentID, state, expected)
+	result, err := dependency.enableDependenciesStub.SetAgentNetworkAttachment(ctx, agentID, state, expected, runtimeEndpoint)
 	if err != nil {
 		return result, err
 	}

@@ -216,8 +216,9 @@ func (deps *offboardingDependencies) GetAgentNetwork(context.Context, string) (p
 func (deps *offboardingDependencies) EnsureAgentNetwork(context.Context, string) (ports.NetworkAttachment, error) {
 	return deps.network, nil
 }
-func (deps *offboardingDependencies) SetAgentNetworkAttachment(_ context.Context, _ string, state string, _ uint64) (ports.NetworkAttachment, error) {
+func (deps *offboardingDependencies) SetAgentNetworkAttachment(_ context.Context, _ string, state string, _ uint64, runtimeEndpoint string) (ports.NetworkAttachment, error) {
 	deps.network.AttachmentState = state
+	deps.network.RuntimeEndpoint = runtimeEndpoint
 	deps.network.AttachmentResourceVersion++
 	return deps.network, nil
 }
@@ -295,7 +296,12 @@ func (deps *offboardingDependencies) EnableRuntime(context.Context, string, stri
 	return deps.runtime, nil
 }
 func (deps *offboardingDependencies) InspectRuntime(_ context.Context, id string) (ports.RuntimeInspection, error) {
-	return ports.RuntimeInspection{AgentID: id, RuntimeRevision: deps.runtime.RuntimeRevision, RuntimeExecutionID: deps.runtime.RuntimeExecutionID, MCPEndpoint: deps.runtime.MCPEndpoint, LifecycleState: deps.runtime.LifecycleState, Health: deps.runtime.Health}, nil
+	inspection := ports.RuntimeInspection{AgentID: id, RuntimeRevision: deps.runtime.RuntimeRevision, RuntimeExecutionID: deps.runtime.RuntimeExecutionID, MCPEndpoint: deps.runtime.MCPEndpoint, LifecycleState: deps.runtime.LifecycleState, Health: deps.runtime.Health}
+	if inspection.LifecycleState == "provisioned" {
+		inspection.Phase = "running"
+		inspection.RuntimeEndpoint = "10.20.0.9"
+	}
+	return inspection, nil
 }
 
 func finishOffboardingOperation(t *testing.T, repo *Repository, service *application.LifecycleService, requestID string, expected domain.OperationState) {

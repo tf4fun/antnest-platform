@@ -15,6 +15,13 @@ observations, not Agent lifecycle or authorization decisions. In particular,
 disabled compute being absent is expected, while an enabled target being absent
 may require repair. Consumers make that distinction using their business intent.
 
+Inspect/List also report `runtime_endpoint` from Docker's configured management
+network for running compute. This peer IPv4 is separate from the MCP URL and
+does not assert health or an execution identity. Controller reads it after a
+completed lifecycle command and before opening Egress, then reconciles it before
+execution admission. Address lookup failure is an observation failure; it never
+rewrites the command receipt. Stopped or absent compute reports no peer address.
+
 - A completed command records its target revision, original image reference and
   resolved image ID. Its inspection is the completion snapshot, with unknown
   health and no asserted execution identity. Replaying the command returns that

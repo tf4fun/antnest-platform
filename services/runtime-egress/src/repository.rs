@@ -46,6 +46,8 @@ pub struct RepositoryConfig {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum RepositoryError {
+    #[error("Runtime peer does not match attachment state")]
+    InvalidRuntimeEndpoint,
     #[error("database connection is unavailable; raw detail omitted")]
     ConnectionUnavailable(String),
     #[error("address pool is invalid: {0}")]
@@ -152,6 +154,7 @@ pub trait Repository: Send + Sync + 'static {
         agent_id: &AgentId,
         state: AttachmentState,
         expected_resource_version: u64,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<RuntimeAttachment, RepositoryError>;
 
     async fn compare_and_swap_assignment(
@@ -271,6 +274,7 @@ impl Repository for InMemoryRepository {
             agent_id: agent_id.clone(),
             state: AttachmentState::Closed,
             resource_version: 1,
+            runtime_endpoint: None,
         };
         state.networks.insert(agent_id.clone(), network.clone());
         state.assignments.insert(agent_id.clone(), assignment);
@@ -353,7 +357,11 @@ impl Repository for InMemoryRepository {
         agent_id: &AgentId,
         desired: AttachmentState,
         expected_resource_version: u64,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<RuntimeAttachment, RepositoryError> {
+        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint) {
+            return Err(RepositoryError::InvalidRuntimeEndpoint);
+        }
         let mut state = self.state.lock().await;
         let network = state
             .networks
@@ -367,7 +375,7 @@ impl Repository for InMemoryRepository {
             .get(agent_id)
             .cloned()
             .ok_or(RepositoryError::AgentNetworkNotFound)?;
-        if current.state == desired {
+        if current.state == desired && current.runtime_endpoint == runtime_endpoint {
             return if retry_version_matches(current.resource_version, expected_resource_version) {
                 Ok(current)
             } else {
@@ -381,6 +389,7 @@ impl Repository for InMemoryRepository {
             agent_id: agent_id.clone(),
             state: desired,
             resource_version: current.resource_version + 1,
+            runtime_endpoint,
         };
         state
             .attachments

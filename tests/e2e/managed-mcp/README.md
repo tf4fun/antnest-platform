@@ -79,6 +79,10 @@ process initializes successfully. Final deletion checks all RC-owned containers
 and volumes, including private MCP bootstrap volumes. Retained Docker identities
 are compared before and after cleanup.
 
+The authenticated Docker runner also checks [Egress peer binding](../runtime-egress/README.md):
+create/rebuild/enable must bind the current Docker IPv4, disable clears it, and a
+graceful Runtime restart at a new fixture address must update the binding.
+
 The drain checks use explicit barriers and service-owned observations, never
 comparisons between independent clocks.
 

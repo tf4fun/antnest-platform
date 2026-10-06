@@ -22,7 +22,8 @@ Startup rejects published PostgreSQL passwords using the connection driver parse
   document without guessing from its identifier.
 - Compile policy into immutable in-memory snapshots.
 - Receive one complete inner IP packet per Runtime UDP datagram.
-- Resolve the inner source Tunnel IP to an Agent and apply its current policy.
+- Resolve the inner source Tunnel IP to an Agent, verify the Controller-bound
+  outer Runtime IPv4, then apply its current policy.
 - Bind each inner flow to the outer Runtime UDP peer that first created it.
 - Route return packets from TUN to the owning UDP peer.
 - Produce fast TCP rejection for valid policy-denied traffic.
@@ -39,7 +40,8 @@ Startup rejects published PostgreSQL passwords using the connection driver parse
 - It does not create containers, Pods, volumes, routes inside Runtime, or Agent
   workspaces.
 - It does not read another service's database.
-- It does not persist UDP peers, packets, flows, queues, DNS cache, or conntrack.
+- It persists the bound Runtime IPv4 with the attachment; UDP source ports,
+  packets, flows, queues, DNS cache and conntrack remain process-local.
 - It does not implement an external API or end-user authentication.
 - It does not add a custom identity, token, session, or tracing envelope to the
   Runtime UDP packet format.

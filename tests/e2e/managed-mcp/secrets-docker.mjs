@@ -164,6 +164,7 @@ try {
         "agent-controller/tokens/runtime-controller",
       ),
       TEST_EVIDENCE_DIRECTORY: output,
+      TEST_DOCKER_PROJECT: config.project,
     },
   );
   business = JSON.parse(readFileSync(resolve(output, "business.json"), "utf8"));

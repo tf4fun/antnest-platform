@@ -87,6 +87,7 @@ trait ControlApi: Send + Sync {
         agent_id: AgentId,
         state: AttachmentState,
         expected_resource_version: u64,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn release(
         &self,
@@ -137,8 +138,9 @@ where
         agent_id: AgentId,
         state: AttachmentState,
         expected_resource_version: u64,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
-        self.set_runtime_attachment(agent_id, state, expected_resource_version)
+        self.set_runtime_attachment(agent_id, state, expected_resource_version, runtime_endpoint)
             .await
     }
 
@@ -578,7 +580,12 @@ async fn set_attachment(
     record_agent_id(&agent_id);
     state
         .api
-        .set_attachment(agent_id, request.state, request.expected_resource_version)
+        .set_attachment(
+            agent_id,
+            request.state,
+            request.expected_resource_version,
+            request.runtime_endpoint,
+        )
         .await
         .map(NetworkResponse::from)
         .map(ControlJson)
@@ -590,6 +597,7 @@ async fn set_attachment(
 struct SetAttachmentRequest {
     state: AttachmentState,
     expected_resource_version: u64,
+    runtime_endpoint: Option<Ipv4Addr>,
 }
 
 async fn release_network(
@@ -722,6 +730,8 @@ struct NetworkResponse {
     network_resource_version: u64,
     attachment_state: AttachmentState,
     attachment_resource_version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_endpoint: Option<Ipv4Addr>,
 }
 
 #[derive(Serialize)]
@@ -745,6 +755,7 @@ impl From<RuntimeNetworkAttachment> for NetworkResponse {
             network_resource_version: value.network_resource_version,
             attachment_state: value.attachment_state,
             attachment_resource_version: value.attachment_resource_version,
+            runtime_endpoint: value.runtime_endpoint,
         }
     }
 }
@@ -848,6 +859,7 @@ impl From<ControlError> for ApiError {
     fn from(error: ControlError) -> Self {
         let diagnostic = error.diagnostic();
         let mut api = match error {
+            ControlError::InvalidRequest => Self::invalid_request(),
             ControlError::AgentNetworkNotFound => Self::new(
                 StatusCode::NOT_FOUND,
                 "agent_network_not_found",

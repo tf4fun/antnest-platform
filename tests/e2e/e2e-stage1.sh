@@ -197,9 +197,13 @@ if docker exec --user 1000 "$runtime_name" \
   exit 1
 fi
 
+runtime_endpoint=$(docker inspect \
+  --format "{{(index .NetworkSettings.Networks \"$ANTNEST_RUNTIME_MANAGEMENT_NETWORK\").IPAddress}}" \
+  "$runtime_name")
+test -n "$runtime_endpoint"
 opened=$(control_request -X PUT \
   -H 'content-type: application/json' \
-  -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_resource_version}}" \
+  -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_resource_version},\"runtime_endpoint\":\"${runtime_endpoint}\"}" \
   "$control_url/internal/agent-network-attachments/agent-stage1-e2e")
 printf '%s' "$opened" | grep -q '"attachment_state":"open"'
 attachment_resource_version=$(network_version "$opened" attachment_resource_version)

@@ -16,6 +16,106 @@ use antnest_runtime_egress::{
 };
 use async_trait::async_trait;
 
+#[tokio::test]
+async fn peer_rebinding_is_a_versioned_cleanup_barrier_and_survives_recovery() {
+    let (service, kernel) = service();
+    let agent = AgentId::parse("agent-peer-rebind").unwrap();
+    let network = service.ensure_agent_network(agent.clone()).await.unwrap();
+    service
+        .assign_policy(
+            agent.clone(),
+            PolicyId::parse("builtin/allow-all").unwrap(),
+            1,
+            1,
+        )
+        .await
+        .unwrap();
+    let first_peer = "10.20.0.9".parse().unwrap();
+    let next_peer = "10.20.0.10".parse().unwrap();
+    let opened = service
+        .set_runtime_attachment(agent.clone(), AttachmentState::Open, 1, Some(first_peer))
+        .await
+        .unwrap();
+    let mut packet = readiness_probe(network.tunnel_ipv4);
+    packet[16..20].copy_from_slice(&Ipv4Addr::new(93, 184, 216, 34).octets());
+    packet[22..24].copy_from_slice(&443_u16.to_be_bytes());
+    assert!(matches!(
+        service.dataplane().lock().unwrap().handle_uplink(
+            &packet,
+            "10.20.0.9:40000".parse().unwrap(),
+            Instant::now()
+        ),
+        DataPlaneAction::WriteTun(_)
+    ));
+    let before = kernel.cleared.lock().unwrap().len();
+    let rebound = service
+        .set_runtime_attachment(
+            agent.clone(),
+            AttachmentState::Open,
+            opened.attachment_resource_version,
+            Some(next_peer),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rebound.attachment_resource_version,
+        opened.attachment_resource_version + 1
+    );
+    assert_eq!(rebound.runtime_endpoint, Some(next_peer));
+    assert_eq!(kernel.cleared.lock().unwrap().len(), before + 1);
+    assert_eq!(service.dataplane().lock().unwrap().flow_count(), 0);
+    assert_eq!(
+        service
+            .set_runtime_attachment(
+                agent.clone(),
+                AttachmentState::Open,
+                opened.attachment_resource_version,
+                Some(first_peer)
+            )
+            .await,
+        Err(ControlError::ResourceVersionConflict)
+    );
+    service.recover().await.unwrap();
+    assert_eq!(
+        service
+            .agent_network(&agent)
+            .await
+            .unwrap()
+            .runtime_endpoint,
+        Some(next_peer)
+    );
+    let plane = service.dataplane();
+    let mut plane = plane.lock().unwrap();
+    assert_eq!(
+        plane.handle_uplink(&packet, "10.20.0.9:40000".parse().unwrap(), Instant::now()),
+        DataPlaneAction::Drop(DropReason::PeerMismatch)
+    );
+    assert!(matches!(
+        plane.handle_uplink(&packet, "10.20.0.10:40000".parse().unwrap(), Instant::now()),
+        DataPlaneAction::WriteTun(_)
+    ));
+}
+
+#[tokio::test]
+async fn invalid_peer_state_pairs_have_no_control_effect() {
+    let (service, kernel) = service();
+    let agent = AgentId::parse("agent-peer-invalid").unwrap();
+    let before = service.ensure_agent_network(agent.clone()).await.unwrap();
+    for (state, peer) in [
+        (AttachmentState::Open, None),
+        (AttachmentState::Closed, Some("10.20.0.9".parse().unwrap())),
+    ] {
+        assert_eq!(
+            service
+                .set_runtime_attachment(agent.clone(), state, 1, peer)
+                .await,
+            Err(ControlError::InvalidRequest)
+        );
+        assert_eq!(service.agent_network(&agent).await.unwrap(), before);
+    }
+    assert!(kernel.cleared.lock().unwrap().is_empty());
+}
+
 #[derive(Default)]
 struct RecordingKernel {
     cleared: Mutex<Vec<Ipv4Addr>>,
@@ -77,6 +177,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -89,6 +190,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
                 agent.clone(),
                 AttachmentState::Closed,
                 opened.attachment_resource_version,
+                None,
             )
             .await,
         Err(ControlError::CleanupFailed(
@@ -108,6 +210,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
             agent.clone(),
             AttachmentState::Closed,
             opened.attachment_resource_version,
+            None,
         )
         .await
         .unwrap();
@@ -131,6 +234,7 @@ async fn healthy_same_policy_submission_preserves_existing_flow_and_reply_peer()
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -188,6 +292,7 @@ async fn same_policy_repairs_a_failed_barrier_instead_of_skipping_cleanup() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -252,6 +357,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
                 agent.clone(),
                 AttachmentState::Open,
                 allocated.attachment_resource_version,
+                Some("10.20.0.9".parse().unwrap()),
             )
             .await
             .unwrap();
@@ -262,6 +368,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
                     agent.clone(),
                     AttachmentState::Closed,
                     opened.attachment_resource_version,
+                    None,
                 )
                 .await
                 .map(|_| ())
@@ -293,6 +400,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
                     agent.clone(),
                     AttachmentState::Open,
                     opened.attachment_resource_version,
+                    Some("10.20.0.9".parse().unwrap()),
                 )
                 .await
         };
@@ -321,6 +429,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
                     agent.clone(),
                     AttachmentState::Open,
                     opened.attachment_resource_version,
+                    Some("10.20.0.9".parse().unwrap()),
                 )
                 .await
         }
@@ -360,6 +469,7 @@ async fn failed_initial_open_keeps_durable_attachment_closed() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await;
     assert!(matches!(result, Err(ControlError::CleanupFailed(_))));
@@ -370,6 +480,7 @@ async fn failed_initial_open_keeps_durable_attachment_closed() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -468,7 +579,7 @@ async fn closed_allocation_is_probe_only_before_runtime_readiness() {
     let (service, _) = service();
     let agent = AgentId::parse("agent-probe-only").unwrap();
     let allocation = service.ensure_agent_network(agent.clone()).await.unwrap();
-    let peer = "10.0.0.2:41000".parse().unwrap();
+    let peer = "10.20.0.9:41000".parse().unwrap();
     let mut probe = readiness_probe(allocation.tunnel_ipv4);
 
     let response =
@@ -511,7 +622,7 @@ async fn cold_recovery_restores_closed_allocation_as_probe_only() {
 
     let recovered = control_with_repository(repository);
     assert_eq!(recovered.recover().await.unwrap(), 1);
-    let peer = "10.0.0.2:41000".parse().unwrap();
+    let peer = "10.20.0.9:41000".parse().unwrap();
     assert!(matches!(
         recovered.dataplane().lock().unwrap().handle_uplink(
             &readiness_probe(allocation.tunnel_ipv4),
@@ -611,6 +722,7 @@ async fn desired_policy_survives_close_and_reopen() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -619,6 +731,7 @@ async fn desired_policy_survives_close_and_reopen() {
             agent.clone(),
             AttachmentState::Closed,
             opened.attachment_resource_version,
+            None,
         )
         .await
         .unwrap();
@@ -628,6 +741,7 @@ async fn desired_policy_survives_close_and_reopen() {
             agent.clone(),
             AttachmentState::Open,
             closed.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -640,7 +754,8 @@ async fn desired_policy_survives_close_and_reopen() {
             .set_runtime_attachment(
                 agent,
                 AttachmentState::Closed,
-                opened.attachment_resource_version
+                opened.attachment_resource_version,
+                None,
             )
             .await,
         Err(ControlError::ResourceVersionConflict)
@@ -657,6 +772,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -665,6 +781,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
             agent.clone(),
             AttachmentState::Closed,
             opened.attachment_resource_version,
+            None,
         )
         .await
         .unwrap();
@@ -673,6 +790,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
             agent.clone(),
             AttachmentState::Open,
             first_close.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -681,6 +799,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
             agent.clone(),
             AttachmentState::Closed,
             reopened.attachment_resource_version,
+            None,
         )
         .await
         .unwrap();
@@ -692,6 +811,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
                 agent,
                 AttachmentState::Closed,
                 opened.attachment_resource_version,
+                None,
             )
             .await,
         Err(ControlError::ResourceVersionConflict)
@@ -832,6 +952,7 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -875,6 +996,7 @@ async fn status_tracks_published_snapshots_instead_of_a_static_constant() {
             agent,
             AttachmentState::Open,
             allocated.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -958,6 +1080,7 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
             failed.clone(),
             AttachmentState::Open,
             failed_network.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();
@@ -966,6 +1089,7 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
             unaffected.clone(),
             AttachmentState::Open,
             unaffected_network.attachment_resource_version,
+            Some("10.20.0.9".parse().unwrap()),
         )
         .await
         .unwrap();

@@ -462,12 +462,7 @@ func (service *LifecycleService) publishAgentCreate(
 	if state.Operation.NetworkAttachment == nil {
 		return ports.AgentCreateState{}, fmt.Errorf("create operation has no network attachment")
 	}
-	attachment, err := service.egress.SetAgentNetworkAttachment(
-		ctx,
-		state.Agent.AgentID,
-		ports.NetworkAttachmentOpen,
-		state.Operation.NetworkAttachment.AttachmentResourceVersion,
-	)
+	attachment, err := service.openRuntimeNetwork(ctx, state.Agent.AgentID, state.Operation.RuntimeResult.RuntimeRevision, *state.Operation.NetworkAttachment)
 	if err != nil {
 		return service.handleCreateDependencyFailure(ctx, state, "runtime-egress", err)
 	}
@@ -545,12 +540,23 @@ func (service *LifecycleService) setOperationNetworkAttachment(
 	if current.State != domain.OperationRunning || current.Phase != operation.Phase || current.AgentID != operation.AgentID || current.RequestFingerprint != operation.RequestFingerprint {
 		return ports.NetworkAttachment{}, ports.ErrConcurrentChange
 	}
-	return service.setKnownNetworkAttachmentState(ctx, operation.AgentID, desired, attachment)
+	return service.setKnownNetworkAttachmentState(ctx, operation.AgentID, desired, attachment, current.SourceRuntimeRevision)
 }
 
 func (service *LifecycleService) setKnownNetworkAttachmentState(
 	ctx context.Context, agentID, state string, attachment ports.NetworkAttachment,
+	expectedRuntimeRevision string,
 ) (ports.NetworkAttachment, error) {
+	if state == ports.NetworkAttachmentOpen {
+		inspection, err := service.runtime.InspectRuntime(ctx, agentID)
+		if err != nil {
+			return ports.NetworkAttachment{}, err
+		}
+		if inspection.AgentID != agentID || inspection.RuntimeRevision != expectedRuntimeRevision || inspection.LifecycleState != "provisioned" || inspection.Phase != "running" || !ports.ValidRuntimePeer(inspection.RuntimeEndpoint) {
+			return ports.NetworkAttachment{}, &ports.DependencyError{Service: "runtime-controller", Code: "runtime_peer_unavailable", Retryable: true}
+		}
+		return service.egress.SetAgentNetworkAttachment(ctx, agentID, state, attachment.AttachmentResourceVersion, inspection.RuntimeEndpoint)
+	}
 	if attachment.AttachmentState == state &&
 		networkAttachmentInState(attachment, agentID, ports.NetworkStateActive, state) {
 		return attachment, nil
@@ -562,7 +568,7 @@ func (service *LifecycleService) setKnownNetworkAttachmentState(
 		}
 	}
 	return service.egress.SetAgentNetworkAttachment(
-		ctx, agentID, state, attachment.AttachmentResourceVersion,
+		ctx, agentID, state, attachment.AttachmentResourceVersion, "",
 	)
 }
 

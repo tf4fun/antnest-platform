@@ -50,6 +50,16 @@ pub struct RuntimeAttachment {
     pub agent_id: AgentId,
     pub state: AttachmentState,
     pub resource_version: u64,
+    pub runtime_endpoint: Option<Ipv4Addr>,
+}
+
+pub fn valid_runtime_endpoint(state: AttachmentState, endpoint: Option<Ipv4Addr>) -> bool {
+    match state {
+        AttachmentState::Closed => endpoint.is_none(),
+        AttachmentState::Open => endpoint.is_some_and(|address| {
+            !address.is_unspecified() && !address.is_multicast() && !address.is_broadcast()
+        }),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

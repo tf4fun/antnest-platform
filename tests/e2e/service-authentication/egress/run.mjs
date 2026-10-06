@@ -62,10 +62,22 @@ const sourceFiles = [
   "services/runtime-egress/src/service_auth.rs",
   "services/runtime-egress/src/transport.rs",
   "services/runtime-egress/src/main.rs",
+  "services/runtime-egress/src/dataplane.rs",
+  "services/runtime-egress/src/domain.rs",
+  "services/runtime-egress/src/application.rs",
+  "services/runtime-egress/src/repository.rs",
+  "services/runtime-egress/src/repository/postgres.rs",
+  "services/runtime-egress/src/kernel.rs",
+  "services/runtime-egress/src/policy.rs",
+  "services/runtime-egress/src/telemetry.rs",
+  "services/runtime-egress/migrations/0002_runtime_peer.sql",
+  "tests/integration/runtime-egress/kernel_backstop.rs",
+  "tests/integration/runtime-egress/kernel-backstop.Dockerfile",
   "contracts/egress/control-contract.json",
   "contracts/egress/callers.json",
   "tests/e2e/service-authentication/egress/compose.yaml",
   "tests/e2e/service-authentication/egress/probe.mjs",
+  "tests/e2e/service-authentication/egress/peer-proof.mjs",
   "tests/e2e/service-authentication/egress/run.mjs",
 ];
 const sourceIdentity = () =>
@@ -119,6 +131,12 @@ try {
     EGRESS_AUTH_CONTROL_IP: `10.242.${octet}.10`,
     EGRESS_AUTH_PACKET_SUBNET: `10.243.${octet}.0/24`,
     EGRESS_AUTH_PACKET_IP: `10.243.${octet}.10`,
+    EGRESS_AUTH_DATABASE_SUBNET: `10.244.${octet}.0/24`,
+    EGRESS_AUTH_DATABASE_PROBE_IP: `10.244.${octet}.20`,
+    EGRESS_AUTH_EXTERNAL_SUBNET: `100.128.${octet}.0/24`,
+    EGRESS_AUTH_EXTERNAL_IP: `100.128.${octet}.10`,
+    EGRESS_AUTH_EXTERNAL_PROBE_IP: `100.128.${octet}.20`,
+    EGRESS_AUTH_KERNEL_IMAGE: project + ":kernel-proof",
   };
   compose = [
     "compose",
@@ -145,6 +163,53 @@ try {
     0,
     "production image build failed; inspect private build evidence",
   );
+  progress("kernel-test-image-build");
+  for (const [name, command] of [
+    [
+      "kernel-build-stage",
+      [
+        "docker",
+        "build",
+        "--target",
+        "build",
+        "-f",
+        "services/runtime-egress/Dockerfile",
+        "-t",
+        project + ":kernel-build",
+        ".",
+      ],
+    ],
+    [
+      "kernel-test-image",
+      [
+        "docker",
+        "build",
+        "-f",
+        "tests/integration/runtime-egress/kernel-backstop.Dockerfile",
+        "--build-arg",
+        "EGRESS_TEST_BUILD_IMAGE=" + project + ":kernel-build",
+        "--build-arg",
+        "EGRESS_TEST_PRODUCTION_IMAGE=" + image,
+        "-t",
+        env.EGRESS_AUTH_KERNEL_IMAGE,
+        ".",
+      ],
+    ],
+  ]) {
+    const result = await runCommand({
+      name,
+      command,
+      cwd: root,
+      env,
+      output: evidence,
+      timeoutMs: budget,
+    });
+    assert.equal(
+      result.exit_code,
+      0,
+      name + " failed; inspect private build evidence",
+    );
+  }
   abort.signal.throwIfAborted();
   progress("isolated-startup");
   await invoke(
@@ -331,13 +396,27 @@ try {
     }),
     assignment,
   );
+  const runtimeProbeID = await invoke([
+    ...compose,
+    "ps",
+    "-q",
+    "runtime-probe",
+  ]);
+  const [runtimeProbe] = JSON.parse(await invoke(["inspect", runtimeProbeID]));
+  const boundPeer =
+    runtimeProbe.NetworkSettings.Networks[project + "_packet"].IPAddress;
   const open = await request({
     method: "PUT",
     path: attachmentPath,
-    body: { state: "open", expected_resource_version: 1 },
+    body: {
+      state: "open",
+      expected_resource_version: 1,
+      runtime_endpoint: boundPeer,
+    },
   });
   assert.equal(open.attachment_resource_version, 2);
   assert.equal(open.attachment_state, "open");
+  assert.equal(open.runtime_endpoint, boundPeer);
   const activeDatabase = await durable(),
     activeStatus = await health(),
     activeRules = await rules();
@@ -357,6 +436,110 @@ try {
     code: "resource_version_conflict",
   });
   await assertUnchanged(activeDatabase, activeStatus, activeRules);
+  progress("peer-impersonation-and-kernel-backstop");
+  const peerProbe = async (service, mode, options = {}) =>
+    JSON.parse(
+      await invoke([
+        ...compose,
+        "exec",
+        "-T",
+        service,
+        "node",
+        "/fixture/peer-proof.mjs",
+        mode,
+        JSON.stringify(options),
+      ]),
+    );
+  const dataSnapshot = async (predicate) => {
+    let found;
+    await waitFor("data-plane metric snapshot", async () => {
+      const entries = (await invoke(["logs", id]))
+        .split("\n")
+        .filter(Boolean)
+        .flatMap((line) => {
+          try {
+            return [JSON.parse(line)];
+          } catch {
+            return [];
+          }
+        });
+      found = entries
+        .reverse()
+        .find(
+          (entry) =>
+            entry["metric.event"] === "data_plane_snapshot" && predicate(entry),
+        );
+      return Boolean(found);
+    });
+    return found;
+  };
+  const kernelDrops = async () => {
+    const document = JSON.parse(
+      await invoke([
+        "exec",
+        id,
+        "nft",
+        "-j",
+        "list",
+        "table",
+        "ip",
+        "antnest_egress",
+      ]),
+    );
+    return document.nftables
+      .filter((item) => item.rule?.chain === "forward")
+      .flatMap((item) => item.rule.expr)
+      .reduce((count, item) => count + (item.counter?.packets ?? 0), 0);
+  };
+  await peerProbe("packet-probe", "send", {
+    source: network.tunnel_ipv4,
+    destination: env.EGRESS_AUTH_EXTERNAL_PROBE_IP,
+  });
+  const rejected = await dataSnapshot(
+    (fields) => fields["peer.mismatches"] >= 1,
+  );
+  assert.equal(rejected["policy.allows"], 0);
+  assert.equal(rejected["flow.active"], 0);
+  assert.equal((await peerProbe("database-probe", "count")).connections, 0);
+  checks += 4;
+  const beforeDrop = await kernelDrops();
+  await peerProbe("runtime-probe", "send", {
+    source: network.tunnel_ipv4,
+    destination: env.EGRESS_AUTH_EXTERNAL_PROBE_IP,
+  });
+  await waitFor(
+    "connected public subnet kernel drop",
+    async () => (await kernelDrops()) > beforeDrop,
+  );
+  assert(
+    (await dataSnapshot((fields) => fields["policy.allows"] >= 1))[
+      "policy.allows"
+    ] >= 1,
+  );
+  assert.equal((await peerProbe("database-probe", "count")).connections, 0);
+  checks += 3;
+  const kernel = await runCommand({
+    name: "private-destination-kernel-proof",
+    command: [
+      "docker",
+      ...compose,
+      "run",
+      "--rm",
+      "--no-deps",
+      "kernel-backstop",
+    ],
+    cwd: root,
+    env,
+    output: evidence,
+    timeoutMs: 60000,
+  });
+  assert.equal(
+    kernel.exit_code,
+    0,
+    "test-only userspace bypass escaped the kernel backstop",
+  );
+  assert.equal((await peerProbe("database-probe", "count")).connections, 0);
+  checks += 2;
   assert.equal((await request({ path: networkPath })).attachment_state, "open");
   const anonymousHealth = await invoke([
     "exec",
@@ -679,8 +862,14 @@ try {
     });
   }
   await attempt(async () => {
-    if (image && (await cleanup(["image", "ls", "-q", image])))
-      await cleanup(["image", "rm", image]);
+    for (const tag of [
+      env?.EGRESS_AUTH_KERNEL_IMAGE,
+      image,
+      project + ":kernel-build",
+    ].filter(Boolean)) {
+      if (await cleanup(["image", "ls", "-q", tag]))
+        await cleanup(["image", "rm", tag]);
+    }
   });
   cleaned = errors.length === 0;
   rmSync(directory, { recursive: true, force: true });

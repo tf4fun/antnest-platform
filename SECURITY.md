@@ -44,6 +44,13 @@ cluster network. Before exposing a deployment, understand these boundaries:
   rules. Its control listener admits only authenticated Controller calls on its
   configured purpose address; readiness uses a separate loopback listener.
   These checks do not contain a compromised Egress process.
+  Open tunnel routes also require the Controller-installed outer Runtime IPv4.
+  Independent nft rules block special-use destinations and all connected Egress
+  subnets, including public-address deployment subnets. This Phase 1 peer binding
+  assumes management-network hosts cannot spoof outer packet sources; hosts
+  with raw-network authority remain trusted. Per-generation tunnel encryption
+  and replay protection are a separate phase. See
+  [the binding contract](docs/egress-peer-binding.md).
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.

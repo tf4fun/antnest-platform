@@ -333,6 +333,7 @@ func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 			"lifecycle_state":"provisioned",
 			"health":"healthy",
 			"mcp_endpoint":"http://runtime-agent:8091/mcp",
+			"runtime_endpoint":"10.243.1.20",
 			"runtime_execution_id":"execution-1",
 			"restart_count":0,
 			"observed_at":"2026-09-01T00:00:00Z"
@@ -354,6 +355,17 @@ func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 		inspection.MCPEndpoint != "http://runtime-agent:8091/mcp" ||
 		inspection.LifecycleState != "provisioned" || inspection.Health != "healthy" {
 		t.Fatalf("Runtime inspection = %+v", inspection)
+	}
+	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection map[string]any
+	if err := json.Unmarshal(encoded, &projection); err != nil {
+		t.Fatal(err)
+	}
+	if projection["runtime_endpoint"] != "10.243.1.20" {
+		t.Fatal("current Runtime peer was omitted", projection)
 	}
 }
 

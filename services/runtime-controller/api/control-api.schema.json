@@ -210,6 +210,11 @@
           "type": "string",
           "format": "uri"
         },
+        "runtime_endpoint": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Docker IPv4 on the RC-owned Runtime management network, separately reported for Egress peer binding. Not an MCP URL or execution-readiness proof."
+        },
         "runtime_execution_id": {
           "type": "string",
           "minLength": 1

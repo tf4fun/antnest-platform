@@ -69,6 +69,7 @@ func TestGetAgentNetworkReadsAuthoritativeActiveAttachment(t *testing.T) {
 			"state":"active",
 			"network_resource_version":1,
 			"attachment_state":"open",
+			"runtime_endpoint":"10.20.0.9",
 			"attachment_resource_version":2
 		}`))
 	}))
@@ -123,7 +124,7 @@ func TestSetAgentNetworkAttachmentUsesEgressControlContract(t *testing.T) {
 	}
 
 	attachment, err := client.SetAgentNetworkAttachment(
-		context.Background(), "agent-1", ports.NetworkAttachmentClosed, 7,
+		context.Background(), "agent-1", ports.NetworkAttachmentClosed, 7, "",
 	)
 	if err != nil || attachment.AttachmentState != ports.NetworkAttachmentClosed ||
 		attachment.AttachmentResourceVersion != 8 {

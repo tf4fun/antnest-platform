@@ -189,6 +189,7 @@ func (client *Client) InspectRuntime(
 		AgentID: inspection.AgentID, RuntimeRevision: inspection.RuntimeRevision,
 		RuntimeExecutionID: inspection.RuntimeExecutionID,
 		MCPEndpoint:        inspection.MCPEndpoint,
+		RuntimeEndpoint:    inspection.RuntimeEndpoint,
 		LifecycleState:     inspection.LifecycleState, Health: inspection.Health,
 	}, nil
 }
@@ -327,6 +328,9 @@ func validUnreadyRuntimeOperation(operation runtimeOperationDTO, lifecycle strin
 }
 
 func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
+	if inspection.RuntimeEndpoint != "" && !ports.ValidRuntimePeer(inspection.RuntimeEndpoint) {
+		return false
+	}
 	if !runtimeRevisionPattern.MatchString(inspection.RuntimeRevision) ||
 		!oneOf(
 			inspection.LifecycleState,
@@ -438,6 +442,7 @@ type runtimeOperationDTO struct {
 }
 
 type runtimeInspectionDTO struct {
+	RuntimeEndpoint    string    `json:"runtime_endpoint,omitempty"`
 	Phase              string    `json:"phase"`
 	Reason             string    `json:"reason,omitempty"`
 	DiagnosticSummary  string    `json:"diagnostic_summary,omitempty"`

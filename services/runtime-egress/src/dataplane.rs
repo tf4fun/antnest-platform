@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
 
@@ -18,6 +18,7 @@ pub struct AgentRoute {
     pub assignment_version: u64,
     pub policy: CompiledPolicy,
     pub gate: RouteGate,
+    pub runtime_endpoint: Option<Ipv4Addr>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +76,7 @@ pub enum DropReason {
     MalformedPacket,
     UnsupportedPacket,
     UnknownAgent,
+    PeerMismatch,
     AgentFenced,
     PolicyDenied,
     FlowCollision,
@@ -93,6 +95,7 @@ pub struct DataPlaneMetrics {
     pub malformed_packets: u64,
     pub unsupported_packets: u64,
     pub unknown_agents: u64,
+    pub peer_mismatches: u64,
     pub fenced_packets: u64,
     pub flow_collisions: u64,
     pub flow_capacity_rejections: u64,
@@ -142,6 +145,11 @@ impl DataPlaneEngine {
         let Some(route) = self.snapshot.route(packet.source) else {
             return self.drop(DropReason::UnknownAgent);
         };
+        if route.gate == RouteGate::Open
+            && route.runtime_endpoint.map(IpAddr::V4) != Some(peer.ip())
+        {
+            return self.drop(DropReason::PeerMismatch);
+        }
         match route.gate {
             RouteGate::HardFenced => return self.drop(DropReason::AgentFenced),
             RouteGate::ProbeOnly => {
@@ -215,11 +223,14 @@ impl DataPlaneEngine {
             .flows
             .peer_for_reply(&packet.flow_key(), route.assignment_version, now)
         {
-            Some(peer) => DataPlaneAction::SendUdp {
-                agent_id: route.agent_id.clone(),
-                peer,
-                packet: bytes.to_vec(),
-            },
+            Some(peer) if route.runtime_endpoint.map(IpAddr::V4) == Some(peer.ip()) => {
+                DataPlaneAction::SendUdp {
+                    agent_id: route.agent_id.clone(),
+                    peer,
+                    packet: bytes.to_vec(),
+                }
+            }
+            Some(_) => self.drop(DropReason::PeerMismatch),
             None => self.drop(DropReason::ReverseFlowMissing),
         }
     }
@@ -315,6 +326,7 @@ impl DataPlaneEngine {
             DropReason::MalformedPacket => increment(&mut self.metrics.malformed_packets, 1),
             DropReason::UnsupportedPacket => increment(&mut self.metrics.unsupported_packets, 1),
             DropReason::UnknownAgent => increment(&mut self.metrics.unknown_agents, 1),
+            DropReason::PeerMismatch => increment(&mut self.metrics.peer_mismatches, 1),
             DropReason::AgentFenced => increment(&mut self.metrics.fenced_packets, 1),
             DropReason::PolicyDenied => {}
             DropReason::FlowCollision => increment(&mut self.metrics.flow_collisions, 1),

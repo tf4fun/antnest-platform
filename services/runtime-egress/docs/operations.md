@@ -264,6 +264,7 @@ snapshot record:
 - policy allows and rejections;
 - malformed and unsupported packets as separate counters;
 - UDP/TUN packet and byte counts;
+- bound-peer mismatch drops, before policy and flow effects;
 - Agent-attributed Runtime-peer UDP output failures;
 - unattributed destination-level UDP receive errors from asynchronous ICMP;
 - DNS proxy accepted, rejected, completed, failed, and byte counts;
@@ -299,6 +300,19 @@ Packet payloads never enter either signal.
 
 Agent IDs, Runtime peer addresses, and destination addresses are not metric
 labels.
+
+`antnest.egress.peer_mismatch.drops` is a monotonic OTLP counter with no packet,
+peer or Agent labels. Cloned exporters and repeated snapshots do not add the
+same count twice. The periodic local data-plane event also includes cumulative
+`peer.mismatches`. Alert on a non-zero rate over the normal collection window;
+investigate the RC-reported management address and committed attachment before
+changing the binding. A same-state rebind is a CAS operation and clears flows.
+
+The kernel's protected-destination rule has a separate packet/byte counter.
+Inspect `nft -j list table ip antnest_egress` to distinguish packets rejected
+before TUN from packets independently rejected by the kernel. Connected IPv4
+subnet discovery is required at startup; recreate/restart Egress after an
+operator changes its network attachments.
 
 ## 8. Recovery
 
@@ -344,8 +358,10 @@ and handshake behavior, and the credential-free health CLI. The PostgreSQL
 admission regression compares complete persisted control rows, allocator
 cursors, snapshot publication, packet fencing and cleanup counts before and
 after rejected requests. These local gates precede coordinated deployment and
-actual Controller-to-Egress integration; they do not complete #34 packet binding
-or #36 DNS restrictions.
+actual Controller-to-Egress integration. The #34 owner gate additionally covers
+peer binding; Controller consumption and the final integration batch are tracked
+in [the delivery record](../../../docs/egress-peer-binding.md). #36 DNS
+restrictions remain separate.
 
 The isolated authentication Docker harness uses the production image with real
 TUN, nftables and PostgreSQL, purpose-specific internal networks and no host
@@ -355,6 +371,16 @@ loopback health, database loss, startup rejection before effects and normal
 SIGTERM/SIGINT restart. Its temporary credentials and labeled Docker resources
 are removed on completion or interruption; evidence is kept privately under
 `artifacts/verification/egress-authentication/`.
+
+The packet proof has two distinct paths. An unrelated container sends a valid
+SYN with the victim Agent's inner source; Egress must increment peer mismatch
+without policy/flow effects or an outbound connection. The bound container's
+SYN to a connected public subnet passes userspace policy and must hit the kernel
+drop counter. A separate Linux integration binary then writes a valid database-
+destination SYN directly to the production TUN adapter, bypassing userspace
+policy entirely, and must hit the same backstop. The integration binary is
+present only in the build stage and its dedicated test image; it is absent from
+the production image and exposes no runtime RPC or production configuration.
 
 Linux container tests must cover real TUN creation, real PostgreSQL
 migrations, policy allow/deny traffic, flow reset, restart recovery, and

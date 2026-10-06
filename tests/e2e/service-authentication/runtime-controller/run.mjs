@@ -257,6 +257,13 @@ try {
   const rows = JSON.parse(await invoke(["inspect", ...runtimeIDs]));
   const runtime = rows.find((row) => row.Id !== id);
   assert(runtime, "lifecycle did not create a managed Runtime");
+  const managementIPv4 =
+    runtime.NetworkSettings.Networks[env.RC_AUTH_MANAGEMENT_NETWORK].IPAddress;
+  assert.equal(list.runtimes[0].runtime_endpoint, managementIPv4);
+  const peerInspection = await request({ path: `/internal/runtimes/${agent}` });
+  assert.equal(peerInspection.runtime_endpoint, managementIPv4);
+  assert.equal(peerInspection.runtime_revision, revision);
+  checks += 3;
   assert.equal(
     runtime.Config.Image,
     installed,
@@ -302,11 +309,11 @@ try {
       }
     }
   };
-  const waitRuntime = async () => {
+  const waitRuntime = async (runtimeAgent = agent) => {
     const deadline = Date.now() + 60000;
     for (;;) {
       const current = await request({
-        path: `/internal/runtimes/${agent}`,
+        path: `/internal/runtimes/${runtimeAgent}`,
         auth: "next",
       });
       if (current.health === "healthy" && current.runtime_execution_id)
@@ -316,7 +323,56 @@ try {
       await delay(250, undefined, { signal: abort.signal });
     }
   };
+  assert.equal((await waitRuntime()).runtime_endpoint, managementIPv4);
+  checks++;
+  // A real disconnected container is an individual unbindable observation,
+  // while both logical List and the monitor remain usable for a healthy peer.
+  const healthyAgent = agent + "-peer-proof";
+  const healthyCreated = await mutate(
+    healthyAgent,
+    "initialize",
+    { configuration },
+    "peer-proof-initialize",
+  );
+  const healthyRuntime = await waitRuntime(healthyAgent);
+  await invoke([
+    "network",
+    "disconnect",
+    env.RC_AUTH_MANAGEMENT_NETWORK,
+    runtime.Id,
+  ]);
+  try {
+    const disconnected = await request({ path: `/internal/runtimes/${agent}` });
+    assert.equal(disconnected.phase, "running");
+    assert.equal(disconnected.health, "unknown");
+    assert.equal(disconnected.reason, "runtime_peer_unavailable");
+    assert.equal(disconnected.runtime_endpoint ?? null, null);
+    assert.equal(disconnected.runtime_execution_id ?? "", "");
+    const inventory = await request({ path: "/internal/runtimes" });
+    const unaffected = inventory.runtimes.find(
+      (value) => value.agent_id === healthyAgent,
+    );
+    assert.equal(unaffected.health, "healthy");
+    assert.equal(unaffected.runtime_endpoint, healthyRuntime.runtime_endpoint);
+    await waitHealthy();
+    checks += 7;
+  } finally {
+    await invoke([
+      "network",
+      "connect",
+      "--ip",
+      managementIPv4,
+      env.RC_AUTH_MANAGEMENT_NETWORK,
+      runtime.Id,
+    ]);
+  }
   await waitRuntime();
+  await mutate(
+    healthyAgent,
+    "delete",
+    { expected_revision: healthyCreated.target_revision },
+    "peer-proof-delete",
+  );
   const beforeConnection = await probe("instance-probe", "instance", { agent });
   checks += beforeConnection.checks;
   const authMount = runtime.Mounts.find(

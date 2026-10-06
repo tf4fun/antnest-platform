@@ -70,18 +70,24 @@ func (client *Client) SetAgentNetworkAttachment(
 	agentID string,
 	state string,
 	expectedResourceVersion uint64,
+	runtimeEndpoint string,
 ) (ports.NetworkAttachment, error) {
 	if state != ports.NetworkAttachmentClosed && state != ports.NetworkAttachmentOpen {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
+	}
+	if (state == ports.NetworkAttachmentOpen && !ports.ValidRuntimePeer(runtimeEndpoint)) ||
+		(state == ports.NetworkAttachmentClosed && runtimeEndpoint != "") {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	payload, err := json.Marshal(struct {
 		State                   string `json:"state"`
 		ExpectedResourceVersion uint64 `json:"expected_resource_version"`
-	}{State: state, ExpectedResourceVersion: expectedResourceVersion})
+		RuntimeEndpoint         string `json:"runtime_endpoint,omitempty"`
+	}{State: state, ExpectedResourceVersion: expectedResourceVersion, RuntimeEndpoint: runtimeEndpoint})
 	if err != nil || expectedResourceVersion == 0 {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
-	return client.writeAgentNetwork(
+	result, err := client.writeAgentNetwork(
 		ctx,
 		agentID,
 		"set_agent_network_attachment",
@@ -89,6 +95,10 @@ func (client *Client) SetAgentNetworkAttachment(
 		bytes.NewReader(payload),
 		state,
 	)
+	if err == nil && result.RuntimeEndpoint != runtimeEndpoint {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
+	}
+	return result, err
 }
 
 func (client *Client) ReleaseAgentNetwork(
@@ -284,6 +294,7 @@ func decodeNetworkAttachment(
 		NetworkResourceVersion    uint64 `json:"network_resource_version"`
 		AttachmentState           string `json:"attachment_state"`
 		AttachmentResourceVersion uint64 `json:"attachment_resource_version"`
+		RuntimeEndpoint           string `json:"runtime_endpoint,omitempty"`
 	}
 	expectedAttachmentState := ""
 	if len(requiredAttachmentState) > 0 {
@@ -295,6 +306,8 @@ func decodeNetworkAttachment(
 		payload.PacketContractRevision == 0 || !validNetworkState(payload.State) ||
 		payload.NetworkResourceVersion == 0 || !validAttachmentState(payload.AttachmentState) ||
 		payload.AttachmentResourceVersion == 0 ||
+		(payload.AttachmentState == ports.NetworkAttachmentOpen && !ports.ValidRuntimePeer(payload.RuntimeEndpoint)) ||
+		(payload.AttachmentState == ports.NetworkAttachmentClosed && payload.RuntimeEndpoint != "") ||
 		(requiredState != "" && payload.State != requiredState) ||
 		(expectedAttachmentState != "" && payload.AttachmentState != expectedAttachmentState) {
 		return ports.NetworkAttachment{}, fmt.Errorf("invalid Agent network attachment")
@@ -307,6 +320,7 @@ func decodeNetworkAttachment(
 		State: payload.State, NetworkResourceVersion: payload.NetworkResourceVersion,
 		AttachmentState:           payload.AttachmentState,
 		AttachmentResourceVersion: payload.AttachmentResourceVersion,
+		RuntimeEndpoint:           payload.RuntimeEndpoint,
 	}, nil
 }
 

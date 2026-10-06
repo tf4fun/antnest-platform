@@ -247,10 +247,7 @@ func (service *LifecycleService) restoreEnableNetwork(
 	if state.Operation.NetworkAttachment == nil || state.Operation.RuntimeResult == nil {
 		return ports.AgentEnableState{}, fmt.Errorf("enable operation is missing a durable dependency result")
 	}
-	attachment, err := service.egress.SetAgentNetworkAttachment(
-		ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
-		state.Operation.NetworkAttachment.AttachmentResourceVersion,
-	)
+	attachment, err := service.openRuntimeNetwork(ctx, state.Agent.AgentID, state.Operation.RuntimeResult.RuntimeRevision, *state.Operation.NetworkAttachment)
 	if err != nil {
 		return state, fmt.Errorf("%w: runtime-egress attachment open: %w", ErrDependencyUnavailable, err)
 	}

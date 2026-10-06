@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -82,6 +83,7 @@ type Container struct {
 	Health       string
 	RestartCount uint64
 	Labels       map[string]string
+	NetworkIPv4  map[string]string
 	Mounts       []ObservedMount
 }
 
@@ -556,6 +558,18 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 		return deployment.Inspection{}, fmt.Errorf("normalize managed Runtime container: Runtime port is malformed")
 	}
 	condition := containerCondition(container)
+	peer := container.NetworkIPv4[d.config.ManagementNetwork]
+	if container.Running {
+		address, err := netip.ParseAddr(peer)
+		if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.String() != peer {
+			peer = ""
+			condition.health = deployment.HealthUnknown
+			condition.reason = "runtime_peer_unavailable"
+			condition.detail = "Runtime management IPv4 is missing or invalid"
+		}
+	} else {
+		peer = ""
+	}
 	base := "http://" + container.Name + ":" + strconv.FormatUint(port, 10)
 	return deployment.Inspection{
 		AgentID: key.AgentID, Generation: key.Generation,
@@ -563,7 +577,8 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 		PlatformPhase: condition.phase, Health: condition.health, Reason: condition.reason,
 		DiagnosticSummary: condition.detail, StatusEndpoint: base + "/status",
 		MCPEndpoint: base + "/mcp", RestartCount: container.RestartCount,
-		ObservedAt: time.Now().UTC(),
+		RuntimeEndpoint: peer,
+		ObservedAt:      time.Now().UTC(),
 	}, nil
 }
 

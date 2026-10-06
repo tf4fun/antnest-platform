@@ -11,6 +11,12 @@ persistence. Their result is `completed` / `provisioned`, not a ready execution
 identity. Agent Controller saves that target and completes its lifecycle
 operation. No Temporal Activity waits for readiness.
 
+Opening the network separately requires a fresh RC inspection of the completed
+target Runtime revision. Its canonical management-network IPv4 becomes Egress's
+outer-peer binding; health and execution identity are still independent. A retry
+does not reuse an address from a durable compute receipt. Source restoration
+likewise inspects the exact source Runtime revision before reopening traffic.
+
 There are two independent facts:
 
 1. Configured Agent: immutable AgentSpec plus the current Runtime revision.
@@ -19,6 +25,10 @@ There are two independent facts:
 2. Available Agent: a current, matching healthy Runtime observation supplies
    execution identity and MCP endpoint. Only then is an immutable execution
    revision appended and the Agent projected `available`.
+
+Runtime health remains a separate observation: its condition may be `available`
+while peer confirmation is pending. Without the published execution binding,
+the Agent still cannot admit Runs.
 
 The `executable_spec_revision_id` database column retains the configured
 spec while disabled or awaiting readiness; it alone has never been a Run grant.
@@ -39,8 +49,23 @@ creation into a failed operation.
 The observation worker drains the Runtime journal and reconciles pending
 bindings against fresh Inspect results. It scans only configured pending Agents,
 with pagination; it does not inspect every Agent on every Run. Early/missed healthy
-events and worker restart therefore converge without an additional queue, table,
+events and worker restart therefore converge without an additional durable queue, table,
 workflow or dependence on one event arriving at the right time.
+
+Journal health and its cursor commit before any Egress call. Changed observations
+mark an in-memory peer work set; worker startup, first initialization and cursor
+reset seed it from RC inventory, so a consumed event or process restart cannot
+lose a rebind. Each retry uses fresh Inspect and attachment CAS. Retry failures
+retain the entry and report synchronization failure without replacing RC health
+with unknown or blocking later journal entries. The work set is not a persisted
+queue: inventory restores it, and normal shutdown requires no additional state.
+
+Before new execution publication the worker still confirms the current peer on
+the open Egress attachment. This confirmation and background retries share a
+single budget equal to the configured observation poll interval; failed attempts
+resume on the next pass, rotating through pending peers. Neither path opens a
+lifecycle-closed attachment. Healthy observation alone cannot publish an
+execution while peer confirmation is failing.
 
 Publication compares the current Agent revision, aggregate sequence, desired
 state and active operation under the database lock and rechecks the identity

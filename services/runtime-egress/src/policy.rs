@@ -1,5 +1,6 @@
 use std::net::Ipv4Addr;
 
+use ipnet::Ipv4Net;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -117,22 +118,26 @@ impl CompiledPolicy {
     }
 }
 
-fn is_external_ipv4(address: Ipv4Addr) -> bool {
-    !matches!(
-        address.octets(),
-        [0, _, _, _]
-            | [10, _, _, _]
-            | [100, 64..=127, _, _]
-            | [127, _, _, _]
-            | [169, 254, _, _]
-            | [172, 16..=31, _, _]
-            | [192, 0, 0, _]
-            | [192, 0, 2, _]
-            | [192, 88, 99, _]
-            | [192, 168, _, _]
-            | [198, 18..=19, _, _]
-            | [198, 51, 100, _]
-            | [203, 0, 113, _]
-            | [224..=255, _, _, _]
-    )
+pub const PROTECTED_IPV4_NETWORKS: &[Ipv4Net] = &[
+    Ipv4Net::new_assert(Ipv4Addr::new(0, 0, 0, 0), 8),
+    Ipv4Net::new_assert(Ipv4Addr::new(10, 0, 0, 0), 8),
+    Ipv4Net::new_assert(Ipv4Addr::new(100, 64, 0, 0), 10),
+    Ipv4Net::new_assert(Ipv4Addr::new(127, 0, 0, 0), 8),
+    Ipv4Net::new_assert(Ipv4Addr::new(169, 254, 0, 0), 16),
+    Ipv4Net::new_assert(Ipv4Addr::new(172, 16, 0, 0), 12),
+    Ipv4Net::new_assert(Ipv4Addr::new(192, 0, 0, 0), 24),
+    Ipv4Net::new_assert(Ipv4Addr::new(192, 0, 2, 0), 24),
+    Ipv4Net::new_assert(Ipv4Addr::new(192, 88, 99, 0), 24),
+    Ipv4Net::new_assert(Ipv4Addr::new(192, 168, 0, 0), 16),
+    Ipv4Net::new_assert(Ipv4Addr::new(198, 18, 0, 0), 15),
+    Ipv4Net::new_assert(Ipv4Addr::new(198, 51, 100, 0), 24),
+    Ipv4Net::new_assert(Ipv4Addr::new(203, 0, 113, 0), 24),
+    Ipv4Net::new_assert(Ipv4Addr::new(224, 0, 0, 0), 4),
+    Ipv4Net::new_assert(Ipv4Addr::new(240, 0, 0, 0), 4),
+];
+
+pub fn is_external_ipv4(address: Ipv4Addr) -> bool {
+    !PROTECTED_IPV4_NETWORKS
+        .iter()
+        .any(|network| network.contains(&address))
 }

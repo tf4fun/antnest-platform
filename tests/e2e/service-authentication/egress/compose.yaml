@@ -7,7 +7,7 @@ services:
       POSTGRES_DB: egress_auth_test
     volumes:
       - database:/var/lib/postgresql/data
-    networks: [control]
+    networks: [database]
     healthcheck:
       test:
         [
@@ -51,9 +51,11 @@ services:
     networks:
       control:
         ipv4_address: ${EGRESS_AUTH_CONTROL_IP:?}
+      database: {}
       packet:
         ipv4_address: ${EGRESS_AUTH_PACKET_IP:?}
       external:
+        ipv4_address: ${EGRESS_AUTH_EXTERNAL_IP:?}
         gw_priority: 1
     healthcheck:
       test: [CMD, /usr/local/bin/runtime-egress, --healthcheck]
@@ -76,10 +78,45 @@ services:
     command: [node, -e, "setInterval(()=>{},60000)"]
     volumes:
       - ./probe.mjs:/fixture/probe.mjs:ro
+      - ./peer-proof.mjs:/fixture/peer-proof.mjs:ro
     environment:
       EGRESS_AUTH_CONTROL_IP: ${EGRESS_AUTH_CONTROL_IP:?}
       EGRESS_AUTH_PACKET_IP: ${EGRESS_AUTH_PACKET_IP:?}
     networks: [packet]
+  runtime-probe:
+    image: node:24.21.0-bookworm-slim
+    command: [node, -e, "setInterval(()=>{},60000)"]
+    volumes:
+      - ./peer-proof.mjs:/fixture/peer-proof.mjs:ro
+    environment:
+      EGRESS_AUTH_PACKET_IP: ${EGRESS_AUTH_PACKET_IP:?}
+    networks: [packet]
+  database-probe:
+    image: node:24.21.0-bookworm-slim
+    command: [node, /fixture/peer-proof.mjs, server]
+    volumes:
+      - ./peer-proof.mjs:/fixture/peer-proof.mjs:ro
+    networks:
+      database:
+        ipv4_address: ${EGRESS_AUTH_DATABASE_PROBE_IP:?}
+      external:
+        ipv4_address: ${EGRESS_AUTH_EXTERNAL_PROBE_IP:?}
+    healthcheck:
+      test: [CMD, node, /fixture/peer-proof.mjs, count]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  kernel-backstop:
+    image: ${EGRESS_AUTH_KERNEL_IMAGE:-unprepared-kernel-backstop}
+    profiles: [kernel-proof]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      ANTNEST_EGRESS_KERNEL_TEST_DESTINATION: ${EGRESS_AUTH_DATABASE_PROBE_IP:?}
+    networks: [database, external]
 networks:
   control:
     internal: true
@@ -91,6 +128,14 @@ networks:
     ipam:
       config:
         - subnet: ${EGRESS_AUTH_PACKET_SUBNET:?}
-  external: {}
+  database:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${EGRESS_AUTH_DATABASE_SUBNET:?}
+  external:
+    ipam:
+      config:
+        - subnet: ${EGRESS_AUTH_EXTERNAL_SUBNET:?}
 volumes:
   database: {}

@@ -23,6 +23,7 @@ fn route(policy: PolicySpec, version: u64) -> AgentRoute {
         assignment_version: version,
         policy: policy.compile(RESOLVER),
         gate: RouteGate::Open,
+        runtime_endpoint: Some("10.0.0.2".parse().unwrap()),
     }
 }
 
@@ -45,6 +46,79 @@ fn allow_policy_claims_flow_and_writes_the_original_packet() {
     assert_eq!(
         engine.handle_uplink(&packet, peer, Instant::now()),
         DataPlaneAction::WriteTun(packet)
+    );
+}
+
+#[test]
+fn issue_34_another_outer_peer_cannot_borrow_an_allow_all_route() {
+    let mut engine = engine(PolicySpec::allow_all());
+    let packet = decode_hex(SYN);
+    let attacker: SocketAddr = "10.0.0.3:42000".parse().unwrap();
+
+    let action = engine.handle_uplink(&packet, attacker, Instant::now());
+
+    assert!(matches!(action, DataPlaneAction::Drop(_)), "{action:?}");
+    assert_eq!(engine.flow_count(), 0);
+    assert_eq!(engine.metrics().policy_allows, 0);
+    assert_eq!(engine.metrics().peer_mismatches, 1);
+}
+
+#[test]
+fn unbound_open_route_cannot_create_or_inject_a_flow() {
+    let mut unbound = route(PolicySpec::allow_all(), 1);
+    unbound.runtime_endpoint = None;
+    let mut engine = DataPlaneEngine::new(
+        NetworkSnapshot::from_routes([unbound]),
+        1400,
+        32,
+        16,
+        Duration::from_secs(60),
+    );
+    assert_eq!(
+        engine.handle_uplink(
+            &decode_hex(SYN),
+            "10.0.0.2:41000".parse().unwrap(),
+            Instant::now()
+        ),
+        DataPlaneAction::Drop(DropReason::PeerMismatch)
+    );
+    assert_eq!(engine.flow_count(), 0);
+}
+
+#[test]
+fn bound_peer_can_change_source_port_for_a_new_flow() {
+    let mut engine = engine(PolicySpec::allow_all());
+    let first = decode_hex(SYN);
+    let mut second = first.clone();
+    second[20..22].copy_from_slice(&41001_u16.to_be_bytes());
+    let now = Instant::now();
+    assert!(matches!(
+        engine.handle_uplink(&first, "10.0.0.2:41000".parse().unwrap(), now),
+        DataPlaneAction::WriteTun(_)
+    ));
+    assert!(matches!(
+        engine.handle_uplink(&second, "10.0.0.2:42000".parse().unwrap(), now),
+        DataPlaneAction::WriteTun(_)
+    ));
+    assert_eq!(engine.flow_count(), 2);
+    assert_eq!(
+        engine.handle_uplink(&first, "10.0.0.2:42000".parse().unwrap(), now),
+        DataPlaneAction::Drop(DropReason::FlowCollision)
+    );
+}
+
+#[test]
+fn reverse_output_does_not_reuse_a_flow_owned_by_a_previous_peer() {
+    let mut engine = engine(PolicySpec::allow_all());
+    let packet = decode_hex(SYN);
+    let now = Instant::now();
+    engine.handle_uplink(&packet, "10.0.0.2:41000".parse().unwrap(), now);
+    let mut updated = route(PolicySpec::allow_all(), 1);
+    updated.runtime_endpoint = Some("10.0.0.3".parse().unwrap());
+    engine.upsert_route(updated);
+    assert_eq!(
+        engine.handle_downlink(&reverse_packet(&packet), now),
+        DataPlaneAction::Drop(DropReason::PeerMismatch)
     );
 }
 
@@ -106,7 +180,7 @@ fn another_runtime_peer_cannot_steal_an_existing_flow() {
 
     assert_eq!(
         engine.handle_uplink(&packet, second, now),
-        DataPlaneAction::Drop(DropReason::FlowCollision)
+        DataPlaneAction::Drop(DropReason::PeerMismatch)
     );
 }
 

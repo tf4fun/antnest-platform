@@ -42,6 +42,7 @@ pub struct RuntimeNetworkAttachment {
     pub network_resource_version: u64,
     pub attachment_state: AttachmentState,
     pub attachment_resource_version: u64,
+    pub runtime_endpoint: Option<Ipv4Addr>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -171,6 +172,8 @@ const fn availability(available: bool) -> &'static str {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ControlError {
+    #[error("invalid control request")]
+    InvalidRequest,
     #[error("Agent network was not found")]
     AgentNetworkNotFound,
     #[error("Agent network is unavailable")]
@@ -240,6 +243,7 @@ impl ControlError {
 
     fn repository(stage: &'static str, error: RepositoryError) -> Self {
         match error {
+            RepositoryError::InvalidRuntimeEndpoint => Self::InvalidRequest,
             RepositoryError::AddressPoolExhausted => Self::AddressPoolExhausted,
             RepositoryError::AgentNetworkNotFound => Self::AgentNetworkNotFound,
             RepositoryError::AgentNetworkUnavailable => Self::AgentNetworkUnavailable,
@@ -419,8 +423,13 @@ where
             .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
         if attachment.state == AttachmentState::Closed {
             self.fence_dataplane(agent_id.clone()).await;
-            self.publish_route(&network, &assignment, RouteGate::ProbeOnly)
-                .await?;
+            self.publish_route(
+                &network,
+                &assignment,
+                RouteGate::ProbeOnly,
+                attachment.runtime_endpoint,
+            )
+            .await?;
             self.applied_assignments.lock().await.remove(&agent_id);
             return Ok(self.attachment(network, attachment));
         }
@@ -443,8 +452,13 @@ where
                 "ensure_agent_network.open_cleanup",
             )
             .await?;
-            self.publish_route(&network, &assignment, RouteGate::Open)
-                .await?;
+            self.publish_route(
+                &network,
+                &assignment,
+                RouteGate::Open,
+                attachment.runtime_endpoint,
+            )
+            .await?;
             self.applied_assignments
                 .lock()
                 .await
@@ -475,7 +489,11 @@ where
         agent_id: AgentId,
         desired: AttachmentState,
         expected_resource_version: u64,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint) {
+            return Err(ControlError::InvalidRequest);
+        }
         if expected_resource_version == 0 {
             return Err(ControlError::ResourceVersionConflict);
         }
@@ -497,7 +515,12 @@ where
             .map_err(|error| {
                 ControlError::repository("set_runtime_attachment.repository", error)
             })?;
-        if !attachment_request_matches(&current, desired, expected_resource_version) {
+        if !attachment_request_matches(
+            &current,
+            desired,
+            expected_resource_version,
+            runtime_endpoint,
+        ) {
             return Err(ControlError::ResourceVersionConflict);
         }
 
@@ -514,7 +537,12 @@ where
                 }
                 let attachment = self
                     .repository
-                    .compare_and_swap_attachment(&agent_id, desired, expected_resource_version)
+                    .compare_and_swap_attachment(
+                        &agent_id,
+                        desired,
+                        expected_resource_version,
+                        runtime_endpoint,
+                    )
                     .await
                     .map_err(|error| {
                         ControlError::repository("set_runtime_attachment.repository", error)
@@ -526,8 +554,13 @@ where
                         .map_err(|error| {
                             ControlError::repository("set_runtime_attachment.repository", error)
                         })?;
-                self.publish_route(&network, &assignment, RouteGate::ProbeOnly)
-                    .await?;
+                self.publish_route(
+                    &network,
+                    &assignment,
+                    RouteGate::ProbeOnly,
+                    attachment.runtime_endpoint,
+                )
+                .await?;
                 self.applied_assignments.lock().await.remove(&agent_id);
                 attachment
             }
@@ -541,7 +574,12 @@ where
                 .await?;
                 let attachment = self
                     .repository
-                    .compare_and_swap_attachment(&agent_id, desired, expected_resource_version)
+                    .compare_and_swap_attachment(
+                        &agent_id,
+                        desired,
+                        expected_resource_version,
+                        runtime_endpoint,
+                    )
                     .await
                     .map_err(|error| {
                         ControlError::repository("set_runtime_attachment.repository", error)
@@ -553,8 +591,13 @@ where
                         .map_err(|error| {
                             ControlError::repository("set_runtime_attachment.repository", error)
                         })?;
-                self.publish_route(&network, &assignment, RouteGate::Open)
-                    .await?;
+                self.publish_route(
+                    &network,
+                    &assignment,
+                    RouteGate::Open,
+                    attachment.runtime_endpoint,
+                )
+                .await?;
                 self.applied_assignments
                     .lock()
                     .await
@@ -666,7 +709,13 @@ where
                 .await
                 .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
             self.fence_dataplane(agent_id.clone()).await;
-            self.replace_route(&network, &assignment, compiled_policy, RouteGate::ProbeOnly);
+            self.replace_route(
+                &network,
+                &assignment,
+                compiled_policy,
+                RouteGate::ProbeOnly,
+                attachment.runtime_endpoint,
+            );
             self.applied_assignments.lock().await.remove(&agent_id);
             return Ok(assignment);
         }
@@ -682,7 +731,13 @@ where
             .compare_and_swap_assignment(&agent_id, policy_id, revision, expected_resource_version)
             .await
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
-        self.replace_route(&network, &assignment, compiled_policy, RouteGate::Open);
+        self.replace_route(
+            &network,
+            &assignment,
+            compiled_policy,
+            RouteGate::Open,
+            attachment.runtime_endpoint,
+        );
         self.applied_assignments
             .lock()
             .await
@@ -750,6 +805,7 @@ where
             assignment_version: binding.assignment.resource_version,
             policy: binding.revision.spec.compile(self.config.resolver_ipv4),
             gate: route_gate(binding.attachment.state),
+            runtime_endpoint: binding.attachment.runtime_endpoint,
         });
         self.dataplane
             .lock()
@@ -816,6 +872,7 @@ where
         network: &AgentNetwork,
         assignment: &PolicyAssignment,
         gate: RouteGate,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) -> Result<(), ControlError> {
         let revision = self
             .repository
@@ -823,7 +880,7 @@ where
             .await
             .map_err(|error| ControlError::repository("publish_route.repository", error))?;
         let policy = revision.spec.compile(self.config.resolver_ipv4);
-        self.replace_route(network, assignment, policy, gate);
+        self.replace_route(network, assignment, policy, gate, runtime_endpoint);
         Ok(())
     }
 
@@ -833,6 +890,7 @@ where
         assignment: &PolicyAssignment,
         policy: CompiledPolicy,
         gate: RouteGate,
+        runtime_endpoint: Option<Ipv4Addr>,
     ) {
         self.dataplane
             .lock()
@@ -843,6 +901,7 @@ where
                 assignment_version: assignment.resource_version,
                 policy,
                 gate,
+                runtime_endpoint,
             });
         self.health.snapshot_published();
     }
@@ -885,6 +944,7 @@ where
             network_resource_version: network.resource_version,
             attachment_state: attachment.state,
             attachment_resource_version: attachment.resource_version,
+            runtime_endpoint: attachment.runtime_endpoint,
         }
     }
 }
@@ -893,8 +953,9 @@ fn attachment_request_matches(
     current: &RuntimeAttachment,
     desired: AttachmentState,
     expected_resource_version: u64,
+    runtime_endpoint: Option<Ipv4Addr>,
 ) -> bool {
-    if current.state != desired {
+    if current.state != desired || current.runtime_endpoint != runtime_endpoint {
         return current.resource_version == expected_resource_version;
     }
     current.resource_version == expected_resource_version

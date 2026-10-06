@@ -62,13 +62,18 @@ func (c *Client) InspectContainer(ctx context.Context, identifier string) (Conta
 	if response.State.Health != nil {
 		health = response.State.Health.Status
 	}
+	networkIPv4 := make(map[string]string, len(response.NetworkSettings.Networks))
+	for name, endpoint := range response.NetworkSettings.Networks {
+		networkIPv4[name] = endpoint.IPAddress
+	}
 	return Container{
 		ID: response.ID, Name: strings.TrimPrefix(response.Name, "/"),
 		Running: response.State.Running, Health: health,
 		Status: response.State.Status, ExitCode: response.State.ExitCode,
 		OOMKilled: response.State.OOMKilled, Error: response.State.Error,
 		RestartCount: response.RestartCount, Labels: response.Config.Labels,
-		Mounts: observedMounts(response.Mounts, response.HostConfig.Mounts),
+		NetworkIPv4: networkIPv4,
+		Mounts:      observedMounts(response.Mounts, response.HostConfig.Mounts),
 	}, nil
 }
 
@@ -435,7 +440,12 @@ type inspectContainerResponse struct {
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
-	Mounts     []dockerObservedMount `json:"Mounts"`
+	Mounts          []dockerObservedMount `json:"Mounts"`
+	NetworkSettings struct {
+		Networks map[string]struct {
+			IPAddress string `json:"IPAddress"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
 	HostConfig struct {
 		Mounts []dockerMount `json:"Mounts"`
 	} `json:"HostConfig"`

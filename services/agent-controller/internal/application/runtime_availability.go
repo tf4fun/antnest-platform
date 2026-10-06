@@ -14,7 +14,7 @@ import (
 
 // Events detect loss; current inspections publish readiness. A ready event can
 // arrive before the lifecycle transaction, so every pass also reconciles intent.
-func (worker *RuntimeObservationWorker) reconcilePendingBindings(ctx context.Context) error {
+func (worker *RuntimeObservationWorker) reconcilePendingBindings(ctx, peerCtx context.Context) error {
 	var failures []error
 	after := ""
 	for {
@@ -27,7 +27,7 @@ func (worker *RuntimeObservationWorker) reconcilePendingBindings(ctx context.Con
 				return errors.Join(append(failures, errors.New("pending Runtime page is not ordered"))...)
 			}
 			after = pending.Agent.AgentID
-			if err := worker.reconcilePendingBinding(ctx, pending); err != nil {
+			if err := worker.reconcilePendingBinding(ctx, peerCtx, pending); err != nil {
 				failures = append(failures, fmt.Errorf("observe Agent %s: %w", after, err))
 			}
 		}
@@ -37,7 +37,7 @@ func (worker *RuntimeObservationWorker) reconcilePendingBindings(ctx context.Con
 	}
 }
 
-func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx context.Context, pending ports.PendingRuntimeBinding) error {
+func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx, peerCtx context.Context, pending ports.PendingRuntimeBinding) error {
 	if !pending.Agent.CanObserveRuntime() {
 		return nil
 	}
@@ -62,6 +62,10 @@ func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx context.Cont
 	pending.Agent.AggregateSequence = sequence
 	if !pending.Agent.AwaitingRuntimeBinding() || !observedBindingMatches(pending.Agent, inspection) {
 		return nil
+	}
+	if err := worker.bindObservedPeer(peerCtx, pending, inspection); err != nil {
+		worker.pendingPeers[pending.Agent.AgentID] = struct{}{}
+		return err
 	}
 	now := time.Now().UTC()
 	execution := ports.ExecutionRecord{
@@ -112,5 +116,13 @@ func (worker *RuntimeObservationWorker) applyObservation(ctx context.Context, ob
 		}
 		observation.Current = &current
 	}
-	return worker.store.ApplyRuntimeObservation(ctx, observation)
+	if err := worker.store.ApplyRuntimeObservation(ctx, observation); err != nil {
+		return err
+	}
+	if current := observation.Current; current != nil && current.Phase == "running" && current.LifecycleState == "provisioned" {
+		worker.pendingPeers[current.AgentID] = struct{}{}
+	} else {
+		delete(worker.pendingPeers, observation.AgentID)
+	}
+	return nil
 }

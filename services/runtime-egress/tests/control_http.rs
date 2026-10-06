@@ -43,7 +43,7 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 5);
+    assert_eq!(contract.revision, 6);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(contract.trust_boundary, "verified-controller-workload");
     assert_eq!(contract.status_values, ["ready", "degraded"]);
@@ -205,7 +205,7 @@ async fn attachment_endpoint_opens_with_a_versioned_cas() {
                 .header("content-type", "application/json")
                 .header("antnest-service-authorization", support::workload_header())
                 .body(Body::from(
-                    r#"{"state":"open","expected_resource_version":1}"#,
+                    r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"10.20.0.9"}"#,
                 ))
                 .unwrap(),
         )
@@ -216,6 +216,7 @@ async fn attachment_endpoint_opens_with_a_versioned_cas() {
     let body = to_bytes(response.into_body(), 4096).await.unwrap();
     let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(document["attachment_state"], "open");
+    assert_eq!(document["runtime_endpoint"], "10.20.0.9");
     assert_eq!(document["attachment_resource_version"], 2);
 }
 
@@ -244,6 +245,62 @@ async fn unknown_routes_and_methods_use_the_stable_error_shape() {
         .await
         .unwrap();
     assert_stable_error(method, StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed").await;
+}
+
+#[tokio::test]
+async fn attachment_peer_validation_rejects_bad_addresses_before_mutation() {
+    let app = app().await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::put("/internal/agent-networks/agent-peer-validation")
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    for body in [
+        r#"{"state":"open","expected_resource_version":1}"#,
+        r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":null}"#,
+        r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"runtime"}"#,
+        r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"http://10.20.0.9/mcp"}"#,
+        r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"::1"}"#,
+        r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"010.20.0.9"}"#,
+        r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"0.0.0.0"}"#,
+        r#"{"state":"closed","expected_resource_version":1,"runtime_endpoint":"10.20.0.9"}"#,
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::put("/internal/agent-network-attachments/agent-peer-validation")
+                    .header("antnest-service-authorization", support::workload_header())
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["code"], "invalid_request");
+    }
+    let response = app
+        .oneshot(
+            Request::get("/internal/agent-networks/agent-peer-validation")
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let network: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(network["attachment_state"], "closed");
+    assert_eq!(network["attachment_resource_version"], 1);
+    assert!(network.get("runtime_endpoint").is_none());
 }
 
 #[tokio::test]

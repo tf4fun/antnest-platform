@@ -55,10 +55,18 @@ export function executionPeers(fixture, stats, json) {
             value.attachment_resource_version,
           );
           assert(["open", "closed"].includes(body.state));
-          if (body.state !== value.attachment_state) {
+          const peer = body.runtime_endpoint;
+          if (body.state === "open") assert.equal(peer, "10.243.1.20");
+          else assert.equal(peer, undefined);
+          if (
+            body.state !== value.attachment_state ||
+            peer !== value.runtime_endpoint
+          ) {
             value.attachment_state = body.state;
             value.attachment_resource_version++;
           }
+          if (peer === undefined) delete value.runtime_endpoint;
+          else value.runtime_endpoint = peer;
           return handled(w, value);
         }
       }
@@ -121,6 +129,7 @@ export function executionPeers(fixture, stats, json) {
             runtime_revision: "rtv_" + randomBytes(16).toString("hex"),
             runtime_execution_id: randomUUID(),
             mcp_endpoint: "http://" + initialize[1] + ":8093/mcp",
+            runtime_endpoint: "10.243.1.20",
             lifecycle_state: "provisioned",
             health: "healthy",
             phase: "running",

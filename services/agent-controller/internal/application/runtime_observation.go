@@ -19,26 +19,32 @@ const runtimeObservationPageSize = 500
 var runtimeObservationTracer = otel.Tracer("github.com/tf4fun/antnest-platform/agent-controller/runtime-observation")
 
 type RuntimeObservationWorker struct {
-	source       ports.RuntimeObservationSource
-	store        ports.RuntimeObservationStore
-	pollInterval time.Duration
-	logger       *slog.Logger
+	source                   ports.RuntimeObservationSource
+	store                    ports.RuntimeObservationStore
+	egress                   ports.EgressClient
+	pollInterval             time.Duration
+	logger                   *slog.Logger
+	pendingPeers             map[string]struct{}
+	peerInventoryInitialized bool
+	lastPeerAttempt          string
 }
 
 func NewRuntimeObservationWorker(
 	source ports.RuntimeObservationSource,
 	store ports.RuntimeObservationStore,
+	egress ports.EgressClient,
 	pollInterval time.Duration,
 	logger *slog.Logger,
 ) (*RuntimeObservationWorker, error) {
-	if source == nil || store == nil || pollInterval <= 0 {
+	if source == nil || store == nil || egress == nil || pollInterval <= 0 {
 		return nil, fmt.Errorf("runtime observation worker dependencies are incomplete")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &RuntimeObservationWorker{
-		source: source, store: store, pollInterval: pollInterval, logger: logger,
+		source: source, store: store, egress: egress, pollInterval: pollInterval, logger: logger,
+		pendingPeers: make(map[string]struct{}),
 	}, nil
 }
 
@@ -68,7 +74,14 @@ func (worker *RuntimeObservationWorker) RunOnce(ctx context.Context) (resultErr 
 		}
 		span.End()
 	}()
-	return errors.Join(worker.synchronizeJournal(ctx), worker.reconcilePendingBindings(ctx))
+	journalErr := worker.synchronizeJournal(ctx)
+	// Egress retries share one poll-sized budget. They cannot prevent the journal
+	// from committing current health, or accumulate a timeout for every Agent.
+	peerCtx, cancel := context.WithTimeout(ctx, worker.pollInterval)
+	defer cancel()
+	bindingErr := worker.reconcilePendingBindings(ctx, peerCtx)
+	peerErr := worker.reconcilePendingPeers(peerCtx)
+	return errors.Join(journalErr, bindingErr, peerErr)
 }
 
 func (worker *RuntimeObservationWorker) synchronizeJournal(ctx context.Context) error {
@@ -76,14 +89,18 @@ func (worker *RuntimeObservationWorker) synchronizeJournal(ctx context.Context) 
 	if err != nil {
 		return fmt.Errorf("read Runtime observation cursor: %w", err)
 	}
-	if !cursor.Initialized {
+	if !cursor.Initialized || !worker.peerInventoryInitialized {
 		runtimes, listErr := worker.source.ListRuntimes(ctx)
 		if listErr != nil {
 			return fmt.Errorf("bootstrap Runtime observations: %w", listErr)
 		}
-		if err := worker.store.InitializeRuntimeObservationCursor(ctx, runtimes); err != nil {
-			return fmt.Errorf("initialize Runtime observation cursor: %w", err)
+		if !cursor.Initialized {
+			if err := worker.store.InitializeRuntimeObservationCursor(ctx, runtimes); err != nil {
+				return fmt.Errorf("initialize Runtime observation cursor: %w", err)
+			}
 		}
+		worker.queuePeerInventory(runtimes)
+		worker.peerInventoryInitialized = true
 		cursor.Initialized = true
 	}
 	for {
@@ -105,6 +122,7 @@ func (worker *RuntimeObservationWorker) synchronizeJournal(ctx context.Context) 
 				return fmt.Errorf("reset Runtime observation cursor: %w", err)
 			}
 			cursor.Sequence = expired.ResetSequence
+			worker.queuePeerInventory(runtimes)
 			continue
 		}
 		for _, observation := range page.Observations {

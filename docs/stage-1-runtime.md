@@ -597,8 +597,9 @@ responsibilities.
 
 The standalone `tests/e2e/e2e-stage1.sh` harness acts as the lifecycle caller;
 it must follow the same Egress contract as Agent Controller. Allocation and an
-allow policy do not open traffic. After Runtime readiness, the harness opens
-the attachment explicitly, exercises policy changes without recreating Runtime,
+allow policy do not open traffic. After Runtime readiness, the harness reads the
+current management-network IPv4 from Docker and opens the attachment explicitly
+with that peer, exercises policy changes without recreating Runtime,
 then closes the attachment and removes compute before releasing the address.
 Network allocation, attachment, and policy-assignment CAS versions are distinct;
 the release request uses the network version, never the policy-assignment version.

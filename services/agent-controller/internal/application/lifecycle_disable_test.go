@@ -140,7 +140,7 @@ func TestDisableAgentKnownRuntimeFailureRestoresPolicyAndExecutable(t *testing.T
 	}
 	wantCalls := []string{
 		"egress.get", "egress.attachment.closed", "runtime.disable", "runtime.inspect",
-		"egress.get", "egress.attachment.open",
+		"egress.get", "runtime.inspect", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -330,7 +330,8 @@ func newDisableDependencies(
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 			RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID,
 			MCPEndpoint:        base.SourceExecution.RuntimeMCPEndpoint,
-			LifecycleState:     "provisioned", Health: "healthy",
+			Phase:              "running", RuntimeEndpoint: "10.20.0.9",
+			LifecycleState: "provisioned", Health: "healthy",
 		},
 	}
 }
@@ -357,7 +358,7 @@ func (dependency *disableDependenciesStub) GetAgentNetwork(
 }
 
 func (dependency *disableDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	if state == ports.NetworkAttachmentClosed && dependency.fenceErr != nil {
@@ -367,6 +368,7 @@ func (dependency *disableDependenciesStub) SetAgentNetworkAttachment(
 	result.AgentID = agentID
 	result.State = ports.NetworkStateActive
 	result.AttachmentState = state
+	result.RuntimeEndpoint = runtimeEndpoint
 	result.AttachmentResourceVersion = expectedResourceVersion + 1
 	dependency.network = result
 	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed

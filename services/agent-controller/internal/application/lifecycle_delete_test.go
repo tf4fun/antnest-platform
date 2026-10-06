@@ -370,7 +370,7 @@ func (dependency *deleteDependenciesStub) GetAgentNetwork(
 }
 
 func (dependency *deleteDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	if dependency.fenceErr != nil {
@@ -380,6 +380,7 @@ func (dependency *deleteDependenciesStub) SetAgentNetworkAttachment(
 	result.AgentID = agentID
 	result.State = ports.NetworkStateActive
 	result.AttachmentState = state
+	result.RuntimeEndpoint = runtimeEndpoint
 	result.AttachmentResourceVersion = expectedResourceVersion + 1
 	dependency.attachment = result
 	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed

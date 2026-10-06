@@ -266,13 +266,28 @@ reconciled with the same request ID.
 
 ## Inspect And List
 
+Revision 18 exposes `runtime_endpoint` when a Runtime has a usable Docker IPv4
+on the configured management network. RC inspects that exact network attachment;
+hostnames and the MCP URL are not used to infer it. Controller reads this current
+inspection after completed Initialize, Update or Enable and before opening
+Egress. A failed address inspection prevents opening traffic and can be retried;
+it does not change an already-completed compute receipt. This field is network
+identity metadata, not an execution ID or a proof of Runtime health. Current
+Inspect/List report a changed address after restart; absent compute has no address.
+
+A running container with a missing or invalid management IPv4 is reported as
+an individual inspection with `phase: running`, `health: unknown`, reason
+`runtime_peer_unavailable`, and no `runtime_endpoint`. No execution identity is
+verified for that inspection. It cannot be used to open an Egress attachment,
+but it does not fail the inventory or hide unrelated healthy Runtimes.
+
 `GET /internal/runtimes/{agent_id}` returns the logical lifecycle state and
 opaque revision. When state is `provisioned`, it reads current platform state
 and performs one bounded Runtime status check for a platform-healthy process.
 Unverified status returns unknown health without inventing an execution ID. The response may contain MCP
 endpoint, execution ID, health, restart count, and observation time. It never
-contains physical generation, digest, container/Pod ID, volume ID, or platform
-phase.
+contains physical generation, digest, container/Pod ID, volume ID, or raw
+platform status.
 
 `GET /internal/runtimes` returns all non-deleted Runtime Environments. Deleted
 identities remain private tombstones and can still be inspected directly by

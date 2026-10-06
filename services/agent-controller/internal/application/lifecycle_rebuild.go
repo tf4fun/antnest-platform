@@ -309,10 +309,10 @@ func (service *LifecycleService) reopenRebuildNetwork(
 	if state.Operation.NetworkAttachment == nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no network attachment")
 	}
-	attachment, err := service.egress.SetAgentNetworkAttachment(
-		ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
-		state.Operation.NetworkAttachment.AttachmentResourceVersion,
-	)
+	if state.Operation.RuntimeResult == nil {
+		return state, ErrDependencyUnavailable
+	}
+	attachment, err := service.openRuntimeNetwork(ctx, state.Agent.AgentID, state.Operation.RuntimeResult.RuntimeRevision, *state.Operation.NetworkAttachment)
 	if err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
 	}

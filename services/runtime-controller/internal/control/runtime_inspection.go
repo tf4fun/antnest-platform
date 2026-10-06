@@ -62,5 +62,6 @@ func (s *Service) inspectExpectedRuntime(ctx context.Context, environment deploy
 func confirmedRuntimeAbsence(inspection deployment.Inspection) bool {
 	return inspection.PlatformPhase == deployment.PhaseAbsent && inspection.Health == deployment.HealthAbsent &&
 		inspection.SpecDigest == "" && inspection.MCPEndpoint == "" && inspection.StatusEndpoint == "" &&
+		inspection.RuntimeEndpoint == "" &&
 		inspection.RuntimeExecutionID == "" && inspection.PlatformResourceID == ""
 }

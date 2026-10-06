@@ -38,7 +38,7 @@ func TestEnableAgentCompletesBeforeNewExecution(t *testing.T) {
 		t.Fatalf("enable publish = %+v", store.published)
 	}
 	wantCalls := []string{
-		"egress.ensure", "runtime.enable", "egress.attachment.open",
+		"egress.ensure", "runtime.enable", "runtime.inspect", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("enable calls = %v, want %v", dependencies.calls, wantCalls)
@@ -216,7 +216,7 @@ func TestEnableAgentAttachmentOpenFailureAfterRuntimeReadyRemainsReplayable(t *t
 		result.Operation.Phase != domain.PhaseNetworkRestore || store.published.RequestID != "" {
 		t.Fatalf("attachment conflict result = %+v publish=%+v", result, store.published)
 	}
-	if dependencies.calls[len(dependencies.calls)-1] != "egress.attachment.open" {
+	if dependencies.calls[len(dependencies.calls)-1] != "egress.network.get" || dependencies.calls[len(dependencies.calls)-2] != "egress.attachment.open" {
 		t.Fatalf("ambiguous open must not change the retry version: %v", dependencies.calls)
 	}
 }
@@ -379,7 +379,7 @@ func (dependency *enableDependenciesStub) EnsureAgentNetwork(
 }
 
 func (dependency *enableDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	if state == ports.NetworkAttachmentOpen && dependency.attachmentOpenErr != nil {
@@ -389,6 +389,7 @@ func (dependency *enableDependenciesStub) SetAgentNetworkAttachment(
 	result.AgentID = agentID
 	result.State = ports.NetworkStateActive
 	result.AttachmentState = state
+	result.RuntimeEndpoint = runtimeEndpoint
 	result.AttachmentResourceVersion = expectedResourceVersion + 1
 	dependency.network = result
 	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed
@@ -428,6 +429,9 @@ func (dependency *enableDependenciesStub) EnableRuntime(
 	dependency.runtimeAgentID = agentID
 	dependency.expectedRuntimeRevision = expected
 	dependency.runtimeConfiguration = configuration
+	if completedProvisionedRuntime(dependency.runtime) {
+		dependency.inspection = peerInspectionForTest(agentID, dependency.runtime.RuntimeRevision)
+	}
 	return dependency.runtime, nil
 }
 

@@ -347,14 +347,16 @@ candidate Runtime.
    plus returned network attachment.
 6. Initialize Runtime with the durable child request ID. A completed
    `provisioned/unknown` result confirms resource creation, not readiness.
-7. Open the attachment with resource-version CAS and require the same active
+7. Inspect the completed target Runtime revision for its current management IPv4.
+   Open the attachment with that peer and resource-version CAS and require the same active
    tunnel, resolver, packet contract, and endpoint used to initialize Runtime.
    This closes the network-configuration race without publishing a Runtime configured for
    stale network facts.
 8. Atomically commit the configured Spec and Runtime revision, complete the
    operation, clear the active slot, and append `agent_created`. Keep lifecycle
    state `created`, activation `enabled`, Runtime condition `unknown`, and all executable-binding fields empty.
-9. Independently inspect pending Runtimes. Healthy matching observations append
+9. Independently inspect pending Runtimes and confirm their current Egress peer
+   binding without reopening a closed attachment. Healthy matching observations append
    an immutable ExecutionRevision, set Runtime condition `available`, and append `agent_ready`.
    Publication checks current aggregate/configuration, owner authorization and
    absence of another lifecycle operation. Lost or early events cannot strand
@@ -389,8 +391,9 @@ userspace and conntrack flow state without changing desired policy. Agent
 Controller persists the returned closed attachment and calls Runtime Controller
 `UpdateRuntime` with the source opaque Runtime revision and complete target
 Runtime configuration. Agent Controller never copies Tunnel allocation
-ownership into its Agent projection. After confirmed platform replacement it opens that same
-attachment with CAS and requires unchanged Tunnel, resolver, packet contract,
+ownership into its Agent projection. After confirmed platform replacement it
+freshly inspects the target Runtime revision and opens that same attachment
+with the current management IPv4 and CAS, requiring unchanged Tunnel, resolver, packet contract,
 and Egress endpoint before publication.
 
 Desired Egress policy and lifecycle attachment state are independent. Policy
@@ -404,7 +407,8 @@ operation, and appends `agent_rebuilt`. Healthy observation later publishes
 execution independently. No partially published endpoint is usable. A transport or
 ambiguous dependency result leaves the durable operation at its current phase
 for exact-request replay. A conclusive pre-replacement failure preserves the
-configured source; its attachment may reopen only if the owner remains allowed
+configured source; its attachment may reopen with a freshly inspected source
+management IPv4 only if the owner remains allowed
 and ACP did not require a Runtime barrier. After Runtime replacement is confirmed, failure
 remains non-terminal and fail-closed until exact replay can publish the observed
 Runtime; there is no implicit rollback.
@@ -454,7 +458,8 @@ always use explicit rebuild. It freezes the disabled Runtime revision and
 optional last successful execution history, ensures the retained network allocation remains
 active with a closed attachment, and calls Runtime Controller with that closed
 attachment. After persisting confirmed platform creation it enters the durable
-`network_restore` phase, opens the same attachment with CAS, verifies unchanged
+`network_restore` phase, inspects the target revision's current management IPv4,
+opens the same attachment with that peer and CAS, verifies unchanged
 network coordinates, and completes in `created/enabled` with Runtime `unknown`, without a new execution.
 Independent health observation creates the next actual ExecutionRevision. Desired policy is
 not part of the lifecycle operation: any policy revision assigned while the
