@@ -44,6 +44,20 @@ test(
     let dropNextProcessContent = false;
     let holdSelectedView = false;
     const heldSelectedViews = [];
+    // The opening skeleton renders before the browser requests the selected
+    // view, so a release must wait until that request is actually held.
+    const releaseSelectedViews = async (answer) => {
+      const deadline = Date.now() + 10_000;
+      while (heldSelectedViews.length === 0) {
+        assert.ok(
+          Date.now() < deadline,
+          "No selected-view request reached the fixture while held",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      holdSelectedView = false;
+      for (const held of heldSelectedViews.splice(0)) answer(held);
+    };
     let operation = null;
     let server;
     let browser;
@@ -667,9 +681,7 @@ test(
         path: `${loadingEvidence}opening-desktop.png`,
         animations: "disabled",
       });
-      holdSelectedView = false;
-      for (const held of heldSelectedViews.splice(0))
-        writeJSON(held, publishedView);
+      await releaseSelectedViews((held) => writeJSON(held, publishedView));
       try {
         await page.getByText("Saved answer").waitFor({ timeout: 10_000 });
       } catch (cause) {
@@ -711,8 +723,7 @@ test(
           () => document.documentElement.scrollWidth <= 390,
         ),
       );
-      holdSelectedView = false;
-      for (const held of heldSelectedViews.splice(0))
+      await releaseSelectedViews((held) =>
         writeJSON(
           held,
           {
@@ -723,7 +734,8 @@ test(
             recovery: "retry_read",
           },
           504,
-        );
+        ),
+      );
       await mobilePage
         .getByRole("alert")
         .filter({ hasText: "History timed out" })
@@ -764,8 +776,7 @@ test(
       holdSelectedView = true;
       await backPage.goto(`${origin}/workspace/agent-1/sessions/session-1`);
       await backPage.locator(".session-opening").waitFor();
-      holdSelectedView = false;
-      for (const held of heldSelectedViews.splice(0))
+      await releaseSelectedViews((held) =>
         writeJSON(
           held,
           {
@@ -776,7 +787,8 @@ test(
             recovery: "retry_read",
           },
           504,
-        );
+        ),
+      );
       await backPage.getByRole("button", { name: "Back to agent" }).click();
       await backPage.waitForURL(
         (url) =>

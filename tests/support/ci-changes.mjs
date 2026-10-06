@@ -131,8 +131,6 @@ export const suites = [
     tier: "a",
     setup: ["agent-ui-web", "chromium"],
     paths: [...service("agent-ui"), "tests/integration/agent-ui/**"],
-    disabled:
-      "the workspace bridge test can release a held view before the request arrives (#121)",
     run: ["npm --prefix services/agent-ui/web run test:browser"],
   },
   {
