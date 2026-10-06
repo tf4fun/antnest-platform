@@ -71,7 +71,10 @@ export function complete(payload) {
     ],
     "managed-exercise": [
       { name: "mcp__alpha__fail", arguments: {} },
-      { name: "mcp__alpha__echo", arguments: { value: "managed-exercise" } },
+      {
+        name: "mcp__alpha__echo",
+        arguments: { value: "managed-exercise", cache_probe: true },
+      },
       {
         name: "bash",
         arguments: {
@@ -161,10 +164,21 @@ function assertEcho(content, phase, calls) {
   assert.equal(result.supervisor_env, false);
   assert.equal(result.launcher_env, false);
   assert.equal(result.calls, calls, "child process was restarted or replayed");
+  assert.equal(result.home, "/run/antnest-mcp-home/2000");
+  assert.equal(result.cwd, "/workspace");
+  if (phase === "managed-exercise") {
+    assert.equal(result.cache_paths.length, 5);
+    assert.equal(result.cache_owned_and_readable, true);
+    assert.equal(result.cache_executable_ok, true);
+    assert.deepEqual(
+      result.cache_modes,
+      result.cache_paths.map(() => 0o600),
+    );
+  }
 }
 
 function isolationCommand(content) {
-  const { pid } = JSON.parse(content.slice(content.indexOf("{")));
+  const { pid, cache_paths } = JSON.parse(content.slice(content.indexOf("{")));
   assert(
     Number.isSafeInteger(pid) && pid > 1,
     "managed process identity missing",
@@ -184,7 +198,7 @@ def denied(action):
 def try_open(path):
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     os.close(fd)
-for path in ['/proc/%d/environ' % pid, '/proc/%d/mem' % pid, '/run/antnest-mcp/secrets.json']:
+for path in ['/proc/%d/environ' % pid, '/proc/%d/mem' % pid, '/run/antnest-mcp/secrets.json'] + ${JSON.stringify(cache_paths)}:
     assert denied(lambda: try_open(path))
 assert denied(lambda: os.readlink('/proc/%d/fd/0' % pid))
 libc = ctypes.CDLL(None, use_errno=True)

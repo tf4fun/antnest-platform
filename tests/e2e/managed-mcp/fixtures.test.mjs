@@ -22,11 +22,23 @@ const echo = (phase, calls) =>
     value: phase,
     calls,
     uid: 2000,
+    home: "/run/antnest-mcp-home/2000",
+    cwd: "/workspace",
     pid: 4242,
     gid: 1000,
     explicit_env: true,
     supervisor_env: false,
     launcher_env: false,
+    cache_paths: [
+      "/run/antnest-mcp-home/2000/token",
+      "/run/antnest-mcp-home/2000/tmp/token",
+      "/run/antnest-mcp-home/2000/.cache/token",
+      "/run/antnest-mcp-home/2000/.config/token",
+      "/tmp/token",
+    ],
+    cache_modes: Array(5).fill(0o600),
+    cache_owned_and_readable: true,
+    cache_executable_ok: true,
   });
 
 test("a draining Run uses the same alpha process before and after the rebuild barrier", () => {

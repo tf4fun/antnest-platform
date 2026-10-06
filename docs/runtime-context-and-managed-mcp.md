@@ -70,7 +70,11 @@ Admin Console edits managed MCP settings in Templates; see the service-local
   immediately before exec. Public environment and minimal process defaults are
   explicit; Supervisor credentials and RuntimeSpec are never inherited. UID
   1000 tools cannot inspect another UID's environ, memory, descriptors or ptrace
-  it. MCP implementations and executable dependencies remain trusted; UID
+  it. Each server has UID-owned 0700 HOME/TMPDIR/XDG directories in bounded
+  private tmpfs and uses umask 077, while cwd remains workspace. This protects
+  usual on-disk credential caches, including default `/tmp` files. Cache data
+  resets on restart; intentional shared files require explicit group grants.
+  MCP implementations and executable dependencies remain trusted; UID
   isolation does not prevent a server deliberately leaking its own secrets.
   See the [secret contract](../contracts/runtime/managed-mcp-secrets.md).
 - A completed Tool/turn/Run does not end the Runtime environment. Ordinary Bash

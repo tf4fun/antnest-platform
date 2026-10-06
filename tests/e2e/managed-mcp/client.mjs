@@ -228,7 +228,7 @@ async function main() {
   const secretDescriptor =
     template.runtime.mcp_servers[0].secret_env.FIXTURE_SECRET;
   assert.equal(secretDescriptor.set, true);
-  assert.match(secretDescriptor.fingerprint, /^sha256:[0-9a-f]{8}$/);
+  assert.match(secretDescriptor.fingerprint, /^hmac-sha256:[0-9a-f]{32}$/);
   assert(!JSON.stringify(template).includes("managed-env-canary"));
   stage = "create";
   const created = await admin.request("/api/admin/agents", {
@@ -434,9 +434,13 @@ async function main() {
     keptBody,
     201,
   );
-  assert.deepEqual(
-    kept.runtime.mcp_servers[0].secret_env,
-    next.runtime.mcp_servers[0].secret_env,
+  const keptSecret = kept.runtime.mcp_servers[0].secret_env.FIXTURE_SECRET;
+  assert.equal(keptSecret.set, true);
+  assert.match(keptSecret.fingerprint, /^hmac-sha256:[0-9a-f]{32}$/);
+  assert.notEqual(
+    keptSecret.fingerprint,
+    next.runtime.mcp_servers[0].secret_env.FIXTURE_SECRET.fingerprint,
+    "new revision must have its own envelope identity",
   );
   assert(!JSON.stringify(kept).includes("managed-env-canary"));
   const clearedBody = templateBody(

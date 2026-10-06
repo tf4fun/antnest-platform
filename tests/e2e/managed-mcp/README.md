@@ -66,6 +66,12 @@ Six successful Runs make 16 Provider requests and ten real Tool calls:
    acknowledgement. Delete reclaims the Agent's Runtime container and workspace
    volume.
 
+Template secret reads expose only set/opaque HMAC metadata. A keep revision
+receives a fresh envelope identity; the value remains unchanged. Real secret_env
+values are cached by the MCP fixture in HOME/TMPDIR/XDG and shared `/tmp`, with
+mode 0600, and the normal Bash tool must fail to read them. Own cache programs
+remain executable under the server UID. The separate Runtime owner gate proves
+peer-MCP isolation, unsafe mount rejection and cache recreation on restart.
 Template secret reads expose only set/fingerprint metadata. An unchanged secret
 is kept in the next immutable revision and then cleared from the head. Disable
 and Enable still use the Agent's earlier frozen revision, whose required MCP

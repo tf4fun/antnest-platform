@@ -53,7 +53,15 @@ cluster network. Before exposing a deployment, understand these boundaries:
   Its generation-private bootstrap is root-owned 0700/0400 and mounted read-only,
   outside workspace backups. Dedicated server UIDs 2000..2007 block UID 1000 tool
   reads of their environ, memory, descriptors and ptrace. Each server receives
-  only its own secrets. MCP code is trusted: it can disclose its own credentials,
+  only its own secrets. HOME/TMPDIR/XDG cache directories are UID-owned 0700
+  directories in a bounded private tmpfs. MCP umask 077 protects default new
+  files, including shared `/tmp` files; cwd remains workspace. Private caches
+  reset on restart. Sorted server IDs preserve UID assignment under list reorder,
+  but not additions/removals: shared workspace files have no enduring per-server
+  ownership guarantee. Public fingerprints and secret-bearing Template receipts
+  use envelope-keyed HMAC instead of guessable plaintext hashes; master-key
+  re-wrapping preserves replay. RC can resolve any organization's frozen
+  revision under its Docker/host-root trust. MCP code is trusted: it can disclose its own credentials,
   and mutable workspace executables/dependencies can undermine this boundary.
   Use administrator-controlled image or read-only preset code for credentialed
   servers. Host/Docker administrators remain trusted. See the

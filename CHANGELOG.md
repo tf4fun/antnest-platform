@@ -9,7 +9,12 @@ Agent admission stopped; mixed contracts are unsupported.** Reconfigure managed
 MCP credentials as `secret_env`, then recreate/rebuild development Agents.
 There is no heuristic migration of old public `env` values. Old snapshots,
 journals and backups can still contain plaintext; discard disposable old data
-and handle retained copies as secrets. See the
+and handle retained copies as secrets. Fingerprints now use opaque HMAC identifiers;
+keeping a secret in a new revision may change its fingerprint. MCP HOME/TMPDIR/
+XDG caches are private and ephemeral; OAuth caches may need reauthentication on
+restart. MCP default files are 0600 (umask 077); explicitly grant group permissions
+when sharing new MCP output in workspace. Remove overridden cache-directory
+environment variables from Templates. See the
 [managed MCP secret contract](contracts/runtime/managed-mcp-secrets.md).
 
 **The first #42 upgrade requires downtime for Controller and Identity; rolling
@@ -144,7 +149,14 @@ Managed MCP credentials no longer enter Template/Agent snapshots as plaintext
 or appear in configuration reads (#37). Encrypted immutable revisions bind
 organization, Template, revision, server and name; keeping a value reseals it
 at the new location. Private Runtime bootstrap and distinct managed-process
-UIDs prevent direct credential inspection by ordinary model tools.
+UIDs prevent direct credential inspection by ordinary model tools. Each server
+now has private 0700 HOME/TMPDIR/XDG cache directories; umask 077 also protects
+default shared `/tmp` files. Public secret fingerprints and secret-bearing
+Template request receipts use protected envelope-keyed HMAC, preventing offline
+plaintext guessing and preserving replay after master-key rotation. List reordering
+no longer changes server UIDs. The secret editor browser test is registered in
+package scripts and root `test-integration-node`, covering desktop/mobile keep,
+replace and clear operations.
 
 Standard Compose single-key configuration now also renders with Compose 2.38.2,
 used by repository CI. Removed nested required-value interpolation that evaluated

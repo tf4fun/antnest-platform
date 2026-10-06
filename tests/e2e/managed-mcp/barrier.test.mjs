@@ -18,6 +18,8 @@ function payload(step) {
           value: "managed-draining",
           calls: 3 + index,
           uid: 2000,
+          home: "/run/antnest-mcp-home/2000",
+          cwd: "/workspace",
           gid: 1000,
           explicit_env: true,
           supervisor_env: false,
