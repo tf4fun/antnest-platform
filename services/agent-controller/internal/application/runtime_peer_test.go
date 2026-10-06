@@ -111,6 +111,9 @@ func TestRestartObservationRebindsOpenPeerWithoutPublishingExecution(t *testing.
 			if err := worker.applyObservation(t.Context(), ports.RuntimeObservation{AgentID: "agent-1", Kind: ports.RuntimeObservationRestarted}); err != nil {
 				t.Fatal(err)
 			}
+			if err := worker.RunOnce(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			if len(store.applied) != 1 || len(store.published) != 0 {
 				t.Fatal("peer reconciliation changed execution publication", store)
 			}

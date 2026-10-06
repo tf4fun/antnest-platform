@@ -127,6 +127,7 @@ func (source *runtimeObservationSourceStub) ListRuntimes(
 }
 
 type runtimeObservationStoreStub struct {
+	conditions      []ports.RecordRuntimeCondition
 	pending         []ports.PendingRuntimeBinding
 	published       []ports.PublishRuntimeBinding
 	cursor          ports.RuntimeObservationCursor
@@ -192,6 +193,7 @@ func (store *runtimeObservationStoreStub) PublishRuntimeBinding(_ context.Contex
 }
 
 func (store *runtimeObservationStoreStub) RecordRuntimeCondition(_ context.Context, input ports.RecordRuntimeCondition) (int64, error) {
+	store.conditions = append(store.conditions, input)
 	return input.ExpectedAggregateSequence, nil
 }
 
