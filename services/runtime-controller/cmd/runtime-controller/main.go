@@ -24,6 +24,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/diagnostics"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/mcpsecretclient"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 	platformmonitor "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/monitor"
@@ -168,7 +169,18 @@ func run(ctx context.Context) (resultErr error) {
 		return classified("instance_authentication", "instance_sender_initialization_failed", err)
 	}
 	defer joinCloseError(&resultErr, "Runtime instance sender files", senders.Close)
-	driver, err := platformdocker.NewDriver(dockerClient, platformdocker.Config{
+	var mcpVolumes *platformdocker.MCPVolumeWriter
+	if configuration.AgentControllerURL != "" {
+		resolver, err := mcpsecretclient.New(configuration.AgentControllerURL, configuration.Authentication.HTTPClient(), configuration.RuntimeStatusTimeout)
+		if err != nil {
+			return classified("managed_mcp", "bootstrap_client_failed", err)
+		}
+		mcpVolumes, err = platformdocker.NewMCPVolumeWriter(dockerClient, configuration.SkillPreparerImage, configuration.ControllerScope, resolver)
+		if err != nil {
+			return classified("managed_mcp", "bootstrap_volume_failed", err)
+		}
+	}
+	driverConfig := platformdocker.Config{
 		AllowedImages:         configuration.AllowedImages,
 		ControllerScope:       configuration.ControllerScope,
 		ManagementNetwork:     configuration.ManagementNetwork,
@@ -177,7 +189,11 @@ func run(ctx context.Context) (resultErr error) {
 		SkillMountGate:        skillVolumes,
 		InstanceMountGate:     instanceVolumes,
 		RuntimeAuthentication: configuration.RuntimeAuthentication,
-	})
+	}
+	if mcpVolumes != nil {
+		driverConfig.MCPMountGate = mcpVolumes
+	}
+	driver, err := platformdocker.NewDriver(dockerClient, driverConfig)
 	if err != nil {
 		return classified("platform", "docker_driver_initialization_failed", err)
 	}

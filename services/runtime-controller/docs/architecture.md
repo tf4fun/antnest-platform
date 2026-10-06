@@ -687,3 +687,10 @@ The private resolve holds the Agent mutation lock through fresh identity
 verification. It exports only ACP's token; public projections remain unchanged.
 Both request and response capture are suppressed even with debug enabled.
 Consumer adoption follows the [shared delivery sequence](../../../contracts/runtime/instance-connection.md#delivery-and-evidence).
+
+Managed MCP configuration contains read-only secret identities and a frozen
+Template source. The authenticated Controller client resolves values when the
+Docker adapter prepares private bootstrap storage. Plaintext remains transient
+in RC memory/archive transfer and root-only volume contents, not the journal.
+Actual mount verification precedes Runtime start and is repeated on adoption;
+existing running bootstraps are never rewritten. Generation deletion owns cleanup.

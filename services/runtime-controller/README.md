@@ -259,3 +259,9 @@ and `ANTNEST_TEST_REAL_RUNTIME_IMAGE`.
 - [Skill learning design](../../docs/skill-learning-design.md) - maintenance
   verifier keys and rotation.
 - [Service layout](../../docs/service-layout.md) - repository ownership rules.
+
+Managed MCP secret bootstrap uses optional `ANTNEST_AGENT_CONTROLLER_URL` and
+the existing authenticated outbound transport. It is required for deployments
+with secret_env descriptors, not for configurations without managed secrets.
+Controller owns encrypted values; RC owns generation-private read-only delivery
+and cleanup. See [the delivery contract](../../contracts/runtime/managed-mcp-secrets.md).

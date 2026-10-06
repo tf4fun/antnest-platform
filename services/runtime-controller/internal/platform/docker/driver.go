@@ -32,6 +32,7 @@ var (
 )
 
 type Config struct {
+	MCPMountGate          MCPMountGate
 	AllowedImages         []string
 	ControllerScope       string
 	ManagementNetwork     string
@@ -187,12 +188,13 @@ func (d *Driver) DeploymentDigest(value deployment.Deployment) (string, error) {
 	}
 	delete(spec.Labels, labelSpecDigest)
 	return deployment.DigestValue(struct {
-		Revision       uint32                      `json:"revision"`
-		Platform       string                      `json:"platform"`
-		Name           string                      `json:"name"`
-		Request        createContainerRequest      `json:"request"`
-		PreparedSkills *skillset.PreparedReference `json:"prepared_skills,omitempty"`
-	}{Revision: 1, Platform: "docker", Name: spec.Name, Request: dockerCreateRequest(spec), PreparedSkills: value.PreparedSkills})
+		Revision           uint32                        `json:"revision"`
+		Platform           string                        `json:"platform"`
+		Name               string                        `json:"name"`
+		Request            createContainerRequest        `json:"request"`
+		PreparedSkills     *skillset.PreparedReference   `json:"prepared_skills,omitempty"`
+		ManagedMCPTemplate *deployment.MCPTemplateSource `json:"managed_mcp_template,omitempty"`
+	}{Revision: 1, Platform: "docker", Name: spec.Name, Request: dockerCreateRequest(spec), PreparedSkills: value.PreparedSkills, ManagedMCPTemplate: value.ManagedMCPTemplate})
 }
 
 func (d *Driver) Create(
@@ -235,13 +237,22 @@ func (d *Driver) Create(
 		}
 	}
 
+	if deployment.HasMCPSecrets(value.RuntimeSpec.MCPServers) {
+		if d.config.MCPMountGate == nil {
+			return failed(deployment.EffectNotStarted, "invalid_request", errors.New("managed MCP bootstrap dependency is not configured"))
+		}
+		if err := d.config.MCPMountGate.Prepare(ctx, key, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers); err != nil {
+			return dockerFailure("platform_unavailable", err, true)
+		}
+	}
+
 	name := containerName(key.AgentID)
 	existing, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), name)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return dockerFailure("platform_unavailable", err, false)
 	}
 	if err == nil {
-		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication)
+		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers)
 	}
 
 	spec, err := d.containerSpec(value, digest)
@@ -252,7 +263,7 @@ func (d *Driver) Create(
 	if err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil {
-			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers)
 		}
 		return dockerFailure(
 			"platform_unavailable", errors.Join(err, inspectErr), errors.Is(err, ErrConflict),
@@ -269,10 +280,15 @@ func (d *Driver) Create(
 			return failed(deployment.EffectUnknown, "instance_mount_verification_failed", errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
 		}
 	}
+	if deployment.HasMCPSecrets(value.RuntimeSpec.MCPServers) {
+		if err := d.config.MCPMountGate.VerifyRuntimeMount(ctx, key, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, containerID); err != nil {
+			return failed(deployment.EffectUnknown, "platform_unavailable", errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
+		}
+	}
 	if err := d.engine.StartContainer(ctx, containerID); err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil && d.matches(existing, key, digest) && existing.Running {
-			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers)
 		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
 	}
@@ -300,7 +316,7 @@ func (d *Driver) removeRejectedSkillCandidate(containerID string, key deployment
 }
 
 func (d *Driver) convergeContainer(
-	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization, auth *deployment.RuntimeAuthentication,
+	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization, auth *deployment.RuntimeAuthentication, source *deployment.MCPTemplateSource, servers []deployment.MCPServer,
 ) deployment.EffectOutcome {
 	if !d.matches(existing, key, digest) {
 		return failed(
@@ -317,6 +333,14 @@ func (d *Driver) convergeContainer(
 	if auth != nil {
 		if err := d.config.InstanceMountGate.VerifyRuntimeMount(ctx, key, auth, existing.ID); err != nil {
 			return failed(deployment.EffectUnknown, "instance_mount_verification_failed", err)
+		}
+	}
+	if deployment.HasMCPSecrets(servers) {
+		if d.config.MCPMountGate == nil {
+			return failed(deployment.EffectNotStarted, "invalid_request", errors.New("managed MCP mount gate is required"))
+		}
+		if err := d.config.MCPMountGate.VerifyRuntimeMount(ctx, key, source, servers, existing.ID); err != nil {
+			return failed(deployment.EffectUnknown, "platform_unavailable", err)
 		}
 	}
 	if existing.Running {
@@ -360,6 +384,11 @@ func (d *Driver) Delete(
 	}
 	container, err := d.engine.InspectContainer(ctx, containerName(key.AgentID))
 	if errors.Is(err, ErrNotFound) {
+		if d.config.MCPMountGate != nil {
+			if err := d.config.MCPMountGate.Remove(ctx, key); err != nil {
+				return dockerFailure("platform_unavailable", err, true)
+			}
+		}
 		if d.config.InstanceMountGate != nil {
 			if err := d.config.InstanceMountGate.Remove(ctx, key); err != nil {
 				return dockerFailure("instance_receiver_cleanup_failed", err, true)
@@ -384,6 +413,11 @@ func (d *Driver) Delete(
 	}
 	if err := d.engine.RemoveContainer(ctx, container.ID); err != nil && !errors.Is(err, ErrNotFound) {
 		return dockerFailure("platform_unavailable", err, true)
+	}
+	if d.config.MCPMountGate != nil {
+		if err := d.config.MCPMountGate.Remove(ctx, key); err != nil {
+			return dockerFailure("platform_unavailable", err, true)
+		}
 	}
 	if d.config.InstanceMountGate != nil {
 		if err := d.config.InstanceMountGate.Remove(ctx, key); err != nil {
@@ -653,6 +687,10 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		spec.Mounts[instanceauth.Directory] = Mount{Source: instanceVolumeName(instanceauth.Identity{Scope: d.config.ControllerScope, AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation}), ReadOnly: true, NoCopy: true}
 		spec.Healthcheck.Test = []string{"CMD", "curl", "--fail", "--silent", "http://127.0.0.1:" + port + "/status/live"}
 	}
+	if deployment.HasMCPSecrets(value.RuntimeSpec.MCPServers) {
+		spec.Mounts[mcpSecretDirectory] = Mount{Source: mcpVolumeName(d.config.ControllerScope, deployment.Key{AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation}), ReadOnly: true, NoCopy: true}
+	}
+
 	return spec, nil
 }
 

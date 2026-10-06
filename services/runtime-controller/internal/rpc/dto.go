@@ -10,14 +10,15 @@ import (
 )
 
 type configurationDTO struct {
-	MCPServers          []deployment.MCPServer `json:"mcp_servers,omitempty"`
-	ImageRef            string                 `json:"image_ref"`
-	Network             networkDTO             `json:"network"`
-	Resources           resourceLimitsDTO      `json:"resources"`
-	OrganizationID      string                 `json:"organization_id,omitempty"`
-	SystemSkills        []skillset.FrozenSkill `json:"system_skills,omitempty"`
-	PreparedSkillSet    *skillset.PreparedSet  `json:"prepared_skill_set,omitempty"`
-	PreparedReferenceID string                 `json:"prepared_reference_id,omitempty"`
+	ManagedMCPTemplate  *deployment.MCPTemplateSource `json:"managed_mcp_template,omitempty"`
+	MCPServers          []deployment.MCPServer        `json:"mcp_servers,omitempty"`
+	ImageRef            string                        `json:"image_ref"`
+	Network             networkDTO                    `json:"network"`
+	Resources           resourceLimitsDTO             `json:"resources"`
+	OrganizationID      string                        `json:"organization_id,omitempty"`
+	SystemSkills        []skillset.FrozenSkill        `json:"system_skills,omitempty"`
+	PreparedSkillSet    *skillset.PreparedSet         `json:"prepared_skill_set,omitempty"`
+	PreparedReferenceID string                        `json:"prepared_reference_id,omitempty"`
 }
 
 type networkDTO struct {
@@ -40,8 +41,9 @@ type resourceLimitsDTO struct {
 
 func (d configurationDTO) domain() deployment.Configuration {
 	return deployment.Configuration{
-		MCPServers: deployment.CloneMCPServers(d.MCPServers),
-		ImageRef:   d.ImageRef,
+		MCPServers:         deployment.CloneMCPServers(d.MCPServers),
+		ManagedMCPTemplate: d.ManagedMCPTemplate,
+		ImageRef:           d.ImageRef,
 		Network: deployment.NetworkSpec{
 			PacketContractRevision: d.Network.PacketContractRevision,
 			EgressEndpoint: deployment.IPv4Endpoint{

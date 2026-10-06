@@ -399,3 +399,23 @@ credentials, environment values, Runtime output, or physical resource names:
   "retryable": false
 }
 ```
+
+## Managed MCP secret bootstrap
+
+`mcp_servers[].secret_env` accepts only frozen set/fingerprint descriptors.
+When any are present, `managed_mcp_template` pins organization_id, template_id
+and revision; inline values and keep actions are rejected at this boundary.
+These descriptors and source are frozen in the deployment digest and journal.
+RC resolves values only through its authenticated Controller bootstrap client.
+`ANTNEST_AGENT_CONTROLLER_URL` must be configured for such deployments; RC's
+service-token directory must include the Controller token.
+
+RC prepares a generation-private root-only bootstrap volume, then verifies the
+actual read-only/nocopy mount, labels, file ownership, permissions and contents
+after container creation and before start. A Docker-created unlabeled empty
+replacement is refused. Replay rechecks the actual mount. Disable, replacement
+and Delete remove the owned generation's private volume; Enable resolves the
+Agent's retained frozen source. No value enters RuntimeSpec, Docker environment,
+labels or deployment digests. The private volume survives ordinary container
+restarts; it is excluded from workspace backup and rebuilt from Controller on
+restore. See the [shared contract](../../../contracts/runtime/managed-mcp-secrets.md).
