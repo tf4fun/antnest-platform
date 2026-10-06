@@ -12,9 +12,11 @@ The Controller `0025` and Identity `0003` migrations add envelope metadata.
 Historical ciphertext retains its exact previous associated data and is read
 as `local-v1`; new writes use authenticated envelopes even in single-key mode.
 
-Use a coordinated binary cutover for each service: stop its old replicas before
-starting upgraded replicas and reopening traffic. Old binaries cannot read new
-envelopes or accept the new migration journal. This initial upgrade is distinct
+**The first upgrade requires downtime for each owning service; a rolling old/new
+binary deployment is unsupported even when retaining single-key configuration.**
+Stop all of its old replicas before starting upgraded replicas and reopening
+traffic. Old binaries cannot read new envelopes or accept the new migration
+journal. This initial upgrade is distinct
 from the online key rotation below. Do not run a mixed old/new binary deployment
 or downgrade a binary against a migrated database. Rollback requires the saved
 pre-upgrade database, keys and matching binary as one recovery set.
@@ -38,9 +40,17 @@ No public key fallback or new development exception is introduced.
 Standard Compose forwards both modes unchanged without public defaults. Each
 owning service rejects missing or conflicting encryption configuration before
 opening its listener or starting dependency clients. Compose rendering alone
-does not validate this choice: older parsers eagerly evaluate nested required
-branches even when the single-key branch is set. `.env.example` leaves both
-modes empty. The development generator
+does not validate this choice. Both owners' single-key and ring variables use
+`:-` instead of `:?`: Compose 2.38 eagerly evaluates required substitutions
+inside an unused alternative branch, even when the single-key branch is set.
+If the other secrets are set, `compose config` can succeed with missing or
+conflicting encryption configuration; `docker compose up --wait` fails because
+the affected service refuses startup. The render-time missing-secret check from
+#13 now covers **10 of its original 12 fields**: nine passwords and
+`ANTNEST_ACP_CLIENT_MCP_KEY`. All twelve secret requirements remain mandatory;
+only these two owners' rejection stage changes.
+
+`.env.example` leaves both modes empty. The development generator
 still creates single keys for a fresh deployment; never regenerate them against
 retained data. Store production rings in the deployment's secret store and never
 print their contents or copy keys into issue reports.

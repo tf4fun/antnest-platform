@@ -10,8 +10,17 @@ with no public fallback. Controller and Identity may supply their
 [key ring](encryption-key-rotation.md) instead of the single-key variable;
 Compose forwards these optional fields unchanged; each owner requires exactly
 one mode and rejects missing/mixed modes or invalid members before startup.
-Other listed secrets keep their Compose required-value checks. The example
-leaves these fields empty.
+This is an intentional change to #13's rendering guarantee: `compose config`
+checks **10 of the original 12 fields** (the nine passwords and
+`ANTNEST_ACP_CLIENT_MCP_KEY`). The two original fields
+`ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY` and `ANTNEST_IDENTITY_ENCRYPTION_KEY`,
+and their ring alternatives, use `:-` instead of `:?`: Compose 2.38 eagerly
+evaluates required substitutions inside an unused alternative branch. If the
+other ten fields are set, rendering can succeed with either owner's encryption
+configuration missing or conflicting. Its service refuses startup, so
+`docker compose up --wait` fails; no traffic is admitted by that service.
+All twelve secret requirements and the ban on public defaults remain. The
+example leaves these fields empty.
 `scripts/generate-dev-env.sh` generates independent random values into a private
 0600 `.env`, refuses an existing output unless `--force` is explicit, and prints
 only the newly generated bootstrap administrator password once. Force is for a

@@ -15,7 +15,8 @@ or ring variable name and preserves callback errors and warnings. Services pass
 `devsecrets.Policy.CheckKey`; the module does not import `devsecrets` or
 `service-authentication` and has no external Go dependencies. Configuration errors
 exclude key material; callbacks must follow the same rule. Controller and Identity
-consumer replacement is delivered in separate owning-service batches.
+use this loader for both startup and `rekey`, retaining their database and
+dependency-client configuration in the owning service.
 
 `KeyEncrypter` accepts a key ID, data key or wrapped key, and associated data.
 It is the extension point for a future remote KMS adapter. No external KMS is
@@ -32,4 +33,7 @@ Only NULL wrapped keys with ID `local-v1` use historical, unmodified identity AA
 Run standalone checks with `GOWORK=off go test -race -count=1 ./...` and
 `GOWORK=off go vet ./...`. Tests cover mixed rings, same-key relabeling,
 cross-record/service tampering, malformed metadata, legacy conversion, key
-retirement, cancellation and command bounds.
+retirement, cancellation and command bounds. Configuration-loader tests cover
+owning-variable names, single/ring modes, required callbacks, rejection before
+policy checks and rejection of decrypt-only keys by the injected policy. Each
+consumer separately verifies startup/rekey admission and warning parity.
