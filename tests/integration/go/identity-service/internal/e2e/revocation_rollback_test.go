@@ -78,7 +78,7 @@ func failingRevocationMutation(t *testing.T, f localAdmissionFixture, user scim.
 
 func seedRevocationGroup(t *testing.T, f localAdmissionFixture, membershipID string) {
 	t.Helper()
-	now := time.Now().UTC()
+	now := storedNow()
 	_, err := f.store.SCIM().CreateGroup(t.Context(), scim.CreateGroupCommand{
 		OrganizationID: f.admin.Organization.ID,
 		Group: domain.Group{ID: f.newID("group"), OrganizationID: f.admin.Organization.ID,
