@@ -257,6 +257,13 @@ try {
   const rows = JSON.parse(await invoke(["inspect", ...runtimeIDs]));
   const runtime = rows.find((row) => row.Id !== id);
   assert(runtime, "lifecycle did not create a managed Runtime");
+  const managementIPv4 =
+    runtime.NetworkSettings.Networks[env.RC_AUTH_MANAGEMENT_NETWORK].IPAddress;
+  assert.equal(list.runtimes[0].runtime_endpoint, managementIPv4);
+  const peerInspection = await request({ path: `/internal/runtimes/${agent}` });
+  assert.equal(peerInspection.runtime_endpoint, managementIPv4);
+  assert.equal(peerInspection.runtime_revision, revision);
+  checks += 3;
   assert.equal(
     runtime.Config.Image,
     installed,
@@ -316,7 +323,8 @@ try {
       await delay(250, undefined, { signal: abort.signal });
     }
   };
-  await waitRuntime();
+  assert.equal((await waitRuntime()).runtime_endpoint, managementIPv4);
+  checks++;
   const beforeConnection = await probe("instance-probe", "instance", { agent });
   checks += beforeConnection.checks;
   const authMount = runtime.Mounts.find(

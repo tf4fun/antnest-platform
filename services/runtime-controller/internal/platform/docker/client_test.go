@@ -29,6 +29,10 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 		case "GET /v1.47/containers/container-1/json":
 			response = jsonResponse(http.StatusOK, map[string]any{
 				"Id": "container-1", "Name": "/antnest-runtime-agent-1", "RestartCount": 2,
+				"NetworkSettings": map[string]any{"Networks": map[string]any{
+					"antnest-runtime-management": map[string]string{"IPAddress": "10.243.1.20"},
+					"another-network":            map[string]string{"IPAddress": "10.242.1.40"},
+				}},
 				"State": map[string]any{"Running": true, "Status": "running", "ExitCode": 137, "OOMKilled": true, "Error": "startup error", "Health": map[string]string{"Status": "healthy"}},
 				"Config": map[string]any{"Labels": map[string]string{
 					labelManaged: "runtime", labelAgentID: "agent-1", labelGeneration: "7",
@@ -107,6 +111,9 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 	}
 	if containers[0].Status != "running" || containers[0].ExitCode != 137 || !containers[0].OOMKilled || containers[0].Error != "startup error" {
 		t.Fatalf("Docker process facts were dropped: %+v", containers[0])
+	}
+	if containers[0].NetworkIPv4["antnest-runtime-management"] != "10.243.1.20" || containers[0].NetworkIPv4["another-network"] != "10.242.1.40" {
+		t.Fatal("Docker network attachments were omitted", containers[0].NetworkIPv4)
 	}
 	volume, err := client.InspectVolume(ctx, "antnest-workspace-agent-1")
 	if err != nil || volume.Labels[labelManaged] != "workspace" {

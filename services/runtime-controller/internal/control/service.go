@@ -588,6 +588,7 @@ func (s *Service) inspectEnvironment(
 ) (deployment.Environment, error) {
 	environment.ObservedAt = s.now().UTC()
 	environment.Phase = deployment.PhaseUnknown
+	environment.RuntimeEndpoint = ""
 	switch environment.LifecycleState {
 	case deployment.LifecycleFailed:
 		environment.Health = deployment.HealthUnhealthy

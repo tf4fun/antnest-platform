@@ -48,7 +48,8 @@ evidence even when a test writer bypasses the userspace policy.
 ## Delivery and acceptance
 
 1. Shared contract and schema tests: passed; service implementation is pending.
-2. RC producer, docs, unit/contract/component and Docker gates: pending.
+2. RC producer: unit/race/lint/vet and PostgreSQL/component gates pass; real
+   Docker address comparisons and 134 owner checks pass, with fixtures cleaned.
 3. Egress persistence, packet validation, kernel backstop and owner gates: pending.
 4. Controller lifecycle/observation consumer and owner gates: pending.
 5. Integration: real Linux kernel bypass test, crafted-UDP peer impersonation,

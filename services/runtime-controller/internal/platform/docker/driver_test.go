@@ -517,6 +517,7 @@ func testDeployment() deployment.Deployment {
 func exactContainer() *Container {
 	return &Container{
 		ID: "container-1", Name: "antnest-runtime-agent-1", Running: true, Status: "running", Health: "healthy",
+		NetworkIPv4: map[string]string{"antnest-runtime-management": "10.243.1.20"},
 		Labels: map[string]string{
 			labelManaged: "runtime", labelScope: "test-controller",
 			labelAgentID: "agent-1", labelGeneration: "7",
@@ -672,6 +673,7 @@ func (e *fakeEngine) StartContainer(context.Context, string) error {
 		e.container.Running = true
 		e.container.Status = "running"
 		e.container.Health = "starting"
+		e.container.NetworkIPv4 = map[string]string{"antnest-runtime-management": "10.243.1.20"}
 	}
 	return e.startErr
 }

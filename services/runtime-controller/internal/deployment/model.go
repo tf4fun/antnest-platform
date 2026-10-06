@@ -480,6 +480,7 @@ type Inspection struct {
 	PlatformPhase      PlatformPhase `json:"-"`
 	Health             HealthState   `json:"-"`
 	MCPEndpoint        string        `json:"-"`
+	RuntimeEndpoint    string        `json:"-"`
 	RuntimeExecutionID string        `json:"-"`
 	RestartCount       uint64        `json:"-"`
 	ObservedAt         time.Time     `json:"-"`
@@ -499,6 +500,7 @@ type Environment struct {
 	LifecycleState     LifecycleState
 	Health             HealthState
 	MCPEndpoint        string
+	RuntimeEndpoint    string
 	RuntimeExecutionID string
 	RestartCount       uint64
 	ObservedAt         time.Time
@@ -518,6 +520,7 @@ func (e Environment) WithInspection(value Inspection) Environment {
 	e.Reason, e.DiagnosticSummary = value.Reason, value.DiagnosticSummary
 	e.Health = value.Health
 	e.MCPEndpoint = value.MCPEndpoint
+	e.RuntimeEndpoint = value.RuntimeEndpoint
 	e.RuntimeExecutionID = value.RuntimeExecutionID
 	e.RestartCount = value.RestartCount
 	e.ObservedAt = value.ObservedAt
