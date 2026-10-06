@@ -562,7 +562,10 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 	if container.Running {
 		address, err := netip.ParseAddr(peer)
 		if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.String() != peer {
-			return deployment.Inspection{}, fmt.Errorf("normalize managed Runtime container: management IPv4 is missing or invalid")
+			peer = ""
+			condition.health = deployment.HealthUnknown
+			condition.reason = "runtime_peer_unavailable"
+			condition.detail = "Runtime management IPv4 is missing or invalid"
 		}
 	} else {
 		peer = ""

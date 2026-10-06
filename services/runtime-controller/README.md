@@ -45,6 +45,8 @@ Startup rejects published PostgreSQL passwords under the [development secret pol
   of MCP URLs and execution readiness. Controller forwards the fresh address
   for Egress attachment opens and restart rebinding; see
   [peer binding](../../docs/egress-peer-binding.md).
+  Missing/invalid management IPv4 is an individual unknown-health inspection
+  with `runtime_peer_unavailable`; it does not fail the whole inventory.
 - Consume platform health and List/Watch events, verify Runtime `/status` on
   Healthy observations and explicit reads, and normalize the facts into an
   ordered, time-retained observation journal.

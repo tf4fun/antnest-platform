@@ -1,6 +1,10 @@
 package docker
 
-import "testing"
+import (
+	"context"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"testing"
+)
 
 func TestRuntimePeerUsesOnlyTheConfiguredManagementNetwork(t *testing.T) {
 	driver := newTestDriver(t, newFakeEngine())
@@ -23,7 +27,7 @@ func TestRuntimePeerUsesOnlyTheConfiguredManagementNetwork(t *testing.T) {
 	}
 }
 
-func TestRuntimePeerRejectsMissingOrNoncanonicalManagementIPv4(t *testing.T) {
+func TestRuntimePeerMarksOnlyTheUnbindableContainerUnknown(t *testing.T) {
 	driver := newTestDriver(t, newFakeEngine())
 	for _, value := range []string{"", "0.0.0.0", "127.0.0.1", "255.255.255.255", "224.0.0.1", "::1", "010.243.1.20", " 10.243.1.20 "} {
 		t.Run(value, func(t *testing.T) {
@@ -31,9 +35,39 @@ func TestRuntimePeerRejectsMissingOrNoncanonicalManagementIPv4(t *testing.T) {
 			container.NetworkIPv4 = map[string]string{
 				"antnest-runtime-management": value, "another-network": "10.242.1.40",
 			}
-			if _, err := driver.inspectContainer(*container); err == nil {
-				t.Fatal("invalid management address accepted")
+			inspection, err := driver.inspectContainer(*container)
+			if err != nil || inspection.RuntimeEndpoint != "" || inspection.Health != deployment.HealthUnknown || inspection.Reason != "runtime_peer_unavailable" || inspection.PlatformPhase != deployment.PhaseRunning {
+				t.Fatal("unbindable container failed or advertised a peer", inspection, err)
 			}
 		})
+	}
+}
+
+type peerInventoryEngine struct {
+	*fakeEngine
+	containers []Container
+}
+
+func (engine *peerInventoryEngine) ListManagedContainers(context.Context) ([]Container, error) {
+	return engine.containers, nil
+}
+
+func TestListPreservesHealthyRuntimeWhenAnotherContainerHasNoManagementPeer(t *testing.T) {
+	invalid := exactContainer()
+	delete(invalid.NetworkIPv4, "antnest-runtime-management")
+	healthy := exactContainer()
+	healthy.ID, healthy.Name = "container-2", containerName("agent-2")
+	healthy.Labels[labelAgentID] = "agent-2"
+	engine := &peerInventoryEngine{fakeEngine: newFakeEngine(), containers: []Container{*invalid, *healthy}}
+	driver, err := NewDriver(engine, testDriverConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspections, err := driver.List(t.Context())
+	if err != nil || len(inspections) != 2 {
+		t.Fatal("one disconnected Runtime hid the inventory", inspections, err)
+	}
+	if inspections[0].RuntimeEndpoint != "" || inspections[0].Reason != "runtime_peer_unavailable" || inspections[1].RuntimeEndpoint != "10.243.1.20" || inspections[1].Health != deployment.HealthHealthy {
+		t.Fatal(inspections)
 	}
 }
