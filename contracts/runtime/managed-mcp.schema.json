@@ -8,9 +8,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "value"
-          ],
+          "required": ["value"],
           "properties": {
             "value": {
               "type": "string",
@@ -21,9 +19,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "keep"
-          ],
+          "required": ["keep"],
           "properties": {
             "keep": {
               "const": true
@@ -35,17 +31,14 @@
     "secret_read": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "set",
-        "fingerprint"
-      ],
+      "required": ["set", "fingerprint"],
       "properties": {
         "set": {
           "const": true
         },
         "fingerprint": {
           "type": "string",
-          "pattern": "^sha256:[0-9a-f]{8}$"
+          "pattern": "^hmac-sha256:[0-9a-f]{32}$"
         }
       }
     },
@@ -57,10 +50,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "command"
-        ],
+        "required": ["id", "command"],
         "properties": {
           "id": {
             "type": "string",
@@ -91,7 +81,15 @@
                   {
                     "enum": [
                       "HOME",
-                      "PATH"
+                      "PATH",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "XDG_CACHE_HOME",
+                      "XDG_CONFIG_HOME",
+                      "XDG_DATA_HOME",
+                      "XDG_STATE_HOME",
+                      "XDG_RUNTIME_DIR"
                     ]
                   },
                   {
@@ -116,7 +114,15 @@
                   {
                     "enum": [
                       "HOME",
-                      "PATH"
+                      "PATH",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "XDG_CACHE_HOME",
+                      "XDG_CONFIG_HOME",
+                      "XDG_DATA_HOME",
+                      "XDG_STATE_HOME",
+                      "XDG_RUNTIME_DIR"
                     ]
                   },
                   {
@@ -140,10 +146,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "command"
-        ],
+        "required": ["id", "command"],
         "properties": {
           "id": {
             "type": "string",
@@ -174,7 +177,15 @@
                   {
                     "enum": [
                       "HOME",
-                      "PATH"
+                      "PATH",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "XDG_CACHE_HOME",
+                      "XDG_CONFIG_HOME",
+                      "XDG_DATA_HOME",
+                      "XDG_STATE_HOME",
+                      "XDG_RUNTIME_DIR"
                     ]
                   },
                   {
@@ -199,7 +210,15 @@
                   {
                     "enum": [
                       "HOME",
-                      "PATH"
+                      "PATH",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "XDG_CACHE_HOME",
+                      "XDG_CONFIG_HOME",
+                      "XDG_DATA_HOME",
+                      "XDG_STATE_HOME",
+                      "XDG_RUNTIME_DIR"
                     ]
                   },
                   {
@@ -218,11 +237,7 @@
     "template_source": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "organization_id",
-        "template_id",
-        "revision"
-      ],
+      "required": ["organization_id", "template_id", "revision"],
       "properties": {
         "organization_id": {
           "type": "string",

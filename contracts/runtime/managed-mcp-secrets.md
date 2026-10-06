@@ -1,6 +1,6 @@
 # Managed MCP secrets
 
-Revision 1. This contract is shared by Controller, Runtime Controller, Runtime
+Revision 2. This contract is shared by Controller, Runtime Controller, Runtime
 and Admin Console. The implementation is delivered in separate owner batches,
 then verified together; a producer alone does not complete issue #37.
 
@@ -12,12 +12,22 @@ Writes use `{ "value": "..." }` or, on revision only, `{ "keep": true }`.
 Keep refers to the same server ID and name in the immediately preceding
 revision; missing values are rejected. Omitting a name clears it from the new
 revision. An empty string is a valid secret. Read responses contain only
-`{ "set": true, "fingerprint": "sha256:12345678" }`. Read descriptors cannot
-be submitted as writes. Fingerprints are diagnostic, not authentication.
+`{ "set": true, "fingerprint": "hmac-sha256:0123456789abcdef0123456789abcdef" }`. Read descriptors cannot
+be submitted as writes. Fingerprints are opaque diagnostic identifiers, not plaintext checksums. Controller
+computes domain-separated HMAC-SHA-256 using a key derived from each envelope
+data key; the read fingerprint contains the first 128 bits. The data key is
+protected by the Controller encryption key/KMS and is never exported. A new
+revision (including keep) has a new envelope and may have a different fingerprint.
+Master-key re-wrapping preserves it. Template request fingerprints containing
+value writes use a separate full HMAC over the exact request, keyed by the first
+secret record in sorted server/name order. Replays use that original revision
+record, including after master-key retirement; concurrent identical requests
+recheck against the winning receipt. No unkeyed plaintext-secret digest is stored.
 
 Names are unique across env and secret_env. Existing encoding and byte limits
 apply to the combined resolved configuration, including kept values. Malformed
-Unicode, reserved names and unknown fields are rejected without echoing values.
+Unicode, reserved names (HOME, PATH, TMPDIR, TMP, TEMP, the five XDG cache/config/
+data/state/runtime variables and ANTNEST_*), and unknown fields are rejected without echoing values.
 
 Controller seals every value in its own `managed_mcp_secrets` table, in the
 same transaction as the immutable Template revision. AAD binds organization,
@@ -32,8 +42,14 @@ Lifecycle configuration pins `managed_mcp_template` and the server descriptors.
 RC journals and deployment digests contain no values. Only authenticated RC may
 resolve a frozen Template's values through Controller's internal bootstrap
 route. No end-user CCT or browser route grants access to that route. The resolver
-does not follow the current Template head. RC checks every returned value against
-the pinned fingerprint and rejects missing, extra or overlapping variables.
+does not follow the current Template head. Controller authenticates ciphertext
+and its fingerprint against the frozen location. RC and Runtime treat the
+fingerprint as opaque; they enforce exact variable names and resolved bounds,
+with integrity supplied by Controller AEAD, workload authentication and the
+protected bootstrap volume. They cannot recompute the HMAC. The resolver is not
+bound to an Agent or lifecycle operation: authenticated RC can resolve any
+organization's frozen Template revision. This is deliberate in the current
+trust model, where RC owns the Docker socket and is equivalent to host root.
 
 RC materializes a root-owned bootstrap volume scoped to Agent and generation,
 mounted read-only at `/run/antnest-mcp`. Its directory is 0700 and configuration
@@ -47,15 +63,26 @@ Config.Env, labels, health checks, deployment identity, logs or spans.
 ## Process boundary
 
 The root entry reads and verifies the private bootstrap before dropping privilege.
-It executes each server as UID 2000 + its position (0..7), with workspace GID
+It executes each server as UID 2000 + its rank in sorted server IDs (0..7), with workspace GID
 1000, empty supplementary groups, no capabilities and no-new-privileges. Values
 enter only that server's environment immediately before exec for compatibility
 with existing stdio servers. File remains root-only and unreadable by servers
 and tools. UID 1000 tools cannot read another UID's environ or ptrace it; different
 managed servers cannot read each other's environment. Do not rely on dumpability
 surviving exec: exec may reset it, so distinct UIDs are the security boundary.
-All managed UIDs share the Executor's tunnel routing and kill switch. Shared
-workspace group permissions permit intended file access without sharing a UID.
+All managed UIDs share the Executor's tunnel routing and kill switch. The cwd remains workspace. RC mounts a bounded, noexec/nosuid/nodev tmpfs at
+`/run/antnest-mcp-home` with root-owned 0711 permissions. Each server has its own
+UID-owned 0700 HOME (`<base>/<uid>`), TMPDIR/TMP/TEMP and XDG cache/config/data/
+state/runtime directories below that HOME. The entry verifies the tmpfs and
+ownership before dropping privileges. These directories are transient and reset
+on container restart; OAuth caches may require reauthentication. Managed MCP
+uses umask 077 (tools retain 007), protecting default-created files even when a
+server ignores TMPDIR and uses `/tmp`. The sorted UID allocation is invariant to
+list reordering, not to adding/removing server IDs; the transient private tree is
+recreated with each Runtime. Shared workspace GID permits intended access, but
+MCP must explicitly grant group permissions when sharing its new files. Trusted
+MCP code can still deliberately write credentials to shared locations or grant
+world/group access; UID isolation does not protect against such disclosure.
 
 ## Upgrade
 
