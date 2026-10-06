@@ -260,10 +260,6 @@ export const suites = [
     tier: "b",
     setup: [],
     pull: base,
-    disabled:
-      mode === "stage1"
-        ? "Workspace cleanup fails on Linux and the image build exceeds its timeout (#122)"
-        : undefined,
     paths: [
       ...service(...owners),
       ...runtime,

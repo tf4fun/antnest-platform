@@ -188,7 +188,8 @@ export async function runShellAcceptance(profile) {
         env,
         output,
         name: "build-" + service,
-        timeoutMs: 600000,
+        // A cold Runtime release build on a 2-core CI runner can exceed 10 min.
+        timeoutMs: 1800000,
       });
       assert.equal(gate.exit_code, 0, "candidate build failed: " + service);
     }

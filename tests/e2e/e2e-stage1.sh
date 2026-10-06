@@ -38,6 +38,14 @@ cleanup() {
   docker rm -f "$runtime_name" >/dev/null 2>&1 || true
   docker volume rm "$auth_volume" >/dev/null 2>&1 || true
   docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  if [ -d "$workspace" ]; then
+    # The Agent writes the workspace as its own uid. On a native Linux daemon
+    # the invoking user cannot delete those directories, so root clears them.
+    docker run --rm --pull never --network none --user 0:0 \
+      --mount "type=bind,src=$workspace,dst=/workspace" \
+      --entrypoint find "$runtime_image" /workspace -mindepth 1 -delete \
+      >/dev/null 2>&1 || true
+  fi
   rm -rf -- "${temporary_root:?}"
   exit "$status"
 }
