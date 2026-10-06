@@ -15,6 +15,7 @@ async fn network_session_emits_start_and_completion_events() {
     let events = Arc::new(AtomicUsize::new(0));
     let subscriber = tracing_subscriber::Registry::default().with(EventCounter(events.clone()));
     let metrics = RuntimeMetrics::default();
+    crate::test_tracing::stabilize_callsite_registry();
     let _guard = tracing::subscriber::set_default(subscriber);
     let socket = std::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
         .expect("test UDP socket");

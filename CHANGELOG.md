@@ -173,6 +173,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Runtime tests that capture tracing spans no longer lose spans or deadlock when
+run in parallel with other tests, a test-only workaround for
+[tokio-rs/tracing#3611](https://github.com/tokio-rs/tracing/issues/3611) (#123).
+
 Runtime process scans (background bash groups, managed MCP work, orphan
 collection) treat a process that exits mid-scan as gone instead of failing the
 whole scan on `ESRCH` (#115).

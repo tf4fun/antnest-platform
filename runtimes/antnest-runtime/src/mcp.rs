@@ -2047,6 +2047,7 @@ mod tool_result_tests {
         let subscriber = tracing_subscriber::registry().with(
             tracing_opentelemetry::layer().with_tracer(provider.tracer("managed-input-test")),
         );
+        crate::test_tracing::stabilize_callsite_registry();
         tracing::subscriber::with_default(subscriber, || {
             let span = super::tool_span("managed", &identity());
             span.in_scope(|| {

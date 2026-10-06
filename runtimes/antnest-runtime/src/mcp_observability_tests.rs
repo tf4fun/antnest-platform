@@ -13,6 +13,7 @@ fn http_disconnect_diagnostics_require_successful_protocol_completion() {
         .build();
     let subscriber = tracing_subscriber::registry()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("http-completion-test")));
+    crate::test_tracing::stabilize_callsite_registry();
     let _guard = tracing::subscriber::set_default(subscriber);
     for (status, succeeded, failed, termination, expected_error, expected_cancel) in [
         (

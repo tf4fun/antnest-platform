@@ -980,6 +980,7 @@ mod tests {
             .with(console)
             .with(traces);
 
+        crate::test_tracing::stabilize_callsite_registry();
         tracing::subscriber::with_default(subscriber, || {
             let span = tracing::info_span!("runtime.test");
             let _entered = span.enter();
@@ -1013,6 +1014,7 @@ mod tests {
             tracestate: None,
         };
 
+        crate::test_tracing::stabilize_callsite_registry();
         tracing::subscriber::with_default(subscriber, || {
             let span = tracing::info_span!("local-trace-test");
             set_remote_parent(&span, Some(&carrier));
@@ -1174,6 +1176,7 @@ mod tests {
         let subscriber = tracing_subscriber::Registry::default()
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer(SERVICE_NAME)));
         let mut injected_parent = None;
+        crate::test_tracing::stabilize_callsite_registry();
         tracing::subscriber::with_default(subscriber, || {
             let parent = tracing::info_span!("runtime.mcp.tool");
             let client =
