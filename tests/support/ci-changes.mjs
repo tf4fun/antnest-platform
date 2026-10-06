@@ -27,7 +27,8 @@ const service = (...names) => names.map((name) => `services/${name}/**`);
 const runtime = ["runtimes/antnest-runtime/**", ...rust];
 
 // Compose dependencies start with --pull never, so third-party images are
-// pulled before the suite runs.
+// pulled before the suite runs. A suite with a pull list is a Docker suite and
+// gets the pinned Docker Engine.
 const base = ["postgres:17.11-bookworm", "node:24.21.0-bookworm-slim"];
 const temporal = [...base, "temporalio/admin-tools:1.32.0"];
 

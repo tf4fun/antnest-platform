@@ -120,21 +120,28 @@ jobs:
           echo "no web package with Playwright is installed" >&2
           exit 1
 
-      # The runners rely on current Compose behavior, such as project labels
-      # on the images it builds; the runner image ships an older release.
-      - name: Install Docker Compose
+      # The runners are developed against Docker Engine 29 and Compose 5; the
+      # runner image ships Engine 28 and Compose 2, whose builds and network
+      # setup differ (for example, built images lack Compose project labels).
+      - name: Install Docker Engine
+        if: matrix.pull != ''
         env:
-          COMPOSE_VERSION: v5.1.2
+          ENGINE_VERSION: 29.4.0
+          COMPOSE_VERSION: 5.1.2
         run: |
-          plugins="$HOME/.docker/cli-plugins"
-          mkdir -p "$plugins"
-          cd "$plugins"
-          base="https://github.com/docker/compose/releases/download/$COMPOSE_VERSION"
-          curl -fsSLO "$base/docker-compose-linux-x86_64"
-          curl -fsSLO "$base/docker-compose-linux-x86_64.sha256"
-          sha256sum -c docker-compose-linux-x86_64.sha256
-          mv docker-compose-linux-x86_64 docker-compose
-          chmod +x docker-compose
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-ci.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-ci.asc] https://download.docker.com/linux/ubuntu noble stable" |
+            sudo tee /etc/apt/sources.list.d/docker-ci.list >/dev/null
+          sudo apt-get update -o Dir::Etc::sourcelist=sources.list.d/docker-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+          version() { apt-cache madison "$1" | awk -v want="$2" '$3 ~ ("^(5:)?" want "-") { print $3; exit }'; }
+          engine="$(version docker-ce "$ENGINE_VERSION")"
+          compose="$(version docker-compose-plugin "$COMPOSE_VERSION")"
+          test -n "$engine" && test -n "$compose"
+          sudo apt-get install -y --allow-downgrades --no-install-recommends \
+            "docker-ce=$engine" "docker-ce-cli=$engine" "docker-compose-plugin=$compose" \
+            docker-buildx-plugin containerd.io
+          docker version --format 'engine {{.Server.Version}}'
           docker compose version
 
       - name: Pull images
