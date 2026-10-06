@@ -204,6 +204,10 @@ Runtime process scans (background bash groups, managed MCP work, orphan
 collection) treat a process that exits mid-scan as gone instead of failing the
 whole scan on `ESRCH` (#115).
 
+The Agent UI workspace bridge browser test waits until the selected-view
+request is held before answering it, instead of racing the browser and
+sometimes never rendering the timeout state it then clicks (#121).
+
 Identity Service PostgreSQL revocation tests pass on Linux: their fixtures now
 create versions at PostgreSQL's microsecond precision instead of the Linux
 clock's nanoseconds, which failed later optimistic checks (#117).
