@@ -200,6 +200,11 @@ empty response at once and drains the rest of the upload, bounded to 8 MiB and
 the exchange deadline, before closing. Previously, closing with unread bytes
 reset the connection and clients saw `ECONNRESET`/`EPIPE` instead (#116).
 
+The authenticated stage 1 shell E2E cleans up on a native Linux Docker daemon:
+a short-lived root container clears the Agent-owned workspace before the host
+directory is removed. The Runtime candidate build timeout is now 30 minutes, so
+a cold build on a 2-core CI runner is not cancelled (#122).
+
 Runtime process scans (background bash groups, managed MCP work, orphan
 collection) treat a process that exits mid-scan as gone instead of failing the
 whole scan on `ESRCH` (#115).
