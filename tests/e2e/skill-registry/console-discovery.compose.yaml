@@ -3,18 +3,30 @@ services:
     extends: {file: discovery.compose.yaml, service: postgres}
   source:
     extends: {file: discovery.compose.yaml, service: source}
+  identity:
+    extends: {file: discovery.compose.yaml, service: identity}
   registry:
     extends: {file: discovery.compose.yaml, service: registry}
   console:
     image: ${ANTNEST_DISCOVERY_CONSOLE_IMAGE}
+    user: "${ANTNEST_DISCOVERY_UID:?}:${ANTNEST_DISCOVERY_GID:?}"
     depends_on:
+      identity: {condition: service_healthy}
       registry: {condition: service_healthy}
     environment:
-      ANTNEST_IDENTITY_SERVICE_URL: http://source:8080
-      ANTNEST_AGENT_CONTROLLER_URL: http://source:8080
-      ANTNEST_AGENT_ACP_SERVICE_URL: http://source:8080
+      ANTNEST_IDENTITY_SERVICE_URL: http://identity:8080
+      # Skill discovery never reaches these dependencies; the reserved names
+      # make any accidental call fail instead of hitting a fixture.
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller.invalid:8080
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://agent-acp-service.invalid:8080
       ANTNEST_SKILL_REGISTRY_URL: http://registry:8080
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: discovery-registry-control-token-at-least-32-bytes
+      ANTNEST_SERVICE_AUTH_MODE: token
+      ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
+      ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /run/auth/outgoing
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ${ANTNEST_DISCOVERY_CONSOLE_AUTH_DIRECTORY:?}:/run/auth:ro
     ports: ["127.0.0.1::8080"]
     healthcheck:
       test: [CMD, /usr/local/bin/admin-console, --healthcheck]

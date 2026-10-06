@@ -64,7 +64,7 @@ test("a service change selects only suites that exercise that service", () => {
 test("test sources select the suites that run them", () => {
   assert.deepEqual(
     ids(selectSuites(["tests/integration/admin-console/catalog-browser.mjs"])),
-    ["admin-console-browser", "deployment-contracts"],
+    ["admin-console-browser", "deployment-contracts", "skill-registry-console"],
   );
   assert.deepEqual(
     ids(

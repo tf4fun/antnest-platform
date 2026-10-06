@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { assertNoOverflow } from "../../integration/admin-console/console-browser-harness.mjs";
 import { skillArtifact } from "./stage3-fixture.mjs";
+import {
+  createFixture,
+  callerContext,
+} from "../service-authentication/registry/auth-fixture.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const require = createRequire(
@@ -22,10 +27,39 @@ const output = resolve(
   `artifacts/verification/skill-discovery-d6-20261001/docker-${id}`,
 );
 mkdirSync(output, { recursive: true, mode: 0o700 });
+const authDirectory = mkdtempSync(resolve(tmpdir(), "antnest-registry-auth-"));
+const auth = createFixture(authDirectory);
+// The Console reuses the Registry fixture's Identity credential and signing
+// key, so one Identity peer serves the caller-context JWKS to both services.
+const consoleAuthDirectory = mkdtempSync(
+  resolve(tmpdir(), "antnest-console-auth-"),
+);
+const gatewayToken = randomBytes(32).toString("base64url");
+const hash = (value) =>
+  "sha256:" + createHash("sha256").update(value, "ascii").digest("hex");
+mkdirSync(resolve(consoleAuthDirectory, "outgoing"), { mode: 0o700 });
+writeFileSync(
+  resolve(consoleAuthDirectory, "callers.json"),
+  JSON.stringify({ "edge-gateway": [hash(gatewayToken)] }),
+  { mode: 0o600 },
+);
+for (const [name, token] of Object.entries({
+  "identity-service": auth.outgoing["identity-service"],
+  "skill-registry": auth.incoming["admin-console"],
+  "agent-controller": randomBytes(32).toString("base64url"),
+  "agent-acp-service": randomBytes(32).toString("base64url"),
+}))
+  writeFileSync(resolve(consoleAuthDirectory, "outgoing", name), token, {
+    mode: 0o600,
+  });
 const env = {
   ...process.env,
   ANTNEST_DISCOVERY_TEST_IMAGE: registryImage,
   ANTNEST_DISCOVERY_CONSOLE_IMAGE: consoleImage,
+  ANTNEST_DISCOVERY_AUTH_DIRECTORY: authDirectory,
+  ANTNEST_DISCOVERY_CONSOLE_AUTH_DIRECTORY: consoleAuthDirectory,
+  ANTNEST_DISCOVERY_UID: String(process.getuid()),
+  ANTNEST_DISCOVERY_GID: String(process.getgid()),
 };
 const controller = new AbortController();
 const stop = () => {
@@ -43,7 +77,6 @@ const compose = [
   "-f",
   resolve(root, "tests/e2e/skill-registry/console-discovery.compose.yaml"),
 ];
-const token = "discovery-registry-control-token-at-least-32-bytes";
 const org = `org_${"a".repeat(32)}`;
 const owner = `user_${"c".repeat(32)}`;
 const otherOwner = `user_${"d".repeat(32)}`;
@@ -64,12 +97,17 @@ const inventory = async (client) => ({
     .filter(Boolean)
     .sort(),
 });
+const gatewayAuthorization = {
+  "Antnest-Service-Authorization": `Bearer ${gatewayToken}`,
+};
 const principal = (actor = owner, organization = org, role = "admin") => ({
-  "X-Antnest-User-ID": actor,
-  "X-Antnest-Organization-ID": organization,
-  "X-Antnest-Membership-ID": "membership-fixture",
-  "X-Antnest-System-Role": "user",
-  "X-Antnest-Organization-Role": role,
+  ...gatewayAuthorization,
+  "Antnest-Caller-Context": callerContext(auth, {
+    sub: actor,
+    org: organization,
+    org_role: role,
+    aud: ["admin-console", "skill-registry"],
+  }),
 });
 const asProjection = ({ artifact_reads, inspections, ...projection }) =>
   projection;
@@ -165,7 +203,7 @@ try {
     const response = await fetch(registry + "/internal/skill-projections", {
       method: "PUT",
       headers: {
-        Authorization: `Bearer ${token}`,
+        "Antnest-Service-Authorization": `Bearer ${auth.incoming["agent-acp-service"]}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(asProjection(projection)),
@@ -260,7 +298,7 @@ try {
   async function exercise(label, viewport, append) {
     const context = await browser.newContext({
       viewport,
-      extraHTTPHeaders: principal(),
+      extraHTTPHeaders: gatewayAuthorization,
       acceptDownloads: true,
     });
     const unexpected = [],
@@ -307,6 +345,11 @@ try {
           unexpected.push(url.pathname);
           return route.abort();
         }
+        // Edge Gateway mints a short-lived caller context per request.
+        if (url.pathname.startsWith("/api/"))
+          return route.continue({
+            headers: { ...route.request().headers(), ...principal() },
+          });
         await route.continue();
       });
       const page = await context.newPage();
@@ -544,6 +587,8 @@ try {
   } catch (error) {
     primaryError ??= error;
   }
+  rmSync(authDirectory, { recursive: true, force: true });
+  rmSync(consoleAuthDirectory, { recursive: true, force: true });
   for (const signal of ["SIGINT", "SIGTERM"]) process.off(signal, stop);
 }
 if (primaryError) throw primaryError;

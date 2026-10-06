@@ -333,7 +333,6 @@ export const suites = [
     tier: "b",
     setup: ["admin-web", "chromium"],
     pull: base,
-    disabled: "the runner predates unified service authentication (#119)",
     paths: [
       ...service("skill-registry", "admin-console"),
       "tests/e2e/skill-registry/**",

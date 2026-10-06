@@ -173,6 +173,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+The Skill Registry Admin Console discovery E2E runner uses unified service
+authentication: the Console receives an Edge Gateway service token and signed
+caller context, and calls the Registry with its own service credential instead
+of the removed `ANTNEST_SKILL_REGISTRY_API_TOKEN` (#119).
+
 Agent TCP through the Runtime tunnel now completes on hosts with strict or
 loose reverse-path filtering (`rp_filter=1` or `2`, the Ubuntu default that
 container namespaces inherit). Previously the kernel dropped every reply
