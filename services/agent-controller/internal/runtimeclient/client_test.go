@@ -219,7 +219,7 @@ func TestEnableRuntimeUsesDisabledRevisionAndCompleteConfiguration(t *testing.T)
 			payload.Configuration.ImageRef == "" ||
 			payload.Configuration.Network.TunnelIPv4 != "100.64.0.2" ||
 			payload.Configuration.Network.ResolverIPv4 != "100.64.0.1" ||
-			payload.Configuration.Network.PacketContractRevision != 1 ||
+			payload.Configuration.Network.PacketContractRevision != 2 ||
 			payload.Configuration.Network.EgressEndpoint.IPv4 != "10.20.0.8" ||
 			payload.Configuration.Network.EgressEndpoint.Port != 8092 ||
 			payload.Configuration.Resources.MemoryBytes != 536870912 ||
@@ -333,7 +333,7 @@ func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 			"lifecycle_state":"provisioned",
 			"health":"healthy",
 			"mcp_endpoint":"http://runtime-agent:8091/mcp",
-			"runtime_endpoint":"10.243.1.20",
+			"runtime_endpoint":"10.243.1.20","tunnel_key_id":"rtk_0123456789abcdef0123456789abcdef",
 			"runtime_execution_id":"execution-1",
 			"restart_count":0,
 			"observed_at":"2026-09-01T00:00:00Z"
@@ -364,7 +364,7 @@ func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 	if err := json.Unmarshal(encoded, &projection); err != nil {
 		t.Fatal(err)
 	}
-	if projection["runtime_endpoint"] != "10.243.1.20" {
+	if projection["runtime_endpoint"] != "10.243.1.20" || projection["tunnel_key_id"] != "rtk_0123456789abcdef0123456789abcdef" {
 		t.Fatal("current Runtime peer was omitted", projection)
 	}
 }
@@ -524,7 +524,7 @@ func runtimeConfiguration() ports.RuntimeConfiguration {
 		ImageRef: "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Network: ports.NetworkAttachment{
 			AgentID: "agent-1", TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-			PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+			PacketContractRevision: 2, EgressIPv4: "10.20.0.8", EgressPort: 8092,
 		},
 		Resources: domain.RuntimeResources{
 			MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,

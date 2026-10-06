@@ -21,12 +21,16 @@ func (deps *peerDependencies) InspectRuntime(context.Context, string) (ports.Run
 }
 
 func TestNetworkOpenPinsCurrentRuntimeRevisionAndAddressBeforeEffects(t *testing.T) {
-	for _, name := range []string{"ready", "missing_peer", "hostname", "stale_revision", "another_agent", "exited", "inspection_failed"} {
+	for _, name := range []string{"ready", "missing_key", "malformed_key", "missing_peer", "hostname", "stale_revision", "another_agent", "exited", "inspection_failed"} {
 		t.Run(name, func(t *testing.T) {
 			network := validLifecycleNetwork()
 			network.AgentID = "agent-1"
 			deps := &peerDependencies{lifecycleDependenciesStub: lifecycleDependenciesStub{network: network}, inspection: peerInspectionForTest("agent-1", "runtime-1")}
 			switch name {
+			case "missing_key":
+				deps.inspection.TunnelKeyID = ""
+			case "malformed_key":
+				deps.inspection.TunnelKeyID = "rtk_bad"
 			case "missing_peer":
 				deps.inspection.RuntimeEndpoint = ""
 			case "hostname":
@@ -128,5 +132,22 @@ func TestRestartObservationRebindsOpenPeerWithoutPublishingExecution(t *testing.
 				}
 			}
 		})
+	}
+}
+
+func TestObservationRebindsWhenKeyChangesAtTheSameAddress(t *testing.T) {
+	network := validLifecycleNetwork()
+	network.AgentID = "agent-1"
+	network.AttachmentState = ports.NetworkAttachmentOpen
+	network.RuntimeEndpoint = "10.20.0.9"
+	network.TunnelKeyID = "rtk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	egress := &enableDependenciesStub{network: network}
+	worker := &RuntimeObservationWorker{egress: egress}
+	inspection := peerInspectionForTest("agent-1", "runtime-1")
+	if err := worker.bindCurrentOpenPeer(t.Context(), inspection, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if egress.network.TunnelKeyID != inspection.TunnelKeyID || egress.network.AttachmentResourceVersion != 2 {
+		t.Fatal("key-only replacement was not rebound", egress.network)
 	}
 }

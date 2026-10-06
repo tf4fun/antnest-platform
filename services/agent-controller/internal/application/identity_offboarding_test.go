@@ -183,8 +183,8 @@ type revokingNetworkOpen struct {
 	revoke func()
 }
 
-func (deps *revokingNetworkOpen) SetAgentNetworkAttachment(ctx context.Context, id, state string, version uint64, runtimeEndpoint string) (ports.NetworkAttachment, error) {
-	result, err := deps.disableDependenciesStub.SetAgentNetworkAttachment(ctx, id, state, version, runtimeEndpoint)
+func (deps *revokingNetworkOpen) SetAgentNetworkAttachment(ctx context.Context, id, state string, version uint64, runtimeEndpoint string, tunnelKeyID string) (ports.NetworkAttachment, error) {
+	result, err := deps.disableDependenciesStub.SetAgentNetworkAttachment(ctx, id, state, version, runtimeEndpoint, tunnelKeyID)
 	if state == ports.NetworkAttachmentOpen {
 		deps.revoke()
 	}

@@ -55,7 +55,7 @@ func TestCreateAgentMaterializesSpecAndCompletesWithoutRuntimeReadiness(t *testi
 	dependencies := &lifecycleDependenciesStub{
 		network: ports.NetworkAttachment{
 			AgentID: "agent_expected", TunnelIPv4: "100.64.0.2",
-			ResolverIPv4: "100.64.0.1", PacketContractRevision: 1,
+			ResolverIPv4: "100.64.0.1", PacketContractRevision: 2,
 			EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
 			NetworkResourceVersion: 1, AttachmentState: ports.NetworkAttachmentClosed,
 			AttachmentResourceVersion: 1,
@@ -277,7 +277,7 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 	store := &lifecycleStoreStub{}
 	dependencies := &lifecycleDependenciesStub{network: ports.NetworkAttachment{
 		TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		PacketContractRevision: 2, EgressIPv4: "10.20.0.8", EgressPort: 8092,
 		State: ports.NetworkStateQuarantined, NetworkResourceVersion: 2,
 		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 1,
 	}}
@@ -514,8 +514,7 @@ func (dependency *lifecycleDependenciesStub) GetAgentNetwork(
 }
 
 func (dependency *lifecycleDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, _ uint64, runtimeEndpoint string,
-) (ports.NetworkAttachment, error) {
+	_ context.Context, agentID string, state string, _ uint64, runtimeEndpoint string, tunnelKeyID string) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	result := dependency.network
 	if dependency.networkIndex < len(dependency.networkResults) {
@@ -525,6 +524,7 @@ func (dependency *lifecycleDependenciesStub) SetAgentNetworkAttachment(
 	result.AgentID = agentID
 	result.AttachmentState = state
 	result.RuntimeEndpoint = runtimeEndpoint
+	result.TunnelKeyID = tunnelKeyID
 	if result.AttachmentResourceVersion == 0 {
 		result.AttachmentResourceVersion = 1
 	}
@@ -581,7 +581,7 @@ func (dependency *lifecycleDependenciesStub) InspectRuntime(
 
 func peerInspectionForTest(agentID, revision string) ports.RuntimeInspection {
 	return ports.RuntimeInspection{AgentID: agentID, RuntimeRevision: revision,
-		Phase: "running", LifecycleState: "provisioned", Health: "unknown", RuntimeEndpoint: "10.20.0.9"}
+		Phase: "running", LifecycleState: "provisioned", Health: "unknown", RuntimeEndpoint: "10.20.0.9", TunnelKeyID: "rtk_0123456789abcdef0123456789abcdef"}
 }
 
 type lifecycleStoreStub struct {
@@ -927,7 +927,7 @@ func lifecycleCreateInput(requestID string) CreateAgentInput {
 func validLifecycleNetwork() ports.NetworkAttachment {
 	return ports.NetworkAttachment{
 		TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		PacketContractRevision: 2, EgressIPv4: "10.20.0.8", EgressPort: 8092,
 		State: ports.NetworkStateActive, NetworkResourceVersion: 1,
 		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 1,
 	}

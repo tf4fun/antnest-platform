@@ -249,3 +249,20 @@ Managed MCP secret_env is write-only. Template reads show only set state and
 fingerprints; ciphertext is stored separately and bound to its immutable location.
 The [managed MCP contract](../../contracts/runtime/managed-mcp-secrets.md) defines
 keep/clear, RC-only bootstrap delivery and coordinated pre-release upgrade.
+
+## Authenticated Runtime tunnel (revision 2)
+
+Controller consumes RC's public `tunnel_key_id` together with its current
+management IPv4. Create, Enable, Rebuild and source restoration read current RC
+inspection before opening Egress. Open CAS and its acknowledgement must match
+both values; close clears both. Missing/noncanonical key IDs and packet revision
+1 attachments are rejected. A lost open response may reconcile only the
+immediately preceding CAS, including a key change at the same address.
+
+The Runtime observation journal remains independent of Egress availability.
+The separate pending-peer worker compares both address and key ID; it cannot
+reopen a lifecycle-closed attachment. Controller never receives or forwards
+private tunnel keys. RC alone privately prepares those with Egress. The shared
+[transport contract](../../docs/authenticated-runtime-tunnel.md) owns framing
+and coordinated deployment; this Controller batch records local consumption,
+with actual cross-service lifecycle acceptance reserved for integration.

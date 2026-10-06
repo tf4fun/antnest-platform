@@ -511,7 +511,7 @@ func networkAttachmentInState(
 ) bool {
 	return attachment.AgentID == agentID && attachment.TunnelIPv4 != "" &&
 		attachment.ResolverIPv4 != "" && attachment.EgressIPv4 != "" && attachment.EgressPort != 0 &&
-		attachment.PacketContractRevision != 0 && attachment.State == networkState &&
+		attachment.PacketContractRevision == 2 && attachment.State == networkState &&
 		attachment.NetworkResourceVersion != 0 && attachment.AttachmentState == attachmentState &&
 		attachment.AttachmentResourceVersion != 0
 }
@@ -552,10 +552,10 @@ func (service *LifecycleService) setKnownNetworkAttachmentState(
 		if err != nil {
 			return ports.NetworkAttachment{}, err
 		}
-		if inspection.AgentID != agentID || inspection.RuntimeRevision != expectedRuntimeRevision || inspection.LifecycleState != "provisioned" || inspection.Phase != "running" || !ports.ValidRuntimePeer(inspection.RuntimeEndpoint) {
+		if inspection.AgentID != agentID || inspection.RuntimeRevision != expectedRuntimeRevision || inspection.LifecycleState != "provisioned" || inspection.Phase != "running" || (!ports.ValidRuntimePeer(inspection.RuntimeEndpoint) || !ports.ValidTunnelKeyID(inspection.TunnelKeyID)) {
 			return ports.NetworkAttachment{}, &ports.DependencyError{Service: "runtime-controller", Code: "runtime_peer_unavailable", Retryable: true}
 		}
-		return service.egress.SetAgentNetworkAttachment(ctx, agentID, state, attachment.AttachmentResourceVersion, inspection.RuntimeEndpoint)
+		return service.egress.SetAgentNetworkAttachment(ctx, agentID, state, attachment.AttachmentResourceVersion, inspection.RuntimeEndpoint, inspection.TunnelKeyID)
 	}
 	if attachment.AttachmentState == state &&
 		networkAttachmentInState(attachment, agentID, ports.NetworkStateActive, state) {
@@ -568,8 +568,7 @@ func (service *LifecycleService) setKnownNetworkAttachmentState(
 		}
 	}
 	return service.egress.SetAgentNetworkAttachment(
-		ctx, agentID, state, attachment.AttachmentResourceVersion, "",
-	)
+		ctx, agentID, state, attachment.AttachmentResourceVersion, "", "")
 }
 
 func completedProvisionedRuntime(result ports.RuntimeOperation) bool {

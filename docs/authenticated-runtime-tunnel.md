@@ -127,6 +127,9 @@ owning Docker fixtures were removed. Private evidence lives under
 `artifacts/verification/issue-111-20261006125553Z/` and the respective owning
 harness directories.
 
-Controller consumption and coordinated deployment/old-address-reassignment
-acceptance remain pending. These producer gates do not claim the business
+Controller consumption passed its local unit/lint gates, 685 tests and 1227
+subtests with race detection and no skips under PostgreSQL/Temporal, and 106
+owning Docker checks. Its source-IP/key-ID validation, same-address rebind,
+lost-open replay and source restoration are covered. Coordinated deployment
+and old-address-reassignment acceptance remain pending. These producer gates do not claim the business
 workflow is complete.

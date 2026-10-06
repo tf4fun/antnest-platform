@@ -45,9 +45,10 @@ func (egress *peerRetryComponentEgress) GetAgentNetwork(ctx context.Context, id 
 func TestPeerRetryCommitsJournalAndHealthBeforeEgressAndRecoversAfterWorkerRestart(t *testing.T) {
 	ctx, repo, _ := controllerTestConnection(t)
 	base, _ := seedConfiguredAgentForTest(t, ctx, repo, false)
-	source := &peerRetryComponentSource{current: ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, RuntimeEndpoint: "10.20.0.10", RuntimeExecutionID: "new-process", MCPEndpoint: "http://runtime:8091/mcp", Phase: "running", LifecycleState: "provisioned", Health: "healthy"}}
+	source := &peerRetryComponentSource{current: ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, RuntimeEndpoint: "10.20.0.10", TunnelKeyID: "rtk_0123456789abcdef0123456789abcdef", RuntimeExecutionID: "new-process", MCPEndpoint: "http://runtime:8091/mcp", Phase: "running", LifecycleState: "provisioned", Health: "healthy"}}
 	network := *closedNetworkAttachment(base.Agent.AgentID)
 	network.AttachmentState, network.RuntimeEndpoint = ports.NetworkAttachmentOpen, "10.20.0.9"
+	network.TunnelKeyID = "rtk_0123456789abcdef0123456789abcdef"
 	egress := &peerRetryComponentEgress{offboardingDependencies: offboardingDependencies{network: network}, failure: errors.New("Egress unavailable")}
 	newWorker := func() *application.RuntimeObservationWorker {
 		worker, err := application.NewRuntimeObservationWorker(source, repo, egress, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))

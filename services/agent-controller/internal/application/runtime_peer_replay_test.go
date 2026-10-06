@@ -16,12 +16,13 @@ type peerReplayDependencies struct {
 func (deps *peerReplayDependencies) GetAgentNetwork(context.Context, string) (ports.NetworkAttachment, error) {
 	return deps.current, nil
 }
-func (deps *peerReplayDependencies) SetAgentNetworkAttachment(_ context.Context, _ string, _ string, version uint64, peer string) (ports.NetworkAttachment, error) {
+func (deps *peerReplayDependencies) SetAgentNetworkAttachment(_ context.Context, _ string, _ string, version uint64, peer string, tunnelKeyID string) (ports.NetworkAttachment, error) {
 	deps.versions = append(deps.versions, version)
 	if version != deps.current.AttachmentResourceVersion {
 		return ports.NetworkAttachment{}, &ports.DependencyError{Service: "runtime-egress", Code: "resource_version_conflict"}
 	}
 	deps.current.RuntimeEndpoint = peer
+	deps.current.TunnelKeyID = tunnelKeyID
 	deps.current.AttachmentResourceVersion++
 	return deps.current, nil
 }
@@ -47,5 +48,21 @@ func TestOpenRetryRebindsAfterLostResponseAndRuntimeAddressChange(t *testing.T) 
 				t.Fatal("borrowed a newer lifecycle version", err, deps.versions)
 			}
 		})
+	}
+}
+
+func TestLostOpenResponseRebindsChangedKeyAtTheSameAddress(t *testing.T) {
+	original := validLifecycleNetwork()
+	original.AgentID = "agent-1"
+	current := original
+	current.AttachmentState = ports.NetworkAttachmentOpen
+	current.AttachmentResourceVersion = 2
+	current.RuntimeEndpoint = "10.20.0.9"
+	current.TunnelKeyID = "rtk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	deps := &peerReplayDependencies{peerDependencies: peerDependencies{inspection: peerInspectionForTest("agent-1", "runtime-1")}, current: current}
+	service := &LifecycleService{runtime: deps, egress: deps}
+	result, err := service.openRuntimeNetwork(t.Context(), "agent-1", "runtime-1", original)
+	if err != nil || result.TunnelKeyID != deps.inspection.TunnelKeyID || len(deps.versions) != 2 || deps.versions[1] != 2 {
+		t.Fatal("lost open did not recover changed generation", result, err, deps.versions)
 	}
 }

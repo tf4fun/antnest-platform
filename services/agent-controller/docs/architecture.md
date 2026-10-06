@@ -688,3 +688,15 @@ See [private Runtime publication](execution-publication.md#private-runtime-autho
 ACP instance-client adoption remains a separate #30 owning-service batch.
 Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
 for remaining receivers, deployment and final cross-service acceptance.
+
+### Revision 2 tunnel identity
+
+Runtime inspection carries the public generation `tunnel_key_id`. Lifecycle
+open and source restoration require the inspected revision, running phase,
+canonical management IPv4 and canonical key ID. Egress CAS and response bind
+both IP and key ID. The pending-peer worker rebinds if either changes, while
+journal progress remains independent of Egress. Closed attachments are never
+reopened by observation. Lost-open recovery cannot borrow a later lifecycle
+cycle, even when only the key changed at the same address. Controller owns no
+private key delivery; see the
+[shared contract](../../../docs/authenticated-runtime-tunnel.md).
