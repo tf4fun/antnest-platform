@@ -22,6 +22,11 @@ async fn network_session_emits_start_and_completion_events() {
     socket.set_nonblocking(true).expect("nonblocking UDP");
     let (reader, _writer) = nix::unistd::pipe().expect("test pipe");
     let network = NetworkSession(UdpNetwork {
+        peer: crate::tunnel_auth::decode(
+            &crate::tunnel_auth_tests::fixture().1,
+            &crate::tunnel_auth_tests::fixture().0,
+        )
+        .unwrap(),
         socket: tokio::net::UdpSocket::from_std(socket).expect("async UDP socket"),
         mtu: 64,
         tun: Arc::new(
@@ -52,20 +57,115 @@ async fn packet_path_probe_requires_a_correlated_egress_reply() {
         .expect("test Egress UDP");
     let endpoint = egress.local_addr().expect("Egress address");
     let responder = tokio::spawn(async move {
-        let mut packet = [0_u8; 1400];
-        let (size, peer) = egress.recv_from(&mut packet).await.expect("probe");
-        let reply = unsupported_ipv4_rejection(&packet[..size]).expect("probe reset");
-        egress.send_to(&reply, peer).await.expect("probe response");
+        let id =
+            antnest_runtime_tunnel::KeyId::parse("rtk_0102030405060708090a0b0c0d0e0f10").unwrap();
+        let mut crypto = antnest_runtime_tunnel::Peer::new(
+            id,
+            [29; 32],
+            antnest_runtime_tunnel::Peer::public_key([11; 32]),
+            [53; 32],
+        );
+        let mut packet = [0u8; antnest_runtime_tunnel::MAX_DATAGRAM + 1];
+        loop {
+            let (size, peer) = egress.recv_from(&mut packet).await.expect("probe");
+            let Ok(events) = crypto.receive(&packet[..size], peer.ip()) else {
+                return;
+            };
+            for event in events {
+                match event {
+                    antnest_runtime_tunnel::Event::Network(frame) => {
+                        egress.send_to(&frame, peer).await.unwrap();
+                    }
+                    antnest_runtime_tunnel::Event::Ipv4(inner) => {
+                        let reply = unsupported_ipv4_rejection(&inner).unwrap();
+                        for output in crypto.send(&reply).unwrap() {
+                            if let antnest_runtime_tunnel::Event::Network(frame) = output {
+                                egress.send_to(&frame, peer).await.unwrap();
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
     });
     let socket = connect_management_udp(endpoint).expect("connected UDP");
 
     verify_egress_path(
         &socket,
+        &mut crate::tunnel_auth::decode(
+            &crate::tunnel_auth_tests::fixture().1,
+            &crate::tunnel_auth_tests::fixture().0,
+        )
+        .unwrap(),
         Ipv4Addr::new(100, 64, 0, 2),
-        1400,
         1,
         1,
         std::time::Duration::from_millis(200),
+    )
+    .await
+    .expect("matching response proves path");
+    responder.await.expect("responder task");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn packet_path_probe_retries_lost_handshake_without_raw_fallback() {
+    let egress = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("test Egress UDP");
+    let endpoint = egress.local_addr().expect("Egress address");
+    let responder = tokio::spawn(async move {
+        let id =
+            antnest_runtime_tunnel::KeyId::parse("rtk_0102030405060708090a0b0c0d0e0f10").unwrap();
+        let mut crypto = antnest_runtime_tunnel::Peer::new(
+            id,
+            [29; 32],
+            antnest_runtime_tunnel::Peer::public_key([11; 32]),
+            [53; 32],
+        );
+        let mut packet = [0u8; antnest_runtime_tunnel::MAX_DATAGRAM + 1];
+        let (size, _) = egress
+            .recv_from(&mut packet)
+            .await
+            .expect("first handshake");
+        assert!(size > 20 && &packet[..4] == b"ANT2");
+        // Drop the first authenticated handshake; the real engine must retry.
+        loop {
+            let (size, peer) = egress.recv_from(&mut packet).await.expect("probe");
+            let Ok(events) = crypto.receive(&packet[..size], peer.ip()) else {
+                return;
+            };
+            for event in events {
+                match event {
+                    antnest_runtime_tunnel::Event::Network(frame) => {
+                        egress.send_to(&frame, peer).await.unwrap();
+                    }
+                    antnest_runtime_tunnel::Event::Ipv4(inner) => {
+                        let reply = unsupported_ipv4_rejection(&inner).unwrap();
+                        for output in crypto.send(&reply).unwrap() {
+                            if let antnest_runtime_tunnel::Event::Network(frame) = output {
+                                egress.send_to(&frame, peer).await.unwrap();
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    let socket = connect_management_udp(endpoint).expect("connected UDP");
+
+    verify_egress_path(
+        &socket,
+        &mut crate::tunnel_auth::decode(
+            &crate::tunnel_auth_tests::fixture().1,
+            &crate::tunnel_auth_tests::fixture().0,
+        )
+        .unwrap(),
+        Ipv4Addr::new(100, 64, 0, 2),
+        1,
+        3,
+        std::time::Duration::from_secs(3),
     )
     .await
     .expect("matching response proves path");
@@ -81,8 +181,12 @@ async fn packet_path_probe_fails_closed_when_egress_does_not_reply() {
 
     let error = verify_egress_path(
         &socket,
+        &mut crate::tunnel_auth::decode(
+            &crate::tunnel_auth_tests::fixture().1,
+            &crate::tunnel_auth_tests::fixture().0,
+        )
+        .unwrap(),
         Ipv4Addr::new(100, 64, 0, 2),
-        1400,
         1,
         1,
         std::time::Duration::from_millis(20),

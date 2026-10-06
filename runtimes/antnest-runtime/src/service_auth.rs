@@ -56,6 +56,7 @@ pub(crate) struct ConfigError;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BootstrapDescriptor {
+    pub(crate) tunnel: crate::tunnel_auth::Descriptor,
     pub(crate) connection_id: String,
     pub(crate) callers_file: String,
     pub(crate) receiver_digest: String,
@@ -63,6 +64,7 @@ pub(crate) struct BootstrapDescriptor {
 
 impl BootstrapDescriptor {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        self.tunnel.validate()?;
         let connection = self
             .connection_id
             .strip_prefix("rci_")
@@ -80,7 +82,7 @@ impl BootstrapDescriptor {
     }
 }
 
-fn valid_digest(value: &str) -> bool {
+pub(crate) fn valid_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|v| {
         v.len() == 64
             && v.bytes()
@@ -135,12 +137,21 @@ pub(crate) fn read_receiver_directory(
     }
     let entries = fs::read_dir(directory)
         .map_err(|_| ConfigError)?
-        .take(2)
+        .take(3)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| ConfigError)?;
-    if entries.len() != 1 || entries[0].file_name() != "callers.json" {
+    if entries.len() != 2
+        || !entries
+            .iter()
+            .any(|entry| entry.file_name() == "callers.json")
+        || !entries
+            .iter()
+            .any(|entry| entry.file_name() == "tunnel.json")
+    {
         return Err(ConfigError);
     }
+    // Verify the complete private bootstrap before any Executor/MCP admission.
+    crate::tunnel_auth::read_opened(&root, &descriptor.tunnel, uid, gid)?;
     // O_NONBLOCK ensures a malicious FIFO cannot stall startup; O_NOFOLLOW and
     // openat retain the already verified directory instead of following a link.
     let fd = unsafe {

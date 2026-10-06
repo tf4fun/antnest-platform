@@ -29,7 +29,7 @@ UID 1000 network traffic is forced through a TUN device to Runtime Egress.
   metadata ([File observations](docs/file-observations.md)).
 - Send UID/GID 1000 traffic through TUN while keeping root control traffic on
   the platform main routing table, and carry structurally valid IPv4/TCP
-  packets to Runtime Egress as one raw packet per UDP datagram.
+  packets to Runtime Egress inside authenticated WireGuard datagrams (revision 2).
 - Preserve background processes across successful calls and turns.
   Cancellation targets only the current invocation's process group.
 - Accept signed, Run-bound temporary Skill packages and signed Skill
@@ -63,7 +63,7 @@ UID 1000 network traffic is forced through a TUN device to Runtime Egress.
 | Inbound   | `/mcp`, all methods/subpaths                         | ACP workload admission before SDK dispatch; requires the execution fence |
 | Inbound   | `POST /internal/skill-maintenance/{action}`          | Signed Skill maintenance requests from Agent ACP Service                 |
 | Inbound   | `POST /internal/skill-temporary/install`, `/release` | Signed temporary Skill delivery from Agent ACP Service                   |
-| Outbound  | Connected UDP socket to Runtime Egress               | Raw IPv4/TCP packet tunnel for all UID 1000 traffic                      |
+| Outbound  | Connected UDP socket to Runtime Egress               | Authenticated IPv4/TCP tunnel for all executor traffic                      |
 | Outbound  | OTLP HTTP/protobuf                                   | Optional trace and metric export to a private Collector                  |
 
 All inbound endpoints listen on an internal platform address and must not be
@@ -101,12 +101,12 @@ inputs; RuntimeSpec is the only deployment configuration. Telemetry variables
 are never copied into Executor environments.
 
 Production `serve` additionally requires RuntimeSpec's nonsecret `authentication`
-descriptor: an RC-issued connection ID, the fixed callers path, and the complete
-receiver file digest. Before network setup or HTTP, Runtime validates the root
-directory (UID/GID 0, mode 0700), the sole regular file (UID/GID 0, mode 0600),
-its digest and the strict bounded RC/ACP hash profile. Missing files, links,
+descriptor: an RC-issued connection ID, fixed callers path/digest and the
+tunnel key ID, fixed `tunnel.json` path/digest. Before network setup or HTTP, Runtime validates the root
+directory (UID/GID 0, mode 0700), both regular files (UID/GID 0, mode 0600),
+their digests and the strict bounded RC/ACP hash profile. Missing files, links,
 FIFOs, extra entries, duplicate JSON members and unsupported TLS configuration
-fail closed. Neither bearer enters RuntimeSpec, the Runtime environment or tool
+fail closed. Neither bearer or tunnel private key enters RuntimeSpec, the Runtime environment or tool
 subprocesses. See the [private instance contract](../../contracts/runtime/instance-connection.md).
 
 Requests use the dedicated `Antnest-Service-Authorization` header. Unknown or
@@ -277,8 +277,8 @@ batches; this receiver gate does not complete the platform workflow.
   Skill delivery contract.
 - [packet-format.md](../../contracts/runtime/packet-format.md),
   [packet-contract.json](../../contracts/runtime/packet-contract.json), and
-  [packet-fixtures.json](../../contracts/runtime/packet-fixtures.json) - raw
-  IP over UDP tunnel contract and examples.
+  [packet-fixtures.json](../../contracts/runtime/packet-fixtures.json) - authenticated
+  authenticated WireGuard tunnel contract and decoded inner packet examples.
 
 Managed MCP processes use dedicated reserved identities (UIDs 2000..2007),
 assigned by sorted server IDs, sharing only workspace GID 1000. Each server has
@@ -290,3 +290,18 @@ root-only bootstrap mount, never the Runtime/launcher environment. See the
 [managed secret contract](../../contracts/runtime/managed-mcp-secrets.md). RC owns
 private-volume delivery and Console the write-only editor; root managed-MCP
 acceptance verifies the complete cross-service flow.
+
+## Authenticated packet transport (#111)
+
+The root Supervisor loads the generation's private X25519 key, PSK and Egress
+public key from RC's read-only private volume. BoringTun 0.7.1 owns authenticated
+encryption, replay checks, handshake/session rekey and keepalive timers. Only
+verified decrypted IPv4/TCP destined to this Runtime reaches TUN; raw UDP payloads
+have no compatibility path. Readiness drives the same engine and its 250 ms
+clock, with three bounded 3-second probe attempts (covering the 5-second handshake
+retry). Packet/session errors are local loss; TUN/socket failure remains fatal.
+
+Runtime/Egress restarts create fresh ephemeral sessions with the retained
+generation's static material. Egress registration, Controller key-aware open and
+final deployment integration are pending subsequent #111 owning batches.
+See [the shared design](../../docs/authenticated-runtime-tunnel.md).

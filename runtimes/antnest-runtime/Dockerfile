@@ -9,6 +9,8 @@ WORKDIR /src
 COPY runtimes/antnest-runtime/rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show active-toolchain
 COPY runtimes/antnest-runtime ./runtimes/antnest-runtime
+COPY modules/runtime-tunnel ./modules/runtime-tunnel
+COPY tests/support/runtime-tunnel ./tests/support/runtime-tunnel
 COPY tests/integration/antnest-runtime ./tests/integration/antnest-runtime
 COPY tests/integration/skill-registry/package-rules-v1.json ./tests/integration/skill-registry/package-rules-v1.json
 COPY contracts/runtime ./contracts/runtime

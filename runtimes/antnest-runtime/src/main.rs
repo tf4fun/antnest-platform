@@ -20,7 +20,6 @@ mod managed_mcp;
 mod mcp;
 mod mcp_progress;
 mod network;
-#[cfg(target_os = "linux")]
 mod network_session;
 mod packet;
 mod privilege;
@@ -33,6 +32,9 @@ mod roots;
 mod service_auth;
 #[cfg(test)]
 mod service_auth_tests;
+mod tunnel_auth;
+#[cfg(test)]
+mod tunnel_auth_tests;
 #[cfg(test)]
 mod service_admission_component_tests {
     include!(concat!(
@@ -620,10 +622,21 @@ async fn serve_runtime(
     use std::time::Duration;
 
     let identity = spec.identity().clone();
-    let network_session =
-        network_session::NetworkSession::prepare(network, spec.identity().generation())
-            .await
-            .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
+    let descriptor = spec.authentication().ok_or_else(|| {
+        runtime_failure(
+            identity.clone(),
+            "network",
+            crate::lifecycle_error::RuntimeErrorCode::NetworkTransportFailed,
+            "private tunnel bootstrap unavailable",
+        )
+    })?;
+    let network_session = network_session::NetworkSession::prepare(
+        network,
+        spec.identity().generation(),
+        &descriptor.tunnel,
+    )
+    .await
+    .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
     tracing::info!(
         lifecycle.event = "egress_path_verified",
         "antnest.agent.id" = spec.identity().agent_id(),

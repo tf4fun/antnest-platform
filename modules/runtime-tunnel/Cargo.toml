@@ -10,6 +10,15 @@ boringtun = { version = "=0.7.1", default-features = false }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 zeroize = "1.8.2"
 
+[dev-dependencies]
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[[example]]
+name = "readiness-peer"
+path = "../../tests/support/runtime-tunnel/readiness-peer.rs"
+
 [[test]]
 name = "protocol"
 path = "tests/protocol.rs"

@@ -139,7 +139,8 @@
   },
   "egress_tunnel": {
     "kind": "udp",
-    "payload": "one-complete-ipv4-packet",
+    "payload": "ant2-prefixed-wireguard-message",
+    "inner_payload": "one-complete-ipv4-packet",
     "packet_contract": "packet-contract.json",
     "traced": false,
     "policy_owner": "runtime-egress"
