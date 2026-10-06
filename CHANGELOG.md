@@ -2,11 +2,52 @@
 
 ## Unreleased
 
+### Upgrade requirement
+
+**The first #42 upgrade requires downtime for Controller and Identity; rolling
+old/new binaries is unsupported, even when retaining single-key configuration.**
+Back up each owned database with its keys and matching binary, then stop all old
+replicas before starting upgraded replicas and reopening traffic. New writes use
+envelopes that old binaries cannot read; old binaries also reject the migrated
+journal. **Rollback requires restoring the pre-upgrade database, keys and binary
+together**, rather than only downgrading the image. This initial cutover is
+separate from the subsequent online key rotation. See
+[Rotating encryption keys](docs/encryption-key-rotation.md).
+
 ### Changed
 
-Development Compose requires all twelve database/bootstrap passwords and
-encryption keys instead of falling back to public values (#13). `.env.example`
-leaves secrets empty. Quick start and operations use `scripts/generate-dev-env.sh`,
+Controller and Identity support active/decrypt-only master-key rings and online
+`rekey --batch-size N` commands (#42). New writes use authenticated per-record
+data-key envelopes; key IDs, service and record identity are bound to encryption.
+Envelope rotation rewraps data keys; historical single-key ciphertext remains
+readable as `local-v1` and is converted once. Identity adds key IDs/wrapped keys
+to both OIDC tables; Controller adds wrapped keys to Provider credentials.
+The shared Go module exposes a KMS adapter seam; no external adapter is shipped.
+
+Controller and Identity share encryption configuration loading through the
+dependency-free `secret-encryption` module. Each service passes its own prefix
+and key-check callback; active and decrypt-only keys retain the existing
+development-secret admission, sanitized errors and variable-only WARNs. The
+module does not depend on `service-authentication`.
+
+Once all replicas are upgraded, add both keys, switch all writers, run rekey until
+every owned table reports zero, then remove the old key. Keep retired keys with
+old backups. See
+[Rotating encryption keys](docs/encryption-key-rotation.md). Single-key mode and
+the existing public-secret admission gate remain; ring values/active IDs are
+exact and never trimmed. ACP's client-MCP key is outside this rotation.
+
+Development deployments require all twelve database/bootstrap passwords and
+encryption keys instead of falling back to public values (#13). Controller and
+Identity now validate their single-key/ring choice at startup. Compose forwards
+these fields with `:-`, so `compose config` can succeed when either owner's
+encryption configuration is missing or conflicting; `docker compose up --wait`
+then fails because the service refuses startup. Compose's render-time
+missing-secret check covers **10 of the original 12 fields**: nine passwords and
+the ACP client-MCP key. This avoids Compose 2.38 evaluating `:?` inside an unused
+alternative branch; all secrets remain mandatory and have no public fallback.
+`.env.example` leaves secrets empty. Quick start and operations use
+`scripts/generate-dev-env.sh`,
 which creates independent random passwords/keys in a 0600 `.env`, refuses existing
 output by default, and prints only the administrator password once.
 
@@ -79,6 +120,17 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Standard Compose single-key configuration now also renders with Compose 2.38.2,
+used by repository CI. Removed nested required-value interpolation that evaluated
+the unused ring branch. The existing service startup checks still reject missing
+keys, conflicting modes and invalid ring members before admitting traffic (#42).
+
+Stored Provider and OIDC secrets no longer depend on one irreplaceable master
+key (#42). Bounded row-locked rekey batches resume after interruption and preserve
+business revisions, timestamps, pending callbacks and Runtime identity. Identity
+metadata updates also rewrap a retained secret under the active key instead of
+writing the decrypt-only key back. Unknown keys and tampering fail closed.
 
 Unconfigured deployments can no longer start with the repository's publicly
 known credentials or all-zero keys (#13). PostgreSQL password checks use each

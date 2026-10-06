@@ -37,8 +37,8 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 		loaded.IdentityServiceURL != values["ANTNEST_IDENTITY_SERVICE_URL"] {
 		t.Fatalf("dependency URLs = %+v", loaded)
 	}
-	if len(loaded.EncryptionKey) != 32 {
-		t.Fatalf("encryption key length = %d", len(loaded.EncryptionKey))
+	if len(loaded.Encryption.Keys["local-v1"]) != 32 {
+		t.Fatalf("encryption key length = %d", len(loaded.Encryption.Keys["local-v1"]))
 	}
 
 	delete(values, "ANTNEST_AGENT_CONTROLLER_DATABASE_URL")

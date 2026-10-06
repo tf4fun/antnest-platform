@@ -14,7 +14,7 @@ func TestLoadAppliesIdentityDefaultsAndBootstrap(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	if config.ListenAddress != ":8080" || config.TokenTTL != 12*time.Hour ||
-		config.OIDCSessionTTL != 10*time.Minute || len(config.EncryptionKey) != 32 {
+		config.OIDCSessionTTL != 10*time.Minute || len(config.Encryption.Keys["local-v1"]) != 32 {
 		t.Fatalf("config = %+v", config)
 	}
 	if config.Bootstrap.OrganizationSlug != "engineering" || config.Bootstrap.AdminEmail != "admin@example.com" {

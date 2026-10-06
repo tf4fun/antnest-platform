@@ -10,6 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
+	github.com/tf4fun/antnest-platform/modules/secret-encryption v0.0.0
 	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
 	go.opentelemetry.io/otel v1.46.0
@@ -63,3 +64,5 @@ require (
 )
 
 replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication
+
+replace github.com/tf4fun/antnest-platform/modules/secret-encryption => ../../modules/secret-encryption

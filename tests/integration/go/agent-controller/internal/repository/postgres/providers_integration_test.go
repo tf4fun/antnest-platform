@@ -132,10 +132,10 @@ func assertProviderModelIsolation(t *testing.T, service *application.CatalogServ
 func assertEncryptedProviderCredential(t *testing.T, repository *Repository, box *credentials.SecretBox, view application.ProviderConnectionView) {
 	t.Helper()
 	var sealed ports.SealedSecret
-	err := repository.pool.QueryRow(context.Background(), `SELECT ciphertext, nonce, key_version
+	err := repository.pool.QueryRow(context.Background(), `SELECT ciphertext, nonce, key_version, wrapped_data_key
 FROM agent_controller.provider_connections WHERE id=$1 AND current_credential_version=$2`, view.ConnectionID, view.CredentialVersion).
-		Scan(&sealed.Ciphertext, &sealed.Nonce, &sealed.KeyVersion)
-	if err != nil || strings.Contains(string(sealed.Ciphertext), "new-secret") {
+		Scan(&sealed.Ciphertext, &sealed.Nonce, &sealed.KeyVersion, &sealed.WrappedDataKey)
+	if err != nil || len(sealed.WrappedDataKey) == 0 || strings.Contains(string(sealed.Ciphertext), "new-secret") {
 		t.Fatalf("credential was not encrypted: %v", err)
 	}
 	secret, err := box.Open(context.Background(), ports.CredentialIdentity{

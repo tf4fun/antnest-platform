@@ -58,9 +58,10 @@ func (a *OIDCAdapter) UpsertProvider(
 				id, organization_id, name, display_name, issuer, client_id,
 				client_secret_ciphertext, client_secret_nonce, scopes, enabled, revision,
 				authorization_endpoint, token_endpoint, token_endpoint_auth_method,
-				id_token_signing_algs, userinfo_endpoint, jwks_uri, created_at, updated_at
+				id_token_signing_algs, userinfo_endpoint, jwks_uri, created_at, updated_at,
+				client_secret_key_id, client_secret_wrapped_data_key
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 			)
 			ON CONFLICT (organization_id, name) DO UPDATE SET
 				display_name = EXCLUDED.display_name,
@@ -68,6 +69,8 @@ func (a *OIDCAdapter) UpsertProvider(
 				client_id = EXCLUDED.client_id,
 				client_secret_ciphertext = EXCLUDED.client_secret_ciphertext,
 				client_secret_nonce = EXCLUDED.client_secret_nonce,
+				client_secret_key_id = EXCLUDED.client_secret_key_id,
+				client_secret_wrapped_data_key = EXCLUDED.client_secret_wrapped_data_key,
 				scopes = EXCLUDED.scopes,
 				enabled = EXCLUDED.enabled,
 				revision = oidc_providers.revision + 1,
@@ -87,7 +90,7 @@ func (a *OIDCAdapter) UpsertProvider(
 			provider.ClientSecret.Nonce, provider.Scopes, provider.Enabled, provider.Revision,
 			provider.AuthorizationEndpoint, provider.TokenEndpoint, provider.TokenEndpointAuthMethod,
 			provider.IDTokenSigningAlgs, provider.UserInfoEndpoint, provider.JWKSURI,
-			provider.CreatedAt, provider.UpdatedAt,
+			provider.CreatedAt, provider.UpdatedAt, provider.ClientSecret.KeyID, provider.ClientSecret.WrappedDataKey,
 		).Scan(&provider.ID, &provider.CreatedAt, &provider.Revision); err != nil {
 			if err == pgx.ErrNoRows {
 				var current oidcflow.Provider
@@ -211,11 +214,11 @@ func (a *OIDCAdapter) CreateSession(ctx context.Context, command oidcflow.Create
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO oidc_auth_sessions (
 				id, provider_id, organization_id, provider_revision, state_hash, request_id, status,
-				secret_ciphertext, secret_nonce, expires_at, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+				secret_ciphertext, secret_nonce, expires_at, created_at, updated_at, secret_key_id, secret_wrapped_data_key
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13)`,
 			session.ID, session.ProviderID, session.OrganizationID, session.ProviderRevision,
 			command.StateHash, command.RequestID, session.Status,
-			session.Secrets.Ciphertext, session.Secrets.Nonce, session.ExpiresAt, session.CreatedAt,
+			session.Secrets.Ciphertext, session.Secrets.Nonce, session.ExpiresAt, session.CreatedAt, session.Secrets.KeyID, session.Secrets.WrappedDataKey,
 		); err != nil {
 			return fmt.Errorf("insert OIDC session: %w", err)
 		}
@@ -552,7 +555,7 @@ func (a *OIDCAdapter) sessionByState(
 		       COALESCE(u.system_role, 'user'), COALESCE(m.role, 'member'),
 		       COALESCE(u.active, FALSE), COALESCE(m.active, FALSE), COALESCE(o.active, FALSE),
 		       COALESCE(t.id, ''), t.expires_at, t.revoked_at,
-		       COALESCE(o.slug, ''), COALESCE(o.name, '')
+		       COALESCE(o.slug, ''), COALESCE(o.name, ''), s.secret_key_id, s.secret_wrapped_data_key
 		FROM oidc_auth_sessions s
 		LEFT JOIN users u ON u.id = s.completed_user_id
 		LEFT JOIN organization_memberships m
@@ -570,7 +573,7 @@ func (a *OIDCAdapter) sessionByState(
 		&userID, &membershipID, &systemRole, &organizationRole,
 		&userActive, &membershipActive, &organizationActive,
 		&tokenID, &tokenExpiresAt, &tokenRevokedAt,
-		&organizationSlug, &organizationName,
+		&organizationSlug, &organizationName, &session.Secrets.KeyID, &session.Secrets.WrappedDataKey,
 	)
 	if err != nil {
 		return oidcflow.AuthSession{}, oidcflow.CompletedLogin{}, err
@@ -602,7 +605,7 @@ const providerSelect = `
 	       p.client_secret_ciphertext, p.client_secret_nonce, p.scopes,
 	       p.enabled, p.revision, p.authorization_endpoint, p.token_endpoint,
 	       p.token_endpoint_auth_method, p.id_token_signing_algs, p.userinfo_endpoint,
-	       p.jwks_uri, p.created_at, p.updated_at
+	       p.jwks_uri, p.created_at, p.updated_at, p.client_secret_key_id, p.client_secret_wrapped_data_key
 	FROM oidc_providers p`
 
 const providerMetadataSelect = `
@@ -620,7 +623,7 @@ func scanProviderRow(row rowScanner) (oidcflow.ProviderWithSecret, error) {
 		&provider.ClientSecret.Nonce, &provider.Scopes, &provider.Enabled, &provider.Revision,
 		&provider.AuthorizationEndpoint, &provider.TokenEndpoint, &provider.TokenEndpointAuthMethod,
 		&provider.IDTokenSigningAlgs, &provider.UserInfoEndpoint,
-		&provider.JWKSURI, &provider.CreatedAt, &provider.UpdatedAt,
+		&provider.JWKSURI, &provider.CreatedAt, &provider.UpdatedAt, &provider.ClientSecret.KeyID, &provider.ClientSecret.WrappedDataKey,
 	)
 	if err != nil {
 		return oidcflow.ProviderWithSecret{}, normalizeError(err)

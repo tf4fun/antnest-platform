@@ -1,55 +1,42 @@
 package credentials
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"fmt"
+	"context"
+
+	secretencryption "github.com/tf4fun/antnest-platform/modules/secret-encryption"
 )
 
-type SealedSecret struct {
-	Ciphertext []byte
-	Nonce      []byte
+type SealedSecret = secretencryption.SealedSecret
+
+type Rekeyer interface {
+	ActiveKeyID() string
+	Rekey(context.Context, SealedSecret, string) (SealedSecret, error)
 }
 
-type SecretBox struct {
-	aead cipher.AEAD
-}
+type SecretBox struct{ box *secretencryption.Box }
 
 func NewSecretBox(key []byte) (*SecretBox, error) {
-	if len(key) != 32 {
-		return nil, fmt.Errorf("secret box key must contain exactly 32 bytes")
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("create AES cipher: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("create AES-GCM: %w", err)
-	}
-	return &SecretBox{aead: aead}, nil
+	return NewKeyring(secretencryption.Config{ActiveKID: secretencryption.LegacyKeyID, Keys: map[string][]byte{secretencryption.LegacyKeyID: key}})
 }
 
+func NewKeyring(config secretencryption.Config) (*SecretBox, error) {
+	box, err := secretencryption.NewLocal(config, "identity-service")
+	if err != nil {
+		return nil, err
+	}
+	return &SecretBox{box: box}, nil
+}
+
+func (b *SecretBox) ActiveKeyID() string { return b.box.ActiveKeyID() }
+
 func (b *SecretBox) Seal(plaintext []byte, recordID string) (SealedSecret, error) {
-	if recordID == "" {
-		return SealedSecret{}, fmt.Errorf("record identity is required")
-	}
-	nonce := make([]byte, b.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return SealedSecret{}, fmt.Errorf("generate AES-GCM nonce: %w", err)
-	}
-	ciphertext := b.aead.Seal(nil, nonce, plaintext, []byte(recordID))
-	return SealedSecret{Ciphertext: ciphertext, Nonce: nonce}, nil
+	return b.box.Seal(context.Background(), plaintext, []byte(recordID))
 }
 
 func (b *SecretBox) Open(sealed SealedSecret, recordID string) ([]byte, error) {
-	if recordID == "" || len(sealed.Nonce) != b.aead.NonceSize() {
-		return nil, fmt.Errorf("sealed secret metadata is invalid")
-	}
-	plaintext, err := b.aead.Open(nil, sealed.Nonce, sealed.Ciphertext, []byte(recordID))
-	if err != nil {
-		return nil, fmt.Errorf("open sealed secret: %w", err)
-	}
-	return plaintext, nil
+	return b.box.Open(context.Background(), sealed, []byte(recordID))
+}
+
+func (b *SecretBox) Rekey(ctx context.Context, sealed SealedSecret, recordID string) (SealedSecret, error) {
+	return b.box.Rekey(ctx, sealed, []byte(recordID))
 }

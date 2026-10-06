@@ -5,6 +5,7 @@ go 1.27.0
 toolchain go1.27.1
 
 require (
+	github.com/tf4fun/antnest-platform/modules/secret-encryption v0.0.0
 	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/exaring/otelpgx v0.12.0
@@ -50,3 +51,5 @@ require (
 )
 
 replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication
+
+replace github.com/tf4fun/antnest-platform/modules/secret-encryption => ../../modules/secret-encryption

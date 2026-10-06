@@ -78,7 +78,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.LookupEnv); err != nil {
+	var err error
+	if len(os.Args) > 1 && os.Args[1] == "rekey" {
+		err = runRekey(ctx, os.LookupEnv, os.Args[2:], os.Stdout)
+	} else {
+		err = run(ctx, os.LookupEnv)
+	}
+	if err != nil {
 		attributes := []any{"error_class", serviceFailureClass(err)}
 		if detail := serviceFailureDetail(err); detail != "" {
 			attributes = append(attributes, "detail", detail)
@@ -189,7 +195,7 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 		return classifyFailure("event_notifier_startup", err)
 	}
 	defer eventNotifier.Close()
-	secretBox, err := credentials.NewSecretBox(cfg.EncryptionKey)
+	secretBox, err := credentials.NewKeyring(cfg.Encryption)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

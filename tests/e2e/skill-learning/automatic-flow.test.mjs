@@ -31,6 +31,7 @@ import {
   assertLearningDebugWarning,
   assertStandardComposeIgnoresDebugSettings,
 } from "./development-settings.mjs";
+import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -42,7 +43,10 @@ const propagation = process.env.ANTNEST_E2E_SKILL_PROPAGATION === "true";
 const deployment = process.env.ANTNEST_E2E_SKILL_DEPLOYMENT === "true";
 const authenticationIntegration =
   process.env.ANTNEST_E2E_SERVICE_AUTHENTICATION === "true";
+const encryptionKeyRotation =
+  process.env.ANTNEST_E2E_ENCRYPTION_KEY_ROTATION === "true";
 assert(!authenticationIntegration || deployment);
+assert(!encryptionKeyRotation || authenticationIntegration);
 const signingKid = deployment ? "key_2026-01" : "fixture-key";
 const sourceLifecycle =
   process.env.ANTNEST_E2E_SKILL_SOURCE_LIFECYCLE === "true";
@@ -124,29 +128,31 @@ const logs = (name) => {
 };
 
 test(
-  toolUsability
-    ? "ordinary write/edit/read/bash calls feed Skill learning, notice recovery and subsequent use"
-    : uiOutage
-      ? "Skill learning continues while Agent UI is offline and View restores both changes"
-      : noticeFailure
-        ? "failed SDK notice closes its connection while View restores the change and the next notice remains live"
-        : keyCompromise
-          ? "a compromised signer is stopped, stale verifier backup is quarantined, and safe Enable preserves Skill use"
-          : keyRotation
-            ? "a pretrusted second signer updates a Skill, then RC rebuild removes the old verifier and preserves Skill use"
-            : browserAcceptance
-              ? "real browser creates and updates a learned Skill, navigates to its source and restores notices without duplicate toasts"
-              : pinned
-                ? "an owner pin prevents a learned Skill update without affecting the foreground Run"
-                : propagation
-                  ? deployment
-                    ? callerDiscovery
-                      ? "an active Agent with its own learned projection loads formal and other Agent Skills through standard discovery"
-                      : sourceLifecycle
-                        ? "normal source Disable/Enable/Delete preserve dynamic read boundaries and independent formal presets"
-                        : "standard deployment configuration serves automatic sources, temporary use, real Console promotion and frozen Template rebuild"
-                    : "automatic Agent sources, temporary use, real Console promotion and frozen Template rebuild form the full Skill propagation workflow"
-                  : "completed Runs create and update a personal Skill, publish notices, and serve the next Run",
+  encryptionKeyRotation
+    ? "stored-secret key add/activate/rekey/retire preserves existing Runtime, Provider authentication and the full Agent workflow"
+    : toolUsability
+      ? "ordinary write/edit/read/bash calls feed Skill learning, notice recovery and subsequent use"
+      : uiOutage
+        ? "Skill learning continues while Agent UI is offline and View restores both changes"
+        : noticeFailure
+          ? "failed SDK notice closes its connection while View restores the change and the next notice remains live"
+          : keyCompromise
+            ? "a compromised signer is stopped, stale verifier backup is quarantined, and safe Enable preserves Skill use"
+            : keyRotation
+              ? "a pretrusted second signer updates a Skill, then RC rebuild removes the old verifier and preserves Skill use"
+              : browserAcceptance
+                ? "real browser creates and updates a learned Skill, navigates to its source and restores notices without duplicate toasts"
+                : pinned
+                  ? "an owner pin prevents a learned Skill update without affecting the foreground Run"
+                  : propagation
+                    ? deployment
+                      ? callerDiscovery
+                        ? "an active Agent with its own learned projection loads formal and other Agent Skills through standard discovery"
+                        : sourceLifecycle
+                          ? "normal source Disable/Enable/Delete preserve dynamic read boundaries and independent formal presets"
+                          : "standard deployment configuration serves automatic sources, temporary use, real Console promotion and frozen Template rebuild"
+                      : "automatic Agent sources, temporary use, real Console promotion and frozen Template rebuild form the full Skill propagation workflow"
+                    : "completed Runs create and update a personal Skill, publish notices, and serve the next Run",
   {
     timeout: 1_200_000,
   },
@@ -171,6 +177,7 @@ test(
     let callerEvidence;
     let resourceBaseline;
     let developmentSettings;
+    let encryptionEvidence;
     const additionalImages = [];
     const propagationOutput = () =>
       `${root}/artifacts/verification/${callerDiscovery ? "skill-discovery-caller-di3-20261001" : sourceLifecycle ? "skill-source-lifecycle-di2-20261001" : deployment ? "skill-deployment-20261001" : "skill-propagation-di1-20261001"}/${config.project}`;
@@ -557,6 +564,19 @@ test(
           mode: "admission",
           output: propagationOutput(),
         });
+      }
+      if (encryptionKeyRotation) {
+        encryptionEvidence = await rotatePlatformKeys({
+          config,
+          docker,
+          fixture,
+          compose: (args) => composeArgs(config.project, [...overlay, ...args]),
+        });
+        await writeFile(
+          `${propagationOutput()}/encryption-key-rotation.json`,
+          JSON.stringify(encryptionEvidence, null, 2),
+          { flag: "wx", mode: 0o600 },
+        );
       }
       const postgresContainer = await docker(
         composeArgs(config.project, [...overlay, "ps", "-q", "postgres"]),
@@ -1739,6 +1759,9 @@ test(
         `${evidence}${config.project}.json`,
         JSON.stringify({
           ...result,
+          ...(encryptionEvidence
+            ? { encryptionKeyRotation: encryptionEvidence }
+            : {}),
           ...(developmentSettings ? { developmentSettings } : {}),
           ...(toolEvidence ? { toolEvidence } : {}),
           ...(learningTrace ? { learningTrace } : {}),

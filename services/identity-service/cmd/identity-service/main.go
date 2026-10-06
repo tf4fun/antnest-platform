@@ -70,7 +70,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.LookupEnv); err != nil {
+	var err error
+	if len(os.Args) > 1 && os.Args[1] == "rekey" {
+		err = runRekey(ctx, os.LookupEnv, os.Args[2:], os.Stdout)
+	} else {
+		err = run(ctx, os.LookupEnv)
+	}
+	if err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error(
 			"Identity Service stopped with an error",
 			"error_class", serviceFailureClass(err),
@@ -188,7 +194,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		logger.Warn("Expired OIDC callbacks were terminalized", "session_count", interrupted)
 	}
 
-	secretBox, err := credentials.NewSecretBox(cfg.EncryptionKey)
+	secretBox, err := credentials.NewKeyring(cfg.Encryption)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

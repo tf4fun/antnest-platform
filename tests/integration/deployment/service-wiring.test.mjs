@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { composeConfig } from "../../support/compose-config.mjs";
 
@@ -31,6 +32,34 @@ const binds = {
   "runtime-egress": "ANTNEST_EGRESS_CONTROL_LISTEN",
 };
 const base = composeConfig();
+const require = createRequire(
+  new URL("services/agent-acp-service/package.json", root),
+);
+const original = require("yaml").parse(
+  readFileSync(new URL("compose.yaml", root), "utf8"),
+);
+
+test("private credential bind mounts explicitly forbid host path creation in the source model", () => {
+  let checked = 0;
+  for (const [name, service] of Object.entries(original.services)) {
+    for (const mount of service.volumes ?? []) {
+      if (
+        typeof mount !== "object" ||
+        !mount.target?.startsWith("/etc/antnest/")
+      )
+        continue;
+      assert.equal(mount.type, "bind", name);
+      assert.equal(mount.read_only, true, `${name} ${mount.target}`);
+      assert.equal(
+        mount.bind?.create_host_path,
+        false,
+        `${name} ${mount.target}`,
+      );
+      checked++;
+    }
+  }
+  assert(checked > 0, "no private credential bind mounts were checked");
+});
 
 test("private networks explicitly isolate their bridge from host-routed access", () => {
   for (const [name, network] of Object.entries(base.networks)) {
@@ -105,7 +134,9 @@ function mounted(service, target) {
   const [mount] = mounts;
   assert.equal(mount.type, "bind", target);
   assert.equal(mount.read_only, true, target);
-  assert.equal(mount.bind.create_host_path, false, target);
+  // Compose 2.38's JSON omits false booleans. The source-model check above
+  // separately requires explicit false; a rendered true still fails here.
+  assert.equal(mount.bind.create_host_path ?? false, false, target);
   return mount.source;
 }
 function address(listener, prefix = "10.241.0") {

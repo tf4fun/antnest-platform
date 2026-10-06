@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { request as httpRequest } from "node:http";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { createFixture, callerContext } from "./auth-fixture.mjs";
+import { rotateControllerFixture } from "./rekey-flow.mjs";
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = "antnest-controller-auth-" + randomUUID();
 const evidence = resolve(
@@ -715,6 +716,19 @@ try {
       await docker(["rm", "-f", probe], true);
     }
   }
+  await rotateControllerFixture({
+    env,
+    docker,
+    compose,
+    rebind: (value) => {
+      base = value;
+    },
+    discover,
+    create,
+    provider,
+    providerSecret,
+  });
+  checks += 7;
   complete = true;
 } catch (error) {
   // Bounded, redacted private diagnostics survive cleanup without retaining the

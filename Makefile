@@ -52,7 +52,7 @@ test-storage-policy:
 	node tests/support/check-storage.mjs
 	python3 -B tests/support/verification/configuration_test.py
 
-test-go: test-go-authentication
+test-go: test-go-authentication test-go-encryption
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs runtime-controller
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs identity-service
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs agent-controller
@@ -61,7 +61,7 @@ test-go: test-go-authentication
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/integration/go/run.mjs skill-registry
 
 .PHONY: test-go-unit
-test-go-unit: test-go-authentication
+test-go-unit: test-go-authentication test-go-encryption
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/runtime-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/identity-service/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/...
@@ -72,6 +72,10 @@ test-go-unit: test-go-authentication
 .PHONY: test-go-authentication
 test-go-authentication:
 	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/service-authentication test -race -count=1 ./...
+
+.PHONY: test-go-encryption
+test-go-encryption:
+	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/secret-encryption test -race -count=1 ./...
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
@@ -96,7 +100,7 @@ e2e-deployment-ports:
 
 .PHONY: test-deployment-wiring e2e-deployment-wiring
 test-deployment-wiring:
-	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
 
 e2e-deployment-wiring:
 	node tests/integration/deployment/compose-runtime-docker.mjs
@@ -119,7 +123,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
 	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
-	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
@@ -517,6 +521,10 @@ test-service-authentication-integration:
 
 e2e-service-authentication-integration:
 	ANTNEST_E2E_SERVICE_AUTHENTICATION=true ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
+
+.PHONY: e2e-encryption-key-rotation
+e2e-encryption-key-rotation:
+	ANTNEST_E2E_ENCRYPTION_KEY_ROTATION=true $(MAKE) e2e-service-authentication-integration
 
 .PHONY: e2e-skill-source-lifecycle
 e2e-skill-source-lifecycle:

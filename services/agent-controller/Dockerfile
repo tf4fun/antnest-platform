@@ -1,6 +1,7 @@
 FROM golang:1.27.1-bookworm AS build
 WORKDIR /src/services/agent-controller
 COPY modules/service-authentication /src/modules/service-authentication
+COPY modules/secret-encryption /src/modules/secret-encryption
 COPY services/agent-controller/go.mod services/agent-controller/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY services/agent-controller ./

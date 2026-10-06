@@ -67,7 +67,10 @@ cluster network. Before exposing a deployment, understand these boundaries:
 ## Required private secrets and startup rejection
 
 `.env.example` leaves database/bootstrap passwords and encryption keys empty;
-`compose.yaml` requires each with no public fallback. For a fresh deployment,
+The deployment requires each with no public fallback. Controller/Identity
+validate their single-key or ring choice before opening listeners or starting
+dependency clients; Compose forwards those optional fields unchanged. Other
+secrets keep their Compose required-value checks. For a fresh deployment,
 run `scripts/generate-dev-env.sh` to create independent random values in a
 mode-0600 `.env`. Existing output is refused unless `--force` is explicit. That
 option is for disposable data and does not rotate existing roles or encrypted data.
@@ -89,8 +92,15 @@ See the [secret admission contract](contracts/platform/development-secrets.md).
 Keep workload credentials in the private directory prepared by
 `scripts/dev-service-tokens.mjs`; Registry's retired API/source tokens remain
 rejected, including with the development opt-in. Never commit either generated
-configuration. Retain existing keys with their encrypted data; versioned key
-rotation remains the separate scope of #42.
+configuration. Controller and Identity now use authenticated envelopes with an
+active master key and decrypt-only ring entries. Their independent `rekey`
+commands rotate stored credentials and OIDC session secrets online (#42).
+Every ring member passes the same admission policy, and unknown or relabeled
+keys fail authentication. See [Rotating encryption keys](docs/encryption-key-rotation.md)
+for the coordinated initial binary upgrade, add/activate/rekey/retire order,
+zero-remaining checks and backups. Preserve retired keys with historical backups;
+rekey neither revokes leaked external credentials nor rewrites backup copies.
+The shared KMS interface is available; external adapters are follow-up work.
 
 ## Service authentication rollout
 

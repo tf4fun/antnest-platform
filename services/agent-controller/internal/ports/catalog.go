@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	secretencryption "github.com/tf4fun/antnest-platform/modules/secret-encryption"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
@@ -17,9 +18,17 @@ var (
 )
 
 type SealedSecret struct {
-	Ciphertext []byte
-	Nonce      []byte
-	KeyVersion string
+	Ciphertext     []byte
+	Nonce          []byte
+	KeyVersion     string
+	WrappedDataKey []byte
+}
+
+type KeyEncrypter = secretencryption.KeyEncrypter
+
+type CredentialRekeyer interface {
+	ActiveKeyID() string
+	Rekey(context.Context, CredentialIdentity, SealedSecret) (SealedSecret, error)
 }
 
 type CredentialIdentity struct {

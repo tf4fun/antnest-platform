@@ -28,7 +28,7 @@ func readExecutionSource(ctx context.Context, tx *databaseTransaction, organizat
 
 func readExecutionProviders(ctx context.Context, tx *databaseTransaction, organizationID string) ([]ports.ProviderConnectionRecord, error) {
 	rows, err := tx.Query(ctx, `SELECT id, organization_id, provider_key, base_url, credential_method,
-current_credential_version, credential_revision, ciphertext, nonce, key_version, enabled
+current_credential_version, credential_revision, ciphertext, nonce, key_version, wrapped_data_key, enabled
 FROM agent_controller.provider_connections WHERE organization_id=$1 ORDER BY id`, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("read execution Providers: %w", err)
@@ -38,7 +38,7 @@ FROM agent_controller.provider_connections WHERE organization_id=$1 ORDER BY id`
 	for rows.Next() {
 		var provider ports.ProviderConnectionRecord
 		if err := rows.Scan(&provider.ConnectionID, &provider.OrganizationID, &provider.ProviderKey, &provider.BaseURL, &provider.CredentialMethod,
-			&provider.CredentialVersion, &provider.CredentialRevision, &provider.SealedCredential.Ciphertext, &provider.SealedCredential.Nonce, &provider.SealedCredential.KeyVersion, &provider.Enabled); err != nil {
+			&provider.CredentialVersion, &provider.CredentialRevision, &provider.SealedCredential.Ciphertext, &provider.SealedCredential.Nonce, &provider.SealedCredential.KeyVersion, &provider.SealedCredential.WrappedDataKey, &provider.Enabled); err != nil {
 			return nil, fmt.Errorf("scan execution Provider: %w", err)
 		}
 		providers = append(providers, provider)
