@@ -35,7 +35,7 @@ func (server MCPServer) String() string   { return "MCPServer(" + server.ID + ")
 func (server MCPServer) GoString() string { return server.String() }
 
 var managedIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
-var managedFingerprintPattern = regexp.MustCompile(`^sha256:[0-9a-f]{8}$`)
+var managedFingerprintPattern = regexp.MustCompile(`^hmac-sha256:[0-9a-f]{32}$`)
 var managedEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 func CloneMCPServers(servers []MCPServer) []MCPServer {
@@ -103,14 +103,14 @@ func (server MCPServer) validate() error {
 		return errors.New("too many MCP environment variables")
 	}
 	for key, value := range server.Env {
-		if !managedEnvPattern.MatchString(key) || key == "HOME" || key == "PATH" || strings.HasPrefix(key, "ANTNEST_") || !boundedMCPText(value, 8192) {
+		if !managedEnvPattern.MatchString(key) || reservedMCPEnvironment(key) || !boundedMCPText(value, 8192) {
 			return errors.New("invalid or reserved MCP environment variable")
 		}
 		size += len(key) + len(value)
 	}
 	for key, value := range server.SecretEnv {
 		_, overlap := server.Env[key]
-		if overlap || !managedEnvPattern.MatchString(key) || key == "HOME" || key == "PATH" || strings.HasPrefix(key, "ANTNEST_") || value.Value != nil || value.Keep || !value.Set || !managedFingerprintPattern.MatchString(value.Fingerprint) {
+		if overlap || !managedEnvPattern.MatchString(key) || reservedMCPEnvironment(key) || value.Value != nil || value.Keep || !value.Set || !managedFingerprintPattern.MatchString(value.Fingerprint) {
 			return errors.New("invalid managed MCP secret descriptor")
 		}
 		size += len(key)
@@ -123,4 +123,12 @@ func (server MCPServer) validate() error {
 
 func boundedMCPText(value string, limit int) bool {
 	return len(value) <= limit && utf8.ValidString(value) && !strings.ContainsRune(value, 0)
+}
+
+func reservedMCPEnvironment(name string) bool {
+	switch name {
+	case "HOME", "PATH", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR":
+		return true
+	}
+	return strings.HasPrefix(name, "ANTNEST_")
 }

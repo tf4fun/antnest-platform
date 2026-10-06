@@ -537,4 +537,8 @@ See [the shared contract](../runtime/managed-mcp-secrets.md). Only authenticated
 Runtime Controller may POST `/internal/managed-mcp-secrets/resolve` with a frozen
 organization_id, template_id and revision. The route requires no end-user CCT,
 rejects all other workloads, uses no-store responses and never captures bodies.
-Template reads and Agent snapshots expose descriptors only.
+Template reads and Agent snapshots expose opaque HMAC descriptors only. The
+resolver does not bind to a specific Agent/operation: authenticated RC can resolve
+any organization's frozen revision under its Docker/host-root trust. Requests
+containing secret value writes store an envelope-keyed HMAC receipt; replays use
+the original revision key, unchanged by master-key re-wrapping.

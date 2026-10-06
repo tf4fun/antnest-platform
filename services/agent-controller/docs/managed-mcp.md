@@ -33,7 +33,7 @@ model change how that trusted server uses its own credentials.
    There are at most eight unique IDs (`[a-z][a-z0-9-]{0,15}`), 64 arguments and
    64 environment entries per server, 32 KiB raw data per server and 64 KiB of
    encoded configuration overall. NUL and invalid UTF-8 are rejected; `HOME`,
-   `PATH` and `ANTNEST_*` environment keys are reserved. Exact field bounds are
+   `PATH`, temporary/XDG cache directory variables and `ANTNEST_*` environment keys are reserved. Exact field bounds are
    in the linked contract.
 2. A template revision and the materialized Agent spec freeze independent deep
    copies of the configuration. It participates in the Agent spec digest.
@@ -52,8 +52,12 @@ Controller stores only secret descriptors in Template/Agent Runtime snapshots.
 Template transaction. The AAD binds organization, Template, revision, server and
 name. `keep: true` reads that exact predecessor and reseals under the new revision;
 omission clears only the new revision. Reads, receipts and execution audits never
-return values or ciphertext. Every read shows set state and an eight-hex SHA256
-fingerprint. Every active/decrypt-only master key policy still applies; the existing
+return values or ciphertext. Every read shows set state and an opaque 128-bit HMAC-SHA-256
+fingerprint derived from the protected envelope data key. New revisions may
+change it even when keeping the value. Requests with value writes use a separate
+full envelope-keyed HMAC; identical retries use the original revision's key,
+including after master-key re-wrapping and retirement. Concurrent retries
+recompute against the committed winner before reporting a conflict. Every active/decrypt-only master key policy still applies; the existing
 `agent-controller rekey` now covers Provider and managed MCP rows under one lock.
 
 ## Configuration privacy
@@ -63,7 +67,9 @@ with passwords. Use `secret_env` for sensitive values regardless of variable
 name. Create/revise and the workload-only bootstrap route are metadata-only in
 telemetry, even when RPC content capture is enabled. Only authenticated RC can
 call `POST /internal/managed-mcp-secrets/resolve`, pinning organization, Template
-and revision. Console, ACP, UI and Gateway cannot access it. RC resolves values at
+and revision. It is not bound to a particular Agent or lifecycle operation:
+authenticated RC may resolve any organization's frozen revision, consistent with
+its Docker/host-root trust. Console, ACP, UI and Gateway cannot access it. RC resolves values at
 startup; its journal and deployment identity contain only descriptors and a
 frozen Template source. No master key is sent to RC or Runtime.
 

@@ -3,8 +3,11 @@ package application
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -16,6 +19,34 @@ import (
 
 func TestManagedMCPSecretCatalogIsWriteOnly(t *testing.T) {
 	assertSecretCatalog(t, "managed-secret-canary-123456789")
+}
+
+func TestManagedMCPFingerprintsDoNotExposeUnkeyedGuessVerifiers(t *testing.T) {
+	store := &catalogStoreStub{modelRevision: mustModelRevision(t, "model-revision-1", "org-1")}
+	box, _ := credentials.NewSecretBox(bytes.Repeat([]byte{29}, 32))
+	service := NewCatalogService(store, box, fixedClock{now: time.Unix(1, 0).UTC()})
+	value := "1234"
+	runtime := validRuntimeInput()
+	runtime.MCPServers = []domain.MCPServer{{ID: "docs", Command: "node", SecretEnv: map[string]domain.MCPSecret{"API_KEY": {Value: &value}}}}
+	input := CreateTemplateInput{RequestID: "guess-test", OrganizationID: "org-1", TemplateKey: "guess", Name: "Guess", ModelProfileID: "model-1", MaxModelRequests: 8, ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtime}
+	plainRequestHash, _ := requestFingerprint(input)
+	view, err := service.CreateTemplate(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := view.Runtime.MCPServers[0].SecretEnv["API_KEY"].Fingerprint
+	plain := sha256.Sum256([]byte(value))
+	if !strings.HasPrefix(descriptor, "hmac-sha256:") || descriptor == "sha256:"+hex.EncodeToString(plain[:4]) {
+		t.Fatal("public descriptor exposes plaintext hash")
+	}
+	if !strings.HasPrefix(store.templateRecord.RequestFingerprint, "hmac-sha256:") || store.templateRecord.RequestFingerprint == plainRequestHash {
+		t.Fatal("database receipt exposes plaintext request hash")
+	}
+	input.RequestID, input.TemplateKey = "guess-other", "guess-other"
+	other, err := service.CreateTemplate(t.Context(), input)
+	if err != nil || other.Runtime.MCPServers[0].SecretEnv["API_KEY"].Fingerprint == descriptor {
+		t.Fatal("different envelopes expose the same guess verifier", err)
+	}
 }
 
 func FuzzManagedMCPTemplateViewsNeverReturnSecretValues(f *testing.F) {
@@ -56,7 +87,7 @@ func assertSecretCatalog(t *testing.T, secret string) {
 		if bytes.Contains(payload, quoted) || bytes.Contains(payload, []byte(`"value"`)) {
 			t.Fatal("Template view or stored Runtime leaked a secret")
 		}
-		if !bytes.Contains(payload, []byte(`"fingerprint":"sha256:`)) {
+		if !bytes.Contains(payload, []byte(`"fingerprint":"hmac-sha256:`)) {
 			t.Fatal("secret descriptor is missing")
 		}
 	}
@@ -84,16 +115,49 @@ func assertSecretCatalog(t *testing.T, secret string) {
 
 type mcpCatalogStore struct {
 	catalogStoreStub
-	secrets map[ports.MCPSecretLocation]ports.MCPSecretRecord
+	secrets  map[ports.MCPSecretLocation]ports.MCPSecretRecord
+	receipts map[string]ports.TemplateRecord
+	history  map[int64]domain.TemplateRevision
+}
+
+func (store *mcpCatalogStore) saveReceipt(record ports.TemplateRecord) {
+	if store.receipts == nil {
+		store.receipts = make(map[string]ports.TemplateRecord)
+		store.history = make(map[int64]domain.TemplateRevision)
+	}
+	store.receipts[record.RequestID] = record
+	store.history[record.Revision.Revision()] = record.Revision
+}
+
+func (store *mcpCatalogStore) LookupTemplateRequest(_ context.Context, _ ports.CatalogRequestKind, requestID string) (ports.TemplateRecord, bool, error) {
+	record, found := store.receipts[requestID]
+	return record, found, nil
+}
+
+func (store *mcpCatalogStore) ReplayTemplateRequest(ctx context.Context, kind ports.CatalogRequestKind, requestID, fingerprint string) (ports.TemplateRecord, bool, error) {
+	record, found, err := store.LookupTemplateRequest(ctx, kind, requestID)
+	if found && record.RequestFingerprint != fingerprint {
+		return ports.TemplateRecord{}, false, ports.ErrRequestConflict
+	}
+	return record, found, err
+}
+
+func (store *mcpCatalogStore) GetTemplateRevision(ctx context.Context, id string, revision int64) (domain.TemplateRevision, error) {
+	if candidate, found := store.history[revision]; found && candidate.Snapshot().TemplateID == id {
+		return candidate, nil
+	}
+	return store.catalogStoreStub.GetTemplateRevision(ctx, id, revision)
 }
 
 func (store *mcpCatalogStore) PutTemplate(ctx context.Context, record ports.TemplateRecord) (ports.TemplateRecord, error) {
+	store.saveReceipt(record)
 	for _, secret := range record.MCPSecrets {
 		store.secrets[secret.Location] = secret
 	}
 	return store.catalogStoreStub.PutTemplate(ctx, record)
 }
 func (store *mcpCatalogStore) ReviseTemplate(ctx context.Context, expected int64, record ports.TemplateRecord) (ports.TemplateRecord, error) {
+	store.saveReceipt(record)
 	for _, secret := range record.MCPSecrets {
 		store.secrets[secret.Location] = secret
 	}
@@ -127,8 +191,8 @@ func TestManagedMCPKeepRebindsAndClearDoesNotChangeHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kept.Runtime.MCPServers[0].SecretEnv["API_KEY"].Fingerprint != created.Runtime.MCPServers[0].SecretEnv["API_KEY"].Fingerprint {
-		t.Fatal("keep changed content identity")
+	if kept.Runtime.MCPServers[0].SecretEnv["API_KEY"].Fingerprint == created.Runtime.MCPServers[0].SecretEnv["API_KEY"].Fingerprint {
+		t.Fatal("new revision reused an envelope MAC")
 	}
 	for location, record := range store.secrets {
 		if location.Revision != 1 {

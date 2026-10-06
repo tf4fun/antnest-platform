@@ -47,6 +47,17 @@ func loadCatalogRequest(
 	requestID string,
 	fingerprint string,
 ) (catalogRequest, bool, error) {
+	request, found, err := readCatalogRequest(ctx, queryer, requestID)
+	if err != nil || !found {
+		return request, found, err
+	}
+	if request.kind != kind || request.fingerprint != fingerprint {
+		return catalogRequest{}, false, ports.ErrRequestConflict
+	}
+	return request, true, nil
+}
+
+func readCatalogRequest(ctx context.Context, queryer catalogQueryer, requestID string) (catalogRequest, bool, error) {
 	var request catalogRequest
 	err := queryer.QueryRow(ctx, `
 SELECT request_kind, request_fingerprint, resource_id, revision_id, revision, created_at, response_snapshot
@@ -60,9 +71,6 @@ WHERE request_id = $1`, requestID).Scan(
 	}
 	if err != nil {
 		return catalogRequest{}, false, fmt.Errorf("query Catalog request: %w", err)
-	}
-	if request.kind != kind || request.fingerprint != fingerprint {
-		return catalogRequest{}, false, ports.ErrRequestConflict
 	}
 	return request, true, nil
 }

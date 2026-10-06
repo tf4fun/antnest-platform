@@ -211,13 +211,7 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if err := validateTemplateInput(input); err != nil {
 		return TemplateView{}, err
 	}
-	fingerprint, err := requestFingerprint(input)
-	if err != nil {
-		return TemplateView{}, err
-	}
-	replayed, found, err := service.store.ReplayTemplateRequest(
-		ctx, ports.CreateTemplateRequest, input.RequestID, fingerprint,
-	)
+	replayed, found, err := service.replayTemplateInput(ctx, ports.CreateTemplateRequest, input.RequestID, input.OrganizationID, input)
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("replay Template request: %w", err)
 	}
@@ -243,6 +237,15 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if err != nil {
 		return TemplateView{}, err
 	}
+	var fingerprintRecords []ports.MCPSecretRecord
+	if containsMCPValueWrite(input.Runtime.MCPServers) {
+		fingerprintRecords = secrets
+	}
+	fingerprint, err := service.templateRequestFingerprint(ctx, input, fingerprintRecords)
+	if err != nil {
+		return TemplateView{}, err
+	}
+	originalInput := input
 	input.Runtime.MCPServers = servers
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: templateID, OrganizationID: input.OrganizationID, Revision: 1,
@@ -261,6 +264,17 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 		TemplateKey: input.TemplateKey, Name: input.Name, Revision: revision, MCPSecrets: secrets,
 		Enabled: true, CreatedAt: now, UpdatedAt: now,
 	})
+	if errors.Is(err, ports.ErrRequestConflict) || errors.Is(err, ports.ErrConcurrentChange) {
+		// Concurrent identical requests may have independently sealed values.
+		// Recompute against the committed winner before classifying conflict.
+		replay, found, replayErr := service.replayTemplateInput(ctx, ports.CreateTemplateRequest, input.RequestID, input.OrganizationID, originalInput)
+		if replayErr != nil {
+			return TemplateView{}, replayErr
+		}
+		if found {
+			return templateView(replay), nil
+		}
+	}
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("persist Template: %w", err)
 	}
@@ -289,13 +303,7 @@ func (service *CatalogService) ReviseTemplate(
 		!validIdentifier(input.ModelProfileID) || strings.TrimSpace(input.Name) == "" {
 		return TemplateView{}, fmt.Errorf("%w: Template revision input", ErrInvalidInput)
 	}
-	fingerprint, err := requestFingerprint(input)
-	if err != nil {
-		return TemplateView{}, err
-	}
-	replayed, found, err := service.store.ReplayTemplateRequest(
-		ctx, ports.ReviseTemplateRequest, input.RequestID, fingerprint,
-	)
+	replayed, found, err := service.replayTemplateInput(ctx, ports.ReviseTemplateRequest, input.RequestID, input.OrganizationID, input)
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("replay Template revision request: %w", err)
 	}
@@ -324,6 +332,15 @@ func (service *CatalogService) ReviseTemplate(
 	if err != nil {
 		return TemplateView{}, err
 	}
+	var fingerprintRecords []ports.MCPSecretRecord
+	if containsMCPValueWrite(input.Runtime.MCPServers) {
+		fingerprintRecords = secrets
+	}
+	fingerprint, err := service.templateRequestFingerprint(ctx, input, fingerprintRecords)
+	if err != nil {
+		return TemplateView{}, err
+	}
+	originalInput := input
 	input.Runtime.MCPServers = servers
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID,
@@ -341,6 +358,17 @@ func (service *CatalogService) ReviseTemplate(
 		TemplateKey: current.TemplateKey, Name: input.Name, Revision: revision, MCPSecrets: secrets,
 		Enabled: current.Enabled, CreatedAt: current.CreatedAt, UpdatedAt: service.clock.Now(),
 	})
+	if errors.Is(err, ports.ErrRequestConflict) || errors.Is(err, ports.ErrConcurrentChange) {
+		// Concurrent identical requests may have independently sealed values.
+		// Recompute against the committed winner before classifying conflict.
+		replay, found, replayErr := service.replayTemplateInput(ctx, ports.ReviseTemplateRequest, input.RequestID, input.OrganizationID, originalInput)
+		if replayErr != nil {
+			return TemplateView{}, replayErr
+		}
+		if found {
+			return templateView(replay), nil
+		}
+	}
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("persist Template revision: %w", err)
 	}

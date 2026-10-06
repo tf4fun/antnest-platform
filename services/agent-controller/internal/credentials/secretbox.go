@@ -58,6 +58,14 @@ func (box *SecretBox) Rekey(ctx context.Context, identity ports.CredentialIdenti
 	return fromEnvelope(rotated), err
 }
 
+func (box *SecretBox) Authenticate(ctx context.Context, identity ports.CredentialIdentity, sealed ports.SealedSecret, purpose string, value []byte) ([]byte, error) {
+	aad, err := credentialAAD(identity)
+	if err != nil {
+		return nil, err
+	}
+	return box.box.Authenticate(ctx, toEnvelope(sealed), aad, purpose, value)
+}
+
 func toEnvelope(sealed ports.SealedSecret) secretencryption.SealedSecret {
 	return secretencryption.SealedSecret{KeyID: sealed.KeyVersion, WrappedDataKey: sealed.WrappedDataKey, Nonce: sealed.Nonce, Ciphertext: sealed.Ciphertext}
 }

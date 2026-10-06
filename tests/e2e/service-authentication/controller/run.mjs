@@ -473,15 +473,13 @@ try {
       status: 201,
     })
   ).json;
-  const descriptor = {
-    set: true,
-    fingerprint:
-      "sha256:" +
+  const descriptor = template.runtime.mcp_servers[0].secret_env.API_KEY;
+  assert.equal(descriptor.set, true);
+  assert.match(descriptor.fingerprint, /^hmac-sha256:[0-9a-f]{32}$/u);
+  assert.notEqual(
+    descriptor.fingerprint,
+    "sha256:" +
       createHash("sha256").update(providerSecret).digest("hex").slice(0, 8),
-  };
-  assert.deepEqual(
-    template.runtime.mcp_servers[0].secret_env.API_KEY,
-    descriptor,
   );
   for (const path of [
     `/internal/agent-templates/${template.template_id}?organization_id=org-1`,

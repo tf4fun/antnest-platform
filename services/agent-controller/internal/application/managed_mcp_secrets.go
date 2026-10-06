@@ -2,18 +2,104 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func mcpFingerprint(value string) string {
-	digest := sha256.Sum256([]byte(value))
-	return "sha256:" + hex.EncodeToString(digest[:4])
+func (service *CatalogService) mcpFingerprint(ctx context.Context, record ports.MCPSecretRecord, value string) (string, error) {
+	authenticator, ok := service.sealer.(ports.CredentialAuthenticator)
+	if !ok {
+		return "", errors.New("managed MCP secret authentication unavailable")
+	}
+	mac, err := authenticator.Authenticate(ctx, record.Location.CredentialIdentity(), record.Sealed, "managed-mcp-public-fingerprint-v1", []byte(value))
+	if err != nil || len(mac) != 32 {
+		return "", errors.New("managed MCP secret authentication failed")
+	}
+	return "hmac-sha256:" + hex.EncodeToString(mac[:16]), nil
+}
+
+// Receipts containing plaintext writes use an envelope-bound MAC, never a
+// publicly guessable hash. The original revision supplies the key on replay.
+func (service *CatalogService) templateRequestFingerprint(ctx context.Context, input any, records []ports.MCPSecretRecord) (string, error) {
+	if len(records) == 0 {
+		return requestFingerprint(input)
+	}
+	records = slices.Clone(records)
+	slices.SortFunc(records, func(a, b ports.MCPSecretRecord) int {
+		if compare := strings.Compare(a.Location.ServerID, b.Location.ServerID); compare != 0 {
+			return compare
+		}
+		return strings.Compare(a.Location.Name, b.Location.Name)
+	})
+	authenticator, ok := service.sealer.(ports.CredentialAuthenticator)
+	if !ok {
+		return "", errors.New("managed MCP request authentication unavailable")
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return "", err
+	}
+	defer clear(payload)
+	record := records[0]
+	mac, err := authenticator.Authenticate(ctx, record.Location.CredentialIdentity(), record.Sealed, "managed-mcp-request-fingerprint-v1", payload)
+	if err != nil || len(mac) != 32 {
+		return "", errors.New("managed MCP request authentication failed")
+	}
+	return "hmac-sha256:" + hex.EncodeToString(mac), nil
+}
+
+func (service *CatalogService) replayTemplateInput(ctx context.Context, kind ports.CatalogRequestKind, requestID, organizationID string, input any) (ports.TemplateRecord, bool, error) {
+	receipt, found, err := service.store.LookupTemplateRequest(ctx, kind, requestID)
+	if err != nil || !found {
+		return receipt, found, err
+	}
+	if receipt.OrganizationID != organizationID {
+		return ports.TemplateRecord{}, false, ports.ErrRequestConflict
+	}
+	var records []ports.MCPSecretRecord
+	if strings.HasPrefix(receipt.RequestFingerprint, "hmac-sha256:") {
+		reader, ok := service.store.(ports.MCPSecretReader)
+		if !ok {
+			return ports.TemplateRecord{}, false, errors.New("managed MCP receipt verification unavailable")
+		}
+		// Only identities from the frozen receipt may select its MAC key.
+		for _, server := range receipt.Revision.Snapshot().Runtime.MCPServers {
+			for name := range server.SecretEnv {
+				location := ports.MCPSecretLocation{OrganizationID: receipt.OrganizationID, TemplateID: receipt.TemplateID, Revision: receipt.Revision.Revision(), ServerID: server.ID, Name: name}
+				record, err := reader.GetMCPSecret(ctx, location)
+				if err != nil {
+					return ports.TemplateRecord{}, false, errors.New("managed MCP receipt secret unavailable")
+				}
+				records = append(records, record)
+			}
+		}
+		if len(records) == 0 {
+			return ports.TemplateRecord{}, false, errors.New("managed MCP receipt identity unavailable")
+		}
+	}
+	fingerprint, err := service.templateRequestFingerprint(ctx, input, records)
+	if err != nil {
+		return ports.TemplateRecord{}, false, err
+	}
+	return service.store.ReplayTemplateRequest(ctx, kind, requestID, fingerprint)
+}
+
+func containsMCPValueWrite(servers []domain.MCPServer) bool {
+	for _, server := range servers {
+		for _, secret := range server.SecretEnv {
+			if secret.Value != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (service *CatalogService) sealMCPSecrets(ctx context.Context, source ports.MCPTemplateSource, servers []domain.MCPServer) ([]domain.MCPServer, []ports.MCPSecretRecord, error) {
@@ -60,8 +146,13 @@ func (service *CatalogService) sealMCPSecrets(ctx context.Context, source ports.
 			if err != nil {
 				return nil, nil, errors.New("seal managed MCP secret failed")
 			}
-			fingerprint := mcpFingerprint(value)
-			records = append(records, ports.MCPSecretRecord{Location: location, Fingerprint: fingerprint, Sealed: sealed})
+			record := ports.MCPSecretRecord{Location: location, Sealed: sealed}
+			fingerprint, err := service.mcpFingerprint(ctx, record, value)
+			if err != nil {
+				return nil, nil, err
+			}
+			record.Fingerprint = fingerprint
+			records = append(records, record)
 			result[index].SecretEnv[name] = domain.MCPSecret{Set: true, Fingerprint: fingerprint}
 		}
 	}
@@ -103,7 +194,11 @@ func (service *CatalogService) ResolveMCPSecrets(ctx context.Context, source por
 				return nil, errors.New("managed MCP bootstrap secret unavailable")
 			}
 			value, err := service.opener.Open(ctx, location.CredentialIdentity(), record.Sealed)
-			if err != nil || mcpFingerprint(value) != descriptor.Fingerprint || record.Fingerprint != descriptor.Fingerprint {
+			if err != nil {
+				return nil, errors.New("managed MCP bootstrap secret verification failed")
+			}
+			fingerprint, err := service.mcpFingerprint(ctx, record, value)
+			if err != nil || fingerprint != descriptor.Fingerprint || record.Fingerprint != descriptor.Fingerprint {
 				return nil, errors.New("managed MCP bootstrap secret verification failed")
 			}
 			values[name] = value

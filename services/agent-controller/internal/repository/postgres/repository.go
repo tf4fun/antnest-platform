@@ -195,6 +195,24 @@ func (repository *Repository) ReplayTemplateRequest(
 	return loadTemplateRequest(ctx, repository.pool, kind, requestID, fingerprint)
 }
 
+// Lookup exposes only the frozen receipt identity; the application must still
+// authenticate the supplied request before returning a replay to its caller.
+func (repository *Repository) LookupTemplateRequest(ctx context.Context, kind ports.CatalogRequestKind, requestID string) (ports.TemplateRecord, bool, error) {
+	receipt, found, err := readCatalogRequest(ctx, repository.pool, requestID)
+	if err != nil || !found {
+		return ports.TemplateRecord{}, found, err
+	}
+	if receipt.kind != kind {
+		return ports.TemplateRecord{}, false, ports.ErrRequestConflict
+	}
+	record, err := loadTemplateRecord(ctx, repository.pool, receipt.resourceID, receipt.revision)
+	if err != nil {
+		return ports.TemplateRecord{}, false, err
+	}
+	record.RequestID, record.RequestFingerprint = requestID, receipt.fingerprint
+	return record, true, nil
+}
+
 func (repository *Repository) PutTemplate(
 	ctx context.Context, record ports.TemplateRecord,
 ) (ports.TemplateRecord, error) {
