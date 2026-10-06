@@ -1,5 +1,5 @@
 {
-  "revision": 18,
+  "revision": 19,
   "transport": "json-over-http",
   "trust_boundary": "authenticated-controller-workload",
   "schemas": {

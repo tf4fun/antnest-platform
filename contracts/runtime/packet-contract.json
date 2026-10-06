@@ -1,11 +1,23 @@
 {
-  "revision": 1,
-  "transport": "raw-ip-over-udp",
+  "revision": 2,
+  "transport": "wireguard-over-udp",
   "inner_ip_version": 4,
   "inner_transport_protocol": "tcp",
   "inner_mtu": 1400,
   "fragmentation": false,
   "one_packet_per_datagram": true,
+  "authentication": {
+    "implementation": "boringtun",
+    "implementation_version": "0.7.1",
+    "profile": "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s",
+    "key_id_format": "rtk_<32 lowercase hex>",
+    "prefix_magic_hex": "414e5432",
+    "prefix_bytes": 20,
+    "max_data_overhead": 67,
+    "raw_packet_fallback": false,
+    "receive_replay": "protocol-owned bounded sliding window after authentication",
+    "restart": "fresh ephemeral session; no persisted packet counter"
+  },
   "readiness_probe": {
     "destination_ipv4": "192.0.2.1",
     "destination_port": 9,

@@ -7,6 +7,7 @@ POSTGRES_ADMIN_USER := antnest_test_admin
 
 
 fmt:
+	cargo fmt --manifest-path modules/runtime-tunnel/Cargo.toml --all
 	gofmt -w $$(find modules services tests -name '*.go' -type f)
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
@@ -15,6 +16,7 @@ fmt:
 	services/agent-acp-service/node_modules/.bin/prettier --write 'tests/**/*.mjs' 'tests/**/*.ts'
 
 fmt-check:
+	cargo fmt --manifest-path modules/runtime-tunnel/Cargo.toml --all --check
 	@unformatted="$$(gofmt -l $$(find modules services tests -name '*.go' -type f))" || exit $$?; \
 		test -z "$$unformatted"
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
@@ -29,6 +31,7 @@ go-lint:
 	GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) node tests/support/go-lint.mjs
 
 rust-clippy:
+	cargo clippy --manifest-path modules/runtime-tunnel/Cargo.toml --locked --all-targets -- -D warnings
 	cargo clippy --manifest-path runtimes/antnest-runtime/Cargo.toml --locked --all-targets -- -D warnings
 	cargo clippy --manifest-path services/runtime-egress/Cargo.toml --locked --all-targets -- -D warnings
 
@@ -78,6 +81,7 @@ test-go-encryption:
 	GOWORK=off GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go -C modules/secret-encryption test -race -count=1 ./...
 
 test-rust:
+	cargo test --manifest-path modules/runtime-tunnel/Cargo.toml --locked
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked --example managed-mcp-fixture
 	cargo test --manifest-path services/runtime-egress/Cargo.toml --locked
@@ -126,6 +130,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
 	node --test tests/integration/runtime-egress/peer-binding-contract.test.mjs
+	node --test tests/integration/runtime-egress/authenticated-tunnel-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs

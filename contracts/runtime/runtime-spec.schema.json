@@ -4,7 +4,7 @@
   "title": "Antnest RuntimeSpec",
   "type": "object",
   "additionalProperties": false,
-  "required": ["agent_id", "generation", "listen", "network", "filesystem"],
+  "required": ["agent_id", "generation", "listen", "network", "filesystem", "authentication"],
   "properties": {
     "skill_maintenance_verifiers": {
       "$ref": "#/$defs/skillMaintenanceVerifiers",
@@ -40,8 +40,8 @@
       "properties": {
         "packet_contract_revision": {
           "type": "integer",
-          "const": 1,
-          "description": "Exact raw-IP-over-UDP contract revision accepted by this Runtime image."
+          "const": 2,
+          "description": "Exact authenticated WireGuard tunnel contract revision accepted by this Runtime image."
         },
         "egress_endpoint": {
           "$ref": "#/$defs/ipv4Endpoint"
@@ -79,7 +79,7 @@
     },
     "authentication": {
       "$ref": "instance-connection.schema.json#/$defs/bootstrap_descriptor",
-      "description": "RC-owned nonsecret bootstrap identity, frozen with accepted generation. Runtime consumer adoption is a separate #30 batch; no bearer enters RuntimeSpec."
+      "description": "RC-owned public bootstrap descriptors, frozen with accepted generation; caller tokens and tunnel private keys never enter RuntimeSpec."
     }
   },
   "$defs": {

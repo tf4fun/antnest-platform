@@ -1,7 +1,7 @@
 {
-  "revision": 6,
+  "revision": 7,
   "transport": "json-over-http",
-  "trust_boundary": "verified-controller-workload",
+  "trust_boundary": "verified-controller-or-runtime-controller-workload",
   "status_values": ["ready", "degraded"],
   "builtin_policies": {
     "deny_all": {
@@ -14,6 +14,13 @@
     }
   },
   "routes": [
+    {
+      "method": "PUT",
+      "path": "/internal/agent-tunnel-keys/{agent_id}",
+      "request_schema": "tunnel-key-request.schema.json",
+      "caller": "runtime-controller",
+      "content_capture": "never"
+    },
     {
       "method": "GET",
       "path": "/status"
@@ -58,7 +65,8 @@
     "packet": "../runtime/packet-contract.json",
     "attachment_state_request": "attachment-state-request.schema.json",
     "resource_version_request": "resource-version-request.schema.json",
-    "service_token": "../platform/service-token-callers.schema.json"
+    "service_token": "../platform/service-token-callers.schema.json",
+    "tunnel_key_request": "tunnel-key-request.schema.json"
   },
   "error_codes": [
     "service_unauthenticated",
@@ -75,6 +83,9 @@
     "address_pool_exhausted",
     "cleanup_failed",
     "operation_failed",
-    "control_plane_unavailable"
+    "control_plane_unavailable",
+    "tunnel_key_unavailable",
+    "tunnel_key_conflict",
+    "attachment_open"
   ]
 }

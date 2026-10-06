@@ -129,7 +129,7 @@
     "bootstrap_descriptor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["connection_id", "callers_file", "receiver_digest"],
+      "required": ["connection_id", "callers_file", "receiver_digest", "tunnel"],
       "properties": {
         "connection_id": {
           "$ref": "#/$defs/connection_id"
@@ -140,6 +140,9 @@
         "receiver_digest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "tunnel": {
+          "$ref": "tunnel-bootstrap.schema.json"
         }
       }
     }

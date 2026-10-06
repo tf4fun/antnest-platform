@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/tunnel-bootstrap.schema.json",
+  "title": "Runtime private tunnel bootstrap descriptor, revision 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["key_id", "keys_file", "keys_digest"],
+  "properties": {
+    "key_id": {"type": "string", "pattern": "^rtk_[0-9a-f]{32}$"},
+    "keys_file": {"const": "/run/antnest-auth/tunnel.json"},
+    "keys_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

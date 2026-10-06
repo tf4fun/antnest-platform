@@ -1,0 +1,15 @@
+[package]
+name = "antnest-runtime-tunnel"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+boringtun = { version = "=0.7.1", default-features = false }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+zeroize = "1.8.2"
+
+[[test]]
+name = "protocol"
+path = "tests/protocol.rs"

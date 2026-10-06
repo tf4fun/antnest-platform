@@ -67,7 +67,7 @@
         "resolver_ipv4"
       ],
       "properties": {
-        "packet_contract_revision": { "type": "integer", "const": 1 },
+        "packet_contract_revision": { "type": "integer", "const": 2 },
         "egress_endpoint": {
           "type": "object",
           "additionalProperties": false,
