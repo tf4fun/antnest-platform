@@ -168,6 +168,28 @@ The drivers in [`tests/e2e/development/`](e2e/development/README.md) target an
 existing development deployment, require explicit configuration and are not
 part of any default target.
 
+## Continuous integration
+
+`.github/workflows/integration.yml` runs on every pull request and push to
+`main`. [`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
+catalog: each suite lists its commands, host setup, prebuilt images and the
+paths it exercises. The workflow runs only the suites that match the changed
+files (prose-only changes select none). Changes to the workflow, `tests/support/`,
+`contracts/` or the `Makefile` select every suite.
+
+- **Tier A:** PostgreSQL and Temporal component suites, browser suites,
+  deployment render contracts and the Runtime SDK probe.
+- **Tier B:** service-owned Docker E2E runners, which build their own images.
+  Runners that start images with `--no-build` get `antnest/<image>:local`
+  built from the checkout first, reusing the image workflows' build cache.
+
+Each suite uploads `artifacts/verification/` (without fixture credentials) as
+the `evidence-<suite>` artifact. The `Integration checks` job is the single
+required status; it fails if suite selection or any selected suite fails. Add a
+suite by extending the catalog; its unit tests check that every `make` target
+and runner it names exists. A suite with a `disabled` reason stays in the
+catalog but is never selected until its known breakage is fixed.
+
 ## Resource hygiene
 
 - Run verification commands serially. A runner preserves the failure exit

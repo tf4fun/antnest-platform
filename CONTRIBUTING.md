@@ -91,4 +91,7 @@ in `artifacts/verification/`, which is ignored by Git and Docker.
   subjects, for example `fix(edge-gateway): strip trusted administrator header`.
 - Describe the behavior change, the contracts touched and the checks you ran.
 - CI must pass. It runs lint, unit tests and an image build for every changed
-  component.
+  component, and the `integration` workflow runs the component, browser and
+  service-owned Docker E2E suites that the change exercises. Only
+  `Repository checks` and `Integration checks` are required; see
+  [tests/README.md](tests/README.md#continuous-integration).

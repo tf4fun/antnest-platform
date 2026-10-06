@@ -1,0 +1,216 @@
+name: integration
+
+# Component, browser and service-owned Docker E2E suites. The workflow has no
+# path filter so that `Integration checks` reports on every pull request;
+# tests/support/ci-changes.mjs selects the suites a change exercises.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Select suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      suites: ${{ steps.select.outputs.suites }}
+      selected: ${{ steps.select.outputs.selected }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # A push whose previous head is unknown (new branch, force push) and a
+      # manual run both select every suite.
+      - name: Select suites
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ "$EVENT" != workflow_dispatch ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            node tests/support/ci-changes.mjs --base "$BASE" --head HEAD
+          else
+            node tests/support/ci-changes.mjs --all
+          fi
+
+  suite:
+    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.selected != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.suites) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            services/agent-acp-service/package-lock.json
+            services/agent-ui/web/package-lock.json
+            services/admin-console/web/package-lock.json
+
+      - uses: actions/setup-go@v5
+        if: matrix.setup_go
+        with:
+          go-version-file: services/runtime-controller/go.mod
+          cache-dependency-path: "**/go.sum"
+
+      # rust-toolchain.toml pins the channel and components.
+      - name: Install Rust toolchain
+        if: matrix.setup_rust
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.setup_rust
+        with:
+          key: ${{ matrix.id }}
+          workspaces: |
+            services/runtime-egress -> target
+            tests/integration/antnest-runtime/sdk-probes/elicitation -> target
+
+      # Shared test tooling loads yaml, ipaddr.js and ajv from the ACP
+      # service's locked installation.
+      - name: Install Agent ACP packages
+        run: npm --prefix services/agent-acp-service ci
+
+      - name: Install Admin Console packages
+        if: matrix.setup_admin_web
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm --prefix services/admin-console/web ci
+
+      - name: Install Agent UI packages
+        if: matrix.setup_agent_ui_web
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm --prefix services/agent-ui/web ci
+
+      # Both web packages pin the same Playwright release.
+      - name: Install headless Chromium
+        if: matrix.setup_chromium
+        run: |
+          for package in agent-ui admin-console; do
+            playwright="services/$package/web/node_modules/.bin/playwright"
+            if [ -x "$playwright" ]; then
+              "$playwright" install --with-deps --only-shell chromium
+              exit 0
+            fi
+          done
+          echo "no web package with Playwright is installed" >&2
+          exit 1
+
+      # The runners are developed against Docker Engine 29 and Compose 5; the
+      # runner image ships Engine 28 and Compose 2, whose builds and network
+      # setup differ (for example, built images lack Compose project labels).
+      - name: Install Docker Engine
+        if: matrix.pull != ''
+        env:
+          ENGINE_VERSION: 29.4.0
+          COMPOSE_VERSION: 5.1.2
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-ci.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-ci.asc] https://download.docker.com/linux/ubuntu noble stable" |
+            sudo tee /etc/apt/sources.list.d/docker-ci.list >/dev/null
+          sudo apt-get update -o Dir::Etc::sourcelist=sources.list.d/docker-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+          version() { apt-cache madison "$1" | awk -v want="$2" '$3 ~ ("^(5:)?" want "-") { print $3; exit }'; }
+          engine="$(version docker-ce "$ENGINE_VERSION")"
+          compose="$(version docker-compose-plugin "$COMPOSE_VERSION")"
+          test -n "$engine" && test -n "$compose"
+          sudo apt-get install -y --allow-downgrades --no-install-recommends \
+            "docker-ce=$engine" "docker-ce-cli=$engine" "docker-compose-plugin=$compose" \
+            docker-buildx-plugin containerd.io
+          docker version --format 'engine {{.Server.Version}}'
+          docker compose version
+
+      - name: Pull images
+        if: matrix.pull != ''
+        env:
+          IMAGES: ${{ matrix.pull }}
+        run: for image in $IMAGES; do docker pull "$image"; done
+
+      # Runners that start these with --no-build or inspect them expect
+      # antnest/<image>:local. A separate builder keeps the runners' own
+      # `docker build` calls on the default engine.
+      - uses: docker/setup-buildx-action@v3
+        if: matrix.images != ''
+        id: buildx
+        with:
+          use: false
+
+      - name: Write image definitions
+        if: matrix.images != ''
+        env:
+          IMAGES: ${{ matrix.images }}
+        run: node tests/support/ci-changes.mjs --bake "$IMAGES" > "$RUNNER_TEMP/images.docker-bake.json"
+
+      - name: Build local images
+        if: matrix.images != ''
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          builder: ${{ steps.buildx.outputs.name }}
+          files: ${{ runner.temp }}/images.docker-bake.json
+          load: true
+
+      - name: Run suite
+        env:
+          SUITE: ${{ matrix.run }}
+        run: bash -euo pipefail -c "$SUITE"
+
+      # Per-run fixture credentials are excluded; everything else is evidence.
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ matrix.id }}
+          path: |
+            artifacts/verification/
+            !artifacts/verification/**/credentials/**
+            !artifacts/verification/**/*.key
+            !artifacts/verification/**/*.pem
+          if-no-files-found: ignore
+          retention-days: 14
+
+  integration:
+    name: Integration checks
+    needs: [changes, suite]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # A skipped suite job is a pass only when no suite was selected.
+      - name: Check suite results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          SUITE: ${{ needs.suite.result }}
+          SELECTED: ${{ needs.changes.outputs.selected }}
+        run: |
+          echo "changes=$CHANGES suite=$SUITE selected=$SELECTED"
+          [ "$CHANGES" = success ] || exit 1
+          if [ "$SELECTED" = 0 ]; then
+            [ "$SUITE" = skipped ]
+          else
+            [ "$SUITE" = success ]
+          fi
