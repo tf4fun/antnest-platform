@@ -96,7 +96,27 @@ async function request({
   return document;
 }
 
-if (mode === "request") {
+if (mode === "register") {
+  const body = JSON.parse(
+    readFileSync("/run/auth/tunnel-registration.json", "utf8"),
+  );
+  await request({
+    method: "PUT",
+    path: "/internal/agent-tunnel-keys/accepted",
+    auth: "current",
+    body,
+    status: 403,
+    code: "caller_not_allowed",
+  });
+  const response = await request({
+    method: "PUT",
+    path: "/internal/agent-tunnel-keys/accepted",
+    auth: "rc",
+    body,
+    status: 204,
+  });
+  process.stdout.write(JSON.stringify(response));
+} else if (mode === "request") {
   process.stdout.write(JSON.stringify(await request(options)));
 } else if (mode === "matrix") {
   const contract = JSON.parse(

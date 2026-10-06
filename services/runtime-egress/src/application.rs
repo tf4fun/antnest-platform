@@ -8,6 +8,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::tunnel::{KeyBox, Registration};
+use antnest_runtime_tunnel::KeyId;
 use async_trait::async_trait;
 use serde::Serialize;
 use thiserror::Error;
@@ -34,6 +36,7 @@ pub struct ControlConfig {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeNetworkAttachment {
+    pub tunnel_key_id: Option<KeyId>,
     pub agent_id: AgentId,
     pub tunnel_ipv4: Ipv4Addr,
     pub resolver_ipv4: Ipv4Addr,
@@ -172,6 +175,12 @@ const fn availability(available: bool) -> &'static str {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ControlError {
+    #[error("prepared tunnel key unavailable")]
+    TunnelKeyUnavailable,
+    #[error("prepared tunnel key conflicts")]
+    TunnelKeyConflict,
+    #[error("attachment must be closed")]
+    AttachmentOpen,
     #[error("invalid control request")]
     InvalidRequest,
     #[error("Agent network was not found")]
@@ -244,6 +253,9 @@ impl ControlError {
     fn repository(stage: &'static str, error: RepositoryError) -> Self {
         match error {
             RepositoryError::InvalidRuntimeEndpoint => Self::InvalidRequest,
+            RepositoryError::TunnelKeyUnavailable => Self::TunnelKeyUnavailable,
+            RepositoryError::TunnelKeyConflict => Self::TunnelKeyConflict,
+            RepositoryError::AttachmentOpen => Self::AttachmentOpen,
             RepositoryError::AddressPoolExhausted => Self::AddressPoolExhausted,
             RepositoryError::AgentNetworkNotFound => Self::AgentNetworkNotFound,
             RepositoryError::AgentNetworkUnavailable => Self::AgentNetworkUnavailable,
@@ -311,6 +323,7 @@ impl AgentOperations {
 }
 
 pub struct ControlService<R, K> {
+    key_box: KeyBox,
     repository: Arc<R>,
     kernel: Arc<K>,
     config: ControlConfig,
@@ -326,8 +339,9 @@ where
     R: Repository,
     K: KernelCleanup,
 {
-    pub fn new(repository: Arc<R>, kernel: Arc<K>, config: ControlConfig) -> Self {
+    pub fn new(repository: Arc<R>, kernel: Arc<K>, config: ControlConfig, key_box: KeyBox) -> Self {
         Self {
+            key_box,
             repository,
             kernel,
             dataplane: Arc::new(Mutex::new(DataPlaneEngine::new(
@@ -343,6 +357,53 @@ where
             applied_assignments: AsyncMutex::new(HashMap::new()),
             health: ServiceHealth::default(),
         }
+    }
+
+    pub async fn register_tunnel(
+        &self,
+        agent_id: AgentId,
+        input: Registration,
+    ) -> Result<(), ControlError> {
+        input.validate().map_err(|_| ControlError::InvalidRequest)?;
+        let _guard = self.operations.lock(&agent_id).await;
+        let candidate = self
+            .key_box
+            .seal(agent_id.clone(), &input)
+            .map_err(|_| ControlError::InvalidRequest)?;
+        let stored = self
+            .repository
+            .prepare_tunnel(candidate)
+            .await
+            .map_err(|e| ControlError::repository("tunnel.prepare", e))?;
+        let material = self
+            .key_box
+            .open(&stored)
+            .map_err(|_| ControlError::TunnelKeyUnavailable)?;
+        if !material
+            .matches(&input)
+            .map_err(|_| ControlError::InvalidRequest)?
+        {
+            return Err(ControlError::TunnelKeyConflict);
+        }
+        self.synchronize_tunnel_keys(&agent_id).await
+    }
+    async fn synchronize_tunnel_keys(&self, agent_id: &AgentId) -> Result<(), ControlError> {
+        let rows = self
+            .repository
+            .prepared_tunnels(agent_id)
+            .await
+            .map_err(|e| ControlError::repository("tunnel.load", e))?;
+        let contexts = rows
+            .iter()
+            .map(|r| self.key_box.open(r).map(|m| (r.clone(), m.peer(r.key_id))))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ControlError::TunnelKeyUnavailable)?;
+        let _output = self.output_barrier.lock().await;
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .replace_agent_tunnels(agent_id, contexts);
+        Ok(())
     }
 
     pub fn status(&self) -> ServiceStatus {
@@ -490,8 +551,11 @@ where
         desired: AttachmentState,
         expected_resource_version: u64,
         runtime_endpoint: Option<Ipv4Addr>,
+        tunnel_key_id: Option<KeyId>,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
-        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint) {
+        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint)
+            || (desired == AttachmentState::Open) != tunnel_key_id.is_some()
+        {
             return Err(ControlError::InvalidRequest);
         }
         if expected_resource_version == 0 {
@@ -520,10 +584,25 @@ where
             desired,
             expected_resource_version,
             runtime_endpoint,
+            tunnel_key_id,
         ) {
             return Err(ControlError::ResourceVersionConflict);
         }
 
+        if let Some(key) = tunnel_key_id {
+            let keys = self
+                .repository
+                .prepared_tunnels(&agent_id)
+                .await
+                .map_err(|e| ControlError::repository("tunnel.select", e))?;
+            let row = keys
+                .iter()
+                .find(|r| r.key_id == key)
+                .ok_or(ControlError::TunnelKeyUnavailable)?;
+            self.key_box
+                .open(row)
+                .map_err(|_| ControlError::TunnelKeyUnavailable)?;
+        }
         let attachment = match desired {
             AttachmentState::Closed => {
                 if current.state != AttachmentState::Closed {
@@ -542,6 +621,7 @@ where
                         desired,
                         expected_resource_version,
                         runtime_endpoint,
+                        tunnel_key_id,
                     )
                     .await
                     .map_err(|error| {
@@ -554,6 +634,11 @@ where
                         .map_err(|error| {
                             ControlError::repository("set_runtime_attachment.repository", error)
                         })?;
+                self.synchronize_tunnel_keys(&agent_id).await?;
+                self.dataplane
+                    .lock()
+                    .expect("data-plane mutex poisoned")
+                    .select_tunnel_key(agent_id.clone(), attachment.tunnel_key_id);
                 self.publish_route(
                     &network,
                     &assignment,
@@ -579,6 +664,7 @@ where
                         desired,
                         expected_resource_version,
                         runtime_endpoint,
+                        tunnel_key_id,
                     )
                     .await
                     .map_err(|error| {
@@ -591,6 +677,11 @@ where
                         .map_err(|error| {
                             ControlError::repository("set_runtime_attachment.repository", error)
                         })?;
+                self.synchronize_tunnel_keys(&agent_id).await?;
+                self.dataplane
+                    .lock()
+                    .expect("data-plane mutex poisoned")
+                    .select_tunnel_key(agent_id.clone(), attachment.tunnel_key_id);
                 self.publish_route(
                     &network,
                     &assignment,
@@ -790,6 +881,10 @@ where
             .map_err(|error| {
                 ControlError::cleanup("release_agent_network.kernel_cleanup", error)
             })?;
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .remove_agent_tunnels(&agent_id);
         Ok(self.attachment(network, attachment))
     }
 
@@ -799,6 +894,33 @@ where
             .active_bindings()
             .await
             .map_err(|error| ControlError::repository("recover.repository", error))?;
+        for binding in &bindings {
+            if binding.attachment.state == AttachmentState::Open
+                && binding.attachment.tunnel_key_id.is_none()
+            {
+                return Err(ControlError::TunnelKeyUnavailable);
+            }
+            self.synchronize_tunnel_keys(&binding.network.agent_id)
+                .await?;
+            if let Some(id) = binding.attachment.tunnel_key_id
+                && !self
+                    .dataplane
+                    .lock()
+                    .expect("data-plane mutex poisoned")
+                    .has_tunnel(&binding.network.agent_id, id, binding.network.tunnel_ipv4)
+            {
+                return Err(ControlError::TunnelKeyUnavailable);
+            }
+        }
+        {
+            let mut engine = self.dataplane.lock().expect("data-plane mutex poisoned");
+            for binding in &bindings {
+                engine.select_tunnel_key(
+                    binding.network.agent_id.clone(),
+                    binding.attachment.tunnel_key_id,
+                );
+            }
+        }
         let routes = bindings.iter().map(|binding| AgentRoute {
             agent_id: binding.network.agent_id.clone(),
             tunnel_ipv4: binding.network.tunnel_ipv4,
@@ -945,6 +1067,7 @@ where
             attachment_state: attachment.state,
             attachment_resource_version: attachment.resource_version,
             runtime_endpoint: attachment.runtime_endpoint,
+            tunnel_key_id: attachment.tunnel_key_id,
         }
     }
 }
@@ -954,8 +1077,12 @@ fn attachment_request_matches(
     desired: AttachmentState,
     expected_resource_version: u64,
     runtime_endpoint: Option<Ipv4Addr>,
+    tunnel_key_id: Option<KeyId>,
 ) -> bool {
-    if current.state != desired || current.runtime_endpoint != runtime_endpoint {
+    if current.state != desired
+        || current.runtime_endpoint != runtime_endpoint
+        || current.tunnel_key_id != tunnel_key_id
+    {
         return current.resource_version == expected_resource_version;
     }
     current.resource_version == expected_resource_version

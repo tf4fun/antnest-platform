@@ -322,3 +322,49 @@ fn forwarding_and_policy_decisions_are_unchanged_and_create_no_spans() {
     assert!(exporter.get_finished_spans().unwrap().is_empty());
     provider.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn private_generation_registration_never_captures_rpc_content() {
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::Registry::default()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("private-tunnel-test")));
+    let service = support::service().await;
+    let agent = antnest_runtime_egress::domain::AgentId::parse("agent-private-trace").unwrap();
+    let network = service.ensure_agent_network(agent.clone()).await.unwrap();
+    let input = support::auth::tunnel_registration(agent.as_str(), network.tunnel_ipv4);
+    let body = json!({"key_id":input.key_id,"runtime_revision":input.runtime_revision,"tunnel_ipv4":input.tunnel_ipv4,"egress_private_key":input.egress_private_key,"runtime_public_key":input.runtime_public_key,"preshared_key":input.preshared_key}).to_string();
+    async {
+        let app = antnest_runtime_egress::control::router_with_capture_rpc_content(
+            service,
+            antnest_runtime_egress::telemetry::EgressMetrics::default(),
+            support::admission_for("runtime-controller"),
+            true,
+        );
+        let response = app
+            .oneshot(
+                Request::put("/internal/agent-tunnel-keys/agent-private-trace")
+                    .header("content-type", "application/json")
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 204);
+        response.into_body().collect().await.unwrap();
+    }
+    .with_subscriber(subscriber)
+    .await;
+    provider.force_flush().unwrap();
+    let spans = exporter.get_finished_spans().unwrap();
+    assert!(!spans.is_empty());
+    assert!(spans.iter().all(|s| s.events.iter().all(
+        |e| !e.name.starts_with("antnest.request") && !e.name.starts_with("antnest.response")
+    )));
+    let debug = format!("{spans:?}");
+    assert!(!debug.contains(&input.egress_private_key));
+    assert!(!debug.contains(&input.preshared_key));
+}

@@ -9,10 +9,13 @@ source addresses and unsigned identity headers grant no control permission.
 
 ## Workload and operation scope
 
-All eight business method/route combinations admit only `agent-controller`.
+Eight lifecycle/policy business routes admit only `agent-controller`.
+The ninth, exact `PUT /internal/agent-tunnel-keys/{agent_id}`, admits only
+`runtime-controller` and never captures private request or response content.
 Authenticate before route fallback, path/body validation, repository access,
 address allocation, policy changes, fences and kernel cleanup. A verified
-different workload has no permission, including RC, ACP and Runtime.
+different workload has no permission on the corresponding route; RC cannot
+allocate, change policy or open attachments, and Controller cannot register keys.
 
 These are Controller-owned operations. Controller derives the Agent and desired
 policy from its accepted lifecycle or administrative operation. Egress does not

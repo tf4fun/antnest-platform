@@ -114,3 +114,19 @@ traces; authentication/replay/unknown-key drops use aggregate metrics.
 Each owning implementation is committed separately, followed by integration.
 All test/evidence locations follow AGENTS.md. Keep the human acceptance project
 untouched. Submit one reviewable PR and stop for human review; do not merge it.
+
+## Current delivery record
+
+The shared transport, RC and Runtime owning batches are committed. RC's local
+Go/PostgreSQL/lint gates and 157-check Docker admission passed; Runtime's host
+and native Linux gates and 401-check Docker admission passed. Egress's unit,
+contract, socket, Clippy and 12 PostgreSQL checks passed; its production-image
+Docker admission completed 189 checks, including wrong authority, plaintext,
+wrong key, tampering, replay, restart and independent nft bypass rejection. All
+owning Docker fixtures were removed. Private evidence lives under
+`artifacts/verification/issue-111-20261006125553Z/` and the respective owning
+harness directories.
+
+Controller consumption and coordinated deployment/old-address-reassignment
+acceptance remain pending. These producer gates do not claim the business
+workflow is complete.

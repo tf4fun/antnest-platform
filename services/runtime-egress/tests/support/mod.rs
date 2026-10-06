@@ -12,7 +12,7 @@ use antnest_runtime_egress::{
 use async_trait::async_trait;
 
 #[path = "../../../../tests/support/egress-auth.rs"]
-mod auth;
+pub mod auth;
 pub fn workload_token() -> &'static str {
     auth::workload_token()
 }
@@ -89,6 +89,7 @@ pub async fn service() -> Arc<ControlService<InMemoryRepository, NoopKernel>> {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
     );
     let service = Arc::new(service);
     service.recover().await.unwrap();

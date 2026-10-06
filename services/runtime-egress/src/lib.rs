@@ -21,3 +21,4 @@ pub mod repository;
 pub mod service_auth;
 pub mod telemetry;
 pub mod transport;
+pub mod tunnel;

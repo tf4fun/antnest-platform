@@ -6,6 +6,10 @@ license = "MIT"
 publish = false
 
 [dependencies]
+antnest-runtime-tunnel = { path = "../../modules/runtime-tunnel" }
+chacha20poly1305 = "0.10.1"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+zeroize = "1.8.2"
 async-trait = "0.1.92"
 axum = "0.8.9"
 base64 = "0.23.1"
@@ -65,3 +69,7 @@ codegen-units = 1
 lto = "thin"
 panic = "abort"
 strip = true
+
+[[example]]
+name = "wire-probe"
+path = "../../tests/support/runtime-tunnel/wire-probe.rs"

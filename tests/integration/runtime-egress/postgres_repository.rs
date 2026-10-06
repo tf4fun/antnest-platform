@@ -1,3 +1,4 @@
+use auth::{TestAttachment as _, TestRepositoryAttachment as _};
 #[path = "../../support/egress-auth.rs"]
 mod auth;
 
@@ -57,6 +58,7 @@ async fn durable_control_state(client: &tokio_postgres::Client) -> Vec<serde_jso
         "policy_revisions",
         "agent_policy_assignments",
         "runtime_attachments",
+        "runtime_tunnel_keys",
     ] {
         let row = client
             .query_one(
@@ -104,12 +106,13 @@ async fn control_admission_rejections_have_no_postgres_or_packet_gate_effects() 
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
     ));
     control.recover().await.unwrap();
     let agent = AgentId::parse(format!("agent-admission-{suffix}")).unwrap();
     control.ensure_agent_network(agent.clone()).await.unwrap();
     control
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             1,
@@ -286,7 +289,7 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
     }));
 
     let opened = repository
-        .compare_and_swap_attachment(
+        .set_test_repository_attachment(
             &agent,
             AttachmentState::Open,
             1,
@@ -303,7 +306,7 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
     }));
     assert_eq!(
         repository
-            .compare_and_swap_attachment(
+            .set_test_repository_attachment(
                 &agent,
                 AttachmentState::Open,
                 1,
@@ -320,11 +323,11 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
         Err(RepositoryError::AgentNetworkUnavailable)
     );
     let first_close = repository
-        .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2, None)
+        .set_test_repository_attachment(&agent, AttachmentState::Closed, 2, None)
         .await
         .unwrap();
     let reopened = repository
-        .compare_and_swap_attachment(
+        .set_test_repository_attachment(
             &agent,
             AttachmentState::Open,
             first_close.resource_version,
@@ -333,7 +336,7 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
         .await
         .unwrap();
     repository
-        .compare_and_swap_attachment(
+        .set_test_repository_attachment(
             &agent,
             AttachmentState::Closed,
             reopened.resource_version,
@@ -343,7 +346,7 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
         .unwrap();
     assert_eq!(
         repository
-            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2, None,)
+            .set_test_repository_attachment(&agent, AttachmentState::Closed, 2, None,)
             .await,
         Err(RepositoryError::ResourceVersionConflict)
     );
@@ -362,7 +365,7 @@ async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
     );
     assert_eq!(
         repository
-            .compare_and_swap_attachment(
+            .set_test_repository_attachment(
                 &agent,
                 AttachmentState::Open,
                 repository
@@ -458,6 +461,7 @@ async fn postgres_preserves_network_and_policy_semantics() {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
     ));
     let snapshot = control.status().snapshot_revision;
     let app = router(
@@ -828,7 +832,7 @@ async fn production_repository_automatically_observes_each_database_primitive_on
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("repository-test")));
     async {
-        repository
+        let provisioned = repository
             .ensure_agent_network(agent.clone())
             .instrument(tracing::info_span!("ensure", otel.kind = "server"))
             .await
@@ -869,8 +873,20 @@ async fn production_repository_automatically_observes_each_database_primitive_on
             .await
             .unwrap();
         repository
-            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 1, None)
+            .set_test_repository_attachment(&agent, AttachmentState::Closed, 1, None)
             .instrument(tracing::info_span!("cas_attachment", otel.kind = "server"))
+            .await
+            .unwrap();
+        let prepared = auth::key_box()
+            .seal(
+                agent.clone(),
+                &auth::tunnel_registration(agent.as_str(), provisioned.tunnel_ipv4),
+            )
+            .unwrap();
+        let key_id = prepared.key_id;
+        repository
+            .prepare_tunnel(prepared)
+            .instrument(tracing::info_span!("prepare_tunnel", otel.kind = "server"))
             .await
             .unwrap();
         assert_eq!(
@@ -880,6 +896,7 @@ async fn production_repository_automatically_observes_each_database_primitive_on
                     AttachmentState::Open,
                     99,
                     Some("10.20.0.9".parse().unwrap()),
+                    Some(key_id),
                 )
                 .instrument(tracing::info_span!("rejected", otel.kind = "server"))
                 .await,
@@ -932,11 +949,20 @@ async fn production_repository_automatically_observes_each_database_primitive_on
             &["BEGIN", "SELECT", "SELECT", "SELECT", "UPDATE", "COMMIT"],
         ),
         ("cas_attachment", &["BEGIN", "SELECT", "SELECT", "COMMIT"]),
-        ("rejected", &["BEGIN", "SELECT", "SELECT", "ROLLBACK"]),
+        (
+            "prepare_tunnel",
+            &[
+                "BEGIN", "SELECT", "SELECT", "SELECT", "DELETE", "INSERT", "COMMIT",
+            ],
+        ),
+        (
+            "rejected",
+            &["BEGIN", "SELECT", "SELECT", "SELECT", "ROLLBACK"],
+        ),
         ("bindings", &["SELECT"]),
         (
             "quarantine",
-            &["BEGIN", "SELECT", "SELECT", "UPDATE", "COMMIT"],
+            &["BEGIN", "SELECT", "SELECT", "UPDATE", "DELETE", "COMMIT"],
         ),
         ("expired", &["SELECT"]),
         ("delete", &["DELETE"]),
@@ -1007,4 +1033,139 @@ async fn production_repository_automatically_observes_each_database_primitive_on
     assert!(!captured.contains("DB_AGENT_CANARY"));
     assert!(!captured.contains("DB_POLICY_CANARY"));
     provider.shutdown().unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
+async fn generation_keys_are_sealed_durable_bounded_and_retired_atomically() {
+    let url = env::var("ANTNEST_EGRESS_TEST_DATABASE_URL").unwrap();
+    let suffix = monotonic_suffix();
+    let repository = Arc::new(
+        PostgresRepository::connect(
+            &url,
+            DatabaseTlsMode::Disable,
+            RepositoryConfig {
+                pool_id: format!("tunnel-{suffix}"),
+                tunnel_cidr: "100.64.16.0/29".parse().unwrap(),
+                resolver_ipv4: "100.64.16.1".parse().unwrap(),
+                quarantine: Duration::from_secs(300),
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    let agent = AgentId::parse(format!("agent-tunnel-{suffix}")).unwrap();
+    let network = repository
+        .ensure_agent_network(agent.clone())
+        .await
+        .unwrap();
+    let vault = auth::key_box();
+    let first = vault
+        .seal(
+            agent.clone(),
+            &auth::tunnel_registration(agent.as_str(), network.tunnel_ipv4),
+        )
+        .unwrap();
+    let committed = repository.prepare_tunnel(first.clone()).await.unwrap();
+    let retry = repository
+        .prepare_tunnel(
+            vault
+                .seal(
+                    agent.clone(),
+                    &auth::tunnel_registration(agent.as_str(), network.tunnel_ipv4),
+                )
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry.sealed, committed.sealed);
+    assert!(
+        !committed
+            .sealed
+            .windows(32)
+            .any(|window| window == [29; 32])
+    );
+    let peer = Some("10.243.0.2".parse().unwrap());
+    let opened = repository
+        .compare_and_swap_attachment(&agent, AttachmentState::Open, 1, peer, Some(first.key_id))
+        .await
+        .unwrap();
+    let mut next = auth::tunnel_registration(agent.as_str(), network.tunnel_ipv4);
+    next.key_id = auth::key_id(&format!("{}-next", agent.as_str())).to_string();
+    assert!(matches!(
+        repository
+            .prepare_tunnel(vault.seal(agent.clone(), &next).unwrap())
+            .await,
+        Err(RepositoryError::AttachmentOpen)
+    ));
+    let closed = repository
+        .compare_and_swap_attachment(
+            &agent,
+            AttachmentState::Closed,
+            opened.resource_version,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let second = vault.seal(agent.clone(), &next).unwrap();
+    repository.prepare_tunnel(second.clone()).await.unwrap();
+    assert_eq!(repository.prepared_tunnels(&agent).await.unwrap().len(), 2);
+    repository
+        .compare_and_swap_attachment(
+            &agent,
+            AttachmentState::Open,
+            closed.resource_version,
+            peer,
+            Some(second.key_id),
+        )
+        .await
+        .unwrap();
+    let rows = repository.prepared_tunnels(&agent).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key_id, second.key_id);
+    assert!(auth::key_box().open(&rows[0]).is_ok());
+    assert!(
+        antnest_runtime_egress::tunnel::KeyBox::new([92; 32])
+            .open(&rows[0])
+            .is_err()
+    );
+    let attachment = repository.runtime_attachment(&agent).await.unwrap();
+    assert!(matches!(
+        repository
+            .compare_and_swap_attachment(
+                &agent,
+                AttachmentState::Open,
+                attachment.resource_version,
+                peer,
+                Some(first.key_id)
+            )
+            .await,
+        Err(RepositoryError::TunnelKeyUnavailable)
+    ));
+    repository
+        .compare_and_swap_attachment(
+            &agent,
+            AttachmentState::Closed,
+            attachment.resource_version,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    repository
+        .quarantine_agent_network(
+            &agent,
+            network.resource_version,
+            std::time::SystemTime::now(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .prepared_tunnels(&agent)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

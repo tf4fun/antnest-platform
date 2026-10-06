@@ -40,6 +40,16 @@ impl Admission {
         &self,
         request: &axum::http::Request<axum::body::Body>,
     ) -> Result<(), AdmissionError> {
+        let allowed = if request.method() == axum::http::Method::PUT
+            && request
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .is_some_and(|p| p.as_str() == crate::control::TUNNEL_KEY_ROUTE)
+        {
+            "runtime-controller"
+        } else {
+            "agent-controller"
+        };
         match self {
             Self::Token(receiver) => {
                 let fields = request
@@ -49,9 +59,7 @@ impl Admission {
                     .map(|value| value.to_str().map(|value| (SERVICE_HEADER, value)))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|_| AdmissionError::Unauthenticated)?;
-                receiver
-                    .authorize_fields(&fields, &["agent-controller"])
-                    .map(|_| ())
+                receiver.authorize_fields(&fields, &[allowed]).map(|_| ())
             }
             Self::Mtls => {
                 // Only our verified listener can construct this connection identity.
@@ -61,7 +69,7 @@ impl Admission {
                     .get::<axum::extract::ConnectInfo<crate::transport::VerifiedPeer>>()
                     .and_then(|peer| peer.0.caller())
                     .ok_or(AdmissionError::Unauthenticated)?;
-                if caller == "agent-controller" {
+                if caller == allowed {
                     Ok(())
                 } else {
                     Err(AdmissionError::Forbidden)

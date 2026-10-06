@@ -1,8 +1,24 @@
+use antnest_runtime_tunnel::{KeyId, Peer};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
+mod tunnel;
+
+struct TunnelContext {
+    agent_id: AgentId,
+    tunnel_ipv4: Ipv4Addr,
+    peer: Peer,
+    remote: Option<SocketAddr>,
+}
+impl std::fmt::Debug for TunnelContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TunnelContext")
+            .field("agent_id", &self.agent_id)
+            .finish_non_exhaustive()
+    }
+}
 
 use crate::{
     domain::AgentId,
@@ -62,6 +78,10 @@ impl NetworkSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataPlaneAction {
+    SendHandshake {
+        peer: SocketAddr,
+        packet: Vec<u8>,
+    },
     WriteTun(Vec<u8>),
     SendUdp {
         agent_id: AgentId,
@@ -73,6 +93,9 @@ pub enum DataPlaneAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DropReason {
+    TunnelAuthentication,
+    TunnelReplay,
+    TunnelUnknownContext,
     MalformedPacket,
     UnsupportedPacket,
     UnknownAgent,
@@ -86,6 +109,9 @@ pub enum DropReason {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DataPlaneMetrics {
+    pub authentication_drops: u64,
+    pub replay_drops: u64,
+    pub unknown_context_drops: u64,
     pub uplink_packets: u64,
     pub uplink_bytes: u64,
     pub downlink_packets: u64,
@@ -108,6 +134,8 @@ pub struct DataPlaneMetrics {
 
 #[derive(Debug)]
 pub struct DataPlaneEngine {
+    tunnels: HashMap<KeyId, TunnelContext>,
+    selected_keys: HashMap<AgentId, KeyId>,
     snapshot: NetworkSnapshot,
     flows: FlowTable,
     inner_mtu: usize,
@@ -123,6 +151,8 @@ impl DataPlaneEngine {
         flow_idle: Duration,
     ) -> Self {
         Self {
+            tunnels: HashMap::new(),
+            selected_keys: HashMap::new(),
             snapshot,
             flows: FlowTable::new(max_flows, max_agent_flows, flow_idle),
             inner_mtu,
@@ -323,6 +353,13 @@ impl DataPlaneEngine {
 
     fn drop(&mut self, reason: DropReason) -> DataPlaneAction {
         match reason {
+            DropReason::TunnelAuthentication => {
+                increment(&mut self.metrics.authentication_drops, 1)
+            }
+            DropReason::TunnelReplay => increment(&mut self.metrics.replay_drops, 1),
+            DropReason::TunnelUnknownContext => {
+                increment(&mut self.metrics.unknown_context_drops, 1)
+            }
             DropReason::MalformedPacket => increment(&mut self.metrics.malformed_packets, 1),
             DropReason::UnsupportedPacket => increment(&mut self.metrics.unsupported_packets, 1),
             DropReason::UnknownAgent => increment(&mut self.metrics.unknown_agents, 1),

@@ -65,6 +65,9 @@ pub struct EgressMetrics {
 
 #[derive(Clone, Debug)]
 struct DataPlaneInstruments {
+    authentication_drops: Gauge<u64>,
+    replay_drops: Gauge<u64>,
+    unknown_context_drops: Gauge<u64>,
     uplink_packets: Gauge<u64>,
     uplink_bytes: Gauge<u64>,
     downlink_packets: Gauge<u64>,
@@ -271,6 +274,13 @@ impl EgressMetrics {
         dns: crate::dns::DnsMetricsSnapshot,
     ) {
         let instruments = &self.data_plane;
+        instruments
+            .authentication_drops
+            .record(data.authentication_drops, &[]);
+        instruments.replay_drops.record(data.replay_drops, &[]);
+        instruments
+            .unknown_context_drops
+            .record(data.unknown_context_drops, &[]);
         let previous = self
             .observed_peer_mismatches
             .fetch_max(data.peer_mismatches, Ordering::Relaxed);
@@ -376,6 +386,9 @@ impl DataPlaneInstruments {
             meter.u64_gauge(name).build()
         }
         Self {
+            authentication_drops: gauge(meter, "antnest.egress.tunnel.authentication_drops"),
+            replay_drops: gauge(meter, "antnest.egress.tunnel.replay_drops"),
+            unknown_context_drops: gauge(meter, "antnest.egress.tunnel.unknown_context_drops"),
             uplink_packets: gauge(meter, "antnest.egress.uplink.packets"),
             uplink_bytes: gauge(meter, "antnest.egress.uplink.bytes"),
             downlink_packets: gauge(meter, "antnest.egress.downlink.packets"),
@@ -609,6 +622,13 @@ mod tests {
         assert!(names.contains(&"antnest.egress.control.requests".to_owned()));
         assert!(names.contains(&"antnest.egress.control.duration".to_owned()));
         assert!(names.contains(&"antnest.egress.uplink.packets".to_owned()));
+        for name in [
+            "authentication_drops",
+            "replay_drops",
+            "unknown_context_drops",
+        ] {
+            assert!(names.contains(&format!("antnest.egress.tunnel.{name}")));
+        }
         assert!(names.contains(&"antnest.egress.packet.unsupported".to_owned()));
         assert!(names.contains(&"antnest.egress.udp.receive_errors.unattributed".to_owned()));
         assert!(names.contains(&"antnest.egress.dns.connections.accepted".to_owned()));

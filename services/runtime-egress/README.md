@@ -21,9 +21,9 @@ Startup rejects published PostgreSQL passwords using the connection driver parse
 - Expose exact policy revision reads so control clients can display the policy
   document without guessing from its identifier.
 - Compile policy into immutable in-memory snapshots.
-- Receive one complete inner IP packet per Runtime UDP datagram.
-- Resolve the inner source Tunnel IP to an Agent, verify the Controller-bound
-  outer Runtime IPv4, then apply its current policy.
+- Authenticate revision 2 WireGuard datagrams using the embedded BoringTun engine.
+- Verify generation keys and replay state before decoding the inner IPv4 source;
+  require the selected Agent allocation and Controller-bound outer IPv4 before policy.
 - Bind each inner flow to the outer Runtime UDP peer that first created it.
 - Route return packets from TUN to the owning UDP peer.
 - Produce fast TCP rejection for valid policy-denied traffic.
@@ -35,7 +35,7 @@ Startup rejects published PostgreSQL passwords using the connection driver parse
 
 ## Non-responsibilities
 
-- It does not know Runtime generations, active/candidate state, Runs, prompts,
+- It owns current/candidate transport-key identity, but not compute lifecycle, Runs, prompts,
   Tools, model providers, users, or Agent lifecycle.
 - It does not create containers, Pods, volumes, routes inside Runtime, or Agent
   workspaces.
@@ -43,8 +43,8 @@ Startup rejects published PostgreSQL passwords using the connection driver parse
 - It persists the bound Runtime IPv4 with the attachment; UDP source ports,
   packets, flows, queues, DNS cache and conntrack remain process-local.
 - It does not implement an external API or end-user authentication.
-- It does not add a custom identity, token, session, or tracing envelope to the
-  Runtime UDP packet format.
+- It uses the versioned `ANT2` key-selection prefix and unmodified WireGuard messages;
+  the prefix alone grants no authority. There is no raw-packet fallback.
 - It does not run as more than one active replica.
 
 ## Interfaces
@@ -53,7 +53,7 @@ Startup rejects published PostgreSQL passwords using the connection driver parse
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Inbound   | Control HTTP/JSON on `ANTNEST_EGRESS_CONTROL_LISTEN`: `/internal/agent-networks/{agent_id}`, `/internal/agent-network-attachments/{agent_id}`, `/internal/agent-networks/{agent_id}/release`, `/internal/policies/{policy_id}/revisions/{revision}`, `/internal/agent-policy-assignments/{agent_id}` | Verified Agent Controller workload RPCs for address allocation, attachment gates, release, policy revisions, and assignments |
 | Inbound   | `GET/HEAD /status` on the separate loopback `ANTNEST_EGRESS_HEALTH_LISTEN`                                                                                                                                                                                                                           | Local process, data-plane, and control-plane readiness                                                                       |
-| Inbound   | UDP on `ANTNEST_EGRESS_UDP_ADVERTISE`                                                                                                                                                                                                                                                                | One complete inner IPv4/TCP packet per datagram from Runtime                                                                 |
+| Inbound   | UDP on `ANTNEST_EGRESS_UDP_ADVERTISE`                                                                                                                                                                                                                                                                | Authenticated WireGuard messages; decrypted inner IPv4/TCP from Runtime                                                                 |
 | Outbound  | UDP to the owning Runtime peer                                                                                                                                                                                                                                                                       | Return packets and local TCP rejections                                                                                      |
 | Kernel    | `/dev/net/tun`, Linux routes, nftables/NAT, conntrack                                                                                                                                                                                                                                                | Packet forwarding, masquerade, and per-Agent cleanup                                                                         |
 | Outbound  | DNS over TCP to `ANTNEST_EGRESS_DNS_UPSTREAM`                                                                                                                                                                                                                                                        | Virtual resolver proxy for Agent DNS                                                                                         |
@@ -70,8 +70,9 @@ These root contracts are an intentional versioned monorepo dependency. Build
 and test the service from the repository root so they are present; do not copy
 them into the crate.
 
-All eight business method/route combinations require Controller workload
-authority, including reads. The [revision 5 authentication profile](../../contracts/egress/service-authentication.md)
+Eight lifecycle/policy routes require Agent Controller workload authority,
+including reads. The private key preparation route requires Runtime Controller
+authority. The [revision 5 authentication profile](../../contracts/egress/service-authentication.md)
 defines exact token/mTLS admission and startup validation. Source addresses,
 user bearer tokens, Cookies, caller context and unsigned identity headers grant
 no authority. Anonymous requests fail with 401; another verified workload fails
@@ -147,7 +148,7 @@ Controller receives 404.
   container namespace, and the `ip`, `nft`, and `conntrack` binaries. Missing
   kernel prerequisites stop startup.
 - A DNS-over-TCP upstream supplied by the deployment.
-- Agent Controller is the control client. Runtime containers send packets over
+- Agent Controller is the lifecycle/policy client; RC privately prepares generation keys. Runtime containers send packets over
   UDP. Egress does not call either service.
 - An OTLP collector is optional and used only when `OTEL_SDK_DISABLED` is not
   `true` or `1`. It is not part of `/status` readiness.
@@ -208,3 +209,27 @@ Test-only variables:
   exact receiver/transport profile and delivery boundaries. UDP inner-source
   binding (#34) and resolver/private-answer restrictions (#36) are independent
   work; authenticated HTTP does not fix those packet/DNS limitations.
+
+## Authenticated tunnel deployment
+
+Revision 2 embeds BoringTun 0.7.1 in this process. No WireGuard daemon, kernel
+WireGuard module or additional production container is required. TUN and the
+independent nft destination backstop retain their existing roles.
+
+`ANTNEST_EGRESS_TUNNEL_KEY_FILE` defaults to
+`/run/antnest-egress-auth/tunnel-master`. It must be a regular, nonsymlink,
+root-owned `0600` file containing exactly 32 random nonzero bytes, mounted
+read-only. Load occurs before database/kernel/listener effects. Back it up with
+the encrypted Egress database; losing or changing it makes startup fail closed.
+
+RC may register only the recipient-limited private generation tuple. Egress
+seals it with ChaCha20-Poly1305 and Agent/key ID/Runtime revision/inner-IP AAD.
+The key route is always excluded from RPC content capture. Open CAS needs both
+RC-reported outer IPv4 and an already prepared key ID. At most current plus one
+candidate exists per Agent; cutover retires the source context, and release
+removes all keys. Restart restores static keys from Egress-owned storage and
+creates fresh ephemeral protocol sessions. Packet forwarding never reads SQL.
+
+The Egress owning batch covers unit/contract/socket/PostgreSQL/Docker evidence.
+Controller consumption and deployment wiring remain pending in the separate
+[#111 integration batch](../../docs/authenticated-runtime-tunnel.md#delivery-batches-and-evidence).

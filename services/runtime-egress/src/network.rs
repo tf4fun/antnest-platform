@@ -82,13 +82,23 @@ pub async fn run_packet_loop<T>(
 where
     T: PacketDevice,
 {
-    let mut udp_buffer = vec![0_u8; inner_mtu + 1];
+    let mut udp_buffer = vec![0_u8; antnest_runtime_tunnel::MAX_DATAGRAM + 1];
+    let mut crypto_clock =
+        tokio::time::interval(Duration::from_millis(antnest_runtime_tunnel::TIMER_MILLIS));
     let mut tun_buffer = vec![0_u8; inner_mtu + 1];
     let mut peer_events = PeerFailureLimiter::default();
 
     loop {
         tokio::select! {
             () = cancellation.cancelled() => return Ok(()),
+            _=crypto_clock.tick()=>{
+                let _output=output_barrier.lock().await;
+                let actions=engine.lock().map_err(|_|NetworkError::Poisoned)?.tunnel_tick();
+                for action in actions {
+                    let result = execute(action, &udp, &mut tun, output_timeout).await;
+                    classify_output_result(None, result, &engine, &mut peer_events, Instant::now())?;
+                }
+            },
             received = udp.recv_from(&mut udp_buffer) => {
                 let Some((length, peer)) = classify_udp_receive_result(received)? else {
                     engine
@@ -99,13 +109,15 @@ where
                 };
                 let packet = &udp_buffer[..length];
                 let _output = output_barrier.lock().await;
-                let action = engine
+                let actions = engine
                     .lock()
                     .map_err(|_| NetworkError::Poisoned)?
-                    .handle_uplink(packet, peer, Instant::now());
+                    .handle_wire_uplink(packet, peer, Instant::now());
+                for action in actions {
                 let peer = peer_output(&action);
                 let result = execute(action, &udp, &mut tun, output_timeout).await;
                 classify_output_result(peer, result, &engine, &mut peer_events, Instant::now())?;
+                }
             }
             read = tun.read_packet(&mut tun_buffer) => {
                 let length = read.map_err(NetworkError::Tun)?;
@@ -114,13 +126,15 @@ where
                 }
                 let packet = &tun_buffer[..length];
                 let _output = output_barrier.lock().await;
-                let action = engine
+                let actions = engine
                     .lock()
                     .map_err(|_| NetworkError::Poisoned)?
-                    .handle_downlink(packet, Instant::now());
+                    .handle_wire_downlink(packet, Instant::now());
+                for action in actions {
                 let peer = peer_output(&action);
                 let result = execute(action, &udp, &mut tun, output_timeout).await;
                 classify_output_result(peer, result, &engine, &mut peer_events, Instant::now())?;
+                }
             }
         }
     }
@@ -140,7 +154,8 @@ where
             .await
             .map_err(|_| NetworkError::OutputTimeout)?
             .map_err(NetworkError::Tun),
-        DataPlaneAction::SendUdp { peer, packet, .. } => {
+        DataPlaneAction::SendUdp { peer, packet, .. }
+        | DataPlaneAction::SendHandshake { peer, packet } => {
             timeout(deadline, udp.send_to(&packet, peer))
                 .await
                 .map_err(|_| NetworkError::OutputTimeout)?
@@ -177,6 +192,11 @@ fn classify_output_result(
             if let Some(agent_id) = events.observe(peer.agent_id, now) {
                 record_peer_failure(agent_id);
             }
+            Ok(())
+        }
+        (None, Err(NetworkError::Udp(error))) if is_peer_local_udp_error(&error) => {
+            // A handshake response has no authenticated inner-packet identity.
+            // Destination-local failure must not kill the shared socket or name an Agent.
             Ok(())
         }
         (_, result) => result,
@@ -287,6 +307,31 @@ mod tests {
         let shared_error =
             classify_udp_receive_result(Err(io::Error::from_raw_os_error(libc::ENETDOWN)));
         assert!(matches!(shared_error, Err(NetworkError::Udp(_))));
+    }
+
+    #[test]
+    fn unauthenticated_handshake_output_failure_has_no_agent_attribution() {
+        let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
+            NetworkSnapshot::default(),
+            1400,
+            32,
+            16,
+            Duration::from_secs(60),
+        )));
+        let mut events = PeerFailureLimiter::default();
+        assert!(
+            classify_output_result(
+                None,
+                Err(NetworkError::Udp(io::Error::from_raw_os_error(
+                    libc::ECONNREFUSED
+                ))),
+                &engine,
+                &mut events,
+                Instant::now()
+            )
+            .is_ok()
+        );
+        assert_eq!(engine.lock().unwrap().metrics().peer_output_failures, 0);
     }
 
     #[test]

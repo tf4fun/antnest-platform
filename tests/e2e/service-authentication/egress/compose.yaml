@@ -36,6 +36,7 @@ services:
     environment:
       ANTNEST_EGRESS_DATABASE_URL: postgres://egress_auth:${EGRESS_AUTH_DATABASE_PASSWORD:?}@postgres:5432/egress_auth_test
       ANTNEST_EGRESS_DATABASE_TLS_MODE: disable
+      ANTNEST_EGRESS_TUNNEL_KEY_FILE: /run/antnest-egress-auth/tunnel-master
       ANTNEST_EGRESS_CONTROL_LISTEN: ${EGRESS_AUTH_CONTROL_IP:?}:8181
       ANTNEST_EGRESS_HEALTH_LISTEN: 127.0.0.1:8087
       ANTNEST_EGRESS_UDP_ADVERTISE: ${EGRESS_AUTH_PACKET_IP:?}:8092
@@ -49,6 +50,7 @@ services:
       OTEL_SDK_DISABLED: "true"
     volumes:
       - ${EGRESS_AUTH_DIRECTORY:?}:/run/auth:ro
+      - ${EGRESS_AUTH_MASTER_FILE:?}:/run/antnest-egress-auth/tunnel-master:ro
     networks:
       control:
         ipv4_address: ${EGRESS_AUTH_CONTROL_IP:?}
@@ -75,20 +77,22 @@ services:
       - ${EGRESS_AUTH_DIRECTORY:?}:/run/auth:ro
     networks: [control]
   packet-probe:
-    image: node:24.21.0-bookworm-slim
+    image: ${EGRESS_AUTH_PACKET_IMAGE:?}
     command: [node, -e, "setInterval(()=>{},60000)"]
     volumes:
       - ./probe.mjs:/fixture/probe.mjs:ro
       - ./peer-proof.mjs:/fixture/peer-proof.mjs:ro
+      - ${EGRESS_AUTH_ATTACKER_KEYS:?}:/run/tunnel:ro
     environment:
       EGRESS_AUTH_CONTROL_IP: ${EGRESS_AUTH_CONTROL_IP:?}
       EGRESS_AUTH_PACKET_IP: ${EGRESS_AUTH_PACKET_IP:?}
     networks: [packet]
   runtime-probe:
-    image: node:24.21.0-bookworm-slim
+    image: ${EGRESS_AUTH_PACKET_IMAGE:?}
     command: [node, -e, "setInterval(()=>{},60000)"]
     volumes:
       - ./peer-proof.mjs:/fixture/peer-proof.mjs:ro
+      - ${EGRESS_AUTH_RUNTIME_KEYS:?}:/run/tunnel:ro
     environment:
       EGRESS_AUTH_PACKET_IP: ${EGRESS_AUTH_PACKET_IP:?}
     networks: [packet]

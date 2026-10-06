@@ -21,6 +21,7 @@ struct PacketContract {
     inner_mtu: usize,
     fragmentation: bool,
     one_packet_per_datagram: bool,
+    authentication: serde_json::Value,
     readiness_probe: ReadinessProbe,
 }
 
@@ -51,19 +52,20 @@ fn shared_fixtures_define_the_egress_packet_boundary() {
         "/../../contracts/runtime/packet-fixtures.json"
     )))
     .expect("packet fixtures");
-    assert_eq!(fixtures.contract, "raw-ipv4-tcp-over-udp");
+    assert_eq!(fixtures.contract, "decoded-inner-ipv4-tcp");
     let contract: PacketContract = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../contracts/runtime/packet-contract.json"
     )))
     .expect("packet contract");
     assert_eq!(contract.revision, PACKET_CONTRACT_REVISION);
-    assert_eq!(contract.transport, "raw-ip-over-udp");
+    assert_eq!(contract.transport, "wireguard-over-udp");
     assert_eq!(contract.inner_ip_version, 4);
     assert_eq!(contract.inner_transport_protocol, "tcp");
     assert_eq!(contract.inner_mtu, INNER_MTU);
     assert!(!contract.fragmentation);
     assert!(contract.one_packet_per_datagram);
+    assert_eq!(contract.authentication["raw_packet_fallback"], false);
     assert_eq!(contract.readiness_probe.destination_ipv4, "192.0.2.1");
     assert_eq!(contract.readiness_probe.destination_port, 9);
     assert_eq!(contract.readiness_probe.source_port_min, 49_152);
