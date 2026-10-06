@@ -689,7 +689,7 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		spec.Healthcheck.Test = []string{"CMD", "curl", "--fail", "--silent", "http://127.0.0.1:" + port + "/status/live"}
 	}
 	if len(value.RuntimeSpec.MCPServers) > 0 {
-		spec.Tmpfs["/run/antnest-mcp-home"] = fmt.Sprintf("rw,noexec,nosuid,nodev,size=%d,mode=0711,uid=0,gid=0", value.Resources.TmpfsBytes)
+		spec.Tmpfs["/run/antnest-mcp-home"] = fmt.Sprintf("rw,exec,nosuid,nodev,size=%d,mode=0711,uid=0,gid=0", value.Resources.TmpfsBytes)
 	}
 	if deployment.HasMCPSecrets(value.RuntimeSpec.MCPServers) {
 		spec.Mounts[mcpSecretDirectory] = Mount{Source: mcpVolumeName(d.config.ControllerScope, deployment.Key{AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation}), ReadOnly: true, NoCopy: true}

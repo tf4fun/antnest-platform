@@ -419,7 +419,7 @@ replacement is refused. Replay rechecks the actual mount. Disable, replacement
 and Delete remove the owned generation's private volume; Enable resolves the
 Agent's retained frozen source. No value enters RuntimeSpec, Docker environment,
 labels or deployment digests. MCP cache HOME/TMPDIR/XDG directories use a separate root-owned
-0711 noexec/nosuid/nodev tmpfs at `/run/antnest-mcp-home`, bounded by
+0711 exec/nosuid/nodev tmpfs at `/run/antnest-mcp-home`, bounded by
 `resources.tmpfs_bytes` across all servers. Runtime creates UID-owned 0700
 children. This cache resets on container restart. The bootstrap volume survives ordinary container
 restarts; it is excluded from workspace backup and rebuilt from Controller on

@@ -70,12 +70,14 @@ with existing stdio servers. File remains root-only and unreadable by servers
 and tools. UID 1000 tools cannot read another UID's environ or ptrace it; different
 managed servers cannot read each other's environment. Do not rely on dumpability
 surviving exec: exec may reset it, so distinct UIDs are the security boundary.
-All managed UIDs share the Executor's tunnel routing and kill switch. The cwd remains workspace. RC mounts a bounded, noexec/nosuid/nodev tmpfs at
+All managed UIDs share the Executor's tunnel routing and kill switch. The cwd remains workspace. RC mounts a bounded, exec/nosuid/nodev tmpfs at
 `/run/antnest-mcp-home` with root-owned 0711 permissions. Each server has its own
 UID-owned 0700 HOME (`<base>/<uid>`), TMPDIR/TMP/TEMP and XDG cache/config/data/
 state/runtime directories below that HOME. The entry verifies the tmpfs and
 ownership before dropping privileges. These directories are transient and reset
-on container restart; OAuth caches may require reauthentication. Managed MCP
+on container restart; OAuth caches may require reauthentication. The tmpfs
+permits execution of a server's own cache programs; all such execution still
+uses that server's unprivileged UID, empty capabilities and no-new-privileges. Managed MCP
 uses umask 077 (tools retain 007), protecting default-created files even when a
 server ignores TMPDIR and uses `/tmp`. The sorted UID allocation is invariant to
 list reordering, not to adding/removing server IDs; the transient private tree is
