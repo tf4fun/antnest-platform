@@ -25,6 +25,22 @@ rejected; uniform keys require its existing explicit disposable-test opt-in.
 This change introduces no second development profile or weaker exception.
 Configuration errors never echo key material.
 
+The dependency-free encryption module owns configuration loading and parsing.
+Each service supplies its variable prefix and a required key-check callback from
+its existing development-secret policy. Every configured key is checked,
+including decrypt-only members; policy errors and variable-only warnings retain
+their existing meaning. The module does not depend on `service-authentication`.
+
+Compose forwards the single-key/ring fields with optional `:-` interpolation.
+Compose 2.38 evaluates required substitutions inside an unused nested branch,
+so `:?` cannot safely express the alternative here. Missing or conflicting
+Controller/Identity encryption configuration is rejected by the owning service
+before startup, causing `docker compose up --wait` to fail. `compose config` may
+render with these two owners' encryption fields empty; its missing-secret check
+from #13 now covers the other **10 of the original 12 fields**: nine passwords
+and `ANTNEST_ACP_CLIENT_MCP_KEY`. This changes the rejection stage, not the
+requirement to configure secrets or the ban on public defaults.
+
 ## Storage and authentication
 
 New records use envelope encryption: a random 32-byte data key encrypts the
@@ -77,8 +93,9 @@ do not expose plaintext, ciphertext, DSNs or database error details.
 
 1. Back up each owned database with its required keys and matching binary.
    Stop old replicas before starting upgraded replicas with the existing single
-   key and additive migrations. This initial binary cutover is coordinated:
-   old binaries cannot accept the migration journal or read new envelopes.
+   key and additive migrations. **The first upgrade requires downtime; a rolling
+   old/new binary deployment is unsupported even when retaining a single key.**
+   Old binaries cannot accept the migration journal or read new envelopes.
 2. Add a fresh key to every replica's ring, retaining all old keys. Once every
    replica can decrypt both IDs, activate the new key on every writer. Do not
    run rotation while a writer still uses an old active key.

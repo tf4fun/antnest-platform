@@ -2,10 +2,20 @@
 
 Shared, dependency-free Go implementation of the
 [stored-secret rotation contract](../../contracts/platform/encryption-key-rotation.md).
-The module owns canonical key-ring parsing, authenticated version-1 envelopes,
-legacy `local-v1` decryption, local data-key wrapping and command argument bounds.
+The module owns encryption configuration loading, canonical key-ring parsing,
+authenticated version-1 envelopes, legacy `local-v1` decryption, local data-key
+wrapping and command argument bounds.
 Service adapters supply their existing record identity and own PostgreSQL rows,
 transactions, progress and lifecycle configuration. The module imports no service.
+
+`LoadConfig(lookup, prefix, checkKey)` loads the three encryption variables once
+and validates their complete structure before invoking the required policy callback
+for every key, including decrypt-only members. It supplies the owning single-key
+or ring variable name and preserves callback errors and warnings. Services pass
+`devsecrets.Policy.CheckKey`; the module does not import `devsecrets` or
+`service-authentication` and has no external Go dependencies. Configuration errors
+exclude key material; callbacks must follow the same rule. Controller and Identity
+consumer replacement is delivered in separate owning-service batches.
 
 `KeyEncrypter` accepts a key ID, data key or wrapped key, and associated data.
 It is the extension point for a future remote KMS adapter. No external KMS is
