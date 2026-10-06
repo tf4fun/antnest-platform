@@ -110,7 +110,7 @@ func TestPrincipalRevocationsSCIMTransitions(t *testing.T) {
 
 func newRevocationSCIMUser(t *testing.T, f localAdmissionFixture) scim.UserResource {
 	t.Helper()
-	now := time.Now().UTC()
+	now := storedNow()
 	userID := f.newID("user")
 	resource, err := f.store.SCIM().CreateUser(t.Context(), scim.CreateUserCommand{
 		OrganizationID: f.admin.Organization.ID,

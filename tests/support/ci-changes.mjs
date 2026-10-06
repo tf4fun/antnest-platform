@@ -80,8 +80,6 @@ export const suites = [
       ...compose,
     ],
     pull: base,
-    disabled:
-      "SCIM revocation fixtures keep nanosecond timestamps that PostgreSQL truncates (#117)",
     run: ["make test-identity-postgres"],
   },
   {

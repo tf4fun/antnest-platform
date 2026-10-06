@@ -105,6 +105,14 @@ type localAdmissionFixture struct {
 	clock func() time.Time
 }
 
+// storedNow matches PostgreSQL's microsecond timestamps. Repository writes
+// return their input, so a fixture version later used as an expected
+// UpdatedAt must already have stored precision; Linux clocks carry
+// nanoseconds that the database would truncate.
+func storedNow() time.Time {
+	return time.Now().UTC().Truncate(time.Microsecond)
+}
+
 func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() time.Time) localAdmissionFixture {
 	t.Helper()
 	pool := newIsolatedPool(t, databaseURL)
@@ -124,12 +132,12 @@ func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() tim
 	bootstrap, err := store.Bootstrap(t.Context(), repository.BootstrapInput{
 		OrganizationSlug: "admission", OrganizationName: "Admission",
 		AdminEmail: "admin@example.com", AdminDisplayName: "Administrator",
-		PasswordHash: hash, Now: time.Now().UTC(),
+		PasswordHash: hash, Now: storedNow(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := directory.NewService(store.Directory(), newID, time.Now).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
+	user, err := directory.NewService(store.Directory(), newID, storedNow).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
 		RequestID: "create-member", ActorPrincipalID: bootstrap.User.ID, OrganizationID: bootstrap.Organization.ID,
 		Email: "member@example.com", DisplayName: "Member", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember,
 	})

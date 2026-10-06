@@ -181,6 +181,10 @@ Runtime process scans (background bash groups, managed MCP work, orphan
 collection) treat a process that exits mid-scan as gone instead of failing the
 whole scan on `ESRCH` (#115).
 
+Identity Service PostgreSQL revocation tests pass on Linux: their fixtures now
+create versions at PostgreSQL's microsecond precision instead of the Linux
+clock's nanoseconds, which failed later optimistic checks (#117).
+
 Runtime Egress rejects tunnel datagrams from an outer IPv4 other than the
 Agent's bound Runtime peer, before policy checks or victim-attributed flows.
 An aggregate `antnest.egress.peer_mismatch.drops` counter records these drops.
