@@ -22,16 +22,20 @@ const profiles = [
   ]),
 ];
 
-export function composeConfig(files = ["compose.yaml"], overrides = {}) {
+export function composeConfig(
+  files = ["compose.yaml"],
+  overrides = {},
+  command = ["docker", "compose"],
+) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !/^(?:ANTNEST_|COMPOSE_|OTEL_)/u.test(key),
     ),
   );
   const result = spawnSync(
-    "docker",
+    command[0],
     [
-      "compose",
+      ...command.slice(1),
       "--env-file",
       "/dev/null",
       "--project-name",

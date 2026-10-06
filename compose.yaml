@@ -1,10 +1,8 @@
 name: antnest-platform
 
-# Require one encryption mode before startup; the owner validates exact parsing
-# and rejects mixed modes. Extensions never become container environment.
-x-encryption-configuration:
-  identity: ${ANTNEST_IDENTITY_ENCRYPTION_KEY:-${ANTNEST_IDENTITY_ENCRYPTION_KEYS:?ANTNEST_IDENTITY_ENCRYPTION_KEY or ANTNEST_IDENTITY_ENCRYPTION_KEYS is required; run scripts/generate-dev-env.sh}}
-  agent-controller: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS:?ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY or ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS is required; run scripts/generate-dev-env.sh}}
+# Stored-secret owners validate exactly one encryption mode before startup.
+# Do not duplicate the choice with nested required-value interpolation: Compose
+# 2.38 evaluates the unused required branch even when a single key is configured.
 
 services:
   postgres:

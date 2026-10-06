@@ -61,7 +61,7 @@ function render(env) {
   );
 }
 
-test("Compose names every unset or empty required secret and rejects an empty deployment", () => {
+test("Compose rejects missing fixed secrets and forwards optional encryption modes for startup validation", () => {
   const empty = render(composeEnvironment);
   assert.notEqual(empty.status, 0);
   // Compose traverses YAML maps without promising which missing field is first.
@@ -87,6 +87,14 @@ test("Compose names every unset or empty required secret and rejects an empty de
       const env = { ...valid, [name]: emptyValue };
       if (emptyValue === undefined) delete env[name];
       const result = render(env);
+      if (rotatingKeys.has(name)) {
+        assert.equal(
+          result.status,
+          0,
+          `${name} is validated by its owner before startup`,
+        );
+        continue;
+      }
       assert.notEqual(result.status, 0, name);
       assert(result.stderr.includes(name), name);
       assert.equal(result.stdout, "");
@@ -118,10 +126,6 @@ test("public example leaves every deployment secret empty and has no opt-in", ()
     for (const name of fields) {
       if (file === "compose.yaml" && rotatingKeys.has(name)) {
         const ring = `${name}S`;
-        assert(
-          source.includes(`\${${name}:-\${${ring}:?`),
-          `${name} requires one encryption mode`,
-        );
         assert(
           source.includes(`\${${name}:-}`),
           `${name} has no public fallback`,

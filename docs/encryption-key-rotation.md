@@ -35,9 +35,12 @@ including decrypt-only entries, follows the existing
 [development-secret policy](../contracts/platform/development-secrets.md).
 No public key fallback or new development exception is introduced.
 
-Standard Compose accepts either mode and refuses an entirely missing encryption
-configuration. It forwards values unchanged; the service validates the complete
-configuration. `.env.example` leaves both modes empty. The development generator
+Standard Compose forwards both modes unchanged without public defaults. Each
+owning service rejects missing or conflicting encryption configuration before
+opening its listener or starting dependency clients. Compose rendering alone
+does not validate this choice: older parsers eagerly evaluate nested required
+branches even when the single-key branch is set. `.env.example` leaves both
+modes empty. The development generator
 still creates single keys for a fresh deployment; never regenerate them against
 retained data. Store production rings in the deployment's secret store and never
 print their contents or copy keys into issue reports.

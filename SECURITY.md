@@ -67,7 +67,10 @@ cluster network. Before exposing a deployment, understand these boundaries:
 ## Required private secrets and startup rejection
 
 `.env.example` leaves database/bootstrap passwords and encryption keys empty;
-`compose.yaml` requires each with no public fallback. For a fresh deployment,
+The deployment requires each with no public fallback. Controller/Identity
+validate their single-key or ring choice before opening listeners or starting
+dependency clients; Compose forwards those optional fields unchanged. Other
+secrets keep their Compose required-value checks. For a fresh deployment,
 run `scripts/generate-dev-env.sh` to create independent random values in a
 mode-0600 `.env`. Existing output is refused unless `--force` is explicit. That
 option is for disposable data and does not rotate existing roles or encrypted data.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { composeConfig } from "../../support/compose-config.mjs";
+import { fixtureEnvironment } from "../../support/authenticated-e2e.mjs";
 
 const owners = [
   ["identity-service", "ANTNEST_IDENTITY"],
@@ -13,6 +14,67 @@ const first = Buffer.from("0123456789abcdef0123456789abcdef").toString(
 const second = Buffer.from("fedcba9876543210fedcba9876543210").toString(
   "base64",
 );
+
+test("single-key and ring configuration also render with the CI Compose parser", () => {
+  const command = process.env.ANTNEST_TEST_COMPOSE_BINARY
+    ? [process.env.ANTNEST_TEST_COMPOSE_BINARY]
+    : ["docker", "compose"];
+  const files = [
+    "compose.yaml",
+    "compose.debug.yaml",
+    "compose.stage3.yaml",
+    "tests/e2e/lifecycle-closeout/compose.yaml",
+  ];
+  for (const [service, prefix] of owners) {
+    for (const mode of ["single", "ring"]) {
+      const values =
+        mode === "single"
+          ? {
+              [`${prefix}_ENCRYPTION_KEY`]: first,
+              [`${prefix}_ENCRYPTION_KEYS`]: undefined,
+              [`${prefix}_ENCRYPTION_ACTIVE_KID`]: undefined,
+            }
+          : {
+              [`${prefix}_ENCRYPTION_KEY`]: "",
+              [`${prefix}_ENCRYPTION_KEYS`]: `kid2:${second}`,
+              [`${prefix}_ENCRYPTION_ACTIVE_KID`]: "kid2",
+            };
+      const actual = composeConfig(
+        files,
+        {
+          ...fixtureEnvironment(
+            {},
+            { project: "antnest-lifecycle-1234abcd", octet: 45 },
+          ),
+          ANTNEST_POSTGRES_HOST_PORT: "55432",
+          ANTNEST_JAEGER_UI_HOST_PORT: "16686",
+          ANTNEST_LIFECYCLE_MODEL_HOST_PORT: "18088",
+          ...values,
+        },
+        command,
+      );
+      const environment = actual.services[service].environment;
+      for (const [name, value] of Object.entries(values))
+        assert.equal(environment[name], value ?? "", `${mode} ${name}`);
+    }
+  }
+});
+
+test("Compose leaves missing and conflicting modes unchanged for owner startup rejection", () => {
+  for (const [service, prefix] of owners) {
+    for (const mode of ["missing", "conflicting"]) {
+      const values = {
+        [`${prefix}_ENCRYPTION_KEY`]: mode === "missing" ? "" : first,
+        [`${prefix}_ENCRYPTION_KEYS`]:
+          mode === "missing" ? "" : `kid2:${second}`,
+        [`${prefix}_ENCRYPTION_ACTIVE_KID`]: mode === "missing" ? "" : "kid2",
+      };
+      const actual = composeConfig(["compose.yaml"], values);
+      for (const [name, value] of Object.entries(values))
+        assert.equal(actual.services[service].environment[name], value);
+    }
+  }
+});
 
 test("each stored-secret owner can move from single key through rotation to retirement in standard Compose", () => {
   const baseline = composeConfig();

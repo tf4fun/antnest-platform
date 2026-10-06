@@ -5,11 +5,13 @@ This contract removes the published deployment credentials tracked in issue #13.
 
 ## Deployment
 
-Every listed password and encryption configuration is required by standard
-Compose, with no public fallback. Controller and Identity may supply their
+Every listed password and encryption configuration is required for deployment,
+with no public fallback. Controller and Identity may supply their
 [key ring](encryption-key-rotation.md) instead of the single-key variable;
-Compose requires at least one mode, and each owner rejects missing/mixed modes
-or invalid members at startup. The example leaves these fields empty.
+Compose forwards these optional fields unchanged; each owner requires exactly
+one mode and rejects missing/mixed modes or invalid members before startup.
+Other listed secrets keep their Compose required-value checks. The example
+leaves these fields empty.
 `scripts/generate-dev-env.sh` generates independent random values into a private
 0600 `.env`, refuses an existing output unless `--force` is explicit, and prints
 only the newly generated bootstrap administrator password once. Force is for a

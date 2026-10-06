@@ -21,8 +21,10 @@ reports zero, then remove the old key. Keep retired keys with old backups. See
 the existing public-secret admission gate remain; ring values/active IDs are
 exact and never trimmed. ACP's client-MCP key is outside this rotation.
 
-Development Compose requires all twelve database/bootstrap passwords and
-encryption keys instead of falling back to public values (#13). `.env.example`
+Development deployments require all twelve database/bootstrap passwords and
+encryption keys instead of falling back to public values (#13). Controller and
+Identity validate their single-key/ring choice at startup; Compose forwards both
+unchanged and keeps required-value checks for other secrets. `.env.example`
 leaves secrets empty. Quick start and operations use `scripts/generate-dev-env.sh`,
 which creates independent random passwords/keys in a 0600 `.env`, refuses existing
 output by default, and prints only the administrator password once.
@@ -96,6 +98,11 @@ read-only Docker mount checks pass. It does not reconfigure a running stack;
 native Runtime retains its separate per-instance token profile.
 
 ### Fixed
+
+Standard Compose single-key configuration now also renders with Compose 2.38.2,
+used by repository CI. Removed nested required-value interpolation that evaluated
+the unused ring branch. The existing service startup checks still reject missing
+keys, conflicting modes and invalid ring members before admitting traffic (#42).
 
 Stored Provider and OIDC secrets no longer depend on one irreplaceable master
 key (#42). Bounded row-locked rekey batches resume after interruption and preserve
