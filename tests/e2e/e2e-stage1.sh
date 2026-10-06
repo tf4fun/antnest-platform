@@ -130,6 +130,8 @@ docker run -d \
   --cap-add SETPCAP \
   --cap-add SETUID \
   --device /dev/net/tun \
+  --sysctl net.ipv4.conf.all.rp_filter=1 \
+  --sysctl net.ipv4.conf.default.rp_filter=1 \
   --tmpfs /tmp:rw,nosuid,nodev,size=64m \
   --dns 100.64.0.1 \
   --dns-option use-vc \

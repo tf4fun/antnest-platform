@@ -266,7 +266,7 @@ export const suites = [
     pull: base,
     disabled:
       mode === "stage1"
-        ? "Agent TCP fails under the runner's rp_filter (#114) and workspace cleanup fails on Linux (#122)"
+        ? "Workspace cleanup fails on Linux and the image build exceeds its timeout (#122)"
         : undefined,
     paths: [
       ...service(...owners),
