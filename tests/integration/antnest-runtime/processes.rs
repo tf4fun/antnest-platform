@@ -1,4 +1,5 @@
-use super::ChildRegistry;
+use super::{ChildRegistry, procfs_entry};
+use std::io;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -39,6 +40,23 @@ fn child(script: &str) -> TestChild {
             .expect("test child"),
         false,
     )
+}
+
+#[test]
+fn procfs_reads_of_vanished_processes_are_absent() {
+    // A process that exits after /proc is listed reads as ENOENT or ESRCH.
+    for vanished in [
+        io::Error::from(io::ErrorKind::NotFound),
+        io::Error::from_raw_os_error(libc::ESRCH),
+    ] {
+        assert!(procfs_entry(Err(vanished)).unwrap().is_none());
+    }
+    assert_eq!(
+        procfs_entry(Ok("1 (sh) S".to_owned())).unwrap().as_deref(),
+        Some("1 (sh) S")
+    );
+    let denied = procfs_entry(Err(io::Error::from(io::ErrorKind::PermissionDenied)));
+    assert_eq!(denied.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
 }
 
 #[test]

@@ -173,6 +173,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Runtime process scans (background bash groups, managed MCP work, orphan
+collection) treat a process that exits mid-scan as gone instead of failing the
+whole scan on `ESRCH` (#115).
+
 Runtime Egress rejects tunnel datagrams from an outer IPv4 other than the
 Agent's bound Runtime peer, before policy checks or victim-attributed flows.
 An aggregate `antnest.egress.peer_mismatch.drops` counter records these drops.
