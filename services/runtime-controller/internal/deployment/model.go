@@ -133,9 +133,10 @@ type RuntimeSpec struct {
 
 // RuntimeAuthentication is nonsecret bootstrap identity. Bearers never enter RuntimeSpec.
 type RuntimeAuthentication struct {
-	ConnectionID   string `json:"connection_id"`
-	CallersFile    string `json:"callers_file"`
-	ReceiverDigest string `json:"receiver_digest"`
+	Tunnel         instanceauth.TunnelDescriptor `json:"tunnel"`
+	ConnectionID   string                        `json:"connection_id"`
+	CallersFile    string                        `json:"callers_file"`
+	ReceiverDigest string                        `json:"receiver_digest"`
 }
 
 type SocketAddress struct {
@@ -177,7 +178,7 @@ func (d Deployment) ValidateFor(key Key) error {
 		return invalid("path identity and runtime_spec identity differ")
 	}
 	if auth := d.RuntimeSpec.Authentication; auth != nil {
-		if !instanceauth.ValidConnectionID(auth.ConnectionID) || auth.CallersFile != instanceauth.CallersFile || ValidateDigest(auth.ReceiverDigest) != nil {
+		if !instanceauth.ValidConnectionID(auth.ConnectionID) || auth.CallersFile != instanceauth.CallersFile || ValidateDigest(auth.ReceiverDigest) != nil || !instanceauth.ValidTunnelKeyID(auth.Tunnel.KeyID) || auth.Tunnel.KeysFile != instanceauth.TunnelFile || ValidateDigest(auth.Tunnel.KeysDigest) != nil {
 			return invalid("authentication bootstrap identity is invalid")
 		}
 	}
@@ -237,8 +238,8 @@ func DigestValue(value any) (string, error) {
 }
 
 func (n NetworkSpec) validate() error {
-	if n.PacketContractRevision != 1 {
-		return invalid("network.packet_contract_revision must be 1")
+	if n.PacketContractRevision != 2 {
+		return invalid("network.packet_contract_revision must be 2")
 	}
 	if err := validateIPv4Endpoint("network.egress_endpoint", n.EgressEndpoint); err != nil {
 		return err
@@ -471,6 +472,7 @@ func LifecycleTransition(kind OperationKind, from LifecycleState) (LifecycleStat
 }
 
 type Inspection struct {
+	TunnelKeyID        string        `json:"-"`
 	Reason             string        `json:"-"`
 	DiagnosticSummary  string        `json:"-"`
 	AgentID            string        `json:"-"`
@@ -492,6 +494,7 @@ func (i Inspection) RuntimeKey() Key {
 }
 
 type Environment struct {
+	TunnelKeyID        string
 	Phase              PlatformPhase
 	Reason             string
 	DiagnosticSummary  string
@@ -521,6 +524,7 @@ func (e Environment) WithInspection(value Inspection) Environment {
 	e.Health = value.Health
 	e.MCPEndpoint = value.MCPEndpoint
 	e.RuntimeEndpoint = value.RuntimeEndpoint
+	e.TunnelKeyID = value.TunnelKeyID
 	e.RuntimeExecutionID = value.RuntimeExecutionID
 	e.RestartCount = value.RestartCount
 	e.ObservedAt = value.ObservedAt

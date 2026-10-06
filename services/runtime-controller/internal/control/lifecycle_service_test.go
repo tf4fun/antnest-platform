@@ -435,7 +435,7 @@ func lifecycleConfiguration() deployment.Configuration {
 	return deployment.Configuration{
 		ImageRef: "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Network: deployment.NetworkSpec{
-			PacketContractRevision: 1,
+			PacketContractRevision: 2,
 			EgressEndpoint:         deployment.IPv4Endpoint{IPv4: "10.20.0.8", Port: 8092},
 			TunnelIPv4:             "100.64.0.2",
 			ResolverIPv4:           "100.64.0.1",

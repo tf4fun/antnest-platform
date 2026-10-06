@@ -44,7 +44,7 @@ func deploymentForOperation(configuration deployment.Configuration, operation de
 	physical.RuntimeSpec.SkillMaintenanceVerifiers = &verifiers
 	if auth := operation.InstanceAuthentication; auth != nil {
 		physical.InstanceAuthentication = auth
-		physical.RuntimeSpec.Authentication = &deployment.RuntimeAuthentication{ConnectionID: auth.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: auth.ReceiverDigest}
+		physical.RuntimeSpec.Authentication = &deployment.RuntimeAuthentication{ConnectionID: auth.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: auth.ReceiverDigest, Tunnel: auth.Tunnel.Descriptor()}
 	}
 	if physical.PreparedSkills != nil && operation.PreparedSetID > 0 {
 		physical.PreparedMaterialization = &skillset.PreparedMaterialization{

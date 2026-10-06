@@ -15,17 +15,18 @@ import (
 )
 
 var (
-	ErrInvalidRequest              = errors.New("invalid request")
-	ErrRequestConflict             = repositoryport.ErrIdempotencyConflict
-	ErrOperationFinalized          = repositoryport.ErrOperationFinalized
-	ErrMutationLockLost            = repositoryport.ErrLockLost
-	ErrAgentMutationInProgress     = repositoryport.ErrConcurrentMutation
-	ErrLifecycleConflict           = repositoryport.ErrTransitionConflict
-	ErrRevisionConflict            = repositoryport.ErrRevisionConflict
-	ErrDrift                       = repositoryport.ErrInvariantConflict
-	ErrNotFound                    = repositoryport.ErrNotFound
-	ErrPreparedSkillSetInvalidated = repositoryport.ErrPreparedSkillSetInvalidated
-	ErrSkillPreflightUnavailable   = errors.New("prepared Skill volume preflight is unavailable")
+	ErrInvalidRequest                = errors.New("invalid request")
+	ErrRequestConflict               = repositoryport.ErrIdempotencyConflict
+	ErrOperationFinalized            = repositoryport.ErrOperationFinalized
+	ErrMutationLockLost              = repositoryport.ErrLockLost
+	ErrAgentMutationInProgress       = repositoryport.ErrConcurrentMutation
+	ErrLifecycleConflict             = repositoryport.ErrTransitionConflict
+	ErrRevisionConflict              = repositoryport.ErrRevisionConflict
+	ErrDrift                         = repositoryport.ErrInvariantConflict
+	ErrNotFound                      = repositoryport.ErrNotFound
+	ErrPreparedSkillSetInvalidated   = repositoryport.ErrPreparedSkillSetInvalidated
+	ErrSkillPreflightUnavailable     = errors.New("prepared Skill volume preflight is unavailable")
+	ErrTunnelRegistrationUnavailable = instanceauth.ErrTunnelRegistrationUnavailable
 )
 
 const operationFinalizeBudget = 5 * time.Second
@@ -53,9 +54,14 @@ type SkillVolumeInspector interface {
 	InspectPreparedVolume(context.Context, skillset.PreparedMaterialization) error
 }
 
+type TunnelRegistrar interface {
+	Register(context.Context, string, instanceauth.TunnelRegistration) error
+}
+
 type Service struct {
 	instanceCredentials  *instanceauth.Manager
 	instanceScope        string
+	tunnelRegistrar      TunnelRegistrar
 	repository           repositoryport.Store
 	locker               repositoryport.MutationLocker
 	observations         ObservationReadiness
@@ -66,6 +72,10 @@ type Service struct {
 	skillScope           string
 	skillInspector       SkillVolumeInspector
 	maintenanceVerifiers deployment.MaintenanceVerifiers
+}
+
+func (s *Service) SetTunnelRegistrar(registrar TunnelRegistrar) {
+	s.tunnelRegistrar = registrar
 }
 
 func (s *Service) SetInstanceCredentials(scope string, manager *instanceauth.Manager) error {
@@ -243,6 +253,11 @@ func (s *Service) lifecycle(ctx context.Context, input lifecycleRequest) (deploy
 			if s.instanceCredentials != nil {
 				if _, authErr := s.instanceCredentials.Receiver(instanceauth.Identity{Scope: s.instanceScope, AgentID: operation.AgentID, Generation: operation.Generation}, operation.InstanceAuthentication); authErr != nil {
 					return deployment.Operation{}, fmt.Errorf("%w: accepted instance authority is unavailable", ErrRequestConflict)
+				}
+				file, authErr := s.instanceCredentials.TunnelFile(instanceauth.Identity{Scope: s.instanceScope, AgentID: operation.AgentID, Generation: operation.Generation}, operation.InstanceAuthentication)
+				clear(file)
+				if authErr != nil {
+					return deployment.Operation{}, fmt.Errorf("%w: accepted tunnel authority is unavailable", ErrRequestConflict)
 				}
 			}
 			physical, err = deploymentForOperation(*input.Configuration, operation)
@@ -429,6 +444,21 @@ func (s *Service) prepareOperation(
 func (s *Service) executeOperation(
 	ctx context.Context, operation deployment.Operation, physical deployment.Deployment,
 ) (deployment.Operation, error) {
+	if operation.CreatesCompute() && s.instanceCredentials != nil {
+		if s.tunnelRegistrar == nil {
+			return operation, ErrTunnelRegistrationUnavailable
+		}
+		registration, err := s.instanceCredentials.TunnelRegistration(instanceauth.Identity{Scope: s.instanceScope, AgentID: operation.AgentID, Generation: operation.Generation}, operation.InstanceAuthentication, string(operation.RuntimeRevision), physical.RuntimeSpec.Network.TunnelIPv4)
+		if err != nil {
+			return operation, fmt.Errorf("%w: accepted tunnel authority is unavailable", ErrRequestConflict)
+		}
+		if err = s.tunnelRegistrar.Register(ctx, operation.AgentID, registration); err != nil {
+			if errors.Is(err, ErrTunnelRegistrationUnavailable) {
+				return operation, ErrTunnelRegistrationUnavailable
+			}
+			return s.finishFromEffect(ctx, operation, deployment.EffectOutcome{State: deployment.EffectNotStarted, Code: "tunnel_key_registration_rejected", Detail: "Egress rejected prepared tunnel identity"}, false, false)
+		}
+	}
 	switch operation.Kind {
 	case deployment.OperationInitializeRuntime:
 		if outcome := s.platform.EnsureStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
@@ -589,6 +619,7 @@ func (s *Service) inspectEnvironment(
 	environment.ObservedAt = s.now().UTC()
 	environment.Phase = deployment.PhaseUnknown
 	environment.RuntimeEndpoint = ""
+	environment.TunnelKeyID = ""
 	switch environment.LifecycleState {
 	case deployment.LifecycleFailed:
 		environment.Health = deployment.HealthUnhealthy

@@ -104,6 +104,7 @@ type runtimeInspectionDTO struct {
 	Health             deployment.HealthState     `json:"health"`
 	MCPEndpoint        string                     `json:"mcp_endpoint,omitempty"`
 	RuntimeEndpoint    string                     `json:"runtime_endpoint,omitempty"`
+	TunnelKeyID        string                     `json:"tunnel_key_id,omitempty"`
 	RuntimeExecutionID string                     `json:"runtime_execution_id,omitempty"`
 	RestartCount       uint64                     `json:"restart_count"`
 	ObservedAt         time.Time                  `json:"observed_at"`
@@ -119,6 +120,7 @@ func runtimeInspectionFromDomain(value deployment.Environment) runtimeInspection
 		LifecycleState: value.LifecycleState, Health: value.Health,
 		MCPEndpoint: value.MCPEndpoint, RuntimeExecutionID: value.RuntimeExecutionID,
 		RuntimeEndpoint: value.RuntimeEndpoint,
+		TunnelKeyID:     value.TunnelKeyID,
 		RestartCount:    value.RestartCount, ObservedAt: value.ObservedAt,
 	}
 }

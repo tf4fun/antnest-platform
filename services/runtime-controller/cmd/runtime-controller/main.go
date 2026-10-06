@@ -33,6 +33,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/rpc"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/runtimeclient"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/tunnelclient"
 )
 
 func main() {
@@ -254,6 +255,11 @@ func run(ctx context.Context) (resultErr error) {
 	if err := service.SetInstanceCredentials(configuration.ControllerScope, configuration.InstanceCredentials); err != nil {
 		return classified("instance_authentication", "instance_issuer_initialization_failed", err)
 	}
+	tunnelRegistrar, err := tunnelclient.New(configuration.RuntimeEgressURL, configuration.Authentication.HTTPClient(), configuration.RuntimeStatusTimeout)
+	if err != nil {
+		return classified("instance_authentication", "tunnel_registrar_initialization_failed", err)
+	}
+	service.SetTunnelRegistrar(tunnelRegistrar)
 	service.SetSkillVolumeInspector(skillVolumes)
 	monitor, err := platformmonitor.New(
 		observedPlatform, service, observationHealth, slog.Default(), config.MonitorRetryDelay,

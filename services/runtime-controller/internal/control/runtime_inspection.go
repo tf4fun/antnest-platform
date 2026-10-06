@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func (s *Service) inspectProvisionedEnvironment(ctx context.Context, environment deployment.Environment) (deployment.Environment, error) {
@@ -55,6 +57,17 @@ func (s *Service) inspectExpectedRuntime(ctx context.Context, environment deploy
 	}
 	if err := s.ValidateRuntimeInspection(ctx, inspection); err != nil {
 		return deployment.Inspection{}, err
+	}
+	if s.instanceCredentials != nil && inspection.RuntimeEndpoint != "" {
+		store, ok := s.repository.(repositoryport.InstanceCredentialStore)
+		if !ok {
+			return deployment.Inspection{}, ErrConnectionUnavailable
+		}
+		creator, err := store.GenerationOperation(ctx, key)
+		if err != nil || creator.SpecDigest != environment.SpecDigest || creator.InstanceAuthentication == nil || creator.InstanceAuthentication.Tunnel == nil || !instanceauth.ValidTunnelKeyID(creator.InstanceAuthentication.Tunnel.KeyID) {
+			return deployment.Inspection{}, ErrConnectionUnavailable
+		}
+		inspection.TunnelKeyID = creator.InstanceAuthentication.Tunnel.KeyID
 	}
 	return inspection, nil
 }

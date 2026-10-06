@@ -56,12 +56,23 @@ func TestGeneratedMaintenanceRuntimeSpecs(t *testing.T) {
 			t.Fatal(err)
 		}
 		values["ANTNEST_RUNTIME_INSTANCE_KEY_FILE"] = master
+		values["ANTNEST_RUNTIME_EGRESS_URL"] = "http://runtime-egress:8081"
+		tokens := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tokens, "runtime-egress"), []byte("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		values["ANTNEST_SERVICE_AUTH_TOKEN_DIR"] = tokens
 		loaded, err := config.Load(func(key string) (string, bool) { value, present := values[key]; return value, present })
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(loaded.Authentication.CloseIdleConnections)
 		driver := newLifecyclePlatform()
 		service := newLifecycleService(t, newLifecycleRepository(), driver)
+		if err := service.SetInstanceCredentials(loaded.ControllerScope, loaded.InstanceCredentials); err != nil {
+			t.Fatal(err)
+		}
+		service.SetTunnelRegistrar(&tunnelRegistrarStub{})
 		if err := service.SetMaintenanceVerifiers(loaded.MaintenanceVerifiers); err != nil {
 			t.Fatal(err)
 		}

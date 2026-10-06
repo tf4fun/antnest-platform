@@ -15,6 +15,7 @@ func TestInstanceAuthorityIsAdmittedAndReplayedWithCompute(t *testing.T) {
 	repo, driver := newLifecycleRepository(), newLifecyclePlatform()
 	issuer, _ := instanceauth.New(bytes.Repeat([]byte{42}, 32))
 	service := newLifecycleService(t, repo, driver)
+	service.SetTunnelRegistrar(&tunnelRegistrarStub{})
 	if err := service.SetInstanceCredentials("scope-a", issuer); err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +34,7 @@ func TestInstanceAuthorityIsAdmittedAndReplayedWithCompute(t *testing.T) {
 	}
 	// Process recovery uses the persisted record, not a second Issue operation.
 	restarted := newLifecycleService(t, repo, driver)
+	restarted.SetTunnelRegistrar(&tunnelRegistrarStub{})
 	if err := restarted.SetInstanceCredentials("scope-a", issuer); err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +94,7 @@ func TestPrivateConnectionRejectsStaleBindingAndHiddenCredentials(t *testing.T) 
 	ctx := context.Background()
 	repo, driver := newLifecycleRepository(), newLifecyclePlatform()
 	service := newLifecycleService(t, repo, driver)
+	service.SetTunnelRegistrar(&tunnelRegistrarStub{})
 	issuer, _ := instanceauth.New(bytes.Repeat([]byte{42}, 32))
 	if err := service.SetInstanceCredentials("scope-a", issuer); err != nil {
 		t.Fatal(err)

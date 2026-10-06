@@ -54,6 +54,11 @@ const saveCallers = (tokens) => {
   );
 };
 saveCallers([keys.current, keys.next]);
+writeFileSync(
+  resolve(directory, "runtime-egress"),
+  randomBytes(32).toString("base64url"),
+  { mode: 0o600 },
+);
 writeFileSync(resolve(directory, "instance-master"), randomBytes(32), {
   mode: 0o600,
 });
@@ -189,7 +194,7 @@ try {
   const configuration = {
     image_ref: runtimeImage,
     network: {
-      packet_contract_revision: 1,
+      packet_contract_revision: 2,
       egress_endpoint: { ipv4: `10.243.${octet}.3`, port: 8092 },
       tunnel_ipv4: "100.64.0.2",
       resolver_ipv4: "100.64.0.1",
@@ -231,6 +236,47 @@ try {
   );
   checks++;
   const agent = "rc-auth-" + project.slice(-8);
+  writeFileSync(resolve(directory, "registration-unavailable"), "", {
+    mode: 0o600,
+  });
+  const outageAgent = agent + "-outage";
+  await mutate(
+    outageAgent,
+    "initialize",
+    { configuration },
+    "registration-outage",
+    { status: 503, code: "tunnel_registration_unavailable" },
+  );
+  const waiting = await request({
+    path: "/internal/runtime-operations/registration-outage",
+  });
+  assert.equal(waiting.state, "running");
+  assert.equal(
+    await invoke([
+      "ps",
+      "-aq",
+      "--filter",
+      `label=${scopeLabel}=${project}`,
+      "--filter",
+      "label=io.antnest.managed=runtime",
+    ]),
+    "",
+  );
+  rmSync(resolve(directory, "registration-unavailable"));
+  const recovered = await mutate(
+    outageAgent,
+    "initialize",
+    { configuration },
+    "registration-outage",
+  );
+  assert.equal(recovered.state, "completed");
+  await mutate(
+    outageAgent,
+    "delete",
+    { expected_revision: recovered.target_revision },
+    "registration-outage-delete",
+  );
+  checks += 3;
   const initialized = await mutate(
     agent,
     "initialize",
@@ -263,6 +309,14 @@ try {
   const peerInspection = await request({ path: `/internal/runtimes/${agent}` });
   assert.equal(peerInspection.runtime_endpoint, managementIPv4);
   assert.equal(peerInspection.runtime_revision, revision);
+  assert.equal(
+    peerInspection.tunnel_key_id,
+    JSON.parse(
+      runtime.Config.Env.find((value) =>
+        value.startsWith("ANTNEST_RUNTIME_SPEC="),
+      ).slice("ANTNEST_RUNTIME_SPEC=".length),
+    ).authentication.tunnel.key_id,
+  );
   checks += 3;
   assert.equal(
     runtime.Config.Image,
@@ -411,7 +465,7 @@ try {
     runtime.Id,
     "node",
     "-e",
-    "try { require('fs').readFileSync('/run/antnest-auth/callers.json'); process.exit(1); } catch(e) { if(e.code !== 'EACCES') process.exit(2); }",
+    "for (const file of ['callers.json','tunnel.json']) { try { require('fs').readFileSync('/run/antnest-auth/'+file); process.exit(1); } catch(e) { if(e.code !== 'EACCES') process.exit(2); } }",
   ]);
   assert.equal(uidRead, "");
   checks += 3;
