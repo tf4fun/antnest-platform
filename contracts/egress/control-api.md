@@ -93,11 +93,28 @@ Agent returns `agent_network_not_found`.
 `PUT /internal/agent-network-attachments/{agent_id}`
 
 ```json
-{ "state": "closed", "expected_resource_version": 7 }
+{ "state": "open", "expected_resource_version": 7, "runtime_endpoint": "10.243.1.20" }
 ```
 
 Attachment state is `closed` or `open` and has its own monotonic resource
 version. It never rewrites the Agent's desired policy.
+
+Revision 6 binds each open attachment to `runtime_endpoint`, the canonical IPv4
+address reported by RC for that Runtime on its management network. This is an
+address, not a URL or an inner tunnel address; the UDP source port is not pinned.
+Open requires this field. Close omits it or sends null and clears the binding.
+Network responses include the address while bound. State and address form one
+CAS value: changing either consumes a new resource version; same-state replay
+with an older version succeeds only for the exact same address. Policy changes,
+Ensure and Egress restart preserve the committed peer binding.
+
+Controller uses the provisioned lifecycle result and reconciles RC's current
+inspection before publishing execution readiness. Runtime restart/address
+changes rebind only an already-open attachment, using its current CAS version;
+observation cannot reopen an attachment closed by a lifecycle operation.
+Rebuild, Enable and source restoration bind the respective Runtime address.
+An unbound open route fails closed. A closed route has no outbound access and
+may answer only the fixed local readiness probe from the packet contract.
 
 - Closing first installs a hard fence, drains packet writers, and clears
   userspace flow and conntrack state. It commits `closed` only after that
@@ -105,7 +122,8 @@ version. It never rewrites the Agent's desired policy.
   therefore proves cleanup completed.
 - Opening hard-fences and completes flow/conntrack cleanup before committing
   the CAS, then compiles the current desired policy and publishes the open
-  route. The caller must first establish Runtime readiness. Same-state open
+  route. The caller must first establish completed provisioning and its peer
+  address; execution readiness is independently observed by Controller. Same-state open
   retries also complete cleanup; durable idempotency does not mean live
   connections survive a repeated open request.
 - Every transition requires an active allocation. An exact same-state retry is

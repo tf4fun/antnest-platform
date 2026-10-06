@@ -7,6 +7,17 @@
   "required": ["state", "expected_resource_version"],
   "properties": {
     "state": {"enum": ["closed", "open"]},
-    "expected_resource_version": {"type": "integer", "minimum": 1}
-  }
+    "expected_resource_version": {"type": "integer", "minimum": 1},
+    "runtime_endpoint": {"type": ["string", "null"], "format": "ipv4"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "open"}}, "required": ["state"]},
+      "then": {
+        "required": ["runtime_endpoint"],
+        "properties": {"runtime_endpoint": {"type": "string"}}
+      },
+      "else": {"properties": {"runtime_endpoint": {"type": "null"}}}
+    }
+  ]
 }

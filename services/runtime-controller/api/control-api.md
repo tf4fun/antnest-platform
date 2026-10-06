@@ -266,6 +266,15 @@ reconciled with the same request ID.
 
 ## Inspect And List
 
+Revision 18 exposes `runtime_endpoint` when a Runtime has a usable Docker IPv4
+on the configured management network. RC inspects that exact network attachment;
+hostnames and the MCP URL are not used to infer it. Controller reads this current
+inspection after completed Initialize, Update or Enable and before opening
+Egress. A failed address inspection prevents opening traffic and can be retried;
+it does not change an already-completed compute receipt. This field is network
+identity metadata, not an execution ID or a proof of Runtime health. Current
+Inspect/List report a changed address after restart; absent compute has no address.
+
 `GET /internal/runtimes/{agent_id}` returns the logical lifecycle state and
 opaque revision. When state is `provisioned`, it reads current platform state
 and performs one bounded Runtime status check for a platform-healthy process.

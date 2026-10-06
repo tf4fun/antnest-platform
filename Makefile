@@ -125,6 +125,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
+	node --test tests/integration/runtime-egress/peer-binding-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
