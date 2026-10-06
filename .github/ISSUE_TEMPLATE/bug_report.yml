@@ -1,0 +1,78 @@
+name: Bug report
+description: Report incorrect behavior in a service, runtime, contract or deployment.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Use
+        [private vulnerability reporting](https://github.com/tf4fun/antnest-platform/security/advisories/new)
+        as described in [SECURITY.md](https://github.com/tf4fun/antnest-platform/blob/main/SECURITY.md).
+        Remove credentials, tokens and private data from everything you paste.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      multiple: true
+      options:
+        - edge-gateway
+        - identity-service
+        - admin-console
+        - agent-controller
+        - agent-acp-service
+        - agent-ui
+        - runtime-controller
+        - runtime-egress
+        - skill-registry
+        - antnest-runtime
+        - contracts
+        - deployment (Compose, images, scripts)
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Commit or image tag
+      description: Output of `git rev-parse --short HEAD`, or the image tags you run.
+      placeholder: 6b83451
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Host OS, Docker Engine and Compose versions, and how you started the stack.
+      placeholder: |
+        Ubuntu 24.04, Docker 28.x, Compose v2.38
+        README quick start (compose.yaml + compose.stage3.yaml)
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error codes and trace IDs when available.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact secrets before pasting. This is rendered as a code block.
+      render: text

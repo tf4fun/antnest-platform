@@ -200,7 +200,8 @@ make e2e-stage3       # 一次性完整 Docker 验收
 ## 参与贡献
 
 欢迎贡献。开发流程和评审要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按
-[SECURITY.md](SECURITY.md) 私下报告。
+[SECURITY.md](SECURITY.md) 私下报告。所有参与者都需遵守
+[行为准则](CODE_OF_CONDUCT.md)。
 
 ## 许可证
 

@@ -8,6 +8,8 @@ how the repository is organized and what a change needs before it can merge.
 - For anything larger than a small fix, open an issue first and describe the
   problem, the owning service and the proposed contract change.
 - Report security problems privately as described in [SECURITY.md](SECURITY.md).
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md) in issues, pull requests and
+  every other project space.
 - By contributing, you agree that your contribution is licensed under the
   [MIT License](LICENSE).
 
