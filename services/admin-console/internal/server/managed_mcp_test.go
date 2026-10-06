@@ -91,12 +91,12 @@ func TestManagedMCPDefaultsProjection(t *testing.T) {
 func TestManagedMCPSecretWriteAndReadBoundaries(t *testing.T) {
 	for _, secret := range []string{`{"value":"private-write-canary"}`, `{"keep":true}`} {
 		backend := newBackendStub()
-		backend.enqueue(http.StatusCreated, `{"template_id":"template-1","runtime":{"mcp_servers":[{"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":"sha256:1234abcd","value":"private-read-canary"}}}]}}`)
+		backend.enqueue(http.StatusCreated, `{"template_id":"template-1","runtime":{"mcp_servers":[{"id":"docs","command":"node","secret_env":{"API_KEY":{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef","value":"private-read-canary"}}}]}}`)
 		response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/templates/template-1/revisions", `{"name":"Template","model_profile_id":"model-1","max_model_requests":32,"runtime":{"mcp_servers":[{"id":"docs","command":"node","secret_env":{"API_KEY":`+secret+`}}]}}`)
 		if response.Code != http.StatusCreated || !strings.Contains(string(backend.singleCall(t).Body), `"API_KEY":`+secret) {
 			t.Fatal("write-only secret action did not reach Controller", response.Code)
 		}
-		if !strings.Contains(response.Body.String(), `"API_KEY":{"set":true,"fingerprint":"sha256:1234abcd"}`) || strings.Contains(response.Body.String(), "private-") {
+		if !strings.Contains(response.Body.String(), `"API_KEY":{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}`) || strings.Contains(response.Body.String(), "private-") {
 			t.Fatal("read boundary lost descriptor or returned a secret")
 		}
 	}

@@ -37,7 +37,7 @@ test("managed MCP reports duplicate and reserved identifiers", () => {
   assert.throws(() => managedMCPInput(form([...draft(), ...draft()])), /Duplicate server ID/);
   const duplicate = draft(); duplicate[0].env.push({ name: "TOKEN", value: "other" });
   assert.throws(() => managedMCPInput(form(duplicate)), /Duplicate environment variable/);
-  for (const name of ["HOME", "PATH", "ANTNEST_RUNTIME_SPEC"]) {
+  for (const name of ["HOME", "PATH", "ANTNEST_RUNTIME_SPEC", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"]) {
     const reserved = draft(); reserved[0].env[0].name = name;
     assert.throws(() => managedMCPInput(form(reserved)), /reserved/);
   }

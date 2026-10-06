@@ -63,3 +63,10 @@ and Agent deployed summaries. The managed-MCP
 Docker profile configures Templates through the BFF, then verifies real child
 execution, rebuild and Gateway-rooted traces. Browser tests cover desktop/mobile
 form layout and the administrator navigation workflow.
+
+Secret read descriptors use opaque 128-bit HMAC-SHA-256 identifiers, not
+plaintext checksums. Keeping a value in a new immutable revision may change its
+fingerprint; master-key re-wrapping does not. Runtime owns HOME/TMPDIR/XDG cache
+directories and Templates cannot override them. The desktop/mobile set/keep/
+replace/clear browser gate is `npm --prefix services/admin-console/web run
+test:browser:managed-mcp-secrets`, included in root `test-integration-node`.

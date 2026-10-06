@@ -31,7 +31,12 @@ const server = {
   command: "node",
   args: [],
   env: { LOG_LEVEL: "info" },
-  secret_env: { API_KEY: { set: true, fingerprint: "sha256:1234abcd" } },
+  secret_env: {
+    API_KEY: {
+      set: true,
+      fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef",
+    },
+  },
 };
 const template = {
   template_id: "template-1",
@@ -129,7 +134,9 @@ async function exercise(browser, origin, viewport, label) {
     };
     let dialog = await open();
     assert.equal(await dialog.getByLabel("Secret 1 value").count(), 0);
-    await dialog.getByText(/Stored · sha256:1234abcd/).waitFor();
+    await dialog
+      .getByText(/Stored · hmac-sha256:0123456789abcdef0123456789abcdef/)
+      .waitFor();
     await page.screenshot({
       path: resolve(output, `${label}-keep.png`),
       fullPage: true,

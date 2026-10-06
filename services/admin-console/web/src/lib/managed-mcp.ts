@@ -61,7 +61,7 @@ function environment(values: MCPDraft["env"], label: string, seen: Set<string>):
 
 function environmentName(name: string, label: string, seen: Set<string>) {
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) throw new Error(`${label}: Invalid environment variable name.`);
-  if (name === "HOME" || name === "PATH" || name.startsWith("ANTNEST_")) throw new Error(`${label}: ${name} is reserved by Runtime.`);
+  if (["HOME", "PATH", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"].includes(name) || name.startsWith("ANTNEST_")) throw new Error(`${label}: ${name} is reserved by Runtime.`);
   if (seen.has(name)) throw new Error(`${label}: Duplicate environment variable ${name}.`);
   seen.add(name);
 }

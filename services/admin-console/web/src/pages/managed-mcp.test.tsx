@@ -38,10 +38,10 @@ function catalog(rejectFirst = false) {
 
 describe("Managed MCP template configuration", () => {
   it("keeps saved secrets write-only and supports replacement, set and clear", () => {
-    const saved = { ...server, secret_env: { API_KEY: { set: true as const, fingerprint: "sha256:1234abcd" } } };
+    const saved = { ...server, secret_env: { API_KEY: { set: true as const, fingerprint: "hmac-sha256:0123456789abcdef0123456789abcdef" } } };
     const { container, unmount } = render(<form><ManagedMCPEditor initial={[saved]} /></form>);
     const input = () => managedMCPInput(new FormData(container.querySelector("form")!))[0]!;
-    expect(screen.getByText(/sha256:1234abcd/)).toBeTruthy();
+    expect(screen.getByText(/hmac-sha256:0123456789abcdef0123456789abcdef/)).toBeTruthy();
     expect(screen.queryByLabelText("Secret 1 value")).toBeNull();
     expect(input().secret_env).toEqual({ API_KEY: { keep: true } });
     fireEvent.click(screen.getByRole("button", { name: "Replace secret 1" }));
@@ -56,7 +56,7 @@ describe("Managed MCP template configuration", () => {
     expect(input().secret_env).toEqual({ API_KEY: { value: "" } });
     unmount();
     render(<ManagedMCPDetails servers={[saved]} />);
-    expect(screen.getByText(/sha256:1234abcd/)).toBeTruthy();
+    expect(screen.getByText(/hmac-sha256:0123456789abcdef0123456789abcdef/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Show API_KEY/ })).toBeNull();
     expect(screen.queryByText("new-secret-canary")).toBeNull();
   });

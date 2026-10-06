@@ -220,7 +220,7 @@ type managedMCPSecret struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
-var managedMCPFingerprint = regexp.MustCompile(`^sha256:[0-9a-f]{8}$`)
+var managedMCPFingerprint = regexp.MustCompile(`^hmac-sha256:[0-9a-f]{32}$`)
 
 type templateRuntimeConfigurationSource struct {
 	runtimeConfigurationSource
