@@ -682,7 +682,10 @@
     "runtime_draft": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image_ref", "resources"],
+      "required": [
+        "image_ref",
+        "resources"
+      ],
       "properties": {
         "image_ref": {
           "type": "string",
@@ -694,12 +697,31 @@
           "$ref": "#/$defs/runtime_resources"
         },
         "mcp_servers": {
-          "$ref": "../runtime/runtime-spec.schema.json#/properties/mcp_servers"
+          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_write"
         }
       }
     },
     "runtime_input": {
-      "$ref": "#/$defs/runtime_draft"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image_ref",
+        "resources"
+      ],
+      "properties": {
+        "image_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Caller-selected image reference, preserved verbatim. Syntax is validated; image availability is checked at Runtime creation."
+        },
+        "resources": {
+          "$ref": "#/$defs/runtime_resources"
+        },
+        "mcp_servers": {
+          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_read"
+        }
+      }
     },
     "model_pricing": {
       "type": "object",

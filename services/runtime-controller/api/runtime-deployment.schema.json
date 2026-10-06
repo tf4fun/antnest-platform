@@ -44,6 +44,9 @@
       "type": "string",
       "pattern": "^psr_[0-9a-f]{32}$"
     },
+    "managed_mcp_template": {
+      "$ref": "../../../contracts/runtime/managed-mcp.schema.json#/$defs/template_source"
+    },
     "mcp_servers": {
       "$ref": "../../../contracts/runtime/runtime-spec.schema.json#/properties/mcp_servers"
     },

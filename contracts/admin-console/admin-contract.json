@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 49,
+  "version": 50,
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
@@ -393,9 +393,11 @@
     "managed_mcp": {
       "configuration_owner": "agent_controller_immutable_template_runtime",
       "input": "runtime.mcp_servers_raw_json_on_create_and_revise",
-      "schema": "../runtime/runtime-spec.schema.json#/properties/mcp_servers",
+      "schema": "../runtime/managed-mcp.schema.json#/$defs/servers_write",
+      "read_schema": "../runtime/managed-mcp.schema.json#/$defs/servers_read",
+      "secret_env": "write_only_value_or_keep_true_read_set_and_fingerprint_omit_to_clear",
       "clear": "explicit_empty_array_in_new_revision",
-      "full_configuration": [
+      "full_configuration_except_secret_values": [
         "get_template",
         "get_template_revision",
         "create_template",

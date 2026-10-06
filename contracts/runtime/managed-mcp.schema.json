@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/managed-mcp.schema.json",
+  "title": "Managed MCP write and read boundary",
+  "$defs": {
+    "secret_write": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keep"
+          ],
+          "properties": {
+            "keep": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "secret_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "set",
+        "fingerprint"
+      ],
+      "properties": {
+        "set": {
+          "const": true
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{8}$"
+        }
+      }
+    },
+    "servers_write": {
+      "type": "array",
+      "default": [],
+      "maxItems": 8,
+      "description": "Required stdio MCP servers. env is public configuration; secret_env is write-only and has disjoint names. Maximum 64 total environment entries, 32 KiB per resolved server and 64 KiB total.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,15}$"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "args": {
+            "type": "array",
+            "default": [],
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          },
+          "env": {
+            "type": "object",
+            "default": {},
+            "maxProperties": 64,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "HOME",
+                      "PATH"
+                    ]
+                  },
+                  {
+                    "pattern": "^ANTNEST_"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          },
+          "secret_env": {
+            "type": "object",
+            "default": {},
+            "maxProperties": 64,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "HOME",
+                      "PATH"
+                    ]
+                  },
+                  {
+                    "pattern": "^ANTNEST_"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/secret_write"
+            }
+          }
+        }
+      }
+    },
+    "servers_read": {
+      "type": "array",
+      "default": [],
+      "maxItems": 8,
+      "description": "Required stdio MCP servers. env is public configuration; secret_env is write-only and has disjoint names. Maximum 64 total environment entries, 32 KiB per resolved server and 64 KiB total.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,15}$"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "args": {
+            "type": "array",
+            "default": [],
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          },
+          "env": {
+            "type": "object",
+            "default": {},
+            "maxProperties": 64,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "HOME",
+                      "PATH"
+                    ]
+                  },
+                  {
+                    "pattern": "^ANTNEST_"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          },
+          "secret_env": {
+            "type": "object",
+            "default": {},
+            "maxProperties": 64,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "HOME",
+                      "PATH"
+                    ]
+                  },
+                  {
+                    "pattern": "^ANTNEST_"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/secret_read"
+            }
+          }
+        }
+      }
+    },
+    "template_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "template_id",
+        "revision"
+      ],
+      "properties": {
+        "organization_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "template_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
