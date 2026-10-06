@@ -177,6 +177,12 @@ Runtime tests that capture tracing spans no longer lose spans or deadlock when
 run in parallel with other tests, a test-only workaround for
 [tokio-rs/tracing#3611](https://github.com/tokio-rs/tracing/issues/3611) (#123).
 
+The development Runtime telemetry ingress now reliably answers an oversized or
+otherwise rejected upload with its status (for example `413`). It sends the
+empty response at once and drains the rest of the upload, bounded to 8 MiB and
+the exchange deadline, before closing. Previously, closing with unread bytes
+reset the connection and clients saw `ECONNRESET`/`EPIPE` instead (#116).
+
 Runtime process scans (background bash groups, managed MCP work, orphan
 collection) treat a process that exits mid-scan as gone instead of failing the
 whole scan on `ESRCH` (#115).

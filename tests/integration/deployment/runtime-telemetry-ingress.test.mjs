@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, request } from "node:http";
+import { connect } from "node:net";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -250,6 +251,74 @@ test(
       413,
     );
     assert.equal(received, 0);
+  },
+);
+
+test(
+  "oversized uploads still in flight always receive 413 instead of a reset",
+  { timeout: 60000 },
+  async (t) => {
+    let received = 0;
+    const peer = await upstream(t, (_incoming, response) => {
+      received++;
+      response.end();
+    });
+    const transport = await ingress(t, peer, { maxBodyBytes: 1024 });
+    const chunk = Buffer.alloc(256 * 1024);
+    const chunks = Array.from({ length: 8 }, () => chunk);
+    const outcomes = [];
+    for (let attempt = 0; attempt < 20; attempt++)
+      for (const headers of [
+        { "content-length": String(chunk.length * chunks.length) },
+        {},
+      ])
+        outcomes.push(
+          await call(t, transport, { headers, chunks }).then(
+            (result) => result.status,
+            (error) => error.code,
+          ),
+        );
+    assert.deepEqual(
+      outcomes.filter((outcome) => outcome !== 413),
+      [],
+    );
+    assert.equal(received, 0);
+  },
+);
+
+test(
+  "a stalled oversized upload gets 413 at once and a bounded lingering close",
+  { timeout: 10000 },
+  async (t) => {
+    const peer = await upstream(t, (_incoming, response) => response.end());
+    const transport = await ingress(t, peer, {
+      maxBodyBytes: 64,
+      timeoutMs: 1000,
+    });
+    const client = connect({
+      host: "127.0.0.1",
+      port: transport.address.port,
+      allowHalfOpen: true,
+    });
+    t.after(() => client.destroy());
+    client.on("error", () => {});
+    await once(client, "connect");
+    const started = Date.now();
+    client.write(
+      "POST /v1/traces HTTP/1.1\r\nHost: ingress\r\nContent-Length: 4096\r\n\r\n",
+    );
+    client.write(Buffer.alloc(1024));
+    let response = "";
+    const responded = Promise.withResolvers();
+    client.on("data", (chunk) => {
+      response += chunk;
+      if (response.includes("\r\n\r\n")) responded.resolve();
+    });
+    await responded.promise;
+    assert.match(response, /^HTTP\/1\.1 413 /u);
+    assert(Date.now() - started < 800, "413 waited for the stalled upload");
+    await once(client, "end");
+    assert(Date.now() - started >= 800, "ingress closed before draining");
   },
 );
 

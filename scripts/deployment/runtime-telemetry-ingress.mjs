@@ -132,6 +132,42 @@ export async function startRuntimeTelemetryIngress({
     });
     response.end(body);
   };
+  // Closing a socket with unread request bytes makes the kernel reset the
+  // connection, which can discard the response before the client reads it.
+  // Rejections therefore send their complete empty response first and close
+  // only after the rest of the upload is drained within a bounded budget.
+  const reject = (incoming, response, status) => {
+    if (response.destroyed || response.writableEnded) return;
+    response.writeHead(status, { "content-length": "0", connection: "close" });
+    if (incoming.complete) {
+      response.end();
+      return;
+    }
+    response.flushHeaders();
+    let drained = 0,
+      settled = false;
+    const settle = (exhausted) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      incoming.off("data", count);
+      incoming.off("end", drainedAll);
+      incoming.off("close", drainedAll);
+      if (exhausted) response.destroy();
+      else if (!response.destroyed) response.end();
+    };
+    const drainedAll = () => settle(false);
+    const count = (chunk) => {
+      drained += chunk.length;
+      if (drained > limits.max_wire_body_bytes) settle(true);
+    };
+    const timer = setTimeout(() => settle(true), timeoutMs);
+    timer.unref();
+    incoming.on("data", count);
+    incoming.once("end", drainedAll);
+    incoming.once("close", drainedAll);
+    incoming.resume();
+  };
   const server = createServer(
     {
       maxHeaderSize: 8192,
@@ -143,19 +179,19 @@ export async function startRuntimeTelemetryIngress({
     (incoming, response) => {
       incoming.on("error", () => {});
       if (!paths.has(incoming.url)) {
-        reply(response, 404);
+        reject(incoming, response, 404);
         return;
       }
       if (incoming.method !== "POST") {
-        reply(response, 405);
+        reject(incoming, response, 405);
         return;
       }
       if (Number(incoming.headers["content-length"]) > maxBodyBytes) {
-        reply(response, 413);
+        reject(incoming, response, 413);
         return;
       }
       if (closing || jobs.size >= maxInflight) {
-        reply(response, 503);
+        reject(incoming, response, 503);
         return;
       }
       const controller = new AbortController();
@@ -239,7 +275,8 @@ export async function startRuntimeTelemetryIngress({
       })()
         .catch((error) => {
           job.upstream?.destroy();
-          reply(
+          reject(
+            incoming,
             response,
             [413, 504].includes(error?.transportStatus)
               ? error.transportStatus

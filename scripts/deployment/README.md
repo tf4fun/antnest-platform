@@ -26,7 +26,10 @@ address and `ANTNEST_RUNTIME_OTLP_INGRESS_IPV4` for its management bind (default
 with no query strings or proxy/upgrade handshakes. It buffers and checks an
 at-most-8-MiB wire body before opening the collector connection. It caps collector
 responses at 1 MiB and simultaneous exchanges at eight, with an absolute
-15-second exchange deadline. Compression is not decoded or transformed here;
+15-second exchange deadline. Rejections (including an oversized body) send their
+complete empty response at once, then drain up to 8 MiB more of the upload within
+the exchange deadline before closing, so clients still uploading read the status
+instead of a reset. Compression is not decoded or transformed here;
 the wire-byte bound applies before collector decoding. Only content type and
 content encoding are forwarded in either direction. CCT, authorization, cookies,
 redirects and claimed identities are not forwarded.
