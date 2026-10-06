@@ -26,6 +26,9 @@ protection remain Phase 2.
   inspects the source Runtime for rebuild rollback. Its observation worker
   reconciles a changed peer before publishing execution readiness; it can
   update an open attachment, never reopen a lifecycle-closed one.
+  Journal health commits independently of Egress. Failed peer updates remain in
+  a bounded-budget retry work set restored from RC inventory on worker restart,
+  first initialization and journal reset; new execution still needs confirmation.
 - Closed, unbound routes answer only the fixed local readiness SYN/RST probe;
   they cannot create flows or write to TUN. Open routes without a bound address
   drop traffic. Policy updates, Ensure and recovery retain the binding.
@@ -49,12 +52,13 @@ evidence even when a test writer bypasses the userspace policy.
 
 1. Shared contract and schema tests: passed.
 2. RC producer: unit/race/lint/vet and PostgreSQL/component gates pass; real
-   Docker address comparisons and 134 owner checks pass, with fixtures cleaned.
+   Docker address comparisons and 151 owner checks pass, including real management
+   disconnection of one Runtime while another remains healthy, with fixtures cleaned.
 3. Egress owner gates pass: native and Linux unit/contract/component/Clippy,
    eight PostgreSQL integration tests, 182 Docker checks, and the real Linux
    userspace-bypass kernel test. Both Docker runs cleaned their resources.
 4. Controller consumer: unit/race/lint/vet pass; PostgreSQL/Temporal component
-   coverage passes (675 tests, 1,222 subtests, no skips), and 105 Docker owner
+   coverage passes (681 tests, 1,225 subtests, no skips), and 105 Docker owner
    checks pass with fixture cleanup. Fresh addresses, source restoration,
    lost-response CAS, restart rebinding and readiness fencing are covered.
 5. Cross-service integration passes: six real Runs and 16 local fixture Provider
@@ -63,6 +67,10 @@ evidence even when a test writer bypasses the userspace policy.
    advancing from 6 to 7. Business/topology/privacy gates pass; only the existing
    reviewed clock-skew warnings remain in strict Trace evidence. The complete
    fixture was cleaned and retained Docker identities were unchanged.
+   Review regression also pauses Egress, reconciles a paused Runtime through a
+   normal RC restart, and proves Controller commits `unhealthy/runtime_paused`
+   while Egress remains paused. Health recovery and subsequent address rebind
+   pass after resume, with the complete fixture again cleaned.
 6. The updated standalone Stage1 Docker entrypoint passes, including real
    outbound allow/deny, attachment close, Egress restart and persisted policy.
    Its disposable fixture cleanup was verified.
@@ -73,3 +81,20 @@ owner gate supplies the crafted-UDP and direct-TUN kernel proofs separately.
 
 Integration runs after the three service batches pass their own gates. Update
 each service in its own commit, then submit one reviewable PR; do not merge it.
+
+## Phase 1 limits and follow-up
+
+Address reuse before the next observation/rebind remains a Phase 1 window.
+[Phase 2 (#111)](https://github.com/tf4fun/antnest-platform/issues/111) tracks
+per-generation authentication/encryption and replay protection separately from
+#34's completed Phase 1 criteria.
+
+Connected IPv4 subnets are a startup snapshot. Hot attachment of a public-address
+network requires restarting/recreating Egress before admitting traffic on that
+network; there is no continuous attachment watcher. RFC1918 destinations remain
+blocked independently of this snapshot.
+
+Migration 0002 constrains stored peer addresses to IPv4 host addresses; it does
+not turn a nullable database row into an admission proof. The API requires a
+peer for open operations, and restored unbound open rows remain fail-closed in
+the data plane. Direct database/host administration remains a trusted boundary.

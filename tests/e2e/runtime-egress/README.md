@@ -10,6 +10,11 @@ the peer. A graceful stop, network reconnect at a free fixture address and start
 forces a changed outer peer; Controller must commit it with a new attachment
 version. Updating this network binding does not reactivate an old execution.
 
+The fixture also pauses Egress and a Runtime, then normally restarts RC to
+produce an inventory health observation. Controller must commit `runtime_paused`
+while Egress is still paused, then recover health after both resume. This uses
+actual services and data without a synthetic database write.
+
 The read-only probe runs only on the disposable control network, with a fixture
 Controller workload token mounted read-only. All probe containers carry the
 fixture's ownership label. The parent cleans owned containers, networks, volumes

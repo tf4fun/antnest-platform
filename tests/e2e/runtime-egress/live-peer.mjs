@@ -157,3 +157,76 @@ export async function restartWithNewPeer(agentID, inspect) {
     "Controller did not rebind the restarted Runtime's current address",
   );
 }
+
+async function fixtureService(name) {
+  assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/u);
+  const ids = lines(
+    await docker([
+      "ps",
+      "-q",
+      "--filter",
+      `label=com.docker.compose.project=${project}`,
+      "--filter",
+      `label=com.docker.compose.service=${name}`,
+    ]),
+  );
+  assert.equal(ids.length, 1, "expected one fixture service");
+  const [container] = JSON.parse(await docker(["inspect", ids[0]]));
+  assert.equal(container.Config.Labels["com.docker.compose.project"], project);
+  assert.equal(container.Config.Labels["com.docker.compose.service"], name);
+  return container;
+}
+
+export async function proveHealthDuringEgressOutage(agentID, readAgent) {
+  const runtime = await runtimeContainer(agentID);
+  const egress = await fixtureService("runtime-egress");
+  const rc = await fixtureService("runtime-controller");
+  let runtimePaused = false,
+    egressPaused = false,
+    committed;
+  try {
+    await docker(["pause", egress.Id]);
+    egressPaused = true;
+    await docker(["pause", runtime.Id]);
+    runtimePaused = true;
+    // Pause does not emit a supported health event. A normal RC restart
+    // reconciles its actual inventory and produces the unhealthy observation.
+    await docker(["restart", "-t", "20", rc.Id], true);
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const current = await readAgent();
+      if (
+        current.runtime_state === "unhealthy" &&
+        current.runtime_reason === "runtime_paused"
+      ) {
+        committed = current;
+        break;
+      }
+      await delay(500);
+    }
+    assert(committed, "Egress outage blocked committed Runtime health");
+    const [stillPaused] = JSON.parse(await docker(["inspect", egress.Id]));
+    assert.equal(
+      stillPaused.State.Paused,
+      true,
+      "Egress recovered before the health proof",
+    );
+  } finally {
+    try {
+      if (runtimePaused) await docker(["unpause", runtime.Id]);
+    } finally {
+      if (egressPaused) await docker(["unpause", egress.Id]);
+    }
+  }
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const current = await readAgent();
+    if (current.runtime_state === "available")
+      return {
+        health: committed.runtime_state,
+        reason: committed.runtime_reason,
+        egress_paused_during_commit: true,
+        recovered: true,
+      };
+    await delay(500);
+  }
+  throw new Error("Runtime health did not recover after Egress resumed");
+}

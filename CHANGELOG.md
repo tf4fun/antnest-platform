@@ -49,6 +49,14 @@ lifecycle-closed attachments (#34). Address binding uses the existing managed
 network trust model; authenticated datagrams and replay protection remain a
 separate Phase 2.
 
+Runtime health observations and journal cursors now commit independently of
+Egress availability. Failed peer updates retry within one observation poll
+budget, restoring work from RC inventory after startup or cursor reset. New
+execution publication still requires peer confirmation. RC reports a missing
+management IPv4 as one unknown-health `runtime_peer_unavailable` instance rather
+than failing the whole inventory (#34). Authentication, encryption and replay
+protection are tracked separately in [#111](https://github.com/tf4fun/antnest-platform/issues/111).
+
 Managed MCP configuration separates public `env` from write-only `secret_env`
 (#37). Console supports set/keep/clear and reads only set/fingerprint metadata.
 Controller contract revision 39, RC revision 17 and Console revision 50 freeze

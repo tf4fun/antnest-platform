@@ -34,6 +34,7 @@ import { collectManagedTrace, inspectManagedTrace } from "./request-trace.mjs";
 import {
   assertLivePeer,
   restartWithNewPeer,
+  proveHealthDuringEgressOutage,
 } from "../runtime-egress/live-peer.mjs";
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
@@ -64,6 +65,7 @@ const secrets = [
 let stage = "setup",
   agentId,
   deleted = false;
+let egressOutage;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
@@ -491,6 +493,8 @@ async function main() {
   );
   stage = "delete";
   if (process.env.TEST_DOCKER_PROJECT) {
+    stage = "egress-outage-health";
+    egressOutage = await proveHealthDuringEgressOutage(agentId, agent);
     stage = "restart-new-peer";
     peerChecks.push(await restartWithNewPeer(agentId, runtime));
     stage = "delete";
@@ -517,6 +521,7 @@ async function main() {
     model_requests: model.requests.length,
     runs: 6,
     peer_binding: peerChecks,
+    egress_outage: egressOutage,
     drain,
     runtime_operations: journals,
     existing_connection_refreshed: true,
