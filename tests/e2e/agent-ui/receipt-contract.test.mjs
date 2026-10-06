@@ -183,8 +183,10 @@ test(
       );
       assert.equal(operation.errorClass, "model_unsupported_content");
 
-      // ACP is private. Capture its actual HTTP wire from the owned Node container,
-      // using the same scope IDs resolved by normal Gateway authentication.
+      // ACP is private. Capture its actual HTTP wire from the owned Agent UI
+      // container, authenticated the way Agent UI calls it: its own service
+      // credential plus a workspace caller context that Identity issues for
+      // the logged-in member's session and this Agent.
       const containerId = await docker(compose(["ps", "-q", "agent-ui"]), true);
       const row = JSON.parse(await docker(["inspect", containerId]))[0];
       assert.equal(
@@ -192,24 +194,45 @@ test(
         config.project,
       );
       assert.equal(row.Config.Labels["com.docker.compose.service"], "agent-ui");
-      const headers = {
-        "x-antnest-organization-id": principal.organization_id,
-        "x-antnest-principal-id": principal.user_id,
-        "x-antnest-agent-id": fixture.agentID,
-      };
+      const accessToken = client.cookies.get("antnest_session");
+      assert(accessToken, "Gateway login did not set a session cookie");
+      // Secrets reach the exec only through the Docker client environment,
+      // never through command-line arguments.
+      const wireDocker = dockerClient(
+        {
+          ...config.env,
+          RECEIPT_ACCESS_TOKEN: accessToken,
+          RECEIPT_GATEWAY_IDENTITY_TOKEN: readFileSync(
+            `${config.credentials}/edge-gateway/tokens/identity-service`,
+            "utf8",
+          ).trim(),
+        },
+        signal,
+        120_000,
+      );
       const readWire = async (path) =>
         JSON.parse(
-          await docker([
+          await wireDocker([
             "exec",
+            "--env",
+            "RECEIPT_ACCESS_TOKEN",
+            "--env",
+            "RECEIPT_GATEWAY_IDENTITY_TOKEN",
             containerId,
             "node",
             "--input-type=module",
             "-e",
-            `const response = await fetch(process.argv[1], { headers: JSON.parse(process.argv[2]), redirect: "error", signal: AbortSignal.timeout(10000) });
+            `import { readFileSync } from "node:fs";
+       const signal = AbortSignal.timeout(10000);
+       const issued = await fetch("http://identity-service:8080/rpc/identity/resolve-access-token", { method: "POST", headers: { "Antnest-Service-Authorization": "Bearer " + process.env.RECEIPT_GATEWAY_IDENTITY_TOKEN, "Content-Type": "application/json" }, body: JSON.stringify({ access_token: process.env.RECEIPT_ACCESS_TOKEN, profile: "workspace", agent_id: process.argv[2] }), redirect: "error", signal });
+       if (!issued.ok) throw new Error("Caller context status " + issued.status);
+       const { caller_context } = await issued.json();
+       const credential = readFileSync("/etc/antnest/service-auth/tokens/agent-acp-service", "utf8").trim();
+       const response = await fetch(process.argv[1], { headers: { "Antnest-Service-Authorization": "Bearer " + credential, "Antnest-Caller-Context": caller_context }, redirect: "error", signal });
        if (!response.ok) throw new Error("Bridge observation status " + response.status);
        process.stdout.write(await response.text());`,
-            `http://agent-acp-service:8080/rpc/agent-acp/workspace/sessions/${encodeURIComponent(sessionId)}/${path}`,
-            JSON.stringify(headers),
+            `http://agent-acp-workspace:8080/rpc/agent-acp/workspace/sessions/${encodeURIComponent(sessionId)}/${path}`,
+            fixture.agentID,
           ]),
         );
       const receipt = await readWire(

@@ -282,7 +282,6 @@ export const suites = [
       "Agent UI receipt contract",
       ["agent-ui-web", "chromium"],
       "make e2e-agent-ui-receipt-contract",
-      "it reaches ACP through a service name that can resolve to a non-listening address (#120)",
     ],
   ].map(([id, name, setup, run, disabled]) => ({
     id,
