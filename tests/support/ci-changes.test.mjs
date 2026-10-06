@@ -46,15 +46,13 @@ test("a service change selects only suites that exercise that service", () => {
   const selected = ids(selectSuites(["services/runtime-egress/src/main.rs"]));
   for (const id of [
     "egress-postgres",
-    "auth-egress",
-    "shell-stage1",
     "shell-runtime-controller",
     "deployment-contracts",
     "gateway-security-headers",
   ])
     assert(selected.includes(id), id);
   for (const id of [
-    "identity-postgres",
+    "auth-identity",
     "admin-console-browser",
     "auth-console",
     "skill-registry-discovery",
@@ -66,7 +64,7 @@ test("a service change selects only suites that exercise that service", () => {
 test("test sources select the suites that run them", () => {
   assert.deepEqual(
     ids(selectSuites(["tests/integration/admin-console/catalog-browser.mjs"])),
-    ["admin-console-browser", "deployment-contracts", "skill-registry-console"],
+    ["admin-console-browser", "deployment-contracts"],
   );
   assert.deepEqual(
     ids(

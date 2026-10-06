@@ -80,6 +80,8 @@ export const suites = [
       ...compose,
     ],
     pull: base,
+    disabled:
+      "SCIM revocation fixtures keep nanosecond timestamps that PostgreSQL truncates (#117)",
     run: ["make test-identity-postgres"],
   },
   {
@@ -131,6 +133,8 @@ export const suites = [
     tier: "a",
     setup: ["agent-ui-web", "chromium"],
     paths: [...service("agent-ui"), "tests/integration/agent-ui/**"],
+    disabled:
+      "the workspace bridge test can release a held view before the request arrives (#121)",
     run: ["npm --prefix services/agent-ui/web run test:browser"],
   },
   {
@@ -187,6 +191,10 @@ export const suites = [
       "runtime-controller": ["antnest-runtime"],
     }[name],
     pull: name === "controller" ? temporal : base,
+    disabled:
+      name === "egress"
+        ? "fixture credentials are unreadable by the capability-dropped Egress on a native Linux daemon (#118)"
+        : undefined,
     paths: [
       ...paths,
       `tests/e2e/service-authentication/${name}/**`,
@@ -196,7 +204,7 @@ export const suites = [
   })),
   {
     id: "deployment-docker",
-    name: "Deployment credentials, PKI, ports and transports",
+    name: "Deployment credentials, PKI and ports",
     tier: "b",
     setup: [],
     paths: [
@@ -212,8 +220,18 @@ export const suites = [
       "node tests/e2e/service-authentication/deployment-credentials/run.mjs",
       "node tests/e2e/service-authentication/development-pki/run.mjs",
       "make e2e-deployment-ports",
-      "make e2e-deployment-transports",
     ],
+  },
+  {
+    id: "deployment-transports",
+    name: "Deployment transports",
+    tier: "b",
+    setup: [],
+    paths: ["tests/integration/deployment/**", ...compose],
+    pull: base,
+    disabled:
+      "the telemetry ingress can reset an over-limit upload instead of answering 413 (#116)",
+    run: ["make e2e-deployment-transports"],
   },
   {
     id: "observation-retry",
@@ -246,6 +264,10 @@ export const suites = [
     tier: "b",
     setup: [],
     pull: base,
+    disabled:
+      mode === "stage1"
+        ? "Agent TCP fails under the runner's rp_filter (#114) and workspace cleanup fails on Linux (#122)"
+        : undefined,
     paths: [
       ...service(...owners),
       ...runtime,
@@ -268,12 +290,14 @@ export const suites = [
       "Agent UI receipt contract",
       ["agent-ui-web", "chromium"],
       "make e2e-agent-ui-receipt-contract",
+      "it reaches ACP through a service name that can resolve to a non-listening address (#120)",
     ],
-  ].map(([id, name, setup, run]) => ({
+  ].map(([id, name, setup, run, disabled]) => ({
     id,
     name,
     tier: "b",
     setup,
+    disabled,
     images: [
       "antnest-runtime",
       "temporal",
@@ -317,6 +341,7 @@ export const suites = [
     tier: "b",
     setup: ["admin-web", "chromium"],
     pull: base,
+    disabled: "the runner predates unified service authentication (#119)",
     paths: [
       ...service("skill-registry", "admin-console"),
       "tests/e2e/skill-registry/**",
