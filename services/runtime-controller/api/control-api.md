@@ -424,3 +424,11 @@ labels or deployment digests. MCP cache HOME/TMPDIR/XDG directories use a separa
 children. This cache resets on container restart. The bootstrap volume survives ordinary container
 restarts; it is excluded from workspace backup and rebuilt from Controller on
 restore. See the [shared contract](../../../contracts/runtime/managed-mcp-secrets.md).
+
+`resources.tmpfs_bytes` is the size limit of each mount, not a single combined
+budget for `/tmp` and MCP HOME. All MCP servers share the HOME mount without
+per-server quotas; one server filling it can prevent others from writing caches.
+The mounts grow on demand and their actual usage shares the existing
+`resources.memory_bytes` limit with all Runtime processes. Configuring two equal
+mount limits neither reserves twice that RAM nor increases the container memory
+limit; insufficient memory can trigger OOM before the filesystem size limits.

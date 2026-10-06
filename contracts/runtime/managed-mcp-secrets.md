@@ -86,6 +86,26 @@ MCP must explicitly grant group permissions when sharing its new files. Trusted
 MCP code can still deliberately write credentials to shared locations or grant
 world/group access; UID isolation does not protect against such disclosure.
 
+The umask also applies to workspace output: default new files are 0600 and
+directories 0700, so UID 1000 Bash/file tools cannot read an MCP-generated report
+or traverse a cloned repository until the MCP grants group access. The private
+0700 HOME/TMPDIR already isolates ordinary credential caches; umask 077 adds
+protection for programs using shared `/tmp` directly. Retain this default for
+the current release. If a concrete server compatibility issue requires revisiting
+007, preserve the private directory boundary and explicitly reassess shared
+`/tmp` credential handling; there is no per-server umask switch in this contract.
+
+All configured servers (at most eight) share one cache tmpfs of
+`resources.tmpfs_bytes`, equal to the separate `/tmp` mount's size limit.
+Directory isolation does not provide per-server capacity quotas. A server that
+fills this shared filesystem can cause other servers' cache writes to fail with
+ENOSPC. The two mounts can together use up to twice that filesystem capacity,
+subject to the existing container memory limit and other memory use; memory
+pressure can cause OOM before either mount is full. The size values are upper
+bounds, not reservations, and actual tmpfs usage counts toward the container's
+`resources.memory_bytes`. See the [Linux tmpfs documentation](https://docs.kernel.org/filesystems/tmpfs.html)
+and [Docker tmpfs memory accounting](https://docs.docker.com/engine/storage/tmpfs/).
+
 ## Upgrade
 
 No heuristic can reliably infer which arbitrary env values are secrets. Existing

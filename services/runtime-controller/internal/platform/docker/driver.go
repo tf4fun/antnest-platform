@@ -627,7 +627,6 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 	for key, raw := range d.config.RuntimeOTEL {
 		environment[key] = raw
 	}
-
 	if value.RuntimeSpec.Authentication != nil {
 		for key, raw := range d.config.RuntimeAuthentication {
 			environment[key] = raw

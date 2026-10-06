@@ -17,6 +17,11 @@ when sharing new MCP output in workspace. Remove overridden cache-directory
 environment variables from Templates. See the
 [managed MCP secret contract](contracts/runtime/managed-mcp-secrets.md).
 
+The MCP cache tmpfs shares one `tmpfs_bytes` capacity across all servers, separate
+from the equally sized `/tmp` mount. There are no per-server cache quotas;
+one server can exhaust that filesystem. These are on-demand size limits, not
+reserved RAM, and all actual usage shares the Runtime's existing memory limit.
+
 **The first #42 upgrade requires downtime for Controller and Identity; rolling
 old/new binaries is unsupported, even when retaining single-key configuration.**
 Back up each owned database with its keys and matching binary, then stop all old
