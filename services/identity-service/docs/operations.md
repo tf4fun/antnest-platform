@@ -77,11 +77,17 @@ The [shared contract](../../../contracts/platform/encryption-key-rotation.md)
 defines exact configuration and envelope authentication. Keep bootstrap,
 signing and transport keys separate from this stored-secret key ring.
 
+Startup and `rekey` use the shared encryption configuration loader with
+Identity's variable prefix and its `devsecrets.Policy.CheckKey` callback. The
+callback checks active and decrypt-only keys and retains variable-only WARNs
+under the existing explicit development opt-in.
+
 1. Back up first and stop old replicas before starting upgraded replicas with
-   the existing single key. Use a coordinated binary cutover: old binaries
-   cannot accept the new migration journal or read new envelopes. Migration
-   `0003` labels historical rows `local-v1`; new writes use envelopes. This is
-   additive; rollback needs the pre-upgrade database, keys and matching binary.
+   the existing single key. **The first upgrade requires downtime; rolling
+   old/new binaries is unsupported even with a single key.** Old binaries cannot
+   accept the new migration journal or read new envelopes. Migration `0003`
+   labels historical rows `local-v1`; new writes use envelopes. This is additive;
+   rollback needs the pre-upgrade database, keys and matching binary.
 2. Replace the single-key variable with a ring containing `local-v1` with the
    **same bytes** and a fresh key ID. Keep active `local-v1` while every replica
    receives both keys. Ring values and active IDs are not trimmed.

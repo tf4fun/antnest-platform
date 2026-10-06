@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -39,5 +40,56 @@ func TestRekeyConfigurationDoesNotRequireBootstrapOrPublicURL(t *testing.T) {
 	})
 	if err != nil || loaded.Encryption.ActiveKID != "kid2" {
 		t.Fatalf("minimal rekey configuration: %v", err)
+	}
+}
+
+func TestRekeyAndStartupUseSameEncryptionAdmission(t *testing.T) {
+	const prefix = "ANTNEST_IDENTITY"
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	uniform := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	for _, test := range []struct {
+		name, single, ring, active, optIn string
+		valid                             bool
+		warnings                          []string
+	}{
+		{name: "trimmed single", single: " " + key + " ", valid: true},
+		{name: "ring", ring: "old:" + key + ",new:" + key, active: "new", valid: true},
+		{name: "missing"},
+		{name: "mixed", single: key, ring: "new:" + key, active: "new"},
+		{name: "active whitespace", ring: "new:" + key, active: " new"},
+		{name: "uniform single", single: uniform},
+		{name: "uniform decrypt-only", ring: "old:" + uniform + ",new:" + key, active: "new"},
+		{name: "single opt-in", single: uniform, optIn: "true", valid: true, warnings: []string{prefix + "_ENCRYPTION_KEY"}},
+		{name: "ring opt-in deduplicates warnings", ring: "old:" + uniform + ",new:" + uniform, active: "new", optIn: "true", valid: true, warnings: []string{prefix + "_ENCRYPTION_KEYS"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			values := validEnvironment()
+			values[prefix+"_ENCRYPTION_KEY"] = test.single
+			values[prefix+"_ENCRYPTION_KEYS"] = test.ring
+			values[prefix+"_ENCRYPTION_ACTIVE_KID"] = test.active
+			values["ANTNEST_ALLOW_PUBLIC_DEV_SECRETS"] = test.optIn
+			startup, startupErr := Load(func(name string) string { return values[name] })
+			rekey, rekeyErr := LoadRekey(func(name string) (string, bool) {
+				value, found := values[name]
+				return value, found
+			})
+			if (startupErr == nil) != test.valid || (rekeyErr == nil) != test.valid {
+				t.Fatalf("startup/rekey admission differs from expected result: %v / %v", startupErr, rekeyErr)
+			}
+			if !test.valid {
+				if startupErr.Error() != rekeyErr.Error() || !strings.Contains(rekeyErr.Error(), prefix+"_ENCRYPTION_KEY") {
+					t.Fatal("startup/rekey lost the same owning-variable rejection")
+				}
+				if strings.Contains(rekeyErr.Error(), key) || strings.Contains(rekeyErr.Error(), uniform) {
+					t.Fatal("admission error exposed key material")
+				}
+				return
+			}
+			if !reflect.DeepEqual(startup.Encryption, rekey.Encryption) ||
+				!reflect.DeepEqual(startup.DevelopmentSecretWarnings, test.warnings) ||
+				!reflect.DeepEqual(rekey.DevelopmentSecretWarnings, test.warnings) {
+				t.Fatal("startup/rekey key configuration or policy warnings differ")
+			}
+		})
 	}
 }

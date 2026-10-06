@@ -87,7 +87,7 @@ func Load(lookup func(string) string) (Config, error) {
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_IDENTITY_DATABASE_URL is required")
 	}
-	config.Encryption, err = loadEncryption(lookup, policy)
+	config.Encryption, err = secretencryption.LoadConfig(lookup, "ANTNEST_IDENTITY", policy.CheckKey)
 	if err != nil {
 		return Config{}, err
 	}
