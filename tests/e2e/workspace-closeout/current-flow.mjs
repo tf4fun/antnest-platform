@@ -38,6 +38,7 @@ import {
 } from "./current-trace.mjs";
 import { observeState, until } from "./state.mjs";
 import { groupAlive, processStat, readProcesses } from "./process.mjs";
+import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 
 export async function workspaceProtocol({
   config,
@@ -82,16 +83,7 @@ export async function workspaceProtocol({
   const binding = async (observed) =>
     runtimeBinding(
       observed,
-      JSON.parse(
-        await docker([
-          "exec",
-          observed.container.Id,
-          "curl",
-          "--fail",
-          "--silent",
-          "http://127.0.0.1:8093/status",
-        ]),
-      ),
+      await runtimeStatus(docker, config.project, observed.container.Id),
     );
   const auditPage = async () => {
     const page = await json(

@@ -27,6 +27,20 @@ export async function networkOctet(docker, seed) {
   );
 }
 
+const secretName = /TOKEN|KEY|PASSWORD|SECRET|CREDENTIAL/i;
+
+// Command stderr can contain integration credentials, so failures report only
+// a short tail with every secret-named environment value and bearer redacted.
+export function stderrDiagnostic(text, env = {}) {
+  const secrets = Object.entries(env)
+    .filter(([name, value]) => secretName.test(name) && value?.length >= 8)
+    .map(([, value]) => value)
+    .sort((a, b) => b.length - a.length);
+  let tail = text.trim().split("\n").slice(-12).join("\n");
+  for (const secret of secrets) tail = tail.replaceAll(secret, "[redacted]");
+  return tail.replace(/(Bearer\s+)\S+/gi, "$1[redacted]").slice(-2000);
+}
+
 export function dockerClient(env, signal, budget = 900000) {
   const deadline = Date.now() + budget;
   return async function docker(args, long = false) {
@@ -58,8 +72,10 @@ export function dockerClient(env, signal, budget = 900000) {
         output += value;
         if (output.length > 8 * 1024 * 1024) terminate();
       });
-      // Command output can contain integration credentials; never echo raw stderr.
-      child.stderr.resume();
+      let errors = "";
+      child.stderr.on("data", (value) => {
+        errors = (errors + value).slice(-64 * 1024);
+      });
       const timer = setTimeout(terminate, invocation.timeoutMs);
       signal?.addEventListener("abort", terminate, { once: true });
       child.once("error", (error) => {
@@ -70,6 +86,8 @@ export function dockerClient(env, signal, budget = 900000) {
         signal?.removeEventListener("abort", terminate);
         if (failure || code !== 0) {
           commandFailure.message += ` (${code})`;
+          const diagnostic = stderrDiagnostic(errors, env);
+          if (diagnostic) commandFailure.message += `\n${diagnostic}`;
           reject(failure ?? commandFailure);
         } else resolve(output.trim());
       });

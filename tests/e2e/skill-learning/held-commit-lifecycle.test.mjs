@@ -11,6 +11,7 @@ import {
   composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
+import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
 import { skillClientArgs } from "./client-container.mjs";
@@ -193,19 +194,12 @@ test(
       );
       const fixture = await setup(config, abort.signal);
       if (atomicHold) {
-        const runtimeStatus = JSON.parse(
-          await docker([
-            "exec",
-            `antnest-runtime-${fixture.agentID}`,
-            "curl",
-            "--fail",
-            "--silent",
-            "http://127.0.0.1:8093/status",
-          ]),
+        const status = await runtimeStatus(
+          docker,
+          config.project,
+          `antnest-runtime-${fixture.agentID}`,
         );
-        assert.deepEqual(runtimeStatus.test_features, [
-          "skill-maintenance-e2e-gate",
-        ]);
+        assert.deepEqual(status.test_features, ["skill-maintenance-e2e-gate"]);
         const logs = spawnSync(
           "docker",
           ["logs", `antnest-runtime-${fixture.agentID}`],
@@ -225,10 +219,7 @@ test(
           );
         assert.equal(warnings.length, 1);
         assert.equal(warnings[0].level, "WARN");
-        assert.deepEqual(
-          warnings[0].test_features,
-          runtimeStatus.test_features,
-        );
+        assert.deepEqual(warnings[0].test_features, status.test_features);
         await docker([
           "exec",
           "-u",

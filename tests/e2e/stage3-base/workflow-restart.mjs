@@ -161,9 +161,11 @@ export function inspectWorkflowRestart(trace, tree, expected) {
       tag(tree.parent(applied), "antnest.configuration.revision"),
       revision,
     );
+    // Server start times are millisecond-truncated; compare client spans.
     if (activity === interrupted)
       assert(
-        applied.startTime + applied.duration <= server.startTime,
+        tree.parent(applied).startTime + tree.parent(applied).duration <=
+          client.startTime,
         "interrupted settlement preceded publication",
       );
   }

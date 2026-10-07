@@ -18,6 +18,7 @@ import {
   saveFoundationFailure,
 } from "../lifecycle-closeout/foundation-trace.mjs";
 import { flushTraceProducers } from "../lifecycle-closeout/network-support.mjs";
+import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 
 export async function runBrowserProfile({
   config,
@@ -41,16 +42,7 @@ export async function runBrowserProfile({
     initial = await ready(agentID);
   const runtime = runtimeBinding(
     initial,
-    JSON.parse(
-      await docker([
-        "exec",
-        initial.container.Id,
-        "curl",
-        "--fail",
-        "--silent",
-        "http://127.0.0.1:8093/status",
-      ]),
-    ),
+    await runtimeStatus(docker, config.project, initial.container.Id),
   );
   const persist = (name, value) =>
     writeFile(

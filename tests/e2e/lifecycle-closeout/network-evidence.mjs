@@ -147,3 +147,21 @@ export function inspectTargetHistory(state, expected, peer) {
     expected.map((request) => ({ ...request, peer })),
   );
 }
+// Summarizes why a held probe never wrote its barrier without echoing the
+// model payloads: which model stages ran and how the probe's TCP connect ended.
+export function barrierDiagnostic(model, phase) {
+  const calls = model.requests.filter((r) => r.phase === phase);
+  const tcp = calls.find((c) => c.stage === "reply")?.report?.tcp;
+  const stages = calls.map((c) => c.stage).join(",") || "none";
+  return [
+    `stages=${stages}`,
+    `model_errors=${model.errors.length}`,
+    ...(tcp
+      ? [
+          `tcp_ok=${tcp.ok}`,
+          `errno=${tcp.errno ?? "-"}`,
+          `timed_out=${tcp.timed_out ?? false}`,
+        ]
+      : []),
+  ].join(" ");
+}
