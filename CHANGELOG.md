@@ -173,6 +173,9 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+The ACP MCP input PostgreSQL test waits for the Agent's final update to reach
+the client instead of asserting it as soon as the Run commits (#135).
+
 The Skill Registry Admin Console discovery E2E runner uses unified service
 authentication: the Console receives an Edge Gateway service token and signed
 caller context, and calls the Registry with its own service credential instead
