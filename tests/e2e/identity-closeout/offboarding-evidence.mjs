@@ -3,6 +3,7 @@ import { writeSync } from "node:fs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { saveSessionTrace } from "./session-trace.mjs";
+import { tag, traceTopology } from "../observability/trace-tree.mjs";
 
 export function assertDisabled(agent, runtime, agentID) {
   assert(
@@ -44,11 +45,30 @@ export function installFailureBoundary() {
   process.on("unhandledRejection", fatal);
 }
 
+// One revocation disables every Agent the principal owns from a shared source
+// Trace; each Agent's Disable is validated without its siblings' subtrees.
+function withoutSiblingDisables(trace, agentID) {
+  const tree = traceTopology(trace);
+  const siblings = trace.spans.filter(
+    (s) =>
+      tree.service(s) === "agent-controller" &&
+      s.operationName === "agent_controller.identity_offboarding.disable" &&
+      tag(s, "agent.id") !== agentID,
+  );
+  if (!siblings.length) return trace;
+  return {
+    ...trace,
+    spans: trace.spans.filter(
+      (s) => !tree.chain(s).some((ancestor) => siblings.includes(ancestor)),
+    ),
+  };
+}
+
 export function inspectOffboardingTrace(traces, expected, secrets) {
   const source = traces.filter((t) => t.traceID === expected.sourceID);
   assert.equal(source.length, 1, "missing or duplicated source Trace");
   const result = inspectLifecycle(
-    source[0],
+    withoutSiblingDisables(source[0], expected.agentID),
     {
       kind: "disable",
       offboarding: true,

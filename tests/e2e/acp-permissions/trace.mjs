@@ -3,6 +3,7 @@ import { tag } from "../observability/trace-tree.mjs";
 import {
   requestBoundary,
   hasError,
+  closedV1PromptResponse,
   timingEvidence,
 } from "../acp-plan/requests.mjs";
 
@@ -212,6 +213,9 @@ export function inspectPermissionTrace(
     assert(tree.chain(client).includes(call));
   }
   for (const span of trace.spans.filter(hasError)) {
+    // The reconnect client closes the socket while the v1 prompt is pending.
+    if (phase === "v1-reconnect" && closedV1PromptResponse(span, request))
+      continue;
     // A rejected permission is a deliberate decision, not a failed Run.
     assert(
       waits.includes(span) &&
@@ -222,7 +226,7 @@ export function inspectPermissionTrace(
         !span.logs?.some((event) =>
           event.fields?.some((field) => field.value === "antnest.error"),
         ),
-      "unexpected error outside deliberate permission rejection",
+      `unexpected error outside deliberate permission rejection: ${tree.service(span)} ${span.operationName}`,
     );
   }
   return {

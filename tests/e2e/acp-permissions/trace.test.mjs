@@ -108,6 +108,31 @@ test("current permission traces cover every decision with HTTP model and actual 
       assert.equal(inspect(f).strict_trace, "failed");
     }
 });
+test("a v1 reconnect prompt may fail only its closed response dispatch", () => {
+  const closed = (phase, version = "v1") => {
+    const f = fixture(phase);
+    f.trace.spans
+      .find((s) => s.spanID === "request")
+      .tags.push(
+        { key: "error", value: true },
+        { key: "antnest.outcome", value: "error" },
+        { key: "antnest.operation.phase", value: "acp.dispatch" },
+        { key: "antnest.protocol.version", value: version },
+      );
+    return f;
+  };
+  assert.equal(inspect(closed("v1-reconnect")).runtime_tool_calls, 1);
+  assert.throws(
+    () => inspect(closed("v2-reconnect", "v2")),
+    /unexpected error/,
+  );
+  assert.throws(() => inspect(closed("v1-once")), /unexpected error/);
+  const tool = closed("v1-reconnect");
+  tool.trace.spans
+    .find((s) => s.spanID === "tool")
+    .tags.push({ key: "error", value: true });
+  assert.throws(() => inspect(tool), /unexpected error/);
+});
 test("permission evidence rejects early effect, incorrect waits, judge leakage and retired ownership", () => {
   for (const mutate of [
     (f) => {

@@ -305,6 +305,9 @@ Runtime Tool, finish with a quiescent executor and a settled Tool effect, and
 resume without re-execution on reconnect. The Run and request IDs and the
 captured execution snapshot stay unchanged. The structured Bash result must
 show exit code zero, complete output and an exact ordered file append per Run.
+A v1 prompt answers only after its Run, so its own ACP dispatch span may end
+in error because the socket is already closed; every Run, model and Tool span
+must still be error-free.
 
 Each rejected message has its own Gateway root linked to the connection.
 Revocation and outage denials carry exactly one failed Gateway Identity check.

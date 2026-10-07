@@ -12,6 +12,7 @@ import {
   requestBoundary,
   timingEvidence,
   hasError,
+  closedV1PromptResponse,
   inspectCatalogRuntime,
 } from "../acp-plan/requests.mjs";
 import { clockWarningsOnly } from "../stage3-base/trace.mjs";
@@ -89,6 +90,12 @@ function rejected(trace, tree, request, expected) {
     assert.equal(tag(request, "antnest.error.code"), "-32020");
   }
   for (const span of trace.spans.filter(hasError)) {
+    if (
+      expected.closedBeforeResponse === true &&
+      !rejection &&
+      closedV1PromptResponse(span, request)
+    )
+      continue;
     assert(rejection, "unexpected command/replay/execution error");
     assert.equal(tree.service(span), "agent-acp-service");
     assert.equal(tag(span, "antnest.outcome"), "rejected");

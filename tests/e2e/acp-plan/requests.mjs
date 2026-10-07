@@ -56,6 +56,14 @@ export const hasError = (span) =>
   span.logs?.some((event) =>
     event.fields?.some((field) => field.value === "antnest.error"),
   );
+// A v1 prompt answers only after its Run; when the client has already closed
+// the socket, the completed Run's response dispatch fails by itself.
+export const closedV1PromptResponse = (span, request) =>
+  span === request &&
+  tag(span, "rpc.method") === "session/prompt" &&
+  tag(span, "antnest.protocol.version") === "v1" &&
+  tag(span, "antnest.outcome") === "error" &&
+  tag(span, "antnest.operation.phase") === "acp.dispatch";
 export function timingEvidence(trace, tree, request, forwarded) {
   const warnings = [
     ...(trace.warnings ?? []),

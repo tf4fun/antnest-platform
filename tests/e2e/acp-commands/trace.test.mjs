@@ -407,6 +407,33 @@ test("ordinary prompt correlates model HTTP spans and actual Bash execution afte
   }
 });
 
+test("a v1 prompt whose socket closed mid-Run may fail only its own response dispatch", () => {
+  const closed = (f) => {
+    f.expected.closedBeforeResponse = true;
+    f.trace.spans[2].tags.push(
+      { key: "error", value: true },
+      { key: "antnest.outcome", value: "error" },
+      { key: "antnest.operation.phase", value: "acp.dispatch" },
+      { key: "antnest.protocol.version", value: "v1" },
+    );
+    return f;
+  };
+  assert.equal(inspect(closed(fixture("ordinary"))).runtime_tool_calls, 1);
+  const open = closed(fixture("ordinary"));
+  delete open.expected.closedBeforeResponse;
+  assert.throws(() => inspect(open), /unexpected command\/replay/);
+  const v2 = closed(fixture("ordinary"));
+  v2.trace.spans[2].tags.find(
+    (t) => t.key === "antnest.protocol.version",
+  ).value = "v2";
+  assert.throws(() => inspect(v2));
+  const tool = closed(fixture("ordinary"));
+  tool.trace.spans
+    .find((s) => s.spanID === "tool")
+    .tags.push({ key: "error", value: true });
+  assert.throws(() => inspect(tool));
+});
+
 test("command strict outcome accepts only the reviewed clock warning class", () => {
   const clock = {
     strict_trace: "failed",

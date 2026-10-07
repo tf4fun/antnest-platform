@@ -162,6 +162,23 @@ test("deliberate errors stay inside the Tool boundary, including cancellation", 
   }
 });
 
+test("a v1 success prompt closed before its answer may fail only its response dispatch", () => {
+  const closed = (phase, version = "v1") => {
+    const { trace, requests } = fixture();
+    requests[0].phase = phase;
+    trace.spans[2].tags.push(
+      { key: "error", value: true },
+      { key: "antnest.outcome", value: "error" },
+      { key: "antnest.operation.phase", value: "acp.dispatch" },
+      { key: "antnest.protocol.version", value: version },
+    );
+    return () => inspectTrace(trace, requests);
+  };
+  assert.equal(closed("v1-bash-success")().tool_calls, 1);
+  assert.throws(closed("v2-bash-success", "v2"), /unexpected error/);
+  assert.throws(closed("v1-managed-failure"), /unexpected error/);
+});
+
 test("cross-service warning evidence preserves parent timing without correcting it", () => {
   const { trace, requests } = fixture();
   trace.spans[2].warnings = [

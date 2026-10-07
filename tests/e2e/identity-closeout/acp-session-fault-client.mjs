@@ -341,7 +341,11 @@ async function admittedRun(version) {
     "Run not actually admitted",
   );
   execution.push(
-    remember(client, "session/prompt", { kind: "ordinary", phase }),
+    remember(client, "session/prompt", {
+      kind: "ordinary",
+      phase,
+      closedBeforeResponse: version === 1,
+    }),
   );
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await assert.rejects(client.request("list", {}));

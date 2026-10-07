@@ -5,6 +5,7 @@ import {
   traceTopology,
   tag,
 } from "../observability/trace-tree.mjs";
+import { closedV1PromptResponse } from "../acp-plan/requests.mjs";
 
 // Current execution belongs to agent.run. The Provider propagates the HTTP
 // CLIENT span ID, not the model.complete wrapper or a retired admission ID.
@@ -124,13 +125,16 @@ export function inspectTrace(trace, requests, secrets = []) {
       ),
   );
   for (const span of errors) {
+    // Success phases close the socket before the v1 prompt answers.
+    if (phase.endsWith("-success") && closedV1PromptResponse(span, prompt))
+      continue;
     const toolError = tree.chain(span).includes(call);
     const expected = phase.endsWith("cancel")
       ? toolError || span === run
       : phase.includes("-managed-failure") && toolError;
     assert(
       expected,
-      "unexpected error outside deliberate Tool failure/cancellation",
+      `unexpected error outside deliberate Tool failure/cancellation: ${phase} ${tree.service(span)} ${span.operationName}`,
     );
   }
   const warnings = [
