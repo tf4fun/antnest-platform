@@ -14,8 +14,9 @@ import { runtimeCommandId } from "./contracts.mjs";
 import { inspectWorkflowRestart } from "./workflow-restart.mjs";
 import { inspectUpdateRestart } from "./update-restart.mjs";
 
-export const clockSkewWarning =
-  /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/;
+import { clockSkewWarning } from "../../support/strict-findings.mjs";
+
+export { clockSkewWarning };
 
 export function clockWarningsOnly(traces) {
   return traces.every(
