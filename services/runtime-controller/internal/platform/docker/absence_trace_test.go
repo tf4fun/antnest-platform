@@ -120,4 +120,7 @@ func TestDockerAbsenceTraceFollowsCreationSemantics(t *testing.T) {
 	t.Run("inspect semantics", func(t *testing.T) {
 		testInspectAbsenceTraceMatchesReadOnlyResult(t, recorder)
 	})
+	t.Run("delete semantics", func(t *testing.T) {
+		testDeleteAbsenceTraceMatchesIdempotentResult(t, recorder)
+	})
 }
