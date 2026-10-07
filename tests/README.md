@@ -196,6 +196,9 @@ artifact; suites that need no image start without waiting for it. Runs on
 change an image's inputs never rebuilds it. Every suite job runs the steps in
 `.github/workflows/_suite.yml`.
 
+A manual run (`gh workflow run integration.yml --ref <branch> -f suites='<id> <id>'`)
+runs only the named catalog suites; without `suites` it runs every suite.
+
 Each suite uploads `artifacts/verification/` (without fixture credentials) as
 the `evidence-<suite>` artifact. The `Integration checks` job is the single
 required status; it fails if suite selection or any selected suite fails. Add a

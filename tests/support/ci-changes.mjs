@@ -664,7 +664,13 @@ function relevant(file) {
   );
 }
 
-export function selectSuites(files, { all = false } = {}) {
+export function selectSuites(files, { all = false, only } = {}) {
+  if (only) {
+    for (const id of only)
+      if (!suites.some((suite) => suite.id === id))
+        throw new Error(`unknown suite ${id}`);
+    return suites.filter((suite) => !suite.disabled && only.includes(suite.id));
+  }
   const changed = files.filter(relevant);
   const global = changed.some((file) =>
     everySuite.some((glob) => matchesGlob(file, glob)),
@@ -729,6 +735,7 @@ function main() {
       bake: { type: "string" },
       "resolve-images": { type: "boolean", default: false },
       "all-images": { type: "boolean", default: false },
+      only: { type: "string" },
     },
   });
   if (values.bake !== undefined) {
@@ -738,7 +745,11 @@ function main() {
   }
   const all = values.all || !values.base || zeroSha.test(values.base);
   const files = all ? [] : changedFiles(values.base, values.head);
-  const selected = selectSuites(files, { all });
+  const only = values.only?.split(/[\s,]+/u).filter(Boolean);
+  const selected = selectSuites(files, {
+    all,
+    only: only?.length ? only : undefined,
+  });
   const { plain, imaged, optional } = matrices(selected);
   const lines = [
     `suites=${JSON.stringify(plain)}`,
@@ -767,9 +778,11 @@ function main() {
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join("\n")}\n`);
   const summary = [
-    all
-      ? "All suites selected."
-      : `${files.length} changed file(s); ${selected.length} of ${suites.length} suites selected.`,
+    only?.length
+      ? `${selected.length} named suite(s) selected.`
+      : all
+        ? "All suites selected."
+        : `${files.length} changed file(s); ${selected.length} of ${suites.length} suites selected.`,
     "",
     ...suites.map(
       (suite) =>

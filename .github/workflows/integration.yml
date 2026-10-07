@@ -8,6 +8,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      suites:
+        description: Suite ids to run (comma or space separated); empty runs every suite.
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -50,7 +55,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # A push whose previous head is unknown (new branch, force push) and a
-      # manual run both select every suite. Images are named by a hash of
+      # manual run both select every suite, unless the manual run names
+      # suites. Images are named by a hash of
       # their build inputs; any that GHCR lacks are built by the image job.
       # Runs on main resolve every image so the image job publishes it.
       - name: Select suites
@@ -59,9 +65,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          ONLY: ${{ inputs.suites }}
         run: |
           set -- --resolve-images
           [ "$PUBLISH" = true ] && set -- "$@" --all-images
+          [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
           if [ "$EVENT" != workflow_dispatch ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             node tests/support/ci-changes.mjs "$@" --base "$BASE" --head HEAD
           else
