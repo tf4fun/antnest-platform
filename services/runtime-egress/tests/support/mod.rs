@@ -89,7 +89,7 @@ pub async fn service() -> Arc<ControlService<InMemoryRepository, NoopKernel>> {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     );
     let service = Arc::new(service);
     service.recover().await.unwrap();

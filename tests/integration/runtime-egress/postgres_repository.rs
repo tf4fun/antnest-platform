@@ -106,7 +106,7 @@ async fn control_admission_rejections_have_no_postgres_or_packet_gate_effects() 
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     ));
     control.recover().await.unwrap();
     let agent = AgentId::parse(format!("agent-admission-{suffix}")).unwrap();
@@ -461,7 +461,7 @@ async fn postgres_preserves_network_and_policy_semantics() {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     ));
     let snapshot = control.status().snapshot_revision;
     let app = router(
@@ -1125,11 +1125,7 @@ async fn generation_keys_are_sealed_durable_bounded_and_retired_atomically() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].key_id, second.key_id);
     assert!(auth::key_box().open(&rows[0]).is_ok());
-    assert!(
-        antnest_runtime_egress::tunnel::KeyBox::new([92; 32])
-            .open(&rows[0])
-            .is_err()
-    );
+    assert!(auth::fresh_key_box().open(&rows[0]).is_err());
     let attachment = repository.runtime_attachment(&agent).await.unwrap();
     assert!(matches!(
         repository

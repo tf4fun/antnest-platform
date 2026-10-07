@@ -186,6 +186,11 @@ TCP, UDP, PostgreSQL, and Linux command-process integration sources live in
 and are registered as Cargo test targets, so the commands above compile and run
 them. The Linux command-process test does not run on a non-Linux host.
 
+Storage-encryption test masters are generated with OS-backed cryptographic
+entropy. Shared fixtures retain one master only for the current test process
+so recovery can reuse it; wrong-key checks use an independently generated
+master. These keys are never persisted or installed into Docker services.
+
 Test-only variables:
 
 - `ANTNEST_EGRESS_TEST_DATABASE_URL` - connection URL for the isolated

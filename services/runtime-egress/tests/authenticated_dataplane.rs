@@ -37,6 +37,24 @@ fn network(events: Vec<Event>) -> Vec<Vec<u8>> {
         .collect()
 }
 const REMOTE: &str = "10.243.0.2:41000";
+
+#[test]
+fn storage_fixture_recovers_with_shared_key_and_rejects_an_independent_key() {
+    let agent = AgentId::parse("agent_fixture_recovery").unwrap();
+    let registration =
+        support::auth::tunnel_registration(agent.as_str(), "100.64.0.2".parse().unwrap());
+    let row = support::auth::key_box().seal(agent, &registration).unwrap();
+
+    assert!(
+        support::auth::key_box()
+            .open(&row)
+            .unwrap()
+            .matches(&registration)
+            .unwrap()
+    );
+    assert!(support::auth::fresh_key_box().open(&row).is_err());
+}
+
 fn engine() -> (DataPlaneEngine, Peer) {
     let agent = AgentId::parse("agent_crypto").unwrap();
     let ip = "100.64.0.2".parse().unwrap();

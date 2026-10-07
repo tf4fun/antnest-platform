@@ -36,7 +36,21 @@ pub fn key_id(agent: &str) -> antnest_runtime_tunnel::KeyId {
     antnest_runtime_tunnel::KeyId::from_bytes(digest[..16].try_into().unwrap())
 }
 pub fn key_box() -> antnest_runtime_egress::tunnel::KeyBox {
-    antnest_runtime_egress::tunnel::KeyBox::new([91; 32])
+    // One ephemeral master per test process lets separately constructed fixtures
+    // model recovery without sharing a published key between test runs.
+    static MASTER: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    antnest_runtime_egress::tunnel::KeyBox::new(*MASTER.get_or_init(storage_key))
+}
+pub fn fresh_key_box() -> antnest_runtime_egress::tunnel::KeyBox {
+    antnest_runtime_egress::tunnel::KeyBox::new(storage_key())
+}
+fn storage_key() -> [u8; 32] {
+    let mut key = [0_u8; 32];
+    rustls::crypto::ring::default_provider()
+        .secure_random
+        .fill(&mut key)
+        .expect("ephemeral test storage key entropy");
+    key
 }
 pub fn tunnel_registration(
     agent: &str,

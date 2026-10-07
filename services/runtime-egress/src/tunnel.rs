@@ -232,12 +232,20 @@ mod tests {
     use super::*;
     use crate::domain::AgentId;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    fn storage_key() -> [u8; 32] {
+        let mut key = [0_u8; 32];
+        OsRng.fill_bytes(&mut key);
+        key
+    }
+
     fn registration() -> Registration {
         serde_json::from_value(serde_json::json!({"key_id":"rtk_0102030405060708090a0b0c0d0e0f10","runtime_revision":"rtv_0102030405060708090a0b0c0d0e0f10","tunnel_ipv4":"100.96.0.2","egress_private_key":URL_SAFE_NO_PAD.encode([29;32]),"runtime_public_key":URL_SAFE_NO_PAD.encode(antnest_runtime_tunnel::Peer::public_key([11;32])),"preshared_key":URL_SAFE_NO_PAD.encode([53;32])})).unwrap()
     }
     #[test]
     fn generation_material_is_sealed_authenticated_and_redacted() {
-        let vault = KeyBox::new([91; 32]);
+        let master = storage_key();
+        let vault = KeyBox::new(master);
         let input = registration();
         let agent = AgentId::parse("agent_a").unwrap();
         let row = vault.seal(agent.clone(), &input).unwrap();
@@ -253,13 +261,13 @@ mod tests {
         let mut altered = row.clone();
         altered.runtime_revision = "rtv_00000000000000000000000000000000".into();
         assert!(vault.open(&altered).is_err());
-        let restarted = KeyBox::new([91; 32]);
+        let restarted = KeyBox::new(master);
         assert!(restarted.open(&row).unwrap().matches(&input).unwrap());
-        assert!(KeyBox::new([92; 32]).open(&row).is_err());
+        assert!(KeyBox::new(storage_key()).open(&row).is_err());
     }
     #[test]
     fn invalid_key_material_never_creates_a_context() {
-        let vault = KeyBox::new([91; 32]);
+        let vault = KeyBox::new(storage_key());
         let mut input = registration();
         input.preshared_key = URL_SAFE_NO_PAD.encode([0; 32]);
         assert!(

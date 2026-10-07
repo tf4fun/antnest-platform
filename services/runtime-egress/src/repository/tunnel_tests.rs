@@ -2,6 +2,13 @@ use super::*;
 use crate::tunnel::{KeyBox, Registration};
 use antnest_runtime_tunnel::KeyId;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand_core::{OsRng, RngCore as _};
+
+fn key_box() -> KeyBox {
+    let mut key = [0_u8; 32];
+    OsRng.fill_bytes(&mut key);
+    KeyBox::new(key)
+}
 
 fn prepared(vault: &KeyBox, agent: &AgentId, ip: Ipv4Addr, id: u8) -> crate::tunnel::PreparedKey {
     let input:Registration=serde_json::from_value(serde_json::json!({"key_id":KeyId::from_bytes([id;16]).to_string(),"runtime_revision":format!("rtv_{:032x}",id),"tunnel_ipv4":ip.to_string(),"egress_private_key":URL_SAFE_NO_PAD.encode([29;32]),"runtime_public_key":URL_SAFE_NO_PAD.encode(antnest_runtime_tunnel::Peer::public_key([11;32])),"preshared_key":URL_SAFE_NO_PAD.encode([53;32])})).unwrap();
@@ -18,7 +25,7 @@ async fn prepared_key_selection_is_atomic_bounded_and_retired_on_cutover() {
     .unwrap();
     let agent = AgentId::parse("agent_a").unwrap();
     let network = repo.ensure_agent_network(agent.clone()).await.unwrap();
-    let vault = KeyBox::new([91; 32]);
+    let vault = key_box();
     let first = prepared(&vault, &agent, network.tunnel_ipv4, 1);
     repo.prepare_tunnel(first.clone()).await.unwrap();
     let replay = repo
@@ -114,7 +121,7 @@ async fn recovery_rejects_open_attachment_whose_key_row_is_missing() {
         .ensure_agent_network(agent.clone())
         .await
         .unwrap();
-    let vault = KeyBox::new([91; 32]);
+    let vault = key_box();
     let key = prepared(&vault, &agent, network.tunnel_ipv4, 1);
     repository.prepare_tunnel(key.clone()).await.unwrap();
     repository

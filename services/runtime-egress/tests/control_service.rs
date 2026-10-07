@@ -166,7 +166,7 @@ fn toggle_service() -> (
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     );
     (service, kernel)
 }
@@ -526,7 +526,7 @@ fn service() -> (
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     );
     (control, kernel)
 }
@@ -544,7 +544,7 @@ fn control_with_repository(
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     )
 }
 
@@ -894,7 +894,7 @@ async fn quarantine_sweeper_isolates_one_agents_cleanup_failure() {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     );
     let first = AgentId::parse("agent-first").unwrap();
     let second = AgentId::parse("agent-second").unwrap();
@@ -946,7 +946,7 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
         repository.clone(),
         kernel.clone(),
         config.clone(),
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     );
     let agent = AgentId::parse("agent-1").unwrap();
     let allocated = first.ensure_agent_network(agent.clone()).await.unwrap();
@@ -969,12 +969,7 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
         .await
         .unwrap();
 
-    let recovered = ControlService::new(
-        repository,
-        kernel,
-        config,
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
-    );
+    let recovered = ControlService::new(repository, kernel, config, auth::key_box());
     assert_eq!(recovered.recover().await.unwrap(), 1);
     let route = recovered
         .dataplane()
@@ -1083,7 +1078,7 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
-        antnest_runtime_egress::tunnel::KeyBox::new([91; 32]),
+        auth::key_box(),
     );
     service.recover().await.unwrap();
     let failed = AgentId::parse("agent-failed").unwrap();
