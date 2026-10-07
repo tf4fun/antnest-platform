@@ -201,7 +201,7 @@ docker compose --profile stage3 build skill-registry
   with the repository root as the build context.
 - `make test-go-unit` and `make test-go` include this module.
   `make e2e-stage3-skill-delivery` runs the full Agent Skill delivery workflow
-  after the Stage 3 images are built, and `make e2e-skill-propagation` runs the
+  after the Stage 3 images are built, and `make e2e-skill-deployment` runs the
   learning, discovery, temporary use and promotion workflow.
 
 Test-only variables:

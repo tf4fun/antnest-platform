@@ -411,9 +411,9 @@ export const suites = [
   ...tierC(),
 ];
 
-// Tier C: whole-platform scenarios. Every target boots its own stack (many
-// are deliberately destructive), so each is one suite. They report outside
-// `Integration checks` until they are stable.
+// Tier C: whole-platform scenarios whose rule spans services. Every target
+// boots its own stack (many are deliberately destructive), so each is one
+// suite. They report outside `Integration checks` until they are stable.
 // Foundation runners exit 2 when business and topology pass but strict trace
 // findings remain. They run without make, which reports every failed recipe
 // as 2.
@@ -433,7 +433,6 @@ function tierC() {
     "Stage 3a": [
       ["e2e-stage3-local", "base"],
       ...[
-        "acp-persistence",
         "acp-restart",
         "file-observations",
         "multimodal",
@@ -441,17 +440,9 @@ function tierC() {
         "session-cost",
         "slash-commands",
         "stage3-skill-delivery",
-        "stage4-skill-fenced-invalidation",
-        "stage4-skill-initialize-race",
-        "stage4-skill-mount-race",
-        "stage4-skill-mount-response-loss",
         "stage4-skill-offline-reuse",
-        "stage4-skill-ready-drift",
-        "stage4-skill-ready-loss",
         "stage4-skill-registry-outage",
         "stage4-skill-restart-rebuild",
-        "stage4-skill-start-response-loss",
-        "stage4-skill-target-drift",
         "structured-plan",
       ].map((name) => [`e2e-${name}`, name]),
       ...[
@@ -488,10 +479,7 @@ function tierC() {
     ],
     Lifecycle: [
       ...[
-        ["lifecycle-health", "run.mjs health"],
-        ["lifecycle-interrupted", "interrupted-run.mjs"],
         ["lifecycle-loss", "run.mjs loss"],
-        ["lifecycle-network", "run.mjs network"],
         ["lifecycle-restore", "run.mjs restore"],
         ["lifecycle-shutdown", "run.mjs shutdown"],
         ["stage4-skill-restore", "run.mjs skill-restore"],
@@ -523,39 +511,20 @@ function tierC() {
         "service-authentication-integration",
         "skill-discovery-caller",
         "skill-learning-browser",
-        "skill-learning-diagnostics-browser",
-        "skill-propagation",
         "skill-source-lifecycle",
       ].map((name) => [`e2e-${name}`, name, { browser: true }]),
       ...[
-        "skill-discovery-acp",
-        "skill-discovery-tools",
         "skill-learning-atomic-commit-disable",
         "skill-learning-atomic-commit-foreground",
-        "skill-learning-automatic",
         "skill-learning-cleanup",
-        "skill-learning-cleanup-lost-response",
-        "skill-learning-debug",
         "skill-learning-held-commit-disable",
         "skill-learning-held-commit-foreground",
         "skill-learning-key-compromise",
         "skill-learning-key-rotation",
-        "skill-learning-lifecycle-disable",
         "skill-learning-lifecycle-rebuild",
         "skill-learning-lost-commit-disable",
-        "skill-learning-model-failure",
-        "skill-learning-model-recovery",
-        "skill-learning-notice-send-failure",
-        "skill-learning-pinned",
-        "skill-learning-policy-off",
         "skill-learning-pre-dispatch-disable",
-        "skill-learning-preempt",
         "skill-learning-restart",
-        "skill-learning-skip",
-        "skill-learning-trace",
-        "skill-learning-ui-outage",
-        "skill-learning-untrusted-only",
-        "skill-temporary-acp",
       ].map((name) => [`e2e-${name}`, name]),
     ],
   };
@@ -573,6 +542,37 @@ function tierC() {
     })),
   );
 }
+
+// Platform targets kept out of CI until the issue lands: each tests one
+// service's rule through the whole stack and moves to that service's
+// component tests, or its behavior is not settled. The issue deletes the
+// target or re-admits it.
+export const outsideCI = {
+  "e2e-acp-persistence": 167,
+  "e2e-lifecycle-health": 168,
+  "e2e-lifecycle-interrupted": 166,
+  "e2e-lifecycle-network": 168,
+  "e2e-skill-learning-cleanup-lost-response": 167,
+  "e2e-skill-learning-diagnostics-browser": 169,
+  "e2e-skill-learning-lifecycle-disable": 167,
+  "e2e-skill-learning-model-failure": 167,
+  "e2e-skill-learning-model-recovery": 167,
+  "e2e-skill-learning-notice-send-failure": 167,
+  "e2e-skill-learning-pinned": 167,
+  "e2e-skill-learning-policy-off": 167,
+  "e2e-skill-learning-preempt": 167,
+  "e2e-skill-learning-skip": 167,
+  "e2e-skill-learning-ui-outage": 169,
+  "e2e-skill-learning-untrusted-only": 167,
+  "e2e-stage4-skill-fenced-invalidation": 166,
+  "e2e-stage4-skill-initialize-race": 165,
+  "e2e-stage4-skill-mount-race": 165,
+  "e2e-stage4-skill-mount-response-loss": 165,
+  "e2e-stage4-skill-ready-drift": 165,
+  "e2e-stage4-skill-ready-loss": 165,
+  "e2e-stage4-skill-start-response-loss": 165,
+  "e2e-stage4-skill-target-drift": 165,
+};
 
 export const setups = ["go", "rust", "admin-web", "agent-ui-web", "chromium"];
 
