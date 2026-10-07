@@ -199,7 +199,9 @@ codes and verify dialog retention versus returning to login, including late
 responses from an older in-page session.
 
 Finally the coordinator stops only Identity and proves that protected requests
-return 503 without deleting cookies. It restarts Identity with the token TTL set
+return 503 without deleting cookies. The stopped Identity keeps its pinned
+Compose address, so Gateway answers only after its 30-second dial timeout and
+these requests allow 45 seconds. It restarts Identity with the token TTL set
 to five seconds for new tokens: the earlier long-lived cookie must recover, and a
 new short-lived cookie must work before its deadline and fail after it, even when
 replayed manually. A fresh login must then work. The short TTL override exists
@@ -233,9 +235,12 @@ deactivation across A and B, an unaffected second owner, and SCIM Membership
 deletion. The Runtime's own inspection API confirms `disabled/absent`, and a
 sentinel seeded and read through the official MCP client proves workspace
 retention after Enable. The test client joins the Runtime management network
-only for this oracle. ACP-owned read-only snapshots prove that Disable does not
-delete history or Runs. After explicit Enable, fresh Gateway ACP Runs prove that
-admission and the shared model credential still work.
+only for this oracle. It reads Runtime state and the per-instance MCP credential
+with the disposable `controller-runtime` grant, and reads raw Controller events
+with the `console-controller` grant and a caller context resolved from the
+admin's existing Gateway session. ACP-owned read-only snapshots prove that
+Disable does not delete history or Runs. After explicit Enable, fresh Gateway
+ACP Runs prove that admission and the shared model credential still work.
 
 The SCIM owner logs in through the same OIDC fixture, has a peer Membership and
 Agent in A, and owns nonempty chat history in B before deletion. A stays usable
@@ -302,10 +307,13 @@ captured execution snapshot stay unchanged. The structured Bash result must
 show exit code zero, complete output and an exact ordered file append per Run.
 
 Each rejected message has its own Gateway root linked to the connection.
-Successful requests bind the SDK request ID and returned Session ID, and
-execution binds the Provider HTTP span IDs. Traces are scanned for the synthetic
-cookies and model credential, including URL-encoded forms. The service relay
-unit tests separately cover identity changes, dependency failure, timeout,
+Revocation and outage denials carry exactly one failed Gateway Identity check.
+An expiry denial may instead be a lone Gateway root, because Gateway closes on
+an expired caller context before re-resolving the session. Successful requests
+bind the SDK request ID and returned Session ID, and execution binds the
+Provider HTTP span IDs. Traces are scanned for the synthetic cookies and model
+credential, including URL-encoded forms. The service relay unit tests
+separately cover identity changes, dependency failure, timeout,
 fragmented and pipelined messages, bounded capacity and shutdown cleanup. No
 test claims immediate revocation of idle sockets or automatic cancellation of
 admitted Runs.

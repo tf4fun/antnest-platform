@@ -5,11 +5,17 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
+import { serviceClient } from "../../support/service-grants.mjs";
 import { assertUnchanged } from "./agent-access-evidence.mjs";
 import {
   assertDisabled,
   verifyOffboardingTrace,
 } from "./offboarding-evidence.mjs";
+
+// Controller routes admit named workloads only; the client container mounts
+// the controller-runtime, gateway-identity and console-controller grants.
+const services = serviceClient();
+const runtimeController = "http://runtime-controller:8080";
 
 export async function until(probe, label) {
   for (let i = 0; i < 240; i++) {
@@ -28,11 +34,29 @@ export const agentEvents = async (item) =>
 
 export async function inspectRuntime(item) {
   const response = await fetch(
-    `http://runtime-controller:8080/internal/runtimes/${item.agent}`,
-    { signal: AbortSignal.timeout(5000) },
+    `${runtimeController}/internal/runtimes/${item.agent}`,
+    {
+      headers: services.authorization("controller-runtime"),
+      signal: AbortSignal.timeout(5000),
+    },
   );
   assert.equal(response.status, 200, "Runtime inspection failed");
   return response.json();
+}
+
+// Runtime MCP requires the per-instance credential ACP would receive; reading
+// it does not rotate the credential ACP already holds.
+async function runtimeConnection(item, runtime) {
+  return services.json(
+    `${runtimeController}/internal/runtimes/${item.agent}/connection`,
+    "controller-runtime",
+    {
+      body: {
+        runtime_revision: runtime.runtime_revision,
+        expected_execution_id: runtime.runtime_execution_id,
+      },
+    },
+  );
 }
 
 export async function sentinel(item, action) {
@@ -41,6 +65,7 @@ export async function sentinel(item, action) {
     runtime.lifecycle_state === "provisioned" && runtime.health === "healthy",
     "sentinel requires a ready Runtime",
   );
+  const connection = await runtimeConnection(item, runtime);
   const client = new Client(
     { name: "offboarding-fixture", version: "1.0.0" },
     { versionNegotiation: { mode: { pin: "2026-07-28" } } },
@@ -48,10 +73,11 @@ export async function sentinel(item, action) {
   const signal = AbortSignal.timeout(10000);
   try {
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(runtime.mcp_endpoint), {
+      new StreamableHTTPClientTransport(new URL(connection.mcp_endpoint), {
         requestInit: {
           headers: {
-            "x-antnest-expected-execution-id": runtime.runtime_execution_id,
+            "Antnest-Service-Authorization": `Bearer ${connection.credential.token}`,
+            "x-antnest-expected-execution-id": connection.runtime_execution_id,
           },
         },
       }),
@@ -135,12 +161,16 @@ export async function waitOffboarding(item, before, response, reason, secrets) {
   );
   assert.equal(revoked.length, 1, "missing or duplicate owner revocation");
   // Console intentionally omits arbitrary event data; check cause through its owning RPC.
-  const raw = await fetch(
-    `http://agent-controller:8080/internal/agents/${item.agent}/events?${new URLSearchParams({ organization_id: item.organization })}`,
-    { signal: AbortSignal.timeout(5000) },
+  const { context } = await services.sessionContext(
+    item.admin.cookies.get("antnest_session"),
+    item.agent,
   );
-  assert.equal(raw.status, 200, "Controller scoped event query failed");
-  const cause = (await raw.json()).events.find(
+  const raw = await services.json(
+    `http://agent-controller:8080/internal/agents/${item.agent}/events?${new URLSearchParams({ organization_id: item.organization })}`,
+    "console-controller",
+    { method: "GET", context },
+  );
+  const cause = raw.events.find(
     (event) => event.event_id === revoked[0].event_id,
   );
   assert.equal(cause?.data.reason, reason, "wrong revocation reason");

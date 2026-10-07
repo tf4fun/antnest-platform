@@ -101,6 +101,22 @@ test("caller contexts come from Identity through the gateway grant", async () =>
   });
 });
 
+test("session contexts reuse an existing Gateway access token without signing in", async () => {
+  const principal = { organization_id: "org_1", user_id: "user_1" };
+  const { client, requests } = harness([
+    { status: 200, body: { caller_context: "cct", principal } },
+  ]);
+  const issued = await client.sessionContext("session", "agent_1");
+  assert.deepEqual(issued, { context: "cct", principal });
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /\/rpc\/identity\/resolve-access-token$/u);
+  assert.deepEqual(JSON.parse(requests[0].body), {
+    access_token: "session",
+    profile: "console",
+    agent_id: "agent_1",
+  });
+});
+
 test("authorization builds a validated header for callers outside json", () => {
   const { client } = harness([]);
   assert.deepEqual(client.authorization("controller-runtime"), {

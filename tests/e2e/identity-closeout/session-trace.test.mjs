@@ -110,6 +110,22 @@ test("Identity outage proves failed Gateway attempt without fabricating a server
   );
 });
 
+test("Gateway may reject an expired caller context locally without asking Identity", () => {
+  const local = fixture("unavailable");
+  local.spans.pop();
+  const r = inspectDeniedMessage(local, expected, []);
+  assert.equal(r.identity_checks, 0);
+  assert.equal(r.identity_sql, 0);
+  for (const reason of ["revoked", "unavailable"])
+    assert.throws(() =>
+      inspectDeniedMessage(
+        local,
+        { ...expected, reason, closeCode: reason === "revoked" ? 1008 : 1013 },
+        [],
+      ),
+    );
+});
+
 test("expected ACP denial errors still fail the separate strict gate", async () => {
   const { strictSessionEvidence } = await import("./session-trace.mjs");
   const trace = fixture();

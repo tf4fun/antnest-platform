@@ -86,14 +86,22 @@ export function inspectDeniedMessage(trace, expected, secrets) {
       tag(s, "server.port") === 8080 &&
       tag(s, "url.scheme") === "http",
   );
-  assert.equal(
-    attempts.length,
-    1,
-    "missing or duplicate Identity admission check",
-  );
+  // Gateway closes on an expired caller context before re-resolving the
+  // session, so only an expiry denial may omit the Identity check.
+  const localExpiry = expected.reason === "expired" && attempts.length === 0;
+  if (localExpiry)
+    assert.equal(trace.spans.length, 1, "local expiry denial was forwarded");
+  else
+    assert.equal(
+      attempts.length,
+      1,
+      "missing or duplicate Identity admission check",
+    );
   const client = attempts[0];
-  assert.equal(tree.parent(client), root);
-  assert(hasError(client), "denied Identity check error missing");
+  if (client) {
+    assert.equal(tree.parent(client), root);
+    assert(hasError(client), "denied Identity check error missing");
+  }
   for (const span of trace.spans)
     assert(
       ["edge-gateway", "identity-service"].includes(tree.service(span)),
@@ -104,11 +112,11 @@ export function inspectDeniedMessage(trace, expected, secrets) {
       (s) =>
         tree.service(s) === "edge-gateway" && tag(s, "span.kind") === "client",
     ).length,
-    1,
+    attempts.length,
     "denied message was forwarded",
   );
   let sql = 0;
-  if (expected.reason === "unavailable")
+  if (localExpiry || expected.reason === "unavailable")
     assert(
       !trace.spans.some((s) => tree.service(s) === "identity-service"),
       "outage fabricated Identity response",
@@ -134,6 +142,7 @@ export function inspectDeniedMessage(trace, expected, secrets) {
     reason: expected.reason,
     close_code: expected.closeCode,
     no_execution: true,
+    identity_checks: attempts.length,
     identity_sql: sql,
     spans: trace.spans.length,
     warning_count: warnings.length,

@@ -53,9 +53,12 @@ docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJE
   -v "$root/tests/e2e/identity-closeout:/app/identity-closeout:ro" \
   antnest/agent-acp-service:local node /app/identity-closeout/agent-access-model.mjs >/dev/null
 # shellcheck disable=SC2086 # service_hosts is a list of options.
-docker create --name "$client" $service_hosts --user "$(id -u):$(id -g)" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+docker create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
   --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "TEST_GATEWAY_PUBLIC_URL=$ANTNEST_EDGE_PUBLIC_BASE_URL" \
   -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \
@@ -66,6 +69,9 @@ docker create --name "$client" $service_hosts --user "$(id -u):$(id -g)" --label
   antnest/agent-acp-service:local node /app/tests/e2e/identity-closeout/agent-access-client.mjs >/dev/null
 docker network connect "${COMPOSE_PROJECT_NAME}_agent-acp-database" "$client"
 docker network connect "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" "$client"
+docker network connect "${COMPOSE_PROJECT_NAME}_controller-runtime" "$client"
+docker network connect "${COMPOSE_PROJECT_NAME}_identity-clients" "$client"
+docker network connect "${COMPOSE_PROJECT_NAME}_controller-clients" "$client"
 docker start "$client" >/dev/null
 attempt=0
 while [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ]; do

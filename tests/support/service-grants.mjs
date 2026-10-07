@@ -96,27 +96,32 @@ export function serviceClient({
   // Identity issues a Console caller context the way edge-gateway does for a
   // signed-in user; agentId scopes it to one Agent.
   async function callerContext(account, agentId) {
-    const identity = endpoints["identity-service"];
     const session = await json(
-      `${identity}/rpc/identity/local-login`,
+      `${endpoints["identity-service"]}/rpc/identity/local-login`,
       "gateway-identity",
       { body: { request_id: randomUUID(), ...account } },
     );
+    const { context } = await sessionContext(session.access_token, agentId);
+    return { context, principal: session.principal };
+  }
+  // The Gateway session cookie is the Identity access token, so a signed-in
+  // test browser can be turned into a Console caller context directly.
+  async function sessionContext(accessToken, agentId) {
     const issued = await json(
-      `${identity}/rpc/identity/resolve-access-token`,
+      `${endpoints["identity-service"]}/rpc/identity/resolve-access-token`,
       "gateway-identity",
       {
         body: {
-          access_token: session.access_token,
+          access_token: accessToken,
           profile: "console",
           ...(agentId === undefined ? {} : { agent_id: agentId }),
         },
       },
     );
-    return { context: issued.caller_context, principal: session.principal };
+    return { context: issued.caller_context, principal: issued.principal };
   }
   const authorization = (grant) => ({
     "Antnest-Service-Authorization": `Bearer ${credential(grant)}`,
   });
-  return { send, json, callerContext, authorization };
+  return { send, json, callerContext, sessionContext, authorization };
 }
