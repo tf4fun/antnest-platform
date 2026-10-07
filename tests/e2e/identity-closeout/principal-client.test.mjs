@@ -42,7 +42,7 @@ test("checks both real RPC paths without redisclosing the access credential", as
   );
   assert.equal(requests[0].body.organization_slug, organization.slug);
   assert.equal(requests[0].body.password, credentials.password);
-  assert.deepEqual(requests[1].body, { access_token: token });
+  assert.deepEqual(requests[1].body, { access_token: token, profile: "console" });
   assert.deepEqual(
     requests.map((request) => request.authorization),
     ["Bearer gateway", "Bearer gateway"],

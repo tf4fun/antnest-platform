@@ -350,7 +350,10 @@ async function exercise(version, phase) {
   );
 }
 async function main() {
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[\w.-]+$/,
+  );
   const login = await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",

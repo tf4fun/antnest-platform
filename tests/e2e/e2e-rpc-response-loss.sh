@@ -23,7 +23,8 @@ trap 'exit 143' TERM
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$temporary/before.json"
 node "$root/tests/e2e/rpc-response-loss/deployment.mjs" "$temporary/before.json" "$COMPOSE_PROJECT_NAME"
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
+image=antnest/antnest-runtime:local
+docker_cmd image inspect "$image" >/dev/null
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=rpc-model-peer" --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=rpc-model-peer" \
   -v "$root/tests:/app/tests:ro" \

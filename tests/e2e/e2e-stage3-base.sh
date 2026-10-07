@@ -45,7 +45,8 @@ if [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_
     -v "$root/tests:/app/tests:ro" \
     antnest/agent-acp-service:local node /app/tests/e2e/stage3-base/rc-fault-proxy.mjs >/dev/null
 fi
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
+image=antnest/antnest-runtime:local
+docker_cmd image inspect "$image" >/dev/null
 registry_ip=
 if [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" = true ]; then
   registry_container=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter 'label=com.docker.compose.service=skill-registry')

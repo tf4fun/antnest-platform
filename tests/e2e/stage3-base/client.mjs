@@ -967,7 +967,10 @@ async function eventStream() {
   }
 }
 async function main() {
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[\w.-]+$/,
+  );
   const { principal, ownerId } = await identity(admin, secrets);
   await login(member);
   secrets.push(...member.cookies.values());

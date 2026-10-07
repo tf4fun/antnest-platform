@@ -86,7 +86,6 @@ export function assertBuildSnapshot(agent, template, model) {
     );
   assert.equal(c.max_model_requests, template.max_model_requests);
   assert.equal(c.runtime.image_ref, template.runtime.image_ref);
-  assert.match(c.runtime.image_ref, /^sha256:[a-f0-9]{64}$/);
   assert(
     !/"(?:credential_ref|credential_version|runtime_execution_id|mcp_endpoint)"/.test(
       JSON.stringify(agent),

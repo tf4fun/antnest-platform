@@ -36,7 +36,8 @@ containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOS
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
 
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
+image=antnest/antnest-runtime:local
+docker_cmd image inspect "$image" >/dev/null
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=restart-model-peer" --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=restart-model-peer" -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local node /app/tests/e2e/acp-restart/model.mjs >/dev/null
 docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
   --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \

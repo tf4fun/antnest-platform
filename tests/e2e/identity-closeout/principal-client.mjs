@@ -51,6 +51,7 @@ export async function verifyPrincipalResponses(
   );
   const resolved = await rpc("resolve-access-token", {
     access_token: login.access_token,
+    profile: "console",
   });
   check(resolved.principal, "resolve-access-token");
   for (const field of [

@@ -24,7 +24,8 @@ containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOS
 # IDs originate from Docker and contain no shell metacharacters.
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
+image=antnest/antnest-runtime:managed-integration
+docker_cmd image inspect "$image" >/dev/null
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=managed-model" \
   --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=managed-model" \

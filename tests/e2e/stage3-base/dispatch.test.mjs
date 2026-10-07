@@ -6,7 +6,7 @@ import test from "node:test";
 
 const entry = fileURLToPath(new URL("../e2e-stage3a.sh", import.meta.url));
 const source = await readFile(entry, "utf8");
-const boundary = source.indexOf("runtime_image=$(docker image inspect");
+const boundary = source.indexOf("runtime_image=antnest/antnest-runtime:local");
 assert(boundary > 0);
 for (const [flag, profile, suite] of [
   [null, "stage3-base", ""],

@@ -23,7 +23,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
+image=antnest/antnest-runtime:managed-integration
+docker_cmd image inspect "$image" >/dev/null
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=permission-model" \
   --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=permission-model" \

@@ -397,11 +397,9 @@ if [ -n "$tool_profile" ]; then
   export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
   docker() { node "$repository_root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 fi
-runtime_image=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
-if ! printf '%s' "$runtime_image" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
-  printf 'Runtime image is not immutable: %s\n' "$runtime_image" >&2
-  exit 1
-fi
+# Runtime Controller policy admits repository references, never bare image IDs.
+runtime_image=antnest/antnest-runtime:local
+docker image inspect "$runtime_image" >/dev/null
 export ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$runtime_image
 
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage3-e2e.XXXXXX")
