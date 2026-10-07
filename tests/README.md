@@ -140,6 +140,14 @@ pause. The held-commit harness accepts isolated RC/Identity candidates through
 Gateway candidate through `ANTNEST_C4_EDGE_GATEWAY_IMAGE`; deploy the new RC
 reader before using the new Runtime status producer.
 
+The Stage 3a profile runners start their client detached and read its result
+with `docker logs`. Docker splits output lines longer than 16 KiB, and the
+json-file log driver replaces a multi-byte character cut by that split with
+U+FFFD. These clients therefore print every JSON line through
+[`support/ascii-json.mjs`](support/ascii-json.mjs), which escapes non-ASCII
+characters; `support/ascii-json.test.mjs` finds the clients from the runners
+and rejects raw `JSON.stringify` output.
+
 All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need

@@ -33,6 +33,7 @@ import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { seed } from "./setup.mjs";
 import { assertUnacknowledged, assertReceipts } from "./evidence.mjs";
 import { inspectRpcTrace, inspectClosedPrompt } from "./trace.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
@@ -470,7 +471,7 @@ async function main() {
   await writeFile("/tmp/rpc-business.json", JSON.stringify(business), {
     mode: 0o600,
   });
-  console.log(JSON.stringify(business));
+  console.log(asciiJSON(business));
   await mkdir("/tmp/rpc-traces", { mode: 0o700 });
   const save = (label) => (trace) =>
     writeFileSync(`/tmp/rpc-traces/${label}.json`, JSON.stringify(trace), {
@@ -561,7 +562,7 @@ async function main() {
   );
   const { accepted, ...strict } = commandStrictOutcome(results);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "scoped_topology_passed",
       ...strict,
       traces: results,
@@ -573,7 +574,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       error: error.name,

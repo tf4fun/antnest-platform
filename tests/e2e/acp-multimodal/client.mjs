@@ -26,6 +26,7 @@ import {
   marker,
 } from "./fixtures.mjs";
 import { collectNativeTrace, nativeStrictOutcome } from "./trace.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -366,9 +367,7 @@ async function exercise(profile) {
       replayed_messages: history.length,
       foreign_session_rejections: 3,
     });
-    console.log(
-      JSON.stringify({ status: "transport_passed", ...outcomes.at(-1) }),
-    );
+    console.log(asciiJSON({ status: "transport_passed", ...outcomes.at(-1) }));
   } finally {
     client.close();
   }
@@ -488,7 +487,7 @@ async function main() {
   );
   const { accepted, ...strict } = nativeStrictOutcome(checked);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       ...strict,
       outcomes,
@@ -503,7 +502,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       ...summarizeFailure(error),

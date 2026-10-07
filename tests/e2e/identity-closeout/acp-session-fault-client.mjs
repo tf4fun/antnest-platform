@@ -16,6 +16,7 @@ import { identityEvidenceExitCode } from "./trace.mjs";
 import { createAccessCatalog } from "./catalog.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertStoredSessionEffects } from "./acp-session-effects.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const credentials = {
   organization_slug: "stage3",
@@ -461,7 +462,7 @@ try {
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await admin.request("/api/session", { method: "DELETE", status: 204 });
   process.stdout.write(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       versions: [1, 2],
       denied_prompts: 6,
@@ -475,7 +476,7 @@ try {
   );
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "acp_session_profile_failed",
       step,
       reason: error.message,

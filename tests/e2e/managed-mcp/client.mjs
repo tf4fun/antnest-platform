@@ -36,6 +36,7 @@ import {
   restartWithNewPeer,
   proveHealthDuringEgressOutage,
 } from "../runtime-egress/live-peer.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 const modelURL = process.env.TEST_MODEL_URL ?? "http://managed-model:8080";
@@ -533,7 +534,7 @@ async function main() {
   await writeFile(businessFile, JSON.stringify(business), {
     mode: 0o600,
   });
-  console.log(JSON.stringify(business));
+  console.log(asciiJSON(business));
   await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
   const save = (label) => (trace) =>
     writeFileSync(
@@ -594,7 +595,7 @@ async function main() {
     ? "failed"
     : "passed";
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "topology_passed",
       version,
       strict_trace: strict,
@@ -615,7 +616,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       version,
       stage,
