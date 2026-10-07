@@ -1,7 +1,7 @@
 name: Integration suite
 
-# One integration suite from the catalog in tests/support/ci-changes.mjs;
-# `suite` is its matrix entry as JSON.
+# One integration shard from tests/support/ci-changes.mjs; `suite` is its
+# matrix entry as JSON. Setup covers every suite the shard selected.
 on:
   workflow_call:
     inputs:
@@ -20,7 +20,7 @@ jobs:
   run:
     name: Run
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 150
     permissions:
       contents: read
       actions: read
@@ -149,23 +149,14 @@ jobs:
             fi
           done
 
-      # Strict runners exit 2 when business and topology checks pass but
-      # strict trace findings remain. Only reviewed findings pass, with a
-      # warning; tests/support/strict-findings.mjs defines them.
-      - name: Run suite
+      # Runs the shard's selected suites in order, each in its own process
+      # group with a timeout; every suite reports even after a failure.
+      # Strict suites that exit 2 pass only with reviewed trace findings
+      # (tests/support/strict-findings.mjs).
+      - name: Run suites
         env:
-          SUITE: ${{ fromJSON(inputs.suite).run }}
-          STRICT_EXIT: ${{ fromJSON(inputs.suite).strict_exit }}
-        run: |
-          set -o pipefail
-          status=0
-          bash -euo pipefail -c "$SUITE" 2>&1 | tee "$RUNNER_TEMP/suite-output.log" || status=$?
-          if [ "$status" -eq 2 ] && [ "$STRICT_EXIT" = true ]; then
-            node tests/support/strict-findings.mjs "$RUNNER_TEMP/suite-output.log"
-            echo "::warning title=Strict trace findings::Business and topology checks passed; only reviewed strict trace findings remain, recorded in the evidence artifact."
-            exit 0
-          fi
-          exit "$status"
+          SUITES: ${{ fromJSON(inputs.suite).suites }}
+        run: node tests/support/ci-shard.mjs
 
       # Per-run fixture credentials are excluded; everything else is evidence.
       - name: Upload evidence

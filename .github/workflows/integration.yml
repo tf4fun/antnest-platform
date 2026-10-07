@@ -2,7 +2,8 @@ name: integration
 
 # Component, browser and service-owned Docker E2E suites. The workflow has no
 # path filter so that `Integration checks` reports on every pull request;
-# tests/support/ci-changes.mjs selects the suites a change exercises.
+# tests/support/ci-changes.mjs selects the suites a change exercises and
+# groups them into one job per shard of each tier.
 on:
   push:
     branches: [main]
@@ -142,7 +143,7 @@ jobs:
           docker tag "antnest/$NAME:local" "$REF"
           docker push "$REF"
 
-  # Suites without images start at once; the others wait for the image job.
+  # Shards without images start at once; the others wait for the image job.
   suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
     needs: changes
@@ -177,8 +178,8 @@ jobs:
       suite: ${{ toJSON(matrix) }}
       images: ${{ needs.changes.outputs.images }}
 
-  # Tier C reports each suite but is not part of `Integration checks` until
-  # it is stable. The parallel cap leaves runners for the required suites.
+  # Tier C reports each shard but is not part of `Integration checks` until
+  # it is stable. The parallel cap leaves runners for the required shards.
   optional-suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
     needs: [changes, images]

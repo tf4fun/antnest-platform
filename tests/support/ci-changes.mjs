@@ -746,17 +746,220 @@ export function matrixEntry(suite) {
   return entry;
 }
 
+// A shard is one CI job: its selected suites run in order on one runner
+// (tests/support/ci-shard.mjs), so jobs follow product areas rather than
+// individual targets. Destructive suites come last in their shard.
+export const shards = [
+  {
+    id: "a-postgres",
+    name: "PostgreSQL components",
+    suites: [
+      "egress-postgres",
+      "runtime-controller-postgres",
+      "identity-postgres",
+      "agent-controller-postgres",
+      "agent-acp-postgres",
+    ],
+  },
+  {
+    id: "a-browser",
+    name: "Browser components",
+    suites: ["admin-console-browser", "agent-ui-browser"],
+  },
+  {
+    id: "a-contracts",
+    name: "Deployment contracts and SDK probes",
+    suites: ["deployment-contracts", "elicitation-sdk-probe"],
+  },
+  {
+    id: "b-auth",
+    name: "Service authentication",
+    suites: [
+      "auth-console",
+      "auth-controller",
+      "auth-egress",
+      "auth-gateway",
+      "auth-identity",
+      "auth-runtime-controller",
+      "auth-runtime",
+    ],
+  },
+  {
+    id: "b-deployment",
+    name: "Deployment",
+    suites: ["deployment-docker", "deployment-transports", "deployment-wiring"],
+  },
+  {
+    id: "b-runtime",
+    name: "Runtime plane",
+    suites: ["observation-retry", "shell-stage1", "shell-runtime-controller"],
+  },
+  {
+    id: "b-gateway",
+    name: "Edge Gateway and Agent UI",
+    suites: ["gateway-security-headers", "agent-ui-receipt"],
+  },
+  {
+    id: "b-skills",
+    name: "Skill Registry and Runtime Skills",
+    suites: [
+      "skill-registry-discovery",
+      "skill-registry-console",
+      "skill-temporary-runtime",
+      "skill-learning-runtime",
+    ],
+  },
+  {
+    id: "b-managed-mcp",
+    name: "Managed MCP secrets",
+    suites: ["managed-mcp-secrets-v1", "managed-mcp-secrets-v2"],
+  },
+  {
+    id: "c-acp",
+    name: "ACP workspace",
+    suites: [
+      "c-stage3-local",
+      "c-file-observations",
+      "c-multimodal",
+      "c-session-cost",
+      "c-slash-commands",
+      "c-structured-plan",
+      "c-acp-closeout",
+    ],
+  },
+  {
+    id: "c-acp-tools",
+    name: "ACP tool permissions and progress",
+    suites: ["c-tool-permissions", "c-tool-progress"],
+  },
+  {
+    id: "c-identity",
+    name: "Identity and access",
+    suites: [
+      "c-identity-core",
+      "c-organization-display",
+      "c-agent-access",
+      "c-acp-session",
+      "c-identity-access",
+    ],
+  },
+  {
+    id: "c-acp-recovery",
+    name: "ACP restart and response loss",
+    suites: ["c-acp-restart", "c-rpc-response-loss"],
+  },
+  {
+    id: "c-skill-delivery",
+    name: "Skill delivery",
+    suites: [
+      "c-stage3-skill-delivery",
+      "c-stage4-skill-registry-outage",
+      "c-stage4-skill-offline-reuse",
+      "c-stage4-skill-restart-rebuild",
+    ],
+  },
+  {
+    id: "c-skill-discovery",
+    name: "Skill discovery and deployment",
+    suites: [
+      "c-service-authentication-integration",
+      "c-skill-source-lifecycle",
+      "c-skill-discovery-caller",
+    ],
+  },
+  {
+    id: "c-skill-learning",
+    name: "Skill learning",
+    suites: [
+      "c-runtime-tool-usability",
+      "c-skill-learning-cleanup",
+      "c-skill-learning-browser",
+      "c-skill-learning-key-rotation",
+      "c-skill-learning-key-compromise",
+    ],
+  },
+  {
+    id: "c-skill-commit",
+    name: "Skill learning commit and lifecycle",
+    suites: [
+      "c-skill-learning-held-commit-disable",
+      "c-skill-learning-held-commit-foreground",
+      "c-skill-learning-pre-dispatch-disable",
+      "c-skill-learning-atomic-commit-disable",
+      "c-skill-learning-atomic-commit-foreground",
+      "c-skill-learning-lost-commit-disable",
+      "c-skill-learning-lifecycle-rebuild",
+      "c-skill-learning-restart",
+    ],
+  },
+  {
+    id: "c-lifecycle",
+    name: "Agent lifecycle",
+    suites: ["c-stage2", "c-lifecycle", "c-lifecycle-loss"],
+  },
+  {
+    id: "c-operations",
+    name: "Backup, restore and shutdown",
+    suites: [
+      "c-lifecycle-restore",
+      "c-stage4-skill-restore",
+      "c-stage4-skill-storage-restore",
+      "c-lifecycle-shutdown",
+    ],
+  },
+  {
+    id: "c-workspace",
+    name: "Workspace closeout",
+    suites: ["c-workspace", "c-workspace-browser"],
+  },
+];
+
+const union = (lists) => [...new Set(lists.flat())].sort();
+
+export function shardEntry(shard, members) {
+  const entries = members.map(matrixEntry);
+  const entry = {
+    id: shard.id,
+    name: shard.name,
+    tier: entries[0].tier,
+    images: union(members.map((suite) => suite.images ?? [])).join(","),
+    pull: union(members.map((suite) => suite.pull ?? [])).join(" "),
+    // A JSON string keeps every matrix value scalar.
+    suites: JSON.stringify(
+      entries.map(({ id, name, run, strict_exit }) => ({
+        id,
+        name,
+        run,
+        strict: strict_exit,
+      })),
+    ),
+  };
+  for (const setup of setups) {
+    const flag = `setup_${setup.replaceAll("-", "_")}`;
+    entry[flag] = entries.some((row) => row[flag]);
+  }
+  return entry;
+}
+
 export function matrix(selected) {
-  return { include: selected.map(matrixEntry) };
+  const chosen = new Map(selected.map((suite) => [suite.id, suite]));
+  return {
+    include: shards.flatMap((shard) => {
+      const members = shard.suites
+        .filter((id) => chosen.has(id))
+        .map((id) => chosen.get(id));
+      return members.length ? [shardEntry(shard, members)] : [];
+    }),
+  };
 }
 
 export function matrices(selected) {
-  const needsImages = (suite) => (suite.images ?? []).length > 0;
-  const required = selected.filter((suite) => suite.tier !== "c");
+  const { include } = matrix(selected);
+  const required = include.filter((row) => row.tier !== "C");
   return {
-    plain: matrix(required.filter((suite) => !needsImages(suite))),
-    imaged: matrix(required.filter(needsImages)),
-    optional: matrix(selected.filter((suite) => suite.tier === "c")),
+    plain: { include: required.filter((row) => row.images === "") },
+    imaged: { include: required.filter((row) => row.images !== "") },
+    optional: { include: include.filter((row) => row.tier === "C") },
   };
 }
 
