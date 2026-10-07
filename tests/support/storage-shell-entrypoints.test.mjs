@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -34,6 +35,7 @@ function launch(t, entry, evidenceRoot, cached, extra = {}, setup = () => {}) {
     "tests/e2e/e2e-" + entry + ".sh",
     "tests/support/storage.mjs",
     "tests/support/public-development-secrets.sh",
+    "tests/support/service-hosts.sh",
     ...(existsSync(join(root, "tests/support/verification/stage3-storage.mjs"))
       ? ["tests/support/verification/stage3-storage.mjs"]
       : []),
@@ -182,4 +184,32 @@ test("Stage 3 durable output still reaches network discovery", (t) => {
   const result = launch(t, "stage3a", "stage3-base", false);
   assert.match(result.calls, /network\.mjs/);
   assert.doesNotMatch(result.stderr, /durable.*cache/i);
+});
+
+// Evidence directories are created with umask 077 by the invoking user, so a
+// container writing into one must run as that user. The service-auth UID is
+// generated from the same invoking user (scripts/dev-service-tokens.mjs).
+test("containers writing private evidence run as the evidence owner", () => {
+  const directory = join(root, "tests/e2e");
+  const commands = [];
+  for (const name of readdirSync(directory).filter((n) => n.endsWith(".sh"))) {
+    const lines = readFileSync(join(directory, name), "utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!/docker(?:_cmd)? (?:create|run) /u.test(lines[i])) continue;
+      let command = lines[i];
+      while (command.endsWith("\\") && i + 1 < lines.length)
+        command = command.slice(0, -1) + lines[++i];
+      if (command.includes('-v "$evidence:/evidence"'))
+        commands.push([name, command]);
+    }
+  }
+  assert(commands.length >= 3, "evidence-writing clients not found");
+  for (const [name, command] of commands)
+    assert(
+      command.includes('--user "$(id -u):$(id -g)"') ||
+        command.includes(
+          '--user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID"',
+        ),
+      name,
+    );
 });

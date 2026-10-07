@@ -235,6 +235,13 @@ e2e-lifecycle-loss:
 e2e-rpc-response-loss:
 	ANTNEST_E2E_RPC_RESPONSE_LOSS=true sh tests/e2e/e2e-stage3a.sh
 
+# Test-only Runtime with the managed MCP fixture, layered on the current
+# antnest/antnest-runtime:local image.
+.PHONY: docker-build-managed-runtime
+docker-build-managed-runtime:
+	docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build .
+	docker build -f tests/e2e/managed-mcp/Dockerfile -t antnest/antnest-runtime:managed-integration .
+
 .PHONY: test-tool-progress-fixtures e2e-tool-progress
 test-tool-progress-fixtures:
 	node --test --test-concurrency=1 tests/e2e/acp-progress/*.test.mjs

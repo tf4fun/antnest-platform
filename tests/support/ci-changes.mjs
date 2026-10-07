@@ -421,21 +421,22 @@ function foundation(runner) {
   return { run: `node tests/e2e/${runner}`, strict: true };
 }
 
+// Stage 3a profiles that report strict-only trace findings (expected
+// rejection errors, clock skew) as exit 2 run the make recipe directly so
+// that exit code survives.
+function stage3aProfile(profile) {
+  return { run: `${profile} sh tests/e2e/e2e-stage3a.sh`, strict: true };
+}
+
 function tierC() {
   const families = {
     "Stage 3a": [
       ["e2e-stage3-local", "base"],
       ...[
-        "acp-closeout",
         "acp-persistence",
         "acp-restart",
-        "acp-session",
-        "agent-access",
         "file-observations",
-        "identity-access",
-        "identity-core",
         "multimodal",
-        "organization-display",
         "rpc-response-loss",
         "session-cost",
         "slash-commands",
@@ -452,9 +453,34 @@ function tierC() {
         "stage4-skill-start-response-loss",
         "stage4-skill-target-drift",
         "structured-plan",
-        "tool-permissions",
-        "tool-progress",
       ].map((name) => [`e2e-${name}`, name]),
+      ...[
+        ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
+        ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
+        ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
+        ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
+        ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],
+        [
+          "organization-display",
+          "ANTNEST_E2E_IDENTITY_CORE=true ANTNEST_E2E_ORGANIZATION_DISPLAY=true",
+          { browser: true },
+        ],
+      ].map(([name, profile, options]) => [
+        `e2e-${name}`,
+        name,
+        { ...options, ...stage3aProfile(profile) },
+      ]),
+      ...[
+        ["tool-permissions", "ANTNEST_E2E_TOOL_PERMISSIONS=true"],
+        ["tool-progress", "ANTNEST_E2E_TOOL_PROGRESS=true"],
+      ].map(([name, profile]) => [
+        `e2e-${name}`,
+        name,
+        {
+          before: ["make docker-build-managed-runtime"],
+          ...stage3aProfile(profile),
+        },
+      ]),
     ],
     "Authenticated shell": [
       ["e2e-stage2", "stage 2", { images: [] }],
@@ -542,7 +568,7 @@ function tierC() {
       images: options.images ?? platformImages,
       pull: observed,
       paths: ["services/**", ...runtime, "tests/e2e/**", ...go, ...compose],
-      run: [options.run ?? `make ${target}`],
+      run: [...(options.before ?? []), options.run ?? `make ${target}`],
       ...(options.strict ? { strict: true } : {}),
     })),
   );

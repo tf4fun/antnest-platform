@@ -16,11 +16,15 @@ services:
       start_period: 10s
       timeout: 3s
       retries: 3
-    networks: [development]
+    # Agent Controller reaches ACP control through this proxy; it forwards the
+    # caller's service credential to the fixed ACP control address.
+    networks: [controller-acp]
+    extra_hosts:
+      agent-acp-control: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.34
   agent-controller:
     image: ${ANTNEST_E2E_CONTROLLER_IMAGE:-antnest/agent-controller:local}
     environment:
-      ANTNEST_AGENT_ACP_SERVICE_URL: http://rpc-loss-proxy:8080
+      ANTNEST_AGENT_ACP_CONTROL_URL: http://rpc-loss-proxy:8080
       ANTNEST_AGENT_CONTROLLER_EXECUTION_REQUEST_TIMEOUT: 120s
     depends_on:
       rpc-loss-proxy:

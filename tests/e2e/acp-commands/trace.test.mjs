@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectCommandTrace, selectCommandTrace } from "./trace.mjs";
+import {
+  commandStrictOutcome,
+  inspectCommandTrace,
+  selectCommandTrace,
+} from "./trace.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
 function fixture(kind = "command", http = false) {
@@ -17,11 +21,11 @@ function fixture(kind = "command", http = false) {
   if (http) {
     f.expected.traceID = f.trace.traceID;
     f.trace.spans[0].references = [];
-    f.trace.spans[1].operationName = "HTTP POST agent-acp-service";
+    f.trace.spans[1].operationName = "HTTP POST agent-acp-workspace";
     f.trace.spans[1].tags = [
       { key: "span.kind", value: "client" },
       { key: "http.request.method", value: "POST" },
-      { key: "server.address", value: "agent-acp-service" },
+      { key: "server.address", value: "agent-acp-workspace" },
     ];
     f.trace.spans[0].tags = [
       { key: "span.kind", value: "server" },
@@ -401,4 +405,55 @@ test("ordinary prompt correlates model HTTP spans and actual Bash execution afte
     mutate(f);
     assert.throws(() => inspect(f));
   }
+});
+
+test("a v1 prompt whose socket closed mid-Run may fail only its own response dispatch", () => {
+  const closed = (f) => {
+    f.expected.closedBeforeResponse = true;
+    f.trace.spans[2].tags.push(
+      { key: "error", value: true },
+      { key: "antnest.outcome", value: "error" },
+      { key: "antnest.operation.phase", value: "acp.dispatch" },
+      { key: "antnest.protocol.version", value: "v1" },
+    );
+    return f;
+  };
+  assert.equal(inspect(closed(fixture("ordinary"))).runtime_tool_calls, 1);
+  const open = closed(fixture("ordinary"));
+  delete open.expected.closedBeforeResponse;
+  assert.throws(() => inspect(open), /unexpected command\/replay/);
+  const v2 = closed(fixture("ordinary"));
+  v2.trace.spans[2].tags.find(
+    (t) => t.key === "antnest.protocol.version",
+  ).value = "v2";
+  assert.throws(() => inspect(v2));
+  const tool = closed(fixture("ordinary"));
+  tool.trace.spans
+    .find((s) => s.spanID === "tool")
+    .tags.push({ key: "error", value: true });
+  assert.throws(() => inspect(tool));
+});
+
+test("command strict outcome accepts only the reviewed clock warning class", () => {
+  const clock = {
+    strict_trace: "failed",
+    warning_count: 1,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of -82.81µs",
+    ],
+  };
+  const passed = { strict_trace: "passed" };
+  assert.deepEqual(commandStrictOutcome([passed]), {
+    strict_trace: "passed",
+    accepted: true,
+  });
+  assert.deepEqual(commandStrictOutcome([passed, clock]), {
+    strict_trace: "failed",
+    clock_warnings_accepted: true,
+    accepted: true,
+  });
+  assert.deepEqual(
+    commandStrictOutcome([clock, { ...clock, warnings: ["missing parent"] }]),
+    { strict_trace: "failed", accepted: false },
+  );
 });

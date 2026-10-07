@@ -175,6 +175,7 @@ export async function globalAndSCIMOffboarding({
   managed.owner = managedOwner.browser;
   const session = await run(managed, "offboard-scim-before-b");
   await addPeerMembership(
+    system,
     systemLogin.body.principal.user_id,
     a.organization,
     user.id,

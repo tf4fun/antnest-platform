@@ -204,3 +204,40 @@ test("global user revocation scopes phases to the matching Agent workflow within
   trace.spans = trace.spans.filter((s) => s.spanID !== "lifecycle.publish");
   assert.throws(() => inspectOffboardingTrace([trace], expected, []));
 });
+
+test("Docker cleanup probes of another revoked Agent's Disable stay outside the selected Agent", () => {
+  const { trace, expected } = offboardingFixture();
+  const schedule = structuredClone(
+    trace.spans.find((s) => s.spanID === "schedule"),
+  );
+  schedule.spanID = "schedule-other";
+  schedule.tags.find((t) => t.key === "agent.id").value = "agent-other";
+  trace.processes["runtime-controller"] ??= {
+    serviceName: "runtime-controller",
+  };
+  const span = (spanID, parent, operationName, tags) => ({
+    traceID: trace.traceID,
+    spanID,
+    processID: "runtime-controller",
+    operationName,
+    startTime: 4,
+    duration: 1,
+    references: [
+      { refType: "CHILD_OF", traceID: trace.traceID, spanID: parent },
+    ],
+    tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
+  });
+  trace.spans.push(
+    schedule,
+    span("other-delete", "schedule-other", "runtime.platform.delete", {
+      "antnest.agent.id": "agent-other",
+      "antnest.outcome": "completed",
+      "antnest.platform": "docker",
+    }),
+    span("other-probe", "other-delete", "HTTP DELETE docker", {
+      "peer.service": "docker",
+      "http.response.status_code": 404,
+    }),
+  );
+  assert.equal(inspectOffboardingTrace([trace], expected, []).phases.length, 5);
+});

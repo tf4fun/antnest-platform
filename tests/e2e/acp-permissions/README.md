@@ -43,11 +43,13 @@ precede its permitted dispatch; rejected, cancelled and Chat Runs must have no
 Tool effect. Runtime SERVER and Tool ancestry and Run IDs are required for every
 effect. Two reconnect request Traces prove that load and resume do not execute a
 second Run, and two foreign-user denials require the specific ACP access error
-with no private updates or execution.
+with no private updates or execution. The v1 reconnect prompt closes its socket
+before the answer, so only that ACP prompt span may record the failed response
+dispatch.
 
 Topology and secret-boundary results are reported separately from strict Jaeger
-timing. Timing warnings keep a failing exit. The fixture does not synchronize
-clocks, rewrite timestamps or waive unrelated diagnostics.
+timing. Timing warnings alone exit 2; any other failure exits 1. The fixture
+does not synchronize clocks, rewrite timestamps or waive unrelated diagnostics.
 
 ## Optional modes
 

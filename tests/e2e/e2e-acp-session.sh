@@ -7,13 +7,15 @@ case "${COMPOSE_PROJECT_NAME:-}" in
   *) echo 'Unexpected test project' >&2; exit 1 ;;
 esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 evidence="$root/artifacts/verification/identity-session/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker() { node "$root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 compose() {
   if [ "$1" = up ]; then lifecycle=--lifecycle; else lifecycle=; fi
-  docker $lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/e2e/identity-closeout/oidc-compose.yaml \
+  docker $lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml \
+    -f tests/e2e/stage3a.compose.yaml -f tests/e2e/identity-closeout/oidc-compose.yaml \
     -f tests/e2e/identity-closeout/compose.yaml --profile stage3 --profile observability "$@"
 }
 identity=$(compose ps -q identity-service)
@@ -42,11 +44,14 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias acp-session-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=acp-session-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=acp-session-model" \
   -v "$root/tests/e2e/identity-closeout:/app/identity-closeout:ro" \
   antnest/agent-acp-service:local node /app/identity-closeout/acp-session-model.mjs >/dev/null
-docker create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" \
+# shellcheck disable=SC2086 # service_hosts is a list of options.
+docker create --name "$client" $service_hosts --user "$(id -u):$(id -g)" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \
   -e ANTNEST_IDENTITY_EVIDENCE_DIR=/evidence/traces \

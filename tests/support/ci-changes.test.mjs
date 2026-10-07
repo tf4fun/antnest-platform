@@ -207,20 +207,75 @@ test("tier C platform scenarios get every local image and no rebuilding target",
   for (const suite of tierC) {
     if (suite.images.length > 0)
       assert.deepEqual(suite.images, Object.keys(images).sort(), suite.id);
-    const make = /^make ([\w.-]+)$/u.exec(suite.run[0]);
-    if (!make) continue;
-    const recipe = new RegExp(
-      `^${make[1]}:(?<deps>.*)\\n(?<body>(?:\\t.*\\n)*)`,
-      "mu",
-    ).exec(makefile);
-    assert(recipe, suite.id);
-    assert.equal(
-      recipe.groups.deps.trim(),
-      "",
-      `${suite.id} has prerequisites`,
-    );
-    assert.doesNotMatch(recipe.groups.body, /docker (?:compose .*)?build/u);
+    for (const command of suite.run) {
+      const make = /^make ([\w.-]+)$/u.exec(command);
+      if (!make) continue;
+      const recipe = new RegExp(
+        `^${make[1]}:(?<deps>.*)\\n(?<body>(?:\\t.*\\n)*)`,
+        "mu",
+      ).exec(makefile);
+      assert(recipe, suite.id);
+      assert.equal(
+        recipe.groups.deps.trim(),
+        "",
+        `${suite.id} has prerequisites`,
+      );
+      if (make[1] === "docker-build-managed-runtime") {
+        // Test-only fixture image layered on the provided Runtime image.
+        assert.doesNotMatch(
+          recipe.groups.body,
+          /-t antnest\/antnest-runtime:local/u,
+        );
+        continue;
+      }
+      assert.doesNotMatch(recipe.groups.body, /docker (?:compose .*)?build/u);
+    }
   }
+});
+
+test("tier C managed MCP scenarios build their fixture image first", () => {
+  const scripts = resolve(root, "tests/e2e");
+  for (const id of ["c-tool-permissions", "c-tool-progress"]) {
+    const suite = suites.find((item) => item.id === id);
+    assert.equal(suite.run[0], "make docker-build-managed-runtime");
+    assert.match(
+      readFileSync(
+        resolve(scripts, `${id.replace(/^c-/u, "e2e-")}.sh`),
+        "utf8",
+      ),
+      /antnest\/antnest-runtime:managed-integration/u,
+    );
+  }
+});
+
+test("tier C Stage 3a profiles keep their strict exit 2 by running the make recipe directly", () => {
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  for (const name of [
+    "acp-closeout",
+    "acp-session",
+    "agent-access",
+    "identity-access",
+    "identity-core",
+    "organization-display",
+    "tool-permissions",
+    "tool-progress",
+  ]) {
+    const suite = suites.find((item) => item.id === `c-${name}`);
+    const recipe = new RegExp(`^e2e-${name}:\\n\\t(.*)$`, "mu").exec(makefile);
+    assert(recipe, name);
+    assert.equal(suite.run.at(-1), recipe[1], name);
+    assert.deepEqual(
+      suite.run.slice(0, -1),
+      name.startsWith("tool-") ? ["make docker-build-managed-runtime"] : [],
+      name,
+    );
+    assert.equal(suite.strict, true, name);
+  }
+});
+
+test("tier C organization display installs the Agent UI browser client", () => {
+  const suite = suites.find((item) => item.id === "c-organization-display");
+  assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
 });
 
 test("foundation runners report strict-only findings through exit 2", () => {
@@ -238,7 +293,8 @@ test("foundation runners report strict-only findings through exit 2", () => {
   for (const suite of suites) {
     const entry = matrixEntry(suite);
     if (!Object.hasOwn(foundation, suite.id)) {
-      assert.equal(entry.strict_exit, false, suite.id);
+      if (!/ sh tests\/e2e\/e2e-stage3a\.sh$/u.test(entry.run))
+        assert.equal(entry.strict_exit, false, suite.id);
       continue;
     }
     assert.equal(entry.strict_exit, true, suite.id);

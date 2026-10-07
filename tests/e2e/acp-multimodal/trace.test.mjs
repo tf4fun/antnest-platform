@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectNativeTrace } from "./trace.mjs";
+import { inspectNativeTrace, nativeStrictOutcome } from "./trace.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
 function fixture(failed = false, version = 1, http = false) {
@@ -17,11 +17,11 @@ function fixture(failed = false, version = 1, http = false) {
   if (http) {
     expected.traceID = trace.traceID;
     trace.spans[0].references = [];
-    trace.spans[1].operationName = "HTTP POST agent-acp-service";
+    trace.spans[1].operationName = "HTTP POST agent-acp-workspace";
     trace.spans[1].tags = [
       { key: "span.kind", value: "client" },
       { key: "http.request.method", value: "POST" },
-      { key: "server.address", value: "agent-acp-service" },
+      { key: "server.address", value: "agent-acp-workspace" },
     ];
     trace.spans[0].tags = [
       { key: "span.kind", value: "server" },
@@ -229,4 +229,67 @@ test("model-to-closure timestamp inversion remains a strict failure with raw evi
     model_duration_us: 1,
     finish_start_us: 10,
   });
+});
+
+test("native strict outcome waives only clock warnings and never a timestamp inversion", () => {
+  const clock = {
+    strict_trace: "failed",
+    model_finish_order: "passed",
+    warning_count: 1,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of 3.2ms",
+    ],
+  };
+  const passed = { strict_trace: "passed", model_finish_order: "passed" };
+  assert.deepEqual(nativeStrictOutcome([passed]), {
+    strict_trace: "passed",
+    accepted: true,
+  });
+  assert.deepEqual(nativeStrictOutcome([passed, clock]), {
+    strict_trace: "failed",
+    clock_warnings_accepted: true,
+    accepted: true,
+  });
+  assert.equal(
+    nativeStrictOutcome([{ ...clock, model_finish_order: "failed" }]).accepted,
+    false,
+  );
+  assert.equal(
+    nativeStrictOutcome([{ ...clock, warnings: ["missing parent span"] }])
+      .accepted,
+    false,
+  );
+});
+
+test("native strict outcome accepts an inversion only inside a truncated millisecond", () => {
+  const inverted = (timing) => ({
+    strict_trace: "failed",
+    warning_count: 0,
+    warnings: [],
+    model_finish_order: "failed",
+    model_to_finish_gap_us:
+      timing.finish_start_us - timing.model_start_us - timing.model_duration_us,
+    model_finish_timing: timing,
+  });
+  const truncated = inverted({
+    model_start_us: 1791366679081000,
+    model_duration_us: 181,
+    finish_start_us: 1791366679081000,
+  });
+  assert.deepEqual(nativeStrictOutcome([truncated]), {
+    strict_trace: "failed",
+    millisecond_truncation_accepted: true,
+    accepted: true,
+  });
+  for (const timing of [
+    { model_start_us: 1000, model_duration_us: 1200, finish_start_us: 1000 },
+    { model_start_us: 1000, model_duration_us: 181, finish_start_us: 1001 },
+  ])
+    assert.equal(nativeStrictOutcome([inverted(timing)]).accepted, false);
+  assert.equal(
+    nativeStrictOutcome([
+      { ...truncated, warning_count: 1, warnings: ["missing parent span"] },
+    ]).accepted,
+    false,
+  );
 });

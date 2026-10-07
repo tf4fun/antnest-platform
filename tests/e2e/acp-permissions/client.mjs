@@ -453,7 +453,7 @@ async function main() {
       cross_user_rejections: 2,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (strictTrace === "failed") process.exitCode = 2;
 }
 try {
   await main();

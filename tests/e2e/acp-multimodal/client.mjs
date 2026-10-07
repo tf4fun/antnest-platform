@@ -25,7 +25,7 @@ import {
   imageData,
   marker,
 } from "./fixtures.mjs";
-import { collectNativeTrace } from "./trace.mjs";
+import { collectNativeTrace, nativeStrictOutcome } from "./trace.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -486,20 +486,18 @@ async function main() {
     ),
     new Set(requests.map((item) => item.trace_id)),
   );
-  const strictTrace = checked.some((trace) => trace.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = nativeStrictOutcome(checked);
   console.log(
     JSON.stringify({
       status: "business_passed",
-      strict_trace: strictTrace,
+      ...strict,
       outcomes,
       model_requests: requests.length,
       cross_user_rejections: 3,
       traces: checked,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();

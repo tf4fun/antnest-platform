@@ -23,6 +23,19 @@ test("grants add each receiver network once and mount credentials read-only", ()
   );
 });
 
+test("Admin Console directory grants reach Identity on its client network", () => {
+  const { networks, args } = grantContainerArgs(config, [
+    "gateway-identity",
+    "console-identity",
+  ]);
+  assert.deepEqual(networks, ["identity-clients"]);
+  assert(
+    args.includes(
+      "/work/credentials/admin-console/tokens/identity-service:/run/auth/console-identity:ro",
+    ),
+  );
+});
+
 test("no grants means no user override and no mounts", () => {
   assert.deepEqual(grantContainerArgs(config), { networks: [], args: [] });
   assert.throws(() => grantContainerArgs(config, ["admin-everything"]));
@@ -86,6 +99,37 @@ test("caller contexts come from Identity through the gateway grant", async () =>
     profile: "console",
     agent_id: "agent_1",
   });
+});
+
+test("session contexts reuse an existing Gateway access token without signing in", async () => {
+  const principal = { organization_id: "org_1", user_id: "user_1" };
+  const { client, requests } = harness([
+    { status: 200, body: { caller_context: "cct", principal } },
+  ]);
+  const issued = await client.sessionContext("session", "agent_1");
+  assert.deepEqual(issued, { context: "cct", principal });
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /\/rpc\/identity\/resolve-access-token$/u);
+  assert.deepEqual(JSON.parse(requests[0].body), {
+    access_token: "session",
+    profile: "console",
+    agent_id: "agent_1",
+  });
+});
+
+test("authorization builds a validated header for callers outside json", () => {
+  const { client } = harness([]);
+  assert.deepEqual(client.authorization("controller-runtime"), {
+    "Antnest-Service-Authorization": `Bearer ${"c".repeat(43)}`,
+  });
+  const invalid = serviceClient({
+    readCredential: () => "not a token",
+    fetch: async () => assert.fail("must not send"),
+  });
+  assert.throws(
+    () => invalid.authorization("controller-runtime"),
+    /invalid disposable credential/u,
+  );
 });
 
 test("credentials must be disposable token encodings", async () => {

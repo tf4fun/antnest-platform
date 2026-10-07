@@ -4,6 +4,7 @@ set -eu
 [ "${ANTNEST_E2E_KEEP_STACK:-false}" = false ] || exit 1
 case "${COMPOSE_PROJECT_NAME:-}" in antnest-stage3-e2e-[0-9]*) ;; *) exit 1 ;; esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 evidence="$root/artifacts/verification/acp-persistence/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
@@ -36,11 +37,15 @@ containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOS
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node --input-type=module - "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME" <<'JS'
 import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {inspectDeployment} from './tests/e2e/stage3-base/deployment.mjs';
-const rows=JSON.parse(readFileSync(process.argv[2])),proxy=rows.filter(r=>r.Config.Labels['com.docker.compose.service']==='persistence-proxy');assert.equal(proxy.length,1);assert.equal(proxy[0].State.Health.Status,'healthy');assert.equal(proxy[0].Config.Labels['com.docker.compose.project'],process.argv[3]);assert.deepEqual(Object.values(proxy[0].HostConfig.PortBindings??{}).flat(),[]);console.log(JSON.stringify({...inspectDeployment(rows.filter(r=>r!==proxy[0]),process.argv[3]),services:12,private_database_proxy:true}));
+const rows=JSON.parse(readFileSync(process.argv[2])),proxy=rows.filter(r=>r.Config.Labels['com.docker.compose.service']==='persistence-proxy');assert.equal(proxy.length,1);assert.equal(proxy[0].State.Health.Status,'healthy');assert.equal(proxy[0].Config.Labels['com.docker.compose.project'],process.argv[3]);assert.deepEqual(Object.values(proxy[0].HostConfig.PortBindings??{}).flat(),[]);console.log(JSON.stringify({...inspectDeployment(rows.filter(r=>r!==proxy[0]),process.argv[3]),services:rows.length,private_database_proxy:true}));
 JS
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
-docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "${COMPOSE_PROJECT_NAME}_development" --network-alias persistence-model-peer -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local node /app/tests/e2e/acp-persistence/model.mjs >/dev/null
-docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_RUNTIME_IMAGE=$image" -v "$root/tests:/app/tests:ro" -v "$temporary:/checkpoints" antnest/agent-acp-service:local node /app/tests/e2e/acp-persistence/client.mjs >/dev/null
+image=antnest/antnest-runtime:local
+docker_cmd image inspect "$image" >/dev/null
+docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=persistence-model-peer" --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=persistence-model-peer" -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local node /app/tests/e2e/acp-persistence/model.mjs >/dev/null
+# shellcheck disable=SC2086 # service_hosts is a list of options.
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_controller-runtime" --network "${COMPOSE_PROJECT_NAME}_agent-acp-database" \
+  --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
+  -e "TEST_RUNTIME_IMAGE=$image" -v "$root/tests:/app/tests:ro" -v "$temporary:/checkpoints" antnest/agent-acp-service:local node /app/tests/e2e/acp-persistence/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null
 for step in 1 2 3 4 5 6; do
   attempt=0

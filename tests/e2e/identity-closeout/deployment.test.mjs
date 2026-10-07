@@ -15,6 +15,8 @@ function rows() {
     "agent-ui",
     "runtime-egress",
     "skill-registry",
+    "diagnostic-relay",
+    "runtime-telemetry-ingress",
     "oidc-fixture",
   ].map((name) => ({
     Config: {
@@ -29,14 +31,15 @@ function rows() {
     },
     State: { Running: true, Health: { Status: "healthy" } },
     HostConfig: {
-      PortBindings: [
-        "postgres",
-        "jaeger",
-        "edge-gateway",
-        "oidc-fixture",
-      ].includes(name)
-        ? { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "48001" }] }
-        : {},
+      PortBindings:
+        name === "diagnostic-relay"
+          ? {
+              "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "48002" }],
+              "16686/tcp": [{ HostIp: "127.0.0.1", HostPort: "48003" }],
+            }
+          : ["edge-gateway", "oidc-fixture"].includes(name)
+            ? { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "48001" }] }
+            : {},
     },
     Mounts:
       name === "identity-service"
@@ -45,7 +48,7 @@ function rows() {
   }));
 }
 test("Identity deployment requires actual HTTPS trust and isolated ingress", () => {
-  assert.equal(inspectIdentityDeployment(rows(), "fixture").services, 13);
+  assert.equal(inspectIdentityDeployment(rows(), "fixture").services, 15);
   for (const mutate of [
     (r) =>
       (r.find(

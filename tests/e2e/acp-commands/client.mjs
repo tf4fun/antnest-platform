@@ -9,7 +9,7 @@ import { assertDeniedSessionError } from "../identity-closeout/agent-access-evid
 import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { until } from "../acp-closeout/support.mjs";
 import { commandConnection } from "./connection.mjs";
-import { collectCommandTrace } from "./trace.mjs";
+import { collectCommandTrace, commandStrictOutcome } from "./trace.mjs";
 import { seedCommands } from "./setup.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
@@ -433,13 +433,11 @@ async function main() {
     new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
     8,
   );
-  const strictTrace = checked.some((trace) => trace.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = commandStrictOutcome(checked);
   console.log(
     JSON.stringify({
       status: "business_passed",
-      strict_trace: strictTrace,
+      ...strict,
       outcomes,
       model_requests: requests.length,
       cross_user_rejections: 3,
@@ -447,7 +445,7 @@ async function main() {
       normal_traces: normal,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 
 try {

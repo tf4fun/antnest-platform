@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 import { provisionTokens } from "../../scripts/dev-service-tokens.mjs";
 import { durablePath } from "./storage.mjs";
 import { publicDevelopmentSecrets } from "./public-development-secrets.mjs";
 
-export function fixtureEnvironment(inherited, { project, octet }) {
-  assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/u);
+const project =
+  /^antnest-(?:lifecycle-[a-f0-9]{8}|stage3-e2e-[1-9][0-9]{0,9})$/u;
+
+export function fixtureEnvironment(inherited, { project: name, octet }) {
+  assert.match(name, project);
   assert(Number.isInteger(octet) && octet >= 1 && octet <= 200);
   return {
     ...Object.fromEntries(
@@ -16,11 +20,11 @@ export function fixtureEnvironment(inherited, { project, octet }) {
       ),
     ),
     ...publicDevelopmentSecrets(),
-    COMPOSE_PROJECT_NAME: project,
+    COMPOSE_PROJECT_NAME: name,
     ANTNEST_SERVICE_NETWORK_PREFIX: `10.244.${octet}`,
-    ANTNEST_RUNTIME_CONTROLLER_SCOPE: project,
-    ANTNEST_RUNTIME_MANAGEMENT_NETWORK: `${project}-runtime-management`,
-    ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: `${project}-system-skills`,
+    ANTNEST_RUNTIME_CONTROLLER_SCOPE: name,
+    ANTNEST_RUNTIME_MANAGEMENT_NETWORK: `${name}-runtime-management`,
+    ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: `${name}-system-skills`,
     ANTNEST_RUNTIME_MANAGEMENT_SUBNET: `10.243.${octet}.0/24`,
     ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE: `10.243.${octet}.128/25`,
     ANTNEST_EGRESS_IPV4: `10.243.${octet}.3`,
@@ -35,10 +39,10 @@ export function fixtureEnvironment(inherited, { project, octet }) {
   };
 }
 
-export function prepareFixtureCredentials(project, root) {
-  assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/u);
+export function prepareFixtureCredentials(name, root) {
+  assert.match(name, project);
   const parent = durablePath(
-    resolve(root, "artifacts/verification/authenticated-e2e", project),
+    resolve(root, "artifacts/verification/authenticated-e2e", name),
   );
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const credentials = resolve(parent, "credentials");
@@ -49,4 +53,30 @@ export function prepareFixtureCredentials(project, root) {
       readFileSync(resolve(credentials, "deployment.env"), "utf8"),
     ),
   };
+}
+
+export function shellExports(env) {
+  return Object.entries(env)
+    .map(([key, value]) => {
+      assert.match(key, /^[A-Z_][A-Z0-9_]*$/u);
+      return `export ${key}='${String(value).replaceAll("'", "'\\''")}'\n`;
+    })
+    .join("");
+}
+
+// Shell entrypoints evaluate this output to join the same disposable
+// deployment as the Node fixtures.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  const [name, octet] = process.argv.slice(2);
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const prepared = prepareFixtureCredentials(name, root);
+  process.stdout.write(
+    shellExports({
+      ...fixtureEnvironment({}, { project: name, octet: Number(octet) }),
+      ...prepared.environment,
+    }),
+  );
 }

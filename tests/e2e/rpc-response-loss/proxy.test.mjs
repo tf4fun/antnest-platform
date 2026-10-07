@@ -4,6 +4,7 @@ import { createServer, request } from "node:http";
 import { once } from "node:events";
 import { startProxy } from "./proxy.mjs";
 const tp = "00-11111111111111111111111111111111-2222222222222222-01";
+const auth = `Bearer ${"a".repeat(43)}`;
 const inputs = {
   "apply-execution-snapshot": {
     organization_id: "org",
@@ -42,6 +43,7 @@ async function fixture(
     received.push({
       body: JSON.parse(Buffer.concat(chunks)),
       traceparent: req.headers.traceparent,
+      authorization: req.headers["antnest-service-authorization"],
     });
     const result = reply(req.url.split("/").at(-1));
     res.writeHead(result.status, { "content-type": "application/json" });
@@ -66,7 +68,7 @@ async function fixture(
     const r = await fetch(base + path, {
       method: "POST",
       body: JSON.stringify(body),
-      headers: { traceparent: tp },
+      headers: { traceparent: tp, "Antnest-Service-Authorization": auth },
       signal: AbortSignal.timeout(3000),
     });
     assert.equal(r.status, status);
@@ -77,7 +79,7 @@ async function fixture(
     const observed = { headers: false, bytes: 0 };
     const req = request(base + "/rpc/agent-acp/" + method, {
       method: "POST",
-      headers: { traceparent: tp },
+      headers: { traceparent: tp, "Antnest-Service-Authorization": auth },
     });
     const done = new Promise((resolve) => {
       req.on("response", (res) => {
@@ -114,7 +116,9 @@ for (const method of Object.keys(inputs))
     assert.equal(held.delivery, "held");
     assert.equal(pending.observed.headers, false);
     assert.equal(pending.observed.bytes, 0);
-    assert.deepEqual(f.received, [{ body: inputs[method], traceparent: tp }]);
+    assert.deepEqual(f.received, [
+      { body: inputs[method], traceparent: tp, authorization: auth },
+    ]);
     assert(!JSON.stringify(await f.state()).includes("never-expose-this"));
     await f.post("/__test/drop", { receipt_id: "foreign" }, 409);
     await f.post("/__test/arm", selection(method), 409);

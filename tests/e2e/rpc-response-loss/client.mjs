@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { commandConnection } from "../acp-commands/connection.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import {
+  inspectCommandTrace,
+  commandStrictOutcome,
+} from "../acp-commands/trace.mjs";
 import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import {
@@ -51,10 +55,17 @@ const api = async (path, body, status = 200) =>
 const agent = () => api(`/api/admin/agents/${agentId}`);
 const state = async () =>
   (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const services = serviceClient();
+const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
   const r = await fetch(base + path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(base === runtimeController
+        ? services.authorization("controller-runtime")
+        : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(15000),
   });
@@ -63,8 +74,7 @@ async function peer(base, path, body) {
 }
 const proxy = (path = "/__test/status", body) =>
   peer("http://rpc-loss-proxy:8080", path, body);
-const runtime = () =>
-  peer("http://runtime-controller:8080", `/internal/runtimes/${agentId}`);
+const runtime = () => peer(runtimeController, `/internal/runtimes/${agentId}`);
 const sync = async () =>
   (await api("/api/admin/execution-synchronization")).synchronization;
 async function modelState() {
@@ -107,7 +117,7 @@ async function operation(id, kind) {
     }[kind],
     current = await runtime();
   const result = await peer(
-    "http://runtime-controller:8080",
+    runtimeController,
     `/internal/runtime-operations/${runtimeCommandId(id, phase)}`,
   );
   assertRuntimeOperation(result, {
@@ -312,6 +322,7 @@ async function exercise(version, kind, template, model) {
       agentId,
       requestId: rebuilt.body.request_id,
       traceID: rebuilt.traceID,
+      skillPreparation: true,
     };
     record = await held();
     assert.equal(record.operation_id, transition.requestId);
@@ -378,7 +389,10 @@ async function exercise(version, kind, template, model) {
   return model;
 }
 async function main() {
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[\w.-]+$/,
+  );
   const login = await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
@@ -417,6 +431,7 @@ async function main() {
     agentId,
     requestId: created.body.operation.request_id,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
   for (const version of [1, 2])
@@ -544,17 +559,15 @@ async function main() {
     results.reduce((n, r) => n + (r.runtime_tool_calls ?? 0), 0),
     8,
   );
-  const strict = results.some((r) => r.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = commandStrictOutcome(results);
   console.log(
     JSON.stringify({
       status: "scoped_topology_passed",
-      strict_trace: strict,
+      ...strict,
       traces: results,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();

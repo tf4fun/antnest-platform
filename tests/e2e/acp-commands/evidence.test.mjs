@@ -111,6 +111,23 @@ test("catalog is complete and belongs to the requested Session", () => {
   }
 });
 
+test("catalog may list delivered Skill commands after the built-in commands", () => {
+  const skill = { name: "skill:system:code-review", description: "Review" };
+  const withSkill = {
+    ...catalog,
+    update: {
+      ...catalog.update,
+      availableCommands: [...catalog.update.availableCommands, skill],
+    },
+  };
+  assertCatalog([withSkill], "s", [skill.name]);
+  assert.throws(() => assertCatalog([withSkill], "s"));
+  assertCatalog([catalog], "s", [skill.name]);
+  const foreign = structuredClone(withSkill);
+  foreign.update.availableCommands[1].name = "skill:system:other";
+  assert.throws(() => assertCatalog([foreign], "s", [skill.name]));
+});
+
 test("transcript compares block identity and order, excluding derived notifications", () => {
   const expected = [
     { role: "user", content: [{ type: "text", text: "/help" }] },

@@ -2,7 +2,8 @@ services:
   skill-docker-proxy:
     image: antnest/agent-acp-service:local
     user: "0:0"
-    command: ["node", "/app/tests/e2e/stage3-base/docker-socket-fault-proxy.mjs"]
+    command:
+      ["node", "/app/tests/e2e/stage3-base/docker-socket-fault-proxy.mjs"]
     environment:
       ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${ANTNEST_RUNTIME_CONTROLLER_SCOPE}
     volumes:
@@ -10,11 +11,19 @@ services:
       - skill-docker-proxy-socket:/proxy
       - ./tests:/app/tests:ro
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8081/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:8081/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
       interval: 2s
       timeout: 2s
       retries: 20
-    networks: [development]
+    # Runtime Controller reaches the proxy through the shared socket volume;
+    # only the test client joins this network to arm and read the fault.
+    networks: [skill-fault]
   runtime-controller:
     environment:
       ANTNEST_DOCKER_HOST: unix:///proxy/docker.sock
@@ -25,3 +34,6 @@ services:
         condition: service_healthy
 volumes:
   skill-docker-proxy-socket: {}
+networks:
+  skill-fault:
+    internal: true

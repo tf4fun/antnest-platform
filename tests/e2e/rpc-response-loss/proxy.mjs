@@ -156,7 +156,11 @@ export function startProxy(
       if (!methods.includes(method) || req.url !== `/rpc/agent-acp/${method}`)
         return json(res, 404, { code: "not_found" });
       const headers = { "content-type": "application/json" };
-      for (const name of ["traceparent", "tracestate"])
+      for (const name of [
+        "traceparent",
+        "tracestate",
+        "antnest-service-authorization",
+      ])
         if (req.headers[name]) headers[name] = req.headers[name];
       const response = await fetch(origin + req.url, {
         method: "POST",
@@ -206,4 +210,4 @@ export function startProxy(
   }).listen(port, host);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  startProxy("http://agent-acp-service:8080");
+  startProxy("http://agent-acp-control:8081");

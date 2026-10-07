@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fixtureEnvironment } from "./authenticated-e2e.mjs";
+import { spawnSync } from "node:child_process";
+import { fixtureEnvironment, shellExports } from "./authenticated-e2e.mjs";
 
 test("an E2E deployment cannot inherit retained credentials, providers or topology", () => {
   const env = fixtureEnvironment(
@@ -43,8 +44,46 @@ test("an E2E deployment cannot inherit retained credentials, providers or topolo
   assert.equal(env.ANTNEST_JAEGER_RUNTIME_IPV4, undefined);
 });
 
+test("Stage 3 shell projects use the same fixture topology", () => {
+  const env = fixtureEnvironment(
+    { PATH: "/fixture/bin" },
+    { project: "antnest-stage3-e2e-4242", octet: 7 },
+  );
+  assert.equal(env.COMPOSE_PROJECT_NAME, "antnest-stage3-e2e-4242");
+  assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_SCOPE, "antnest-stage3-e2e-4242");
+  assert.equal(env.ANTNEST_RUNTIME_OTLP_INGRESS_IPV4, "10.243.7.4");
+});
+
+test("shell exports quote every value and reject unsafe names", () => {
+  const script = shellExports({
+    A: "plain",
+    B_2: `it's {"json": "$HOME"}`,
+    EMPTY: "",
+  });
+  assert.equal(
+    script,
+    `export A='plain'\nexport B_2='it'\\''s {"json": "$HOME"}'\nexport EMPTY=''\n`,
+  );
+  const result = spawnSync(
+    "sh",
+    ["-c", `eval "$1"; printf '%s' "$B_2"`, "sh", script],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.stdout, `it's {"json": "$HOME"}`);
+  for (const name of ["", "1A", "A-B", "A;B", "a"])
+    assert.throws(() => shellExports({ [name]: "x" }));
+});
+
 test("fixture scope and subnet must be valid before preparing credentials", () => {
-  for (const project of ["", "antnest", "antnest-lifecycle-*", "../retained"])
+  for (const project of [
+    "",
+    "antnest",
+    "antnest-lifecycle-*",
+    "../retained",
+    "antnest-stage3-e2e-",
+    "antnest-stage3-e2e-01",
+    "antnest-stage3-e2e-12a",
+  ])
     assert.throws(() => fixtureEnvironment({}, { project, octet: 45 }));
   for (const octet of [0, 201, 1.5, NaN])
     assert.throws(() =>

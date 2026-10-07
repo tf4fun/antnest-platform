@@ -16,7 +16,7 @@ services:
       start_period: 10s
       timeout: 3s
       retries: 3
-    networks: [agent-acp-database, development]
+    networks: [agent-acp-database]
   agent-acp-service:
     labels:
       io.antnest.e2e-run-id: ${ANTNEST_E2E_RUN_ID}

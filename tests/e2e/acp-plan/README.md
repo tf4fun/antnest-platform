@@ -73,14 +73,18 @@ ordering. Each protocol version has its own Tool event shape: v1 starts with
 - Successful replay and fork requests and denial requests are collected
   separately. Repeated loads of one Session are disambiguated by their
   connection link. Each Trace must match its method and resource identity and
-  must not execute a Run, model or Runtime call. Denial diagnostics must stay
-  within the matching rejected ACP request and domain operation.
+  must not execute a Run, model or Runtime tool. A successful replay may read
+  the Runtime Skill catalog (`discover` and `resources/read`) once each; a
+  denied request may not. Denial diagnostics must stay within the matching
+  rejected ACP request and domain operation.
 - Plan content, user input and synthetic credentials must not appear in
   exported Jaeger Traces. This check does not cover container stdout or metrics
   exports. IP forwarding is outside the tracing scope. Collection uses bounded
   stable-span sampling, which cannot rule out arbitrarily late telemetry.
 
-Strict timing warnings make the command exit nonzero.
+Strict timing warnings make the command exit nonzero, except the reviewed
+clock-skew warning (`clock skew adjustment disabled; not applying calculated
+delta of ...`), which is reported without failing the exit.
 
 ## Cleanup
 

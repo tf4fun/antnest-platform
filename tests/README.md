@@ -186,9 +186,16 @@ files (prose-only changes select none). Changes to the workflow, `tests/support/
   and lifecycle, lifecycle and workspace closeout, skill learning). Each target
   boots its own stack and runs as its own suite, at most six at a time. Tier C
   reports per suite but is not part of `Integration checks` yet. Lifecycle and
-  workspace foundation runners exit 2 when business and topology checks pass
-  but strict trace findings remain; CI passes those runs with a warning and
-  keeps the findings in the evidence artifact.
+  workspace foundation runners and the Stage 3a identity, tool permission and
+  tool progress profiles exit 2 when business and topology checks pass but
+  strict trace findings remain. CI passes such a run with a warning only when
+  `tests/support/strict-findings.mjs` finds no Jaeger warning other than clock
+  skew adjustments in its output; error spans on denial and cancellation paths
+  are recorded by contract and checked by each runner's topology. The findings
+  stay in the evidence artifact. The Stage 3a profiles run their make
+  recipe directly because make reports every failed recipe as 2. Tool permission and tool
+  progress first build the test-only `antnest/antnest-runtime:managed-integration`
+  image with `make docker-build-managed-runtime`.
 
 Each local image is named `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
 where the hash covers the image's Dockerfile, `.dockerignore` and every path

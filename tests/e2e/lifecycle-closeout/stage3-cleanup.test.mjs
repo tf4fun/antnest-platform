@@ -85,6 +85,7 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
               ? join(directory, "identity.private.log")
               : "",
             temporary_root: temporary,
+            credentials_root: join(directory, "credentials-root"),
             tool_profile: "stage3-base",
             keep_stack: "false",
             COMPOSE_PROJECT_NAME: "antnest-stage3-fixture",

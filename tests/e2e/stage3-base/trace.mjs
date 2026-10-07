@@ -14,6 +14,10 @@ import { runtimeCommandId } from "./contracts.mjs";
 import { inspectWorkflowRestart } from "./workflow-restart.mjs";
 import { inspectUpdateRestart } from "./update-restart.mjs";
 
+import { clockSkewWarning } from "../../support/strict-findings.mjs";
+
+export { clockSkewWarning };
+
 export function clockWarningsOnly(traces) {
   return traces.every(
     (result) =>
@@ -21,11 +25,7 @@ export function clockWarningsOnly(traces) {
       (result.strict_trace === "failed" &&
         result.warning_count > 0 &&
         result.warnings?.length > 0 &&
-        result.warnings.every((warning) =>
-          /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/.test(
-            warning,
-          ),
-        ) &&
+        result.warnings.every((warning) => clockSkewWarning.test(warning)) &&
         (result.platform_probe_errors ?? 0) === 0 &&
         (result.restart_error_spans ?? 0) === 0),
   );
@@ -42,9 +42,7 @@ export function reviewedFencedRestartOnly(traces) {
     result.restart_error_spans === 2 &&
     result.platform_probe_errors === 0 &&
     (result.warnings ?? []).every((warning) =>
-      /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/.test(
-        warning,
-      ),
+      clockSkewWarning.test(warning),
     ) &&
     clockWarningsOnly(traces.filter((item) => item !== result))
   );

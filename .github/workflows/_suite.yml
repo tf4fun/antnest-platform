@@ -149,17 +149,20 @@ jobs:
             fi
           done
 
-      # Foundation runners exit 2 when business and topology checks pass but
-      # strict trace findings remain; the findings stay in the evidence.
+      # Strict runners exit 2 when business and topology checks pass but
+      # strict trace findings remain. Only reviewed findings pass, with a
+      # warning; tests/support/strict-findings.mjs defines them.
       - name: Run suite
         env:
           SUITE: ${{ fromJSON(inputs.suite).run }}
           STRICT_EXIT: ${{ fromJSON(inputs.suite).strict_exit }}
         run: |
+          set -o pipefail
           status=0
-          bash -euo pipefail -c "$SUITE" || status=$?
+          bash -euo pipefail -c "$SUITE" 2>&1 | tee "$RUNNER_TEMP/suite-output.log" || status=$?
           if [ "$status" -eq 2 ] && [ "$STRICT_EXIT" = true ]; then
-            echo "::warning title=Strict trace findings::Business and topology checks passed; strict trace findings are recorded in the evidence artifact."
+            node tests/support/strict-findings.mjs "$RUNNER_TEMP/suite-output.log"
+            echo "::warning title=Strict trace findings::Business and topology checks passed; only reviewed strict trace findings remain, recorded in the evidence artifact."
             exit 0
           fi
           exit "$status"

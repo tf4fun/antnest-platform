@@ -2,6 +2,7 @@
 set -eu
 [ "${ANTNEST_E2E_DISPOSABLE:-false}" = true ] || { echo 'Use make e2e-stage3-local' >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 evidence="$root/artifacts/verification/stage3-base/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
@@ -40,19 +41,19 @@ docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
 if [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ]; then
   docker_cmd run -d --name "$fault_proxy" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-    --network "${COMPOSE_PROJECT_NAME}_control" --network-alias stage3-rc-proxy \
+    --network "${COMPOSE_PROJECT_NAME}_controller-runtime" --network-alias stage3-rc-proxy \
     -e "ANTNEST_E2E_SKILL_RESTART_REBUILD=${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" \
     -v "$root/tests:/app/tests:ro" \
     antnest/agent-acp-service:local node /app/tests/e2e/stage3-base/rc-fault-proxy.mjs >/dev/null
-  docker_cmd network connect --alias stage3-rc-proxy "${COMPOSE_PROJECT_NAME}_development" "$fault_proxy"
 fi
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
+image=antnest/antnest-runtime:local
+docker_cmd image inspect "$image" >/dev/null
 registry_ip=
 if [ "${ANTNEST_E2E_SKILL_DELIVERY:-false}" = true ]; then
   registry_container=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter 'label=com.docker.compose.service=skill-registry')
   [ -n "$registry_container" ] || { echo 'Skill Registry container missing' >&2; exit 1; }
   docker_cmd inspect "$registry_container" > "$temporary/registry.json"
-  docker_cmd network inspect "${COMPOSE_PROJECT_NAME}_development" > "$temporary/registry-network.json"
+  docker_cmd network inspect "${COMPOSE_PROJECT_NAME}_registry-clients" > "$temporary/registry-network.json"
   registry_ip=$(node "$root/tests/e2e/stage3-base/registry-network.mjs" "$temporary/registry.json" "$temporary/registry-network.json" "$COMPOSE_PROJECT_NAME")
 fi
 legacy_helper_id=
@@ -63,7 +64,8 @@ if [ "${ANTNEST_E2E_LEGACY_INVENTORY:-false}" = true ]; then
   docker_cmd cp "$temporary/legacy-note.txt" "$legacy_helper:/legacy/legacy-note.txt"
 fi
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias stage3-model-peer \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=stage3-model-peer" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=stage3-model-peer" \
   -e "ANTNEST_E2E_SKILL_DELIVERY=${ANTNEST_E2E_SKILL_DELIVERY:-false}" \
   -e "ANTNEST_E2E_SKILL_REGISTRY_OUTAGE=${ANTNEST_E2E_SKILL_REGISTRY_OUTAGE:-false}" \
   -e "ANTNEST_E2E_SKILL_OFFLINE_REUSE=${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" \
@@ -74,8 +76,26 @@ docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_P
   -e "ANTNEST_E2E_REGISTRY_IP=$registry_ip" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/stage3-base/model-server.mjs >/dev/null
-docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_RUNTIME_IMAGE=$image" \
+fault_network=
+if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then
+  fault_network="--network ${COMPOSE_PROJECT_NAME}_skill-fault"
+fi
+# The client signs in through edge-gateway and reads Runtime Controller and
+# Agent Controller with the per-run credentials those services admit.
+# shellcheck disable=SC2086 # fault_network and service_hosts are option lists.
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" \
+  --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
+  --network "${COMPOSE_PROJECT_NAME}_controller-clients" \
+  --network "${COMPOSE_PROJECT_NAME}_identity-clients" \
+  --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
+  $fault_network \
+  --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -e "TEST_RUNTIME_IMAGE=$image" \
   -e "ANTNEST_E2E_SKILL_DELIVERY=${ANTNEST_E2E_SKILL_DELIVERY:-false}" \
   -e "ANTNEST_E2E_SKILL_READY_LOSS=${ANTNEST_E2E_SKILL_READY_LOSS:-false}" \
   -e "ANTNEST_E2E_SKILL_READY_DRIFT=${ANTNEST_E2E_SKILL_READY_DRIFT:-false}" \

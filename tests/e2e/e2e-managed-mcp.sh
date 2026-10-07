@@ -2,6 +2,7 @@
 set -eu
 [ "${ANTNEST_E2E_DISPOSABLE:-false}" = true ] || { echo 'Use make e2e-managed-mcp-v1' >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 evidence="$root/artifacts/verification/managed-mcp/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
@@ -24,13 +25,21 @@ containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOS
 # IDs originate from Docker and contain no shell metacharacters.
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
-image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
+image=antnest/antnest-runtime:managed-integration
+docker_cmd image inspect "$image" >/dev/null
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias managed-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=managed-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=managed-model" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/managed-mcp/model.mjs >/dev/null
-docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_RUNTIME_IMAGE=$image" -e "TEST_ACP_VERSION=${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}" \
+# shellcheck disable=SC2086 # service_hosts is a list of options.
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
+  --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
+  -e TEST_RC_TOKEN_FILE=/run/auth/controller-runtime \
+  -e "TEST_RUNTIME_IMAGE=$image" -e "TEST_ACP_VERSION=${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/managed-mcp/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null

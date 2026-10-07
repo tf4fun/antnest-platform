@@ -380,6 +380,18 @@ for (const phase of ["fetch", "response-body"])
     );
   });
 
+test("Gateway requests may extend the client deadline for slow dependency failures", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => {
+    throw new DOMException("private-timeout", "TimeoutError");
+  });
+  await assert.rejects(
+    new GatewayClient("http://fixture").request("/api/session", {
+      timeoutMs: 45000,
+    }),
+    (error) => summarizeFailure(error).timeout_ms === 45000,
+  );
+});
+
 test("cleanup retains last operation state across HTTP failure and deletes the next Agent", async (t) => {
   let polls = 0;
   const deleted = [];

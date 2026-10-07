@@ -10,7 +10,7 @@ services:
       - oidc-test-certs:/certs:ro
     ports:
       - 127.0.0.1:${ANTNEST_OIDC_TEST_PORT:?required}:8443
-    networks: [development]
+    networks: [identity-outbound]
     healthcheck:
       test: ["CMD", "node", "-e", "require('https').get('https://oidc-fixture:8443/status',{ca:require('fs').readFileSync('/certs/tls.crt')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
