@@ -4,6 +4,7 @@ set -euo pipefail
 root_dir=$(cd "$(dirname "$0")/../../.." && pwd)
 suffix=$$
 postgres_name="antnest-skill-prepare-pg-$suffix"
+identity_name="antnest-skill-prepare-identity-$suffix"
 network_name="antnest-skill-prepare-network-$suffix"
 runtime_image="antnest/skill-runtime-integration:$suffix"
 temp_root=${TMPDIR:-/tmp}
@@ -25,6 +26,7 @@ cleanup() {
   docker image rm "$runtime_image" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
   docker rm -f "$postgres_name" >/dev/null 2>&1 || true
+  docker rm -f "$identity_name" >/dev/null 2>&1 || true
   rm -rf "$temp_dir"
 }
 trap cleanup EXIT
@@ -35,7 +37,7 @@ if [[ "${ANTNEST_TEST_RESTART_SKILL_PREPARATION:-false}" == true && "${ANTNEST_T
   exit 1
 fi
 
-export GOCACHE="$root_dir/.cache/go-build" GOMODCACHE="$root_dir/.cache/go-mod" GOPROXY=off
+export GOCACHE="$root_dir/.cache/go-build" GOMODCACHE="$root_dir/.cache/go-mod"
 cd "$root_dir"
 go build -o "$temp_dir/skill-registry" ./services/skill-registry/cmd/skill-registry
 go build -o "$temp_dir/runtime-controller" ./services/runtime-controller/cmd/runtime-controller
@@ -49,17 +51,38 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 docker network create "$network_name" >/dev/null
-registry_port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
-controller_port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
-export ANTNEST_SKILL_REGISTRY_API_TOKEN=antnest-skill-registry-isolated-integration-token
+free_port() {
+  python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'
+}
+registry_port=$(free_port)
+controller_port=$(free_port)
+controller_health_port=$(free_port)
+auth_dir="$temp_dir/auth"
+node tests/integration/skill-registry/prepare-auth.mjs "$auth_dir"
+# Identity serves the JWKS the Registry uses to verify Console Caller Contexts.
+docker run --rm -d --name "$identity_name" -p 127.0.0.1::8080 \
+  -v "$root_dir/tests/e2e/service-authentication/registry:/fixtures:ro" \
+  -v "$auth_dir/registry:/run/auth:ro" \
+  node:24.21.0-bookworm-slim node /fixtures/identity-peer.mjs >/dev/null
+identity_port=$(docker port "$identity_name" 8080/tcp | sed 's/.*://')
+for _ in $(seq 1 30); do
+  if docker exec "$identity_name" node /fixtures/identity-peer.mjs --healthcheck >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+docker exec "$identity_name" node /fixtures/identity-peer.mjs --healthcheck >/dev/null
+export ANTNEST_TEST_CREDENTIALS_FILE="$auth_dir/test-credentials.json"
 export ANTNEST_TEST_REGISTRY_URL="http://127.0.0.1:$registry_port"
 export ANTNEST_TEST_RUNTIME_CONTROLLER_URL="http://127.0.0.1:$controller_port"
 export ANTNEST_RUNTIME_CONTROLLER_SCOPE="$network_name"
 export ANTNEST_TEST_RUNTIME_IMAGE="$runtime_image"
 export ANTNEST_DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
 export OTEL_SDK_DISABLED=true
+export ANTNEST_SERVICE_AUTH_MODE=token ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true
 ANTNEST_SKILL_REGISTRY_LISTEN="127.0.0.1:$registry_port" \
   ANTNEST_SKILL_REGISTRY_DATABASE_URL="postgres://postgres:antnest_test@127.0.0.1:$pg_port/postgres?sslmode=disable" \
+  ANTNEST_IDENTITY_URL="http://127.0.0.1:$identity_port" \
+  ANTNEST_SERVICE_AUTH_CALLERS_FILE="$auth_dir/registry/callers.json" \
+  ANTNEST_SERVICE_AUTH_TOKEN_DIR="$auth_dir/registry/outgoing" \
   "$temp_dir/skill-registry" >"$temp_dir/registry.log" 2>&1 &
 registry_pid=$!
 registry_for_controller="$ANTNEST_TEST_REGISTRY_URL"
@@ -74,6 +97,11 @@ if [[ "${ANTNEST_TEST_SLOW_SKILL_PREPARATION:-false}" == true ]]; then
 fi
 start_controller() {
   ANTNEST_RUNTIME_CONTROLLER_LISTEN="127.0.0.1:$controller_port" \
+    ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN="127.0.0.1:$controller_health_port" \
+    ANTNEST_SERVICE_AUTH_CALLERS_FILE="$auth_dir/controller/callers.json" \
+    ANTNEST_SERVICE_AUTH_TOKEN_DIR="$auth_dir/controller/outgoing" \
+    ANTNEST_RUNTIME_INSTANCE_KEY_FILE="$auth_dir/controller/instance-master" \
+    ANTNEST_RUNTIME_ALLOWED_IMAGES='["antnest/skill-runtime-integration"]' \
     ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL="postgres://postgres:antnest_test@127.0.0.1:$pg_port/postgres?sslmode=disable" \
     ANTNEST_RUNTIME_MANAGEMENT_NETWORK="$network_name" \
     ANTNEST_SKILL_REGISTRY_URL="$registry_for_controller" \

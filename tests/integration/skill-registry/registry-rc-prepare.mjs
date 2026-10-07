@@ -1,23 +1,40 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createHash, createPrivateKey } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { callerContext } from "../../e2e/service-authentication/registry/auth-fixture.mjs";
 
 const registry = process.env.ANTNEST_TEST_REGISTRY_URL;
 const controller = process.env.ANTNEST_TEST_RUNTIME_CONTROLLER_URL;
-const token = process.env.ANTNEST_SKILL_REGISTRY_API_TOKEN;
+const credentialsFile = process.env.ANTNEST_TEST_CREDENTIALS_FILE;
 const scope = process.env.ANTNEST_RUNTIME_CONTROLLER_SCOPE;
 const runtimeImage = process.env.ANTNEST_TEST_RUNTIME_IMAGE;
 const realRuntimeImage = process.env.ANTNEST_TEST_REAL_RUNTIME_IMAGE;
 assert(
-  registry && controller && token && scope && runtimeImage,
-  "isolated service addresses, scope and Runtime image are required",
+  registry && controller && credentialsFile && scope && runtimeImage,
+  "isolated service addresses, credentials, scope and Runtime image are required",
 );
 
 const organizationID = "org_" + "1".repeat(32);
 const actorID = "user_" + "1".repeat(32);
+const credentials = JSON.parse(readFileSync(credentialsFile, "utf8"));
+const contextSigner = {
+  privateKey: createPrivateKey(credentials.caller_context_key),
+};
+// The test publishes as Admin Console for an organization admin and calls
+// Runtime Controller as Agent Controller, the only caller it accepts.
+const consoleHeaders = () => ({
+  "Antnest-Service-Authorization": `Bearer ${credentials.admin_console}`,
+  "Antnest-Caller-Context": callerContext(contextSigner, {
+    org: organizationID,
+    sub: actorID,
+  }),
+});
+const controllerHeaders = {
+  "Antnest-Service-Authorization": `Bearer ${credentials.agent_controller}`,
+};
 const agentID = "agent_skill_delivery_integration";
 const requestID = "skill-integration-prepare";
 const content =
@@ -77,7 +94,11 @@ function digestSet(org, skills) {
 }
 
 async function jsonCall(base, path, options = {}) {
-  const response = await fetch(base + path, options);
+  const headers =
+    base === controller
+      ? { ...controllerHeaders, ...options.headers }
+      : options.headers;
+  const response = await fetch(base + path, { ...options, headers });
   const payload = await response.json();
   return { response, payload };
 }
@@ -92,7 +113,11 @@ for (const path of [
   for (const method of ["GET", "POST", "HEAD", "DELETE"]) {
     const response = await fetch(controller + path, {
       method,
-      headers: { "Idempotency-Key": "retired-release-route" },
+      headers: {
+        ...controllerHeaders,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "retired-release-route",
+      },
     });
     assert.equal(response.status, 404, `${method} ${path} must be retired`);
     await response.arrayBuffer();
@@ -112,9 +137,23 @@ form.append(
   new Blob([artifact], { type: "application/zip" }),
   "code-review.zip",
 );
+const anonymous = await fetch(
+  `${controller}/internal/runtimes/${agentID}/skill-sets/preparations/${requestID}?organization_id=${organizationID}`,
+);
+assert.equal(anonymous.status, 401);
+assert.equal((await anonymous.json()).code, "service_unauthenticated");
+const withoutContext = await jsonCall(registry, "/internal/skills", {
+  method: "POST",
+  headers: {
+    "Antnest-Service-Authorization": `Bearer ${credentials.admin_console}`,
+  },
+  body: form,
+});
+assert.equal(withoutContext.response.status, 401);
+assert.equal(withoutContext.payload.error.code, "caller_context_required");
 const published = await jsonCall(registry, "/internal/skills", {
   method: "POST",
-  headers: { Authorization: `Bearer ${token}` },
+  headers: consoleHeaders(),
   body: form,
 });
 assert.equal(published.response.status, 201, JSON.stringify(published.payload));
@@ -628,7 +667,7 @@ if (process.env.ANTNEST_TEST_SLOW_SKILL_PREPARATION === "true") {
     );
     const version = await jsonCall(registry, "/internal/skills", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: consoleHeaders(),
       body: slowForm,
     });
     assert.equal(version.response.status, 201, JSON.stringify(version.payload));
