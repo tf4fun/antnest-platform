@@ -86,4 +86,4 @@ They exclude queries, bodies, packages, dialogue, source URLs and credentials.
 Coverage includes service unit and contract tests, real HTTP and PostgreSQL
 components, and a deployed deterministic model choosing these tools in a real
 Run. Cross-Agent temporary file use, promotion and Template/rebuild propagation
-are covered by the `make e2e-skill-propagation` Docker E2E target.
+are covered by the `make e2e-skill-deployment` Docker E2E target.

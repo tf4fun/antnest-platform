@@ -16,6 +16,7 @@ import {
   matrices,
   matrix,
   matrixEntry,
+  outsideCI,
   resolveImages,
   selectSuites,
   setups,
@@ -154,6 +155,17 @@ test("the catalog is unique and refers to existing entry points", () => {
     assert(existsSync(resolve(root, dockerfile)), dockerfile);
 });
 
+test("platform targets kept out of CI exist, run nowhere and name their issue", () => {
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  const commands = suites.flatMap((suite) => suite.run).join("\n");
+  for (const [target, issue] of Object.entries(outsideCI)) {
+    assert.match(makefile, new RegExp(`^${target}:`, "mu"), target);
+    assert(!commands.includes(target), target);
+    assert(!ids(suites).includes(target.replace(/^e2e-/u, "c-")), target);
+    assert(Number.isInteger(issue) && issue > 0, target);
+  }
+});
+
 test("matrix entries carry the tier and scalar setup flags", () => {
   const { include } = matrix(suites);
   assert.equal(include.length, suites.length);
@@ -202,7 +214,7 @@ test("required suites split by image need; tier C forms its own matrix", () => {
 
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
-  assert(tierC.length >= 70);
+  assert.equal(tierC.length, 45);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   for (const suite of tierC) {
     if (suite.images.length > 0)
@@ -280,10 +292,7 @@ test("tier C organization display installs the Agent UI browser client", () => {
 
 test("foundation runners report strict-only findings through exit 2", () => {
   const foundation = {
-    "c-lifecycle-health": "lifecycle-closeout/run.mjs health",
-    "c-lifecycle-interrupted": "lifecycle-closeout/interrupted-run.mjs",
     "c-lifecycle-loss": "lifecycle-closeout/run.mjs loss",
-    "c-lifecycle-network": "lifecycle-closeout/run.mjs network",
     "c-lifecycle-restore": "lifecycle-closeout/run.mjs restore",
     "c-lifecycle-shutdown": "lifecycle-closeout/run.mjs shutdown",
     "c-stage4-skill-restore": "lifecycle-closeout/run.mjs skill-restore",

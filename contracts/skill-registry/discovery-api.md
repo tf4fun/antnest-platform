@@ -211,4 +211,4 @@ cross-owner/org rejection, current-source checks, digest drift and offline
 failure, promotion rollback/CAS/idempotence and independent formal reads after
 source removal. The complete dual-Agent learning → projection → temporary use →
 promotion → Template/rebuild workflow is covered by the
-`make e2e-skill-propagation` Docker E2E target.
+`make e2e-skill-deployment` Docker E2E target.
