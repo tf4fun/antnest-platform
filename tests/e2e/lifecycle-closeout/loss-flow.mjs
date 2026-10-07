@@ -332,10 +332,14 @@ async function lossCase(
         signal,
       );
     await docker(["rm", target.Id]);
-    assert.deepEqual(await resources(agentID), {
-      containers: [],
-      volumes: [initial.volume],
-    });
+    // Skills and the generation's receiver stay until Rebuild replaces them;
+    // ready() then proves no stale volume survives.
+    const lostResources = await resources(agentID);
+    assert.deepEqual(lostResources.containers, []);
+    assert.deepEqual(
+      lostResources.volumes.sort(),
+      [initial.volume, initial.skillVolume, initial.receiverVolume].sort(),
+    );
     if (stopped) await startController(config, docker, stopped);
     const eventsPath = `/api/admin/agents/${agentID}/events?limit=100`;
     let lost;
