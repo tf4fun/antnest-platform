@@ -6,8 +6,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
+// An unmatched glob leaves the pattern itself in $f; `if` keeps that case from
+// becoming the script's exit status, so "no credential yet" is empty output.
 const credentialFiles =
-  'for f in /tmp/antnest-acp-runtime-*/*/antnest-runtime; do [ -f "$f" ] && { cat "$f"; echo; }; done';
+  'for f in /tmp/antnest-acp-runtime-*/*/antnest-runtime; do if [ -f "$f" ]; then cat "$f"; echo; fi; done';
 const flags = new Set([
   "ANTNEST_E2E_EXPECT_OLD_TRUSTED",
   "ANTNEST_E2E_EXPECT_RUNTIME_OFFLINE",
