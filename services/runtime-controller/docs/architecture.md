@@ -149,6 +149,15 @@ not merely a request de-duplication record. It removes these races:
 - workspace deletion between Create's storage check and container creation;
 - a stale attempt overwriting a newer terminal operation result.
 
+The Agent lock does not order transactions of different Agents. Transition
+start and operation completion run at `SERIALIZABLE`, so PostgreSQL may abort
+one of two concurrent Agents' transactions with SQLSTATE `40001`, for example
+when offboarding disables every Agent of a principal at once. The repository
+reruns the whole transaction after a short jittered backoff, at most 10 times
+and never past the caller's deadline; it does not retry any other error. Each
+aborted attempt remains in the trace as a failed `postgresql transaction`
+span, followed by the committed attempt under the same parent.
+
 Advisory locks use a bounded connection pool separate from ordinary repository
 queries. Holding many long platform operations therefore cannot consume every
 query connection. A lock connection that cannot be conclusively unlocked is
