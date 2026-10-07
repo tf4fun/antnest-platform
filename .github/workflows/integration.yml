@@ -20,10 +20,18 @@ jobs:
   changes:
     name: Select suites
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
     outputs:
       suites: ${{ steps.select.outputs.suites }}
-      selected: ${{ steps.select.outputs.selected }}
+      plain: ${{ steps.select.outputs.plain }}
+      image_suites: ${{ steps.select.outputs.image_suites }}
+      imaged: ${{ steps.select.outputs.imaged }}
+      images: ${{ steps.select.outputs.images }}
+      builds: ${{ steps.select.outputs.builds }}
+      building: ${{ steps.select.outputs.building }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,184 +41,153 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # A push whose previous head is unknown (new branch, force push) and a
-      # manual run both select every suite.
+      # manual run both select every suite. Images are named by a hash of
+      # their build inputs; any that GHCR lacks are built by the image job.
+      # Runs on main resolve every image so the image job publishes it.
       - name: Select suites
         id: select
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         run: |
+          set -- --resolve-images
+          [ "$PUBLISH" = true ] && set -- "$@" --all-images
           if [ "$EVENT" != workflow_dispatch ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            node tests/support/ci-changes.mjs --base "$BASE" --head HEAD
+            node tests/support/ci-changes.mjs "$@" --base "$BASE" --head HEAD
           else
-            node tests/support/ci-changes.mjs --all
+            node tests/support/ci-changes.mjs "$@" --all
           fi
 
-  suite:
-    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+  images:
+    name: Image / ${{ matrix.name }}
     needs: changes
-    if: needs.changes.outputs.selected != '0'
+    if: needs.changes.outputs.building != '0'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.suites) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.builds) }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: |
-            services/agent-acp-service/package-lock.json
-            services/agent-ui/web/package-lock.json
-            services/admin-console/web/package-lock.json
 
-      - uses: actions/setup-go@v5
-        if: matrix.setup_go
-        with:
-          go-version-file: services/runtime-controller/go.mod
-          cache-dependency-path: "**/go.sum"
-
-      # rust-toolchain.toml pins the channel and components.
-      - name: Install Rust toolchain
-        if: matrix.setup_rust
-        run: |
-          rustup toolchain install
-          rustc --version
-
-      - uses: Swatinem/rust-cache@v2
-        if: matrix.setup_rust
-        with:
-          key: ${{ matrix.id }}
-          workspaces: |
-            services/runtime-egress -> target
-            tests/integration/antnest-runtime/sdk-probes/elicitation -> target
-
-      # Shared test tooling loads yaml, ipaddr.js and ajv from the ACP
-      # service's locked installation.
-      - name: Install Agent ACP packages
-        run: npm --prefix services/agent-acp-service ci
-
-      - name: Install Admin Console packages
-        if: matrix.setup_admin_web
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-        run: npm --prefix services/admin-console/web ci
-
-      - name: Install Agent UI packages
-        if: matrix.setup_agent_ui_web
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-        run: npm --prefix services/agent-ui/web ci
-
-      # Both web packages pin the same Playwright release.
-      - name: Install headless Chromium
-        if: matrix.setup_chromium
-        run: |
-          for package in agent-ui admin-console; do
-            playwright="services/$package/web/node_modules/.bin/playwright"
-            if [ -x "$playwright" ]; then
-              "$playwright" install --with-deps --only-shell chromium
-              exit 0
-            fi
-          done
-          echo "no web package with Playwright is installed" >&2
-          exit 1
-
-      # The runners are developed against Docker Engine 29 and Compose 5; the
-      # runner image ships Engine 28 and Compose 2, whose builds and network
-      # setup differ (for example, built images lack Compose project labels).
-      - name: Install Docker Engine
-        if: matrix.pull != ''
-        env:
-          ENGINE_VERSION: 29.4.0
-          COMPOSE_VERSION: 5.1.2
-        run: |
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-ci.asc
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-ci.asc] https://download.docker.com/linux/ubuntu noble stable" |
-            sudo tee /etc/apt/sources.list.d/docker-ci.list >/dev/null
-          sudo apt-get update -o Dir::Etc::sourcelist=sources.list.d/docker-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
-          version() { apt-cache madison "$1" | awk -v want="$2" '$3 ~ ("^(5:)?" want "-") { print $3; exit }'; }
-          engine="$(version docker-ce "$ENGINE_VERSION")"
-          compose="$(version docker-compose-plugin "$COMPOSE_VERSION")"
-          test -n "$engine" && test -n "$compose"
-          sudo apt-get install -y --allow-downgrades --no-install-recommends \
-            "docker-ce=$engine" "docker-ce-cli=$engine" "docker-compose-plugin=$compose" \
-            docker-buildx-plugin containerd.io
-          docker version --format 'engine {{.Server.Version}}'
-          docker compose version
-
-      - name: Pull images
-        if: matrix.pull != ''
-        env:
-          IMAGES: ${{ matrix.pull }}
-        run: for image in $IMAGES; do docker pull "$image"; done
-
-      # Runners that start these with --no-build or inspect them expect
-      # antnest/<image>:local. A separate builder keeps the runners' own
-      # `docker build` calls on the default engine.
       - uses: docker/setup-buildx-action@v3
-        if: matrix.images != ''
-        id: buildx
-        with:
-          use: false
 
-      - name: Write image definitions
-        if: matrix.images != ''
+      - name: Write image definition
         env:
-          IMAGES: ${{ matrix.images }}
-        run: node tests/support/ci-changes.mjs --bake "$IMAGES" > "$RUNNER_TEMP/images.docker-bake.json"
+          NAME: ${{ matrix.name }}
+        run: node tests/support/ci-changes.mjs --bake "$NAME" > "$RUNNER_TEMP/image.docker-bake.json"
 
-      - name: Build local images
-        if: matrix.images != ''
+      - name: Build image
         uses: docker/bake-action@v6
         with:
           source: .
-          builder: ${{ steps.buildx.outputs.name }}
-          files: ${{ runner.temp }}/images.docker-bake.json
+          files: ${{ runner.temp }}/image.docker-bake.json
           load: true
 
-      - name: Run suite
+      - name: Save image
         env:
-          SUITE: ${{ matrix.run }}
-        run: bash -euo pipefail -c "$SUITE"
+          NAME: ${{ matrix.name }}
+        run: |
+          set -o pipefail
+          docker save "antnest/$NAME:local" | zstd -T0 -3 -o "$RUNNER_TEMP/$NAME.tar.zst"
+          ls -l "$RUNNER_TEMP/$NAME.tar.zst"
 
-      # Per-run fixture credentials are excluded; everything else is evidence.
-      - name: Upload evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: evidence-${{ matrix.id }}
-          path: |
-            artifacts/verification/
-            !artifacts/verification/**/credentials/**
-            !artifacts/verification/**/*.key
-            !artifacts/verification/**/*.pem
-          if-no-files-found: ignore
-          retention-days: 14
+          name: image-${{ matrix.name }}
+          path: ${{ runner.temp }}/${{ matrix.name }}.tar.zst
+          compression-level: 0
+          retention-days: 1
+
+      # Only main publishes, so a pull request cannot place an image under a
+      # reference that later runs trust.
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          NAME: ${{ matrix.name }}
+          REF: ${{ matrix.ref }}
+        run: |
+          docker tag "antnest/$NAME:local" "$REF"
+          docker push "$REF"
+
+  # Suites without images start at once; the others wait for the image job.
+  suite:
+    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.plain != '0'
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.suites) }}
+    uses: ./.github/workflows/_suite.yml
+    with:
+      suite: ${{ toJSON(matrix) }}
+
+  image-suite:
+    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    needs: [changes, images]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.imaged != '0' &&
+      (needs.images.result == 'success' || needs.images.result == 'skipped')
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.image_suites) }}
+    uses: ./.github/workflows/_suite.yml
+    with:
+      suite: ${{ toJSON(matrix) }}
+      images: ${{ needs.changes.outputs.images }}
 
   integration:
     name: Integration checks
-    needs: [changes, suite]
+    needs: [changes, images, suite, image-suite]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # A skipped suite job is a pass only when no suite was selected.
+      # A skipped job is a pass only when it had nothing to do.
       - name: Check suite results
         env:
           CHANGES: ${{ needs.changes.result }}
+          IMAGES: ${{ needs.images.result }}
           SUITE: ${{ needs.suite.result }}
-          SELECTED: ${{ needs.changes.outputs.selected }}
+          IMAGE_SUITE: ${{ needs.image-suite.result }}
+          BUILDING: ${{ needs.changes.outputs.building }}
+          PLAIN: ${{ needs.changes.outputs.plain }}
+          IMAGED: ${{ needs.changes.outputs.imaged }}
         run: |
-          echo "changes=$CHANGES suite=$SUITE selected=$SELECTED"
+          echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED"
           [ "$CHANGES" = success ] || exit 1
-          if [ "$SELECTED" = 0 ]; then
-            [ "$SUITE" = skipped ]
-          else
-            [ "$SUITE" = success ]
-          fi
+          expect() { if [ "$2" = 0 ]; then [ "$1" = skipped ]; else [ "$1" = success ]; fi; }
+          expect "$IMAGES" "$BUILDING"
+          expect "$SUITE" "$PLAIN"
+          expect "$IMAGE_SUITE" "$IMAGED"

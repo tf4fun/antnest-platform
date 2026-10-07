@@ -1,6 +1,7 @@
 // Selects the integration suites a change set must run. The integration
 // workflow always runs; its suite job consumes the matrix printed here.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { parseArgs } from "node:util";
 // Any change here can alter every suite's environment or selection.
 const everySuite = [
   ".github/workflows/integration.yml",
+  ".github/workflows/_suite.yml",
   "tests/support/**",
   "contracts/**",
   "Makefile",
@@ -373,21 +375,115 @@ export const images = {
   temporal: "scripts/temporal/Dockerfile",
 };
 
+const registry = "ghcr.io/tf4fun";
+const packageName = (name) =>
+  name.startsWith("antnest-") ? name : `antnest-${name}`;
+
 // Unchanged layers come from the cache the image workflows publish on main.
 export function bakeDefinition(names, context = ".") {
   const target = {};
   for (const name of names) {
     if (!Object.hasOwn(images, name)) throw new Error(`unknown image ${name}`);
-    const scope = name.startsWith("antnest-") ? name : `antnest-${name}`;
     target[name] = {
       context,
       dockerfile: images[name],
       platforms: ["linux/amd64"],
       tags: [`antnest/${name}:local`],
-      "cache-from": [`type=gha,scope=${scope}`],
+      "cache-from": [`type=gha,scope=${packageName(name)}`],
     };
   }
   return { group: { default: { targets: names } }, target };
+}
+
+// The context paths a Dockerfile copies; `--from` copies read build stages.
+// An empty string stands for the whole context.
+export function dockerfileSources(text) {
+  const sources = [];
+  for (const line of text.replace(/\\\r?\n/gu, " ").split(/\r?\n/u)) {
+    const [instruction = "", ...args] = line.trim().split(/\s+/u);
+    if (!/^(?:COPY|ADD)$/iu.test(instruction)) continue;
+    if (args.some((arg) => arg.startsWith("--from="))) continue;
+    const paths = args.filter((arg) => !arg.startsWith("--")).slice(0, -1);
+    for (const path of paths)
+      sources.push(
+        path === "." ? "" : path.replace(/^\.\//u, "").replace(/\/+$/u, ""),
+      );
+  }
+  return sources;
+}
+
+function copies(source, file) {
+  if (source === "") return true;
+  if (/[*?[]/u.test(source))
+    return matchesGlob(file, source) || matchesGlob(file, `${source}/**`);
+  return file === source || file.startsWith(`${source}/`);
+}
+
+export function listTree(head = "HEAD", git = execFileSync) {
+  const output = git("git", ["ls-tree", "-r", "-z", "--full-tree", head], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const tree = new Map();
+  for (const entry of output.split("\0").filter(Boolean)) {
+    const [meta, path] = entry.split("\t");
+    const [mode, , object] = meta.split(" ");
+    tree.set(path, { mode, object });
+  }
+  return tree;
+}
+
+// Hashes the tracked files a build can read, so an image is rebuilt exactly
+// when its Dockerfile, .dockerignore or a copied source changes. Untracked
+// files never reach CI checkouts.
+export function imageDigest(name, tree, readBlob) {
+  const dockerfile = images[name];
+  const entry = tree.get(dockerfile);
+  if (!entry) throw new Error(`${dockerfile} is not tracked`);
+  const sources = [
+    dockerfile,
+    ".dockerignore",
+    ...dockerfileSources(readBlob(entry.object)),
+  ];
+  const files = [...tree.keys()].filter((file) =>
+    sources.some((source) => copies(source, file)),
+  );
+  for (const source of sources)
+    if (!files.some((file) => copies(source, file)))
+      throw new Error(`${dockerfile} copies ${source}, which is not tracked`);
+  const hash = createHash("sha256").update(`${name}\n`);
+  for (const file of files.sort()) {
+    const { mode, object } = tree.get(file);
+    hash.update(`${mode} ${object}\t${file}\n`);
+  }
+  return hash.digest("hex").slice(0, 32);
+}
+
+export function imageReference(name, digest) {
+  return `${registry}/${packageName(name)}:inputs-${digest}`;
+}
+
+export function imageExists(ref, run = execFileSync) {
+  try {
+    run("docker", ["manifest", "inspect", ref], {
+      stdio: "ignore",
+      timeout: 60_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveImages(names, { tree, readBlob, exists }) {
+  return names.map((name) => {
+    const ref = imageReference(name, imageDigest(name, tree, readBlob));
+    return { name, dockerfile: images[name], ref, build: !exists(ref) };
+  });
+}
+
+export function suiteImages(selected) {
+  return [...new Set(selected.flatMap((suite) => suite.images ?? []))].sort();
 }
 
 function relevant(file) {
@@ -432,6 +528,14 @@ export function matrix(selected) {
   return { include: selected.map(matrixEntry) };
 }
 
+export function matrices(selected) {
+  const needsImages = (suite) => (suite.images ?? []).length > 0;
+  return {
+    plain: matrix(selected.filter((suite) => !needsImages(suite))),
+    imaged: matrix(selected.filter(needsImages)),
+  };
+}
+
 const zeroSha = /^0+$/u;
 
 export function changedFiles(base, head, git = execFileSync) {
@@ -450,6 +554,8 @@ function main() {
       head: { type: "string", default: "HEAD" },
       all: { type: "boolean", default: false },
       bake: { type: "string" },
+      "resolve-images": { type: "boolean", default: false },
+      "all-images": { type: "boolean", default: false },
     },
   });
   if (values.bake !== undefined) {
@@ -460,10 +566,29 @@ function main() {
   const all = values.all || !values.base || zeroSha.test(values.base);
   const files = all ? [] : changedFiles(values.base, values.head);
   const selected = selectSuites(files, { all });
+  const { plain, imaged } = matrices(selected);
   const lines = [
-    `suites=${JSON.stringify(matrix(selected))}`,
-    `selected=${selected.length}`,
+    `suites=${JSON.stringify(plain)}`,
+    `plain=${plain.include.length}`,
+    `image_suites=${JSON.stringify(imaged)}`,
+    `imaged=${imaged.include.length}`,
   ];
+  let resolved = [];
+  if (values["resolve-images"]) {
+    const tree = listTree(values.head);
+    const readBlob = (object) =>
+      execFileSync("git", ["cat-file", "blob", object], { encoding: "utf8" });
+    resolved = resolveImages(
+      values["all-images"] ? Object.keys(images).sort() : suiteImages(selected),
+      { tree, readBlob, exists: imageExists },
+    );
+    const builds = resolved.filter((image) => image.build);
+    lines.push(
+      `images=${JSON.stringify(Object.fromEntries(resolved.map(({ name, ref, build }) => [name, { ref, build }])))}`,
+      `builds=${JSON.stringify({ include: builds.map(({ name, ref }) => ({ name, ref })) })}`,
+      `building=${builds.length}`,
+    );
+  }
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join("\n")}\n`);
   const summary = [
@@ -474,6 +599,11 @@ function main() {
     ...suites.map(
       (suite) =>
         `- ${suite.disabled ? "disabled" : selected.includes(suite) ? "run" : "skip"}: ${suite.name} (tier ${suite.tier.toUpperCase()})${suite.disabled ? `: ${suite.disabled}` : ""}`,
+    ),
+    ...(resolved.length > 0 ? ["", "Images:", ""] : []),
+    ...resolved.map(
+      (image) =>
+        `- ${image.build ? "build" : "pull"}: ${image.name} (${image.ref})`,
     ),
   ].join("\n");
   if (process.env.GITHUB_STEP_SUMMARY)

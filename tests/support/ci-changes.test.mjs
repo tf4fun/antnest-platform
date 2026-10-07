@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -6,11 +7,19 @@ import { fileURLToPath } from "node:url";
 import {
   bakeDefinition,
   changedFiles,
+  dockerfileSources,
+  imageDigest,
+  imageExists,
+  imageReference,
   images,
+  listTree,
+  matrices,
   matrix,
   matrixEntry,
+  resolveImages,
   selectSuites,
   setups,
+  suiteImages,
   suites,
 } from "./ci-changes.mjs";
 
@@ -35,6 +44,7 @@ test("documentation-only changes select no suites", () => {
 test("workflow, shared tooling, contract and Makefile changes select every suite", () => {
   for (const file of [
     ".github/workflows/integration.yml",
+    ".github/workflows/_suite.yml",
     "tests/support/dependencies.mjs",
     "contracts/runtime/README.md",
     "Makefile",
@@ -142,6 +152,19 @@ test("matrix entries carry the tier and scalar setup flags", () => {
   assert.deepEqual(matrix([]), { include: [] });
 });
 
+test("suites that need images form a matrix separate from those that do not", () => {
+  const { plain, imaged } = matrices(suites);
+  assert.equal(plain.include.length + imaged.include.length, suites.length);
+  assert(plain.include.every((row) => row.images === ""));
+  assert(imaged.include.every((row) => row.images !== ""));
+  assert(plain.include.some((row) => row.id === "egress-postgres"));
+  assert(imaged.include.some((row) => row.id === "auth-runtime-controller"));
+  assert.deepEqual(matrices([]), {
+    plain: { include: [] },
+    imaged: { include: [] },
+  });
+});
+
 test("bake definitions tag local images and read the image workflow cache", () => {
   const definition = bakeDefinition(
     ["antnest-runtime", "runtime-egress"],
@@ -162,6 +185,169 @@ test("bake definitions tag local images and read the image workflow cache", () =
     "type=gha,scope=antnest-runtime",
   ]);
   assert.throws(() => bakeDefinition(["unknown"]), /unknown image/u);
+});
+
+test("Dockerfile sources skip stage copies, flags and comments", () => {
+  assert.deepEqual(
+    dockerfileSources(
+      [
+        "# COPY ignored ./comment",
+        "FROM node AS build",
+        "COPY services/a/package.json \\",
+        "  services/a/package-lock.json ./",
+        "COPY --chown=node:node ./services/a/src/ ./src",
+        "COPY --from=build /workspace/dist ./dist",
+        "ADD --chmod=0555 scripts/run.sh /run.sh",
+        "copy . /context",
+        "RUN npm ci",
+      ].join("\n"),
+    ),
+    [
+      "services/a/package.json",
+      "services/a/package-lock.json",
+      "services/a/src",
+      "scripts/run.sh",
+      "",
+    ],
+  );
+});
+
+const blobs = new Map([
+  [
+    "dockerfile-1",
+    "FROM scratch\nCOPY services/a ./\nCOPY web/package*.json ./\n",
+  ],
+  ["dockerfile-2", "FROM scratch\nCOPY services/a ./\nCOPY missing ./\n"],
+  [
+    "dockerfile-3",
+    "FROM scratch\nCOPY services/a ./\nCOPY web/package*.json ./\nUSER 1\n",
+  ],
+]);
+const readBlob = (object) => blobs.get(object) ?? "";
+const tree = (entries) =>
+  new Map(
+    Object.entries({
+      ".dockerignore": "ignore-1",
+      "services/runtime-egress/Dockerfile": "dockerfile-1",
+      "services/a/main.go": "main-1",
+      "services/ab/main.go": "other-1",
+      "web/package.json": "package-1",
+      "web/src/index.ts": "source-1",
+      "README.md": "readme-1",
+      ...entries,
+    }).map(([path, object]) => [path, { mode: "100644", object }]),
+  );
+
+test("image digests change only with the files the build reads", () => {
+  const digest = (entries) =>
+    imageDigest("runtime-egress", tree(entries), readBlob);
+  const original = digest({});
+  assert.match(original, /^[0-9a-f]{32}$/u);
+  assert.equal(digest({ "README.md": "readme-2" }), original);
+  assert.equal(digest({ "services/ab/main.go": "other-2" }), original);
+  assert.equal(digest({ "web/src/index.ts": "source-2" }), original);
+  for (const changed of [
+    { "services/a/main.go": "main-2" },
+    { "services/a/new.go": "new-1" },
+    { "web/package.json": "package-2" },
+    { ".dockerignore": "ignore-2" },
+    { "services/runtime-egress/Dockerfile": "dockerfile-3" },
+  ])
+    assert.notEqual(digest(changed), original, JSON.stringify(changed));
+  assert.throws(
+    () => digest({ "services/runtime-egress/Dockerfile": "dockerfile-2" }),
+    /copies missing, which is not tracked/u,
+  );
+  assert.throws(
+    () => imageDigest("runtime-egress", new Map(), readBlob),
+    /services\/runtime-egress\/Dockerfile is not tracked/u,
+  );
+});
+
+test("every image digest resolves against the repository tree", () => {
+  const head = listTree("HEAD");
+  for (const name of Object.keys(images)) {
+    const digest = imageDigest(name, head, (object) =>
+      execFileSync("git", ["cat-file", "blob", object], { encoding: "utf8" }),
+    );
+    assert.match(digest, /^[0-9a-f]{32}$/u, name);
+  }
+});
+
+test("image references name the GHCR package of each image", () => {
+  assert.equal(
+    imageReference("antnest-runtime", "abc"),
+    "ghcr.io/tf4fun/antnest-runtime:inputs-abc",
+  );
+  assert.equal(
+    imageReference("temporal", "abc"),
+    "ghcr.io/tf4fun/antnest-temporal:inputs-abc",
+  );
+});
+
+test("missing image references are built and existing ones are pulled", () => {
+  const head = tree({});
+  const checked = [];
+  const resolved = resolveImages(["runtime-egress"], {
+    tree: head,
+    readBlob,
+    exists: (ref) => {
+      checked.push(ref);
+      return false;
+    },
+  });
+  const ref = imageReference(
+    "runtime-egress",
+    imageDigest("runtime-egress", head, readBlob),
+  );
+  assert.deepEqual(checked, [ref]);
+  assert.deepEqual(resolved, [
+    {
+      name: "runtime-egress",
+      dockerfile: "services/runtime-egress/Dockerfile",
+      ref,
+      build: true,
+    },
+  ]);
+  assert.equal(
+    resolveImages(["runtime-egress"], {
+      tree: head,
+      readBlob,
+      exists: () => true,
+    })[0].build,
+    false,
+  );
+});
+
+test("an unreachable or missing manifest counts as absent", () => {
+  let call;
+  assert.equal(
+    imageExists("ghcr.io/x/y:z", (...args) => {
+      call = args;
+    }),
+    true,
+  );
+  assert.deepEqual(call.slice(0, 2), [
+    "docker",
+    ["manifest", "inspect", "ghcr.io/x/y:z"],
+  ]);
+  assert.equal(
+    imageExists("ghcr.io/x/y:z", () => {
+      throw new Error("manifest unknown");
+    }),
+    false,
+  );
+});
+
+test("suite images are the sorted union of the selected suites' images", () => {
+  assert.deepEqual(
+    suiteImages([
+      { images: ["temporal", "antnest-runtime"] },
+      { images: ["antnest-runtime"] },
+      {},
+    ]),
+    ["antnest-runtime", "temporal"],
+  );
 });
 
 test("changed files come from a rename-free merge-base diff", () => {
