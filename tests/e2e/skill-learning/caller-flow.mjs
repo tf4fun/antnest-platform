@@ -13,6 +13,14 @@ import {
   tag,
   traceTopology,
 } from "../observability/trace-tree.mjs";
+import { skillClientArgs } from "./client-container.mjs";
+
+const CALLER_GRANTS = [
+  "acp-controller",
+  "console-controller",
+  "gateway-identity",
+  "acp-registry",
+];
 
 export async function callerAcpFlow({
   config,
@@ -51,10 +59,9 @@ export async function callerAcpFlow({
           "run",
           "--name",
           name,
-          "--label",
-          `com.docker.compose.project=${config.project}`,
-          "--network",
-          `${config.project}_development`,
+          ...skillClientArgs(config, {
+            grants: script === "caller-client.mjs" ? CALLER_GRANTS : [],
+          }),
           ...Object.entries(env).flatMap(([key, value]) => [
             "-e",
             `${key}=${value}`,
@@ -123,8 +130,6 @@ export async function callerAcpFlow({
       ANTNEST_E2E_AGENT_ID: fixture.agentID,
       ANTNEST_E2E_PEER_AGENT_ID: peerId,
       ANTNEST_E2E_ACTOR_ID: fixture.ownerID,
-      ANTNEST_E2E_SKILL_REGISTRY_TOKEN:
-        config.env.ANTNEST_E2E_SKILL_REGISTRY_TOKEN,
       ANTNEST_E2E_CALLER_FORMAL: JSON.stringify(formal),
     },
     "caller-client.mjs",

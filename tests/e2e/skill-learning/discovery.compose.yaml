@@ -1,12 +1,5 @@
+# Discovery runs only replace the Registry image. Source and learning service
+# authentication come from compose.yaml grants, never from this file.
 services:
-  agent-acp-service:
-    environment:
-      ANTNEST_ACP_SKILL_REGISTRY_URL: http://skill-registry:8080
-      ANTNEST_ACP_SKILL_REGISTRY_TOKEN: ${ANTNEST_E2E_SKILL_REGISTRY_TOKEN:?}
-      ANTNEST_ACP_SKILL_SOURCE_TOKEN: ${ANTNEST_E2E_SKILL_SOURCE_TOKEN:?}
   skill-registry:
     image: ${ANTNEST_E2E_DISCOVERY_REGISTRY_IMAGE:?}
-    environment:
-      ANTNEST_SKILL_REGISTRY_API_TOKEN: ${ANTNEST_E2E_SKILL_REGISTRY_TOKEN:?}
-      ANTNEST_SKILL_REGISTRY_SOURCE_URL: http://agent-acp-service:8080
-      ANTNEST_SKILL_REGISTRY_SOURCE_TOKEN: ${ANTNEST_E2E_SKILL_SOURCE_TOKEN:?}

@@ -17,6 +17,7 @@ import {
   until,
 } from "../workspace-closeout/c4-setup.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { skillClientArgs } from "./client-container.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const reviewSkip = process.env.ANTNEST_E2E_REVIEW_SKIP === "true";
@@ -195,10 +196,11 @@ test(
             "run",
             "--name",
             clientName,
-            "--label",
-            `com.docker.compose.project=${config.project}`,
-            "--network",
-            `${config.project}_development`,
+            ...skillClientArgs(config, {
+              grants: reviewPolicyOff
+                ? ["acp-controller", "console-controller", "gateway-identity"]
+                : [],
+            }),
             "-e",
             `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
             ...(reviewFailure ? ["-e", "ANTNEST_E2E_REVIEW_FAILURE=true"] : []),
@@ -353,10 +355,7 @@ test(
               "run",
               "--name",
               restartClientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              `${config.project}_development`,
+              ...skillClientArgs(config),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -555,10 +554,7 @@ test(
               "run",
               "--name",
               recoveryClientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              `${config.project}_development`,
+              ...skillClientArgs(config),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",

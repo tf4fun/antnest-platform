@@ -13,6 +13,7 @@ import {
 } from "../lifecycle-closeout/docker.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
+import { skillClientArgs } from "./client-container.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const dropResponse = process.env.ANTNEST_E2E_DROP_COMMIT_RESPONSE === "true";
@@ -262,10 +263,7 @@ test(
             "run",
             "--name",
             clientName,
-            "--label",
-            `com.docker.compose.project=${config.project}`,
-            "--network",
-            `${config.project}_development`,
+            ...skillClientArgs(config),
             "-e",
             `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
             "-e",
@@ -386,10 +384,7 @@ test(
             "-d",
             "--name",
             foregroundName,
-            "--label",
-            `com.docker.compose.project=${config.project}`,
-            "--network",
-            `${config.project}_development`,
+            ...skillClientArgs(config),
             "-e",
             `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
             "-v",
@@ -501,10 +496,7 @@ test(
                 "run",
                 "--name",
                 retryName,
-                "--label",
-                `com.docker.compose.project=${config.project}`,
-                "--network",
-                `${config.project}_development`,
+                ...skillClientArgs(config),
                 "-e",
                 `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
                 "-v",
@@ -743,10 +735,7 @@ test(
             "run",
             "--name",
             postEnableClient,
-            "--label",
-            `com.docker.compose.project=${config.project}`,
-            "--network",
-            `${config.project}_development`,
+            ...skillClientArgs(config),
             "-e",
             `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
             "-v",

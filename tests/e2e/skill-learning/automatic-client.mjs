@@ -109,9 +109,9 @@ try {
       "/skill:personal:fixture-procedure verify selected skill command",
     );
     await run("verify learned procedure");
-    const model = await fetch(
-      `${process.env.ANTNEST_E2E_MODEL_URL}/status`,
-    ).then((response) => response.json());
+    const model = await fetch("http://stage3-model:8080/status").then(
+      (response) => response.json(),
+    );
     assert.deepEqual(model.errors, []);
     assert(model.requests.includes("foreground-verify-tool"));
     assert(model.requests.includes("foreground-verify-reply"));
@@ -207,9 +207,9 @@ try {
       assert.match(updated.occurredAt, /^\d{4}-\d{2}-\d{2}T/u);
     }
     if (!debug) await run("verify learned procedure");
-    const model = await fetch(
-      `${process.env.ANTNEST_E2E_MODEL_URL}/status`,
-    ).then((response) => response.json());
+    const model = await fetch("http://stage3-model:8080/status").then(
+      (response) => response.json(),
+    );
     assert.deepEqual(model.errors, []);
     for (const kind of debug
       ? [
