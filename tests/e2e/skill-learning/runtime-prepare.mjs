@@ -12,6 +12,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createRuntimeReceiver,
+  freeLoopbackPort,
+  installRuntimeReceiver,
+} from "../../support/runtime-receiver-fixture.mjs";
 
 const image =
   process.env.ANTNEST_RUNTIME_TEST_IMAGE ??
@@ -31,6 +36,19 @@ const fixtureSource = `${prefix}-fixture-source`;
 const volume = `${prefix}-workspace`;
 const directory = mkdtempSync(join(tmpdir(), `${prefix}-`));
 chmodSync(directory, 0o755);
+const authVolume = `${prefix}-receiver`;
+const authDirectory = join(directory, "auth");
+const authentication = createRuntimeReceiver(authDirectory);
+// The ACP credential is admitted on every Runtime route this runner uses.
+const serviceToken = readFileSync(join(authDirectory, "mcp.headers"), "utf8")
+  .trim()
+  .replace(/^Antnest-Service-Authorization: /, "");
+function runtimeFetch(url, init = {}) {
+  return fetch(url, {
+    ...init,
+    headers: { "Antnest-Service-Authorization": serviceToken, ...init.headers },
+  });
+}
 
 function docker(...args) {
   return execFileSync("docker", args, {
@@ -47,7 +65,7 @@ function cleanup() {
     }
   }
   try {
-    docker("volume", "rm", volume);
+    docker("volume", "rm", volume, authVolume);
   } catch {
     /* absent */
   }
@@ -150,7 +168,7 @@ function multipart(metadata, artifact) {
 async function ready(port) {
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/status`);
+      const response = await runtimeFetch(`http://127.0.0.1:${port}/status`);
       if (response.ok) {
         const status = await response.json();
         if (status.status === "ready") return status;
@@ -172,7 +190,7 @@ async function callTool(port, executionId, name, args) {
       "io.modelcontextprotocol/clientCapabilities": {},
     },
   };
-  const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+  const response = await runtimeFetch(`http://127.0.0.1:${port}/mcp`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -225,6 +243,12 @@ try {
   docker("rm", "-f", "--volumes", fixtureSource);
   docker("network", "create", network);
   docker("volume", "create", volume);
+  await installRuntimeReceiver(
+    (args) => docker(...args),
+    image,
+    authVolume,
+    authDirectory,
+  );
   docker(
     "run",
     "-d",
@@ -250,10 +274,12 @@ try {
   const nextPublicBytes = nextPublicKey
     .export({ format: "der", type: "spki" })
     .subarray(-32);
+  const listenPort = await freeLoopbackPort();
   const spec = {
+    authentication,
     agent_id: "agent-1",
     generation: 1,
-    listen: { host: "0.0.0.0", port: 8093 },
+    listen: { host: "0.0.0.0", port: listenPort },
     network: {
       packet_contract_revision: 1,
       egress_endpoint: { ipv4: egressIp, port: 8092 },
@@ -297,10 +323,21 @@ try {
       `type=volume,src=${volume},dst=/workspace`,
       "--mount",
       `type=bind,src=${managedFixture},dst=/opt/managed-mcp-fixture,readonly`,
+      // Mirrors the private managed MCP HOME tmpfs Runtime Controller creates.
+      "--tmpfs",
+      "/run/antnest-mcp-home:rw,exec,nosuid,nodev,size=67108864,mode=0711,uid=0,gid=0",
       "-p",
-      "127.0.0.1::8093",
+      `127.0.0.1:${listenPort}:${listenPort}`,
+      "--mount",
+      `type=volume,src=${authVolume},dst=/run/antnest-auth,readonly`,
       "-e",
       `ANTNEST_RUNTIME_SPEC=${JSON.stringify(runtimeSpec)}`,
+      "-e",
+      "ANTNEST_SERVICE_AUTH_MODE=token",
+      "-e",
+      "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true",
+      "-e",
+      `ANTNEST_SERVICE_AUTH_CALLERS_FILE=${authentication.callers_file}`,
       "-e",
       "OTEL_SDK_DISABLED=true",
       ...[
@@ -315,13 +352,13 @@ try {
       image,
     );
     return JSON.parse(docker("inspect", runtime))[0].NetworkSettings.Ports[
-      "8093/tcp"
+      `${listenPort}/tcp`
     ][0].HostPort;
   };
   let port = startRuntime(spec);
   const status = await ready(port);
   assert.deepEqual(status.test_features, []);
-  const removedRevert = await fetch(
+  const removedRevert = await runtimeFetch(
     `http://127.0.0.1:${port}/internal/skill-maintenance/revert`,
     {
       method: "POST",
@@ -382,24 +419,27 @@ finally:
   };
   const body = multipart(metadata, artifact);
   const send = (preparedBody = body, signingKey = privateKey, kid = "key-1") =>
-    fetch(`http://127.0.0.1:${port}/internal/skill-maintenance/prepare`, {
-      method: "POST",
-      headers: {
-        Authorization: signed(
-          signingKey,
-          preparedBody,
-          status.execution_id,
-          "prepare",
-          "request-1",
-          "job-1",
-          1,
-          kid,
-        ),
-        "Content-Type": "multipart/form-data; boundary=skill-boundary",
-        "X-Antnest-Expected-Execution-ID": status.execution_id,
+    runtimeFetch(
+      `http://127.0.0.1:${port}/internal/skill-maintenance/prepare`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: signed(
+            signingKey,
+            preparedBody,
+            status.execution_id,
+            "prepare",
+            "request-1",
+            "job-1",
+            1,
+            kid,
+          ),
+          "Content-Type": "multipart/form-data; boundary=skill-boundary",
+          "X-Antnest-Expected-Execution-ID": status.execution_id,
+        },
+        body: preparedBody,
       },
-      body: preparedBody,
-    });
+    );
   const checkBody = Buffer.from(
     JSON.stringify({
       action: "check",
@@ -413,7 +453,7 @@ finally:
     }),
   );
   const check = () =>
-    fetch(`http://127.0.0.1:${port}/internal/skill-maintenance/check`, {
+    runtimeFetch(`http://127.0.0.1:${port}/internal/skill-maintenance/check`, {
       method: "POST",
       headers: {
         Authorization: signed(
@@ -510,7 +550,7 @@ finally:
     }),
   );
   const commit = () =>
-    fetch(`http://127.0.0.1:${port}/internal/skill-maintenance/commit`, {
+    runtimeFetch(`http://127.0.0.1:${port}/internal/skill-maintenance/commit`, {
       method: "POST",
       headers: {
         Authorization: signed(
@@ -557,12 +597,9 @@ finally:
   assert.equal(managedBlockedResult.outcome, "blocked");
   assert.equal(managedBlockedResult.blocked_reason, "managed_call_in_flight");
   assert.equal(managedBlockedResult.blocked_subject_id, "managed:learning");
-  const stoppedManaged = await bash(
-    port,
-    status.execution_id,
-    `kill ${managedPid}`,
-  );
-  assert.equal(stoppedManaged.structuredContent.exit_code, 0);
+  // Managed MCP servers run under their own UID, so the workspace user cannot
+  // signal the worker; only the in-flight state is under test here.
+  docker("exec", "--user", "0", runtime, "sh", "-c", `kill ${managedPid}`);
   for (let attempt = 0; attempt < 2; attempt++) {
     let response;
     for (let wait = 0; wait < 20; wait++) {
@@ -600,7 +637,7 @@ finally:
         expected_target_digest: targetDigest,
       }),
     );
-    return fetch(
+    return runtimeFetch(
       `http://127.0.0.1:${port}/internal/skill-maintenance/observe`,
       {
         method: "POST",
@@ -624,7 +661,7 @@ finally:
   assert.equal((await observed.json()).outcome, "applied");
   docker("restart", runtime);
   port = JSON.parse(docker("inspect", runtime))[0].NetworkSettings.Ports[
-    "8093/tcp"
+    `${listenPort}/tcp`
   ][0].HostPort;
   const restarted = await ready(port);
   assert.notEqual(restarted.execution_id, status.execution_id);
@@ -664,23 +701,26 @@ finally:
     }),
   );
   const maintenancePost = (action, body, requestId, executionId) =>
-    fetch(`http://127.0.0.1:${port}/internal/skill-maintenance/${action}`, {
-      method: "POST",
-      headers: {
-        Authorization: signed(
-          privateKey,
-          body,
-          executionId,
-          action,
-          requestId,
-          "job-2",
-          2,
-        ),
-        "Content-Type": "application/json",
-        "X-Antnest-Expected-Execution-ID": executionId,
+    runtimeFetch(
+      `http://127.0.0.1:${port}/internal/skill-maintenance/${action}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: signed(
+            privateKey,
+            body,
+            executionId,
+            action,
+            requestId,
+            "job-2",
+            2,
+          ),
+          "Content-Type": "application/json",
+          "X-Antnest-Expected-Execution-ID": executionId,
+        },
+        body,
       },
-      body,
-    });
+    );
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await maintenancePost(
       "cancel",
@@ -713,7 +753,7 @@ finally:
   assert.equal((await denied.json()).error.code, "generation_cancelled");
   docker("restart", runtime);
   port = JSON.parse(docker("inspect", runtime))[0].NetworkSettings.Ports[
-    "8093/tcp"
+    `${listenPort}/tcp`
   ][0].HostPort;
   const restartedAgain = await ready(port);
   const deniedAfterRestart = await maintenancePost(
@@ -753,7 +793,7 @@ finally:
         expected_digest: expectedDigest,
       }),
     );
-    return fetch(
+    return runtimeFetch(
       `http://127.0.0.1:${port}/internal/skill-maintenance/release`,
       {
         method: "POST",
@@ -882,23 +922,26 @@ finally:
   };
   const fullBody = multipart(fullMetadata, artifact);
   const prepareAfterFill = () =>
-    fetch(`http://127.0.0.1:${port}/internal/skill-maintenance/prepare`, {
-      method: "POST",
-      headers: {
-        Authorization: signed(
-          privateKey,
-          fullBody,
-          restartedAgain.execution_id,
-          "prepare",
-          fullMetadata.request_id,
-          fullMetadata.job_id,
-          fullMetadata.generation,
-        ),
-        "Content-Type": "multipart/form-data; boundary=skill-boundary",
-        "X-Antnest-Expected-Execution-ID": restartedAgain.execution_id,
+    runtimeFetch(
+      `http://127.0.0.1:${port}/internal/skill-maintenance/prepare`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: signed(
+            privateKey,
+            fullBody,
+            restartedAgain.execution_id,
+            "prepare",
+            fullMetadata.request_id,
+            fullMetadata.job_id,
+            fullMetadata.generation,
+          ),
+          "Content-Type": "multipart/form-data; boundary=skill-boundary",
+          "X-Antnest-Expected-Execution-ID": restartedAgain.execution_id,
+        },
+        body: fullBody,
       },
-      body: fullBody,
-    });
+    );
   const full = await prepareAfterFill();
   assert.equal(full.status, 409, await full.clone().text());
   assert.equal((await full.json()).error.code, "skill_storage_full");
@@ -935,24 +978,27 @@ finally:
   };
   const rotatedBody = multipart(rotatedMetadata, artifact);
   const afterRemoval = (signingKey, kid) =>
-    fetch(`http://127.0.0.1:${port}/internal/skill-maintenance/prepare`, {
-      method: "POST",
-      headers: {
-        Authorization: signed(
-          signingKey,
-          rotatedBody,
-          reducedTrust.execution_id,
-          "prepare",
-          rotatedMetadata.request_id,
-          rotatedMetadata.job_id,
-          1,
-          kid,
-        ),
-        "Content-Type": "multipart/form-data; boundary=skill-boundary",
-        "X-Antnest-Expected-Execution-ID": reducedTrust.execution_id,
+    runtimeFetch(
+      `http://127.0.0.1:${port}/internal/skill-maintenance/prepare`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: signed(
+            signingKey,
+            rotatedBody,
+            reducedTrust.execution_id,
+            "prepare",
+            rotatedMetadata.request_id,
+            rotatedMetadata.job_id,
+            1,
+            kid,
+          ),
+          "Content-Type": "multipart/form-data; boundary=skill-boundary",
+          "X-Antnest-Expected-Execution-ID": reducedTrust.execution_id,
+        },
+        body: rotatedBody,
       },
-      body: rotatedBody,
-    });
+    );
   const removedKey = await afterRemoval(privateKey, "key-1");
   assert.equal(removedKey.status, 401, await removedKey.clone().text());
   const retainedKey = await afterRemoval(nextPrivateKey, "key-2");

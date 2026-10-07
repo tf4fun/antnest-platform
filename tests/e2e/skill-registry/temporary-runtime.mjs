@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { crc32 } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { runCommand } from "../../support/run-command.mjs";
+import {
+  createRuntimeReceiver,
+  freeLoopbackPort,
+  installRuntimeReceiver,
+} from "../../support/runtime-receiver-fixture.mjs";
 
 const prefix = `antnest-temporary-${randomUUID().slice(0, 8)}`;
 const build = process.argv.includes("--build");
@@ -27,6 +32,20 @@ const network = `${prefix}-network`,
 const fixture = fileURLToPath(
   new URL("../antnest-runtime/fixtures/egress_probe.py", import.meta.url),
 );
+const authVolume = `${prefix}-receiver`,
+  authDirectory = fileURLToPath(
+    new URL(`../../../${output}/${prefix}-auth`, import.meta.url),
+  );
+const authentication = createRuntimeReceiver(authDirectory);
+// The ACP credential is admitted on every Runtime route this runner uses.
+const serviceAuthorization = {
+  "Antnest-Service-Authorization": readFileSync(
+    `${authDirectory}/mcp.headers`,
+    "utf8",
+  )
+    .trim()
+    .replace(/^Antnest-Service-Authorization: /, ""),
+};
 const label = (bytes) =>
   `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const key = generateKeyPairSync("ed25519"),
@@ -178,7 +197,11 @@ async function request(
     `http://127.0.0.1:${port}/internal/skill-temporary/${endpoint}`,
     {
       method: "POST",
-      headers: { "Content-Type": contentType, Authorization: token },
+      headers: {
+        ...serviceAuthorization,
+        "Content-Type": contentType,
+        Authorization: token,
+      },
       body,
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90000)]),
     },
@@ -260,6 +283,7 @@ async function rpc(executionId, method, params) {
   const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
     method: "POST",
     headers: {
+      ...serviceAuthorization,
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
       "MCP-Protocol-Version": "2026-07-28",
@@ -282,6 +306,7 @@ async function ready() {
     controller.signal.throwIfAborted();
     try {
       const response = await fetch(`http://127.0.0.1:${port}/status`, {
+        headers: serviceAuthorization,
         signal: AbortSignal.timeout(1000),
       });
       const value = await response.json();
@@ -347,6 +372,7 @@ try {
     `io.antnest.test=${prefix}`,
     volume,
   ]);
+  await installRuntimeReceiver(docker, image, authVolume, authDirectory);
   await docker([
     "run",
     "-d",
@@ -363,12 +389,14 @@ try {
     image,
     "/probe.py",
   ]);
+  port = await freeLoopbackPort();
   const ip = JSON.parse(await docker(["inspect", egress]))[0].NetworkSettings
     .Networks[network].IPAddress;
   const spec = {
+    authentication,
     agent_id: "agent-temporary",
     generation: 1,
-    listen: { host: "0.0.0.0", port: 8093 },
+    listen: { host: "0.0.0.0", port },
     network: {
       packet_contract_revision: 1,
       egress_endpoint: { ipv4: ip, port: 8092 },
@@ -408,9 +436,17 @@ try {
       "--mount",
       `type=volume,src=${volume},dst=/workspace`,
       "-p",
-      "127.0.0.1::8093",
+      `127.0.0.1:${port}:${port}`,
+      "--mount",
+      `type=volume,src=${authVolume},dst=/run/antnest-auth,readonly`,
       "-e",
       `ANTNEST_RUNTIME_SPEC=${JSON.stringify(spec)}`,
+      "-e",
+      "ANTNEST_SERVICE_AUTH_MODE=token",
+      "-e",
+      "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true",
+      "-e",
+      `ANTNEST_SERVICE_AUTH_CALLERS_FILE=${authentication.callers_file}`,
       "-e",
       "OTEL_SDK_DISABLED=true",
       ...[
@@ -424,8 +460,6 @@ try {
       ].flatMap((cap) => ["--cap-add", cap]),
       image,
     ]);
-    port = JSON.parse(await docker(["inspect", runtime]))[0].NetworkSettings
-      .Ports["8093/tcp"][0].HostPort;
     return ready();
   };
   const status = await start(),
@@ -683,6 +717,13 @@ try {
   for (const name of [runtime, egress]) {
     try {
       const found = await clean(["ps", "-aq", "--filter", `name=^${name}$`]);
+      if (found && failure)
+        await runCommand({
+          command: ["docker", "logs", "--tail", "200", name],
+          output,
+          name: `${name}-logs`,
+          env: process.env,
+        });
       if (found) await clean(["rm", "-f", "--volumes", name]);
     } catch (error) {
       errors.push(error);
@@ -690,6 +731,7 @@ try {
   }
   for (const [kind, name] of [
     ["volume", volume],
+    ["volume", authVolume],
     ["network", network],
   ]) {
     try {
@@ -728,6 +770,7 @@ try {
   } catch (error) {
     errors.push(error);
   }
+  rmSync(authDirectory, { recursive: true, force: true });
   process.off("SIGINT", stop);
   process.off("SIGTERM", stop);
   writeFileSync(
