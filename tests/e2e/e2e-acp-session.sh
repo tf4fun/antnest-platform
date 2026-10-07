@@ -49,7 +49,7 @@ docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJE
   -v "$root/tests/e2e/identity-closeout:/app/identity-closeout:ro" \
   antnest/agent-acp-service:local node /app/identity-closeout/acp-session-model.mjs >/dev/null
 # shellcheck disable=SC2086 # service_hosts is a list of options.
-docker create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+docker create --name "$client" $service_hosts --user "$(id -u):$(id -g)" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
   --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \

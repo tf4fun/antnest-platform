@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -183,4 +184,25 @@ test("Stage 3 durable output still reaches network discovery", (t) => {
   const result = launch(t, "stage3a", "stage3-base", false);
   assert.match(result.calls, /network\.mjs/);
   assert.doesNotMatch(result.stderr, /durable.*cache/i);
+});
+
+// Evidence directories are created with umask 077 by the invoking user, so a
+// container writing into one must run as that user.
+test("containers writing private evidence run as the evidence owner", () => {
+  const directory = join(root, "tests/e2e");
+  const commands = [];
+  for (const name of readdirSync(directory).filter((n) => n.endsWith(".sh"))) {
+    const lines = readFileSync(join(directory, name), "utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!/docker(?:_cmd)? (?:create|run) /u.test(lines[i])) continue;
+      let command = lines[i];
+      while (command.endsWith("\\") && i + 1 < lines.length)
+        command = command.slice(0, -1) + lines[++i];
+      if (command.includes('-v "$evidence:/evidence"'))
+        commands.push([name, command]);
+    }
+  }
+  assert(commands.length >= 3, "evidence-writing clients not found");
+  for (const [name, command] of commands)
+    assert(command.includes('--user "$(id -u):$(id -g)"'), name);
 });
