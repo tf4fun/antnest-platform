@@ -118,13 +118,26 @@ control_request -X PUT \
   >/dev/null
 
 authentication=$(node tests/support/runtime-receiver-fixture.mjs "$temporary_root/runtime-auth")
+tunnel_key_id=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).tunnel.key_id)' "$authentication")
 docker volume create --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" "$auth_volume" >/dev/null
 docker run --rm -i --network none --entrypoint sh \
   --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
   --mount "type=volume,src=$auth_volume,dst=/run/antnest-auth" \
   "$runtime_image" -c 'chmod 700 /run/antnest-auth; umask 077; cat > /run/antnest-auth/callers.json; chmod 600 /run/antnest-auth/callers.json' \
   < "$temporary_root/runtime-auth/callers.json"
-runtime_spec="{\"agent_id\":\"agent-stage1-e2e\",\"generation\":1,\"listen\":{\"host\":\"0.0.0.0\",\"port\":8093},\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"filesystem\":{\"workspace\":\"/workspace\",\"system_skills\":\"/skills\"},\"authentication\":${authentication}}"
+docker run --rm -i --network none --entrypoint sh \
+  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
+  --mount "type=volume,src=$auth_volume,dst=/run/antnest-auth" \
+  "$runtime_image" -c 'umask 077; cat > /run/antnest-auth/tunnel.json; chmod 600 /run/antnest-auth/tunnel.json' \
+  < "$temporary_root/runtime-auth/tunnel.json"
+docker run --rm --network "${COMPOSE_PROJECT_NAME}_control" --cap-drop ALL \
+  --user "${ANTNEST_SERVICE_AUTH_UID}:${ANTNEST_SERVICE_AUTH_GID}" \
+  --mount "type=bind,src=$temporary_root/runtime-auth/egress-tunnel.json,dst=/fixture/keys.json,readonly" \
+  --mount "type=bind,src=$ANTNEST_SERVICE_AUTH_DIRECTORY/runtime-controller/tokens/runtime-egress,dst=/fixture/token,readonly" \
+  --mount "type=bind,src=$repository_root/tests/support/runtime-tunnel/register.mjs,dst=/fixture/register.mjs,readonly" \
+  node:24.21.0-bookworm-slim node /fixture/register.mjs "$control_url" agent-stage1-e2e
+
+runtime_spec="{\"agent_id\":\"agent-stage1-e2e\",\"generation\":1,\"listen\":{\"host\":\"0.0.0.0\",\"port\":8093},\"network\":{\"packet_contract_revision\":2,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"filesystem\":{\"workspace\":\"/workspace\",\"system_skills\":\"/skills\"},\"authentication\":${authentication}}"
 
 docker run -d \
   --name "$runtime_name" \
@@ -188,7 +201,7 @@ printf '%s' "$mcp_read" | grep -q '"content":"after"'
 mcp_bash=$(mcp_request '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"bash","arguments":{"command":"printf '\''%s:%s:'\'' \"$(id -u)\" \"$(id -g)\"; cat stage1-mcp.txt","working_dir":".","env":[],"timeout_ms":1000}}}' 'tools/call' 'bash')
 printf '%s' "$mcp_bash" | grep -q '"stdout":"1000:1000:after"'
 
-echo "Checking crash-only Runtime restart in the retained container network"
+echo "Checking normal Runtime restart in the retained container network"
 first_execution_id=$runtime_execution_id
 docker restart "$runtime_name" >/dev/null
 wait_runtime_ready
@@ -213,7 +226,7 @@ runtime_endpoint=$(docker inspect \
 test -n "$runtime_endpoint"
 opened=$(control_request -X PUT \
   -H 'content-type: application/json' \
-  -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_resource_version},\"runtime_endpoint\":\"${runtime_endpoint}\"}" \
+  -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_resource_version},\"runtime_endpoint\":\"${runtime_endpoint}\",\"tunnel_key_id\":\"${tunnel_key_id}\"}" \
   "$control_url/internal/agent-network-attachments/agent-stage1-e2e")
 printf '%s' "$opened" | grep -q '"attachment_state":"open"'
 attachment_resource_version=$(network_version "$opened" attachment_resource_version)
@@ -276,8 +289,12 @@ docker compose up -d --wait runtime-egress
 echo "Checking persisted state after Egress restart"
 control_request "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
   | grep -q '"resource_version":4'
+# The live Runtime retains its old session while Egress has a fresh one.
+# BoringTun rehandshakes after 10s keepalive + 5s rekey timeout; allow that
+# protocol recovery window rather than requiring an immediate 5s connection.
 docker exec --user 1000 "$runtime_name" \
-  curl -kfsS --connect-timeout 5 --max-time 10 https://1.1.1.1 \
+  curl -kfs --connect-timeout 3 --max-time 5 \
+  --retry 8 --retry-delay 1 --retry-max-time 30 https://1.1.1.1 \
   >/dev/null
 docker exec --user 1000 "$runtime_name" \
   curl -fsS --connect-timeout 5 --max-time 10 https://example.com \

@@ -12,7 +12,9 @@
     "skill-registry": "contracts/skill-registry/callers.json",
     "runtime-egress": "contracts/egress/callers.json"
   },
-  "dynamic_receivers": ["antnest-runtime"],
+  "dynamic_receivers": [
+    "antnest-runtime"
+  ],
   "host_ports": {
     "revision": 2,
     "debug_publisher": "diagnostic-relay",
@@ -102,6 +104,13 @@
       "algorithm": "Ed25519",
       "private_encoding": "base64-PKCS8-DER",
       "public_encoding": "base64url-Ed25519"
+    },
+    "egress_tunnel_master": {
+      "file": "runtime-egress/tunnel-master.key",
+      "random_bytes": 32,
+      "encoding": "raw",
+      "container_owner": "0:0",
+      "ownership_helper": "scripts/dev-egress-auth-owner.mjs"
     }
   },
   "development_pki": {
@@ -126,9 +135,15 @@
       "private_file": "<service>/key.pem",
       "valid_days": 30,
       "uri_template": "antnest://service/<service>",
-      "extended_key_usages": ["serverAuth", "clientAuth"],
+      "extended_key_usages": [
+        "serverAuth",
+        "clientAuth"
+      ],
       "dns_aliases": {
-        "agent-acp-service": ["agent-acp-control", "agent-acp-workspace"]
+        "agent-acp-service": [
+          "agent-acp-control",
+          "agent-acp-workspace"
+        ]
       }
     },
     "ca_private_key_service_mount": false,

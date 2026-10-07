@@ -8,6 +8,7 @@ import {
 } from "./authenticated-e2e.mjs";
 import { runCommand } from "./run-command.mjs";
 import { evidenceDirectory, writeEvidenceFile } from "./storage.mjs";
+import { prepareEgressOwnership } from "../../scripts/dev-egress-auth-owner.mjs";
 import {
   cleanup,
   dockerClient,
@@ -111,10 +112,7 @@ export async function runShellAcceptance(profile) {
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, stop);
   const docker = dockerClient(inherited, abort.signal, 1800000);
   const built = [];
-  let config,
-    before,
-    result,
-    cleaned = false;
+  let config, before, result, cleaned;
   const failures = [];
   try {
     before = await identities(docker);
@@ -129,6 +127,7 @@ export async function runShellAcceptance(profile) {
       runtimeImage,
     });
     config = { project, env, credentials: prepared.credentials };
+    await prepareEgressOwnership(docker, prepared.credentials);
     const ports = new Set();
     while (ports.size < 10) ports.add(await freePort());
     for (const [index, name] of [

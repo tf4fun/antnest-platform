@@ -111,6 +111,51 @@ fn tampering_replay_and_old_sessions_never_return_plaintext() {
 }
 
 #[test]
+fn a_warm_peer_recovers_a_restarted_receiver_using_only_engine_timers() {
+    let (mut runtime, mut egress) = pair();
+    establish(&mut runtime, &mut egress);
+    let reply = network(egress.send(&packet(10)).unwrap()).pop().unwrap();
+    assert_eq!(
+        inner(runtime.receive(&reply, IP).unwrap()),
+        vec![packet(10)]
+    );
+    // The timer uses millisecond resolution and requires a send after the last
+    // authenticated receive. Keep the established Runtime peer throughout.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let captured = network(runtime.send(&packet(11)).unwrap()).pop().unwrap();
+    assert_eq!(
+        inner(egress.receive(&captured, IP).unwrap()),
+        vec![packet(11)]
+    );
+    let (_, mut restarted) = pair();
+    assert!(restarted.receive(&captured, IP).is_err());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "engine did not rehandshake a silent restarted peer"
+        );
+        for frame in network(runtime.tick().unwrap()) {
+            if let Ok(events) = restarted.receive(&frame, IP) {
+                for response in network(events) {
+                    for confirmation in network(runtime.receive(&response, IP).unwrap()) {
+                        restarted.receive(&confirmation, IP).unwrap();
+                    }
+                }
+            }
+        }
+        let frame = network(runtime.send(&packet(12)).unwrap()).pop().unwrap();
+        if let Ok(events) = restarted.receive(&frame, IP)
+            && inner(events) == vec![packet(12)]
+        {
+            assert!(restarted.receive(&captured, IP).is_err());
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
 fn wrong_preshared_key_cannot_complete_the_authenticated_handshake() {
     let (mut a, _) = pair();
     let mut wrong = Peer::new(a.key_id(), [29; 32], Peer::public_key([11; 32]), [54; 32]);

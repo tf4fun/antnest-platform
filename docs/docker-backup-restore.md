@@ -19,13 +19,13 @@ Keep one protected recovery set, with a timestamp and checksums:
 | Identity           | `antnest_identity`                                | Single encryption key or complete `ANTNEST_IDENTITY_ENCRYPTION_KEYS` ring and active ID; IdP configuration, database role/DSN                                                  |
 | Agent Controller   | `antnest_agent_controller`                        | Single encryption key or complete `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS` ring and active ID; Provider configuration, deployment identity                                   |
 | ACP                | `antnest_agent_acp`                               | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context, Skill maintenance signing keys                                                                                 |
-| Runtime Controller | `antnest_runtime_controller`                      | Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration                                                              |
-| Egress             | `antnest_egress`                                  | Tunnel CIDR/resolver and deployment network configuration                                                                                                                      |
+| Runtime Controller | `antnest_runtime_controller`                      | Instance master file, retained generation bootstrap volumes, Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration                                                              |
+| Egress             | `antnest_egress`                                  | Private Egress tunnel master file matching the encrypted generation rows, Tunnel CIDR/resolver and deployment network configuration                                                                                                                      |
 | Skill Registry     | `antnest_skill_registry`                          | Receiver hash file, per-pair Identity/ACP sender files or TLS material, and pinned Identity/source configuration                                                               |
 | Temporal           | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data                                                                            |
 | Runtime filesystem | none                                              | Every retained `antnest-workspace-<agent-id>` volume, every referenced per-Agent Skill volume and the configured system Skills volume, including ownership, modes and symlinks |
 
-The three owners' encryption configurations are independent of database login
+The owners' encryption configurations are independent of database login
 passwords. Preserve every key ID/key needed by the backed-up rows, including
 decrypt-only and retired keys, the active ID and working connection configuration,
 plus the exact Compose files and

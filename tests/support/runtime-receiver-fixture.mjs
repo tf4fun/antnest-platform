@@ -1,7 +1,7 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { pathToFileURL } from "node:url";
 import { durablePath } from "./storage.mjs";
 
@@ -38,15 +38,57 @@ export function createRuntimeReceiver(output) {
     ],
   ])
     writeFileSync(join(output, file), contents, { flag: "wx", mode: 0o600 });
+  const pair = () => {
+    const key = generateKeyPairSync("x25519");
+    return {
+      private: key.privateKey
+        .export({ format: "der", type: "pkcs8" })
+        .subarray(-32)
+        .toString("base64url"),
+      public: key.publicKey
+        .export({ format: "der", type: "spki" })
+        .subarray(-32)
+        .toString("base64url"),
+    };
+  };
+  const runtime = pair(),
+    egress = pair(),
+    keyID = "rtk_" + randomBytes(16).toString("hex"),
+    psk = randomBytes(32).toString("base64url");
+  const tunnel = JSON.stringify({
+    key_id: keyID,
+    runtime_private_key: runtime.private,
+    egress_public_key: egress.public,
+    preshared_key: psk,
+  });
+  writeFileSync(join(output, "tunnel.json"), tunnel, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  writeFileSync(
+    join(output, "egress-tunnel.json"),
+    JSON.stringify({
+      key_id: keyID,
+      egress_private_key: egress.private,
+      runtime_public_key: runtime.public,
+      preshared_key: psk,
+      tunnel_ipv4: "100.64.0.2",
+      runtime_revision: "rtv_" + randomBytes(16).toString("hex"),
+    }),
+    { flag: "wx", mode: 0o600 },
+  );
   return {
+    tunnel: {
+      key_id: keyID,
+      keys_file: "/run/antnest-auth/tunnel.json",
+      keys_digest: hash(tunnel),
+    },
     connection_id: "rci_" + randomBytes(16).toString("hex"),
     callers_file: "/run/antnest-auth/callers.json",
     receiver_digest: hash(raw),
   };
 }
 
-// The Runtime accepts only a root-owned 0700 directory holding a root-owned
-// 0600 callers.json, so a short-lived root container installs it in a volume.
 export async function installRuntimeReceiver(invoke, image, volume, output) {
   await invoke(["volume", "create", volume]);
   await invoke([
@@ -62,7 +104,7 @@ export async function installRuntimeReceiver(invoke, image, volume, output) {
     `type=volume,src=${volume},dst=/run/antnest-auth`,
     image,
     "-c",
-    "chmod 700 /run/antnest-auth; cp /fixture/auth/callers.json /run/antnest-auth/; chown 0:0 /run/antnest-auth /run/antnest-auth/callers.json; chmod 600 /run/antnest-auth/callers.json",
+    "chmod 700 /run/antnest-auth; cp /fixture/auth/callers.json /fixture/auth/tunnel.json /run/antnest-auth/; chown 0:0 /run/antnest-auth /run/antnest-auth/callers.json /run/antnest-auth/tunnel.json; chmod 600 /run/antnest-auth/callers.json /run/antnest-auth/tunnel.json",
   ]);
 }
 

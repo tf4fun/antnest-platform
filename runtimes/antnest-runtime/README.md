@@ -217,6 +217,12 @@ docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:m
 python3 tests/e2e/antnest-runtime/e2e_managed_mcp.py
 ```
 
+The suite builds a test-only encrypted readiness responder and provisions a
+private receiver/tunnel volume. Mapped host ports retain the canonical Runtime
+Host and workload authority through one-to-one listen port publication. It runs
+the pinned official MCP client's default HTTP transport and removes all test containers, volumes, network and
+readiness image on completion.
+
 Only the build stage contains the managed MCP test fixture; it is not
 shipped in the production image. Override `ANTNEST_RUNTIME_BUILD_IMAGE` and
 `ANTNEST_RUNTIME_TEST_IMAGE` to select other local tags.

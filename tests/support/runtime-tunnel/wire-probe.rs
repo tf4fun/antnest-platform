@@ -65,6 +65,13 @@ fn main() {
         "keys-file egress source destination mode capture-file"
     );
     let keys: Keys = serde_json::from_slice(&std::fs::read(&args[1]).unwrap()).unwrap();
+    if args[5] == "public" {
+        println!(
+            "{}",
+            serde_json::json!({"key_id":keys.key_id,"egress_public_key":keys.egress_public_key})
+        );
+        return;
+    }
     let mut peer = Peer::new(
         KeyId::parse(&keys.key_id).unwrap(),
         key(&keys.runtime_private_key),
@@ -87,7 +94,12 @@ fn main() {
     // Handshake only a canonical local probe, so crypto setup creates no policy flow.
     let probe = syn(source, "192.0.2.1:9".parse().unwrap(), 53000);
     send_events(&socket, peer.send(&probe).unwrap());
-    let deadline = Instant::now() + Duration::from_secs(9);
+    let deadline = Instant::now()
+        + if args[5] == "wrong" {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(9)
+        };
     let mut buffer = [0; MAX_DATAGRAM + 1];
     let mut ready = false;
     while Instant::now() < deadline && !ready {

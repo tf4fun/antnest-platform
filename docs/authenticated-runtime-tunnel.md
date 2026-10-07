@@ -55,6 +55,24 @@ AAD-bound to Agent/key ID/Runtime revision/Tunnel IPv4. It restores rows from it
 own database after restart without an RC availability dependency. The new
 workload pair and network permission are RC → Egress only.
 
+The development generator creates the independent master at
+`runtime-egress/tunnel-master.key`. Before Compose startup, run
+`node scripts/dev-egress-auth-owner.mjs` against that generated directory. Its
+one-shot, network-isolated root container changes only the receiver and master
+files to UID/GID 0 and preserves 0600, so Linux bind mounts meet Egress's private
+file requirements. It adds no running service. Repeat after restoring or
+replacing either file; never regenerate the master for retained encrypted rows.
+
+The generator is for a fresh deployment, not retained-directory rotation. When
+keeping an existing development deployment, preserve the RC instance master,
+Identity CCT and maintenance keys. Provision only the new RC → Egress token/file
+and its hash in Egress's receiver profile, retaining Controller → Egress authority,
+plus the independent new Egress master before first encrypted rows are written.
+Stop admission and restart the affected credential readers under the existing
+[rotation order](../contracts/platform/development-authentication.md#mounting-and-startup).
+Replacing the whole directory with fresh credentials requires a coordinated
+restart of all static workloads, not only the four tunnel owners.
+
 ## Lifecycle and recovery
 
 RC registers the candidate key before workspace/compute mutation and before
@@ -78,7 +96,11 @@ Normal Runtime/Egress process restart rebuilds the WireGuard session with fresh
 ephemeral keys; old encrypted data cannot enter a new session. No per-packet
 database counter write or persistent replay bitmap is needed. Data-plane
 generation keys survive restart in protected storage, while rekey/session timers
-remain protocol-owned. Updating the Egress at-rest master key requires a
+remain protocol-owned. A surviving Runtime recovers a restarted Egress through
+BoringTun's standard silence timer (10-second keepalive plus 5-second rekey
+timeout); connectivity is not immediate during this window. Recovery acceptance
+keeps the Runtime alive and allows a bounded 30-second retry window, and checks
+that old encrypted data remains rejected after the new handshake. Updating the Egress at-rest master key requires a
 coordinated key/data backup and rewrite, outside automatic packet rekey; loss of
 that key is fail-closed. A leaked generation key requires explicit disable and
 rebuild, not an in-place environment edit.
@@ -117,7 +139,7 @@ untouched. Submit one reviewable PR and stop for human review; do not merge it.
 
 ## Current delivery record
 
-The shared transport, RC and Runtime owning batches are committed. RC's local
+The shared transport and all four owning service batches are committed. RC's local
 Go/PostgreSQL/lint gates and 157-check Docker admission passed; Runtime's host
 and native Linux gates and 401-check Docker admission passed. Egress's unit,
 contract, socket, Clippy and 12 PostgreSQL checks passed; its production-image
@@ -130,6 +152,29 @@ harness directories.
 Controller consumption passed its local unit/lint gates, 685 tests and 1227
 subtests with race detection and no skips under PostgreSQL/Temporal, and 106
 owning Docker checks. Its source-IP/key-ID validation, same-address rebind,
-lost-open replay and source restoration are covered. Coordinated deployment
-and old-address-reassignment acceptance remain pending. These producer gates do not claim the business
-workflow is complete.
+lost-open replay and source restoration are covered.
+
+Source-built ACP v1 and v2 integration each passed six Runs and 16 synthetic
+Provider requests, with complete normal trace topology and owned-resource
+cleanup. Both reassigned the victim's old outer IPv4 to another container while
+retaining its old Egress binding: wrong authority and a captured encrypted replay
+were rejected without policy/flow effects. Create/rebuild/enable issue different
+generation identities; normal Runtime restart retains its generation identity
+and converges after address rebind. Egress outage does not block Runtime health
+journal consumption.
+
+The updated Stage1, Stage2 and RC shell entry points passed. Stage1 keeps Runtime
+alive across an Egress restart and verifies real TCP recovery through standard
+engine timers. The warm-receiver component also rejects pre-restart ciphertext.
+Stage2's nine business scenarios, Controller worker replacement and 330 ACP
+PostgreSQL tests passed. The isolated native MCP suite preserves its ten scenarios
+and official SDK close/Trace regression under authenticated packet revision 2.
+The repository gate passed 1958 Node tests and its Python checks; mapped-port
+host-publication fixture checks passed separately. Existing cross-process clock-only Trace
+warnings remain under the previously accepted policy; no timing correction or
+NTP dependency is added. Native Skill-learning and temporary-Skill HTTP flows
+passed with authenticated bootstrap, signed maintenance tickets, isolated MCP
+UIDs and the canonical Runtime Host. Host-side fixtures use one-to-one listen
+port publication and the official SDK's default HTTP transport; production
+transport and SDK code are unchanged. Final Docker container/network/volume identities exactly match the
+retained set after integration; unique test image tags were removed.

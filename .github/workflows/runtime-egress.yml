@@ -5,6 +5,8 @@ on:
     branches: [main]
     tags: ["v*"]
     paths:
+      - modules/runtime-tunnel/**
+      - tests/support/runtime-tunnel/**
       - services/runtime-egress/**
       - tests/integration/runtime-egress/**
       - contracts/runtime/**
@@ -15,6 +17,8 @@ on:
       - .github/workflows/_image.yml
   pull_request:
     paths:
+      - modules/runtime-tunnel/**
+      - tests/support/runtime-tunnel/**
       - services/runtime-egress/**
       - tests/integration/runtime-egress/**
       - contracts/runtime/**
@@ -33,6 +37,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  transport:
+    uses: ./.github/workflows/_rust-crate.yml
+    with:
+      crate-path: modules/runtime-tunnel
+      integration-path: modules/runtime-tunnel/tests
+
   check:
     uses: ./.github/workflows/_rust-crate.yml
     with:
@@ -40,7 +50,7 @@ jobs:
       integration-path: tests/integration/runtime-egress
 
   image:
-    needs: check
+    needs: [check, transport]
     permissions:
       contents: read
       packages: write

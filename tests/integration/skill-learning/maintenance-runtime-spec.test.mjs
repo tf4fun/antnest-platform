@@ -45,6 +45,13 @@ test(
           ),
         ),
       )
+      .addSchema(
+        JSON.parse(
+          await readFile(
+            resolve(root, "contracts/runtime/tunnel-bootstrap.schema.json"),
+          ),
+        ),
+      )
       .compile(schema);
     const output = resolve(
       root,
@@ -80,15 +87,17 @@ test(
       `RC component fixture failed; see ${output}`,
     );
     const specs = [];
+    let decodedOutput = "";
     for (const line of (
       await readFile(resolve(output, "generated-runtime-spec.log"), "utf8")
     ).split("\n")) {
-      if (!line.startsWith("{")) continue;
-      const event = JSON.parse(line);
-      const marker = "MAINTENANCE_RUNTIME_SPEC:";
-      const start = event.Output?.indexOf(marker) ?? -1;
-      if (start >= 0)
-        specs.push(JSON.parse(event.Output.slice(start + marker.length)));
+      if (line.startsWith("{")) decodedOutput += JSON.parse(line).Output ?? "";
+    }
+    // Go may split a long t.Log line across output events; reconstruct it first.
+    const marker = "MAINTENANCE_RUNTIME_SPEC:";
+    for (const line of decodedOutput.split("\n")) {
+      const start = line.indexOf(marker);
+      if (start >= 0) specs.push(JSON.parse(line.slice(start + marker.length)));
     }
     assert.equal(
       specs.length,

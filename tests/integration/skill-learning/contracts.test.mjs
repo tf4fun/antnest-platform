@@ -63,6 +63,15 @@ const managedSchema = JSON.parse(
     ),
   ),
 );
+const tunnelSchema = JSON.parse(
+  await readFile(
+    new URL(
+      "../../../contracts/runtime/tunnel-bootstrap.schema.json",
+      import.meta.url,
+    ),
+  ),
+);
+runtimeValidator.addSchema(tunnelSchema);
 runtimeValidator.addSchema(managedSchema);
 runtimeValidator.addSchema(instanceSchema);
 runtimeValidator.addSchema(runtimeSchema);
@@ -708,6 +717,7 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
   const [bridge, runtime, workspace] = related;
   const compile = (document, name) => {
     const validator = new Ajv2020({ strict: true, validateFormats: false });
+    validator.addSchema(tunnelSchema);
     validator.addSchema(managedSchema);
     validator.addSchema(instanceSchema);
     validator.addSchema(document);

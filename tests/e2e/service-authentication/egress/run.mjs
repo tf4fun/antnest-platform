@@ -221,6 +221,28 @@ try {
     resolve(root, "tests/e2e/service-authentication/egress/compose.yaml"),
   ];
   const invoke = dockerClient(env, abort.signal, budget);
+  // The new storage master must be root-only even on Linux host bind mounts.
+  await invoke([
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--read-only",
+    "--label",
+    scopeLabel + "=" + project,
+    "--user",
+    "0:0",
+    "--cap-drop",
+    "ALL",
+    "--cap-add",
+    "CHOWN",
+    "--mount",
+    `type=bind,src=${masterPath},dst=/master`,
+    "node:24.21.0-bookworm-slim",
+    "node",
+    "-e",
+    "require('node:fs').chownSync('/master',0,0)",
+  ]);
   progress("production-image-build");
   const build = await runCommand({
     name: "production-image-build",

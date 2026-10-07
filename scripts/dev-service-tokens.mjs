@@ -163,6 +163,10 @@ export function provisionTokens({
       join(path, contract.bootstrap_keys.runtime_instance_master.file),
       randomBytes(contract.bootstrap_keys.runtime_instance_master.random_bytes),
     );
+    write(
+      join(path, contract.bootstrap_keys.egress_tunnel_master.file),
+      randomBytes(contract.bootstrap_keys.egress_tunnel_master.random_bytes),
+    );
     const environment = {
       ANTNEST_SERVICE_AUTH_DIRECTORY: path,
       ANTNEST_SERVICE_AUTH_UID: String(process.getuid()),

@@ -103,7 +103,7 @@ test("fresh credentials match every static receiver grant without a global Runti
   const output = join(fixture(t), "fresh");
   const manifest = provisionTokens({ output });
   const pairs = deriveStaticPairs(catalogs());
-  assert.equal(pairs.length, 24);
+  assert.equal(pairs.length, 25);
   assert.deepEqual(manifest.pairs, pairs);
   assert.equal(manifest.version, contract.version);
   assert.equal(manifest.skill_learning, false);
@@ -142,7 +142,7 @@ test("fresh credentials match every static receiver grant without a global Runti
       assert(!bytes(output, "deployment.env").includes(token));
     }
   }
-  assert.equal(tokens.size, 24);
+  assert.equal(tokens.size, 25);
   assert(!existsSync(join(output, "antnest-runtime")));
   assert.deepEqual(JSON.parse(bytes(output, "edge-gateway/callers.json")), {});
 });
@@ -456,7 +456,7 @@ test("CLI works without npm or external binaries and prints only completion meta
   assert.deepEqual(JSON.parse(result.stdout), {
     complete: true,
     services: 9,
-    pairs: 24,
+    pairs: 25,
     skill_learning: true,
   });
   const manifest = JSON.parse(bytes(output, "manifest.json"));
@@ -566,4 +566,22 @@ test("Docker CLI failure still removes private probe credentials", (t) => {
   assert.equal(report.credentials_cleaned, true);
   assert(!existsSync(join(output, "credentials")));
   assert(!result.stderr.includes("PRIVATE KEY"));
+});
+
+test("Egress receives an independent private random tunnel storage master", async (t) => {
+  const { provisionTokens } = await helper();
+  const output = join(fixture(t), "tunnel");
+  provisionTokens({ output });
+  const master = bytes(output, "runtime-egress/tunnel-master.key");
+  assert.equal(master.length, 32);
+  assert(master.some((value) => value !== 0));
+  assert(
+    !master.equals(bytes(output, "runtime-controller/instance-master.key")),
+  );
+  assert.equal(
+    statSync(join(output, "runtime-egress/tunnel-master.key")).mode & 0o777,
+    0o600,
+  );
+  assert(!bytes(output, "manifest.json").includes(master));
+  assert(!bytes(output, "deployment.env").includes(master));
 });

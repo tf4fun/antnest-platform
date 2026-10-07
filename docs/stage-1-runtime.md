@@ -174,7 +174,7 @@ is conclusively absent.
 
 The implemented Rust Runtime remains the baseline for privilege separation,
 MCP, filesystem roots, cancellation, process cleanup, status, telemetry, and
-raw packet transport.
+authenticated packet transport.
 
 The Runtime Controller layer extends, but does not reinterpret, that baseline:
 
@@ -188,8 +188,8 @@ The Runtime Controller layer extends, but does not reinterpret, that baseline:
   example in `X-Antnest-Expected-Execution-ID`.
 - Runtime rejects a stale expected execution ID before dispatching a Tool.
 
-The header is an internal consistency token, not service authentication. The
-trusted platform network remains the access boundary.
+The header is an internal consistency token, not service authentication. Workload authentication and expected execution identity are distinct checks;
+network placement alone grants neither authority.
 
 The implemented Egress design applies the following Runtime contract decision:
 
@@ -207,11 +207,13 @@ one complete, unfragmented IPv4/TCP packet per UDP datagram with a fixed inner
 MTU of `1400`. Inner UDP, IPv6, fragmentation, and unsolicited inbound flows require a
 later explicit contract revision.
 
-RuntimeSpec and the Egress attachment carry that revision. A future incompatible
-packet revision is introduced on a distinct Egress UDP endpoint, supported in
-parallel while old Runtime images are retired, and removed only after no
-Runtime uses the old revision. The revision is control metadata, never a packet
-envelope.
+RuntimeSpec and Egress attachments carry packet revision 2. UDP transports an
+`ANT2` key selector and one unmodified WireGuard message; a selector alone is
+not authentication. Decrypted inner packets retain the fixed IPv4/TCP contract.
+The embedded engine owns handshake, encryption, session rekey and bounded replay
+rejection. No raw revision 1 fallback exists. See the
+[authenticated transport contract](authenticated-runtime-tunnel.md) for key
+ownership, coordinated cutover and recovery.
 
 ## 7. Runtime Egress Durable Model
 

@@ -30,6 +30,7 @@ export function fixtureEnvironment(inherited, { project, octet }) {
     ANTNEST_EGRESS_CONTROL_SUBNET: `10.242.${octet}.0/24`,
     ANTNEST_EGRESS_CONTROL_IPV4: `10.242.${octet}.3`,
     ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4: `10.242.${octet}.4`,
+    ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4: `10.242.${octet}.5`,
     ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT: `http://10.243.${octet}.4:4318`,
     ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "false",
   };

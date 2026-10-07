@@ -74,7 +74,7 @@ test("every current workload pair shares the receiver's explicitly bound purpose
       }
     }
   }
-  assert.equal(pairs.size, 24);
+  assert.equal(pairs.size, 25);
   assert.deepEqual(contract.control_routes, {
     "agent-acp-service": [
       "POST /rpc/agent-acp/apply-execution-snapshot",
@@ -97,6 +97,7 @@ test("static purpose addresses are unique and fit their private /28 subnets", ()
       assert.deepEqual(network.members, {
         "runtime-egress": 3,
         "agent-controller": 4,
+        "runtime-controller": 5,
       });
       continue;
     }
