@@ -20,10 +20,16 @@ jobs:
   changes:
     name: Select suites
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
     outputs:
       suites: ${{ steps.select.outputs.suites }}
       selected: ${{ steps.select.outputs.selected }}
+      images: ${{ steps.select.outputs.images }}
+      builds: ${{ steps.select.outputs.builds }}
+      building: ${{ steps.select.outputs.building }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,26 +39,110 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # A push whose previous head is unknown (new branch, force push) and a
-      # manual run both select every suite.
+      # manual run both select every suite. Images are named by a hash of
+      # their build inputs; any that GHCR lacks are built by the image job.
+      # Runs on main resolve every image so the image job publishes it.
       - name: Select suites
         id: select
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         run: |
+          set -- --resolve-images
+          [ "$PUBLISH" = true ] && set -- "$@" --all-images
           if [ "$EVENT" != workflow_dispatch ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            node tests/support/ci-changes.mjs --base "$BASE" --head HEAD
+            node tests/support/ci-changes.mjs "$@" --base "$BASE" --head HEAD
           else
-            node tests/support/ci-changes.mjs --all
+            node tests/support/ci-changes.mjs "$@" --all
           fi
+
+  images:
+    name: Image / ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.building != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Write image definition
+        env:
+          NAME: ${{ matrix.name }}
+        run: node tests/support/ci-changes.mjs --bake "$NAME" > "$RUNNER_TEMP/image.docker-bake.json"
+
+      - name: Build image
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: ${{ runner.temp }}/image.docker-bake.json
+          load: true
+
+      - name: Save image
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -o pipefail
+          docker save "antnest/$NAME:local" | zstd -T0 -3 -o "$RUNNER_TEMP/$NAME.tar.zst"
+          ls -l "$RUNNER_TEMP/$NAME.tar.zst"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.name }}
+          path: ${{ runner.temp }}/${{ matrix.name }}.tar.zst
+          compression-level: 0
+          retention-days: 1
+
+      # Only main publishes, so a pull request cannot place an image under a
+      # reference that later runs trust.
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          NAME: ${{ matrix.name }}
+          REF: ${{ matrix.ref }}
+        run: |
+          docker tag "antnest/$NAME:local" "$REF"
+          docker push "$REF"
 
   suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
-    needs: changes
-    if: needs.changes.outputs.selected != '0'
+    needs: [changes, images]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.selected != '0' &&
+      (needs.images.result == 'success' || needs.images.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      packages: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.suites) }}
@@ -150,29 +240,35 @@ jobs:
           IMAGES: ${{ matrix.pull }}
         run: for image in $IMAGES; do docker pull "$image"; done
 
-      # Runners that start these with --no-build or inspect them expect
-      # antnest/<image>:local. A separate builder keeps the runners' own
-      # `docker build` calls on the default engine.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         if: matrix.images != ''
-        id: buildx
         with:
-          use: false
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Write image definitions
+      # Runners that start these with --no-build or inspect them expect
+      # antnest/<image>:local: published images are pulled, images built in
+      # this run are loaded from the image job's artifact.
+      - name: Provide local images
         if: matrix.images != ''
         env:
+          GH_TOKEN: ${{ github.token }}
           IMAGES: ${{ matrix.images }}
-        run: node tests/support/ci-changes.mjs --bake "$IMAGES" > "$RUNNER_TEMP/images.docker-bake.json"
-
-      - name: Build local images
-        if: matrix.images != ''
-        uses: docker/bake-action@v6
-        with:
-          source: .
-          builder: ${{ steps.buildx.outputs.name }}
-          files: ${{ runner.temp }}/images.docker-bake.json
-          load: true
+          RESOLVED: ${{ needs.changes.outputs.images }}
+        run: |
+          set -o pipefail
+          for name in ${IMAGES//,/ }; do
+            ref="$(jq -er --arg name "$name" '.[$name].ref' <<<"$RESOLVED")"
+            if [ "$(jq -r --arg name "$name" '.[$name].build' <<<"$RESOLVED")" = true ]; then
+              gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "image-$name" -D "$RUNNER_TEMP/image-$name"
+              zstd -dc "$RUNNER_TEMP/image-$name/$name.tar.zst" | docker load
+              rm -rf "$RUNNER_TEMP/image-$name"
+            else
+              docker pull "$ref"
+              docker tag "$ref" "antnest/$name:local"
+            fi
+          done
 
       - name: Run suite
         env:
@@ -195,20 +291,28 @@ jobs:
 
   integration:
     name: Integration checks
-    needs: [changes, suite]
+    needs: [changes, images, suite]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # A skipped suite job is a pass only when no suite was selected.
+      # A skipped suite job is a pass only when no suite was selected, and a
+      # skipped image job only when no image needed building.
       - name: Check suite results
         env:
           CHANGES: ${{ needs.changes.result }}
+          IMAGES: ${{ needs.images.result }}
           SUITE: ${{ needs.suite.result }}
           SELECTED: ${{ needs.changes.outputs.selected }}
+          BUILDING: ${{ needs.changes.outputs.building }}
         run: |
-          echo "changes=$CHANGES suite=$SUITE selected=$SELECTED"
+          echo "changes=$CHANGES images=$IMAGES suite=$SUITE selected=$SELECTED building=$BUILDING"
           [ "$CHANGES" = success ] || exit 1
+          if [ "$BUILDING" = 0 ]; then
+            [ "$IMAGES" = skipped ] || exit 1
+          else
+            [ "$IMAGES" = success ] || exit 1
+          fi
           if [ "$SELECTED" = 0 ]; then
             [ "$SUITE" = skipped ]
           else
