@@ -10,6 +10,7 @@ import {
   configuration,
   dockerClient,
 } from "../lifecycle-closeout/docker.mjs";
+import { runCommand } from "../../support/run-command.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 
 const requireAcp = createRequire(
@@ -150,19 +151,30 @@ try {
       .ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY,
     "1s",
   );
-  await docker(
-    config.compose([
-      "up",
-      "-d",
-      "--no-build",
-      "--pull",
-      "never",
-      "postgres",
-      "runtime-egress",
-      "runtime-controller",
-      "diagnostic-relay",
-    ]),
-    true,
+  const started = await runCommand({
+    name: "compose-up",
+    command: [
+      "docker",
+      ...config.compose([
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "postgres",
+        "runtime-egress",
+        "runtime-controller",
+        "diagnostic-relay",
+      ]),
+    ],
+    output: config.evidence,
+    env: config.env,
+    timeoutMs: 600000,
+  });
+  assert.equal(
+    started.exit_code,
+    0,
+    "Compose start failed; see private evidence",
   );
   controllerID = await docker(
     config.compose(["ps", "-q", "runtime-controller"]),
