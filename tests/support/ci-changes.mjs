@@ -435,7 +435,6 @@ function tierC() {
         "identity-access",
         "identity-core",
         "multimodal",
-        "organization-display",
         "rpc-response-loss",
         "session-cost",
         "slash-commands",
@@ -453,6 +452,7 @@ function tierC() {
         "stage4-skill-target-drift",
         "structured-plan",
       ].map((name) => [`e2e-${name}`, name]),
+      ["e2e-organization-display", "organization-display", { browser: true }],
       ...["tool-permissions", "tool-progress"].map((name) => [
         `e2e-${name}`,
         name,

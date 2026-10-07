@@ -251,6 +251,11 @@ test("tier C managed MCP scenarios build their fixture image first", () => {
   }
 });
 
+test("tier C organization display installs the Agent UI browser client", () => {
+  const suite = suites.find((item) => item.id === "c-organization-display");
+  assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
+});
+
 test("foundation runners report strict-only findings through exit 2", () => {
   const foundation = {
     "c-lifecycle-health": "lifecycle-closeout/run.mjs health",
