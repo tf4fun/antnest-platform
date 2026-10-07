@@ -72,6 +72,8 @@ docker network connect "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" "$client"
 docker network connect "${COMPOSE_PROJECT_NAME}_controller-runtime" "$client"
 docker network connect "${COMPOSE_PROJECT_NAME}_identity-clients" "$client"
 docker network connect "${COMPOSE_PROJECT_NAME}_controller-clients" "$client"
+# The OIDC offboarding scenario signs in at the test IdP like a browser.
+docker network connect "${COMPOSE_PROJECT_NAME}_identity-outbound" "$client"
 docker start "$client" >/dev/null
 attempt=0
 while [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ]; do

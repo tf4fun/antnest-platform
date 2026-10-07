@@ -284,7 +284,10 @@ resume the same Session with no rejected prompt or Run events in its history.
 
 **Identity outage.** Official v1 and v2 clients connect before the coordinator
 stops only Identity. A prompt on each old connection must close with 1013
-without any durable Run, message or Tool change, and the same long-lived cookies
+without any durable Run, message or Tool change. Both prompts are sent at once:
+Gateway waits out its Identity request timeout, and a later serial probe would
+outlive the socket's 60-second caller context and close with 1008 instead. The
+same long-lived cookies
 must reconnect after Identity recovers. An empty recovered Session must contain
 its current command catalog, one untitled Session info update with a valid
 timestamp and, for v2 replay only, exactly one idle control update

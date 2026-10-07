@@ -288,8 +288,14 @@ async function outageAndExpiry() {
   }
   step = "identity_outage";
   await checkpoint(1);
-  for (const item of connected)
-    await rejectedPrompt(item.client, item.sessionId, 1013, "unavailable");
+  // Each socket keeps its 60s caller context from admission, and Gateway
+  // spends its request timeout waiting for the stopped Identity. Serial probes
+  // would let the later socket expire (1008) before it can observe the outage.
+  await Promise.all(
+    connected.map((item) =>
+      rejectedPrompt(item.client, item.sessionId, 1013, "unavailable"),
+    ),
+  );
   const deniedHTTP = await browser.request("/api/session", { status: 503 });
   assert.equal(deniedHTTP.headers.getSetCookie().length, 0);
   assert(browser.cookie === longCookie, "outage destroyed browser cookie");
