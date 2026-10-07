@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectRegistryNetwork } from "./registry-network.mjs";
 
-test("Registry probe binds the actual development IPv4 and proves IPv6 is absent", () => {
+test("Registry probe binds the Registry client-network IPv4 and proves IPv6 is absent", () => {
   const project = "antnest-skill-test";
-  const name = `${project}_development`;
+  const name = `${project}_registry-clients`;
   const container = {
     Config: {
       Labels: {
@@ -57,6 +57,13 @@ test("Registry probe binds the actual development IPv4 and proves IPv6 is absent
     inspectRegistryNetwork(
       container,
       { ...network, EnableIPv6: true },
+      project,
+    ),
+  );
+  assert.throws(() =>
+    inspectRegistryNetwork(
+      container,
+      { ...network, Name: `${project}_development` },
       project,
     ),
   );

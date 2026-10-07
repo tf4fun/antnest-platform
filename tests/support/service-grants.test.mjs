@@ -88,6 +88,21 @@ test("caller contexts come from Identity through the gateway grant", async () =>
   });
 });
 
+test("authorization builds a validated header for callers outside json", () => {
+  const { client } = harness([]);
+  assert.deepEqual(client.authorization("controller-runtime"), {
+    "Antnest-Service-Authorization": `Bearer ${"c".repeat(43)}`,
+  });
+  const invalid = serviceClient({
+    readCredential: () => "not a token",
+    fetch: async () => assert.fail("must not send"),
+  });
+  assert.throws(
+    () => invalid.authorization("controller-runtime"),
+    /invalid disposable credential/u,
+  );
+});
+
 test("credentials must be disposable token encodings", async () => {
   const client = serviceClient({
     readCredential: () => "not a token",

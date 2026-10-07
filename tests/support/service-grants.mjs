@@ -114,5 +114,8 @@ export function serviceClient({
     );
     return { context: issued.caller_context, principal: session.principal };
   }
-  return { send, json, callerContext };
+  const authorization = (grant) => ({
+    "Antnest-Service-Authorization": `Bearer ${credential(grant)}`,
+  });
+  return { send, json, callerContext, authorization };
 }

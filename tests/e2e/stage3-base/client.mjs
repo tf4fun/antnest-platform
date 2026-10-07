@@ -36,6 +36,7 @@ import {
   assertFrozenSkill,
   publishSkill,
 } from "../skill-registry/stage3-fixture.mjs";
+import { serviceClient } from "../../support/service-grants.mjs";
 
 const skillMode = process.env.ANTNEST_E2E_SKILL_DELIVERY === "true";
 const readyLossMode = process.env.ANTNEST_E2E_SKILL_READY_LOSS === "true";
@@ -78,16 +79,29 @@ const api = async (path, body, status = 200) =>
 const agent = () => api(`/api/admin/agents/${agentId}`);
 const state = async () =>
   (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const services = serviceClient();
+const runtimeController = "http://runtime-controller:8080";
+// Runtime Controller admits only the Agent Controller workload; Agent
+// Controller reads need the Console workload and an admin caller context.
 async function internal(base, path, status = 200) {
-  const response = await fetch(base + path, {
-    signal: AbortSignal.timeout(15000),
-  });
-  assert.equal(
-    response.status,
-    status,
-    `internal ${path.split("?")[0]} status`,
+  if (base === runtimeController)
+    return services.json(base + path, "controller-runtime", {
+      method: "GET",
+      status,
+    });
+  const { context } = await services.callerContext(
+    {
+      organization_slug: "stage3",
+      email: "stage3-admin@example.com",
+      password: "stage3-admin-password",
+    },
+    agentId,
   );
-  return response.json();
+  return services.json(base + path, "console-controller", {
+    method: "GET",
+    status,
+    context,
+  });
 }
 async function operation(requestId, kind) {
   let result;
@@ -543,6 +557,7 @@ async function verifyPostCreateSkillMountRace(body, targetDigest) {
       const response = await fetch(
         `http://runtime-controller:8080/internal/runtime-operations/${rcRequestId}`,
         {
+          headers: services.authorization("controller-runtime"),
           signal: AbortSignal.timeout(15000),
         },
       );
@@ -641,6 +656,7 @@ async function admitRebuildAfterTargetDrift(
         method: "POST",
         signal: AbortSignal.timeout(15000),
         headers: {
+          ...services.authorization("controller-runtime"),
           "content-type": "application/json",
           "Idempotency-Key": preparationKey,
         },
@@ -717,6 +733,7 @@ async function admitRebuildAfterTargetDrift(
       method: "POST",
       signal: AbortSignal.timeout(15000),
       headers: {
+        ...services.authorization("controller-runtime"),
         "content-type": "application/json",
         "Idempotency-Key": randomUUID(),
       },
@@ -1018,7 +1035,10 @@ async function main() {
         async () => {
           const response = await fetch(
             `http://runtime-controller:8080/internal/runtime-operations/${rcRequestId}`,
-            { signal: AbortSignal.timeout(15000) },
+            {
+              headers: services.authorization("controller-runtime"),
+              signal: AbortSignal.timeout(15000),
+            },
           );
           if (response.status === 404) return false;
           assert.equal(response.status, 200);
@@ -1086,11 +1106,12 @@ async function main() {
         original.template.skill_refs,
       );
     }
-    await internal(
+    const foreign = await internal(
       "http://agent-controller:8080",
       `/internal/agents/${agentId}?organization_id=stage3-unrelated-organization`,
-      404,
+      403,
     );
+    assert.equal(foreign.code, "organization_mismatch");
     const events = (await api(`/api/admin/agents/${agentId}/events`)).events;
     assert(
       events.some(

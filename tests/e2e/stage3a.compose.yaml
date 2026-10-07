@@ -1,0 +1,13 @@
+# Disposable Stage 3a stacks only. Each run publishes loopback diagnostics on
+# its own ports, and model peers are private test containers.
+services:
+  diagnostic-relay:
+    ports: !override
+      - "127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:?required}:5432"
+      - "127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:?required}:16686"
+  agent-controller:
+    environment:
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true"
+  agent-acp-service:
+    environment:
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true"
