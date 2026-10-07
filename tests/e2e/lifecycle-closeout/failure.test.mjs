@@ -227,6 +227,20 @@ for (const [name, mutate] of [
     assert.throws(() => assertStartupFailure(f));
   });
 
+test("startup failure names the observed Runtime state it rejected", () => {
+  const f = fixture();
+  f.agent.runtime_state = "starting";
+  f.agent.runtime_reason = "runtime_starting";
+  f.physical.containers[0].State = {
+    Status: "running",
+    Health: { Status: "starting" },
+  };
+  assert.throws(
+    () => assertStartupFailure(f),
+    /runtime_state=starting runtime_reason=runtime_starting container=running\/starting/u,
+  );
+});
+
 const failureLog = {
   "antnest.agent.id": "a",
   "antnest.runtime.generation": "1",
