@@ -111,7 +111,7 @@ test("catalog is complete and belongs to the requested Session", () => {
   }
 });
 
-test("catalog lists delivered Skill commands after the built-in commands", () => {
+test("catalog may list delivered Skill commands after the built-in commands", () => {
   const skill = { name: "skill:system:code-review", description: "Review" };
   const withSkill = {
     ...catalog,
@@ -122,7 +122,10 @@ test("catalog lists delivered Skill commands after the built-in commands", () =>
   };
   assertCatalog([withSkill], "s", [skill.name]);
   assert.throws(() => assertCatalog([withSkill], "s"));
-  assert.throws(() => assertCatalog([catalog], "s", [skill.name]));
+  assertCatalog([catalog], "s", [skill.name]);
+  const foreign = structuredClone(withSkill);
+  foreign.update.availableCommands[1].name = "skill:system:other";
+  assert.throws(() => assertCatalog([foreign], "s", [skill.name]));
 });
 
 test("transcript compares block identity and order, excluding derived notifications", () => {
