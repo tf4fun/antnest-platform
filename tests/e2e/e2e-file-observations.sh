@@ -19,11 +19,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias file-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=file-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=file-model" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/acp-files/model.mjs >/dev/null
 docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_RUNTIME_IMAGE=$image" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" -e "TEST_RUNTIME_IMAGE=$image" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/acp-files/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null

@@ -51,6 +51,7 @@ for (const [profile, file, flag] of [
       });
       child.stdin.end(`
 temporary_root="$FIXTURE_ROOT"
+credentials_root="$FIXTURE_ROOT"
 tool_profile="${profile}"
 keep_stack=false
 COMPOSE_PROJECT_NAME=fixture

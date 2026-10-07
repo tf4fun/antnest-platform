@@ -26,11 +26,17 @@ docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
 image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias managed-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=managed-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=managed-model" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/managed-mcp/model.mjs >/dev/null
 docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_RUNTIME_IMAGE=$image" -e "TEST_ACP_VERSION=${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
+  --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
+  -e TEST_RC_TOKEN_FILE=/run/auth/controller-runtime \
+  -e "TEST_RUNTIME_IMAGE=$image" -e "TEST_ACP_VERSION=${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/managed-mcp/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null

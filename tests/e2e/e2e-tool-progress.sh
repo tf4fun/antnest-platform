@@ -21,13 +21,15 @@ trap 'exit 143' TERM
 image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
 docker_cmd run -d --name "$model" \
   --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias progress-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=progress-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=progress-model" \
   -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/acp-progress/model.mjs >/dev/null
 docker_cmd create --name "$client" \
   --user 0:0 -v /var/run/docker.sock:/var/run/docker.sock \
   --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
   -e COMPOSE_PROJECT_NAME -e "TEST_RUNTIME_IMAGE=$image" -v "$root/tests:/app/tests:ro" \
   antnest/agent-acp-service:local node /app/tests/e2e/acp-progress/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null
