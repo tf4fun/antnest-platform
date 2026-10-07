@@ -29,6 +29,8 @@ jobs:
       plain: ${{ steps.select.outputs.plain }}
       image_suites: ${{ steps.select.outputs.image_suites }}
       imaged: ${{ steps.select.outputs.imaged }}
+      optional_suites: ${{ steps.select.outputs.optional_suites }}
+      optional: ${{ steps.select.outputs.optional }}
       images: ${{ steps.select.outputs.images }}
       builds: ${{ steps.select.outputs.builds }}
       building: ${{ steps.select.outputs.building }}
@@ -162,6 +164,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.image_suites) }}
+    uses: ./.github/workflows/_suite.yml
+    with:
+      suite: ${{ toJSON(matrix) }}
+      images: ${{ needs.changes.outputs.images }}
+
+  # Tier C reports each suite but is not part of `Integration checks` until
+  # it is stable. The parallel cap leaves runners for the required suites.
+  optional-suite:
+    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    needs: [changes, images]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.optional != '0' &&
+      (needs.images.result == 'success' || needs.images.result == 'skipped')
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.changes.outputs.optional_suites) }}
     uses: ./.github/workflows/_suite.yml
     with:
       suite: ${{ toJSON(matrix) }}

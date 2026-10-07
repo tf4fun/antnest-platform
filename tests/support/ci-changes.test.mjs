@@ -87,11 +87,16 @@ test("test sources select the suites that run them", () => {
 });
 
 test("managed MCP and deployment wiring runners select their suites", () => {
-  assert.deepEqual(ids(selectSuites(["tests/e2e/managed-mcp/model.mjs"])), [
-    "deployment-contracts",
-    "managed-mcp-secrets-v1",
-    "managed-mcp-secrets-v2",
-  ]);
+  const required = (selected) =>
+    ids(selected.filter((suite) => suite.tier !== "c"));
+  assert.deepEqual(
+    required(selectSuites(["tests/e2e/managed-mcp/model.mjs"])),
+    [
+      "deployment-contracts",
+      "managed-mcp-secrets-v1",
+      "managed-mcp-secrets-v2",
+    ],
+  );
   assert(
     ids(
       selectSuites(["tests/integration/deployment/compose-runtime-docker.mjs"]),
@@ -122,7 +127,7 @@ test("the catalog is unique and refers to existing entry points", () => {
     ].map((match) => match[1]),
   );
   for (const suite of suites) {
-    assert(["a", "b"].includes(suite.tier), suite.id);
+    assert(["a", "b", "c"].includes(suite.tier), suite.id);
     assert(suite.paths.length > 0 && suite.run.length > 0, suite.id);
     for (const setup of suite.setup) assert(setups.includes(setup), setup);
     for (const image of suite.images ?? [])
@@ -143,7 +148,7 @@ test("matrix entries carry the tier and scalar setup flags", () => {
   assert.equal(include.length, suites.length);
   assert.deepEqual(
     new Set(include.map((row) => row.tier)),
-    new Set(["A", "B"]),
+    new Set(["A", "B", "C"]),
   );
   const entry = matrixEntry(
     suites.find((suite) => suite.id === "auth-runtime-controller"),
@@ -165,17 +170,46 @@ test("matrix entries carry the tier and scalar setup flags", () => {
   assert.deepEqual(matrix([]), { include: [] });
 });
 
-test("suites that need images form a matrix separate from those that do not", () => {
-  const { plain, imaged } = matrices(suites);
-  assert.equal(plain.include.length + imaged.include.length, suites.length);
-  assert(plain.include.every((row) => row.images === ""));
-  assert(imaged.include.every((row) => row.images !== ""));
+test("required suites split by image need; tier C forms its own matrix", () => {
+  const { plain, imaged, optional } = matrices(suites);
+  assert.equal(
+    plain.include.length + imaged.include.length + optional.include.length,
+    suites.length,
+  );
+  assert(plain.include.every((row) => row.images === "" && row.tier !== "C"));
+  assert(imaged.include.every((row) => row.images !== "" && row.tier !== "C"));
+  assert(optional.include.every((row) => row.tier === "C"));
   assert(plain.include.some((row) => row.id === "egress-postgres"));
   assert(imaged.include.some((row) => row.id === "auth-runtime-controller"));
+  assert(optional.include.some((row) => row.id === "c-stage3-local"));
   assert.deepEqual(matrices([]), {
     plain: { include: [] },
     imaged: { include: [] },
+    optional: { include: [] },
   });
+});
+
+test("tier C platform scenarios get every local image and no rebuilding target", () => {
+  const tierC = suites.filter((suite) => suite.tier === "c");
+  assert(tierC.length >= 70);
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  for (const suite of tierC) {
+    if (suite.images.length > 0)
+      assert.deepEqual(suite.images, Object.keys(images).sort(), suite.id);
+    const make = /^make ([\w.-]+)$/u.exec(suite.run[0]);
+    if (!make) continue;
+    const recipe = new RegExp(
+      `^${make[1]}:(?<deps>.*)\\n(?<body>(?:\\t.*\\n)*)`,
+      "mu",
+    ).exec(makefile);
+    assert(recipe, suite.id);
+    assert.equal(
+      recipe.groups.deps.trim(),
+      "",
+      `${suite.id} has prerequisites`,
+    );
+    assert.doesNotMatch(recipe.groups.body, /docker (?:compose .*)?build/u);
+  }
 });
 
 test("bake definitions tag local images and read the image workflow cache", () => {

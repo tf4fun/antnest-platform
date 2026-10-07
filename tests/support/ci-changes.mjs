@@ -33,6 +33,20 @@ const runtime = ["runtimes/antnest-runtime/**", ...rust];
 // gets the pinned Docker Engine.
 const base = ["postgres:17.11-bookworm", "node:24.21.0-bookworm-slim"];
 const temporal = [...base, "temporalio/admin-tools:1.32.0"];
+// Platform stacks start every service from antnest/<image>:local.
+const platformImages = [
+  "admin-console",
+  "agent-acp-service",
+  "agent-controller",
+  "agent-ui",
+  "antnest-runtime",
+  "edge-gateway",
+  "identity-service",
+  "runtime-controller",
+  "runtime-egress",
+  "skill-registry",
+  "temporal",
+];
 const observed = [
   ...temporal,
   "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
@@ -394,7 +408,127 @@ export const suites = [
     paths: [...runtime, "tests/e2e/skill-learning/**"],
     run: ["make e2e-skill-learning-runtime"],
   },
+  ...tierC(),
 ];
+
+// Tier C: whole-platform scenarios. Every target boots its own stack (many
+// are deliberately destructive), so each is one suite. They report outside
+// `Integration checks` until they are stable.
+function tierC() {
+  const families = {
+    "Stage 3a": [
+      ["e2e-stage3-local", "base"],
+      ...[
+        "acp-closeout",
+        "acp-persistence",
+        "acp-restart",
+        "acp-session",
+        "agent-access",
+        "file-observations",
+        "identity-access",
+        "identity-core",
+        "multimodal",
+        "organization-display",
+        "rpc-response-loss",
+        "session-cost",
+        "slash-commands",
+        "stage3-skill-delivery",
+        "stage4-skill-fenced-invalidation",
+        "stage4-skill-initialize-race",
+        "stage4-skill-mount-race",
+        "stage4-skill-mount-response-loss",
+        "stage4-skill-offline-reuse",
+        "stage4-skill-ready-drift",
+        "stage4-skill-ready-loss",
+        "stage4-skill-registry-outage",
+        "stage4-skill-restart-rebuild",
+        "stage4-skill-start-response-loss",
+        "stage4-skill-target-drift",
+        "structured-plan",
+        "tool-permissions",
+        "tool-progress",
+      ].map((name) => [`e2e-${name}`, name]),
+    ],
+    "Authenticated shell": [
+      ["e2e-stage2", "stage 2", { images: [] }],
+      ["e2e-lifecycle", "lifecycle", { images: [] }],
+    ],
+    Lifecycle: [
+      "lifecycle-health",
+      "lifecycle-interrupted",
+      "lifecycle-loss",
+      "lifecycle-network",
+      "lifecycle-restore",
+      "lifecycle-shutdown",
+      "stage4-skill-restore",
+      "stage4-skill-storage-restore",
+    ].map((name) => [`e2e-${name}`, name]),
+    Workspace: [
+      ["e2e-workspace", "workspace"],
+      ["e2e-workspace-browser", "browser", { browser: true }],
+    ],
+    "Skill learning": [
+      // The make target rebuilds antnest/antnest-runtime:local first.
+      [
+        "e2e-runtime-tool-usability",
+        "runtime tool usability",
+        {
+          run: "ANTNEST_E2E_SKILL_LEARNING_DEBUG=true ANTNEST_E2E_TOOL_USABILITY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs",
+        },
+      ],
+      ...[
+        "service-authentication-integration",
+        "skill-discovery-caller",
+        "skill-learning-browser",
+        "skill-learning-diagnostics-browser",
+        "skill-propagation",
+        "skill-source-lifecycle",
+      ].map((name) => [`e2e-${name}`, name, { browser: true }]),
+      ...[
+        "skill-discovery-acp",
+        "skill-discovery-tools",
+        "skill-learning-atomic-commit-disable",
+        "skill-learning-atomic-commit-foreground",
+        "skill-learning-automatic",
+        "skill-learning-cleanup",
+        "skill-learning-cleanup-lost-response",
+        "skill-learning-debug",
+        "skill-learning-held-commit-disable",
+        "skill-learning-held-commit-foreground",
+        "skill-learning-key-compromise",
+        "skill-learning-key-rotation",
+        "skill-learning-lifecycle-disable",
+        "skill-learning-lifecycle-rebuild",
+        "skill-learning-lost-commit-disable",
+        "skill-learning-model-failure",
+        "skill-learning-model-recovery",
+        "skill-learning-notice-send-failure",
+        "skill-learning-pinned",
+        "skill-learning-policy-off",
+        "skill-learning-pre-dispatch-disable",
+        "skill-learning-preempt",
+        "skill-learning-restart",
+        "skill-learning-skip",
+        "skill-learning-trace",
+        "skill-learning-ui-outage",
+        "skill-learning-untrusted-only",
+        "skill-temporary-acp",
+      ].map((name) => [`e2e-${name}`, name]),
+    ],
+  };
+  return Object.entries(families).flatMap(([family, targets]) =>
+    targets.map(([target, name, options = {}]) => ({
+      id: target.replace(/^e2e-/u, "c-"),
+      name: `${family}: ${name}`,
+      tier: "c",
+      setup: options.browser ? ["agent-ui-web", "chromium"] : [],
+      images: options.images ?? platformImages,
+      pull: observed,
+      paths: ["services/**", ...runtime, "tests/e2e/**", ...go, ...compose],
+      run: [options.run ?? `make ${target}`],
+    })),
+  );
+}
 
 export const setups = ["go", "rust", "admin-web", "agent-ui-web", "chromium"];
 
@@ -567,9 +701,11 @@ export function matrix(selected) {
 
 export function matrices(selected) {
   const needsImages = (suite) => (suite.images ?? []).length > 0;
+  const required = selected.filter((suite) => suite.tier !== "c");
   return {
-    plain: matrix(selected.filter((suite) => !needsImages(suite))),
-    imaged: matrix(selected.filter(needsImages)),
+    plain: matrix(required.filter((suite) => !needsImages(suite))),
+    imaged: matrix(required.filter(needsImages)),
+    optional: matrix(selected.filter((suite) => suite.tier === "c")),
   };
 }
 
@@ -603,12 +739,14 @@ function main() {
   const all = values.all || !values.base || zeroSha.test(values.base);
   const files = all ? [] : changedFiles(values.base, values.head);
   const selected = selectSuites(files, { all });
-  const { plain, imaged } = matrices(selected);
+  const { plain, imaged, optional } = matrices(selected);
   const lines = [
     `suites=${JSON.stringify(plain)}`,
     `plain=${plain.include.length}`,
     `image_suites=${JSON.stringify(imaged)}`,
     `imaged=${imaged.include.length}`,
+    `optional_suites=${JSON.stringify(optional)}`,
+    `optional=${optional.include.length}`,
   ];
   let resolved = [];
   if (values["resolve-images"]) {

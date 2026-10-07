@@ -182,6 +182,10 @@ files (prose-only changes select none). Changes to the workflow, `tests/support/
 - **Tier B:** service-owned Docker E2E runners, which build their own images.
   Runners that start images with `--no-build` get `antnest/<image>:local`
   first.
+- **Tier C:** whole-platform scenarios (stage 3a, authenticated shell stage 2
+  and lifecycle, lifecycle and workspace closeout, skill learning). Each target
+  boots its own stack and runs as its own suite, at most six at a time. Tier C
+  reports per suite but is not part of `Integration checks` yet.
 
 Each local image is named `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
 where the hash covers the image's Dockerfile, `.dockerignore` and every path
@@ -189,7 +193,7 @@ the Dockerfile copies. Suites pull images that GHCR already has. The image job
 builds each missing image once per run and hands it to the suites as an
 artifact; suites that need no image start without waiting for it. Runs on
 `main` build and publish every missing image, so a pull request that does not
-change an image's inputs never rebuilds it. Both suite jobs run the steps in
+change an image's inputs never rebuilds it. Every suite job runs the steps in
 `.github/workflows/_suite.yml`.
 
 Each suite uploads `artifacts/verification/` (without fixture credentials) as
