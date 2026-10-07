@@ -66,8 +66,10 @@ images. The Runtime image is `antnest/antnest-runtime:local`. The runner uses
 isolated subnets and no host Temporal port, so a development stack can keep
 running, and it removes its labeled resources on completion, failure or
 interruption. Reports, traces and screenshots are written to
-`artifacts/verification/c4-browser-<timestamp>/`. Strict trace warnings keep a
-failing exit code even when browser checks pass.
+`artifacts/verification/c4-browser-<timestamp>/`. Exit code 1 means a browser,
+business or topology failure; exit code 2 means only strict trace warnings
+remain. The final JSON line lists each trace's warnings, so the CI shard gate
+can accept reviewed clock-skew warnings and fail on any other.
 
 The browser uses same-origin HTTP/SSE, and the trace check requires Gateway HTTP
 -> Agent UI Bridge -> ACP HTTP ancestry. The cancellation scenario has no
