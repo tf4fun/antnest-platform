@@ -341,8 +341,6 @@ export const suites = [
     tier: "b",
     setup: [],
     pull: base,
-    disabled:
-      "the Runtime container exits before publishing its port, also outside CI",
     paths: [
       ...runtime,
       "tests/e2e/skill-registry/**",
@@ -356,8 +354,6 @@ export const suites = [
     tier: "b",
     setup: [],
     pull: base,
-    disabled:
-      "the Runtime container exits before publishing its port, as in the temporary runtime suite",
     paths: [...runtime, "tests/e2e/skill-learning/**"],
     run: ["make e2e-skill-learning-runtime"],
   },

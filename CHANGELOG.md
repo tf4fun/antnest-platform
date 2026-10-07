@@ -193,6 +193,13 @@ The Agent UI receipt contract E2E reads ACP's wire through the pinned
 Identity-issued workspace caller context. Previously it used the ambiguous
 `agent-acp-service` name and identity hint headers that ACP ignores (#120).
 
+The Skill Registry temporary runtime and skill learning runtime preparation
+E2E runners start the Runtime the way Runtime Controller does again. They
+install a private service caller receiver and send `Antnest-Service-Authorization`
+on every Runtime call, publish the Runtime listen port unchanged so the `Host`
+header passes admission, and the learning runner mounts the private managed MCP
+HOME tmpfs. Both suites are enabled in integration CI again (#136).
+
 Runtime tests that capture tracing spans no longer lose spans or deadlock when
 run in parallel with other tests, a test-only workaround for
 [tokio-rs/tracing#3611](https://github.com/tokio-rs/tracing/issues/3611) (#123).
