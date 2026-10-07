@@ -203,7 +203,10 @@ describe.skipIf(databaseUrl === undefined)(
           source: "runtime",
           name: "read",
         });
-        expect(JSON.stringify(client.frames)).toContain("owner-only-response");
+        // The Run can commit before its final session/update reaches the client.
+        await expect
+          .poll(() => JSON.stringify(client.frames))
+          .toContain("owner-only-response");
       });
 
       it("accepts empty MCP configuration through setup and isolated fork", async () => {
