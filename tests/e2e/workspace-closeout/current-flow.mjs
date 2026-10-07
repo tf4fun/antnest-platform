@@ -497,7 +497,13 @@ export async function workspaceProtocol({
     );
     assertAgentDisabled(await json(`/api/admin/agents/${agentID}`));
     const retained = await resources(agentID);
-    assert.deepEqual(retained.volumes, [initial.volume]);
+    // Disable keeps the workspace and the current Skill set reference; the
+    // generation's receiver volume leaves with its compute.
+    assert.deepEqual(
+      [...retained.volumes].sort(),
+      [rebuilt.skillVolume, rebuilt.volume].sort(),
+      "Disable retained unexpected Runtime storage",
+    );
     assert(
       retained.containers.every((container) => !container.State.Running),
       "revoked owner's Runtime still running",
