@@ -79,8 +79,10 @@ span is correlated to `model.complete` and `agent.run`.
 
 All replay and fork message Traces are collected independently of model
 requests. Each must match its method and Session, link to its WebSocket
-connection and contain no Run, model or Runtime calls. A missing or ambiguous
-Trace is a failure.
+connection and contain no Run, model or executable Runtime calls. A replay may
+refresh the Runtime Skill catalog with at most one `discover` and one
+`resources/read` request under the ACP request span; any other Runtime method
+fails. A missing or ambiguous Trace is a failure.
 
 Short ASCII sentinels from the complete file context and synthetic credentials
 must be absent from Traces; checking only a full escaped file string is not

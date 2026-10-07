@@ -9,6 +9,7 @@ import {
   traceTopology,
   tag,
 } from "../observability/trace-tree.mjs";
+import { inspectCatalogRuntime } from "../acp-plan/requests.mjs";
 
 // Current execution belongs to agent.run. The Provider propagates the HTTP
 // CLIENT span ID, not the model.complete wrapper or a retired admission ID.
@@ -220,12 +221,13 @@ export function inspectReplayRequestTrace(trace, expected, secrets = []) {
   assert.equal(tag(forwarded, "span.kind"), "producer");
   assert.equal(tag(forwarded, "antnest.operation.phase"), "forward");
   assert.equal(tree.parent(forwarded), root);
+  const runtimeInformationReads = inspectCatalogRuntime(
+    trace,
+    tree,
+    request,
+    expected,
+  );
   for (const span of trace.spans) {
-    assert.notEqual(
-      tree.service(span),
-      "antnest-runtime",
-      "replay contacted Runtime",
-    );
     assert(
       !/^(agent\.run$|model\.|mcp\.|HTTP POST model$)/.test(span.operationName),
       "replay executed a Run/model/Runtime operation",
@@ -249,6 +251,7 @@ export function inspectReplayRequestTrace(trace, expected, secrets = []) {
     method: expected.method,
     spans: trace.spans.length,
     no_execution: true,
+    runtime_information_reads: runtimeInformationReads,
     warning_count: warnings.length,
     warnings: [...new Set(warnings)],
     strict_trace: warnings.length ? "failed" : "passed",
