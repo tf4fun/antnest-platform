@@ -294,10 +294,7 @@ async function restoreScenario(
   assert.deepEqual(offlineResources.containers, []);
   assert.deepEqual(
     offlineResources.volumes.sort(),
-    [
-      initial.volume,
-      ...(config.skillRestore ? [initial.skillVolume] : []),
-    ].sort(),
+    [initial.volume, initial.skillVolume].sort(),
   );
   if (peerCreated) {
     const peerResources = await resources(peerCreated.agentID);
