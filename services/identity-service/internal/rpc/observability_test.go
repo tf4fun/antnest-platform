@@ -67,6 +67,48 @@ func TestLoginDispatcherCapturesActualDTOValuesAndPreservesCredentialWire(t *tes
 	}
 }
 
+func TestServerSpanKeepsContractRouteForConsoleAndRejectedCalls(t *testing.T) {
+	previous := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()); otel.SetTracerProvider(previous) })
+	stub := &rpcServicesStub{}
+	deps, _ := authenticationDependencies(t, Dependencies{Directory: stub, LocalAuth: stub, OIDC: stub, SCIM: stub})
+	unauthenticated, err := NewHandler(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ContractRoutes["issue_scim_token"]
+	for name, handler := range map[string]http.Handler{
+		"console":  authenticatedBusinessHandler(t, Dependencies{Directory: stub, LocalAuth: stub, OIDC: stub, SCIM: stub}),
+		"rejected": unauthenticated,
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder.Reset()
+			// Production mounts the RPC handler below a prefix route, which sets the
+			// outer request pattern before RPC authentication derives a request.
+			server := http.NewServeMux()
+			server.Handle("/rpc/identity/", handler)
+			request := httptest.NewRequest(http.MethodPost, route, strings.NewReader(`{"request_id":"request-42","actor_principal_id":"admin","name":"scim","scopes":["scim:read"]}`))
+			telemetry.HTTPHandler(server, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(httptest.NewRecorder(), request)
+			spans := recorder.Ended()
+			if len(spans) != 1 {
+				t.Fatalf("spans = %d", len(spans))
+			}
+			for _, attribute := range spans[0].Attributes() {
+				if attribute.Key == "http.route" {
+					if attribute.Value.AsString() != route {
+						t.Fatalf("http.route = %q", attribute.Value.AsString())
+					}
+					return
+				}
+			}
+			t.Fatal("http.route missing")
+		})
+	}
+}
+
 func TestIssuedCallerContextIsOmittedFromEnabledRPCCapture(t *testing.T) {
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	previous := otel.GetTracerProvider()

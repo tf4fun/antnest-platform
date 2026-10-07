@@ -131,6 +131,11 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	h.registerObservation(response, request)
+	// Telemetry reads the pattern from the request it passed in, while
+	// authentication may derive a new request before the RPC mux matches it.
+	if _, pattern := h.mux.Handler(request); pattern != "" {
+		request.Pattern = pattern
+	}
 	request, ok := h.authenticate(response, request)
 	if !ok {
 		return
