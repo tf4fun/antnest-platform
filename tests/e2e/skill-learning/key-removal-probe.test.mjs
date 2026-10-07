@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   acpRuntimeCredentials,
@@ -70,6 +74,38 @@ test("credential discovery waits for a recreated ACP and then fails closed", asy
     }),
     /ACP holds no Runtime credential/u,
   );
+});
+
+test("the credential script succeeds while ACP holds no credential yet", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "antnest-acp-probe-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let calls = 0;
+  // Runs the exact script inside a stand-in for /tmp and fails on a non-zero
+  // exit, as the real Docker client does.
+  const docker = async (args) => {
+    assert.deepEqual(args.slice(0, 4), ["exec", "acp-1", "sh", "-c"]);
+    if (++calls === 3) {
+      const session = join(directory, "antnest-acp-runtime-x", "session");
+      await mkdir(session, { recursive: true });
+      await writeFile(join(session, "antnest-runtime"), "token-a");
+    }
+    const result = spawnSync(
+      "sh",
+      ["-c", args[4].replaceAll("/tmp/", `${directory}/`)],
+      { encoding: "utf8" },
+    );
+    if (result.status !== 0)
+      throw new Error(`Docker exec failed (${result.status})`);
+    return result.stdout;
+  };
+  assert.deepEqual(
+    await acpRuntimeCredentials(docker, "acp-1", {
+      timeoutMs: 5000,
+      pollMs: 1,
+    }),
+    ["token-a"],
+  );
+  assert.equal(calls, 3);
 });
 
 test("the offline probe does not require ACP credentials", async () => {
