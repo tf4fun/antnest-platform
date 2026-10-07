@@ -73,7 +73,7 @@ export function inspectUpdateProxyDeployment(rows, config) {
     Object.values(proxy.NetworkSettings.Ports ?? {}).every((v) => !v?.length),
   );
   assert.deepEqual(Object.keys(proxy.NetworkSettings.Networks), [
-    `${config.project}_development`,
+    `${config.project}_controller-runtime`,
   ]);
   return { update_proxy_private: true };
 }
