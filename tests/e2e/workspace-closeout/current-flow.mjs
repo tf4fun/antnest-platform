@@ -210,6 +210,7 @@ export async function workspaceProtocol({
       kind: "cancelled",
       phase: "c4-cancel",
       runtime: await binding(initial),
+      closedBeforeResponse: true,
     });
     const pgid = processStat(
       await exec(initial.container.Id, `cat /proc/${pid}/stat`),
@@ -325,6 +326,7 @@ export async function workspaceProtocol({
       kind: "ordinary",
       phase: "c4-offline",
       runtime: await binding(initial),
+      closedBeforeResponse: true,
     });
     await watch.wait(
       (state) =>
