@@ -3,6 +3,41 @@ import { createHash } from "node:crypto";
 import { requestTraceBoundary } from "../acp-commands/trace.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { hasError, timingEvidence } from "../acp-plan/requests.mjs";
+import { clockSkewWarning, clockWarningsOnly } from "../stage3-base/trace.mjs";
+
+// The injected lost acknowledgement fails one SQL statement inside ACP and the
+// ACP spans that propagate it. Nothing else may error in a fault trace.
+function reviewedFaultTrace(result) {
+  const errors = result.error_spans ?? [];
+  return (
+    result.strict_reason === "fault_error_spans_retained" &&
+    result.selected_sql_verified === true &&
+    errors.some((span) => span.error_type === "database_error") &&
+    errors.every(
+      (span) =>
+        span.service === "agent-acp-service" &&
+        ["database_error", "Error"].includes(span.error_type),
+    ) &&
+    (result.warnings ?? []).every((warning) => clockSkewWarning.test(warning))
+  );
+}
+
+export function persistenceStrictOutcome(results) {
+  if (results.every((r) => r.strict_trace === "passed"))
+    return { strict_trace: "passed", accepted: true };
+  const faults = results.filter(reviewedFaultTrace);
+  const rest = results.filter((r) => !faults.includes(r));
+  if (!clockWarningsOnly(rest))
+    return { strict_trace: "failed", accepted: false };
+  return {
+    strict_trace: "failed",
+    reviewed_fault_traces: faults.length,
+    ...(rest.some((r) => r.strict_trace === "failed")
+      ? { clock_warnings_accepted: true }
+      : {}),
+    accepted: true,
+  };
+}
 export function inspectFaultTrace(
   trace,
   expected,

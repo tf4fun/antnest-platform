@@ -7,6 +7,18 @@ import {
 } from "../observability/trace-tree.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { hasError, timingEvidence } from "../acp-plan/requests.mjs";
+import { clockWarningsOnly } from "../stage3-base/trace.mjs";
+
+// Interrupted executions lose unexported spans by design, so only completed
+// requests and lifecycle commands are gated.
+export function restartStrictOutcome(results) {
+  const gated = results.filter((r) => r.strict_trace !== "not_applicable");
+  if (gated.every((r) => r.strict_trace === "passed"))
+    return { strict_trace: "passed", accepted: true };
+  return clockWarningsOnly(gated)
+    ? { strict_trace: "failed", clock_warnings_accepted: true, accepted: true }
+    : { strict_trace: "failed", accepted: false };
+}
 export function assertRuntimeBinding(trace, run, runtime) {
   const tree = traceTopology(trace),
     models = trace.spans.filter(

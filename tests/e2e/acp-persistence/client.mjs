@@ -23,7 +23,7 @@ import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
-import { inspectFaultTrace } from "./trace.mjs";
+import { inspectFaultTrace, persistenceStrictOutcome } from "./trace.mjs";
 import { assertDurable, assertRecovered, assertReplay } from "./evidence.mjs";
 import { seed } from "./setup.mjs";
 import { stateReady } from "./readiness.mjs";
@@ -494,18 +494,16 @@ async function main() {
       });
     }
   }
-  const strict = results.some((r) => r.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = persistenceStrictOutcome(results);
   save("results")(results);
   console.log(
     JSON.stringify({
       status: "trace_assessment",
-      strict_trace: strict,
+      ...strict,
       traces: results,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();

@@ -5,6 +5,7 @@ import {
   inspectBarrierTrace,
   inspectInterruptedTrace,
   assertRuntimeBinding,
+  restartStrictOutcome,
 } from "./trace.mjs";
 function fixture() {
   const f = requestFixture("session/prompt");
@@ -143,5 +144,44 @@ test("replacement binding comes from actual Model trace context and public snaps
       { ...expected.run, run_id: "foreign" },
       expected.runtime,
     ),
+  );
+});
+
+test("restart strict outcome gates completed traces and accepts only clock warnings", () => {
+  const clock = {
+    label: "v1-completed-new",
+    strict_trace: "failed",
+    warning_count: 1,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of 806.281µs",
+    ],
+  };
+  const interrupted = {
+    label: "v1-tool-inflight",
+    strict_trace: "not_applicable",
+    warnings: [
+      "parent span ID=d181 is not in the trace; skipping clock skew adjustment",
+    ],
+  };
+  const passed = { label: "create", strict_trace: "passed" };
+  assert.deepEqual(restartStrictOutcome([passed, interrupted]), {
+    strict_trace: "passed",
+    accepted: true,
+  });
+  assert.deepEqual(restartStrictOutcome([passed, interrupted, clock]), {
+    strict_trace: "failed",
+    clock_warnings_accepted: true,
+    accepted: true,
+  });
+  assert.equal(
+    restartStrictOutcome([
+      clock,
+      { label: "create", strict_trace: "failed", evidence_error: "unexpected" },
+    ]).accepted,
+    false,
+  );
+  assert.equal(
+    restartStrictOutcome([{ ...clock, warnings: ["missing parent"] }]).accepted,
+    false,
   );
 });

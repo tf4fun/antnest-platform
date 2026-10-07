@@ -28,6 +28,7 @@ import {
   inspectBarrierTrace,
   inspectInterruptedTrace,
   assertRuntimeBinding,
+  restartStrictOutcome,
 } from "./trace.mjs";
 import { captureRuntime } from "../managed-mcp/rebuild-evidence.mjs";
 import {
@@ -444,6 +445,7 @@ async function exercise(version, kind, template) {
       traceID: rebuilt.traceID,
       label: label + "-rebuild",
       settlementOutcome: "runtime_barrier_required",
+      skillPreparation: true,
     });
     await operation(rebuilt.body.request_id, "rebuild");
     await ready();
@@ -551,6 +553,7 @@ async function main() {
     agentId,
     requestId: created.body.operation.request_id,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
   for (const version of [1, 2])
@@ -671,9 +674,7 @@ async function main() {
       });
     }
   }
-  const strict = results.some((r) => r.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = restartStrictOutcome(results);
   save("results")(results);
   console.log(
     JSON.stringify({
@@ -682,11 +683,11 @@ async function main() {
       interrupted_trace_diagnostics: results.filter(
         (r) => r.strict_trace === "not_applicable",
       ).length,
-      strict_trace: strict,
+      ...strict,
       traces: results,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();
