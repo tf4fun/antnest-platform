@@ -294,7 +294,11 @@ test(
           ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:
             config.env.ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS,
         });
-      const docker = dockerClient(config.env, abort.signal, 1_200_000);
+      const docker = dockerClient(
+        config.env,
+        abort.signal,
+        imageBuildBudgetMs + workflowBudgetMs,
+      );
       if (propagation) resourceBaseline = await resources(docker);
       for (const { service, image: candidate } of additionalImages) {
         assert.equal(await docker(["image", "ls", "-q", candidate]), "");
