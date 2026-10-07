@@ -123,7 +123,10 @@ test(
             "ANTNEST_RUNTIME_ALLOW_TEST_FEATURES=true",
           ),
         );
-        config.image = gatedImage.Id;
+        // Runtime Controller's image policy admits repositories, never bare
+        // image IDs; the ID stays the physical identity to compare against.
+        config.image = runtimeImage;
+        config.resolvedImage = gatedImage.Id;
         config.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF = config.image;
       }
       Object.assign(config.env, {
