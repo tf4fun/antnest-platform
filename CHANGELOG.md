@@ -181,6 +181,14 @@ authentication: the Console receives an Edge Gateway service token and signed
 caller context, and calls the Registry with its own service credential instead
 of the removed `ANTNEST_SKILL_REGISTRY_API_TOKEN` (#119).
 
+The Runtime Controller observation retry E2E runs on the current development
+topology again. Its fault proxy uses a private fixture network instead of the
+removed `development` network, it reaches Runtime Controller through the
+diagnostics relay with Agent Controller's service credential, it reads
+loopback-only readiness from a probe in the controller's network namespace,
+and it opens the Egress attachment with an authenticated probe. The suite is
+enabled in integration CI again (#139).
+
 Agent TCP through the Runtime tunnel now completes on hosts with strict or
 loose reverse-path filtering (`rp_filter=1` or `2`, the Ubuntu default that
 container namespaces inherit). Previously the kernel dropped every reply

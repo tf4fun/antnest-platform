@@ -82,7 +82,6 @@ test("an explicit full run selects every enabled suite without any changes", () 
 
 test("disabled suites name their breakage and are never selected", () => {
   const disabled = suites.filter((suite) => suite.disabled);
-  assert(disabled.length > 0);
   for (const suite of disabled) {
     assert.equal(typeof suite.disabled, "string");
     assert(!selectSuites(["Makefile"], { all: true }).includes(suite));
