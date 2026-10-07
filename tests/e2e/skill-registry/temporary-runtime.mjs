@@ -759,7 +759,7 @@ try {
     }
   }
   await clean(["image", "rm", helperImage]).catch((error) =>
-    cleanupFailures.push(error),
+    errors.push(error),
   );
   if (build) {
     try {

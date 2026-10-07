@@ -169,8 +169,7 @@ engine timers. The warm-receiver component also rejects pre-restart ciphertext.
 Stage2's nine business scenarios, Controller worker replacement and 330 ACP
 PostgreSQL tests passed. The isolated native MCP suite preserves its ten scenarios
 and official SDK close/Trace regression under authenticated packet revision 2.
-The repository gate passed 1958 Node tests and its Python checks; mapped-port
-host-publication fixture checks passed separately. Existing cross-process clock-only Trace
+The final repository gate passed 1969 Node tests and its Python checks. Existing cross-process clock-only Trace
 warnings remain under the previously accepted policy; no timing correction or
 NTP dependency is added. Native Skill-learning and temporary-Skill HTTP flows
 passed with authenticated bootstrap, signed maintenance tickets, isolated MCP
@@ -178,3 +177,9 @@ UIDs and the canonical Runtime Host. Host-side fixtures use one-to-one listen
 port publication and the official SDK's default HTTP transport; production
 transport and SDK code are unchanged. Final Docker container/network/volume identities exactly match the
 retained set after integration; unique test image tags were removed.
+
+Final source was rebased onto main snapshot `92f6524`, retaining its Runtime
+reverse-path filter/process-scan/tracing and fixture fixes. Egress's 189-check
+Docker gate, native MCP/learning/temporary flows, source-built ACP v2 integration
+and repository/format/storage/caller/link checks passed again. The shared tunnel
+module also selects both transport owners and applicable integration suites in CI.

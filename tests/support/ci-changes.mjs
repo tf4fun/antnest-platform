@@ -16,7 +16,7 @@ const everySuite = [
   ".dockerignore",
 ];
 const go = ["go.work", "go.work.sum", "modules/**", ".golangci.yml"];
-const rust = ["rust-toolchain.toml"];
+const rust = ["rust-toolchain.toml", "modules/runtime-tunnel/**"];
 const compose = [
   "compose*.yaml",
   ".env.example",
@@ -171,7 +171,11 @@ export const suites = [
     [
       "egress",
       "Runtime Egress",
-      [...service("runtime-egress"), "tests/integration/runtime-egress/**"],
+      [
+        ...service("runtime-egress"),
+        "tests/integration/runtime-egress/**",
+        ...rust,
+      ],
     ],
     ["gateway", "Edge Gateway", service("edge-gateway")],
     ["identity", "Identity Service", service("identity-service")],

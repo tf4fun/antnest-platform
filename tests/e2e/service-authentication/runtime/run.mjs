@@ -108,7 +108,7 @@ const timer = setTimeout(stop, 1800000);
 const docker = dockerClient(process.env, aborted.signal, 1800000);
 const labelArgs = ["--label", scopeLabel + "=" + scope];
 let complete = false,
-  cleaned = false,
+  cleaned,
   checks = 0,
   spec;
 const containers = new Set();

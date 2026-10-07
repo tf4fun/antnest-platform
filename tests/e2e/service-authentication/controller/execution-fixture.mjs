@@ -29,7 +29,9 @@ export function executionPeers(fixture, stats, json) {
     return networks.get(agent);
   };
   const inspection = (value) => {
-    const { connection_id, token, ...publicValue } = value;
+    const publicValue = { ...value };
+    delete publicValue.connection_id;
+    delete publicValue.token;
     return { ...publicValue, observed_at: new Date().toISOString() };
   };
   const handled = (w, value, status) => {
