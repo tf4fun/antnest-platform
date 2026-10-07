@@ -18,6 +18,7 @@ import {
 } from "./loss-current.mjs";
 import { connectOwner } from "./acp.mjs";
 import { lines } from "./docker.mjs";
+import { runtimeControllerRead } from "./runtime-status.mjs";
 import { assertControllerStopped } from "./drain-evidence.mjs";
 import { assertEventPage } from "./evidence.mjs";
 import {
@@ -165,23 +166,8 @@ export async function runLoss(input) {
     ...journalReader(input.docker, postgres.Id),
     lossEvent: (eventID) => readLossEvent(input.docker, postgres.Id, eventID),
   };
-  const model = await serviceContainer(
-    input.docker,
-    config.project,
-    "stage3-model",
-  );
-  const runtimeRead = async (path) =>
-    JSON.parse(
-      await input.docker([
-        "exec",
-        model.Id,
-        "node",
-        "--input-type=module",
-        "-e",
-        "const r=await fetch('http://runtime-controller:8080'+process.argv[1], {signal:AbortSignal.timeout(5000)}); if(r.status!==200) throw Error('Runtime query '+r.status); console.log(JSON.stringify(await r.json()));",
-        path,
-      ]),
-    );
+  const runtimeRead = (path) =>
+    runtimeControllerRead(input.docker, config, path);
   for (const mode of ["live", "cold"])
     cases.push(
       await lossCase(
