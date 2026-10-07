@@ -20,6 +20,7 @@ function harness() {
           caller_context: `cct-${body.access_token}`,
         },
         "create-organization": { organization: { id: "org_b" } },
+        "add-organization-membership": { membership: { id: "membership_1" } },
         "revoke-access-token": { revoked: true },
       };
       return Response.json(replies[method]);
@@ -77,6 +78,31 @@ test("directory commands carry the Console grant, caller context and actor", asy
   assert.equal(command.body.actor_principal_id, "user_1");
   assert.equal(command.body.slug, "access-b");
   assert.match(command.body.request_id, /^[0-9a-f-]{36}$/u);
+});
+
+test("a signed-in Gateway browser runs directory commands without the fixture owning its session", async () => {
+  const { requests, identity } = harness();
+  const session = await identity.browserSession("browser-token", {
+    user_id: "user_2",
+  });
+  assert.deepEqual(session, {
+    principal: { user_id: "user_2" },
+    context: "cct-browser-token",
+  });
+  await identity.admin(session, "add-organization-membership", {
+    organization_id: "org_a",
+  });
+  assert.deepEqual(requests[0].body, {
+    access_token: "browser-token",
+    profile: "console",
+  });
+  assert.equal(
+    requests[1].init.headers["Antnest-Caller-Context"],
+    "cct-browser-token",
+  );
+  assert.equal(requests[1].body.actor_principal_id, "user_2");
+  await identity.close();
+  assert.equal(requests.length, 2, "browser session stays with its owner");
 });
 
 test("close revokes every session the fixture opened, once", async () => {

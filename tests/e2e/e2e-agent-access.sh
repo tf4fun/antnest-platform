@@ -59,6 +59,7 @@ docker create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/identity-service:/run/auth/console-identity:ro" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "TEST_GATEWAY_PUBLIC_URL=$ANTNEST_EDGE_PUBLIC_BASE_URL" \
   -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \

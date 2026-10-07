@@ -296,7 +296,11 @@ async function outageAndExpiry() {
       rejectedPrompt(item.client, item.sessionId, 1013, "unavailable"),
     ),
   );
-  const deniedHTTP = await browser.request("/api/session", { status: 503 });
+  // Gateway reports the outage only after its 30s Identity dial timeout.
+  const deniedHTTP = await browser.request("/api/session", {
+    status: 503,
+    timeoutMs: 45000,
+  });
   assert.equal(deniedHTTP.headers.getSetCookie().length, 0);
   assert(browser.cookie === longCookie, "outage destroyed browser cookie");
   step = "identity_recovery_and_natural_expiry";

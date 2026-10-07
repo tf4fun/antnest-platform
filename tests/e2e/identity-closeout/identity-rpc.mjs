@@ -22,6 +22,15 @@ export function identityFixture(services = serviceClient()) {
     });
     return { principal: login.principal, context: resolved.caller_context };
   }
+  // The Gateway session cookie is the Identity access token; its browser
+  // owns it, so close() does not revoke it.
+  async function browserSession(accessToken, principal) {
+    const resolved = await gateway("resolve-access-token", {
+      access_token: accessToken,
+      profile: "console",
+    });
+    return { principal, context: resolved.caller_context };
+  }
   const admin = (session, method, body) =>
     services.json(rpc(method), "console-identity", {
       body: {
@@ -35,5 +44,5 @@ export function identityFixture(services = serviceClient()) {
     for (const token of tokens.splice(0))
       await gateway("revoke-access-token", { access_token: token });
   }
-  return { signIn, admin, close };
+  return { signIn, browserSession, admin, close };
 }
