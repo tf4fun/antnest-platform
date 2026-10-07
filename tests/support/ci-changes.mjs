@@ -414,6 +414,13 @@ export const suites = [
 // Tier C: whole-platform scenarios. Every target boots its own stack (many
 // are deliberately destructive), so each is one suite. They report outside
 // `Integration checks` until they are stable.
+// Foundation runners exit 2 when business and topology pass but strict trace
+// findings remain. They run without make, which reports every failed recipe
+// as 2.
+function foundation(runner) {
+  return { run: `node tests/e2e/${runner}`, strict: true };
+}
+
 function tierC() {
   const families = {
     "Stage 3a": [
@@ -454,18 +461,28 @@ function tierC() {
       ["e2e-lifecycle", "lifecycle", { images: [] }],
     ],
     Lifecycle: [
-      "lifecycle-health",
-      "lifecycle-interrupted",
-      "lifecycle-loss",
-      "lifecycle-network",
-      "lifecycle-restore",
-      "lifecycle-shutdown",
-      "stage4-skill-restore",
-      "stage4-skill-storage-restore",
-    ].map((name) => [`e2e-${name}`, name]),
+      ...[
+        ["lifecycle-health", "run.mjs health"],
+        ["lifecycle-interrupted", "interrupted-run.mjs"],
+        ["lifecycle-loss", "run.mjs loss"],
+        ["lifecycle-network", "run.mjs network"],
+        ["lifecycle-restore", "run.mjs restore"],
+        ["lifecycle-shutdown", "run.mjs shutdown"],
+        ["stage4-skill-restore", "run.mjs skill-restore"],
+      ].map(([name, runner]) => [
+        `e2e-${name}`,
+        name,
+        foundation(`lifecycle-closeout/${runner}`),
+      ]),
+      ["e2e-stage4-skill-storage-restore", "stage4-skill-storage-restore"],
+    ],
     Workspace: [
-      ["e2e-workspace", "workspace"],
-      ["e2e-workspace-browser", "browser", { browser: true }],
+      ["e2e-workspace", "workspace", foundation("workspace-closeout/run.mjs")],
+      [
+        "e2e-workspace-browser",
+        "browser",
+        { browser: true, ...foundation("workspace-closeout/browser-run.mjs") },
+      ],
     ],
     "Skill learning": [
       // The make target rebuilds antnest/antnest-runtime:local first.
@@ -526,6 +543,7 @@ function tierC() {
       pull: observed,
       paths: ["services/**", ...runtime, "tests/e2e/**", ...go, ...compose],
       run: [options.run ?? `make ${target}`],
+      ...(options.strict ? { strict: true } : {}),
     })),
   );
 }
@@ -695,6 +713,7 @@ export function matrixEntry(suite) {
     run: suite.run.join("\n"),
     images: (suite.images ?? []).join(","),
     pull: (suite.pull ?? []).join(" "),
+    strict_exit: suite.strict === true,
   };
   for (const setup of setups)
     entry[`setup_${setup.replaceAll("-", "_")}`] = suite.setup.includes(setup);

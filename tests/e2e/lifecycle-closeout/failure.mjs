@@ -75,10 +75,12 @@ export function assertStartupFailure({
   assert.equal(agent.agent_id, agentID);
   assert.equal(agent.lifecycle_state, "created");
   assert.equal(agent.activation_state, "enabled");
+  const container = physical.containers[0]?.State;
   assert(
     ["unhealthy", "exited"].includes(agent.runtime_state) ||
       (agent.runtime_state === "waiting" &&
         agent.runtime_reason === "runtime_restarting"),
+    `startup failure not observed: runtime_state=${agent.runtime_state} runtime_reason=${agent.runtime_reason} container=${container?.Status}/${container?.Health?.Status}`,
   );
   assert(agent.runtime_reason, "observed startup diagnostic missing");
   assert(agent.runtime?.runtime_revision, "configured target missing");

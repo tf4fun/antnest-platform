@@ -16,7 +16,11 @@ import {
 } from "./foundation-trace.mjs";
 import { inspectAccessTraceTopology } from "../identity-closeout/agent-access-evidence.mjs";
 import { connectOwner } from "./acp.mjs";
-import { inspectProbe, inspectTargetHistory } from "./network-evidence.mjs";
+import {
+  barrierDiagnostic,
+  inspectProbe,
+  inspectTargetHistory,
+} from "./network-evidence.mjs";
 import {
   networkFixture,
   physicalIdentity,
@@ -195,7 +199,14 @@ export async function runNetwork({
         return probe;
       await delay(100, undefined, { signal });
     }
-    throw new Error(`${phase}: real socket barrier not reached`);
+    let detail = "model status unavailable";
+    try {
+      const response = await fetch(`${config.model}/status`, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+      });
+      if (response.ok) detail = barrierDiagnostic(await response.json(), phase);
+    } catch {}
+    throw new Error(`${phase}: real socket barrier not reached (${detail})`);
   };
   let evidence;
   let modelRequests;

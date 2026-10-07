@@ -6,7 +6,33 @@ import {
   scopeLabel,
   networkOctet,
   cleanup,
+  stderrDiagnostic,
 } from "./docker.mjs";
+
+test("Docker failure diagnostics keep the stderr tail and redact secrets", () => {
+  const env = {
+    ANTNEST_SERVICE_TOKEN: "changeme-token-xxxxxxxx",
+    ANTNEST_TEMPORAL_POSTGRES_PASSWORD: "changeme-xxxxxxxx",
+    ANTNEST_SHORT_KEY: "abc",
+    ANTNEST_EDGE_HOST_PORT: "18080",
+  };
+  const text = [
+    ...Array.from({ length: 30 }, (_, i) => `line ${i}`),
+    "container antnest-x-postgres-1 is unhealthy",
+    "env changeme-token-xxxxxxxx and changeme-xxxxxxxx on 18080",
+    "Authorization: Bearer abc.def-ghi",
+    "",
+  ].join("\n");
+  const result = stderrDiagnostic(text, env);
+  assert.equal(result.split("\n").length, 12);
+  assert.match(result, /^line 21\n/);
+  assert.match(result, /antnest-x-postgres-1 is unhealthy/);
+  assert.match(result, /env \[redacted\] and \[redacted\] on 18080/);
+  assert.match(result, /Bearer \[redacted\]/);
+  assert.doesNotMatch(result, /changeme|abc\.def/);
+  assert.equal(stderrDiagnostic(" \n", env), "");
+  assert(stderrDiagnostic("x".repeat(10000), env).length <= 2000);
+});
 
 for (const kind of ["container", "volume", "network"])
   test(`cleanup preserves conflicted ${kind} and continues with later owned resources`, async () => {
