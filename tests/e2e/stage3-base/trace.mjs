@@ -605,8 +605,11 @@ export function inspectLifecycle(trace, expected, secrets = []) {
           tag(confirmation, "antnest.configuration.applied_revision") >=
             revision,
         );
+        // agent-acp-service server spans carry millisecond-truncated start
+        // times, so ordering is judged on the controller's client spans.
         assert(
-          settled.startTime >= applied.startTime + applied.duration,
+          confirmation.startTime >=
+            publication.startTime + publication.duration,
           "settlement preceded publication",
         );
         settlement = true;
@@ -712,6 +715,32 @@ export function assertDockerProbe(trace, tree, error, expected) {
   assert.equal(tag(platform, "antnest.agent.id"), expected.agentId);
   assert.equal(tag(platform, "antnest.outcome"), "completed");
   assert.equal(tag(platform, "antnest.platform"), "docker");
+  if (platform.operationName === "runtime.platform.delete") {
+    // Delete cleanup probes optional per-generation resources; absence means
+    // there was nothing left to remove. Rebuild deletes the old generation.
+    const phase = { delete: "runtime_delete", rebuild: "runtime_update" }[
+      expected.kind
+    ];
+    assert(phase, "unexpected Runtime delete");
+    assert(!hasError(error), "Delete absence was reported as an error");
+    const command = tree
+      .chain(platform)
+      .find((s) => tag(s, "antnest.operation.request_id"));
+    assert.equal(
+      tag(command, "antnest.operation.request_id"),
+      runtimeCommandId(expected.requestId, phase),
+    );
+    assert(
+      !trace.spans.some(
+        (s) =>
+          tree.parent(s) === platform &&
+          tag(s, "http.request.method") === "POST" &&
+          tag(s, "http.response.status_code") === 201,
+      ),
+      "Delete allocated a Docker resource",
+    );
+    return;
+  }
   if (platform.operationName === "runtime.platform.inspect") {
     const generation = expected.missingSourceGeneration;
     assert.equal(expected.kind, "rebuild");
