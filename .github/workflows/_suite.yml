@@ -1,0 +1,169 @@
+name: Integration suite
+
+# One integration suite from the catalog in tests/support/ci-changes.mjs;
+# `suite` is its matrix entry as JSON.
+on:
+  workflow_call:
+    inputs:
+      suite:
+        required: true
+        type: string
+      images:
+        description: Resolved images as printed by ci-changes.mjs --resolve-images.
+        default: "{}"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            services/agent-acp-service/package-lock.json
+            services/agent-ui/web/package-lock.json
+            services/admin-console/web/package-lock.json
+
+      - uses: actions/setup-go@v5
+        if: fromJSON(inputs.suite).setup_go
+        with:
+          go-version-file: services/runtime-controller/go.mod
+          cache-dependency-path: "**/go.sum"
+
+      # rust-toolchain.toml pins the channel and components.
+      - name: Install Rust toolchain
+        if: fromJSON(inputs.suite).setup_rust
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        if: fromJSON(inputs.suite).setup_rust
+        with:
+          key: ${{ fromJSON(inputs.suite).id }}
+          workspaces: |
+            services/runtime-egress -> target
+            tests/integration/antnest-runtime/sdk-probes/elicitation -> target
+
+      # Shared test tooling loads yaml, ipaddr.js and ajv from the ACP
+      # service's locked installation.
+      - name: Install Agent ACP packages
+        run: npm --prefix services/agent-acp-service ci
+
+      - name: Install Admin Console packages
+        if: fromJSON(inputs.suite).setup_admin_web
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm --prefix services/admin-console/web ci
+
+      - name: Install Agent UI packages
+        if: fromJSON(inputs.suite).setup_agent_ui_web
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm --prefix services/agent-ui/web ci
+
+      # Both web packages pin the same Playwright release.
+      - name: Install headless Chromium
+        if: fromJSON(inputs.suite).setup_chromium
+        run: |
+          for package in agent-ui admin-console; do
+            playwright="services/$package/web/node_modules/.bin/playwright"
+            if [ -x "$playwright" ]; then
+              "$playwright" install --with-deps --only-shell chromium
+              exit 0
+            fi
+          done
+          echo "no web package with Playwright is installed" >&2
+          exit 1
+
+      # The runners are developed against Docker Engine 29 and Compose 5; the
+      # runner image ships Engine 28 and Compose 2, whose builds and network
+      # setup differ (for example, built images lack Compose project labels).
+      - name: Install Docker Engine
+        if: fromJSON(inputs.suite).pull != ''
+        env:
+          ENGINE_VERSION: 29.4.0
+          COMPOSE_VERSION: 5.1.2
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-ci.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-ci.asc] https://download.docker.com/linux/ubuntu noble stable" |
+            sudo tee /etc/apt/sources.list.d/docker-ci.list >/dev/null
+          sudo apt-get update -o Dir::Etc::sourcelist=sources.list.d/docker-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+          version() { apt-cache madison "$1" | awk -v want="$2" '$3 ~ ("^(5:)?" want "-") { print $3; exit }'; }
+          engine="$(version docker-ce "$ENGINE_VERSION")"
+          compose="$(version docker-compose-plugin "$COMPOSE_VERSION")"
+          test -n "$engine" && test -n "$compose"
+          sudo apt-get install -y --allow-downgrades --no-install-recommends \
+            "docker-ce=$engine" "docker-ce-cli=$engine" "docker-compose-plugin=$compose" \
+            docker-buildx-plugin containerd.io
+          docker version --format 'engine {{.Server.Version}}'
+          docker compose version
+
+      - name: Pull images
+        if: fromJSON(inputs.suite).pull != ''
+        env:
+          IMAGES: ${{ fromJSON(inputs.suite).pull }}
+        run: for image in $IMAGES; do docker pull "$image"; done
+
+      - uses: docker/login-action@v3
+        if: fromJSON(inputs.suite).images != ''
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Runners that start these with --no-build or inspect them expect
+      # antnest/<image>:local: published images are pulled, images built in
+      # this run are loaded from the image job's artifact.
+      - name: Provide local images
+        if: fromJSON(inputs.suite).images != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGES: ${{ fromJSON(inputs.suite).images }}
+          RESOLVED: ${{ inputs.images }}
+        run: |
+          set -o pipefail
+          for name in ${IMAGES//,/ }; do
+            ref="$(jq -er --arg name "$name" '.[$name].ref' <<<"$RESOLVED")"
+            if [ "$(jq -r --arg name "$name" '.[$name].build' <<<"$RESOLVED")" = true ]; then
+              gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "image-$name" -D "$RUNNER_TEMP/image-$name"
+              zstd -dc "$RUNNER_TEMP/image-$name/$name.tar.zst" | docker load
+              rm -rf "$RUNNER_TEMP/image-$name"
+            else
+              docker pull "$ref"
+              docker tag "$ref" "antnest/$name:local"
+            fi
+          done
+
+      - name: Run suite
+        env:
+          SUITE: ${{ fromJSON(inputs.suite).run }}
+        run: bash -euo pipefail -c "$SUITE"
+
+      # Per-run fixture credentials are excluded; everything else is evidence.
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ fromJSON(inputs.suite).id }}
+          path: |
+            artifacts/verification/
+            !artifacts/verification/**/credentials/**
+            !artifacts/verification/**/*.key
+            !artifacts/verification/**/*.pem
+          if-no-files-found: ignore
+          retention-days: 14

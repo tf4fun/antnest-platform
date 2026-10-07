@@ -13,6 +13,7 @@ import {
   imageReference,
   images,
   listTree,
+  matrices,
   matrix,
   matrixEntry,
   resolveImages,
@@ -43,6 +44,7 @@ test("documentation-only changes select no suites", () => {
 test("workflow, shared tooling, contract and Makefile changes select every suite", () => {
   for (const file of [
     ".github/workflows/integration.yml",
+    ".github/workflows/_suite.yml",
     "tests/support/dependencies.mjs",
     "contracts/runtime/README.md",
     "Makefile",
@@ -148,6 +150,19 @@ test("matrix entries carry the tier and scalar setup flags", () => {
     for (const value of Object.values(row))
       assert(["string", "boolean"].includes(typeof value));
   assert.deepEqual(matrix([]), { include: [] });
+});
+
+test("suites that need images form a matrix separate from those that do not", () => {
+  const { plain, imaged } = matrices(suites);
+  assert.equal(plain.include.length + imaged.include.length, suites.length);
+  assert(plain.include.every((row) => row.images === ""));
+  assert(imaged.include.every((row) => row.images !== ""));
+  assert(plain.include.some((row) => row.id === "egress-postgres"));
+  assert(imaged.include.some((row) => row.id === "auth-runtime-controller"));
+  assert.deepEqual(matrices([]), {
+    plain: { include: [] },
+    imaged: { include: [] },
+  });
 });
 
 test("bake definitions tag local images and read the image workflow cache", () => {

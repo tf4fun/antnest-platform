@@ -10,6 +10,7 @@ import { parseArgs } from "node:util";
 // Any change here can alter every suite's environment or selection.
 const everySuite = [
   ".github/workflows/integration.yml",
+  ".github/workflows/_suite.yml",
   "tests/support/**",
   "contracts/**",
   "Makefile",
@@ -527,6 +528,14 @@ export function matrix(selected) {
   return { include: selected.map(matrixEntry) };
 }
 
+export function matrices(selected) {
+  const needsImages = (suite) => (suite.images ?? []).length > 0;
+  return {
+    plain: matrix(selected.filter((suite) => !needsImages(suite))),
+    imaged: matrix(selected.filter(needsImages)),
+  };
+}
+
 const zeroSha = /^0+$/u;
 
 export function changedFiles(base, head, git = execFileSync) {
@@ -557,9 +566,12 @@ function main() {
   const all = values.all || !values.base || zeroSha.test(values.base);
   const files = all ? [] : changedFiles(values.base, values.head);
   const selected = selectSuites(files, { all });
+  const { plain, imaged } = matrices(selected);
   const lines = [
-    `suites=${JSON.stringify(matrix(selected))}`,
-    `selected=${selected.length}`,
+    `suites=${JSON.stringify(plain)}`,
+    `plain=${plain.include.length}`,
+    `image_suites=${JSON.stringify(imaged)}`,
+    `imaged=${imaged.include.length}`,
   ];
   let resolved = [];
   if (values["resolve-images"]) {
