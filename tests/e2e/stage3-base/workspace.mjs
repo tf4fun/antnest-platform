@@ -208,7 +208,7 @@ export async function logoutRevocation(
   secrets.push(...browser.cookies.values());
   await restoreWorkspace(
     {
-      profile: { name: `v${version}-ws`, version },
+      profile: { name: `v${version}-ws`, version, skills },
       agentId,
       member: browser,
       phase: `logout-v${version}`,
