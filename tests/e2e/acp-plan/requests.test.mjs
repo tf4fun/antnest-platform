@@ -128,3 +128,61 @@ test("denial permits only its exact rejected ACP boundary and matching domain op
     "access_denied",
   );
 });
+function catalogRead(f, method = "resources/read") {
+  f.add(
+    "catalog-client",
+    "request",
+    "HTTP POST antnest-runtime",
+    undefined,
+    5,
+    {
+      "span.kind": "client",
+    },
+  );
+  f.add(
+    "catalog-server",
+    "catalog-client",
+    "HTTP POST /mcp",
+    "antnest-runtime",
+    5,
+    {
+      "span.kind": "server",
+      "rpc.method": method,
+    },
+  );
+  f.add(
+    "catalog-operation",
+    "catalog-server",
+    "runtime.mcp.operation",
+    "antnest-runtime",
+    5,
+    { "rpc.method": method },
+  );
+  return f;
+}
+test("replays may refresh the Skill catalog but never call executable Runtime methods", () => {
+  for (const method of ["session/load", "session/resume", "session/fork"]) {
+    const f = catalogRead(requestFixture(method));
+    const result = inspectPlanRequestTrace(f.trace, f.expected);
+    assert.equal(result.no_execution, true);
+    assert.equal(result.runtime_information_reads, 1);
+    const executable = catalogRead(requestFixture(method), "tools/call");
+    assert.throws(() =>
+      inspectPlanRequestTrace(executable.trace, executable.expected),
+    );
+  }
+  const denied = catalogRead(requestFixture());
+  denied.expected.denial = "session_access_denied";
+  denied.trace.spans[2].tags.push(
+    { key: "antnest.outcome", value: "rejected" },
+    { key: "rpc.response.status_code", value: -32020 },
+    { key: "antnest.error.code", value: "-32020" },
+  );
+  denied.trace.spans[2].logs = [
+    { fields: [{ key: "event", value: "antnest.error" }] },
+  ];
+  assert.throws(
+    () => inspectPlanRequestTrace(denied.trace, denied.expected),
+    /cannot refresh Skill catalog/,
+  );
+});

@@ -91,6 +91,86 @@ export function timingEvidence(trace, tree, request, forwarded) {
     }),
   };
 }
+// Session setup and replay may read the Runtime Skill catalog; nothing else.
+export function inspectCatalogRuntime(trace, tree, request, expected) {
+  const runtime = trace.spans.filter(
+    (span) => tree.service(span) === "antnest-runtime",
+  );
+  const clients = trace.spans.filter(
+    (span) =>
+      tree.service(span) === "agent-acp-service" &&
+      span.operationName === "HTTP POST antnest-runtime",
+  );
+  if (!runtime.length && !clients.length) return 0;
+  assert(
+    !expected.rejection &&
+      [
+        "session/new",
+        "session/load",
+        "session/fork",
+        "session/resume",
+        "session/prompt",
+      ].includes(expected.method),
+    "request cannot refresh Skill catalog",
+  );
+  const servers = [];
+  for (const span of runtime) {
+    assert(
+      tree.chain(span).includes(request),
+      "catalog read detached from ACP request",
+    );
+    const parent = tree.parent(span);
+    if (span.operationName === "HTTP POST /mcp") {
+      assert(
+        ["discover", "resources/read"].includes(tag(span, "rpc.method")),
+        "catalog called an executable MCP method",
+      );
+      assert.equal(tag(span, "span.kind"), "server");
+      assert.equal(tree.service(parent), "agent-acp-service");
+      assert.equal(parent?.operationName, "HTTP POST antnest-runtime");
+      assert.equal(tag(parent, "span.kind"), "client");
+      servers.push(span);
+    } else if (span.operationName === "runtime.mcp.operation") {
+      assert.equal(parent?.operationName, "HTTP POST /mcp");
+      assert.equal(tree.service(parent), "antnest-runtime");
+      assert(["discover", "resources/read"].includes(tag(span, "rpc.method")));
+      assert.equal(tag(span, "rpc.method"), tag(parent, "rpc.method"));
+    } else {
+      assert.equal(
+        span.operationName,
+        "runtime.executor",
+        "catalog executed a Runtime tool",
+      );
+      assert.equal(parent?.operationName, "runtime.mcp.operation");
+      assert.equal(tree.service(parent), "antnest-runtime");
+      assert.equal(tag(parent, "rpc.method"), "resources/read");
+    }
+  }
+  for (const method of ["discover", "resources/read"])
+    assert(
+      servers.filter((span) => tag(span, "rpc.method") === method).length <= 1,
+      "repeated catalog discovery or information read",
+    );
+  for (const client of clients)
+    assert.equal(
+      servers.filter((span) => tree.parent(span) === client).length,
+      1,
+      "missing or duplicate Runtime catalog server",
+    );
+  for (const server of servers)
+    assert.equal(
+      runtime.filter(
+        (span) =>
+          span.operationName === "runtime.mcp.operation" &&
+          tree.parent(span) === server,
+      ).length,
+      1,
+      "missing or duplicate Runtime catalog operation",
+    );
+  return servers.filter((span) => tag(span, "rpc.method") === "resources/read")
+    .length;
+}
+
 export function inspectPlanRequestTrace(trace, expected, secrets = []) {
   assert(
     ["session/load", "session/resume", "session/fork", "session/new"].includes(
@@ -117,12 +197,11 @@ export function inspectPlanRequestTrace(trace, expected, secrets = []) {
     );
     assert.equal(tag(request, "antnest.outcome"), "rejected");
   }
+  const runtimeInformationReads = inspectCatalogRuntime(trace, tree, request, {
+    method: expected.method,
+    rejection: expected.denial,
+  });
   for (const span of trace.spans) {
-    assert.notEqual(
-      tree.service(span),
-      "antnest-runtime",
-      "non-execution request contacted Runtime",
-    );
     assert(
       !/^(agent\.run$|model\.|mcp\.|HTTP POST model$)/.test(span.operationName),
       "non-execution request executed work",
@@ -162,6 +241,7 @@ export function inspectPlanRequestTrace(trace, expected, secrets = []) {
     agent_id: expected.agentId,
     spans: trace.spans.length,
     no_execution: true,
+    runtime_information_reads: runtimeInformationReads,
     ...(expected.denial ? { denial: expected.denial } : {}),
     ...timingEvidence(trace, tree, request, forwarded),
   };
