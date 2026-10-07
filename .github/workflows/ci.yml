@@ -56,7 +56,8 @@ jobs:
           npm --prefix services/admin-console/web ci
 
       - name: Install headless Chromium
-        run: services/agent-ui/web/node_modules/.bin/playwright install --with-deps --only-shell chromium
+        timeout-minutes: 28
+        run: sh tests/support/ci-install-chromium.sh services/agent-ui/web/node_modules/.bin/playwright
 
       - name: Markdown links
         run: make check-links
