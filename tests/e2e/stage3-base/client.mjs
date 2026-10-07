@@ -110,7 +110,7 @@ async function operation(requestId, kind) {
       result = await api(`/api/admin/operations/${requestId}`);
       assert(
         ["running", "completed"].includes(result.state),
-        `${kind} lifecycle failed`,
+        `${kind} lifecycle failed at ${result.phase}: ${result.error_code ?? "unknown"}`,
       );
       return result.state === "completed";
     },
