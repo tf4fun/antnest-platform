@@ -224,6 +224,22 @@ export async function volumeTool(
   );
 }
 
+// The archiver runs as root to read every owner's files. Without the chown a
+// Linux daemon leaves the archive root-owned on the host bind mount.
+export function archiveCommand(
+  file,
+  owner = `${process.getuid()}:${process.getgid()}`,
+) {
+  return [
+    "sh",
+    "-c",
+    'tar --numeric-owner -cpf "/backup/$1" -C /data . && chown "$2" "/backup/$1" && chmod 600 "/backup/$1"',
+    "sh",
+    file,
+    owner,
+  ];
+}
+
 export async function backupStorage(
   config,
   docker,
@@ -289,11 +305,10 @@ export async function backupStorage(
       docker,
       name,
       directory,
-      ["tar", "--numeric-owner", "-cpf", `/backup/${file}`, "-C", "/data", "."],
+      archiveCommand(file),
       true,
     );
     metadata.files[file] = digest(await readFile(join(directory, file)));
-    await chmod(join(directory, file), 0o600);
     metadata.volumes.push({ ...volume, file });
   }
   const keys = JSON.stringify(encryptionKeys(config.env));
