@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { connectACP } from "../identity-closeout/acp-connection.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
+import { serviceCalls } from "./service-calls.mjs";
 
 const agentId = process.env.ANTNEST_E2E_AGENT_ID;
 const stopAfterPending = process.env.ANTNEST_E2E_STOP_AFTER_PENDING === "true";
@@ -11,15 +12,14 @@ const heldCommit = process.env.ANTNEST_E2E_HELD_COMMIT_DISABLE === "true";
 const policyOff = process.env.ANTNEST_E2E_POLICY_OFF === "true";
 assert(agentId);
 const member = new GatewayClient("http://edge-gateway:8080");
-const login = (
-  await member.request("/api/session/login", {
-    body: {
-      organization_slug: "stage3",
-      email: "c4-member@example.com",
-      password: "c4-member-password",
-    },
-  })
-).body;
+const account = {
+  organization_slug: "stage3",
+  email: "c4-member@example.com",
+  password: "c4-member-password",
+};
+const login = (await member.request("/api/session/login", { body: account }))
+  .body;
+const services = policyOff ? serviceCalls() : undefined;
 const client = connectACP(1, agentId, member.cookie);
 const status = () =>
   fetch("http://stage3-model:8080/status").then((response) => response.json());
@@ -52,35 +52,23 @@ try {
   if (policyOff) {
     const principal = login.principal;
     assert(principal?.organization_id && principal?.user_id);
-    const url = `http://agent-controller:8080/internal/agents/${agentId}/skill-learning-policy`;
-    const query = new URLSearchParams({
+    const scope = {
       organization_id: principal.organization_id,
       principal_id: principal.user_id,
-    });
-    const before = await fetch(`${url}?${query}`).then((response) =>
-      response.json(),
-    );
+    };
+    const before = await services.learningPolicy(agentId, scope);
     assert.equal(before.mode, "automatic");
-    const changed = await fetch(url, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        request_id: "learning-policy-off-during-review",
-        organization_id: principal.organization_id,
-        actor_principal_id: principal.user_id,
-        expected_revision: before.revision,
-        mode: "off",
-        scope: before.scope,
-        pinned_paths: before.pinned_paths,
-        limits: before.limits,
-      }),
+    const changed = await services.setLearningPolicy(agentId, account, {
+      request_id: "learning-policy-off-during-review",
+      organization_id: principal.organization_id,
+      actor_principal_id: principal.user_id,
+      expected_revision: before.revision,
+      mode: "off",
+      scope: before.scope,
+      pinned_paths: before.pinned_paths,
+      limits: before.limits,
     });
-    assert.equal(
-      changed.status,
-      200,
-      changed.status === 200 ? undefined : await changed.text(),
-    );
-    assert.equal((await changed.json()).mode, "off");
+    assert.equal(changed.mode, "off");
     const stopped = await until(
       async () => {
         const current = await status();

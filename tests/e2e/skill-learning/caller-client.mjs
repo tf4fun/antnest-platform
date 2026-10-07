@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import { connectACP } from "../identity-closeout/acp-connection.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
+import { serviceCalls } from "./service-calls.mjs";
 
 const callerId = process.env.ANTNEST_E2E_AGENT_ID;
 const peerId = process.env.ANTNEST_E2E_PEER_AGENT_ID;
 const ownerId = process.env.ANTNEST_E2E_ACTOR_ID;
-const registryToken = process.env.ANTNEST_E2E_SKILL_REGISTRY_TOKEN;
 const formal = JSON.parse(process.env.ANTNEST_E2E_CALLER_FORMAL);
 for (const id of [callerId, peerId]) assert.match(id, /^agent_[a-f0-9]{32}$/u);
 assert.notEqual(callerId, peerId);
-assert(registryToken);
 const client = new GatewayClient("http://edge-gateway:8080");
 const login = (await client.request("/api/session/login", { body: member }))
   .body;
@@ -23,49 +22,32 @@ const scope = {
 
 // Stop new review work for this test Run using the normal owner policy API.
 // Applied personal content and its projection remain active, verified below.
-const policyUrl = `http://agent-controller:8080/internal/agents/${callerId}/skill-learning-policy`;
-const policyResponse = await fetch(
-  `${policyUrl}?${new URLSearchParams({
-    organization_id: scope.organization_id,
-    principal_id: ownerId,
-  })}`,
-);
-assert.equal(policyResponse.status, 200);
-const policy = await policyResponse.json();
-const changed = await fetch(policyUrl, {
-  method: "PUT",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    request_id: "caller-foreground-policy-off",
-    organization_id: scope.organization_id,
-    actor_principal_id: ownerId,
-    expected_revision: policy.revision,
-    mode: "off",
-    scope: policy.scope,
-    pinned_paths: policy.pinned_paths,
-    limits: policy.limits,
-  }),
+const services = serviceCalls();
+const policy = await services.learningPolicy(callerId, {
+  organization_id: scope.organization_id,
+  principal_id: ownerId,
 });
-assert.equal(changed.status, 200);
-assert.equal((await changed.json()).mode, "off");
+const changed = await services.setLearningPolicy(callerId, member, {
+  request_id: "caller-foreground-policy-off",
+  organization_id: scope.organization_id,
+  actor_principal_id: ownerId,
+  expected_revision: policy.revision,
+  mode: "off",
+  scope: policy.scope,
+  pinned_paths: policy.pinned_paths,
+  limits: policy.limits,
+});
+assert.equal(changed.mode, "off");
 console.log(
   "Caller fixture: subsequent reviews disabled without removing content",
 );
 
 const candidates = await until(
   async () => {
-    const response = await fetch(
-      "http://skill-registry:8080/internal/skill-discovery/search",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${registryToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ ...scope, query: "fixture-procedure" }),
-        signal: AbortSignal.timeout(12000),
-      },
-    );
+    const response = await services.registrySearch({
+      ...scope,
+      query: "fixture-procedure",
+    });
     if (response.status !== 200) return null;
     const items = (await response.json()).items;
     const own = items.find(
