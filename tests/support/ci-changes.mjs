@@ -421,19 +421,20 @@ function foundation(runner) {
   return { run: `node tests/e2e/${runner}`, strict: true };
 }
 
+// Identity profiles report expected rejection errors as strict findings
+// (exit 2). They run the make recipe directly so that exit code survives.
+function identityProfile(profile) {
+  return { run: `${profile} sh tests/e2e/e2e-stage3a.sh`, strict: true };
+}
+
 function tierC() {
   const families = {
     "Stage 3a": [
       ["e2e-stage3-local", "base"],
       ...[
-        "acp-closeout",
         "acp-persistence",
         "acp-restart",
-        "acp-session",
-        "agent-access",
         "file-observations",
-        "identity-access",
-        "identity-core",
         "multimodal",
         "rpc-response-loss",
         "session-cost",
@@ -452,7 +453,22 @@ function tierC() {
         "stage4-skill-target-drift",
         "structured-plan",
       ].map((name) => [`e2e-${name}`, name]),
-      ["e2e-organization-display", "organization-display", { browser: true }],
+      ...[
+        ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
+        ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
+        ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
+        ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
+        ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],
+        [
+          "organization-display",
+          "ANTNEST_E2E_IDENTITY_CORE=true ANTNEST_E2E_ORGANIZATION_DISPLAY=true",
+          { browser: true },
+        ],
+      ].map(([name, profile, options]) => [
+        `e2e-${name}`,
+        name,
+        { ...options, ...identityProfile(profile) },
+      ]),
       ...["tool-permissions", "tool-progress"].map((name) => [
         `e2e-${name}`,
         name,

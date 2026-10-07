@@ -251,6 +251,24 @@ test("tier C managed MCP scenarios build their fixture image first", () => {
   }
 });
 
+test("tier C identity scenarios keep their strict exit 2 by running the make recipe directly", () => {
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  for (const name of [
+    "acp-closeout",
+    "acp-session",
+    "agent-access",
+    "identity-access",
+    "identity-core",
+    "organization-display",
+  ]) {
+    const suite = suites.find((item) => item.id === `c-${name}`);
+    const recipe = new RegExp(`^e2e-${name}:\\n\\t(.*)$`, "mu").exec(makefile);
+    assert(recipe, name);
+    assert.deepEqual(suite.run, [recipe[1]], name);
+    assert.equal(suite.strict, true, name);
+  }
+});
+
 test("tier C organization display installs the Agent UI browser client", () => {
   const suite = suites.find((item) => item.id === "c-organization-display");
   assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
@@ -271,7 +289,8 @@ test("foundation runners report strict-only findings through exit 2", () => {
   for (const suite of suites) {
     const entry = matrixEntry(suite);
     if (!Object.hasOwn(foundation, suite.id)) {
-      assert.equal(entry.strict_exit, false, suite.id);
+      if (!/ sh tests\/e2e\/e2e-stage3a\.sh$/u.test(entry.run))
+        assert.equal(entry.strict_exit, false, suite.id);
       continue;
     }
     assert.equal(entry.strict_exit, true, suite.id);
