@@ -5,7 +5,11 @@ import { skillClientArgs } from "./client-container.mjs";
 const config = {
   project: "antnest-lifecycle-0000abcd",
   credentials: "/work/artifacts/credentials",
-  env: { ANTNEST_SERVICE_AUTH_UID: "1234", ANTNEST_SERVICE_AUTH_GID: "5678" },
+  env: {
+    ANTNEST_SERVICE_AUTH_UID: "1234",
+    ANTNEST_SERVICE_AUTH_GID: "5678",
+    ANTNEST_SERVICE_NETWORK_PREFIX: "10.244.7",
+  },
 };
 const networks = (args) =>
   args.flatMap((value, index) =>
@@ -20,6 +24,7 @@ test("plain clients reach only the gateway and the model fixture", () => {
   ]);
   assert(!args.includes("--user"));
   assert(!args.some((value) => value.includes("/run/auth")));
+  assert(!args.some((value) => value.startsWith("--add-host=")));
   assert(
     args.includes("com.docker.compose.project=antnest-lifecycle-0000abcd"),
   );
@@ -63,6 +68,10 @@ test("Registry grants join the Registry client network once", () => {
     args.includes(
       "/work/artifacts/credentials/admin-console/tokens/skill-registry:/run/auth/console-registry:ro",
     ),
+  );
+  assert.deepEqual(
+    args.filter((value) => value.startsWith("--add-host=")),
+    ["--add-host=skill-registry:10.244.7.82"],
   );
 });
 
