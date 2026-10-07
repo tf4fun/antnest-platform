@@ -108,6 +108,17 @@ test("an explicit full run selects every enabled suite without any changes", () 
   assert.deepEqual(selectSuites([], { all: true }), enabled);
 });
 
+test("a manual run can name the suites it runs", () => {
+  assert.deepEqual(
+    ids(selectSuites([], { only: ["c-acp-session", "egress-postgres"] })),
+    ["egress-postgres", "c-acp-session"],
+  );
+  assert.throws(
+    () => selectSuites([], { only: ["egress-postgres", "missing"] }),
+    /unknown suite missing/u,
+  );
+});
+
 test("disabled suites name their breakage and are never selected", () => {
   const disabled = suites.filter((suite) => suite.disabled);
   for (const suite of disabled) {
