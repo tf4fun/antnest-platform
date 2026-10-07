@@ -559,7 +559,9 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 	}
 	condition := containerCondition(container)
 	peer := container.NetworkIPv4[d.config.ManagementNetwork]
-	if container.Running {
+	// Docker also reports Running for a restarting container; its restart
+	// condition, not a missing address, is the diagnosis.
+	if condition.phase == deployment.PhaseRunning {
 		address, err := netip.ParseAddr(peer)
 		if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.String() != peer {
 			peer = ""
