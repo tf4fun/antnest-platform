@@ -21,6 +21,11 @@ services:
     ports: !override
       - "127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT}:5432"
       - "127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT}:58080"
+  # Telemetry is disabled here, so the optional Jaeger dependency is dropped.
+  runtime-egress:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
   runtime-controller:
     image: ${ANTNEST_OBSERVATION_TEST_CONTROLLER_IMAGE}
     environment:
@@ -28,7 +33,9 @@ services:
       ANTNEST_SKILL_REGISTRY_URL: ""
     volumes:
       - observation-docker-socket:/fault
-    depends_on:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
       observation-docker-proxy:
         condition: service_healthy
 networks:
