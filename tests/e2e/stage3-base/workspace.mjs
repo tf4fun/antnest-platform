@@ -35,7 +35,10 @@ function record(traces, client, label, kind = "request", extra = {}) {
   assert(client.lastRequest?.method.startsWith("session/"));
   traces.push({ ...client.lastRequest, kind, label, ...extra });
 }
-async function catalog(client, sessionId) {
+// v1 lists delivered Skills after the built-in commands; v2 does not.
+const skillCommands = (profile) =>
+  profile.version === 1 ? (profile.skills ?? []) : [];
+async function catalog(client, sessionId, skills) {
   await until(
     () =>
       client.updates.some(
@@ -43,7 +46,7 @@ async function catalog(client, sessionId) {
       ),
     "catalog",
   );
-  assertCatalog(client.updates, sessionId);
+  assertCatalog(client.updates, sessionId, skills);
 }
 function validate(client, version) {
   for (const frame of client.updates)
@@ -74,7 +77,7 @@ export async function exerciseWorkspace(
     ({ sessionId } = await client.request("new", setup));
     assertResourceId("session", sessionId);
     record(traces, client, `${phase}:new`, "request", { sessionId });
-    await catalog(client, sessionId);
+    await catalog(client, sessionId, skillCommands(profile));
     client.updates.length = 0;
     const content = [{ type: "text", text: phase }];
     const result = await client.request(
@@ -143,7 +146,7 @@ export async function restoreWorkspace(saved, traces) {
       ...(profile.version === 2 ? { replayFrom: { type: "start" } } : {}),
     });
     record(traces, client, `${phase}:replay`);
-    await catalog(client, sessionId);
+    await catalog(client, sessionId, skillCommands(profile));
     await until(
       () =>
         transcript(client.updates, sessionId).length === history.length &&
@@ -156,7 +159,7 @@ export async function restoreWorkspace(saved, traces) {
     client.updates.length = 0;
     await client.request("resume", { ...setup, sessionId });
     record(traces, client, `${phase}:resume`);
-    await catalog(client, sessionId);
+    await catalog(client, sessionId, skillCommands(profile));
     assertTranscript(client.updates, sessionId, []);
     assert.deepEqual(tools(client.updates), []);
   } finally {
@@ -168,7 +171,13 @@ export async function restoreWorkspace(saved, traces) {
     "replay executed Provider work",
   );
 }
-export async function logoutRevocation(agentId, version, traces, secrets) {
+export async function logoutRevocation(
+  agentId,
+  version,
+  traces,
+  secrets,
+  skills = [],
+) {
   const before = await modelStatus(),
     browser = new GatewayClient(gateway);
   await login(browser);
@@ -178,7 +187,7 @@ export async function logoutRevocation(agentId, version, traces, secrets) {
   try {
     await client.initialize();
     ({ sessionId } = await client.request("new", setup));
-    await catalog(client, sessionId);
+    await catalog(client, sessionId, skillCommands({ version, skills }));
     assertTranscript(client.updates, sessionId, []);
     assert.deepEqual(tools(client.updates), []);
     const updates = structuredClone(client.updates);

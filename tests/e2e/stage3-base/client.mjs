@@ -39,6 +39,8 @@ import {
 import { serviceClient } from "../../support/service-grants.mjs";
 
 const skillMode = process.env.ANTNEST_E2E_SKILL_DELIVERY === "true";
+// The published Skill fixture is "code-review"; v1 lists it as a command.
+const deliveredSkills = skillMode ? ["skill:system:code-review"] : [];
 const readyLossMode = process.env.ANTNEST_E2E_SKILL_READY_LOSS === "true";
 const readyDriftMode = process.env.ANTNEST_E2E_SKILL_READY_DRIFT === "true";
 const targetDriftMode = process.env.ANTNEST_E2E_SKILL_TARGET_DRIFT === "true";
@@ -819,7 +821,7 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
   );
   assert.equal((await agent()).runtime.runtime_revision, sourceRevision);
   await exerciseWorkspace(
-    { name: "v1-ws", version: 1 },
+    { name: "v1-ws", version: 1, skills: deliveredSkills },
     agentId,
     member,
     "registry-outage",
@@ -1137,7 +1139,7 @@ async function main() {
     assert(html.body.includes("Antnest Workspace"));
     stage = "v1-workspace";
     const saved = await exerciseWorkspace(
-      { name: "v1-ws", version: 1 },
+      { name: "v1-ws", version: 1, skills: deliveredSkills },
       agentId,
       member,
       "v1-baseline",
@@ -1162,7 +1164,7 @@ async function main() {
     );
     stage = "http-workspace";
     await exerciseWorkspace(
-      { name: "v1-http", version: 1, http: true },
+      { name: "v1-http", version: 1, http: true, skills: deliveredSkills },
       agentId,
       member,
       "http-baseline",
@@ -1218,7 +1220,7 @@ async function main() {
       assert.notEqual(reused.runtime.runtime_revision, before);
       assertBuildSnapshot(reused, original.template, edited.model);
       await exerciseWorkspace(
-        { name: "v1-ws", version: 1 },
+        { name: "v1-ws", version: 1, skills: deliveredSkills },
         agentId,
         member,
         "offline-reuse",
@@ -1347,7 +1349,13 @@ async function main() {
     const revocations = [];
     for (const version of [1, 2])
       revocations.push(
-        await logoutRevocation(agentId, version, requests, secrets),
+        await logoutRevocation(
+          agentId,
+          version,
+          requests,
+          secrets,
+          deliveredSkills,
+        ),
       );
     await transition("delete");
     assert(

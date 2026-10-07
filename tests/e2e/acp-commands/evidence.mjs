@@ -57,7 +57,7 @@ export function assertOrdinaryTool(frames, version, phase) {
   );
 }
 
-export function assertCatalog(frames, sessionId) {
+export function assertCatalog(frames, sessionId, skills = []) {
   assert(
     frames.every((frame) => frame.sessionId === sessionId),
     "foreign Session notification",
@@ -69,7 +69,7 @@ export function assertCatalog(frames, sessionId) {
   const commands = catalogs[0].update.availableCommands;
   assert.deepEqual(
     commands.map(({ name }) => name),
-    ["help"],
+    ["help", ...skills],
   );
   assert(commands[0].description.includes("/帮助"), "missing localized alias");
 }

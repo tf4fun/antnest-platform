@@ -111,6 +111,20 @@ test("catalog is complete and belongs to the requested Session", () => {
   }
 });
 
+test("catalog lists delivered Skill commands after the built-in commands", () => {
+  const skill = { name: "skill:system:code-review", description: "Review" };
+  const withSkill = {
+    ...catalog,
+    update: {
+      ...catalog.update,
+      availableCommands: [...catalog.update.availableCommands, skill],
+    },
+  };
+  assertCatalog([withSkill], "s", [skill.name]);
+  assert.throws(() => assertCatalog([withSkill], "s"));
+  assert.throws(() => assertCatalog([catalog], "s", [skill.name]));
+});
+
 test("transcript compares block identity and order, excluding derived notifications", () => {
   const expected = [
     { role: "user", content: [{ type: "text", text: "/help" }] },
