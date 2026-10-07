@@ -19,6 +19,15 @@ const receiverNetworks = {
   "skill-registry": "registry-clients",
   "runtime-controller": "controller-runtime",
 };
+// Last octet of each receiver's listener on its receiver network in
+// compose.yaml. Docker DNS may answer a multi-network client with the
+// receiver's address on another shared network, where it does not listen.
+const receiverListeners = {
+  "identity-service": 66,
+  "agent-controller": 18,
+  "skill-registry": 82,
+  "runtime-controller": 50,
+};
 const endpoints = {
   "identity-service": "http://identity-service:8080",
 };
@@ -28,11 +37,17 @@ const endpoints = {
 export function grantContainerArgs(config, wanted = []) {
   const networks = [];
   const args = [];
+  const prefix = config.env.ANTNEST_SERVICE_NETWORK_PREFIX ?? "10.241.0";
   for (const grant of wanted) {
     assert(Object.hasOwn(grants, grant), `unknown client grant ${grant}`);
     const [sender, receiver] = grants[grant];
     const network = receiverNetworks[receiver];
-    if (!networks.includes(network)) networks.push(network);
+    if (!networks.includes(network)) {
+      networks.push(network);
+      args.push(
+        `--add-host=${receiver}:${prefix}.${receiverListeners[receiver]}`,
+      );
+    }
     args.push(
       "-v",
       `${join(config.credentials, sender, "tokens", receiver)}:/run/auth/${grant}:ro`,

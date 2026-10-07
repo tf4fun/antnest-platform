@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { grantContainerArgs, serviceClient } from "./service-grants.mjs";
 
 const config = {
@@ -19,6 +21,44 @@ test("grants add each receiver network once and mount credentials read-only", ()
   assert(
     args.includes(
       "/work/credentials/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro",
+    ),
+  );
+});
+
+test("grants pin each receiver to its listener on the receiver network", () => {
+  const compose = readFileSync(
+    fileURLToPath(new URL("../../compose.yaml", import.meta.url)),
+    "utf8",
+  );
+  const listener = (service, network) => {
+    const block = new RegExp(
+      `^  ${service}:\\n(?:(?!^  \\S).*\\n)*?      ${network}:\\n        ipv4_address: \\$\\{ANTNEST_SERVICE_NETWORK_PREFIX:-10\\.241\\.0\\}\\.(\\d+)$`,
+      "mu",
+    ).exec(compose);
+    assert(block, `${service} on ${network}`);
+    return block[1];
+  };
+  const prefixed = {
+    ...config,
+    env: { ...config.env, ANTNEST_SERVICE_NETWORK_PREFIX: "10.244.7" },
+  };
+  const { args } = grantContainerArgs(prefixed, [
+    "gateway-identity",
+    "acp-registry",
+    "console-registry",
+    "console-controller",
+    "controller-runtime",
+  ]);
+  const hosts = args.filter((arg) => arg.startsWith("--add-host="));
+  assert.deepEqual(hosts, [
+    `--add-host=identity-service:10.244.7.${listener("identity-service", "identity-clients")}`,
+    `--add-host=skill-registry:10.244.7.${listener("skill-registry", "registry-clients")}`,
+    `--add-host=agent-controller:10.244.7.${listener("agent-controller", "controller-clients")}`,
+    `--add-host=runtime-controller:10.244.7.${listener("runtime-controller", "controller-runtime")}`,
+  ]);
+  assert(
+    grantContainerArgs(config, ["gateway-identity"]).args.includes(
+      `--add-host=identity-service:10.241.0.${listener("identity-service", "identity-clients")}`,
     ),
   );
 });
