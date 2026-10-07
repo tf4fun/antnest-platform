@@ -31,6 +31,9 @@ services:
     environment:
       ANTNEST_DOCKER_HOST: unix:///fault/docker.sock
       ANTNEST_SKILL_REGISTRY_URL: ""
+      # Receiver and skill volumes are prepared with the candidate image, not
+      # an unrelated local tag.
+      ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${ANTNEST_OBSERVATION_TEST_CONTROLLER_IMAGE}
     volumes:
       - observation-docker-socket:/fault
     depends_on: !override
