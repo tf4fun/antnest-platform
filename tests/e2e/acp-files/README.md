@@ -67,7 +67,10 @@ WebSocket upgrade is not Agent access.
 Scenario reports use `status: file_case_passed` for a successful verification
 and a separate `tool_status` for the expected Tool outcome, so an intentionally
 failed edit does not look like a failed test command to the suite runner. The
-business result and the strict Trace result are reported separately.
+business result and the strict Trace result are reported separately. Strict
+warnings fail the exit, except the reviewed clock-skew warning (`clock skew
+adjustment disabled; not applying calculated delta of ...`), which is reported
+without failing.
 
 ## Trace checks
 
