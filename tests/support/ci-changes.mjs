@@ -421,9 +421,10 @@ function foundation(runner) {
   return { run: `node tests/e2e/${runner}`, strict: true };
 }
 
-// Identity profiles report expected rejection errors as strict findings
-// (exit 2). They run the make recipe directly so that exit code survives.
-function identityProfile(profile) {
+// Stage 3a profiles that report strict-only trace findings (expected
+// rejection errors, clock skew) as exit 2 run the make recipe directly so
+// that exit code survives.
+function stage3aProfile(profile) {
   return { run: `${profile} sh tests/e2e/e2e-stage3a.sh`, strict: true };
 }
 
@@ -467,12 +468,18 @@ function tierC() {
       ].map(([name, profile, options]) => [
         `e2e-${name}`,
         name,
-        { ...options, ...identityProfile(profile) },
+        { ...options, ...stage3aProfile(profile) },
       ]),
-      ...["tool-permissions", "tool-progress"].map((name) => [
+      ...[
+        ["tool-permissions", "ANTNEST_E2E_TOOL_PERMISSIONS=true"],
+        ["tool-progress", "ANTNEST_E2E_TOOL_PROGRESS=true"],
+      ].map(([name, profile]) => [
         `e2e-${name}`,
         name,
-        { before: ["make docker-build-managed-runtime"] },
+        {
+          before: ["make docker-build-managed-runtime"],
+          ...stage3aProfile(profile),
+        },
       ]),
     ],
     "Authenticated shell": [

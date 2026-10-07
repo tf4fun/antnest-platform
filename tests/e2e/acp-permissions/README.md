@@ -48,8 +48,8 @@ before the answer, so only that ACP prompt span may record the failed response
 dispatch.
 
 Topology and secret-boundary results are reported separately from strict Jaeger
-timing. Timing warnings keep a failing exit. The fixture does not synchronize
-clocks, rewrite timestamps or waive unrelated diagnostics.
+timing. Timing warnings alone exit 2; any other failure exits 1. The fixture
+does not synchronize clocks, rewrite timestamps or waive unrelated diagnostics.
 
 ## Optional modes
 

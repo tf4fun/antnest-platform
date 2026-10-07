@@ -237,10 +237,7 @@ test("tier C managed MCP scenarios build their fixture image first", () => {
   const scripts = resolve(root, "tests/e2e");
   for (const id of ["c-tool-permissions", "c-tool-progress"]) {
     const suite = suites.find((item) => item.id === id);
-    assert.deepEqual(suite.run, [
-      "make docker-build-managed-runtime",
-      `make ${id.replace(/^c-/u, "e2e-")}`,
-    ]);
+    assert.equal(suite.run[0], "make docker-build-managed-runtime");
     assert.match(
       readFileSync(
         resolve(scripts, `${id.replace(/^c-/u, "e2e-")}.sh`),
@@ -251,7 +248,7 @@ test("tier C managed MCP scenarios build their fixture image first", () => {
   }
 });
 
-test("tier C identity scenarios keep their strict exit 2 by running the make recipe directly", () => {
+test("tier C Stage 3a profiles keep their strict exit 2 by running the make recipe directly", () => {
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   for (const name of [
     "acp-closeout",
@@ -260,11 +257,18 @@ test("tier C identity scenarios keep their strict exit 2 by running the make rec
     "identity-access",
     "identity-core",
     "organization-display",
+    "tool-permissions",
+    "tool-progress",
   ]) {
     const suite = suites.find((item) => item.id === `c-${name}`);
     const recipe = new RegExp(`^e2e-${name}:\\n\\t(.*)$`, "mu").exec(makefile);
     assert(recipe, name);
-    assert.deepEqual(suite.run, [recipe[1]], name);
+    assert.equal(suite.run.at(-1), recipe[1], name);
+    assert.deepEqual(
+      suite.run.slice(0, -1),
+      name.startsWith("tool-") ? ["make docker-build-managed-runtime"] : [],
+      name,
+    );
     assert.equal(suite.strict, true, name);
   }
 });

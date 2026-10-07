@@ -262,4 +262,4 @@ console.log(
     strict_trace: strictTrace,
   }),
 );
-if (strictTrace === "failed") process.exitCode = 1;
+if (strictTrace === "failed") process.exitCode = 2;

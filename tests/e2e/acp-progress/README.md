@@ -55,8 +55,9 @@ every model request, exactly one ACP dispatch and one Runtime invocation. A
 deliberate managed Tool failure permits errors only inside that Tool call;
 cancellation also permits the owning Run error. Bash exit 7 and successful paths
 permit no error spans, except that a v1 successful path disconnected before its
-prompt answered may record the failed response dispatch on that ACP prompt span. Clock warnings stay visible and cause exit 1 even when all
-business and topology checks pass (the parent `make` reports exit 2). Warning
+prompt answered may record the failed response dispatch on that ACP prompt span.
+Clock warnings stay visible and cause exit 2 even when all business and
+topology checks pass; any other failure exits 1. Warning
 evidence includes the original cross-service timing differences, without
 rewriting timestamps or exempting small durations. Only compact final counts and
 verdicts are saved.
