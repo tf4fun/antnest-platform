@@ -524,7 +524,7 @@ function dependencyCancellationFixture(executionState = false) {
     trace.spans = [
       trace.spans[0],
       trace.spans[1],
-      client("forward", "edge", "agent-acp-service", "POST"),
+      client("forward", "edge", "agent-acp-workspace", "POST"),
       server(
         "acp",
         "agent-acp-service",

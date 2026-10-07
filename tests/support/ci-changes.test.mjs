@@ -223,6 +223,30 @@ test("tier C platform scenarios get every local image and no rebuilding target",
   }
 });
 
+test("foundation runners report strict-only findings through exit 2", () => {
+  const foundation = {
+    "c-lifecycle-health": "lifecycle-closeout/run.mjs health",
+    "c-lifecycle-interrupted": "lifecycle-closeout/interrupted-run.mjs",
+    "c-lifecycle-loss": "lifecycle-closeout/run.mjs loss",
+    "c-lifecycle-network": "lifecycle-closeout/run.mjs network",
+    "c-lifecycle-restore": "lifecycle-closeout/run.mjs restore",
+    "c-lifecycle-shutdown": "lifecycle-closeout/run.mjs shutdown",
+    "c-stage4-skill-restore": "lifecycle-closeout/run.mjs skill-restore",
+    "c-workspace": "workspace-closeout/run.mjs",
+    "c-workspace-browser": "workspace-closeout/browser-run.mjs",
+  };
+  for (const suite of suites) {
+    const entry = matrixEntry(suite);
+    if (!Object.hasOwn(foundation, suite.id)) {
+      assert.equal(entry.strict_exit, false, suite.id);
+      continue;
+    }
+    assert.equal(entry.strict_exit, true, suite.id);
+    // make reports every failed recipe as 2, which would hide the runner's code.
+    assert.equal(entry.run, `node tests/e2e/${foundation[suite.id]}`);
+  }
+});
+
 test("bake definitions tag local images and read the image workflow cache", () => {
   const definition = bakeDefinition(
     ["antnest-runtime", "runtime-egress"],
