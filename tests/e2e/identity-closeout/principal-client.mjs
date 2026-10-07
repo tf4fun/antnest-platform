@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { serviceClient } from "../../support/service-grants.mjs";
 
 // Probe Identity directly: Gateway's principal projection is a separate
 // consumer batch and cannot establish the producer's response contract.
@@ -8,12 +9,13 @@ export async function verifyPrincipalResponses(
   base,
   { organization, email, password },
   fetcher = fetch,
+  authorization = {},
 ) {
   async function rpc(method, body) {
     const response = await fetcher(new URL(`/rpc/identity/${method}`, base), {
       method: "POST",
       signal: AbortSignal.timeout(15000),
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authorization },
       body: JSON.stringify(body),
     });
     assert.equal(response.status, 200, `Identity ${method} must succeed`);
@@ -101,6 +103,8 @@ if (
         await verifyPrincipalResponses(
           process.argv[2] ?? "http://identity-service:8080",
           settings,
+          fetch,
+          serviceClient().authorization("gateway-identity"),
         ),
       ),
     );

@@ -14,7 +14,8 @@ evidence="$root/artifacts/verification/identity-agent/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 mkdir -p "$evidence/traces"
 compose() {
-  docker --lifecycle compose --env-file /dev/null -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" \
+  docker --lifecycle compose --env-file /dev/null -f "$root/compose.yaml" -f "$root/compose.debug.yaml" -f "$root/compose.stage3.yaml" \
+    -f "$root/tests/support/compose.public-development-secrets.yaml" -f "$root/tests/e2e/stage3a.compose.yaml" \
     -f "$root/tests/e2e/identity-closeout/oidc-compose.yaml" -f "$root/tests/e2e/identity-closeout/compose.yaml" \
     --profile stage3 --profile observability "$@"
 }
@@ -37,16 +38,22 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
+# The seed signs in as edge-gateway and changes the directory as Admin Console.
+docker run --rm --network "${COMPOSE_PROJECT_NAME}_identity-clients" \
   --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
-  node:24.21.0-bookworm-slim node /fixture/access-seed.mjs > "$directory/seed.json"
+  --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/identity-service:/run/auth/console-identity:ro" \
+  -v "$root/tests:/app/tests:ro" \
+  node:24.21.0-bookworm-slim node /app/tests/e2e/identity-closeout/access-seed.mjs > "$directory/seed.json"
 docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias agent-access-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=agent-access-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=agent-access-model" \
   -v "$root/tests/e2e/identity-closeout:/app/identity-closeout:ro" \
   antnest/agent-acp-service:local node /app/identity-closeout/agent-access-model.mjs >/dev/null
 docker create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "TEST_GATEWAY_PUBLIC_URL=$ANTNEST_EDGE_PUBLIC_BASE_URL" \
   -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \

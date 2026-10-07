@@ -9,6 +9,7 @@ export const grants = {
   "gateway-identity": ["edge-gateway", "identity-service"],
   "acp-controller": ["agent-acp-service", "agent-controller"],
   "console-controller": ["admin-console", "agent-controller"],
+  "console-identity": ["admin-console", "identity-service"],
   "acp-registry": ["agent-acp-service", "skill-registry"],
   "console-registry": ["admin-console", "skill-registry"],
   "controller-runtime": ["agent-controller", "runtime-controller"],

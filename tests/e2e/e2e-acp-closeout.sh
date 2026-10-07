@@ -28,11 +28,13 @@ containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOS
 docker_cmd inspect $containers >"$evidence/deployment.private.json"
 node "$root/tests/e2e/identity-closeout/deployment.mjs" "$evidence/deployment.private.json" "$COMPOSE_PROJECT_NAME"
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" --network-alias closeout-access-model \
+  --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=closeout-access-model" \
+  --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=closeout-access-model" \
   -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local \
   node /app/tests/e2e/acp-closeout/access-model.mjs >/dev/null
 docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" \
+  --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \
   -e ANTNEST_IDENTITY_EVIDENCE_DIR=/evidence/traces \

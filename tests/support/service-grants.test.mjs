@@ -23,6 +23,19 @@ test("grants add each receiver network once and mount credentials read-only", ()
   );
 });
 
+test("Admin Console directory grants reach Identity on its client network", () => {
+  const { networks, args } = grantContainerArgs(config, [
+    "gateway-identity",
+    "console-identity",
+  ]);
+  assert.deepEqual(networks, ["identity-clients"]);
+  assert(
+    args.includes(
+      "/work/credentials/admin-console/tokens/identity-service:/run/auth/console-identity:ro",
+    ),
+  );
+});
+
 test("no grants means no user override and no mounts", () => {
   assert.deepEqual(grantContainerArgs(config), { networks: [], args: [] });
   assert.throws(() => grantContainerArgs(config, ["admin-everything"]));

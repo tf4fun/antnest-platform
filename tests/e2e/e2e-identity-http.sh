@@ -18,7 +18,8 @@ export ANTNEST_IDENTITY_EVIDENCE_DIR="$evidence/traces"
 docker_cmd() { node "$root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 compose() {
   if [ "$1" = up ]; then lifecycle=--lifecycle; else lifecycle=; fi
-  docker_cmd $lifecycle compose --env-file /dev/null -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" \
+  docker_cmd $lifecycle compose --env-file /dev/null -f "$root/compose.yaml" -f "$root/compose.debug.yaml" -f "$root/compose.stage3.yaml" \
+    -f "$root/tests/support/compose.public-development-secrets.yaml" -f "$root/tests/e2e/stage3a.compose.yaml" \
     -f "$root/tests/e2e/identity-closeout/oidc-compose.yaml" -f "$root/tests/e2e/identity-closeout/compose.yaml" \
     --profile stage3 --profile observability "$@"
 }
@@ -43,21 +44,27 @@ run_suite() {
 }
 gateway="http://127.0.0.1:$ANTNEST_EDGE_HOST_PORT"
 jaeger="http://127.0.0.1:$ANTNEST_JAEGER_UI_HOST_PORT"
-if [ "$ANTNEST_IDENTITY_SUITE" = core ]; then
-  docker_cmd run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
+# Identity fixtures sign in as edge-gateway and change the directory as Admin
+# Console, with the per-run credentials Identity admits from those callers.
+identity_fixture() {
+  script=$1; shift
+  docker_cmd run --rm --network "${COMPOSE_PROJECT_NAME}_identity-clients" \
     --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" \
+    -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+    -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/identity-service:/run/auth/console-identity:ro" \
+    -v "$root/tests:/app/tests:ro" "$@" \
+    node:24.21.0-bookworm-slim node "/app/tests/e2e/identity-closeout/$script"
+}
+if [ "$ANTNEST_IDENTITY_SUITE" = core ]; then
+  identity_fixture principal-client.mjs \
     -e ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG -e ANTNEST_BOOTSTRAP_ORGANIZATION_NAME \
     -e ANTNEST_BOOTSTRAP_ADMIN_EMAIL -e ANTNEST_BOOTSTRAP_ADMIN_PASSWORD \
-    -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
-    node:24.21.0-bookworm-slim node /fixture/principal-client.mjs \
     >"$evidence/principal.json" 2>"$evidence/principal.stderr"
   node -e 'const assert=require("node:assert/strict"); const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); assert.equal(r.status,"business_passed"); console.log(JSON.stringify(r));' "$evidence/principal.json"
   docker_cmd cp "$COMPOSE_PROJECT_NAME-oidc-fixture-1:/certs/tls.crt" "$temporary/tls.crt" >/dev/null
   if [ "${ANTNEST_E2E_ORGANIZATION_DISPLAY:-false}" = true ]; then
-    docker_cmd run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
-      --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-      -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
-      node:24.21.0-bookworm-slim node /fixture/organization-display-seed.mjs \
+    identity_fixture organization-display-seed.mjs \
       >"$temporary/organization-seed.json" 2>"$evidence/organization-seed.stderr"
     run_suite organization-display "$root/tests/e2e/identity-closeout/organization-display-client.mjs" \
       "$gateway" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/organization-seed.json" "$temporary/canaries.json"
@@ -68,10 +75,7 @@ if [ "$ANTNEST_IDENTITY_SUITE" = core ]; then
   compose logs --no-color edge-gateway admin-console identity-service agent-ui >"$temporary/service-logs.txt"
   node "$root/tests/e2e/identity-closeout/check-oidc-logs.mjs" "$temporary/canaries.json" "$temporary/service-logs.txt"
 else
-  docker_cmd run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
-    --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-    -v "$root/tests/e2e/identity-closeout:/fixture:ro" \
-    node:24.21.0-bookworm-slim node /fixture/access-seed.mjs >"$temporary/seed.json"
+  identity_fixture access-seed.mjs >"$temporary/seed.json"
   run_suite access "$root/tests/e2e/identity-closeout/access-client.mjs" "$gateway" "$jaeger" "$temporary/seed.json"
   node "$root/tests/e2e/identity-closeout/expiry-client.mjs" "$gateway" "$jaeger" prepare "$temporary/expiry.json"
   compose stop identity-service >/dev/null
