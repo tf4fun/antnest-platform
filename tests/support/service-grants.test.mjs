@@ -1,12 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { grantContainerArgs, serviceClient } from "./service-grants.mjs";
+import { composeListeners } from "./compose-listeners.mjs";
+import {
+  grantContainerArgs,
+  grants,
+  serviceClient,
+} from "./service-grants.mjs";
 
 const config = {
   project: "antnest-stage3-e2e-42",
   credentials: "/work/credentials",
-  env: { ANTNEST_SERVICE_AUTH_UID: "1234", ANTNEST_SERVICE_AUTH_GID: "5678" },
+  env: {
+    ANTNEST_SERVICE_AUTH_UID: "1234",
+    ANTNEST_SERVICE_AUTH_GID: "5678",
+    ANTNEST_SERVICE_NETWORK_PREFIX: "10.9.8",
+  },
 };
+const pins = (args) =>
+  args.filter((arg) => arg.startsWith("--add-host=")).sort();
+
+test("grants pin each receiver to its Compose listener on the run's prefix", () => {
+  const listeners = composeListeners();
+  const receivers = [...new Set(Object.values(grants).map(([, r]) => r))];
+  const { args } = grantContainerArgs(config, Object.keys(grants));
+  // A client on several receiver networks may otherwise resolve a receiver
+  // to its address on a network where it does not listen.
+  assert.deepEqual(
+    pins(args),
+    receivers
+      .map((receiver) => {
+        assert(listeners.has(receiver), `${receiver} has no Compose listener`);
+        return `--add-host=${receiver}:10.9.8.${listeners.get(receiver)}`;
+      })
+      .sort(),
+  );
+  assert.deepEqual(pins(grantContainerArgs(config, ["acp-registry"]).args), [
+    "--add-host=skill-registry:10.9.8.82",
+  ]);
+});
+
+test("grants require the run's service network prefix", () => {
+  const { ANTNEST_SERVICE_NETWORK_PREFIX, ...env } = config.env;
+  assert.throws(
+    () => grantContainerArgs({ ...config, env }, ["acp-registry"]),
+    /ANTNEST_SERVICE_NETWORK_PREFIX/,
+  );
+});
 
 test("grants add each receiver network once and mount credentials read-only", () => {
   const { networks, args } = grantContainerArgs(config, [

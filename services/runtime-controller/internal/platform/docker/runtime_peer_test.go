@@ -43,6 +43,24 @@ func TestRuntimePeerMarksOnlyTheUnbindableContainerUnknown(t *testing.T) {
 	}
 }
 
+func TestRestartingRuntimeKeepsItsConditionWithoutAPeer(t *testing.T) {
+	driver := newTestDriver(t, newFakeEngine())
+	container := exactContainer()
+	// Docker reports Running=true for a restarting container that has already
+	// left its networks.
+	container.Status, container.Running, container.Health = "restarting", true, "unhealthy"
+	delete(container.NetworkIPv4, "antnest-runtime-management")
+	inspection, err := driver.inspectContainer(*container)
+	if err != nil || inspection.RuntimeEndpoint != "" || inspection.PlatformPhase != deployment.PhaseCreated ||
+		inspection.Health != deployment.HealthStarting || inspection.Reason != "runtime_restarting" {
+		t.Fatal("restart loop was hidden behind a missing peer", inspection, err)
+	}
+	container.NetworkIPv4["antnest-runtime-management"] = "10.243.1.20"
+	if inspection, err := driver.inspectContainer(*container); err != nil || inspection.RuntimeEndpoint != "" {
+		t.Fatal("restarting compute advertised a peer", inspection, err)
+	}
+}
+
 type peerInventoryEngine struct {
 	*fakeEngine
 	containers []Container

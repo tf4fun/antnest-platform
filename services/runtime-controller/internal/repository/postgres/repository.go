@@ -91,6 +91,20 @@ func (r *Repository) ProbeObservationNotification(ctx context.Context, payload s
 func (r *Repository) BeginTransition(
 	ctx context.Context, candidate deployment.Operation,
 ) (deployment.Operation, bool, error) {
+	type begun struct {
+		operation deployment.Operation
+		replay    bool
+	}
+	result, err := retrySerializable(ctx, func() (begun, error) {
+		operation, replay, err := r.beginTransition(ctx, candidate)
+		return begun{operation, replay}, err
+	})
+	return result.operation, result.replay, err
+}
+
+func (r *Repository) beginTransition(
+	ctx context.Context, candidate deployment.Operation,
+) (deployment.Operation, bool, error) {
 	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return deployment.Operation{}, false, fmt.Errorf("begin Runtime transition: %w", err)
@@ -324,6 +338,16 @@ func scanGenerationClaim(row scanner) (repository.GenerationClaim, error) {
 }
 
 func (r *Repository) CompleteOperation(
+	ctx context.Context,
+	operation deployment.Operation,
+	observation *deployment.Observation,
+) (*deployment.Observation, error) {
+	return retrySerializable(ctx, func() (*deployment.Observation, error) {
+		return r.completeOperation(ctx, operation, observation)
+	})
+}
+
+func (r *Repository) completeOperation(
 	ctx context.Context,
 	operation deployment.Operation,
 	observation *deployment.Observation,
