@@ -169,11 +169,52 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       skillRetries.add(span);
     }
   }
+  // Runtime Controller reruns a SERIALIZABLE transaction that PostgreSQL
+  // aborted with 40001; the abort is expected only before a committed retry.
+  const serializationRetries = new Set();
+  const retriedTransactions = new Set();
+  for (const error of errors) {
+    if (tree.service(error) !== "runtime-controller") continue;
+    const transaction =
+      error.operationName === "postgresql transaction"
+        ? error
+        : tree.parent(error);
+    if (
+      transaction?.operationName !== "postgresql transaction" ||
+      tree.service(transaction) !== "runtime-controller" ||
+      !["rolled_back", "failed"].includes(
+        tag(transaction, "antnest.transaction.outcome"),
+      ) ||
+      !trace.spans.some(
+        (span) =>
+          tree.parent(span) === transaction &&
+          hasError(span) &&
+          /\(SQLSTATE 40001\)$/.test(tag(span, "otel.status_description")),
+      )
+    )
+      continue;
+    const owner = tree.parent(transaction);
+    const aborted = transaction.startTime + transaction.duration;
+    if (
+      trace.spans.some(
+        (span) =>
+          span.operationName === "postgresql transaction" &&
+          tree.parent(span) === owner &&
+          !hasError(span) &&
+          tag(span, "antnest.transaction.outcome") === "committed" &&
+          span.startTime >= aborted,
+      )
+    ) {
+      serializationRetries.add(error);
+      retriedTransactions.add(transaction);
+    }
+  }
   for (const error of errors)
     if (
       !restart?.errors.has(error) &&
       !skillRetries.has(error) &&
-      !expectedTransportFaults.has(error)
+      !expectedTransportFaults.has(error) &&
+      !serializationRetries.has(error)
     )
       assertDockerProbe(trace, tree, error, expected);
   const absence = trace.spans.filter(
@@ -629,7 +670,11 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       errors.length -
       (restart?.errors.size ?? 0) -
       skillRetries.size -
-      expectedTransportFaults.size,
+      expectedTransportFaults.size -
+      serializationRetries.size,
+    ...(retriedTransactions.size
+      ? { serialization_retries: retriedTransactions.size }
+      : {}),
     ...(expected.startResponseLoss
       ? { expected_transport_faults: expectedTransportFaults.size }
       : {}),
@@ -650,7 +695,10 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       : {}),
     platform_absence_probes: absence.length,
     strict_trace:
-      errors.length > skillRetries.size + expectedTransportFaults.size
+      errors.length >
+      skillRetries.size +
+        expectedTransportFaults.size +
+        serializationRetries.size
         ? "failed"
         : timing.strict_trace,
     timing: {
