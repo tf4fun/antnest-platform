@@ -230,8 +230,6 @@ export const suites = [
     setup: [],
     images: ["antnest-runtime", "agent-acp-service", "runtime-egress"],
     pull: base,
-    disabled:
-      "its Compose override still joins the `development` network that #32 removed",
     paths: [
       ...service("runtime-controller", "runtime-egress", "agent-acp-service"),
       ...runtime,

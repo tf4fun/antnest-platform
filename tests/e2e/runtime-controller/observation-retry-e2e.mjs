@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
@@ -9,6 +10,7 @@ import {
   configuration,
   dockerClient,
 } from "../lifecycle-closeout/docker.mjs";
+import { runCommand } from "../../support/run-command.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 
 const requireAcp = createRequire(
@@ -149,18 +151,30 @@ try {
       .ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY,
     "1s",
   );
-  await docker(
-    config.compose([
-      "up",
-      "-d",
-      "--no-build",
-      "--pull",
-      "never",
-      "postgres",
-      "runtime-egress",
-      "runtime-controller",
-    ]),
-    true,
+  const started = await runCommand({
+    name: "compose-up",
+    command: [
+      "docker",
+      ...config.compose([
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "postgres",
+        "runtime-egress",
+        "runtime-controller",
+        "diagnostic-relay",
+      ]),
+    ],
+    output: config.evidence,
+    env: config.env,
+    timeoutMs: 600000,
+  });
+  assert.equal(
+    started.exit_code,
+    0,
+    "Compose start failed; see private evidence",
   );
   controllerID = await docker(
     config.compose(["ps", "-q", "runtime-controller"]),
@@ -188,10 +202,53 @@ try {
   }
   const controller = `http://127.0.0.1:${config.env.ANTNEST_RUNTIME_CONTROLLER_HOST_PORT}`;
   const proxy = `http://127.0.0.1:${config.env.ANTNEST_OBSERVATION_PROXY_HOST_PORT}`;
+  const controllerToken = readFileSync(
+    resolve(config.credentials, "agent-controller/tokens/runtime-controller"),
+    "utf8",
+  ).trim();
+  // Readiness is served only to loopback callers, so a disposable probe joins
+  // the controller's network namespace to read it.
+  const readStatus = async () =>
+    JSON.parse(
+      await docker([
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--label",
+        `com.docker.compose.project=${config.project}`,
+        "--network",
+        `container:${controllerID}`,
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--user",
+        "65532:65532",
+        "node:24.21.0-bookworm-slim",
+        "node",
+        "-e",
+        `fetch("http://127.0.0.1:8082/status", { signal: AbortSignal.timeout(5000) })
+  .then(async (response) => console.log(JSON.stringify({ status: response.status, body: await response.text() })));`,
+      ]),
+    );
   const request = async (path, body, key, expectedStatus = 200) => {
+    if (path === "/status") {
+      const response = await readStatus();
+      assert.equal(
+        response.status,
+        expectedStatus,
+        `${path}: HTTP ${response.status}`,
+      );
+      const value = JSON.parse(response.body);
+      assert(validateStatus(value), JSON.stringify(validateStatus.errors));
+      return value;
+    }
     const response = await fetch(controller + path, {
       method: body ? "POST" : "GET",
       headers: {
+        "Antnest-Service-Authorization": `Bearer ${controllerToken}`,
         "content-type": "application/json",
         ...(key ? { "Idempotency-Key": key } : {}),
       },
@@ -203,10 +260,7 @@ try {
       expectedStatus,
       `${path}: HTTP ${response.status}`,
     );
-    const value = await response.json();
-    if (path === "/status")
-      assert(validateStatus(value), JSON.stringify(validateStatus.errors));
-    return value;
+    return response.json();
   };
   const proxyMode = async (mode) => {
     const response = await fetch(`${proxy}/${mode}`, {
@@ -304,15 +358,33 @@ try {
     const [current] = JSON.parse(await docker(["inspect", egress]));
     return current.State.Health.Status === "healthy";
   }, "Egress readiness");
+  // A disposable probe on the control network keeps Agent Controller's Egress
+  // credential out of process arguments.
   const network = JSON.parse(
     await docker([
-      "exec",
-      egress,
-      "curl",
-      "--fail-with-body",
-      "-sS",
-      "-X",
-      "PUT",
+      "run",
+      "--rm",
+      "--pull",
+      "never",
+      "--label",
+      `com.docker.compose.project=${config.project}`,
+      "--network",
+      `${config.project}_control`,
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges:true",
+      "--user",
+      `${process.getuid()}:${process.getgid()}`,
+      "--mount",
+      `type=bind,src=${resolve(config.credentials, "agent-controller/tokens/runtime-egress")},dst=/proof/token,readonly`,
+      "node:24.21.0-bookworm-slim",
+      "node",
+      "-e",
+      `const token = require("node:fs").readFileSync("/proof/token", "utf8").trim();
+fetch(process.argv[1], { method: "PUT", headers: { "Antnest-Service-Authorization": "Bearer " + token }, signal: AbortSignal.timeout(10000) })
+  .then(async (response) => { const body = await response.text(); if (!response.ok) throw new Error("Egress attachment failed: HTTP " + response.status); console.log(body); });`,
       `http://${config.env.ANTNEST_EGRESS_CONTROL_IPV4}:8081/internal/agent-networks/${agent}`,
     ]),
   );
