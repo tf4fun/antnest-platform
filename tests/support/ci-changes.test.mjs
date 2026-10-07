@@ -86,6 +86,19 @@ test("test sources select the suites that run them", () => {
   );
 });
 
+test("managed MCP and deployment wiring runners select their suites", () => {
+  assert.deepEqual(ids(selectSuites(["tests/e2e/managed-mcp/model.mjs"])), [
+    "deployment-contracts",
+    "managed-mcp-secrets-v1",
+    "managed-mcp-secrets-v2",
+  ]);
+  assert(
+    ids(
+      selectSuites(["tests/integration/deployment/compose-runtime-docker.mjs"]),
+    ).includes("deployment-wiring"),
+  );
+});
+
 test("an explicit full run selects every enabled suite without any changes", () => {
   assert.deepEqual(selectSuites([], { all: true }), enabled);
 });

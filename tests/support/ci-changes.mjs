@@ -33,6 +33,10 @@ const runtime = ["runtimes/antnest-runtime/**", ...rust];
 // gets the pinned Docker Engine.
 const base = ["postgres:17.11-bookworm", "node:24.21.0-bookworm-slim"];
 const temporal = [...base, "temporalio/admin-tools:1.32.0"];
+const observed = [
+  ...temporal,
+  "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
+];
 
 // Prose never changes test behavior; contract and test sources may be parsed.
 const ignored = ["**/*.md", "LICENSE"];
@@ -318,8 +322,41 @@ export const suites = [
       ...go,
       ...compose,
     ],
-    run: ["make e2e-skill-discovery-registry"],
+    run: [
+      "make e2e-skill-discovery-registry",
+      "make e2e-skill-discovery-caller-registry",
+      "make e2e-skill-registry-trace",
+    ],
   },
+  {
+    id: "deployment-wiring",
+    name: "Deployment Compose wiring",
+    tier: "b",
+    setup: [],
+    pull: observed,
+    paths: [
+      "services/**",
+      "tests/integration/deployment/**",
+      ...go,
+      ...compose,
+    ],
+    run: ["make e2e-deployment-wiring"],
+  },
+  ...[1, 2].map((version) => ({
+    id: `managed-mcp-secrets-v${version}`,
+    name: `Managed MCP secrets protocol v${version}`,
+    tier: "b",
+    setup: [],
+    pull: observed,
+    paths: [
+      "services/**",
+      ...runtime,
+      "tests/e2e/managed-mcp/**",
+      ...go,
+      ...compose,
+    ],
+    run: [`make e2e-managed-mcp-v${version}`],
+  })),
   {
     id: "skill-registry-console",
     name: "Skill Registry Admin Console discovery",
