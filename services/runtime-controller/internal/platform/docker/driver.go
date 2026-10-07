@@ -384,7 +384,7 @@ func (d *Driver) Delete(
 	if err := key.Validate(); err != nil || deployment.ValidateDigest(digest) != nil {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("invalid Runtime identity"))
 	}
-	container, err := d.engine.InspectContainer(ctx, containerName(key.AgentID))
+	container, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
 	if errors.Is(err, ErrNotFound) {
 		if d.config.MCPMountGate != nil {
 			if err := d.config.MCPMountGate.Remove(ctx, key); err != nil {

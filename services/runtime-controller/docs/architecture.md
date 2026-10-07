@@ -225,7 +225,9 @@ effect; uncertainty retains the mutation slot for exact-request recovery.
 Update recovery uses physical identity, not a new attempt counter or a second
 phase journal. Before removing compute, inspect the recorded source. Only an
 exact source identity/digest can be deleted. An absent source means replacement
-may already have started. If the Agent-named resource belongs to another
+may already have started. Its generation-scoped receiver and MCP volumes can
+outlive the container, so the absent source is still deleted before the target
+is created; a failed release keeps the operation `unknown`. If the Agent-named resource belongs to another
 generation, only the exact target bound to this operation may be reused; the
 platform's idempotent Create still enforces scope, generation, digest and
 workspace ownership before reuse/start. The ordinary completion transaction
