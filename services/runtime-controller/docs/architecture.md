@@ -149,6 +149,15 @@ not merely a request de-duplication record. It removes these races:
 - workspace deletion between Create's storage check and container creation;
 - a stale attempt overwriting a newer terminal operation result.
 
+The Agent lock does not order transactions of different Agents. Transition
+start and operation completion run at `SERIALIZABLE`, so PostgreSQL may abort
+one of two concurrent Agents' transactions with SQLSTATE `40001`, for example
+when offboarding disables every Agent of a principal at once. The repository
+reruns the whole transaction after a short jittered backoff, at most 10 times
+and never past the caller's deadline; it does not retry any other error. Each
+aborted attempt remains in the trace as a failed `postgresql transaction`
+span, followed by the committed attempt under the same parent.
+
 Advisory locks use a bounded connection pool separate from ordinary repository
 queries. Holding many long platform operations therefore cannot consume every
 query connection. A lock connection that cannot be conclusively unlocked is
@@ -216,7 +225,9 @@ effect; uncertainty retains the mutation slot for exact-request recovery.
 Update recovery uses physical identity, not a new attempt counter or a second
 phase journal. Before removing compute, inspect the recorded source. Only an
 exact source identity/digest can be deleted. An absent source means replacement
-may already have started. If the Agent-named resource belongs to another
+may already have started. Its generation-scoped receiver and MCP volumes can
+outlive the container, so the absent source is still deleted before the target
+is created; a failed release keeps the operation `unknown`. If the Agent-named resource belongs to another
 generation, only the exact target bound to this operation may be reused; the
 platform's idempotent Create still enforces scope, generation, digest and
 workspace ownership before reuse/start. The ordinary completion transaction

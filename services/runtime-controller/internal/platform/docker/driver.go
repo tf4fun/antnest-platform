@@ -384,7 +384,7 @@ func (d *Driver) Delete(
 	if err := key.Validate(); err != nil || deployment.ValidateDigest(digest) != nil {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("invalid Runtime identity"))
 	}
-	container, err := d.engine.InspectContainer(ctx, containerName(key.AgentID))
+	container, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
 	if errors.Is(err, ErrNotFound) {
 		if d.config.MCPMountGate != nil {
 			if err := d.config.MCPMountGate.Remove(ctx, key); err != nil {
@@ -559,7 +559,9 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 	}
 	condition := containerCondition(container)
 	peer := container.NetworkIPv4[d.config.ManagementNetwork]
-	if container.Running {
+	// Docker also reports Running for a restarting container; its restart
+	// condition, not a missing address, is the diagnosis.
+	if condition.phase == deployment.PhaseRunning {
 		address, err := netip.ParseAddr(peer)
 		if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.String() != peer {
 			peer = ""
