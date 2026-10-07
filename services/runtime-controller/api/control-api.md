@@ -280,6 +280,9 @@ an individual inspection with `phase: running`, `health: unknown`, reason
 `runtime_peer_unavailable`, and no `runtime_endpoint`. No execution identity is
 verified for that inspection. It cannot be used to open an Egress attachment,
 but it does not fail the inventory or hide unrelated healthy Runtimes.
+A restarting container is not running: it keeps `phase: created` with reason
+`runtime_restarting` and has no `runtime_endpoint`, even when Docker still
+reports it as running.
 
 `GET /internal/runtimes/{agent_id}` returns the logical lifecycle state and
 opaque revision. When state is `provisioned`, it reads current platform state

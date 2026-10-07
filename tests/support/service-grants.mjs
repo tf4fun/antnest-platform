@@ -20,6 +20,15 @@ const receiverNetworks = {
   "skill-registry": "registry-clients",
   "runtime-controller": "controller-runtime",
 };
+// Last octet of each receiver's listener in compose.yaml. A receiver can share
+// several networks with a client, and Docker DNS may answer with an address
+// where it does not listen, so clients pin the listener (see service-hosts.sh).
+const receiverListeners = {
+  "identity-service": 66,
+  "agent-controller": 18,
+  "skill-registry": 82,
+  "runtime-controller": 50,
+};
 const endpoints = {
   "identity-service": "http://identity-service:8080",
 };
@@ -29,6 +38,7 @@ const endpoints = {
 export function grantContainerArgs(config, wanted = []) {
   const networks = [];
   const args = [];
+  const pinned = new Set();
   for (const grant of wanted) {
     assert(Object.hasOwn(grants, grant), `unknown client grant ${grant}`);
     const [sender, receiver] = grants[grant];
@@ -38,6 +48,14 @@ export function grantContainerArgs(config, wanted = []) {
       "-v",
       `${join(config.credentials, sender, "tokens", receiver)}:/run/auth/${grant}:ro`,
     );
+    if (!pinned.has(receiver)) {
+      const prefix = config.env.ANTNEST_SERVICE_NETWORK_PREFIX;
+      assert(prefix, "ANTNEST_SERVICE_NETWORK_PREFIX is required for grants");
+      pinned.add(receiver);
+      args.push(
+        `--add-host=${receiver}:${prefix}.${receiverListeners[receiver]}`,
+      );
+    }
   }
   if (args.length)
     args.unshift(
