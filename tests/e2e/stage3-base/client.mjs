@@ -790,30 +790,46 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
     (value) => ({ value }),
     (error) => ({ error }),
   );
-  const progress = await until(
-    async () => {
-      const response = await fetch(
-        `${gateway}/api/admin/agent-skill-preparations/by-idempotency-key`,
-        {
-          signal: AbortSignal.timeout(15000),
-          headers: {
-            Cookie: admin.cookie,
-            Origin: gateway,
-            "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
-            "Idempotency-Key": key,
-          },
+  const preparation = async () => {
+    const response = await fetch(
+      `${gateway}/api/admin/agent-skill-preparations/by-idempotency-key`,
+      {
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          Cookie: admin.cookie,
+          Origin: gateway,
+          "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
+          "Idempotency-Key": key,
         },
-      );
-      if (response.status === 404) return false;
-      assert.equal(response.status, 200);
-      return response.json();
-    },
+      },
+    );
+    if (response.status === 404) return false;
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const found = await until(
+    preparation,
     "find durable preparation after uncertain HTTP response",
     60000,
   );
-  assert.equal(progress.agent_id, agentId);
-  assert.equal(progress.kind, "rebuild");
-  assert(["queued", "preparing", "retry_wait"].includes(progress.state));
+  assert.equal(found.agent_id, agentId);
+  assert.equal(found.kind, "rebuild");
+  assert(["queued", "preparing", "retry_wait"].includes(found.state));
+  // Restoring before a failed attempt lets a slow first attempt succeed and
+  // proves nothing about outage handling.
+  const progress = await until(
+    async () => {
+      const current = await preparation();
+      assert(current, "durable preparation disappeared during outage");
+      assert(
+        ["queued", "preparing", "retry_wait"].includes(current.state),
+        `unexpected preparation state during outage: ${current.state}`,
+      );
+      return current.state === "retry_wait" && current;
+    },
+    "Registry outage schedules a durable preparation retry",
+    90000,
+  );
   assert.equal(
     (await state()).availability,
     "ready",
