@@ -20,6 +20,7 @@ import {
   resolveImages,
   selectSuites,
   setups,
+  shards,
   suiteImages,
   suites,
 } from "./ci-changes.mjs";
@@ -166,16 +167,27 @@ test("platform targets kept out of CI exist, run nowhere and name their issue", 
   }
 });
 
-test("matrix entries carry the tier and scalar setup flags", () => {
-  const { include } = matrix(suites);
-  assert.equal(include.length, suites.length);
-  assert.deepEqual(
-    new Set(include.map((row) => row.tier)),
-    new Set(["A", "B", "C"]),
-  );
+test("every suite belongs to exactly one shard of its own tier", () => {
+  const members = shards.flatMap((shard) => shard.suites);
+  assert.equal(new Set(members).size, members.length);
+  assert.deepEqual([...members].sort(), ids(suites).sort());
+  assert.equal(new Set(shards.map((shard) => shard.id)).size, shards.length);
+  for (const shard of shards) {
+    assert(shard.suites.length > 0, shard.id);
+    const tiers = new Set(
+      shard.suites.map((id) => suites.find((suite) => suite.id === id).tier),
+    );
+    assert.equal(tiers.size, 1, shard.id);
+    assert(shard.id.startsWith(`${[...tiers][0]}-`), shard.id);
+  }
+  assert(shards.filter((shard) => shard.id.startsWith("c-")).length <= 12);
+});
+
+test("suite entries carry the tier and scalar setup flags", () => {
   const entry = matrixEntry(
     suites.find((suite) => suite.id === "auth-runtime-controller"),
   );
+  assert.equal(entry.tier, "B");
   assert.equal(entry.setup_go, false);
   assert.equal(entry.setup_chromium, false);
   assert.equal(entry.images, "antnest-runtime");
@@ -187,24 +199,54 @@ test("matrix entries carry the tier and scalar setup flags", () => {
     entry.run,
     "node tests/e2e/service-authentication/runtime-controller/run.mjs",
   );
+});
+
+test("shard entries run their selected suites in shard order with merged setup", () => {
+  const { include } = matrix(suites);
+  assert.equal(include.length, shards.length);
+  assert.deepEqual(
+    new Set(include.map((row) => row.tier)),
+    new Set(["A", "B", "C"]),
+  );
   for (const row of include)
     for (const value of Object.values(row))
       assert(["string", "boolean"].includes(typeof value));
+  const pick = (...names) => suites.filter((suite) => names.includes(suite.id));
+  const [postgres] = matrix(
+    pick("agent-controller-postgres", "egress-postgres", "auth-console"),
+  ).include.filter((row) => row.id === "a-postgres");
+  assert.deepEqual(
+    JSON.parse(postgres.suites).map(({ id }) => id),
+    ["egress-postgres", "agent-controller-postgres"],
+  );
+  assert.equal(postgres.images, "temporal");
+  assert.equal(postgres.setup_go, true);
+  assert.equal(postgres.setup_rust, true);
+  assert.equal(postgres.setup_chromium, false);
+  const [identity] = matrix(pick("c-identity-access")).include;
+  assert.deepEqual(JSON.parse(identity.suites), [
+    {
+      id: "c-identity-access",
+      name: "Stage 3a: identity-access",
+      run: "ANTNEST_E2E_IDENTITY_ACCESS=true sh tests/e2e/e2e-stage3a.sh",
+      strict: true,
+    },
+  ]);
   assert.deepEqual(matrix([]), { include: [] });
 });
 
-test("required suites split by image need; tier C forms its own matrix", () => {
+test("required shards split by image need; tier C forms its own matrix", () => {
   const { plain, imaged, optional } = matrices(suites);
   assert.equal(
     plain.include.length + imaged.include.length + optional.include.length,
-    suites.length,
+    shards.length,
   );
   assert(plain.include.every((row) => row.images === "" && row.tier !== "C"));
   assert(imaged.include.every((row) => row.images !== "" && row.tier !== "C"));
   assert(optional.include.every((row) => row.tier === "C"));
-  assert(plain.include.some((row) => row.id === "egress-postgres"));
-  assert(imaged.include.some((row) => row.id === "auth-runtime-controller"));
-  assert(optional.include.some((row) => row.id === "c-stage3-local"));
+  assert(plain.include.some((row) => row.id === "a-browser"));
+  assert(imaged.include.some((row) => row.id === "b-auth"));
+  assert(optional.include.some((row) => row.id === "c-acp"));
   assert.deepEqual(matrices([]), {
     plain: { include: [] },
     imaged: { include: [] },

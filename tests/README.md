@@ -177,6 +177,15 @@ paths it exercises. The workflow runs only the suites that match the changed
 files (prose-only changes select none). Changes to the workflow, `tests/support/`,
 `contracts/` or the `Makefile` select every suite.
 
+Suites are grouped into shards by product area (`shards` in the catalog).
+Each shard is one CI job, `Tier <tier> / <shard>`: it installs the setup and
+images its selected suites need and runs them in order on one runner through
+[`support/ci-shard.mjs`](support/ci-shard.mjs). Every selected suite runs even
+after an earlier one fails, each in its own process group with a timeout, and
+the job summary lists each suite's result. Destructive suites come last in
+their shard. Every suite starts and removes its own stack, so a shard reuses
+pulled images and host setup but no platform state.
+
 - **Tier A:** PostgreSQL and Temporal component suites, browser suites,
   deployment render contracts and the Runtime SDK probe.
 - **Tier B:** service-owned Docker E2E runners, which build their own images.
@@ -186,14 +195,14 @@ files (prose-only changes select none). Changes to the workflow, `tests/support/
   authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
   skill learning). Platform targets that test one service's rule, or behavior
   that is not settled, stay out of CI; `outsideCI` in `ci-changes.mjs` names
-  the issue that moves each one to its service or re-admits it. Each target
-  boots its own stack and runs as its own suite, at most six at a time. Tier C
-  reports per suite but is not part of `Integration checks` yet. Lifecycle and
+  the issue that moves each one to its service or re-admits it. At most six
+  tier C shards run at a time. Tier C reports per shard but is not part of
+  `Integration checks` yet. Lifecycle and
   workspace foundation runners and the Stage 3a identity, tool permission and
   tool progress profiles exit 2 when business and topology checks pass but
-  strict trace findings remain. CI passes such a run with a warning only when
-  `tests/support/strict-findings.mjs` finds no Jaeger warning other than clock
-  skew adjustments in its output; error spans on denial and cancellation paths
+  strict trace findings remain. The shard passes such a suite with a warning
+  only when [`support/strict-findings.mjs`](support/strict-findings.mjs) finds
+  no Jaeger warning other than clock skew adjustments in its output; error spans on denial and cancellation paths
   are recorded by contract and checked by each runner's topology. The findings
   stay in the evidence artifact. The Stage 3a profiles run their make
   recipe directly because make reports every failed recipe as 2. Tool permission and tool
@@ -203,20 +212,22 @@ files (prose-only changes select none). Changes to the workflow, `tests/support/
 Each local image is named `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
 where the hash covers the image's Dockerfile, `.dockerignore` and every path
 the Dockerfile copies. Suites pull images that GHCR already has. The image job
-builds each missing image once per run and hands it to the suites as an
-artifact; suites that need no image start without waiting for it. Runs on
+builds each missing image once per run and hands it to the shards as an
+artifact; shards that need no image start without waiting for it. Runs on
 `main` build and publish every missing image, so a pull request that does not
-change an image's inputs never rebuilds it. Every suite job runs the steps in
+change an image's inputs never rebuilds it. Every shard job runs the steps in
 `.github/workflows/_suite.yml`.
 
 A manual run (`gh workflow run integration.yml --ref <branch> -f suites='<id> <id>'`)
-runs only the named catalog suites; without `suites` it runs every suite.
+runs only the named catalog suites, in their shards; without `suites` it runs
+every suite.
 
-Each suite uploads `artifacts/verification/` (without fixture credentials) as
-the `evidence-<suite>` artifact. The `Integration checks` job is the single
-required status; it fails if suite selection or any selected suite fails. Add a
-suite by extending the catalog; its unit tests check that every `make` target
-and runner it names exists. A suite with a `disabled` reason stays in the
+Each shard uploads `artifacts/verification/` (without fixture credentials) as
+the `evidence-<shard>` artifact. The `Integration checks` job is the single
+required status; it fails if suite selection or any selected tier A or B suite
+fails. Add a suite by extending the catalog and naming it in one shard of its
+tier; the catalog's unit tests check that every `make` target and runner it
+names exists and that every suite belongs to exactly one shard. A suite with a `disabled` reason stays in the
 catalog but is never selected until its known breakage is fixed.
 
 ## Resource hygiene
