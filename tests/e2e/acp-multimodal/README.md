@@ -63,7 +63,9 @@ is forbidden.
 
 The driver reports business, topology and privacy results separately from strict
 Trace timing. Timing warnings or a negative model-to-closure timestamp gap keep
-a nonzero exit, and the raw timing evidence is recorded. Mutation tests reject
+a nonzero exit, and the raw timing evidence is recorded. Only the reviewed
+clock-skew warning (`clock skew adjustment disabled; not applying calculated
+delta of ...`) is reported without failing the exit. Mutation tests reject
 changed bytes, missing history, detached spans, missing terminal writes, extra
 Provider calls, unrelated errors and unexpected Tools. The optional local HTTP
 reference test uses only a loopback temporary port and closes all sockets when

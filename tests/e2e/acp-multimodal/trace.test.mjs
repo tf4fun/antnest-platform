@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectNativeTrace } from "./trace.mjs";
+import { inspectNativeTrace, nativeStrictOutcome } from "./trace.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
 function fixture(failed = false, version = 1, http = false) {
@@ -229,4 +229,34 @@ test("model-to-closure timestamp inversion remains a strict failure with raw evi
     model_duration_us: 1,
     finish_start_us: 10,
   });
+});
+
+test("native strict outcome waives only clock warnings and never a timestamp inversion", () => {
+  const clock = {
+    strict_trace: "failed",
+    model_finish_order: "passed",
+    warning_count: 1,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of 3.2ms",
+    ],
+  };
+  const passed = { strict_trace: "passed", model_finish_order: "passed" };
+  assert.deepEqual(nativeStrictOutcome([passed]), {
+    strict_trace: "passed",
+    accepted: true,
+  });
+  assert.deepEqual(nativeStrictOutcome([passed, clock]), {
+    strict_trace: "failed",
+    clock_warnings_accepted: true,
+    accepted: true,
+  });
+  assert.equal(
+    nativeStrictOutcome([{ ...clock, model_finish_order: "failed" }]).accepted,
+    false,
+  );
+  assert.equal(
+    nativeStrictOutcome([{ ...clock, warnings: ["missing parent span"] }])
+      .accepted,
+    false,
+  );
 });

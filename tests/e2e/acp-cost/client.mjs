@@ -7,7 +7,10 @@ import { assertDeniedSessionError } from "../identity-closeout/agent-access-evid
 import { until } from "../acp-closeout/support.mjs";
 import { transcript } from "../acp-commands/evidence.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { collectNativeTrace } from "../acp-multimodal/trace.mjs";
+import {
+  collectNativeTrace,
+  nativeStrictOutcome,
+} from "../acp-multimodal/trace.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import {
@@ -682,15 +685,11 @@ async function main() {
       ),
     );
   }
-  const strictTrace = [...checked, ...pricing].some(
-    (t) => t.strict_trace === "failed",
-  )
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = nativeStrictOutcome([...checked, ...pricing]);
   console.log(
     JSON.stringify({
       status: "business_passed",
-      strict_trace: strictTrace,
+      ...strict,
       transports: profiles.map((p) => p.name),
       model_requests: requests.length,
       restored_sessions: saved.length * 3,
@@ -704,7 +703,7 @@ async function main() {
       pricing_traces: pricing,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();

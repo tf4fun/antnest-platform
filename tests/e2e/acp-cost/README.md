@@ -55,7 +55,9 @@ content capture is disabled, and the project does not read the developer
   Controller ancestry and a committed Model SQL write.
 
 Strict Jaeger timing and ordering failures keep a nonzero exit even when the
-business, privacy and ancestry checks pass.
+business, privacy and ancestry checks pass. Only the reviewed clock-skew warning
+(`clock skew adjustment disabled; not applying calculated delta of ...`) is
+reported without failing the exit.
 
 ## Cleanup
 

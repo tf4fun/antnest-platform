@@ -8,7 +8,15 @@ import {
   requestTraceBoundary,
   inspectCommandTrace,
   selectCommandTrace,
+  commandStrictOutcome,
 } from "../acp-commands/trace.mjs";
+
+// A model-to-closure inversion is ordering evidence, not a Jaeger clock warning.
+export function nativeStrictOutcome(checked) {
+  if (checked.some((trace) => trace.model_finish_order === "failed"))
+    return { strict_trace: "failed", accepted: false };
+  return commandStrictOutcome(checked);
+}
 
 export function inspectNativeTrace(
   trace,
