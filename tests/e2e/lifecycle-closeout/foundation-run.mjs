@@ -235,20 +235,7 @@ export async function runFoundation(
         "failure.private.txt",
         inspect(error, { depth: 8 }),
       );
-    if (
-      config?.evidence &&
-      [
-        "shutdown",
-        "health",
-        "restore",
-        "skill-restore",
-        "loss",
-        "interrupted",
-        "crash",
-        "workspace",
-        "workspace-browser",
-      ].includes(profile)
-    ) {
+    if (config?.evidence) {
       // Preserve bounded, private service diagnostics before owned cleanup.
       const diagnostics = {};
       try {
