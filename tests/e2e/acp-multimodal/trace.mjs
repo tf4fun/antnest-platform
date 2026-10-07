@@ -11,11 +11,41 @@ import {
   commandStrictOutcome,
 } from "../acp-commands/trace.mjs";
 
+// The finish span's start is truncated to the millisecond, so an inversion is
+// unresolvable only while the true start may still follow the model's end.
+function truncatedInversion(trace) {
+  const timing = trace.model_finish_timing;
+  return (
+    timing !== undefined &&
+    timing.finish_start_us % 1000 === 0 &&
+    timing.finish_start_us + 1000 >
+      timing.model_start_us + timing.model_duration_us
+  );
+}
+
 // A model-to-closure inversion is ordering evidence, not a Jaeger clock warning.
 export function nativeStrictOutcome(checked) {
-  if (checked.some((trace) => trace.model_finish_order === "failed"))
+  const inverted = checked.filter(
+    (trace) => trace.model_finish_order === "failed",
+  );
+  if (!inverted.every(truncatedInversion))
     return { strict_trace: "failed", accepted: false };
-  return commandStrictOutcome(checked);
+  const outcome = commandStrictOutcome(
+    checked.map((trace) =>
+      inverted.includes(trace)
+        ? {
+            ...trace,
+            strict_trace: trace.warnings?.length ? "failed" : "passed",
+          }
+        : trace,
+    ),
+  );
+  if (!inverted.length || !outcome.accepted) return outcome;
+  return {
+    ...outcome,
+    strict_trace: "failed",
+    millisecond_truncation_accepted: true,
+  };
 }
 
 export function inspectNativeTrace(

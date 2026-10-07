@@ -59,7 +59,9 @@ JSON-RPC ID and connection.
 Each publication attempt must own an `agent_controller.execution_publication`
 span and its source read. The oracle rejects missing, foreign or premature SQL.
 Strict timing warnings and unrelated ERROR spans are reported as failures,
-separately from the scoped business and topology result.
+separately from the scoped business and topology result. Only the reviewed
+clock-skew warning (`clock skew adjustment disabled; not applying calculated
+delta of ...`) is reported without failing the exit.
 
 Full Traces stay in the private directory
 `artifacts/verification/rpc-response-loss/<project>/rpc-traces`; console output

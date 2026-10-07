@@ -5,7 +5,10 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { commandConnection } from "../acp-commands/connection.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import {
+  inspectCommandTrace,
+  commandStrictOutcome,
+} from "../acp-commands/trace.mjs";
 import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import {
@@ -556,17 +559,15 @@ async function main() {
     results.reduce((n, r) => n + (r.runtime_tool_calls ?? 0), 0),
     8,
   );
-  const strict = results.some((r) => r.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = commandStrictOutcome(results);
   console.log(
     JSON.stringify({
       status: "scoped_topology_passed",
-      strict_trace: strict,
+      ...strict,
       traces: results,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();

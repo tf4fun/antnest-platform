@@ -260,3 +260,36 @@ test("native strict outcome waives only clock warnings and never a timestamp inv
     false,
   );
 });
+
+test("native strict outcome accepts an inversion only inside a truncated millisecond", () => {
+  const inverted = (timing) => ({
+    strict_trace: "failed",
+    warning_count: 0,
+    warnings: [],
+    model_finish_order: "failed",
+    model_to_finish_gap_us:
+      timing.finish_start_us - timing.model_start_us - timing.model_duration_us,
+    model_finish_timing: timing,
+  });
+  const truncated = inverted({
+    model_start_us: 1791366679081000,
+    model_duration_us: 181,
+    finish_start_us: 1791366679081000,
+  });
+  assert.deepEqual(nativeStrictOutcome([truncated]), {
+    strict_trace: "failed",
+    millisecond_truncation_accepted: true,
+    accepted: true,
+  });
+  for (const timing of [
+    { model_start_us: 1000, model_duration_us: 1200, finish_start_us: 1000 },
+    { model_start_us: 1000, model_duration_us: 181, finish_start_us: 1001 },
+  ])
+    assert.equal(nativeStrictOutcome([inverted(timing)]).accepted, false);
+  assert.equal(
+    nativeStrictOutcome([
+      { ...truncated, warning_count: 1, warnings: ["missing parent span"] },
+    ]).accepted,
+    false,
+  );
+});
