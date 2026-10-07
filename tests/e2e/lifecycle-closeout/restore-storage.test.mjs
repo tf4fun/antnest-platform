@@ -10,6 +10,7 @@ import {
   restoreStorage,
   backupStorage,
   volumeTool,
+  archiveCommand,
   skillVolumeInventory,
   stage4RecoveryPlan,
   databaseInitializers,
@@ -82,6 +83,24 @@ test("volume archive operations use the bounded lifecycle deadline", async (t) =
     true,
   );
   assert.equal(calls[0][1], true);
+});
+
+test("volume archives are handed to the host user that verifies them", () => {
+  const [shell, flag, script, name, file, owner] = archiveCommand(
+    "volume-0.tar",
+    "1001:121",
+  );
+  assert.deepEqual(
+    [shell, flag, name, file, owner],
+    ["sh", "-c", "sh", "volume-0.tar", "1001:121"],
+  );
+  assert.match(script, /tar --numeric-owner -cpf "\/backup\/\$1" -C \/data \./);
+  assert.match(script, /&& chown "\$2" "\/backup\/\$1"/);
+  assert.match(script, /&& chmod 600 "\/backup\/\$1"$/);
+  assert.equal(
+    archiveCommand("volume-1.tar").at(-1),
+    `${process.getuid()}:${process.getgid()}`,
+  );
 });
 
 test("Skill recovery inventory reads current, lifecycle and candidate physical volumes from RC", async () => {
