@@ -207,19 +207,47 @@ test("tier C platform scenarios get every local image and no rebuilding target",
   for (const suite of tierC) {
     if (suite.images.length > 0)
       assert.deepEqual(suite.images, Object.keys(images).sort(), suite.id);
-    const make = /^make ([\w.-]+)$/u.exec(suite.run[0]);
-    if (!make) continue;
-    const recipe = new RegExp(
-      `^${make[1]}:(?<deps>.*)\\n(?<body>(?:\\t.*\\n)*)`,
-      "mu",
-    ).exec(makefile);
-    assert(recipe, suite.id);
-    assert.equal(
-      recipe.groups.deps.trim(),
-      "",
-      `${suite.id} has prerequisites`,
+    for (const command of suite.run) {
+      const make = /^make ([\w.-]+)$/u.exec(command);
+      if (!make) continue;
+      const recipe = new RegExp(
+        `^${make[1]}:(?<deps>.*)\\n(?<body>(?:\\t.*\\n)*)`,
+        "mu",
+      ).exec(makefile);
+      assert(recipe, suite.id);
+      assert.equal(
+        recipe.groups.deps.trim(),
+        "",
+        `${suite.id} has prerequisites`,
+      );
+      if (make[1] === "docker-build-managed-runtime") {
+        // Test-only fixture image layered on the provided Runtime image.
+        assert.doesNotMatch(
+          recipe.groups.body,
+          /-t antnest\/antnest-runtime:local/u,
+        );
+        continue;
+      }
+      assert.doesNotMatch(recipe.groups.body, /docker (?:compose .*)?build/u);
+    }
+  }
+});
+
+test("tier C managed MCP scenarios build their fixture image first", () => {
+  const scripts = resolve(root, "tests/e2e");
+  for (const id of ["c-tool-permissions", "c-tool-progress"]) {
+    const suite = suites.find((item) => item.id === id);
+    assert.deepEqual(suite.run, [
+      "make docker-build-managed-runtime",
+      `make ${id.replace(/^c-/u, "e2e-")}`,
+    ]);
+    assert.match(
+      readFileSync(
+        resolve(scripts, `${id.replace(/^c-/u, "e2e-")}.sh`),
+        "utf8",
+      ),
+      /antnest\/antnest-runtime:managed-integration/u,
     );
-    assert.doesNotMatch(recipe.groups.body, /docker (?:compose .*)?build/u);
   }
 });
 

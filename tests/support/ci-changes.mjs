@@ -452,9 +452,12 @@ function tierC() {
         "stage4-skill-start-response-loss",
         "stage4-skill-target-drift",
         "structured-plan",
-        "tool-permissions",
-        "tool-progress",
       ].map((name) => [`e2e-${name}`, name]),
+      ...["tool-permissions", "tool-progress"].map((name) => [
+        `e2e-${name}`,
+        name,
+        { before: ["make docker-build-managed-runtime"] },
+      ]),
     ],
     "Authenticated shell": [
       ["e2e-stage2", "stage 2", { images: [] }],
@@ -542,7 +545,7 @@ function tierC() {
       images: options.images ?? platformImages,
       pull: observed,
       paths: ["services/**", ...runtime, "tests/e2e/**", ...go, ...compose],
-      run: [options.run ?? `make ${target}`],
+      run: [...(options.before ?? []), options.run ?? `make ${target}`],
       ...(options.strict ? { strict: true } : {}),
     })),
   );

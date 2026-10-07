@@ -188,7 +188,9 @@ files (prose-only changes select none). Changes to the workflow, `tests/support/
   reports per suite but is not part of `Integration checks` yet. Lifecycle and
   workspace foundation runners exit 2 when business and topology checks pass
   but strict trace findings remain; CI passes those runs with a warning and
-  keeps the findings in the evidence artifact.
+  keeps the findings in the evidence artifact. Tool permission and tool
+  progress first build the test-only `antnest/antnest-runtime:managed-integration`
+  image with `make docker-build-managed-runtime`.
 
 Each local image is named `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
 where the hash covers the image's Dockerfile, `.dockerignore` and every path
