@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectCommandTrace, selectCommandTrace } from "./trace.mjs";
+import {
+  commandStrictOutcome,
+  inspectCommandTrace,
+  selectCommandTrace,
+} from "./trace.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
 function fixture(kind = "command", http = false) {
@@ -401,4 +405,28 @@ test("ordinary prompt correlates model HTTP spans and actual Bash execution afte
     mutate(f);
     assert.throws(() => inspect(f));
   }
+});
+
+test("command strict outcome accepts only the reviewed clock warning class", () => {
+  const clock = {
+    strict_trace: "failed",
+    warning_count: 1,
+    warnings: [
+      "clock skew adjustment disabled; not applying calculated delta of -82.81µs",
+    ],
+  };
+  const passed = { strict_trace: "passed" };
+  assert.deepEqual(commandStrictOutcome([passed]), {
+    strict_trace: "passed",
+    accepted: true,
+  });
+  assert.deepEqual(commandStrictOutcome([passed, clock]), {
+    strict_trace: "failed",
+    clock_warnings_accepted: true,
+    accepted: true,
+  });
+  assert.deepEqual(
+    commandStrictOutcome([clock, { ...clock, warnings: ["missing parent"] }]),
+    { strict_trace: "failed", accepted: false },
+  );
 });

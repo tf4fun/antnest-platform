@@ -392,6 +392,7 @@ async function main() {
     agentId,
     requestId: created.body.operation.request_id,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
   for (const version of [1, 2])

@@ -13,6 +13,7 @@ import {
   timingEvidence,
   hasError,
 } from "../acp-plan/requests.mjs";
+import { clockWarningsOnly } from "../stage3-base/trace.mjs";
 
 function boundary(trace, expected, secrets) {
   assert(
@@ -432,3 +433,13 @@ export async function collectCommandTrace(
 
 // Shared transport boundary; callers retain their own execution contracts.
 export { boundary as requestTraceBoundary };
+
+// Command traces fail strict only on Jaeger warnings; the shared reviewed rule
+// accepts the clock-skew warning class and nothing else.
+export function commandStrictOutcome(checked) {
+  if (checked.every((trace) => trace.strict_trace === "passed"))
+    return { strict_trace: "passed", accepted: true };
+  return clockWarningsOnly(checked)
+    ? { strict_trace: "failed", clock_warnings_accepted: true, accepted: true }
+    : { strict_trace: "failed", accepted: false };
+}

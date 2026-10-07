@@ -319,6 +319,7 @@ async function exercise(version, kind, template, model) {
       agentId,
       requestId: rebuilt.body.request_id,
       traceID: rebuilt.traceID,
+      skillPreparation: true,
     };
     record = await held();
     assert.equal(record.operation_id, transition.requestId);
@@ -427,6 +428,7 @@ async function main() {
     agentId,
     requestId: created.body.operation.request_id,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
   for (const version of [1, 2])

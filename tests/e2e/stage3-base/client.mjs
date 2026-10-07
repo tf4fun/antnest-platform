@@ -186,7 +186,9 @@ async function transition(kind, body = {}, admission) {
     traceID: result.traceID,
     agentId,
     requestId,
-    ...(skillMode && (kind === "enable" || kind === "rebuild")
+    // Every create, enable and rebuild prepares the Agent Skill set, even an
+    // empty one, so its admission may be retried while preparation is queued.
+    ...(kind === "enable" || kind === "rebuild"
       ? { skillPreparation: true }
       : {}),
     ...(readyLossMode && kind === "enable" ? { readyVolumeLoss: true } : {}),
@@ -1091,7 +1093,7 @@ async function main() {
       traceID: created.traceID,
       agentId,
       requestId,
-      ...(skillMode ? { skillPreparation: true } : {}),
+      skillPreparation: true,
     });
     const scoped = await internal(
       "http://agent-controller:8080",
