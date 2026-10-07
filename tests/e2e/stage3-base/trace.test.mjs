@@ -430,6 +430,139 @@ function expectedAbsenceFixture() {
   probe.tags.push({ key: "antnest.outcome", value: "absent" });
   return f;
 }
+test("settlement ordering uses agent-controller client timestamps", () => {
+  const f = fixture("delete");
+  const span = (id) => f.trace.spans.find((s) => s.spanID === id);
+  const appliedClient = span("apply-execution-snapshot-client");
+  const settledClient = span("settle-agent-client");
+  const applied = span("apply-execution-snapshot");
+  const settled = span("settle-agent");
+  // agent-acp-service truncates server start times to milliseconds.
+  const start = appliedClient.startTime;
+  Object.assign(appliedClient, { startTime: start, duration: 1050 });
+  Object.assign(applied, { startTime: start, duration: 1046 });
+  Object.assign(settledClient, { startTime: start + 1060, duration: 900 });
+  Object.assign(settled, { startTime: start + 1000, duration: 900 });
+  assert.equal(inspectLifecycle(f.trace, f.expected).settlement, true);
+  settledClient.startTime = start + 1049;
+  assert.throws(
+    () => inspectLifecycle(f.trace, f.expected),
+    /settlement preceded publication/,
+  );
+});
+function deleteAbsenceFixture(kind = "delete") {
+  const f = fixture(kind),
+    t = f.trace;
+  const owner = t.spans.find(
+    (s) =>
+      s.spanID ===
+      `rpc-lifecycle.${kind === "delete" ? "runtime_delete" : "runtime_update"}`,
+  );
+  const add = (id, parent, operationName, offset, tags) =>
+    t.spans.push({
+      traceID: t.traceID,
+      spanID: id,
+      processID: "runtime-controller",
+      operationName,
+      startTime: owner.startTime + offset,
+      duration: 1,
+      references: [{ refType: "CHILD_OF", traceID: t.traceID, spanID: parent }],
+      tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
+    });
+  add("platform", owner.spanID, "runtime.platform.delete", 0, {
+    "antnest.agent.id": "agent-test",
+    "antnest.outcome": "completed",
+    "antnest.platform": "docker",
+  });
+  add("remove", "platform", "HTTP DELETE docker", 1, {
+    "span.kind": "client",
+    "peer.service": "docker",
+    "http.request.method": "DELETE",
+    "http.response.status_code": 204,
+    "antnest.outcome": "completed",
+  });
+  add("probe", "platform", "HTTP GET docker", 2, {
+    "span.kind": "client",
+    "peer.service": "docker",
+    "http.request.method": "GET",
+    "http.response.status_code": 404,
+    "antnest.outcome": "absent",
+  });
+  return f;
+}
+for (const kind of ["delete", "rebuild"])
+  test(`${kind} accepts an expected absent Runtime cleanup resource`, () => {
+    const f = deleteAbsenceFixture(kind);
+    const result = inspectLifecycle(f.trace, f.expected);
+    assert.equal(result.platform_probe_errors, 0);
+    assert.equal(result.platform_absence_probes, 1);
+    assert.equal(result.strict_trace, "passed");
+  });
+for (const [name, mutate] of [
+  [
+    "an error-status absence",
+    (f) =>
+      f.trace.spans
+        .find((s) => s.spanID === "probe")
+        .tags.push(
+          { key: "error", value: true },
+          { key: "antnest.error.code", value: "404" },
+          { key: "error.type", value: "protocol_error" },
+        ),
+  ],
+  [
+    "a foreign Runtime owner",
+    (f) =>
+      (f.trace.spans
+        .find((s) => s.spanID === "platform")
+        .tags.find((t) => t.key === "antnest.agent.id").value = "other"),
+  ],
+  [
+    "a failed platform delete",
+    (f) =>
+      (f.trace.spans
+        .find((s) => s.spanID === "platform")
+        .tags.find((t) => t.key === "antnest.outcome").value = "failed"),
+  ],
+  ["another lifecycle kind", (f) => (f.expected.kind = "disable")],
+  [
+    "a foreign Runtime command",
+    (f) =>
+      (f.trace.spans
+        .find((s) => s.spanID === "client-rpc-lifecycle.runtime_delete")
+        .tags.find((t) => t.key === "antnest.operation.request_id").value =
+        "acr_foreign"),
+  ],
+  [
+    "an allocation during delete",
+    (f) => {
+      const probe = f.trace.spans.find((s) => s.spanID === "probe");
+      f.trace.spans.push({
+        ...probe,
+        spanID: "allocate",
+        operationName: "HTTP POST docker",
+        startTime: probe.startTime + 1,
+        tags: [
+          { key: "span.kind", value: "client" },
+          { key: "peer.service", value: "docker" },
+          { key: "http.request.method", value: "POST" },
+          { key: "http.response.status_code", value: 201 },
+        ],
+      });
+    },
+  ],
+])
+  test(`Delete absence rejects ${name}`, () => {
+    const f = deleteAbsenceFixture();
+    mutate(f);
+    let result;
+    try {
+      result = inspectLifecycle(f.trace, f.expected);
+    } catch {
+      return;
+    }
+    assert.equal(result.strict_trace, "failed");
+  });
 test("expected absence preserves 404 and requires actual successful allocation", () => {
   const f = expectedAbsenceFixture();
   const result = inspectLifecycle(f.trace, f.expected);

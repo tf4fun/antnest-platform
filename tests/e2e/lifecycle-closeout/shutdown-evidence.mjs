@@ -170,7 +170,7 @@ export function inspectShutdownTrace(trace, expected, secrets) {
       tag(span, "error.type") === "cancelled" &&
       span.operationName ===
         (expected.executionState
-          ? "HTTP POST agent-acp-service"
+          ? "HTTP POST agent-acp-workspace"
           : "HTTP GET admin-console") &&
       tag(span, "http.request.method") ===
         (expected.executionState ? "POST" : "GET")
