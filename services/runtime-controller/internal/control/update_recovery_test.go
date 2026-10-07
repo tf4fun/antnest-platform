@@ -22,6 +22,7 @@ type recoveryPlatform struct {
 	inspection   *deployment.Inspection
 	created      int
 	removed      int
+	deleted      []deployment.Key
 }
 
 func (p *recoveryPlatform) Inspect(ctx context.Context, key deployment.Key) (deployment.Inspection, error) {
@@ -64,6 +65,7 @@ func (p *recoveryPlatform) Delete(ctx context.Context, key deployment.Key, diges
 	if p.onDelete != nil {
 		p.onDelete()
 	}
+	p.deleted = append(p.deleted, key)
 	if existing, ok := p.containers[key.AgentID]; ok {
 		if existing.RuntimeKey() != key || existing.SpecDigest != digest || p.foreignScope {
 			return deployment.EffectOutcome{State: deployment.EffectNotStarted, Code: "runtime_drift"}
@@ -252,6 +254,55 @@ func TestUpdateRecoversAfterSourceDeletionWithoutLosingWorkspace(t *testing.T) {
 	result, err := f.update(t)
 	if err != nil || result.State != deployment.OperationCompleted || result.RuntimeRevision != first.RuntimeRevision || f.platform.removed != 1 || f.platform.created != 2 || f.platform.ensureStorageCalls != 1 || f.platform.deleteStorageCalls != 0 {
 		t.Fatalf("source absence recovery changed resource identity: %+v %v", result, err)
+	}
+}
+
+func TestUpdateReleasesLostSourceGenerationBeforeCreatingTarget(t *testing.T) {
+	t.Parallel()
+	f := newUpdateRecoveryFixture(t)
+	source := f.source.RuntimeKey()
+	delete(f.platform.containers, "agent-1")
+	targetExisted := false
+	f.platform.onDelete = func() {
+		_, targetExisted = f.platform.containers["agent-1"]
+	}
+	result, err := f.update(t)
+	if err != nil || result.State != deployment.OperationCompleted || result.Generation != source.Generation+1 {
+		t.Fatalf("Update after Runtime loss did not converge: %+v %v", result, err)
+	}
+	// Generation-scoped receiver and MCP volumes outlive a lost container;
+	// only the source Delete releases them.
+	if len(f.platform.deleted) != 1 || f.platform.deleted[0] != source || targetExisted {
+		t.Fatalf("lost source generation was not released before target creation: deleted=%+v targetExisted=%t", f.platform.deleted, targetExisted)
+	}
+	if f.platform.removed != 0 || f.platform.created != 2 || f.platform.deleteStorageCalls != 0 {
+		t.Fatalf("lost-source Update changed workspace or compute effects: %+v", f.platform)
+	}
+}
+
+func TestUpdateDoesNotCreateTargetWhileLostSourceCleanupFails(t *testing.T) {
+	t.Parallel()
+	for _, state := range []deployment.EffectState{deployment.EffectNotStarted, deployment.EffectUnknown} {
+		t.Run(string(state), func(t *testing.T) {
+			f := newUpdateRecoveryFixture(t)
+			delete(f.platform.containers, "agent-1")
+			f.platform.deleteOutcome = deployment.EffectOutcome{State: state, Code: "instance_receiver_cleanup_failed"}
+			result, err := f.update(t)
+			// Source absence never proves a retained source, so even a
+			// definite cleanup rejection keeps the mutation slot.
+			if err != nil || result.State != deployment.OperationUnknown || result.ErrorCode != "instance_receiver_cleanup_failed" {
+				t.Fatalf("lost-source cleanup failure misclassified: %+v %v", result, err)
+			}
+			f.requireUnresolved(t)
+			if f.platform.created != 1 || len(f.platform.containers) != 0 {
+				t.Fatalf("target created before lost source was released: %+v", f.platform)
+			}
+			f.platform.deleteOutcome = deployment.EffectOutcome{State: deployment.EffectCompleted}
+			recovered, err := f.update(t)
+			if err != nil || recovered.State != deployment.OperationCompleted || recovered.RuntimeRevision != result.RuntimeRevision || f.platform.created != 2 {
+				t.Fatalf("lost-source Update did not recover after cleanup: %+v %v", recovered, err)
+			}
+		})
 	}
 }
 

@@ -2,28 +2,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { composeListeners } from "./compose-listeners.mjs";
 
 const root = new URL("../../", import.meta.url);
 const script = new URL("tests/support/service-hosts.sh", root).pathname;
-
-function composeListeners() {
-  const expected = new Map();
-  let service;
-  for (const line of readFileSync(new URL("compose.yaml", root), "utf8").split(
-    "\n",
-  )) {
-    const header = /^ {2}([a-z][a-z-]*):$/u.exec(line);
-    if (header) service = header[1];
-    const listener =
-      /^ {6}ANTNEST_([A-Z_]+)_LISTEN: \$\{ANTNEST_SERVICE_NETWORK_PREFIX:-10\.241\.0\}\.(\d+):\d+$/u.exec(
-        line,
-      );
-    if (!listener) continue;
-    const name = listener[1] === "ACP_CONTROL" ? "agent-acp-control" : service;
-    expected.set(name, listener[2]);
-  }
-  return expected;
-}
 
 test("client host pins follow every Compose service listener", () => {
   const expected = composeListeners();

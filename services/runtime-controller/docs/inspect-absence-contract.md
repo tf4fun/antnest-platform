@@ -16,13 +16,21 @@ telemetry.
   execution identity.
 - Inspect never retries and never mutates Docker state because of absence.
 
+## Delete
+
+Delete is idempotent: a missing container means there is no compute left to
+remove, and Delete still releases the generation-scoped receiver and MCP
+volumes before it completes. Update relies on this when it releases an absent
+source. The container existence `GET` that Delete issues therefore uses the
+same expected-absence context: HTTP 404 keeps an unset span status, the outcome
+`absent` and no error event. Other inspect failures stay errors.
+
 ## Out of Scope
 
 Absence classification does not change:
 
 - the generic Docker client;
 - required-resource and post-create checks;
-- Delete;
 - identity conflicts;
 - authorization, server, transport or body failures, which remain errors;
 - clock and export policy.

@@ -6,6 +6,7 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
 import { verifyTraces } from "../managed-mcp/trace.mjs";
 import { inspectTrace } from "./trace.mjs";
+import { cancelDiagnostics } from "./cancel-diagnostics.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import {
   assertEarly,
@@ -101,12 +102,29 @@ async function scenario(version, source, ending, agent, gate) {
     }
     if (ending === "cancel") {
       await gate.alive(phase, source);
+      const cancelAt = Date.now();
       await client.notify("cancel", { sessionId });
-      await until(
-        () => gate.stopped(phase, source),
-        `${phase} process cancellation`,
-        10000,
-      );
+      try {
+        await until(
+          () => gate.stopped(phase, source),
+          `${phase} process cancellation`,
+          10000,
+        );
+      } catch (error) {
+        console.log(
+          JSON.stringify(
+            await cancelDiagnostics({
+              jaeger: "http://jaeger:16686",
+              model: "http://progress-model:8080",
+              phase,
+              cancelAt,
+              frames: client.updates,
+              stopped: () => gate.stopped(phase, source),
+            }),
+          ),
+        );
+        throw error;
+      }
     } else {
       await gate.release(phase);
     }

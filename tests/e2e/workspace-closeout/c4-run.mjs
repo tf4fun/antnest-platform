@@ -14,7 +14,11 @@ import {
 import { setup } from "./c4-setup.mjs";
 import { runBrowser } from "./c4-browser.mjs";
 import { assertWorkspaceBytes } from "./browser-control.mjs";
-import { inspectChatTrace, inspectChatTraceTopology } from "./chat-trace.mjs";
+import {
+  inspectChatTrace,
+  inspectChatTraceTopology,
+  strictTraceOutcome,
+} from "./chat-trace.mjs";
 import {
   assertCaptureDisabled,
   traceTopology,
@@ -169,10 +173,9 @@ try {
     report.traces.push({ phase: requests[0].phase, ...checked, strict });
   }
   report.status = "browser_passed";
-  report.strict_trace = report.traces.some((trace) => trace.strict === "failed")
-    ? "failed"
-    : "passed";
-  if (report.strict_trace === "failed") process.exitCode = 1;
+  const outcome = strictTraceOutcome(report.traces);
+  report.strict_trace = outcome.strict_trace;
+  if (outcome.exitCode) process.exitCode = outcome.exitCode;
 } catch (error) {
   report.status = "failed";
   report.error = error.message;
@@ -213,6 +216,7 @@ try {
       status: report.status,
       checks: report.checks,
       strict_trace: report.strict_trace,
+      traces: report.traces,
       cleanup: report.cleanup,
       evidence: output,
     }),

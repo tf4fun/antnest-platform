@@ -29,7 +29,12 @@ and cancellation.
   admission without Runtime stopping evidence stays blocked with
   `runtime_barrier_required`. Tool status is `failed` in v1 and `cancelled` in
   v2. The test separately verifies that execution was alive before
-  cancellation and stopped afterwards. Cancellation does not claim rollback.
+  cancellation and stopped within 10 s. Cancellation does not claim rollback.
+- When that deadline is missed, the client prints one `cancel_timeout` line
+  before failing. It reports whether the process stopped within 30 more
+  seconds, the Tool and state frame transitions, and payload-free spans of the
+  prompt and `session/cancel` traces, including
+  `executor.exit.classification`. It never extends the deadline.
 
 Synthetic accounts and all Agent management go through the Gateway. The
 test-only driver mounts the Docker socket solely to release gate files and
