@@ -2,6 +2,7 @@
 set -eu
 [ "${ANTNEST_E2E_DISPOSABLE:-false}" = true ] || { echo "Use make e2e-tool-permissions" >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker_cmd() { node "$root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 model="${COMPOSE_PROJECT_NAME}-permission-model"
@@ -29,7 +30,8 @@ docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_P
   --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=permission-model" \
   --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=permission-model" \
   -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local node /app/tests/e2e/acp-permissions/model.mjs >/dev/null
-docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+# shellcheck disable=SC2086 # service_hosts is a list of options.
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
   --network "${COMPOSE_PROJECT_NAME}_acp-provider" -e "TEST_RUNTIME_IMAGE=$image" -e "TEST_BROWSER=${ANTNEST_E2E_BROWSER:-false}" \
   -e "TEST_PERMISSION_RUN_ID=$run_id" -e "TEST_PERMISSION_CRASH=${ANTNEST_E2E_PERMISSION_CRASH:-false}" \

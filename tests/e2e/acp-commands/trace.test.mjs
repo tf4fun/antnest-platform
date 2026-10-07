@@ -17,11 +17,11 @@ function fixture(kind = "command", http = false) {
   if (http) {
     f.expected.traceID = f.trace.traceID;
     f.trace.spans[0].references = [];
-    f.trace.spans[1].operationName = "HTTP POST agent-acp-service";
+    f.trace.spans[1].operationName = "HTTP POST agent-acp-workspace";
     f.trace.spans[1].tags = [
       { key: "span.kind", value: "client" },
       { key: "http.request.method", value: "POST" },
-      { key: "server.address", value: "agent-acp-service" },
+      { key: "server.address", value: "agent-acp-workspace" },
     ];
     f.trace.spans[0].tags = [
       { key: "span.kind", value: "server" },

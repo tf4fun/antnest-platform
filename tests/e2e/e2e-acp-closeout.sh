@@ -4,6 +4,7 @@ set -eu
 [ "${ANTNEST_E2E_KEEP_STACK:-false}" = false ] || exit 1
 case "${COMPOSE_PROJECT_NAME:-}" in antnest-stage3-e2e-[0-9]*) ;; *) exit 1 ;; esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker_cmd() { node "$root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 umask 077
@@ -32,7 +33,8 @@ docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_P
   --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=closeout-access-model" \
   -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local \
   node /app/tests/e2e/acp-closeout/access-model.mjs >/dev/null
-docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+# shellcheck disable=SC2086 # service_hosts is a list of options.
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
   --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \

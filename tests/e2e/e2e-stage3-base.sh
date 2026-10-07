@@ -2,6 +2,7 @@
 set -eu
 [ "${ANTNEST_E2E_DISPOSABLE:-false}" = true ] || { echo 'Use make e2e-stage3-local' >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tests/support/service-hosts.sh"
 evidence="$root/artifacts/verification/stage3-base/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
@@ -81,8 +82,8 @@ if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL
 fi
 # The client signs in through edge-gateway and reads Runtime Controller and
 # Agent Controller with the per-run credentials those services admit.
-# shellcheck disable=SC2086 # fault_network is empty or one option pair.
-docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+# shellcheck disable=SC2086 # fault_network and service_hosts are option lists.
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" \
   --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
   --network "${COMPOSE_PROJECT_NAME}_controller-clients" \

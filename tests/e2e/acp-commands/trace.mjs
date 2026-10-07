@@ -58,7 +58,7 @@ function boundary(trace, expected, secrets) {
     const forwarded = tree.parent(http);
     assert.equal(tree.service(forwarded), "edge-gateway");
     assert.equal(tag(forwarded, "span.kind"), "client");
-    assert.equal(forwarded.operationName, "HTTP POST agent-acp-service");
+    assert.equal(forwarded.operationName, "HTTP POST agent-acp-workspace");
     assert.equal(tag(forwarded, "http.request.method"), "POST");
     assert.equal(tree.parent(forwarded), root);
     result = { tree, root, request, forwarded, http };

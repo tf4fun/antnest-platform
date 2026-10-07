@@ -34,6 +34,7 @@ function launch(t, entry, evidenceRoot, cached, extra = {}, setup = () => {}) {
     "tests/e2e/e2e-" + entry + ".sh",
     "tests/support/storage.mjs",
     "tests/support/public-development-secrets.sh",
+    "tests/support/service-hosts.sh",
     ...(existsSync(join(root, "tests/support/verification/stage3-storage.mjs"))
       ? ["tests/support/verification/stage3-storage.mjs"]
       : []),
