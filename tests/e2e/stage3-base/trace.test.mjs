@@ -450,13 +450,16 @@ test("settlement ordering uses agent-controller client timestamps", () => {
     /settlement preceded publication/,
   );
 });
+const cleanupPhase = {
+  delete: "runtime_delete",
+  disable: "runtime_disable",
+  rebuild: "runtime_update",
+};
 function deleteAbsenceFixture(kind = "delete") {
   const f = fixture(kind),
     t = f.trace;
   const owner = t.spans.find(
-    (s) =>
-      s.spanID ===
-      `rpc-lifecycle.${kind === "delete" ? "runtime_delete" : "runtime_update"}`,
+    (s) => s.spanID === `rpc-lifecycle.${cleanupPhase[kind]}`,
   );
   const add = (id, parent, operationName, offset, tags) =>
     t.spans.push({
@@ -490,7 +493,7 @@ function deleteAbsenceFixture(kind = "delete") {
   });
   return f;
 }
-for (const kind of ["delete", "rebuild"])
+for (const kind of Object.keys(cleanupPhase))
   test(`${kind} accepts an expected absent Runtime cleanup resource`, () => {
     const f = deleteAbsenceFixture(kind);
     const result = inspectLifecycle(f.trace, f.expected);

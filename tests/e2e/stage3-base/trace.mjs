@@ -717,10 +717,13 @@ export function assertDockerProbe(trace, tree, error, expected) {
   assert.equal(tag(platform, "antnest.platform"), "docker");
   if (platform.operationName === "runtime.platform.delete") {
     // Delete cleanup probes optional per-generation resources; absence means
-    // there was nothing left to remove. Rebuild deletes the old generation.
-    const phase = { delete: "runtime_delete", rebuild: "runtime_update" }[
-      expected.kind
-    ];
+    // there was nothing left to remove. Disable removes the stopped Runtime and
+    // Rebuild deletes the old generation.
+    const phase = {
+      delete: "runtime_delete",
+      disable: "runtime_disable",
+      rebuild: "runtime_update",
+    }[expected.kind];
     assert(phase, "unexpected Runtime delete");
     assert(!hasError(error), "Delete absence was reported as an error");
     const command = tree
