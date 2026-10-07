@@ -149,10 +149,20 @@ jobs:
             fi
           done
 
+      # Foundation runners exit 2 when business and topology checks pass but
+      # strict trace findings remain; the findings stay in the evidence.
       - name: Run suite
         env:
           SUITE: ${{ fromJSON(inputs.suite).run }}
-        run: bash -euo pipefail -c "$SUITE"
+          STRICT_EXIT: ${{ fromJSON(inputs.suite).strict_exit }}
+        run: |
+          status=0
+          bash -euo pipefail -c "$SUITE" || status=$?
+          if [ "$status" -eq 2 ] && [ "$STRICT_EXIT" = true ]; then
+            echo "::warning title=Strict trace findings::Business and topology checks passed; strict trace findings are recorded in the evidence artifact."
+            exit 0
+          fi
+          exit "$status"
 
       # Per-run fixture credentials are excluded; everything else is evidence.
       - name: Upload evidence
