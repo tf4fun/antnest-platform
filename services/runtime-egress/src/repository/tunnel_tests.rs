@@ -5,9 +5,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand_core::{OsRng, RngCore as _};
 
 fn key_box() -> KeyBox {
-    let mut key = [0_u8; 32];
-    OsRng.fill_bytes(&mut key);
-    KeyBox::new(key)
+    KeyBox::new(std::array::from_fn(|_| OsRng.next_u32() as u8))
 }
 
 fn prepared(vault: &KeyBox, agent: &AgentId, ip: Ipv4Addr, id: u8) -> crate::tunnel::PreparedKey {

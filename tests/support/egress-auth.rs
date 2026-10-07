@@ -3,6 +3,7 @@
 
 use antnest_runtime_egress::service_auth::{Admission, Receiver};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand_core::{OsRng, RngCore as _};
 use sha2::{Digest as _, Sha256};
 
 pub fn workload_token() -> &'static str {
@@ -45,12 +46,7 @@ pub fn fresh_key_box() -> antnest_runtime_egress::tunnel::KeyBox {
     antnest_runtime_egress::tunnel::KeyBox::new(storage_key())
 }
 fn storage_key() -> [u8; 32] {
-    let mut key = [0_u8; 32];
-    rustls::crypto::ring::default_provider()
-        .secure_random
-        .fill(&mut key)
-        .expect("ephemeral test storage key entropy");
-    key
+    std::array::from_fn(|_| OsRng.next_u32() as u8)
 }
 pub fn tunnel_registration(
     agent: &str,

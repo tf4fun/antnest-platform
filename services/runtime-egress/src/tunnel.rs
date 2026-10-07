@@ -234,9 +234,7 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     fn storage_key() -> [u8; 32] {
-        let mut key = [0_u8; 32];
-        OsRng.fill_bytes(&mut key);
-        key
+        std::array::from_fn(|_| OsRng.next_u32() as u8)
     }
 
     fn registration() -> Registration {
