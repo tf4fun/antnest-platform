@@ -1788,7 +1788,11 @@ test(
           services: {},
         };
         const readDocker = dockerClient(config.env, undefined, 60000);
+        // Gateway and Console sit on every admin request path; without them a
+        // Console 5xx cannot be attributed to the layer that produced it.
         for (const service of [
+          "edge-gateway",
+          "admin-console",
           "agent-acp-service",
           "agent-controller",
           "runtime-controller",

@@ -16,6 +16,7 @@ import {
 } from "../observability/trace-tree.mjs";
 import { assertFrozenSkill } from "../skill-registry/stage3-fixture.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
+import { unexpectedStatus } from "./response-diagnostic.mjs";
 
 const skillName = "fixture-procedure";
 const firstRule = "For the fixture task, inspect the target before editing it.";
@@ -365,7 +366,8 @@ export async function openPropagationFlow({
       .getByRole("button", { name: `Review and promote ${skillName}` })
       .click();
     const response = await previewResponse;
-    assert.equal(response.status(), 200);
+    if (response.status() !== 200)
+      assert.fail(await unexpectedStatus("skill source preview", response));
     const preview = await response.json();
     assert.equal(preview.content_digest, source.item.content_digest);
     assert(preview.skill_md.includes(firstRule));
