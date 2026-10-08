@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash, createPrivateKey, randomUUID, sign } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const agentId = process.env.ANTNEST_E2E_AGENT_ID;
-const runtimeIp = process.env.ANTNEST_E2E_RUNTIME_IP;
 const oldKey = process.env.ANTNEST_E2E_OLD_SIGNING_KEY;
 const nextKey = process.env.ANTNEST_E2E_NEXT_SIGNING_KEY;
-assert(agentId && runtimeIp && oldKey && nextKey);
+assert(agentId && oldKey && nextKey);
+const serviceHeader = "Antnest-Service-Authorization";
 
 async function main() {
-  const origin = `http://${runtimeIp}:8093`;
+  // The Runtime admits only its alias as Host; the caller pins it.
+  const origin = `http://antnest-runtime-${agentId}:8093`;
   if (process.env.ANTNEST_E2E_EXPECT_RUNTIME_OFFLINE === "true") {
     await assert.rejects(
       fetch(`${origin}/status`, { signal: AbortSignal.timeout(2000) }),
@@ -16,11 +18,27 @@ async function main() {
     console.log(JSON.stringify({ status: "runtime_stopped" }));
     return;
   }
-  const statusResponse = await fetch(`${origin}/status`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  assert.equal(statusResponse.status, 200);
-  const runtime = await statusResponse.json();
+  // ACP may hold credentials for earlier Runtime connections; the live
+  // Runtime accepts only its own.
+  const tokens = readFileSync("/proof/runtime-tokens", "utf8")
+    .split(/\s+/u)
+    .filter(Boolean);
+  assert(tokens.length > 0, "no ACP Runtime credential");
+  let token;
+  let runtime;
+  for (const candidate of tokens) {
+    const response = await fetch(`${origin}/status`, {
+      headers: { [serviceHeader]: `Bearer ${candidate}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (response.status === 200) {
+      token = candidate;
+      runtime = await response.json();
+      break;
+    }
+    await response.body?.cancel();
+  }
+  assert(token, "Runtime rejected every ACP credential");
   assert.equal(runtime.status, "ready");
   assert.equal(typeof runtime.execution_id, "string");
 
@@ -71,6 +89,7 @@ async function main() {
     return fetch(`${origin}/internal/skill-maintenance/cancel`, {
       method: "POST",
       headers: {
+        [serviceHeader]: `Bearer ${token}`,
         Authorization: `AntnestMaintenance ${header}.${payload}.${signature}`,
         "Content-Type": "application/json",
         "X-Antnest-Expected-Execution-ID": runtime.execution_id,
@@ -82,11 +101,16 @@ async function main() {
 
   const removed = await cancel("fixture-key", oldKey);
   const oldTrusted = process.env.ANTNEST_E2E_EXPECT_OLD_TRUSTED === "true";
-  assert.equal(
-    removed.status,
-    oldTrusted ? 200 : 401,
-    await removed.clone().text(),
-  );
+  const removedText = await removed.clone().text();
+  assert.equal(removed.status, oldTrusted ? 200 : 401, removedText);
+  // A transport rejection is also 401; only the maintenance verifier's code
+  // proves that the removed key itself was refused.
+  if (!oldTrusted)
+    assert.equal(
+      JSON.parse(removedText).error?.code,
+      "maintenance_unauthorized",
+      removedText,
+    );
   const retained = await cancel("fixture-next", nextKey);
   assert.equal(retained.status, 200, await retained.clone().text());
   assert.equal((await retained.json()).outcome, "cancelled");

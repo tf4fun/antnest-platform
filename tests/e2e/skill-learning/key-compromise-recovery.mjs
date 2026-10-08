@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { relative } from "node:path";
 import { composeArgs } from "../lifecycle-closeout/docker.mjs";
+import { runKeyRemovalProbe } from "./key-removal-probe.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -70,37 +71,21 @@ export async function isolateCompromisedRuntime({
       "Incident ACP must not hold an active signer",
     );
 
-  const probe = async (suffix, flag) => {
-    const output = await docker(
-      [
-        "run",
-        "--rm",
-        "--name",
-        `${config.project}-key-${suffix}`,
-        "--label",
-        `com.docker.compose.project=${config.project}`,
-        "--network",
-        config.env.ANTNEST_RUNTIME_MANAGEMENT_NETWORK,
-        "-e",
-        `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
-        "-e",
-        `ANTNEST_E2E_RUNTIME_IP=${runtimeIp}`,
-        "-e",
-        `ANTNEST_E2E_OLD_SIGNING_KEY=${oldKey}`,
-        "-e",
-        `ANTNEST_E2E_NEXT_SIGNING_KEY=${nextKey}`,
-        "-e",
-        `${flag}=true`,
-        "-v",
-        `${root}/tests:/app/tests:ro`,
-        image,
-        "node",
-        "/app/tests/e2e/skill-learning/key-removal-client.mjs",
-      ],
-      true,
-    );
-    return JSON.parse(output.trim().split("\n").at(-1));
-  };
+  const probe = (suffix, flag) =>
+    runKeyRemovalProbe({
+      docker,
+      acpContainer,
+      name: `${config.project}-key-${suffix}`,
+      project: config.project,
+      network: config.env.ANTNEST_RUNTIME_MANAGEMENT_NETWORK,
+      agentId: fixture.agentID,
+      runtimeIp,
+      oldKey,
+      nextKey,
+      image,
+      flag,
+      remove: true,
+    });
   assert.equal(
     (await probe("still-trusted", "ANTNEST_E2E_EXPECT_OLD_TRUSTED")).status,
     "old_key_still_trusted",
