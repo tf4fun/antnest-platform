@@ -33,4 +33,4 @@ Delivery batches for [#12](https://github.com/tf4fun/antnest-platform/issues/12)
 | Shared contract    | Status schema and release/E2E examples                            | Complete; schema tests pass        |
 | Runtime            | Separate image targets, startup guard/warning and status metadata | Complete; both build gates pass    |
 | Runtime Controller | Recognize the status field while keeping strict decoding          | Complete; local service gates pass |
-| Integration        | Default image and held-commit Docker regressions                  | Complete; both Docker E2E pass     |
+| Integration        | Default image and install interruption Docker regressions         | Complete; both Docker E2E pass     |

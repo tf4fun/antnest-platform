@@ -1,0 +1,7 @@
+services:
+  agent-acp-service:
+    environment:
+      NODE_OPTIONS: --import /tests/e2e/skill-learning/maintenance-response-gate.mjs
+      ANTNEST_E2E_INSTALL_GATE: ${ANTNEST_E2E_INSTALL_GATE:?select an install gate mode}
+    volumes:
+      - ./tests:/tests:ro

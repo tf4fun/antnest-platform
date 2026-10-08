@@ -111,8 +111,8 @@ export async function collectLearningTraces(
         tag(span, "http.route") === "/internal/skill-maintenance/{action}",
     );
     assert(
-      maintenance.length >= 3,
-      "Runtime prepare/check/commit must join the task Trace",
+      maintenance.length >= 1,
+      "the Runtime install must join the task Trace",
     );
     for (const server of maintenance) {
       const parentId = server.references.find(

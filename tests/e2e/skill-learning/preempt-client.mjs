@@ -8,7 +8,7 @@ const agentId = process.env.ANTNEST_E2E_AGENT_ID;
 const stopAfterPending = process.env.ANTNEST_E2E_STOP_AFTER_PENDING === "true";
 const lifecycleDisable = process.env.ANTNEST_E2E_LIFECYCLE_DISABLE === "true";
 const lifecycleRebuild = process.env.ANTNEST_E2E_LIFECYCLE_REBUILD === "true";
-const heldCommit = process.env.ANTNEST_E2E_HELD_COMMIT_DISABLE === "true";
+const heldInstall = process.env.ANTNEST_E2E_HELD_INSTALL === "true";
 const policyOff = process.env.ANTNEST_E2E_POLICY_OFF === "true";
 assert(agentId);
 const member = new GatewayClient("http://edge-gateway:8080");
@@ -93,8 +93,8 @@ try {
           ? "review_pending_for_disable"
           : lifecycleRebuild
             ? "review_pending_for_rebuild"
-            : heldCommit
-              ? "review_pending_for_commit"
+            : heldInstall
+              ? "review_pending_for_install"
               : "review_pending_for_restart",
         agent_id: agentId,
         session_id: sessionId,

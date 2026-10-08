@@ -331,10 +331,7 @@ e2e-runtime-tool-usability:
 e2e-skill-learning-cleanup:
 	ANTNEST_E2E_SKILL_CLEANUP=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
 
-.PHONY: e2e-skill-learning-cleanup e2e-skill-learning-cleanup-lost-response
-
-e2e-skill-learning-cleanup-lost-response:
-	ANTNEST_E2E_SKILL_CLEANUP_LOST_RESPONSE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+.PHONY: e2e-skill-learning-cleanup
 
 e2e-skill-learning-preempt:
 	node --test tests/e2e/skill-learning/preempt-flow.test.mjs
@@ -348,29 +345,29 @@ e2e-skill-learning-lifecycle-disable:
 e2e-skill-learning-lifecycle-rebuild:
 	ANTNEST_E2E_LIFECYCLE_REBUILD=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
 
-.PHONY: e2e-skill-learning-held-commit-disable
-e2e-skill-learning-held-commit-disable:
-	node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-held-disable
+e2e-skill-learning-install-held-disable:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=held-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-held-commit-foreground
-e2e-skill-learning-held-commit-foreground:
-	ANTNEST_E2E_FOREGROUND_DURING_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-held-foreground
+e2e-skill-learning-install-held-foreground:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=held-foreground node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-atomic-commit-foreground
-e2e-skill-learning-atomic-commit-foreground:
-	ANTNEST_E2E_FOREGROUND_DURING_ATOMIC_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-pre-dispatch-disable
+e2e-skill-learning-install-pre-dispatch-disable:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=pre-dispatch-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-lost-commit-disable
-e2e-skill-learning-lost-commit-disable:
-	ANTNEST_E2E_DROP_COMMIT_RESPONSE=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-after-rename-disable
+e2e-skill-learning-install-after-rename-disable:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=after-rename-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-pre-dispatch-disable
-e2e-skill-learning-pre-dispatch-disable:
-	ANTNEST_E2E_HOLD_BEFORE_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-after-rename-foreground
+e2e-skill-learning-install-after-rename-foreground:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=after-rename-foreground node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-atomic-commit-disable
-e2e-skill-learning-atomic-commit-disable:
-	ANTNEST_E2E_HOLD_AFTER_INSTALL=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-lost
+e2e-skill-learning-install-lost:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=lost node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
 .PHONY: e2e-skill-learning-notice-send-failure
 e2e-skill-learning-notice-send-failure:
