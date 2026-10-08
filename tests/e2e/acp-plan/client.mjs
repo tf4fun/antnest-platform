@@ -20,6 +20,7 @@ import {
   appendRunEvidence,
 } from "./evidence.mjs";
 import { caseFor, phases, marker, stepsFor } from "./model.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -171,9 +172,7 @@ async function prompt(client, version, sessionId, phase) {
   for (const frame of client.updates)
     assert(validators[version - 1](frame.update), "invalid live schema");
   outcomes.push({ phase, ...assertPlanEvents(version, phase, client.updates) });
-  console.log(
-    JSON.stringify({ status: "scenario_passed", ...outcomes.at(-1) }),
-  );
+  console.log(asciiJSON({ status: "scenario_passed", ...outcomes.at(-1) }));
   return structuredClone(relevantUpdates(client.updates));
 }
 
@@ -365,7 +364,7 @@ async function main() {
   assert.equal(replays.filter((trace) => trace.denial).length, 6);
   const { accepted, ...strict } = commandStrictOutcome([...traces, ...replays]);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       ...strict,
       scenarios: outcomes.length,
@@ -387,7 +386,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       error_type: error.name,

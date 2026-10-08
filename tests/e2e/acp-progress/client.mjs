@@ -15,6 +15,7 @@ import {
   terminalStatus,
   previewReceived,
 } from "./evidence.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway);
 const member = new GatewayClient(gateway);
@@ -112,7 +113,7 @@ async function scenario(version, source, ending, agent, gate) {
         );
       } catch (error) {
         console.log(
-          JSON.stringify(
+          asciiJSON(
             await cancelDiagnostics({
               jaeger: "http://jaeger:16686",
               model: "http://progress-model:8080",
@@ -194,7 +195,7 @@ async function scenario(version, source, ending, agent, gate) {
       terminal: status,
       ...(ending === "cancel" ? { actual_execution_stopped: true } : {}),
     });
-    console.log(JSON.stringify(outcomes.at(-1)));
+    console.log(asciiJSON(outcomes.at(-1)));
   } finally {
     client.close();
   }
@@ -272,7 +273,7 @@ const strictTrace = traces.some((trace) => trace.strict_trace === "failed")
   ? "failed"
   : "passed";
 console.log(
-  JSON.stringify({
+  asciiJSON({
     status: "business_passed",
     scenarios: outcomes.length,
     model_requests: observed.requests.length,

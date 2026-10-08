@@ -120,6 +120,11 @@ const overlay = [
     ? ["-f", "tests/e2e/skill-learning/propagation.compose.yaml"]
     : []),
 ];
+// The test builds up to eleven candidate images from source before its
+// workflow starts. On a cold runner those builds alone take over 17 minutes,
+// so they get their own budget instead of consuming the workflow's.
+const imageBuildBudgetMs = 1_200_000;
+const workflowBudgetMs = 1_200_000;
 const logs = (name) => {
   const result = spawnSync("docker", ["logs", "--tail", "200", name], {
     encoding: "utf8",
@@ -156,7 +161,7 @@ test(
                       : "automatic Agent sources, temporary use, real Console promotion and frozen Template rebuild form the full Skill propagation workflow"
                     : "completed Runs create and update a personal Skill, publish notices, and serve the next Run",
   {
-    timeout: 1_200_000,
+    timeout: imageBuildBudgetMs + workflowBudgetMs,
   },
   async () => {
     process.chdir(root);
@@ -290,7 +295,11 @@ test(
           ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:
             config.env.ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS,
         });
-      const docker = dockerClient(config.env, abort.signal, 1_200_000);
+      const docker = dockerClient(
+        config.env,
+        abort.signal,
+        imageBuildBudgetMs + workflowBudgetMs,
+      );
       if (propagation) resourceBaseline = await resources(docker);
       for (const { service, image: candidate } of additionalImages) {
         assert.equal(await docker(["image", "ls", "-q", candidate]), "");

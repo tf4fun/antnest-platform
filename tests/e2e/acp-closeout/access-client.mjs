@@ -43,6 +43,7 @@ import {
   strictSessionEvidence,
 } from "../identity-closeout/session-trace.mjs";
 import { identityEvidenceExitCode } from "../identity-closeout/trace.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const evidenceRoot = evidenceDirectory(
   process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
@@ -460,7 +461,7 @@ try {
     );
   process.exitCode = identityEvidenceExitCode([...evidence, ...offboarding]);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       versions: [1, 2],
       denied_agents: deniedAgents,
@@ -479,7 +480,7 @@ try {
   if (evidenceRoot)
     writeEvidenceFile(evidenceRoot, "failure.private.txt", String(error.stack));
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "closeout_access_failed",
       step,
       category:

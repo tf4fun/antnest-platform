@@ -28,6 +28,7 @@ import { assertDurable, assertRecovered, assertReplay } from "./evidence.mjs";
 import { seed } from "./setup.mjs";
 import { stateReady } from "./readiness.mjs";
 import { assertHeldCompletion } from "./completion.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
 const connections = [],
@@ -341,7 +342,7 @@ async function exercise(version, phase) {
     terminal_observed_while_receipt_held: terminalObserved,
   });
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "fault_case_passed",
       label,
       run_id: held.run_id,
@@ -434,7 +435,7 @@ async function main() {
   await writeFile("/tmp/persistence-business.json", JSON.stringify(business), {
     mode: 0o600,
   });
-  console.log(JSON.stringify(business));
+  console.log(asciiJSON(business));
   await mkdir("/tmp/persistence-traces", { mode: 0o700 });
   const save = (label) => (trace) =>
     writeFileSync(
@@ -497,7 +498,7 @@ async function main() {
   const { accepted, ...strict } = persistenceStrictOutcome(results);
   save("results")(results);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "trace_assessment",
       ...strict,
       traces: results,
@@ -509,7 +510,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "persistence_failed",
       stage,
       error: error.message,
