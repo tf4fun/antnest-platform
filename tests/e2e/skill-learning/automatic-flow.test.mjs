@@ -1,4 +1,5 @@
 import { isolateCompromisedRuntime } from "./key-compromise-recovery.mjs";
+import { runKeyRemovalProbe } from "./key-removal-probe.mjs";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -1610,40 +1611,34 @@ test(
           "replacement Runtime must join the management network",
         );
         const clientName = `${config.project}-skill-learning-key-removal`;
-        let output;
         try {
-          output = await docker(
-            [
-              "run",
-              "--name",
-              clientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              managementNetwork,
-              "-e",
-              `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
-              "-e",
-              `ANTNEST_E2E_RUNTIME_IP=${runtimeIp}`,
-              "-e",
-              `ANTNEST_E2E_OLD_SIGNING_KEY=${keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64")}`,
-              "-e",
-              `ANTNEST_E2E_NEXT_SIGNING_KEY=${config.env.ANTNEST_E2E_SKILL_SIGNING_KEY}`,
-              "-v",
-              `${root}/tests:/app/tests:ro`,
-              image,
-              "node",
-              "/app/tests/e2e/skill-learning/key-removal-client.mjs",
-            ],
-            true,
-          );
+          removedKey = await runKeyRemovalProbe({
+            docker,
+            acpContainer: await docker(
+              composeArgs(config.project, [
+                ...overlay,
+                "ps",
+                "-q",
+                "agent-acp-service",
+              ]),
+            ),
+            name: clientName,
+            project: config.project,
+            network: managementNetwork,
+            agentId: fixture.agentID,
+            runtimeIp,
+            oldKey: keys.privateKey
+              .export({ format: "der", type: "pkcs8" })
+              .toString("base64"),
+            nextKey: config.env.ANTNEST_E2E_SKILL_SIGNING_KEY,
+            image,
+          });
         } catch (error) {
           throw new Error(
             `Key removal client failed: ${logs(clientName).slice(-2000)}`,
             { cause: error },
           );
         }
-        removedKey = JSON.parse(output.trim().split("\n").at(-1));
         assert.equal(removedKey.status, "removed_key_rejected");
         const verifyClientName = `${config.project}-skill-learning-post-rebuild`;
         let verifyOutput;
