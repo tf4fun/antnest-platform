@@ -299,7 +299,7 @@ async fn private_skill_maintenance_http_stays_closed_without_trusted_credentials
         let router = skill_maintenance_router(status, keys);
         let request = axum::http::Request::builder()
             .method("POST")
-            .uri("/internal/skill-maintenance/commit")
+            .uri("/internal/skill-maintenance/digest")
             .header("X-Antnest-Expected-Execution-ID", "execution-1")
             .body(axum::body::Body::from("{}"))
             .unwrap();
@@ -327,12 +327,13 @@ async fn private_skill_maintenance_http_rejects_signed_but_invalid_control_body(
         .as_secs();
     let body = b"{}";
     let token = signed(&pair, body, |payload| {
+        payload["action"] = json!("digest");
         payload["issued_at"] = json!(now);
         payload["expires_at"] = json!(now + 60);
     });
     let request = axum::http::Request::builder()
         .method("POST")
-        .uri("/internal/skill-maintenance/commit")
+        .uri("/internal/skill-maintenance/digest")
         .header("X-Antnest-Expected-Execution-ID", "execution-1")
         .header(axum::http::header::AUTHORIZATION, token)
         .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -347,11 +348,12 @@ async fn private_skill_maintenance_http_rejects_signed_but_invalid_control_body(
     let (pair, _, keys) = fixture();
     let repeated = axum::http::Request::builder()
         .method("POST")
-        .uri("/internal/skill-maintenance/commit")
+        .uri("/internal/skill-maintenance/digest")
         .header("X-Antnest-Expected-Execution-ID", "execution-1")
         .header(
             axum::http::header::AUTHORIZATION,
             signed(&pair, body, |payload| {
+                payload["action"] = json!("digest");
                 payload["issued_at"] = json!(now);
                 payload["expires_at"] = json!(now + 60);
             }),
@@ -372,7 +374,7 @@ async fn private_skill_maintenance_http_rejects_signed_but_invalid_control_body(
 }
 
 #[tokio::test]
-async fn private_skill_prepare_validates_the_signed_multipart_package_before_admission() {
+async fn private_skill_install_validates_the_signed_multipart_package_before_admission() {
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::ServiceExt as _;
 
@@ -388,8 +390,8 @@ async fn private_skill_prepare_validates_the_signed_multipart_package_before_adm
     let artifact = prepared_zip();
     let package = crate::skill_package_zip::validate_skill_zip(&artifact).unwrap();
     let metadata = json!({
-        "action":"prepare", "request_id":"request-1", "job_id":"job-1", "generation":1,
-        "candidate_id":"candidate-1", "package_path":".antnest/skills/retry-timeouts",
+        "action":"install", "request_id":"request-1", "job_id":"job-1", "generation":1,
+        "package_path":".antnest/skills/retry-timeouts",
         "expected_base_digest":null, "target_digest":package.content_digest,
         "artifact_digest":package.artifact_digest, "package_rules_version":1
     });
@@ -399,13 +401,13 @@ async fn private_skill_prepare_validates_the_signed_multipart_package_before_adm
         .as_secs();
     let send = |body: Vec<u8>| {
         let token = signed(&pair, &body, |payload| {
-            payload["action"] = json!("prepare");
+            payload["action"] = json!("install");
             payload["issued_at"] = json!(now);
             payload["expires_at"] = json!(now + 60);
         });
         axum::http::Request::builder()
             .method("POST")
-            .uri("/internal/skill-maintenance/prepare")
+            .uri("/internal/skill-maintenance/install")
             .header("X-Antnest-Expected-Execution-ID", "execution-1")
             .header(axum::http::header::AUTHORIZATION, token)
             .header(

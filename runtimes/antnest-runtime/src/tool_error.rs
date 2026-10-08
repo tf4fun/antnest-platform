@@ -56,10 +56,8 @@ define_tool_error_codes! {
     RuntimeBusy => "runtime_busy",
     RuntimeFailed => "runtime_failed",
     RuntimeUnavailable => "runtime_unavailable",
-    SkillContentChangedDuringActivation => "skill_content_changed_during_activation",
     SkillBackgroundTaskRunning => "skill_background_task_running",
     SkillManagedCallInFlight => "skill_managed_call_in_flight",
-    SkillGenerationCancelled => "skill_generation_cancelled",
     SkillStorageFull => "skill_storage_full",
     SkillWritersUnknown => "skill_writers_unknown",
     SpawnFailed => "spawn_failed",
@@ -77,10 +75,8 @@ impl ToolErrorCode {
         !matches!(
             self,
             Self::AtomicSkillReplaceUnsupported
-                | Self::SkillContentChangedDuringActivation
                 | Self::SkillBackgroundTaskRunning
                 | Self::SkillManagedCallInFlight
-                | Self::SkillGenerationCancelled
                 | Self::SkillStorageFull
                 | Self::SkillWritersUnknown
                 | Self::TemporaryRunClosed

@@ -40,7 +40,6 @@ mod service_admission_component_tests {
         "/../../tests/integration/antnest-runtime/service_admission_http.rs"
     ));
 }
-mod skill_candidate;
 mod skill_install;
 #[cfg(all(test, target_os = "linux"))]
 mod skill_install_tests;
@@ -50,7 +49,6 @@ mod skill_maintenance_auth_tests;
 mod skill_maintenance_request;
 #[cfg(test)]
 mod skill_maintenance_request_tests;
-mod skill_maintenance_state;
 mod skill_package_manifest;
 #[cfg(test)]
 mod skill_package_manifest_tests;

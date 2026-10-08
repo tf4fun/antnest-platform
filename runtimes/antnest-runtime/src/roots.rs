@@ -299,10 +299,7 @@ mod platform {
                             .bytes()
                             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
                 });
-            if !(matches!(
-                parent,
-                ".antnest/skill-learning/candidates" | ".antnest/skill-learning/staging"
-            ) || temporary_parent)
+            if !(parent == ".antnest/skill-learning/staging" || temporary_parent)
                 || name.is_empty()
                 || name.len() > 128
                 || !name
@@ -469,153 +466,6 @@ mod platform {
             Ok(())
         }
 
-        pub fn hidden_skill_storage_bytes(&self, cutoff: u64) -> Result<u64, RootError> {
-            let mut total = 0;
-            let mut entries = 0;
-            for class in ["candidates", "release-stage"] {
-                let path = format!(".antnest/skill-learning/{class}");
-                let directory = match open_relative(
-                    self.workspace.as_raw_fd(),
-                    &path,
-                    (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                    0,
-                ) {
-                    Ok(directory) => directory,
-                    Err(error) if error.is_not_found() => continue,
-                    Err(error) => return Err(error),
-                };
-                count_hidden_skill_bytes(
-                    directory.as_raw_fd(),
-                    &mut total,
-                    cutoff,
-                    0,
-                    &mut entries,
-                )?;
-                if total > cutoff {
-                    break;
-                }
-            }
-            Ok(total)
-        }
-
-        pub fn detach_skill_learning_tree(
-            &self,
-            source_parent: &str,
-            storage_key: &str,
-            release_key: &str,
-        ) -> Result<(), RootError> {
-            if !matches!(source_parent, ".antnest/skill-learning/candidates")
-                || !valid_skill_storage_key(storage_key)
-                || !valid_skill_storage_key(release_key)
-            {
-                return Err(RootError::InvalidPath(storage_key.to_owned()));
-            }
-            let stage_parent = ".antnest/skill-learning/release-stage";
-            create_parent_directories(
-                self.workspace.as_raw_fd(),
-                &format!("{stage_parent}/placeholder"),
-            )?;
-            let source = open_relative(
-                self.workspace.as_raw_fd(),
-                source_parent,
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                0,
-            )?;
-            let stage = open_relative(
-                self.workspace.as_raw_fd(),
-                stage_parent,
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                0,
-            )?;
-            let _item = open_relative(
-                source.as_raw_fd(),
-                storage_key,
-                (libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                0,
-            )?;
-            let source_name = CString::new(storage_key)
-                .map_err(|_| RootError::InvalidPath(storage_key.to_owned()))?;
-            let stage_name = CString::new(release_key)
-                .map_err(|_| RootError::InvalidPath(release_key.to_owned()))?;
-            let renamed = unsafe {
-                libc::syscall(
-                    libc::SYS_renameat2,
-                    source.as_raw_fd(),
-                    source_name.as_ptr(),
-                    stage.as_raw_fd(),
-                    stage_name.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            };
-            if renamed != 0 {
-                return Err(system(
-                    "detach Skill storage tree",
-                    io::Error::last_os_error(),
-                ));
-            }
-            for fd in [source.as_raw_fd(), stage.as_raw_fd()] {
-                if unsafe { libc::fsync(fd) } != 0 {
-                    return Err(RootError::OutcomeUnknown {
-                        operation: "sync detached Skill storage tree",
-                        detail: io::Error::last_os_error().to_string(),
-                    });
-                }
-            }
-            Ok(())
-        }
-
-        pub fn remove_detached_skill_learning_tree(
-            &self,
-            release_key: &str,
-        ) -> Result<(), RootError> {
-            if !valid_skill_storage_key(release_key) {
-                return Err(RootError::InvalidPath(release_key.to_owned()));
-            }
-            let stage = open_relative(
-                self.workspace.as_raw_fd(),
-                ".antnest/skill-learning/release-stage",
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                0,
-            )?;
-            let _item = open_relative(
-                stage.as_raw_fd(),
-                release_key,
-                (libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                0,
-            )?;
-            fs::remove_dir_all(format!("/proc/self/fd/{}/{release_key}", stage.as_raw_fd()))
-                .map_err(|error| system("remove detached Skill storage tree", error))?;
-            if unsafe { libc::fsync(stage.as_raw_fd()) } != 0 {
-                return Err(RootError::OutcomeUnknown {
-                    operation: "sync removed Skill storage tree",
-                    detail: io::Error::last_os_error().to_string(),
-                });
-            }
-            Ok(())
-        }
-
-        #[allow(dead_code)] // Used by the private Skill maintenance executor.
-        pub fn install_candidate_tree(
-            &self,
-            candidate_key: &str,
-            skill_name: &str,
-            mode: TreeInstallMode,
-        ) -> Result<(), RootError> {
-            if candidate_key.is_empty()
-                || candidate_key.len() > 128
-                || !candidate_key
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            {
-                return Err(RootError::InvalidPath(candidate_key.to_owned()));
-            }
-            self.install_package_tree(
-                &format!(".antnest/skill-learning/candidates/{candidate_key}"),
-                skill_name,
-                mode,
-            )
-        }
-
         /// Installs `.antnest/skill-learning/staging/install/package` with one
         /// rename; after an exchange the staging path holds the old package.
         pub fn install_staged_skill_tree(
@@ -774,59 +624,6 @@ mod platform {
                 NamedRoot::SystemSkills => Ok(RootHandle::Owned(open_root(&self.system_skills)?)),
             }
         }
-    }
-
-    fn valid_skill_storage_key(value: &str) -> bool {
-        value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    }
-
-    fn count_hidden_skill_bytes(
-        directory: RawFd,
-        total: &mut u64,
-        cutoff: u64,
-        depth: usize,
-        entries: &mut usize,
-    ) -> Result<(), RootError> {
-        if depth > 16 {
-            return Err(RootError::TooLarge);
-        }
-        let items = fs::read_dir(format!("/proc/self/fd/{directory}"))
-            .map_err(|source| system("read hidden Skill storage", source))?;
-        for item in items {
-            let item = item.map_err(|source| system("read hidden Skill entry", source))?;
-            *entries += 1;
-            if *entries > 65_536 {
-                return Err(RootError::TooLarge);
-            }
-            let name = item
-                .file_name()
-                .into_string()
-                .map_err(|_| RootError::InvalidPath("non-UTF8 hidden Skill entry".into()))?;
-            let opened = open_relative(
-                directory,
-                &name,
-                (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64,
-                0,
-            )?;
-            let file = File::from(opened);
-            let metadata = file
-                .metadata()
-                .map_err(|source| system("stat hidden Skill entry", source))?;
-            if metadata.is_dir() {
-                count_hidden_skill_bytes(file.as_raw_fd(), total, cutoff, depth + 1, entries)?;
-            } else if metadata.is_file() {
-                *total = total.saturating_add(metadata.len());
-            } else {
-                return Err(RootError::InvalidPath(name));
-            }
-            if *total > cutoff {
-                return Ok(());
-            }
-        }
-        Ok(())
     }
 
     fn open_root(path: &Path) -> Result<OwnedFd, RootError> {
@@ -1286,35 +1083,7 @@ mod platform {
         }
 
         #[test]
-        fn hidden_skill_storage_count_includes_detached_bytes_and_rejects_symlinks() {
-            let workspace = tempdir().expect("workspace");
-            let skills = tempdir().expect("skills");
-            let roots = NamedRoots::open(workspace.path(), skills.path()).expect("open roots");
-            assert_eq!(roots.hidden_skill_storage_bytes(256).unwrap(), 0);
-            for (parent, name, bytes) in [
-                ("candidates", "a", b"one".as_slice()),
-                ("release-stage", "d", b"eight".as_slice()),
-            ] {
-                roots
-                    .write(
-                        NamedRoot::Workspace,
-                        &format!(".antnest/skill-learning/{parent}/{name}/SKILL.md"),
-                        bytes,
-                        false,
-                    )
-                    .unwrap();
-            }
-            assert_eq!(roots.hidden_skill_storage_bytes(256).unwrap(), 3 + 5);
-            assert!(roots.hidden_skill_storage_bytes(7).unwrap() > 7);
-            let bad = workspace
-                .path()
-                .join(".antnest/skill-learning/candidates/a/escape");
-            symlink(skills.path(), bad).unwrap();
-            assert!(roots.hidden_skill_storage_bytes(256).is_err());
-        }
-
-        #[test]
-        fn candidate_tree_publish_is_complete_noreplace_and_nofollow() {
+        fn staged_tree_publish_is_complete_noreplace_and_nofollow() {
             let workspace = tempdir().expect("workspace");
             let skills = tempdir().expect("skills");
             let outside = tempdir().expect("outside");
@@ -1337,11 +1106,11 @@ mod platform {
                 },
             ];
             roots
-                .publish_workspace_tree(".antnest/skill-learning/candidates", "candidate-1", &files)
-                .expect("publish candidate");
+                .publish_workspace_tree(".antnest/skill-learning/staging", "install", &files)
+                .expect("publish staged install");
             let root = workspace
                 .path()
-                .join(".antnest/skill-learning/candidates/candidate-1");
+                .join(".antnest/skill-learning/staging/install");
             assert_eq!(fs::read(root.join("package/SKILL.md")).unwrap(), b"ready");
             use std::os::unix::fs::PermissionsExt as _;
             assert_ne!(
@@ -1354,11 +1123,7 @@ mod platform {
             );
             assert!(
                 roots
-                    .publish_workspace_tree(
-                        ".antnest/skill-learning/candidates",
-                        "candidate-1",
-                        &files
-                    )
+                    .publish_workspace_tree(".antnest/skill-learning/staging", "install", &files)
                     .is_err()
             );
             assert_eq!(fs::read(root.join("package/SKILL.md")).unwrap(), b"ready");
@@ -1374,7 +1139,7 @@ mod platform {
             assert!(
                 roots
                     .publish_workspace_tree(
-                        ".antnest/skill-learning/candidates",
+                        ".antnest/skill-learning/staging",
                         "candidate-3",
                         &[TreeFile {
                             path: "../escape",
@@ -1394,52 +1159,49 @@ mod platform {
         }
 
         #[test]
-        fn candidate_tree_install_uses_atomic_create_and_exchange() {
+        fn staged_tree_install_uses_atomic_create_and_exchange() {
             let workspace = tempdir().expect("workspace");
             let skills = tempdir().expect("system Skills");
             let roots = NamedRoots::open(workspace.path(), skills.path()).expect("roots");
-            for (key, contents) in [
-                ("first", b"first".as_slice()),
-                ("second", b"second".as_slice()),
-            ] {
+            let stage = |contents: &[u8]| {
                 roots
                     .publish_workspace_tree(
-                        ".antnest/skill-learning/candidates",
-                        key,
+                        ".antnest/skill-learning/staging",
+                        "install",
                         &[TreeFile {
                             path: "package/SKILL.md",
                             contents,
                             executable: false,
                         }],
                     )
-                    .expect("candidate");
-            }
+                    .expect("staged install");
+            };
             let active = workspace
                 .path()
                 .join(".antnest/skills/retry-timeouts/SKILL.md");
-            let first = workspace
+            let staged = workspace
                 .path()
-                .join(".antnest/skill-learning/candidates/first/package");
-            let second = workspace
-                .path()
-                .join(".antnest/skill-learning/candidates/second/package/SKILL.md");
+                .join(".antnest/skill-learning/staging/install/package/SKILL.md");
+            stage(b"first");
             roots
-                .install_candidate_tree("first", "retry-timeouts", TreeInstallMode::Create)
+                .install_staged_skill_tree("retry-timeouts", TreeInstallMode::Create)
                 .expect("atomic new Skill");
             assert_eq!(fs::read(&active).unwrap(), b"first");
-            assert!(!first.exists());
+            assert!(!staged.exists());
+            roots.remove_skill_install_staging().expect("clear staging");
+            stage(b"second");
             assert!(
                 roots
-                    .install_candidate_tree("second", "retry-timeouts", TreeInstallMode::Create)
+                    .install_staged_skill_tree("retry-timeouts", TreeInstallMode::Create)
                     .is_err()
             );
             assert_eq!(fs::read(&active).unwrap(), b"first");
-            assert_eq!(fs::read(&second).unwrap(), b"second");
+            assert_eq!(fs::read(&staged).unwrap(), b"second");
             roots
-                .install_candidate_tree("second", "retry-timeouts", TreeInstallMode::Replace)
+                .install_staged_skill_tree("retry-timeouts", TreeInstallMode::Replace)
                 .expect("atomic replacement");
             assert_eq!(fs::read(&active).unwrap(), b"second");
-            assert_eq!(fs::read(&second).unwrap(), b"first");
+            assert_eq!(fs::read(&staged).unwrap(), b"first");
         }
     }
 }
@@ -1527,31 +1289,6 @@ mod platform {
         pub fn remove_temporary_skill_tree(&self, _scope: Option<&str>) -> Result<(), RootError> {
             Err(RootError)
         }
-        pub fn hidden_skill_storage_bytes(&self, _cutoff: u64) -> Result<u64, RootError> {
-            Err(RootError)
-        }
-        pub fn detach_skill_learning_tree(
-            &self,
-            _source_parent: &str,
-            _storage_key: &str,
-            _release_key: &str,
-        ) -> Result<(), RootError> {
-            Err(RootError)
-        }
-        pub fn remove_detached_skill_learning_tree(
-            &self,
-            _release_key: &str,
-        ) -> Result<(), RootError> {
-            Err(RootError)
-        }
-        pub fn install_candidate_tree(
-            &self,
-            _candidate_key: &str,
-            _skill_name: &str,
-            _mode: TreeInstallMode,
-        ) -> Result<(), RootError> {
-            Err(RootError)
-        }
         pub fn install_staged_skill_tree(
             &self,
             _skill_name: &str,
@@ -1563,13 +1300,6 @@ mod platform {
             Err(RootError)
         }
         pub fn sync_managed_skill_tree(&self, _skill_name: &str) -> Result<(), RootError> {
-            Err(RootError)
-        }
-        pub fn retire_active_tree(
-            &self,
-            _skill_name: &str,
-            _effect_key: &str,
-        ) -> Result<(), RootError> {
             Err(RootError)
         }
         pub fn workspace_path(&self, _path: &str) -> Result<std::path::PathBuf, RootError> {

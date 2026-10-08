@@ -319,7 +319,7 @@ docker-build-runtime-controller:
 e2e-skill-learning-runtime:
 	docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-build .
 	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-local .
-	node tests/e2e/skill-learning/runtime-prepare.mjs
+	node tests/e2e/skill-learning/runtime-release.mjs
 	docker build --target e2e --build-arg ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-gate .
 	node tests/e2e/skill-learning/runtime-install.mjs
 
