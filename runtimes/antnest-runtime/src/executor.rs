@@ -9,13 +9,9 @@ use tokio_util::sync::CancellationToken;
 use crate::command::ToolCommand;
 use crate::executor_protocol::{
     MAX_EXECUTOR_MESSAGE_BYTES, decode_bash_request, decode_edit_request, decode_info_request,
-    decode_read_request, decode_skill_cancel_request, decode_skill_check_request,
-    decode_skill_commit_request, decode_skill_observe_request, decode_skill_prepare_request,
-    decode_skill_release_request, decode_temporary_install_request,
-    decode_temporary_release_request, decode_write_request, encode_bash_reply, encode_edit_reply,
-    encode_info_reply, encode_read_reply, encode_skill_cancel_reply, encode_skill_check_reply,
-    encode_skill_commit_reply, encode_skill_observe_reply, encode_skill_prepare_reply,
-    encode_skill_release_reply, encode_temporary_install_reply, encode_temporary_released_reply,
+    decode_read_request, decode_temporary_install_request, decode_temporary_release_request,
+    decode_write_request, encode_bash_reply, encode_edit_reply, encode_info_reply,
+    encode_read_reply, encode_temporary_install_reply, encode_temporary_released_reply,
     encode_write_reply,
 };
 use crate::executor_protocol::{
@@ -86,36 +82,6 @@ pub(crate) fn run(command: ToolCommand) -> Result<(), ExecutorEntryError> {
             let result = decode_edit_request(&input)
                 .and_then(|request| runtime.block_on(engine.edit(request, cancel)));
             write_reply(encode_edit_reply(result).map_err(protocol_error)?)
-        }
-        ToolCommand::SkillPrepare => {
-            let result = decode_skill_prepare_request(&input)
-                .and_then(|request| crate::skill_candidate::prepare_candidate(&roots, request));
-            write_reply(encode_skill_prepare_reply(result).map_err(protocol_error)?)
-        }
-        ToolCommand::SkillCheck => {
-            let result = decode_skill_check_request(&input)
-                .and_then(|request| crate::skill_candidate::check_candidate(&roots, request));
-            write_reply(encode_skill_check_reply(result).map_err(protocol_error)?)
-        }
-        ToolCommand::SkillCommit => {
-            let result = decode_skill_commit_request(&input)
-                .and_then(|request| crate::skill_candidate::commit_candidate(&roots, request));
-            write_reply(encode_skill_commit_reply(result).map_err(protocol_error)?)
-        }
-        ToolCommand::SkillObserve => {
-            let result = decode_skill_observe_request(&input)
-                .and_then(|request| crate::skill_candidate::observe_candidate(&roots, request));
-            write_reply(encode_skill_observe_reply(result).map_err(protocol_error)?)
-        }
-        ToolCommand::SkillCancel => {
-            let result = decode_skill_cancel_request(&input)
-                .and_then(|request| crate::skill_candidate::cancel_generation(&roots, request));
-            write_reply(encode_skill_cancel_reply(result).map_err(protocol_error)?)
-        }
-        ToolCommand::SkillRelease => {
-            let result = decode_skill_release_request(&input)
-                .and_then(|request| crate::skill_candidate::release_candidate(&roots, request));
-            write_reply(encode_skill_release_reply(result).map_err(protocol_error)?)
         }
         ToolCommand::SkillInstall => {
             let result = decode_skill_install_request(&input)

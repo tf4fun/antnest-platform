@@ -52,7 +52,7 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
                 assert!(!request.headers().contains_key("x-antnest-organization-id"));
                 if matches!(
                     request.uri().path(),
-                    "/internal/skill-maintenance/prepare"
+                    "/internal/skill-maintenance/digest"
                         | "/internal/skill-maintenance/install"
                         | "/internal/skill-temporary/install"
                 ) {
@@ -90,7 +90,7 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
         "/mcp",
         "/mcp/session",
         "/status",
-        "/internal/skill-maintenance/prepare",
+        "/internal/skill-maintenance/digest",
         "/internal/skill-maintenance/install",
         "/internal/skill-temporary/install",
     ] {
@@ -127,7 +127,7 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
     for path in [
         "/mcp",
         "/mcp/session",
-        "/internal/skill-maintenance/prepare",
+        "/internal/skill-maintenance/digest",
         "/internal/skill-maintenance/install",
         "/internal/skill-temporary/install",
     ] {
@@ -148,7 +148,6 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
     assert_eq!(called.load(Ordering::SeqCst), 0);
     for path in [
         "/mcp",
-        "/internal/skill-maintenance/check",
         "/internal/skill-maintenance/digest",
         "/internal/skill-temporary/release",
     ] {
@@ -193,7 +192,6 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
     }
     assert_eq!(called.load(Ordering::SeqCst), 0);
     for path in [
-        "/internal/skill-maintenance/prepare",
         "/internal/skill-maintenance/install",
         "/internal/skill-temporary/install",
     ] {
@@ -211,6 +209,19 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
             "authenticated multipart Skill upload must reach its signed-ticket parser: {path}"
         );
     }
+    let retired_upload = client
+        .post(format!("{base}/internal/skill-maintenance/prepare"))
+        .header(SERVICE_HEADER, format!("Bearer {}", tokens[1]))
+        .header("Content-Type", "multipart/form-data; boundary=skill-boundary")
+        .body("--skill-boundary--\r\n")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        retired_upload.status(),
+        415,
+        "a retired action must not keep a multipart upload admission"
+    );
     for host in [
         "evil.example",
         "0.0.0.0:8093",
@@ -229,7 +240,7 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
             403
         );
     }
-    assert_eq!(called.load(Ordering::SeqCst), 3);
+    assert_eq!(called.load(Ordering::SeqCst), 2);
     for token in &tokens {
         assert_eq!(
             client
@@ -278,7 +289,7 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
         .unwrap();
     assert_eq!(live.status(), 200);
     assert!(live.bytes().await.unwrap().is_empty());
-    assert_eq!(called.load(Ordering::SeqCst), 8);
+    assert_eq!(called.load(Ordering::SeqCst), 7);
     shutdown.cancel();
     server.await.unwrap();
 }

@@ -132,7 +132,9 @@ scenario and remove every resource they own. They are never part of
 
 `e2e-skill-learning-runtime` verifies that the default Runtime image has an empty
 test-feature label, no test-feature startup opt-in, and `test_features: []` on
-its live `/status`. The `e2e-skill-learning-install-after-rename-*` variants
+its live `/status`; that signed requests for the retired transaction actions are
+unknown; and that `install` and `digest` work across dual-key trust and old-key
+removal. It then runs the gate-image install suite. The `e2e-skill-learning-install-after-rename-*` variants
 explicitly build `--target e2e` with `skill-maintenance-e2e-gate`, check its
 image label and startup opt-in, and verify the live status and single feature
 warning before pausing an install after its rename. The install interruption

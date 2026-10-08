@@ -6,7 +6,7 @@ use crate::skill_maintenance_auth::{MaintenanceAuthError, verify_maintenance_tic
 use crate::spec::{RuntimeIdentity, SkillMaintenanceVerifier};
 
 const BODY: &[u8] =
-    br#"{"action":"commit","request_id":"request-1","job_id":"job-1","generation":1}"#;
+    br#"{"action":"install","request_id":"request-1","job_id":"job-1","generation":1}"#;
 
 pub(crate) fn fixture() -> (
     Ed25519KeyPair,
@@ -36,7 +36,7 @@ pub(crate) fn signed(
     let mut payload = json!({
         "organization_id": "org-1", "agent_id": "agent-1",
         "execution_id": "execution-1", "job_id": "job-1", "generation": 1,
-        "action": "commit", "request_id": "request-1",
+        "action": "install", "request_id": "request-1",
         "body_sha256": format!("sha256:{digest}"),
         "issued_at": 1_790_000_000_u64, "expires_at": 1_790_000_060_u64
     });
@@ -55,7 +55,7 @@ fn verified_ticket_binds_current_runtime_action_body_and_time() {
     let ticket = verify_maintenance_ticket(
         &token,
         BODY,
-        "commit",
+        "install",
         &identity,
         "execution-1",
         &keys,
@@ -67,9 +67,9 @@ fn verified_ticket_binds_current_runtime_action_body_and_time() {
     assert_eq!(ticket.generation, 1);
 
     for (body, action, execution) in [
-        (&b"altered"[..], "commit", "execution-1"),
-        (BODY, "release", "execution-1"),
-        (BODY, "commit", "execution-2"),
+        (&b"altered"[..], "install", "execution-1"),
+        (BODY, "digest", "execution-1"),
+        (BODY, "install", "execution-2"),
     ] {
         assert_eq!(
             verify_maintenance_ticket(
@@ -88,7 +88,7 @@ fn verified_ticket_binds_current_runtime_action_body_and_time() {
         verify_maintenance_ticket(
             &token,
             BODY,
-            "commit",
+            "install",
             &identity,
             "execution-1",
             &keys,
@@ -106,7 +106,7 @@ fn verification_fails_closed_for_missing_keys_or_noncanonical_credentials() {
         verify_maintenance_ticket(
             &token,
             BODY,
-            "commit",
+            "install",
             &identity,
             "execution-1",
             &[],
@@ -128,7 +128,7 @@ fn verification_fails_closed_for_missing_keys_or_noncanonical_credentials() {
             verify_maintenance_ticket(
                 &invalid,
                 BODY,
-                "commit",
+                "install",
                 &identity,
                 "execution-1",
                 &keys,
@@ -142,7 +142,7 @@ fn verification_fails_closed_for_missing_keys_or_noncanonical_credentials() {
         verify_maintenance_ticket(
             &wrong_agent,
             BODY,
-            "commit",
+            "install",
             &identity,
             "execution-1",
             &keys,
@@ -157,7 +157,7 @@ fn verification_fails_closed_for_missing_keys_or_noncanonical_credentials() {
         verify_maintenance_ticket(
             &long_ttl,
             BODY,
-            "commit",
+            "install",
             &identity,
             "execution-1",
             &keys,
@@ -172,7 +172,7 @@ fn verification_fails_closed_for_missing_keys_or_noncanonical_credentials() {
         verify_maintenance_ticket(
             &future,
             BODY,
-            "commit",
+            "install",
             &identity,
             "execution-1",
             &keys,

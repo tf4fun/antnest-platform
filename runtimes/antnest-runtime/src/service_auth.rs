@@ -319,9 +319,7 @@ pub(crate) async fn admit_http(
         || path.starts_with("/internal/skill-temporary/");
     let skill_upload = matches!(
         path,
-        "/internal/skill-maintenance/prepare"
-            | "/internal/skill-maintenance/install"
-            | "/internal/skill-temporary/install"
+        "/internal/skill-maintenance/install" | "/internal/skill-temporary/install"
     );
     if !live {
         let allowed: &[&str] = if path == "/status" {

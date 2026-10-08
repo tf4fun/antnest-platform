@@ -419,7 +419,7 @@ export const suites = [
   },
   {
     id: "skill-learning-runtime",
-    name: "Skill learning runtime preparation",
+    name: "Skill learning Runtime install",
     tier: "b",
     setup: [],
     pull: base,

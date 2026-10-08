@@ -66,12 +66,15 @@ use, effect-aware receipts and local cleanup. These operations stay outside
 
 #### Install and digest
 
-`install` and `digest` are the current learning actions. Each request is one
+`install` and `digest` are the only learning actions; any other action is
+`404 unknown_action` even with a valid ticket. Each request is one
 uninterruptible step with no state kept between requests:
 
-- `install` parses the same two bounded multipart parts as `prepare`
-  (`install_request` metadata and the ZIP artifact) and verifies them against
-  the signed ticket before the request reaches the actor. The UID/GID 1000
+- `install` parses exactly two bounded multipart parts (`install_request`
+  metadata and the ZIP artifact) after verifying the signature over the raw
+  body. It checks Registry v1 manifest examples, archive paths, types and
+  limits, and artifact and content identities against the signed metadata
+  before the request reaches the actor. The UID/GID 1000
   executor first removes any staging left under
   `/workspace/.antnest/skill-learning/staging/`, writes and verifies the
   package there, then reads the active digest. If the active digest already
@@ -84,13 +87,14 @@ uninterruptible step with no state kept between requests:
   read back that differs from the target is
   `conflict`/`content_changed_during_activation`; Runtime never rolls back.
   Staging is removed after every attempt.
-- `digest` reads the active manifest digest of one managed package path and
-  returns `observed` with the digest or `null` when the package is absent. It
-  never writes.
+- `digest` strictly parses a bounded JSON body bound to the ticket's request
+  ID, job and generation. It reads the active manifest digest of one managed
+  package path and returns `observed` with the digest or `null` when the
+  package is absent. It never writes.
 
 Learning never waits for the execution slot. If a foreground call holds it,
 both actions return `blocked`/`foreground_running` at once. Before an install
-writes, the actor applies the same live-writer checks as `commit` and returns
+writes, the actor applies the live-writer checks below and returns
 `blocked` with `background_task_running`, `managed_call_in_flight` or
 `writers_unknown` and the bounded subject. A learning request holds the slot
 only as a preemptible holder: foreground admission or drain cancels it and
@@ -103,92 +107,43 @@ reports ready; a failed sweep is logged and the next install removes it again.
 Receipts conform to `maintenance_receipt` in the
 [learning API schema](../../../contracts/skill-learning/learning-api.schema.json).
 
-Until Agent ACP moves to `install` and `digest`, Runtime keeps serving
-`prepare`, `check`, `commit`, `observe`, `cancel` and `release` as described
-below. The integration batch removes them.
-
-#### Request parsing
-
-For `check`, `commit`, `observe`, `cancel` and `release`, the route strictly
-parses the bounded JSON body and binds the request ID, job and generation to
-the ticket. `prepare` parses exactly two bounded multipart parts after
-verifying the signature over the raw body. It checks Registry v1 manifest
-examples, archive paths, types and limits, and artifact and content identities
-against the signed metadata.
-
-The route passes valid `prepare`, `check`, `commit`, `observe`, `cancel` and
-`release` requests through the Execution Actor to the UID/GID 1000 executor.
-
-#### Actions
-
-- `prepare` writes a hidden, no-overwrite candidate tree with a bounded
-  receipt and binds it to the current execution ID. On an exact retry it
-  verifies the original expected base digest and the existing bytes. It
-  returns a storage key.
-- `check` independently validates the complete candidate inventory and the
-  canonical content digest.
-- `commit` checks the saved check marker, the active base digest and the
-  candidate bytes. It records an intent before atomic directory installation,
-  then verifies the active digest.
-- `observe` reads the persisted commit intent and the current active digest,
-  including after a restart. A missing, ambiguous or unreadable intent remains
-  `unknown`; changed active content is `conflict`.
-- `cancel` closes the in-memory generation, cancels and waits for active
-  Runtime maintenance executors, then persists a cancellation marker in the
-  workspace volume. `prepare`, `check` and `commit` reject that generation,
-  including after a Runtime restart.
-- `release` checks the stored identity and content, atomically detaches one
-  hidden directory, and keeps an idempotent completion receipt.
-
 #### Filesystem and process guarantees
 
-`commit` uses `RENAME_NOREPLACE` and `RENAME_EXCHANGE` together with directory
+`install` uses `RENAME_NOREPLACE` and `RENAME_EXCHANGE` together with directory
 `fsync` on the workspace volume.
 
-The Actor holds its single execution slot during maintenance and blocks
-conservatively when live child ownership cannot be established.
+The Actor blocks an install conservatively when live child ownership cannot be
+established.
 `ChildRegistry` scans for live direct children outside its managed set. It
 retains Bash process groups after their launching shell exits, and scans
-managed MCP descendants while excluding the idle server process itself. Commit
+managed MCP descendants while excluding the idle server process itself. Install
 admission returns a bounded blocker identity and releases the execution slot;
 unknown children remain fail-closed. A managed MCP child that survives its Tool
 reply is reported with blocked reason `managed_call_in_flight` and subject
-`managed:<server id>`, and the commit is allowed after the child exits.
-
-Hidden storage is capped at 256 MiB. The scanner includes candidates and
-detached release trees, rejects symlinks, and checks capacity before each new
-hidden write. A write that would exceed the cap fails with
-`skill_storage_full`; the caller can release space and retry.
+`managed:<server id>`, and the install is allowed after the child exits.
 
 Ordinary MCP keeps its trusted-network policy. `tools/list` remains the sole
 authority for model-callable tools.
 
 #### Tests
 
-- Linux executor tests cover ownership, duplicate requests, restart identity,
-  drift rejection, conditional create and commit replay. Deterministic executor
-  tests model the window after the exchange and before the receipt in `commit`,
-  and the windows after detach and after unlink in `release`, without relying
-  on SIGKILL timing.
 - Linux unit tests in `runtimes/antnest-runtime/src/roots.rs` cover
-  `RENAME_NOREPLACE` and `RENAME_EXCHANGE`.
+  `RENAME_NOREPLACE` and `RENAME_EXCHANGE` of the staged install tree.
   `tests/integration/antnest-runtime/processes.rs` covers the live-child scan
   in `ChildRegistry`, including Bash background groups and managed MCP
   descendants.
-- `tests/integration/antnest-runtime/executor_cli.rs` covers candidate
-  preparation as UID 1000, conditional atomic commit, and rejection of direct
+- `tests/integration/antnest-runtime/executor_cli.rs` covers an install written
+  as UID 1000 with one rename and settling resends, and rejection of direct
   maintenance subcommand invocation by the Agent user.
 - `tests/integration/antnest-runtime/mcp_wire.rs` covers the private HTTP route
   without trusted credentials, signed but invalid control bodies, and multipart
-  `prepare` validation.
-- `make e2e-skill-learning-runtime` runs the Docker HTTP flow on a named
-  volume. It starts a Bash background process, observes the blocked receipt,
-  stops it through a normal Bash call and completes the commit; repeats the
-  blocker check with an official SDK managed MCP fixture; covers lost responses,
-  normal Runtime restarts, cancellation and later observation; covers candidate
-  cleanup after cancellation and replay after a same-name directory appears;
-  and fills hidden storage until `skill_storage_full`, releases space and
-  retries successfully.
+  `install` validation. Request tests check that signed `prepare`, `check`,
+  `commit`, `observe`, `cancel` and `release` requests are unknown actions.
+- `make e2e-skill-learning-runtime` first runs
+  `tests/e2e/skill-learning/runtime-release.mjs` on the default image: no test
+  features, retired actions unknown, both rename flags on the workspace volume
+  as UID 1000, and an install and `digest` across dual-key trust, unknown-key
+  rejection and old-key removal after a Runtime replacement.
 - `src/skill_install_tests.rs` covers create, resend without rename, update by
   exchange, `target_exists`, `base_changed`, stale staging removal, a writer
   after the rename and `digest`. Execution Actor unit tests cover foreground

@@ -24,27 +24,17 @@ use crate::execution::{
 use crate::executor_protocol::{
     ExecutorFailure, MAX_EXECUTOR_DIAGNOSTIC_BYTES, MAX_EXECUTOR_MESSAGE_BYTES, Outcome,
     decode_bash_reply, decode_edit_reply, decode_info_reply, decode_read_reply,
-    decode_skill_cancel_reply, decode_skill_check_reply, decode_skill_commit_reply,
     decode_skill_digest_reply, decode_skill_install_cleaned_reply, decode_skill_install_reply,
-    decode_skill_observe_reply, decode_skill_prepare_reply, decode_skill_release_reply,
     decode_temporary_install_reply, decode_temporary_released_reply, decode_write_reply,
-    encode_bash_request, encode_edit_request, encode_read_request, encode_skill_cancel_request,
-    encode_skill_check_request, encode_skill_commit_request, encode_skill_digest_request,
-    encode_skill_install_request, encode_skill_observe_request, encode_skill_prepare_request,
-    encode_skill_release_request, encode_temporary_install_request,
+    encode_bash_request, encode_edit_request, encode_read_request, encode_skill_digest_request,
+    encode_skill_install_request, encode_temporary_install_request,
     encode_temporary_release_request, encode_write_request,
 };
 use crate::information::RuntimeContext;
 use crate::progress::ProgressSink;
-use crate::skill_candidate::{
-    CandidateCancelRequest, CandidateCancelled, CandidateCheckRequest, CandidateChecked,
-    CandidateCommitRequest, CandidateCommitted, CandidateObserveRequest, CandidateObserved,
-    CandidatePrepareRequest, CandidatePrepared, CandidateReleaseRequest, CandidateReleased,
-};
 use crate::skill_install::{
     SkillDigestObserved, SkillDigestRequest, SkillInstallRequest, SkillInstalled,
 };
-use crate::skill_maintenance_state::{MaintenanceGenerations, MaintenanceLease};
 use crate::skill_temporary::{
     TemporaryInstallRequest, TemporaryInstalled, TemporaryReleaseRequest, TemporaryReleased,
 };
@@ -76,7 +66,6 @@ pub(crate) struct ExecutionActor {
     shutdown: CancellationToken,
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     children: crate::processes::ChildRegistry,
-    maintenance: MaintenanceGenerations,
     temporary: TemporaryScopes,
 }
 
@@ -99,7 +88,6 @@ impl ExecutionActor {
                 shutdown,
                 fatal,
                 children: crate::processes::ChildRegistry::default(),
-                maintenance: MaintenanceGenerations::default(),
                 temporary: TemporaryScopes::default(),
             },
             failures,
@@ -147,7 +135,6 @@ impl ExecutionActor {
             cancel,
             timeout,
             progress,
-            None,
         )
         .await
     }
@@ -165,7 +152,6 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
-            None,
         )
         .await
     }
@@ -183,7 +169,6 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
-            None,
         )
         .await
     }
@@ -201,7 +186,6 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
-            None,
         )
         .await
     }
@@ -217,130 +201,8 @@ impl ExecutionActor {
             cancel,
             FILE_TOOL_TIMEOUT,
             ProgressSink::default(),
-            None,
         )
         .await
-    }
-
-    pub(crate) async fn prepare_skill_candidate(
-        &self,
-        request: CandidatePrepareRequest,
-    ) -> Result<CandidatePrepared, ToolError> {
-        let lease =
-            self.maintenance_lease(&request.agent_id, &request.job_id, request.generation)?;
-        let cancel = lease.cancellation();
-        let encoded = encode_skill_prepare_request(&request).map_err(executor_request_error)?;
-        self.execute(
-            ToolCommand::SkillPrepare,
-            encoded,
-            decode_skill_prepare_reply,
-            cancel,
-            Duration::from_secs(60),
-            ProgressSink::default(),
-            Some(lease),
-        )
-        .await
-    }
-
-    pub(crate) async fn check_skill_candidate(
-        &self,
-        request: CandidateCheckRequest,
-    ) -> Result<CandidateChecked, ToolError> {
-        let lease =
-            self.maintenance_lease(&request.agent_id, &request.job_id, request.generation)?;
-        let cancel = lease.cancellation();
-        let encoded = encode_skill_check_request(&request).map_err(executor_request_error)?;
-        self.execute(
-            ToolCommand::SkillCheck,
-            encoded,
-            decode_skill_check_reply,
-            cancel,
-            FILE_TOOL_TIMEOUT,
-            ProgressSink::default(),
-            Some(lease),
-        )
-        .await
-    }
-
-    pub(crate) async fn commit_skill_candidate(
-        &self,
-        request: CandidateCommitRequest,
-    ) -> Result<CandidateCommitted, ToolError> {
-        let lease =
-            self.maintenance_lease(&request.agent_id, &request.job_id, request.generation)?;
-        let cancel = lease.cancellation();
-        let encoded = encode_skill_commit_request(&request).map_err(executor_request_error)?;
-        self.execute(
-            ToolCommand::SkillCommit,
-            encoded,
-            decode_skill_commit_reply,
-            cancel,
-            FILE_TOOL_TIMEOUT,
-            ProgressSink::default(),
-            Some(lease),
-        )
-        .await
-    }
-
-    pub(crate) async fn observe_skill_candidate(
-        &self,
-        request: CandidateObserveRequest,
-        cancel: CancellationToken,
-    ) -> Result<CandidateObserved, ToolError> {
-        let encoded = encode_skill_observe_request(&request).map_err(executor_request_error)?;
-        self.execute(
-            ToolCommand::SkillObserve,
-            encoded,
-            decode_skill_observe_reply,
-            cancel,
-            FILE_TOOL_TIMEOUT,
-            ProgressSink::default(),
-            None,
-        )
-        .await
-    }
-
-    pub(crate) async fn release_skill_candidate(
-        &self,
-        request: CandidateReleaseRequest,
-    ) -> Result<CandidateReleased, ToolError> {
-        let encoded = encode_skill_release_request(&request).map_err(executor_request_error)?;
-        self.execute(
-            ToolCommand::SkillRelease,
-            encoded,
-            decode_skill_release_reply,
-            CancellationToken::new(),
-            FILE_TOOL_TIMEOUT,
-            ProgressSink::default(),
-            None,
-        )
-        .await
-    }
-
-    pub(crate) async fn cancel_skill_generation(
-        &self,
-        request: CandidateCancelRequest,
-    ) -> Result<CandidateCancelled, ToolError> {
-        self.maintenance
-            .close_and_settle(&request.agent_id, &request.job_id, request.generation)
-            .await;
-        let encoded = encode_skill_cancel_request(&request).map_err(executor_request_error)?;
-        let result = self
-            .execute(
-                ToolCommand::SkillCancel,
-                encoded,
-                decode_skill_cancel_reply,
-                CancellationToken::new(),
-                FILE_TOOL_TIMEOUT,
-                ProgressSink::default(),
-                None,
-            )
-            .await;
-        if result.is_ok() {
-            self.maintenance
-                .release_closed(&request.agent_id, &request.job_id, request.generation);
-        }
-        result
     }
 
     pub(crate) async fn install_skill(
@@ -381,7 +243,6 @@ impl ExecutionActor {
             CancellationToken::new(),
             Duration::from_secs(30),
             ProgressSink::default(),
-            None,
         )
         .await
         .map(|_| ())
@@ -421,7 +282,6 @@ impl ExecutionActor {
                 preempt.clone(),
                 timeout,
                 ProgressSink::default(),
-                None,
                 lease,
             )
             .await;
@@ -432,22 +292,6 @@ impl ExecutionActor {
             }
             Err(error) => Err(MaintenanceCallError::Tool(error)),
         }
-    }
-
-    fn maintenance_lease(
-        &self,
-        agent_id: &str,
-        job_id: &str,
-        generation: u64,
-    ) -> Result<MaintenanceLease, ToolError> {
-        self.maintenance
-            .enter(agent_id, job_id, generation)
-            .map_err(|()| {
-                ToolError::new(
-                    ToolErrorCode::SkillGenerationCancelled,
-                    "Skill maintenance generation is closed",
-                )
-            })
     }
 
     pub(crate) fn children(&self) -> crate::processes::ChildRegistry {
@@ -486,7 +330,6 @@ impl ExecutionActor {
             CancellationToken::new(),
             Duration::from_secs(60),
             ProgressSink::default(),
-            None,
             lease,
         )
         .await
@@ -509,7 +352,6 @@ impl ExecutionActor {
                 CancellationToken::new(),
                 Duration::from_secs(30),
                 ProgressSink::default(),
-                None,
                 lease,
             )
             .await;
@@ -529,7 +371,6 @@ impl ExecutionActor {
             CancellationToken::new(),
             Duration::from_secs(30),
             ProgressSink::default(),
-            None,
         )
         .await
     }
@@ -558,7 +399,6 @@ impl ExecutionActor {
                 CancellationToken::new(),
                 Duration::from_secs(5),
                 ProgressSink::default(),
-                None,
             )
             .await
     }
@@ -581,10 +421,6 @@ impl ExecutionActor {
         self.gate.close_and_drain().await
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "executor dispatch keeps cancellation and maintenance leases explicit"
-    )]
     async fn execute<O>(
         &self,
         tool: ToolCommand,
@@ -593,7 +429,6 @@ impl ExecutionActor {
         cancel: CancellationToken,
         timeout: Duration,
         progress: ProgressSink,
-        maintenance: Option<MaintenanceLease>,
     ) -> Result<O, ToolError>
     where
         O: Send + 'static,
@@ -606,7 +441,6 @@ impl ExecutionActor {
             cancel,
             timeout,
             progress,
-            maintenance,
             lease,
         )
         .await
@@ -624,7 +458,6 @@ impl ExecutionActor {
         cancel: CancellationToken,
         timeout: Duration,
         progress: ProgressSink,
-        maintenance: Option<MaintenanceLease>,
         lease: ExecutionLease,
     ) -> Result<O, ToolError>
     where
@@ -643,7 +476,7 @@ impl ExecutionActor {
                 "encoded executor request exceeds the supported limit",
             ));
         }
-        if matches!(tool, ToolCommand::SkillCommit | ToolCommand::SkillInstall) {
+        if tool == ToolCommand::SkillInstall {
             #[cfg(target_os = "linux")]
             {
                 if std::process::id() != 1 {
@@ -699,7 +532,6 @@ impl ExecutionActor {
             fatal: self.fatal.clone(),
             gate: self.gate.clone(),
             _lease: lease,
-            _maintenance: maintenance,
             children: self.children.clone(),
             contain_bash_descendants: tool == ToolCommand::Bash && self.temporary.active(),
         };
@@ -964,7 +796,6 @@ struct ExecutorCall {
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     gate: SingleFlight,
     _lease: ExecutionLease,
-    _maintenance: Option<MaintenanceLease>,
     children: crate::processes::ChildRegistry,
     contain_bash_descendants: bool,
 }

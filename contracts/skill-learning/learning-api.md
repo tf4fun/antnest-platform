@@ -26,10 +26,10 @@ checks the stored organization, owner and current authorization.
 This revision ([#201](https://github.com/tf4fun/antnest-platform/issues/201))
 replaces the earlier `prepare`/`check`/`commit`/`observe`/`cancel`/`release`
 maintenance transaction with one atomic `install` and a read-only `digest`.
-Services still implement the earlier transaction until their batches land, in
-this order: Antnest Runtime, Agent ACP Service, then the cross-service Skill
-learning E2E rewrite. Runtime Controller, Agent Controller and Agent UI need
-no wire change.
+Antnest Runtime serves only `install` and `digest`; a signed request for any
+earlier action is `404 unknown_action`. Agent ACP Service and the cross-service
+Skill learning E2E suites use the new actions. Runtime Controller, Agent
+Controller and Agent UI need no wire change.
 
 ## 1. Ownership and activation
 
