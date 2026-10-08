@@ -92,8 +92,8 @@ in `artifacts/verification/`, which is ignored by Git and Docker.
 - Describe the behavior change, the contracts touched and the checks you ran.
 - CI must pass. Every push runs lint, unit tests and an image build for every
   changed component. The `integration` workflow runs the component, browser and
-  Docker E2E suites that the change exercises when the pull request is opened,
-  reopened or marked ready for review. After further pushes, add the `ci:full`
-  label to run them again on the latest commit. Only `Repository checks` and
-  `Integration checks` are required; see
+  Docker E2E suites that the change exercises on every push to a pull request
+  that is not a draft; open a draft to iterate without them. Workflows on a
+  pull request from a fork start after a maintainer approves them. Only
+  `Repository checks` and `Integration checks` are required; see
   [tests/README.md](tests/README.md#continuous-integration).
