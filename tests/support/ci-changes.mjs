@@ -205,6 +205,11 @@ export const suites = [
     images: {
       controller: ["temporal"],
       "runtime-controller": ["antnest-runtime"],
+      runtime: [
+        "antnest-runtime",
+        "antnest-runtime-fixture",
+        "antnest-runtime-skill-gate",
+      ],
     }[name],
     pull: name === "controller" ? temporal : base,
     paths: [
@@ -248,7 +253,12 @@ export const suites = [
     name: "Runtime Controller observation retry",
     tier: "b",
     setup: [],
-    images: ["antnest-runtime", "agent-acp-service", "runtime-egress"],
+    images: [
+      "agent-acp-service",
+      "antnest-runtime",
+      "runtime-controller",
+      "runtime-egress",
+    ],
     pull: base,
     paths: [
       ...service("runtime-controller", "runtime-egress", "agent-acp-service"),
@@ -280,6 +290,7 @@ export const suites = [
       ...go,
       ...compose,
     ],
+    images: ["antnest-runtime", ...owners].sort(),
     run: [`node tests/support/authenticated-shell-e2e.mjs ${mode}`],
   })),
   ...[
@@ -301,14 +312,7 @@ export const suites = [
     tier: "b",
     setup,
     disabled,
-    images: [
-      "antnest-runtime",
-      "temporal",
-      "runtime-egress",
-      "agent-controller",
-      "skill-registry",
-      "admin-console",
-    ],
+    images: platformImages,
     pull: temporal,
     paths: [
       "services/**",
@@ -328,6 +332,7 @@ export const suites = [
     name: "Skill Registry discovery",
     tier: "b",
     setup: [],
+    images: ["skill-registry"],
     pull: base,
     paths: [
       ...service("skill-registry"),
@@ -365,6 +370,7 @@ export const suites = [
     name: "Deployment Compose wiring",
     tier: "b",
     setup: [],
+    images: platformImages,
     pull: observed,
     paths: [
       "services/**",
@@ -379,6 +385,7 @@ export const suites = [
     name: `Managed MCP secrets protocol v${version}`,
     tier: "b",
     setup: [],
+    images: [...platformImages, "antnest-runtime-managed"].sort(),
     pull: observed,
     paths: [
       "services/**",
@@ -394,6 +401,7 @@ export const suites = [
     name: "Skill Registry Admin Console discovery",
     tier: "b",
     setup: ["admin-web", "chromium"],
+    images: ["admin-console", "skill-registry"],
     pull: base,
     paths: [
       ...service("skill-registry", "admin-console"),
@@ -409,6 +417,7 @@ export const suites = [
     name: "Skill Registry temporary runtime",
     tier: "b",
     setup: [],
+    images: ["antnest-runtime"],
     pull: base,
     paths: [
       ...runtime,
@@ -422,6 +431,11 @@ export const suites = [
     name: "Skill learning Runtime install",
     tier: "b",
     setup: [],
+    images: [
+      "antnest-runtime",
+      "antnest-runtime-fixture",
+      "antnest-runtime-skill-gate",
+    ],
     pull: base,
     paths: [...runtime, "tests/e2e/skill-learning/**"],
     run: ["make e2e-skill-learning-runtime"],
@@ -487,13 +501,14 @@ function tierC() {
         name,
         {
           before: ["make docker-build-managed-runtime"],
+          images: [...platformImages, "antnest-runtime-managed"].sort(),
           ...stage3aProfile(profile),
         },
       ]),
     ],
     "Authenticated shell": [
-      ["e2e-stage2", "stage 2", { images: [] }],
-      ["e2e-lifecycle", "lifecycle", { images: [] }],
+      ["e2e-stage2", "stage 2"],
+      ["e2e-lifecycle", "lifecycle"],
     ],
     Lifecycle: [
       ...[
@@ -543,7 +558,15 @@ function tierC() {
         "skill-learning-key-rotation",
         "skill-learning-lifecycle-rebuild",
         "skill-learning-restart",
-      ].map((name) => [`e2e-${name}`, name]),
+      ].map((name) => [
+        `e2e-${name}`,
+        name,
+        name.startsWith("skill-learning-install-")
+          ? {
+              images: [...platformImages, "antnest-runtime-skill-gate"].sort(),
+            }
+          : {},
+      ]),
     ],
   };
   return Object.entries(families).flatMap(([family, targets]) =>
@@ -605,23 +628,101 @@ export const images = {
   "agent-ui": "services/agent-ui/Dockerfile",
   "edge-gateway": "services/edge-gateway/Dockerfile",
   temporal: "scripts/temporal/Dockerfile",
+  // Runtime test variants. Runners derive their candidates from these
+  // (tests/support/candidate-images.mjs) instead of rebuilding the Runtime.
+  // A context replaces the base image a Dockerfile names by default with a
+  // stage of another image's Dockerfile.
+  "antnest-runtime-fixture": {
+    dockerfile: "tests/e2e/managed-mcp/fixture.Dockerfile",
+    contexts: {
+      "antnest/antnest-runtime:managed-build": {
+        image: "antnest-runtime",
+        target: "build",
+      },
+    },
+  },
+  "antnest-runtime-managed": {
+    dockerfile: "tests/e2e/managed-mcp/Dockerfile",
+    contexts: {
+      "antnest/antnest-runtime:managed-build": {
+        image: "antnest-runtime",
+        target: "build",
+      },
+      "antnest/antnest-runtime:local": { image: "antnest-runtime" },
+    },
+  },
+  "antnest-runtime-skill-gate": {
+    dockerfile: "runtimes/antnest-runtime/Dockerfile",
+    target: "e2e",
+    args: { ANTNEST_RUNTIME_FEATURES: "skill-maintenance-e2e-gate" },
+  },
 };
+
+export function imageSpec(name) {
+  if (!Object.hasOwn(images, name)) throw new Error(`unknown image ${name}`);
+  const spec = images[name];
+  return typeof spec === "string" ? { dockerfile: spec } : spec;
+}
+
+const isVariant = (name) => typeof images[name] !== "string";
 
 const registry = "ghcr.io/tf4fun";
 const packageName = (name) =>
   name.startsWith("antnest-") ? name : `antnest-${name}`;
+const scope = (name) => `scope=${packageName(name)}`;
+const platforms = ["linux/amd64"];
+
+// The primary image a variant shares layers with: the images its contexts
+// build, or the image whose Dockerfile it builds another stage of.
+function sharedImages(name) {
+  const spec = imageSpec(name);
+  if (spec.contexts)
+    return Object.values(spec.contexts).map(({ image }) => image);
+  if (!isVariant(name)) return [];
+  return Object.keys(images).filter(
+    (other) => images[other] === spec.dockerfile,
+  );
+}
 
 // Unchanged layers come from the cache the image workflows publish on main.
+// Variants have no image workflow, so they also write their own scope.
 export function bakeDefinition(names, context = ".") {
   const target = {};
+  const base = (image, stage) => {
+    const id = ["base", image, stage].filter(Boolean).join("-");
+    target[id] = {
+      context,
+      dockerfile: imageSpec(image).dockerfile,
+      platforms,
+      ...(stage && { target: stage }),
+      "cache-from": [`type=gha,${scope(image)}`],
+    };
+    return `target:${id}`;
+  };
   for (const name of names) {
-    if (!Object.hasOwn(images, name)) throw new Error(`unknown image ${name}`);
+    const spec = imageSpec(name);
+    const contexts =
+      spec.contexts &&
+      Object.fromEntries(
+        Object.entries(spec.contexts).map(([ref, { image, target: stage }]) => [
+          ref,
+          base(image, stage),
+        ]),
+      );
     target[name] = {
       context,
-      dockerfile: images[name],
-      platforms: ["linux/amd64"],
+      dockerfile: spec.dockerfile,
+      platforms,
       tags: [`antnest/${name}:local`],
-      "cache-from": [`type=gha,scope=${packageName(name)}`],
+      ...(spec.target && { target: spec.target }),
+      ...(spec.args && { args: spec.args }),
+      ...(contexts && { contexts }),
+      "cache-from": [...new Set([name, ...sharedImages(name)])].map(
+        (image) => `type=gha,${scope(image)}`,
+      ),
+      ...(isVariant(name) && {
+        "cache-to": [`type=gha,mode=max,${scope(name)}`],
+      }),
     };
   }
   return { group: { default: { targets: names } }, target };
@@ -667,9 +768,9 @@ export function listTree(head = "HEAD", git = execFileSync) {
 
 // Hashes the tracked files a build can read, so an image is rebuilt exactly
 // when its Dockerfile, .dockerignore or a copied source changes. Untracked
-// files never reach CI checkouts.
-export function imageDigest(name, tree, readBlob) {
-  const dockerfile = images[name];
+// files never reach CI checkouts. A variant also covers the images its
+// contexts build and its own build options.
+function buildInputs(dockerfile, tree, readBlob) {
   const entry = tree.get(dockerfile);
   if (!entry) throw new Error(`${dockerfile} is not tracked`);
   const sources = [
@@ -683,8 +784,18 @@ export function imageDigest(name, tree, readBlob) {
   for (const source of sources)
     if (!files.some((file) => copies(source, file)))
       throw new Error(`${dockerfile} copies ${source}, which is not tracked`);
+  return files;
+}
+
+export function imageDigest(name, tree, readBlob) {
+  const spec = imageSpec(name);
+  const files = new Set(buildInputs(spec.dockerfile, tree, readBlob));
+  for (const { image } of Object.values(spec.contexts ?? {}))
+    for (const file of buildInputs(imageSpec(image).dockerfile, tree, readBlob))
+      files.add(file);
   const hash = createHash("sha256").update(`${name}\n`);
-  for (const file of files.sort()) {
+  if (isVariant(name)) hash.update(`${JSON.stringify(spec)}\n`);
+  for (const file of [...files].sort()) {
     const { mode, object } = tree.get(file);
     hash.update(`${mode} ${object}\t${file}\n`);
   }
@@ -710,7 +821,12 @@ export function imageExists(ref, run = execFileSync) {
 export function resolveImages(names, { tree, readBlob, exists }) {
   return names.map((name) => {
     const ref = imageReference(name, imageDigest(name, tree, readBlob));
-    return { name, dockerfile: images[name], ref, build: !exists(ref) };
+    return {
+      name,
+      dockerfile: imageSpec(name).dockerfile,
+      ref,
+      build: !exists(ref),
+    };
   });
 }
 

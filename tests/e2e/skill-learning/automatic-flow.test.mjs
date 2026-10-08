@@ -24,6 +24,7 @@ import { collectLearningTraces } from "./learning-trace.mjs";
 import { collectDiscoveryTrace } from "./discovery-trace.mjs";
 import { temporaryAcpFlow } from "./temporary-acp-flow.mjs";
 import { callerAcpFlow } from "./caller-flow.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
 import { assertMaintenanceKidStartupRejected } from "./maintenance-kid.mjs";
@@ -293,10 +294,21 @@ test(
         abort.signal,
         imageBuildBudgetMs + workflowBudgetMs,
       );
+      const buildCandidate = (name, tag, build, labels) => {
+        const [, ...args] = candidateCommand({
+          name,
+          tag,
+          build: ["docker", ...build],
+          labels,
+        });
+        return docker(args, true);
+      };
       if (propagation) resourceBaseline = await resources(docker);
       for (const { service, image: candidate } of additionalImages) {
         assert.equal(await docker(["image", "ls", "-q", candidate]), "");
-        await docker(
+        await buildCandidate(
+          service,
+          candidate,
           [
             "build",
             "-f",
@@ -309,7 +321,7 @@ test(
             `io.antnest.authentication-integration=${config.project}`,
             ".",
           ],
-          true,
+          { "io.antnest.authentication-integration": config.project },
         );
       }
       if (callerDiscovery)
@@ -323,17 +335,14 @@ test(
           `Temporary acceptance ${config.project}: building isolated Runtime candidate`,
         );
         temporaryRuntimeImage = `antnest/antnest-runtime:acp-temporary-${config.project.slice(-8)}`;
-        await docker(
-          [
-            "build",
-            "-f",
-            "runtimes/antnest-runtime/Dockerfile",
-            "-t",
-            temporaryRuntimeImage,
-            ".",
-          ],
-          true,
-        );
+        await buildCandidate("antnest-runtime", temporaryRuntimeImage, [
+          "build",
+          "-f",
+          "runtimes/antnest-runtime/Dockerfile",
+          "-t",
+          temporaryRuntimeImage,
+          ".",
+        ]);
         config.resolvedImage = await docker([
           "image",
           "inspect",
@@ -347,54 +356,29 @@ test(
           `Temporary acceptance ${config.project}: Runtime candidate built`,
         );
       }
-      await docker(
-        [
+      const builds = [
+        ["agent-acp-service", image],
+        ["agent-ui", uiImage],
+        ...(discoveryImage ? [["skill-registry", discoveryImage]] : []),
+        ...(pinned || propagation
+          ? [["agent-controller", controllerImage]]
+          : []),
+        ...(propagation
+          ? [
+              ["admin-console", consoleImage],
+              ["runtime-controller", rcImage],
+            ]
+          : []),
+      ];
+      for (const [service, tag] of builds)
+        await buildCandidate(service, tag, [
           "build",
           "-f",
-          "services/agent-acp-service/Dockerfile",
+          `services/${service}/Dockerfile`,
           "-t",
-          image,
+          tag,
           ".",
-        ],
-        true,
-      );
-      await docker(
-        ["build", "-f", "services/agent-ui/Dockerfile", "-t", uiImage, "."],
-        true,
-      );
-      if (discoveryImage)
-        await docker(
-          [
-            "build",
-            "-f",
-            "services/skill-registry/Dockerfile",
-            "-t",
-            discoveryImage,
-            ".",
-          ],
-          true,
-        );
-      if (pinned || propagation)
-        await docker(
-          [
-            "build",
-            "-f",
-            "services/agent-controller/Dockerfile",
-            "-t",
-            controllerImage,
-            ".",
-          ],
-          true,
-        );
-      if (propagation)
-        for (const [service, tag] of [
-          ["admin-console", consoleImage],
-          ["runtime-controller", rcImage],
-        ])
-          await docker(
-            ["build", "-f", `services/${service}/Dockerfile`, "-t", tag, "."],
-            true,
-          );
+        ]);
       if (deployment) {
         const invalidKid = await assertMaintenanceKidStartupRejected({
           docker,

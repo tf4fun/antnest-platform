@@ -11,6 +11,7 @@ import {
   dockerClient,
 } from "../lifecycle-closeout/docker.mjs";
 import { runCommand } from "../../support/run-command.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 
 const requireAcp = createRequire(
@@ -125,8 +126,11 @@ try {
     ]);
   const docker = dockerClient(config.env, abort.signal);
   console.log(`Disposable observation recovery project: ${config.project}`);
-  await docker(
-    [
+  const [, ...build] = candidateCommand({
+    name: "runtime-controller",
+    tag: imageTag,
+    build: [
+      "docker",
       "build",
       "--label",
       `io.antnest.test-project=${config.project}`,
@@ -136,8 +140,9 @@ try {
       imageTag,
       ".",
     ],
-    true,
-  );
+    labels: { "io.antnest.test-project": config.project },
+  });
+  await docker(build, true);
   imageID = await docker(["image", "inspect", "--format", "{{.Id}}", imageTag]);
   const rendered = JSON.parse(
     await docker(config.compose(["config", "--format", "json"])),

@@ -12,6 +12,7 @@ import {
   imageExists,
   imageReference,
   images,
+  imageSpec,
   listTree,
   matrices,
   matrix,
@@ -152,8 +153,12 @@ test("the catalog is unique and refers to existing entry points", () => {
       if (node) assert(existsSync(resolve(root, node[1])), command);
     }
   }
-  for (const dockerfile of Object.values(images))
+  for (const name of Object.keys(images)) {
+    const { dockerfile, contexts = {} } = imageSpec(name);
     assert(existsSync(resolve(root, dockerfile)), dockerfile);
+    for (const { image } of Object.values(contexts))
+      assert(typeof images[image] === "string", `${name} layers on ${image}`);
+  }
 });
 
 test("platform targets kept out of CI exist, run nowhere and name their issue", () => {
@@ -258,9 +263,25 @@ test("tier C platform scenarios get every local image and no rebuilding target",
   const tierC = suites.filter((suite) => suite.tier === "c");
   assert.equal(tierC.length, 45);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  const primary = Object.keys(images).filter(
+    (name) => typeof images[name] === "string",
+  );
+  const variants = {
+    "c-tool-permissions": ["antnest-runtime-managed"],
+    "c-tool-progress": ["antnest-runtime-managed"],
+    ...Object.fromEntries(
+      tierC
+        .filter((suite) => suite.id.startsWith("c-skill-learning-install-"))
+        .map((suite) => [suite.id, ["antnest-runtime-skill-gate"]]),
+    ),
+  };
+  assert.equal(Object.keys(variants).length, 8);
   for (const suite of tierC) {
-    if (suite.images.length > 0)
-      assert.deepEqual(suite.images, Object.keys(images).sort(), suite.id);
+    assert.deepEqual(
+      suite.images,
+      [...primary, ...(variants[suite.id] ?? [])].sort(),
+      suite.id,
+    );
     for (const command of suite.run) {
       const make = /^make ([\w.-]+)$/u.exec(command);
       if (!make) continue;
@@ -285,6 +306,46 @@ test("tier C platform scenarios get every local image and no rebuilding target",
       assert.doesNotMatch(recipe.groups.body, /docker (?:compose .*)?build/u);
     }
   }
+});
+
+test("required suites declare every image their runners derive candidates from", () => {
+  const primary = Object.keys(images)
+    .filter((name) => typeof images[name] === "string")
+    .sort();
+  const expected = {
+    "auth-runtime": [
+      "antnest-runtime",
+      "antnest-runtime-fixture",
+      "antnest-runtime-skill-gate",
+    ],
+    "deployment-wiring": primary,
+    "gateway-security-headers": primary,
+    "agent-ui-receipt": primary,
+    "managed-mcp-secrets-v1": [...primary, "antnest-runtime-managed"].sort(),
+    "managed-mcp-secrets-v2": [...primary, "antnest-runtime-managed"].sort(),
+    "observation-retry": [
+      "agent-acp-service",
+      "antnest-runtime",
+      "runtime-controller",
+      "runtime-egress",
+    ],
+    "shell-stage1": ["antnest-runtime", "runtime-egress"],
+    "shell-runtime-controller": [
+      "antnest-runtime",
+      "runtime-controller",
+      "runtime-egress",
+    ],
+    "skill-learning-runtime": [
+      "antnest-runtime",
+      "antnest-runtime-fixture",
+      "antnest-runtime-skill-gate",
+    ],
+    "skill-registry-console": ["admin-console", "skill-registry"],
+    "skill-registry-discovery": ["skill-registry"],
+    "skill-temporary-runtime": ["antnest-runtime"],
+  };
+  for (const [id, names] of Object.entries(expected))
+    assert.deepEqual(suites.find((suite) => suite.id === id).images, names, id);
 });
 
 test("tier C managed MCP scenarios build their fixture image first", () => {
@@ -376,6 +437,77 @@ test("bake definitions tag local images and read the image workflow cache", () =
   assert.throws(() => bakeDefinition(["unknown"]), /unknown image/u);
 });
 
+test("Runtime test variants build a stage or layer on Runtime build stages", () => {
+  const gate = bakeDefinition(["antnest-runtime-skill-gate"], "/workspace");
+  assert.deepEqual(gate.group.default.targets, ["antnest-runtime-skill-gate"]);
+  assert.deepEqual(gate.target["antnest-runtime-skill-gate"], {
+    context: "/workspace",
+    dockerfile: "runtimes/antnest-runtime/Dockerfile",
+    platforms: ["linux/amd64"],
+    tags: ["antnest/antnest-runtime-skill-gate:local"],
+    target: "e2e",
+    args: { ANTNEST_RUNTIME_FEATURES: "skill-maintenance-e2e-gate" },
+    "cache-from": [
+      "type=gha,scope=antnest-runtime-skill-gate",
+      "type=gha,scope=antnest-runtime",
+    ],
+    // No image workflow owns a variant's cache scope.
+    "cache-to": ["type=gha,mode=max,scope=antnest-runtime-skill-gate"],
+  });
+
+  const managed = bakeDefinition(
+    ["antnest-runtime-managed", "antnest-runtime-fixture"],
+    "/workspace",
+  );
+  assert.deepEqual(managed.group.default.targets, [
+    "antnest-runtime-managed",
+    "antnest-runtime-fixture",
+  ]);
+  assert.deepEqual(managed.target["antnest-runtime-managed"].contexts, {
+    "antnest/antnest-runtime:managed-build":
+      "target:base-antnest-runtime-build",
+    "antnest/antnest-runtime:local": "target:base-antnest-runtime",
+  });
+  assert.deepEqual(managed.target["antnest-runtime-fixture"].contexts, {
+    "antnest/antnest-runtime:managed-build":
+      "target:base-antnest-runtime-build",
+  });
+  assert.deepEqual(managed.target["base-antnest-runtime-build"], {
+    context: "/workspace",
+    dockerfile: "runtimes/antnest-runtime/Dockerfile",
+    platforms: ["linux/amd64"],
+    target: "build",
+    "cache-from": ["type=gha,scope=antnest-runtime"],
+  });
+  assert.deepEqual(managed.target["base-antnest-runtime"], {
+    context: "/workspace",
+    dockerfile: "runtimes/antnest-runtime/Dockerfile",
+    platforms: ["linux/amd64"],
+    "cache-from": ["type=gha,scope=antnest-runtime"],
+  });
+  assert.deepEqual(managed.target["antnest-runtime-managed"]["cache-from"], [
+    "type=gha,scope=antnest-runtime-managed",
+    "type=gha,scope=antnest-runtime",
+  ]);
+});
+
+test("variant contexts replace exactly the base images their Dockerfile names", () => {
+  for (const [name, file] of [
+    ["antnest-runtime-managed", "tests/e2e/managed-mcp/Dockerfile"],
+    ["antnest-runtime-fixture", "tests/e2e/managed-mcp/fixture.Dockerfile"],
+  ]) {
+    const text = readFileSync(resolve(root, file), "utf8");
+    const defaults = [...text.matchAll(/^ARG \w+=(\S+)$/gmu)].map(
+      ([, value]) => value,
+    );
+    assert.deepEqual(
+      Object.keys(bakeDefinition([name]).target[name].contexts).sort(),
+      defaults.sort(),
+      name,
+    );
+  }
+});
+
 test("Dockerfile sources skip stage copies, flags and comments", () => {
   assert.deepEqual(
     dockerfileSources(
@@ -450,6 +582,44 @@ test("image digests change only with the files the build reads", () => {
   assert.throws(
     () => imageDigest("runtime-egress", new Map(), readBlob),
     /services\/runtime-egress\/Dockerfile is not tracked/u,
+  );
+});
+
+test("variant digests cover their base image inputs and their own build options", () => {
+  const files = (entries = {}) =>
+    tree({
+      "runtimes/antnest-runtime/Dockerfile": "runtime-dockerfile",
+      "runtimes/antnest-runtime/src/main.rs": "main-1",
+      "tests/integration/antnest-runtime/a.rs": "probe-1",
+      "tests/integration/skill-registry/package-rules-v1.json": "rules-1",
+      "contracts/runtime/a.json": "contract-1",
+      "contracts/platform/service-token-fixtures.json": "tokens-1",
+      "tests/e2e/managed-mcp/Dockerfile": "managed-dockerfile",
+      ...entries,
+    });
+  const blobs = {
+    "runtime-dockerfile": [
+      "FROM rust AS build",
+      "COPY runtimes/antnest-runtime ./runtimes/antnest-runtime",
+      "COPY tests/integration/antnest-runtime ./tests/integration/antnest-runtime",
+      "COPY tests/integration/skill-registry/package-rules-v1.json ./x.json",
+      "COPY contracts/runtime ./contracts/runtime",
+      "COPY contracts/platform/service-token-fixtures.json ./y.json",
+    ].join("\n"),
+    "managed-dockerfile": "FROM ${RUNTIME_IMAGE}\nCOPY --from=fixture /a /b\n",
+  };
+  const read = (object) => blobs[object] ?? "";
+  const digest = (name, entries) => imageDigest(name, files(entries), read);
+  const managed = digest("antnest-runtime-managed");
+  assert.notEqual(
+    digest("antnest-runtime-managed", {
+      "runtimes/antnest-runtime/src/main.rs": "main-2",
+    }),
+    managed,
+  );
+  assert.notEqual(
+    digest("antnest-runtime-skill-gate"),
+    digest("antnest-runtime"),
   );
 });
 

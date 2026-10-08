@@ -17,6 +17,7 @@ import {
   until,
 } from "../workspace-closeout/c4-setup.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 import { skillClientArgs } from "./client-container.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -141,22 +142,25 @@ test(
         ANTNEST_E2E_REVIEW_UNTRUSTED: reviewUntrusted ? "true" : "false",
       });
       const docker = dockerClient(config.env, abort.signal, 720_000);
-      await docker(
-        [
-          "build",
-          "-f",
-          "services/agent-acp-service/Dockerfile",
-          "-t",
-          image,
-          ".",
-        ],
-        true,
-      );
-      if (reviewRecovery)
-        await docker(
-          ["build", "-f", "services/agent-ui/Dockerfile", "-t", uiImage, "."],
-          true,
-        );
+      for (const [service, tag] of [
+        ["agent-acp-service", image],
+        ...(reviewRecovery ? [["agent-ui", uiImage]] : []),
+      ]) {
+        const [, ...build] = candidateCommand({
+          name: service,
+          tag,
+          build: [
+            "docker",
+            "build",
+            "-f",
+            `services/${service}/Dockerfile`,
+            "-t",
+            tag,
+            ".",
+          ],
+        });
+        await docker(build, true);
+      }
       await docker(
         composeArgs(config.project, [
           ...overlay,

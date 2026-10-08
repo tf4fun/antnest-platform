@@ -238,11 +238,11 @@ e2e-rpc-response-loss:
 	ANTNEST_E2E_RPC_RESPONSE_LOSS=true sh tests/e2e/e2e-stage3a.sh
 
 # Test-only Runtime with the managed MCP fixture, layered on the current
-# antnest/antnest-runtime:local image.
+# antnest/antnest-runtime:local image. CI provides it prebuilt
+# (tests/support/candidate-images.mjs).
 .PHONY: docker-build-managed-runtime
 docker-build-managed-runtime:
-	docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build .
-	docker build -f tests/e2e/managed-mcp/Dockerfile -t antnest/antnest-runtime:managed-integration .
+	node tests/support/candidate-images.mjs antnest-runtime-managed antnest/antnest-runtime:managed-integration -- sh -c 'docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build . && docker build -f tests/e2e/managed-mcp/Dockerfile -t antnest/antnest-runtime:managed-integration .'
 
 .PHONY: test-tool-progress-fixtures e2e-tool-progress
 test-tool-progress-fixtures:
@@ -317,10 +317,10 @@ docker-build-runtime-controller:
 	docker compose build runtime-controller
 
 e2e-skill-learning-runtime:
-	docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-build .
-	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-local .
+	node tests/support/candidate-images.mjs antnest-runtime-fixture antnest/antnest-runtime:skill-learning-build -- docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-build .
+	node tests/support/candidate-images.mjs antnest-runtime antnest/antnest-runtime:skill-learning-local -- docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-local .
 	node tests/e2e/skill-learning/runtime-release.mjs
-	docker build --target e2e --build-arg ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-gate .
+	node tests/support/candidate-images.mjs antnest-runtime-skill-gate antnest/antnest-runtime:skill-learning-gate -- docker build --target e2e --build-arg ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-gate .
 	node tests/e2e/skill-learning/runtime-install.mjs
 
 .PHONY: e2e-runtime-tool-usability
