@@ -1,17 +1,43 @@
 import { createServer } from "node:http";
+import { pathToFileURL } from "node:url";
 
 // Loaded only by the disposable ACP container. One test delays the real
 // Runtime receipt; another delays dispatch after ACP has recorded its intent.
 // NODE_OPTIONS loads this file into every node process in the container,
 // including the `node -e` healthcheck, which must not take the gate's port.
-if (process.argv[1]?.endsWith("/dist/main.js")) install();
+if (process.argv[1]?.endsWith("/dist/main.js")) await install();
 
-function install() {
-  const originalFetch = globalThis.fetch;
+// ACP reaches Runtime only through RuntimeConnections.fetchFor, which calls
+// undici with its own dispatcher and never the global fetch. Gating anything
+// else would leave every held-commit scenario waiting for a request it can
+// never see, so a missing hook stops ACP instead of starting ungated.
+// The module graph is free of pg, so loading it here does not preempt the
+// instrumentation that main registers before composition.
+async function install() {
+  const transport = new URL(
+    "./adapters/runtime-connections.js",
+    pathToFileURL(process.argv[1]),
+  );
+  let RuntimeConnections;
+  try {
+    ({ RuntimeConnections } = await import(transport.href));
+  } catch (error) {
+    throw new Error(`Maintenance gate cannot load ${transport.pathname}`, {
+      cause: error,
+    });
+  }
+  const fetchFor = RuntimeConnections?.prototype?.fetchFor;
+  if (typeof fetchFor !== "function")
+    throw new Error(
+      `Maintenance gate found no RuntimeConnections.fetchFor in ${transport.pathname}`,
+    );
   let pending = null;
   let atomicAbortSeen = false;
   let releaseHeld = false;
-  globalThis.fetch = async (input, init) => {
+  RuntimeConnections.prototype.fetchFor = function (binding) {
+    return gated(fetchFor.call(this, binding));
+  };
+  const gated = (originalFetch) => async (input, init) => {
     const address =
       input instanceof URL
         ? input.href
