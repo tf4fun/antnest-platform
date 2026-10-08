@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   buildLearningCandidatePackage,
-  learningSkillTextDigest,
+  learningSkillTextPackage,
   type LearningCandidatePackage,
 } from "../domain/learning-candidate-package.js";
 import type { LearningEvidence } from "../domain/learning-evidence.js";
@@ -10,8 +10,6 @@ import type { ManagedSkillIdentity } from "../domain/learning-apply-admission.js
 import type { LearningReviewDecision } from "../domain/learning-review-proposal.js";
 import { learningPolicySchema } from "../domain/learning-policy.js";
 import type { LearningScanScope, LearningTaskClaim } from "../domain/learning-scan.js";
-import type { RuntimeInformation } from "../domain/runtime-information.js";
-import type { RuntimeBinding } from "../domain/types.js";
 
 type Review = {
   execute(input: {
@@ -36,7 +34,10 @@ type Candidates = {
 };
 type Managed = {
   read(scope: LearningScanScope, packagePath: string): Promise<ManagedSkillIdentity | null>;
-  list(scope: LearningScanScope): Promise<ManagedSkillIdentity[]>;
+  /** `appliedSkillText` is ACP's stored SKILL.md of the last applied package. */
+  list(
+    scope: LearningScanScope,
+  ): Promise<(ManagedSkillIdentity & { appliedSkillText: string | null })[]>;
 };
 type Outcomes = {
   recordModelSkip(claim: LearningTaskClaim): Promise<{ state: "skipped" }>;
@@ -45,16 +46,7 @@ type Outcomes = {
     packagePath: string,
   ): Promise<{ state: "skipped" }>;
 };
-type Binding = RuntimeBinding;
-type Runtime = {
-  current(claim: LearningTaskClaim): Promise<Binding | null>;
-  readBinding(
-    binding: Binding,
-    signal: AbortSignal,
-  ): Promise<Pick<RuntimeInformation, "executionId" | "skills" | "warnings" | "truncated">>;
-  readPersonalSkill(binding: Binding, packagePath: string, signal: AbortSignal): Promise<string>;
-};
-
+/** Review reads only ACP data and never calls the Runtime. */
 export class LearningReviewProcessor {
   public constructor(
     private readonly review: Review,
@@ -62,7 +54,6 @@ export class LearningReviewProcessor {
     private readonly candidates: Candidates,
     private readonly managed: Managed,
     private readonly outcomes: Outcomes,
-    private readonly runtime: Runtime,
   ) {}
 
   public async process(
@@ -82,19 +73,11 @@ export class LearningReviewProcessor {
       agentId: claim.agentId,
       ownerId: claim.ownerId,
     };
-    const binding = await this.runtime.current(claim);
-    if (binding === null) throw new Error("Learning Runtime binding is unavailable");
-    const [registered, information, sourceEvidence] = await Promise.all([
+    const [registered, sourceEvidence] = await Promise.all([
       this.managed.list(scope),
-      this.runtime.readBinding(binding, signal),
       this.evidence.readAndRecord(claim),
     ]);
-    if (
-      information.executionId !== binding.executionId ||
-      information.truncated ||
-      information.warnings.length > 0
-    )
-      throw new Error("Learning Runtime Skill inventory is incomplete");
+    // A missing or drifted stored artifact is never offered or updated.
     const eligible = registered
       .filter(
         (item) =>
@@ -103,38 +86,36 @@ export class LearningReviewProcessor {
           !frozenPolicy.pinned_paths.includes(item.packagePath),
       )
       .flatMap((item) => {
-        const skill = information.skills.find(
-          (found) =>
-            found.source === "personal" &&
-            found.path.root === "workspace" &&
-            found.path.path === `${item.packagePath}/SKILL.md` &&
-            item.packagePath === `.antnest/skills/${found.name}`,
-        );
-        return skill === undefined ? [] : [{ name: skill.name, description: skill.description }];
+        const stored = appliedPackage(item.appliedSkillText);
+        return stored === null ||
+          stored.targetDigest !== item.lastDigest ||
+          item.packagePath !== `.antnest/skills/${stored.name}`
+          ? []
+          : [
+              {
+                name: stored.name,
+                description: stored.description,
+                skillText: stored.skillText,
+                digest: stored.targetDigest,
+              },
+            ];
       });
     const selected = selectRelatedSkills(eligible, sourceEvidence);
     const currentByPath = new Map<string, { skillText: string; digest: string }>();
     const existingSkills: { name: string; description: string; content?: string }[] = [];
     let contentBytes = 0;
-    for (const skill of eligible) {
+    for (const { skillText, digest, ...skill } of eligible) {
       if (!selected.has(skill.name)) {
         existingSkills.push(skill);
         continue;
       }
-      const packagePath = `.antnest/skills/${skill.name}`;
-      const current = registered.find((item) => item.packagePath === packagePath);
-      if (current === undefined) throw new Error("Learning Skill inventory is inconsistent");
-      const skillText = await this.runtime.readPersonalSkill(binding, packagePath, signal);
-      const digest = learningSkillTextDigest(skillText);
-      if (digest !== current.lastDigest)
-        throw new Error("Learning Skill current content differs from its managed digest");
       const nextBytes = Buffer.byteLength(skillText, "utf8");
       if (contentBytes + nextBytes > 24 * 1024) {
         existingSkills.push(skill);
         continue;
       }
       contentBytes += nextBytes;
-      currentByPath.set(packagePath, { skillText, digest });
+      currentByPath.set(`.antnest/skills/${skill.name}`, { skillText, digest });
       existingSkills.push({ ...skill, content: skillText });
     }
     const decision = await this.review.execute({ claim, signal, existingSkills });
@@ -181,6 +162,17 @@ export class LearningReviewProcessor {
       ...(current === undefined ? {} : { baseSkillText: current.skillText }),
     });
     return { kind: "candidate", ...saved };
+  }
+}
+
+function appliedPackage(
+  skillText: string | null,
+): ReturnType<typeof learningSkillTextPackage> | null {
+  if (skillText === null) return null;
+  try {
+    return learningSkillTextPackage(skillText);
+  } catch {
+    return null;
   }
 }
 

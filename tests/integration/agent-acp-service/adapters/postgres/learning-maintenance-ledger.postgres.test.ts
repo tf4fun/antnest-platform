@@ -979,6 +979,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       {
         packagePath: candidatePackage.packagePath,
         lastDigest: candidatePackage.targetDigest,
+        appliedSkillText: null,
       },
     ]);
     await expect(
@@ -1864,6 +1865,25 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       state: "active",
       lastDigest: candidatePackage.targetDigest,
     });
+    // Review reads the last applied package from ACP, never from the Runtime.
+    expect(await managedSkills.list(claim)).toMatchObject([
+      {
+        packagePath: candidatePackage.packagePath,
+        lastDigest: candidatePackage.targetDigest,
+        appliedSkillText: candidatePackage.skillText,
+      },
+    ]);
+    await pool.query(
+      "UPDATE learning_managed_skills SET last_digest=$1 WHERE package_path=$2",
+      [`sha256:${"f".repeat(64)}`, candidatePackage.packagePath],
+    );
+    expect(await managedSkills.list(claim)).toMatchObject([
+      { packagePath: candidatePackage.packagePath, appliedSkillText: null },
+    ]);
+    await pool.query(
+      "UPDATE learning_managed_skills SET last_digest=$1 WHERE package_path=$2",
+      [candidatePackage.targetDigest, candidatePackage.packagePath],
+    );
     expect(
       (
         await pool.query<Record<string, unknown>>(

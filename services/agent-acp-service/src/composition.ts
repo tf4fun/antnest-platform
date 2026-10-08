@@ -653,19 +653,7 @@ function buildLearningWorker(input: {
     providers,
     new LearningTelemetry(telemetry),
   );
-  const review = new LearningReviewProcessor(
-    reviewRunner,
-    evidence,
-    candidates,
-    managed,
-    outcomes,
-    {
-      current: (claim) => binding.current(claim),
-      readBinding: (current, signal) => rawTools.readBinding(current, signal),
-      readPersonalSkill: (current, path, signal) =>
-        rawTools.readPersonalSkill(current, path, signal),
-    },
-  );
+  const review = new LearningReviewProcessor(reviewRunner, evidence, candidates, managed, outcomes);
   const apply = new LearningApplyAttempt(
     candidates,
     binding,

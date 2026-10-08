@@ -65,6 +65,13 @@ startup recovery and stops before the worker lock is released.
   from untrusted Tool output. PostgreSQL truncates text before returning it.
 - A claimed task persists one immutable, idempotent evidence snapshot. Changed
   selected content conflicts on replay.
+- Review never calls the Runtime. It lists the Agent's active, automatically
+  generated, unpinned managed Skills from ACP's stored `SKILL.md` of the last
+  applied package, and passes the bodies of up to two related Skills (24 KiB
+  total) as reference. A Skill whose stored artifact is missing or no longer
+  matches its managed digest is not offered and cannot be updated. A package
+  edited in the workspace since its last applied change is caught by the
+  Runtime base digest check when the change is applied.
 - The immutable review prompt and strict output parser produce only a bounded
   `skip` or a single-Skill proposal with per-rule citations. Evidence is
   serialized as labeled data; Tool output is never promoted to a user instruction.
