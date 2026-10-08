@@ -39,7 +39,7 @@ defines it.
 
 | Concern | Design decision |
 | --- | --- |
-| Background work occupying a Run or Runtime | Maintenance is an independent task and does not occupy a foreground Run. It shares an admission gate with foreground work; a foreground request cancels the review before the Run is prepared. |
+| Background work occupying a Run or Runtime | Maintenance is an independent, read-only task that occupies neither a foreground Run nor the Runtime. Its only Runtime call is one atomic install, sent when the Agent is idle; foreground work preempts it and never waits for it. |
 | Persisting external instructions as rules | Evidence is graded and each item is traceable. Low-trust content cannot on its own support an automatic rule. Automatic candidates must pass scope and source checks. Semantic misjudgment remains a known limit. |
 | Active references incompatible with the Runtime | Packages are real directories, and candidates live on the same volume. An update is an atomic whole-directory exchange. A new Skill is created with a non-overwriting rename. Symbolic links and pointer files are not used. |
 | No isolated validation environment | Checks are limited to structural checks and results the source Run already produced. User confirmation is the application basis of the optional manual path, not business validation. A new candidate is never executed to validate itself. |
@@ -66,7 +66,7 @@ protocol. It adopts the following rules:
 | Conditional automatic creation and update of Skills, with managed ownership | Users get learned Skills without a confirmation step for each change. Managed ownership limits automatic writes to packages the learning system created. |
 | Read before modify, and prefer extending an existing topic over creating a new Skill | This avoids duplicate or conflicting Skills for the same subject. |
 | Notify the user after the change takes effect | The normal path does not wait for approval, so the user still learns what changed and why. |
-| Review runs as an independent ACP task behind the Runtime single-slot admission gate | Background learning must not compete with or corrupt foreground Runs. |
+| Review runs as an independent read-only ACP task; its single Runtime install yields to foreground work | Background learning must not compete with, delay, or corrupt foreground Runs. |
 | Every applied change records its policy basis | Each automatic change can be traced to the policy revision, path, and digest that authorized it. |
 | System Skills are read-only to learning | Template system Skills remain immutable; learning writes only managed personal Skills. |
 | Strategies, cases, failure feedback, validation, and process records have separate roles | Each kind of information has one owner and one purpose (see Section 3). |
@@ -127,7 +127,7 @@ Registry, RC, and learning checks use shared samples and a shared package rules 
 | `review_prompt_version` | Version of the ACP internal review prompt template; it identifies the distillation method and its prompt content, not the package format | Positive integer starting at 1; ACP keeps the immutable template content and freezes it when the task is created; both explicit requests and background suggestions record it |
 
 Neither is the Registry collection `layout_version`, a Skill release version, an Agent configuration revision, or a model version. A task records both the package rules version and the prompt version, and a retry never silently switches to a newer prompt.
-When new package rules are released, candidates waiting to be applied are rechecked under the current rules and the old check records are kept. A candidate that no longer complies is blocked from commit. If its bytes must change, a new candidate is generated and the basis for applying it is re-evaluated; the old pass flag is not reused. A manual-confirmation branch must confirm the new content again.
+When new package rules are released, candidates waiting to be applied are rechecked under the current rules and the old check records are kept. A candidate that no longer complies is blocked from install. If its bytes must change, a new candidate is generated and the basis for applying it is re-evaluated; the old pass flag is not reused. A manual-confirmation branch must confirm the new content again.
 
 A personal candidate starts as a directory, but it must also be checked against the 8 MiB compressed limit of a future ZIP export. This is verified by a bounded count of the actual packing and encoding, not estimated from the unpacked size. Packing never runs scripts, and the artifact and its temporary space count toward the candidate budget. The exported file list must match the candidate bound to the apply record.
 
@@ -139,16 +139,16 @@ When the user renames or moves the directory, changes `name`, or changes the con
 
 The review method uses a versioned prompt template internal to ACP. It is used only in maintenance contexts and never appears as a normal system Skill in the summary of each foreground Run. The prompt distills the method; program code enforces permissions, budget, tool scope, and the apply basis. The prompt cannot grant publish rights or change the read-only boundary of system Skills.
 
-Maintenance uses a **separate internal Runtime HTTP endpoint** with the fixed path `POST /internal/skill-maintenance/{action}`. The action is limited to `prepare`, `check`, `commit`, `observe`, `cancel`, and `release` (candidate preparation, check, commit, observation, cancellation, and cleanup). It is not an MCP Tool and is not added to `tools/list`, Runtime information, or any model-callable definition. The Runtime built-in model tools remain only `read/write/edit/bash`, and existing managed MCP tools are still discovered from the real catalog. See [tool boundaries](runtime-context-and-managed-mcp.md).
+Maintenance uses a **separate internal Runtime HTTP endpoint** with the fixed path `POST /internal/skill-maintenance/{action}`. The action is limited to `install` (atomic creation or replacement of one managed personal Skill) and `digest` (a read-only digest query used by dynamic Skill discovery). It is not an MCP Tool and is not added to `tools/list`, Runtime information, or any model-callable definition. The Runtime built-in model tools remain only `read/write/edit/bash`, and existing managed MCP tools are still discovered from the real catalog. See [tool boundaries](runtime-context-and-managed-mcp.md).
 
 Protection has two layers and does not rely on ACP filtering alone:
 
 1. The Runtime rejects reserved maintenance names and aliases on normal `tools/call` and never creates tool bindings for them. The managed MCP catalog must not register reserved names either. Even if ACP misses a filter, the model guesses a name, or a historical call is replayed, nothing can be committed through the Tool channel. The separate endpoint first verifies the maintenance credential and the execution binding, then enters the same Execution Actor, where an executor with dropped privileges (UID/GID 1000) operates on files.
 2. The ACP internal maintenance adapter accepts only maintenance contexts that program code established. The model Tool dispatcher has no route that forwards to this endpoint. The call source is never taken from parameters, names, or `role=maintenance` text. As a second layer, a reserved definition that unexpectedly appears in the catalog is rejected separately and reported as a contract error.
 
-The maintenance credential is a restricted request credential that ACP issues on the server side and the Runtime verifies. It is bound to the Agent, the current `execution_id`, the maintenance task and generation, the action, and the request and candidate/parameter digest. A repeated request can only recover the same effect; a cancelled generation or an old `execution_id` cannot continue writing. The ACP private key stays in ACP. RC supplies the verification public key set, with a `kid` per key, through the controlled Runtime bootstrap. Issued credentials are never handed to the model, normal tools, the workspace, or child processes.
+The maintenance credential is a restricted request credential that ACP issues on the server side and the Runtime verifies. It is bound to the Agent, the current `execution_id`, the maintenance task and generation, the action, and the request and candidate/parameter digest. A repeated request can only reproduce the same digest-conditioned effect; an old `execution_id` is rejected, and ACP stops signing for a superseded task generation. The ACP private key stays in ACP. RC supplies the verification public key set, with a `kid` per key, through the controlled Runtime bootstrap. Issued credentials are never handed to the model, normal tools, the workspace, or child processes.
 The current `X-Antnest-Expected-Execution-ID` header is only an identity consistency field and cannot serve as an authentication credential.
-The credential fields, the rotation and revocation boundaries in the next section, replay handling, and cancellation observation are fixed by the shared contract and implemented separately by the Runtime, RC, and ACP. When no valid verification identity is configured, the endpoint stays closed. This addition does not change the current internal-network trust model of normal MCP, and it does not make the maintenance endpoint an authorization entry point for browsers or foreground scripts.
+The credential fields, the rotation and revocation boundaries in the next section, and replay handling are fixed by the shared contract and implemented separately by the Runtime, RC, and ACP. When no valid verification identity is configured, the endpoint stays closed. This addition does not change the current internal-network trust model of normal MCP, and it does not make the maintenance endpoint an authorization entry point for browsers or foreground scripts.
 
 The separate control channel and the reserved-name rules are registered in the shared contract. `tools/list` remains the only authority for **model tool** definitions. The design never mixes maintenance capabilities into the real catalog first and then relies on filtering.
 
@@ -176,10 +176,10 @@ A new global configuration applies only to create, rebuild, or Enable operations
 Normal rotation:
 
 1. RC pre-provisions `{K_current, K_next}` for new targets. Operators check the sets held by running Runtimes **and by the frozen targets of unfinished operations**. An existing Runtime does not receive new keys when the RC configuration changes. An instance that lacks K_next is first rebuilt explicitly in a maintenance window, or learning maintenance for that Agent is paused.
-2. ACP switches the signing `kid` only after it is confirmed that the targets trust K_next. A target that does not support the kid rejects maintenance requests and keeps its candidates; normal Runs are not blocked by the key change. There is no fallback through trial signing, automatic downgrade, or skipping signature verification. Old snapshots still under recovery must be included in the switch checklist, so that a late completion cannot bring back an unprepared instance.
+2. ACP switches the signing `kid` only after it is confirmed that the targets trust K_next. A target that does not support the kid rejects maintenance requests, and ACP keeps its candidates; normal Runs are not blocked by the key change. There is no fallback through trial signing, automatic downgrade, or skipping signature verification. Old snapshots still under recovery must be included in the switch checklist, so that a late completion cannot bring back an unprepared instance.
 3. RC configuration is updated to `{K_next, K_future}`. Instances are rebuilt explicitly one by one, or picked up by a later controlled Enable, and maintenance resumes only after the new execution binding and key set are verified. Accepted operations are settled under their original snapshot first and then updated with new requests. Switching the ACP signer alone does not revoke a running Runtime's trust in K_current. The first version does not promise online immediate revocation; removing an old trusted key requires completing this round of rebuilds.
 
-If the private key leaks, first close new learning admission and signing, and settle in-flight maintenance. **Stopping ACP signing does not revoke the leaked key.** The maintenance entry point of affected Runtimes must be isolated. If the current deployment cannot reliably block every entry point, including direct connections from normal processes inside the Runtime, the Controller disables the affected Runtime and confirms that execution has stopped, accepting the foreground interruption for that Agent. Blocking only the external network is not a revocation. Within the isolation or maintenance window, inventory running instances, disabled configurations, and in-flight targets; replace the key and rebuild with a set that does not contain the leaked kid. Recover or settle old operations according to the facts. Do not rewrite frozen snapshots to bypass digest conflicts, and do not reopen targets that carry the old key. Maintenance reopens only after the new `execution_id` and the new trust set are verified.
+If the private key leaks, first close new learning admission and signing, and abandon in-flight installs. **Stopping ACP signing does not revoke the leaked key.** The maintenance entry point of affected Runtimes must be isolated. If the current deployment cannot reliably block every entry point, including direct connections from normal processes inside the Runtime, the Controller disables the affected Runtime and confirms that execution has stopped, accepting the foreground interruption for that Agent. Blocking only the external network is not a revocation. Within the isolation or maintenance window, inventory running instances, disabled configurations, and in-flight targets; replace the key and rebuild with a set that does not contain the leaked kid. Recover or settle old operations according to the facts. Do not rewrite frozen snapshots to bypass digest conflicts, and do not reopen targets that carry the old key. Maintenance reopens only after the new `execution_id` and the new trust set are verified.
 
 RC public key snapshots and deployment records, and the ACP protected private key configuration, must be included in their respective backup and restore checklists. The private key is never written into the RuntimeSpec, business logs, or the repository. When restoring an old backup, check the revocation records first; never re-enable a leaked key or an old target that carries it. Rotation, in-flight recovery during configuration changes, empty sets and unknown kids, leak isolation, and restore restrictions are each covered by the local gates of the Runtime, RC, and ACP and by cross-service integration tests. The manual leak-response path is exercised by `make e2e-skill-learning-key-compromise`. It does not provide automatic revocation or startup blocking, and it does not cover leak recovery with in-flight lifecycle operations; the operator performing a recovery must still inventory and settle unfinished targets as described in this section.
 
@@ -188,14 +188,14 @@ RC public key snapshots and deployment records, and the ACP protected private ke
 ```mermaid
 flowchart TD
     R["Source Run completes and is persisted"] --> T["Check automatic policy, experience cues, budget, and idleness"]
-    T --> J["Low-priority review; read related existing Skills first"]
+    T --> J["Read-only review from ACP records; read related managed Skills first"]
     J --> C["Generate an update or new candidate with a source mapping"]
     C --> V["Package structure check, trust check, link to existing results"]
     V -->|"Matches automatic policy"| P["ACP records the apply basis and target digest"]
     V -->|"Optional manual branch"| D["Show the diff and confirm the exact content"]
     D --> P
-    P --> W["Wait for idle; recheck apply basis and base"]
-    W --> A["Activate in the directory, read back and verify the target digest, record the result"]
+    P --> W["Wait for idle; recheck apply basis"]
+    W --> A["One atomic install: Runtime checks base, renames, verifies the target digest; ACP records the result"]
     A --> N["Lightweight notice; later Runs use the Skill"]
     V -->|"Failure or insufficient sources"| Q["Keep the reason or a revision suggestion; do not apply"]
     U["Optional: user saves explicitly"] --> E["Real user action and scoped evidence"]
@@ -286,7 +286,7 @@ The display includes additions, deletions, and changes to the body and every
 supporting file, the impact scope, the base and target digests, the sources,
 and the verification limits. On the automatic path, ACP records
 `apply_basis=policy`, the organization and Agent, the scope, the policy
-revision, and the full candidate digest. It revalidates them before commit,
+revision, and the full candidate digest. It revalidates them before install,
 and they remain reviewable afterwards. The manual branch records
 `apply_basis=user_action` and binds the real confirmation, the candidate
 digest, and the authorized revision. Opening a page, delivering a notice, or
@@ -326,7 +326,7 @@ SSE recovery, and frontend deduplication together. The design adds no receipt
 to the standard notice and does not insert notices into `session/load`
 replay.
 
-## 6. Background Review and Foreground Admission
+## 6. Background Review and Foreground Priority
 
 ### 6.1 Existing Limits and Maintenance Task Identity
 
@@ -342,64 +342,72 @@ bypass Runs to access the Runtime concurrently.
 Background review is a **maintenance task** owned by ACP. It reuses the model
 client, billing, and cancellation infrastructure. It does not create an active
 user Run, does not take the Run slot, does not write fabricated user messages,
-and does not modify the source Run. For each Agent, maintenance tasks and
-foreground Runs share one programmatic admission gate. The Runtime still keeps
-its own single-slot constraint.
+and does not modify the source Run.
 
-A task runs in this order: read bounded evidence, release the Runtime, run
-model inference, recheck admission, write the candidate. Inference does not
-hold the Runtime slot. A maintenance read or write starts only when the Agent
-has no foreground Run, no pending foreground admission intent, and a valid
-binding. Resource reads go through the same gate, so maintenance cannot read
-the personal directory while a foreground Run prepares `info`. The model has no
-general shell, no external business tools, and no arbitrary write path. The
-first version uses bounded structured generation: the program reads the
+**Learning is read-only until its last step.** A task reads bounded evidence
+from ACP persistence (the source Session messages, Run records, and ACP's
+stored artifact of the related managed Skills), runs model inference,
+validates the output, and stores the candidate in ACP. None of these steps
+calls the Runtime, so they never compete with foreground work for the Runtime
+slot, and they can stop at any point without leaving a side effect. The model
+has no general shell, no external business tools, and no arbitrary write path.
+The first version uses bounded structured generation: the program reads the
 evidence and related Skills, the model outputs a target, a change, and the
-evidence for each item, and the program validates the output and writes the
+evidence for each item, and the program validates the output and builds the
 candidate. It does not run a free-form tool loop. Format correction counts
 against the same task budget.
 
-### 6.2 Ordering of Foreground Admission, Drain, and Cancellation
+The only write is one Runtime `install` call (Section 7.2). It is the only step
+that cannot be interrupted at an arbitrary instant, and its uninterruptible
+part is a single rename system call.
 
-1. A foreground submission first atomically registers a priority admission
-   intent. This blocks new maintenance Runtime calls for that Agent. If another
-   foreground Run is already active, the submission still fails with
-   `agent_busy`.
-2. ACP cancels the review model request and invalidates the current
-   maintenance generation and lease. A late model response is discarded and
-   cannot write a candidate. ACP does not wait for the model service to finish
-   inference.
-   A pure model call does not hold the Runtime slot. If the model adapter
-   ignores cancellation, ACP still stops waiting for the response. The call
-   cost is conservatively recorded as unknown. The budget is not refunded and
-   the request is not resent. A late success or error never becomes a
-   candidate. An unsettled model cost is not treated as an unsettled Runtime
-   file side effect.
-3. ACP cancels any maintenance file call already sent and waits until the
-   Runtime explicitly finishes the call or the result is observed. Firing an
-   AbortSignal or closing the HTTP connection does not prove that the slot is
-   free. A request that has already entered its short atomic commit either
-   completes or is settled by target digest. A completed exchange is never
-   reported as an ineffective cancellation.
-4. Only after the maintenance call is confirmed quiescent does the foreground
-   Run start preparation, read `info`, and enter normal execution. Ordinary
-   review never causes `agent_busy` and never makes a foreground Run hit
-   `runtime_busy`.
-5. Cancellation and settlement have their own short timeout. If the timeout
-   expires and Runtime quiescence cannot be proven, ACP keeps the unsettled
-   state and reports a diagnosable temporary unavailability. It does not fake
-   success, busy-wait, or start a colliding Run. Cancellation timeouts are set
-   from real file operation behavior. ACP does not promise to admit a
-   foreground Run while a side effect is unknown.
+### 6.2 Foreground Priority
 
-Drain, disable, and rebuild close maintenance admission as soon as the request
-arrives. They revoke the lease and cancel the review. They **do not wait for
-the review model to finish**, and the review is not added to the Drain wait
-list of foreground Runs. A short file side effect that has already been sent
-must still be settled within a bound or recorded as unsettled, and then the
-existing lifecycle semantics apply. "Cancel directly" never means ignoring a
-subtask that is still writing files. A new Runtime binding must use a new
-lease. An old task cannot continue writing.
+Foreground work never waits for learning:
+
+1. Run submission, preparation, `info` reads and tool calls do not check,
+   cancel-and-observe, or settle learning work. When ACP admits a foreground
+   Run, it aborts any in-flight install request for that Agent and does not
+   wait for its result.
+2. Review inference does not use the Runtime and keeps running when a
+   foreground Run starts. Its cost is recorded separately and bounded by the
+   learning budget.
+3. ACP sends `install` only when the Agent has no active Run, no pending
+   foreground admission, and no pending temporary-Skill scope. This check is
+   not a lock and does not delay foreground admission.
+4. The Runtime enforces priority. An install that finds the execution slot
+   taken returns `blocked` with `foreground_running` at once. A foreground call
+   that finds the slot held by an install preempts it: the Runtime terminates
+   the maintenance executor and serves the foreground call within 2 seconds.
+5. A preempted install, or one whose response was lost, keeps its candidate in
+   ACP. The task sends the identical install again at the next idle window.
+   Because install is conditioned on the base and target digests, a resend
+   either finds the target already installed or performs the same conditional
+   install (Section 7.4).
+
+A collision is rare: it needs a foreground Run to start within the short
+window between ACP's idle check and the end of the install call. In that
+window an install can complete between two Runtime calls of a Run that just
+started. The Runtime still never executes the two concurrently, and the Run's
+read records show which version of the Skill it actually read (Section 8.2).
+
+Lifecycle behavior:
+
+- Drain, disable, and rebuild stop install dispatch for that Agent and abandon
+  any in-flight install request. They **do not wait for the review or the
+  install**. Learning never adds a Drain wait, never produces
+  `runtime_barrier_required`, and never marks the Agent's execution unsafe.
+  Runtime drain preempts an in-flight install the same way a foreground call
+  does.
+- A task interrupted by the lifecycle pauses with `lifecycle_closed` and keeps
+  its candidate. No Skill change and no success notice is produced at that
+  point. After a rebuild or Enable publishes a new Runtime execution, ACP
+  sends the identical install with a ticket for that execution. The retained
+  workspace volume decides the result: the target is already present
+  (`applied`), the base is still present (install now), or anything else
+  (`conflict`). The change is recorded exactly once.
+- The temporary-Skill cleanup barrier is unchanged. Learning does not send an
+  install while a temporary-Skill scope of that Agent is pending.
 
 Deferred background learning does not make chat unavailable. The design is
 foreground first with after-the-fact notification. An ordinary deferral
@@ -408,54 +416,17 @@ actually applied. There is no persistent "learning blocked" indicator and no
 separate status polling. Diagnostics and guidance live in the learning results
 view that the user opens explicitly. Asking an ordinary Run to stop a background
 task is only an option for users who want learning to continue. It is never a
-precondition for continuing to chat. An unknown Runtime file call result is
-still settled within the bounds described in this section. Cancelling HTTP is
-not evidence that the slot is free.
-
-Lifecycle behavior:
-
-- When the execution configuration closes, ACP stops maintenance admission for
-  that Agent. Lifecycle settlement waits for maintenance calls to become
-  quiescent within a bound. An unknown Runtime side effect is handled as
-  `runtime_barrier_required`.
-- Disable and rebuild cancel the model request and pause the task with
-  `lifecycle_closed`. No Skill change and no success notice is produced.
-  After a rebuild, the new Agent reaches ready.
-- The recovery worker can observe old side effects while the lifecycle is
-  closed, but it checks current lifecycle admission again before it dispatches
-  a candidate. A paused task stays paused across later worker scans.
-- If a maintenance file call has been dispatched, lifecycle settlement waits
-  until the call and the ledger are explicitly quiescent. If cancellation
-  loses the response, the call is recorded as `unknown` and the Runtime barrier
-  stays in place.
-- If the Runtime has completed an atomic commit but ACP has not received the
-  response, disable stays in progress until the response releases it. The
-  result is recorded once.
-- If the response is lost after the filesystem atomic install, the old commit
-  stays `unknown` after disable. When the Runtime is enabled again and
-  admission resumes, ACP reads the real content from the retained volume,
-  settles the old commit, and records the change once. If ACP can still reach
-  the Runtime before it stops, it claims the real effect with one `observe`
-  call. The original `commit` is recorded as `observed_effect|applied`, no
-  second commit is sent, and exactly one change is recorded.
-- If disable happens after ACP persists the commit intent but before it sends
-  the request to the Runtime, no Skill is added to the workspace volume and no
-  change is recorded. A commit, and its observation, that cannot be proven
-  delivered stay `unknown`; ACP does not report them as a definite rejection.
-- After re-enable, the Controller creates a different Runtime container and
-  ACP receives a new execution configuration. The `unknown` records of the old
-  execution are retained, but their barrier does not carry over to the new
-  execution, so ordinary foreground Runs proceed.
+precondition for continuing to chat.
 
 ACP has one active worker per database, but different Agents can run their own
 Runs. It is not limited to one Run per database. See the
 [worker constraint](../services/agent-acp-service/docs/architecture.md).
 Background limits are fixed at **one review globally and one per Agent**. A
 bounded queue merges duplicate triggers per Agent. Candidates waiting to be
-applied are limited by count and by disk usage. A waiting background task never
-takes a foreground slot. When the worker loses ownership, it stops making new
-calls and cancels in-flight tasks. Recovery observes the original commit first
-and never replays an unknown side effect.
+installed are limited by count and stored in ACP. A waiting background task
+never takes a foreground slot. When the worker loses ownership, it stops making
+new calls and abandons in-flight requests. Recovery resends the identical
+install, which is safe because it is conditioned on digests.
 
 ### 6.3 Triggers, Budgets, and Update Priority
 
@@ -482,12 +453,15 @@ new experience, already covered, and insufficient evidence are all normal
 skips. Maintenance tasks never trigger a review recursively.
 
 Review first lists the names and descriptions of the managed, automatically
-generated Skills of this Agent. It then reads from the current Runtime a small
-number of `SKILL.md` bodies linked by source signals, checks them against the
-managed digests, and passes them to the model as reference. When the model
+generated Skills of this Agent. It then reads a small number of `SKILL.md`
+bodies linked by source signals from ACP's stored artifacts of the last applied
+packages, checks them against the managed digests, and passes them to the model
+as reference. Review never reads Skill files from the Runtime; a package edited
+in the workspace since its last applied change is caught by the install base
+check. When the model
 proposes an update, ACP accepts only targets read during this task. ACP keeps
 the existing body and appends the new rules that this task's evidence supports.
-If a read or digest check fails, no update candidate is submitted. Input
+If a stored artifact is missing or does not match its managed digest, no update candidate is submitted. Input
 includes only authorized source excerpts. It does not copy the full history,
 all Traces, or all Skill bodies.
 The global process budget belongs to the ACP deployment configuration. The
@@ -500,9 +474,9 @@ and prompt version are frozen, and the current policy is rechecked before
 submission. Run completion and the reply do not wait for the review or for its
 enqueue to succeed. The ACP worker performs a bounded backfill from its own
 persisted terminal records, and the queue records the source coverage range.
-A task cancelled by a new foreground Run can merge into the next idle
-opportunity, but its retry count and consumed budget are not reset. A failure
-to prepare or activate a candidate is not written back to the source Run's
+A task whose install was preempted or blocked keeps its candidate for the next
+idle opportunity, and its retry count and consumed budget are not reset. A
+failure to build or install a candidate is not written back to the source Run's
 success result, and it does not consume the model through unbounded retries.
 
 Cooldown, idle, model, and disk budgets have initial values defined in the
@@ -511,7 +485,7 @@ values are not tuned from measured results. One review globally, one per Agent,
 foreground priority, and no per-change confirmation are fixed semantics that
 tuning cannot change.
 
-## 7. Candidates, Whole-Directory Commit, and Recovery
+## 7. Candidates, Atomic Install, and Recovery
 
 ### 7.1 Content and Trusted Records
 
@@ -519,20 +493,20 @@ tuning cannot change.
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | User-initiated action             | ACP-generated user_action_id, trusted operator, organization/Agent/Session, the actual user input, message/Run scope, idempotent request                                                                                                 |
 | Maintenance task                  | Organization, Agent, initiating/owning principal, trigger and user_action_id (required when user-initiated), source messages/Run, review_prompt_version, package_rules_version, configuration revision, budget, request/worker identity |
-| Candidate                         | Stable personal path, base digest, target package manifest/digest, package_rules_version, reason, per-item source level, Runtime binding                                                                                                 |
+| Candidate                         | Stable personal path, base digest, target package manifest/digest, complete artifact bytes, package_rules_version, reason, per-item source level                                                                                         |
 | Check/apply basis                 | Candidate digest, check type/coverage and package_rules_version, result, evidence references; for apply_basis=policy, the scope and policy revision; for user_action, the identity, time, and authorization revision of the specific confirmation |
-| Managed personal package identity | Stable path, automatic-creation basis, last applied digest, pause reason; ownership is never inferred from ordinary workspace files                                                                                                      |
-| Commit intent/result              | Request identity, before/after digests, binding and admission lease, expected base, and observed result                                                                                                                                  |
+| Managed personal package identity | Stable path, automatic-creation basis, last applied digest and its artifact (the review input for later updates), pause reason; ownership is never inferred from ordinary workspace files                                               |
+| Install request/result            | Request identity, expected base and target digests, the Runtime executions it was sent to, and the settled receipt                                                                                                                       |
 
-The active personal root is `/workspace/.antnest/skills/`. Candidates and effect
-observation receipts live on the same workspace volume under
-`/workspace/.antnest/skill-learning/`. This location is outside the Skill directory
-scan and is not `.cache/`. A candidate is ordinary workspace data that the user may
-change. It is verified before every check, display, and commit. If it no longer
-matches the ACP record, the old apply basis is invalidated. The Runtime adds no
-business database and owns no publication decision.
+The active personal root is `/workspace/.antnest/skills/`. Candidates live in ACP,
+not in the workspace. The only learning bytes outside the active root are the
+staging tree of one install, under `/workspace/.antnest/skill-learning/` on the same
+workspace volume. It exists while that call runs, or after an interruption until
+the next install or Runtime startup removes it. This location is outside the Skill
+directory scan and is not `.cache/`. The Runtime adds no business database and owns
+no publication decision.
 
-### 7.2 Atomic Replacement with Real Directories
+### 7.2 Atomic Install with Real Directories
 
 This section applies only to candidate activation of **personal Skills** in the
 workspace. System Skills are downloaded as described in the
@@ -545,67 +519,70 @@ The Runtime resolves paths with `RESOLVE_NO_SYMLINKS`, and the scan accepts only
 real directories. See the
 [path implementation](../runtimes/antnest-runtime/src/roots.rs). The design therefore
 uses no symlinked active version, no pointer file, and no separate discovery protocol.
-The candidate and active directories must be on the same mounted filesystem:
 
-1. Prepare a **complete directory** in the candidate area. Check the Registry package
-   rules, supporting files, and base/target digests, and ensure the candidate is no
-   longer being written. ACP first persists the policy or user apply basis and the
-   commit intent, then issues the conditional commit.
-2. At commit time, acquire the maintenance admission gate and the Runtime file
-   execution slot. Re-check identity/authorization, the real target directory, the
-   base content, and the managed quiescence conditions in section 7.3. Hash only the
-   target package; do not scan or hash the whole personal library.
-3. For an update, use Linux `renameat2(RENAME_EXCHANGE)` to swap the complete
-   candidate directory with the active directory. The old package stays at the
-   former candidate location for unknown-effect observation and is cleaned up after
-   settlement. For a new package, use `renameat2(RENAME_NOREPLACE)`. If the target
-   already exists, the operation conflicts, so an unexpected user directory is never
-   overwritten. The two flags are used separately.
-4. While still holding the execution slot, read back the full file list, contents,
-   and modes of the new active directory. Compare them with the full package digest
-   bound to the apply basis, then run the applicable durability syncs on the new
-   content and the relevant parent directories. Only on a match does the Runtime
-   report "applied" to ACP together with the verification time. On a mismatch it
-   returns a content conflict stating that the exchange has already happened, and
-   recovery follows section 7.3. Renaming multiple files one by one, or deleting the
-   old package and then moving the new one, is never called atomic activation.
+ACP first persists the policy or user apply basis and the install request, then
+sends one `install` call carrying the complete candidate artifact, the managed
+path, the expected base digest (null for a new package), and the target digest.
+Within that call, holding the Runtime execution slot, the Runtime:
+
+1. Checks the writer conditions in Section 7.3. A blocker returns `blocked` and
+   releases the slot.
+2. Removes any staging tree left by an earlier interrupted install, then extracts
+   the artifact into a fresh **complete directory** in the staging area on the same
+   workspace volume. It checks the Registry package rules and requires the package
+   digest to equal the target digest. Only the target package is hashed; the
+   Runtime never scans or hashes the whole personal library.
+3. Reads the active directory at the managed path and decides by digest. If it
+   already holds the target, the effect is present: the Runtime syncs it and
+   reports `applied` without renaming again. If it holds the expected base (or, for
+   a new package, does not exist), installation continues. Otherwise the result is
+   `conflict`, so an unexpected user directory is never overwritten.
+4. For an update, uses Linux `renameat2(RENAME_EXCHANGE)` to swap the complete
+   staged directory with the active directory. For a new package, uses
+   `renameat2(RENAME_NOREPLACE)`. The two flags are used separately.
+5. Reads back the full file list, contents, and modes of the new active directory,
+   compares them with the target digest, and runs the applicable durability syncs on
+   the new content and the relevant parent directories. Only on a match does the
+   Runtime report `applied`. On a mismatch it returns a content conflict stating
+   that the rename has already happened, and never renames back.
+6. Removes the staging tree, which after an exchange holds the old package.
+
+Renaming multiple files one by one, or deleting the old package and then moving the
+new one, is never called atomic activation.
 
 The atomic exchange and no-replace semantics of these system calls come from
 [rename(2) in the Linux man-pages](https://man7.org/linux/man-pages/man2/rename.2.html).
 They do not support exchange across mounts, and not every filesystem supports the
 required flags. When the flags are unsupported, the Runtime returns
-`atomic_skill_replace_unsupported` and keeps both the original package and the
-candidate. It never falls back to per-file overwrite while still reporting success.
+`atomic_skill_replace_unsupported` and keeps the original package. It never falls
+back to per-file overwrite while still reporting success.
 
-The Runtime `commit` operation performs the conditional install, post-commit
-verification, and same-request replay. A separate `observe` operation reports the
-applied, unknown, and content-conflict outcomes, including after a restart. `cancel`
-closes the generation, is safe to repeat, and causes later commits to be rejected
-after a restart. There is no `revert` operation. While a real directory operation is
-unsettled, it is handled as an effect to observe; an HTTP cancellation alone never
-releases the execution slot.
+There are no separate `prepare`, `check`, `commit`, `observe`, `cancel`, `release`,
+or `revert` operations, and the Runtime keeps no learning state between calls. A
+separate read-only `digest` call reports the active digest of one managed path; it
+serves dynamic Skill discovery, not learning.
 
-### 7.3 Managed-Call Quiescence, Resident Processes, and Replay Boundaries
+### 7.3 Managed-Call Quiescence and Resident Processes
 
-"Quiescence" has a precise meaning here: **ACP has no foreground Run and no priority
-admission intent, every Runtime managed call other than this commit has settled, the
-commit holds the Execution Actor exclusively, and none of the blockers in the table
-below is present.** It does not require that every process able to write has exited,
+"Quiescence" has a precise meaning here: **the install holds the Execution Actor
+exclusively, every other Runtime managed call has settled, and none of the blockers
+in the table below is present.** It does not require that every process able to write has exited,
 and it does not claim that the workspace has no writers. See
 [background process boundaries](runtime-context-and-managed-mcp.md).
 
 | Execution/process state                                                                                    | Blocks activation | Handling                                                                                                                                           |
 | ---------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Foreground Run, Tool/info call, maintenance file call, unsettled cancellation                              | Yes               | Wait for or cancel to settlement. New foreground work takes priority; maintenance cannot check in one call and then preempt with a commit later    |
+| Foreground Tool/info call or temporary-Skill call                                                          | Yes               | The install returns `blocked` at once. A foreground call that arrives during an install preempts it (Section 6.2)                                  |
 | Managed MCP with an in-flight request, observed related asynchronous work not yet settled, or an unknown cancellation result | Yes | The Runtime observes settlement. An unknown state is never treated as idle                                                                         |
-| Managed MCP process initialized, with no in-flight protocol operation, only waiting for requests           | No                | A live PID does not block forever. No new calls are dispatched to it during the commit. Post-commit digest verification still runs                |
+| Managed MCP process initialized, with no in-flight protocol operation, only waiting for requests           | No                | A live PID does not block forever. No new calls are dispatched to it during the install. Post-rename digest verification still runs                 |
 | Background task or descendant process group started by Bash that is still alive, including dev servers and watchers | Yes      | No exemption based on cwd or a self-declared "read-only" flag. The user stops it, or the candidate is kept for later application                    |
 | Workspace execution process of unknown origin, or background task whose ownership or exit cannot be confirmed | Yes            | `writers_unknown` with a diagnosable reason. Not allowed by default                                                                                |
 | Task confirmed as exited, reaped zombie record                                                             | No                | A stale historical task record cannot block indefinitely                                                                                           |
 
 Checking background state, acquiring the execution slot, and closing new dispatch
 happen inside the same managed admission boundary. The slot is held until the
-exchange, post-commit digest verification, and result observation finish. The Runtime
+rename, post-rename digest verification, and staging cleanup finish, unless
+foreground work preempts the install. The Runtime
 tracks Bash task and descendant ownership and managed MCP in-flight state; "no active
 Run" or a single process listing does not substitute for this mechanism. Waiting does
 not hold the execution slot, does not kill user processes, and does not stop idle
@@ -615,23 +592,22 @@ An idle managed MCP server has its own UID but shares workspace GID 1000, so in
 principle it can write group-writable workspace paths outside protocol calls. Blocking dispatch does not revoke
 its file permissions. The design therefore accepts **managed-call quiescence plus
 before/after content verification**. It does not promise strong filesystem isolation
-or an atomic compare-and-swap. The post-commit digest must match the target content.
+or an atomic compare-and-swap. The post-rename digest must match the target content.
 If a manual or child-process change is found later, during a normal read or
 maintenance, automatic maintenance for that path is paused. There is no continuous
 watcher and no per-Run scan of the whole library. If an MCP server autonomously
 modifies managed Skills and keeps causing verification conflicts, an administrator
 disables or reconfigures it and explicitly rebuilds, or the application is deferred.
 Such a server is never labeled idle as proof that no writer exists. Preventing all
-autonomous writes requires separate process or filesystem isolation; a post-commit
+autonomous writes requires separate process or filesystem isolation; a post-rename
 hash is not a substitute for that isolation.
 
-When post-commit verification fails, the Runtime returns
-`skill_content_changed_during_activation`. The error states that a directory exchange
-may already have happened. The Runtime keeps evidence of both the old and the current
-directory, marks the candidate as conflicted, and pauses maintenance. It does not
-return success, and it does not blindly exchange back over concurrent user edits. If
-the observation result is unknown, observation is recovered first; the change is
-never reapplied.
+When post-rename verification fails, the Runtime returns `conflict` with
+`content_changed_during_activation`, which states that the rename has already
+happened. ACP marks the candidate as conflicted and pauses maintenance of that path.
+The Runtime does not return success, and it does not blindly exchange back over
+concurrent user edits. If the result is unknown, ACP resends the identical install;
+its digest check settles the result without a second rename.
 
 The internal Runtime maintenance receipt keeps `blocked_reason` and the stable
 identities of the known affected tasks or managed servers. The UI receives only the
@@ -651,37 +627,37 @@ cooldown, and budget constraints.
 While a candidate waits, the maintenance execution slot is released so the ordinary
 Run described above can enter. The slot is never held while waiting for a dev server
 to exit, because that would block the user from stopping it. After the foreground
-work ends, the Runtime observes that the related tasks and descendants have actually
-exited, then re-checks the quiescence conditions and the base/candidate digests. If
-any bytes changed, the old apply basis is invalidated. Disabling or reconfiguring a
+work ends, ACP resends the install, and the Runtime re-checks the writer conditions
+and the base digest. A changed base is a conflict, and the old apply basis is
+invalidated. Disabling or reconfiguring a
 managed MCP server uses the explicit administrator rebuild path described above;
 killing its child processes is not a configuration change. The page shows no endless
 spinner, kills no processes automatically, and does not display full commands or
 sensitive process arguments.
 
-Commit idempotency binds the stable request and the full target digest. After a lost
-response or a process restart, the active directory is observed first. If it already
-holds the target content, the commit settles as effect achieved and **is never
-exchanged again, which would swap the old version back in**. If it still holds the
-original base and the candidate is complete, the commit continues after valid
-admission and authorization are re-acquired. Any other state remains conflicted or
-unsettled; success is never guessed. Workspace receipts help locate state but do not
-replace the ACP intent or verification of the actual bytes.
+### 7.4 Interruption, Resend, and Staging Cleanup
 
-`release` removes candidate directories that have settled. ACP keeps the bytes it
-needs until unknown-effect observation completes. The Runtime checks the stable
-storage key, path, and digest, and deletes with a replayable receipt. Before adding
-hidden bytes, the Runtime checks a physical limit of 256 MiB per Agent. When space
-is insufficient, the operation blocks; nothing is evicted automatically. ACP handles
-the candidate of at most one terminal task per pass, including prepare records
-settled by an earlier generation. It uses the storage key and target digest from the
-original prepare receipt, never the digest of the old package left after the
-exchange. Cleanup reuses maintenance admission. Foreground work can preempt it before
-the request is sent; after sending, ACP waits for the response for up to five seconds,
-and stopping the worker still cancels. An unknown `release` is replayed with the
-original request. A replacement worker that holds the exclusive lock resumes leftover
-pending releases. No old version is kept for user undo, and there is no undo entry
-point.
+Install idempotency comes from its digest conditions, not from a stored receipt.
+After a preemption, a lost response, a Runtime restart, or a lifecycle replacement,
+ACP sends the identical install request again with a fresh ticket. The Runtime reads
+the active directory first. If it already holds the target content, the install
+settles as `applied` and **is never exchanged again, which would swap the old version
+back in**. If it still holds the original base, the install runs. Any other state is
+`conflict`; success is never guessed.
+
+Termination is safe at every point of an install. Before the rename, the active
+directory is unchanged and only the staging tree is left behind. The rename is a
+single atomic system call. After the rename, the active directory already holds the
+target, so the next resend settles it, including the durability syncs, without
+renaming again. A preempted call reports only that it did not settle; it does not
+claim whether the rename happened.
+
+The staging tree is removed at the end of every completed install, at the start of
+the next install, and at Runtime startup before readiness. It never holds bytes
+needed for recovery, because recovery reads only the active directory and ACP's
+stored candidate. There is no `release` call, no candidate storage quota in the
+Runtime, and no storage-full state for learning. No old version is kept for user
+undo, and there is no undo entry point.
 
 ## 8. Verification Boundaries and Run Usage Records
 
@@ -717,10 +693,11 @@ or use the user's execution slot to produce evidence.
 
 ### 8.2 Idle Activation Without Per-Run Freezing of the Whole Library
 
-Learning uses idle activation and shares the gate from Section 6 with new Run
-admission. Maintenance cannot replace an active package while a foreground Run
-is in progress. A new Run uses the directory that is discoverable when it
-starts. **This does not mean the workspace bytes are snapshotted and frozen for
+Learning installs only when the Agent is idle (Section 6.2), and the Runtime
+never runs an install concurrently with a foreground call. In the rare race
+described there, an install can complete between two calls of a Run that has
+just started; otherwise a new Run uses the directory that is discoverable when
+it starts. **This does not mean the workspace bytes are snapshotted and frozen for
 the whole Run.** The foreground Run's own edits, background processes, and
 manual edits can still change content.
 
@@ -853,7 +830,7 @@ maintenance task.
 | Owner              | Responsibilities                                                                                                                                       | Not responsible for                                         |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
 | Agent Controller   | Automatic learning configuration, scope, pins, budget, and revision projection                                                                         | Review reasoning, personal file transactions                |
-| Antnest Runtime    | Candidate files, real package validation, quiescence observation, directory commit and recovery, read digests                                          | Learning policy, publish approval, business control database |
+| Antnest Runtime    | Install staging, real package validation, writer checks, atomic install with read-back digests, foreground preemption, read-only digests              | Learning policy, publish approval, business control database |
 | Agent ACP Service  | Automatic triggers, candidates, sources, apply basis, and managed ownership records; foreground priority; dedicated maintenance client and issued credentials; billing | Container management, cross-organization evidence, automatic Registry publishing |
 | Agent UI           | After-the-fact learning result notices, sources, and blocking reasons; an optional save entry point later                                              | Authority over maintenance decisions, an independent background execution loop |
 | Runtime Controller | Lifecycle binding, bootstrap of the maintenance public key set, frozen snapshots of accepted operations, and digest-based recovery                    | Holding the ACP signing private key; creating an extra verification Runtime in v1 |
@@ -879,9 +856,9 @@ Each row states an invariant that tests cover.
 | Learning notices, refresh or disconnect, across sessions        | The SDK notice reports only settled results. The server recovers publication, the Bridge re-reads and deduplicates by stable identity, and the frontend recovers from the SSE snapshot. The real source is kept. Notices never enter model context or move the Run output watermark. |
 | Automatic policy off, path pinned, or budget exhausted          | Stop new maintenance, cancel old tasks, and re-check in-flight results. Existing Skill use and the source Run status are unaffected.                                                                                                           |
 | Automatic update, hand-written packages, duplicate topics       | Prefer a managed topic that is already in use. User packages, system packages, and pinned packages are never changed automatically. No new experience means no forced new Skill.                                                               |
-| Terminal-state rescan, task retry, worker restart               | One task per source. Budget already used is not reset. An unknown commit is observed first. A successful source Run never changes because the review failed.                                                                                    |
-| Foreground work arrives during model reasoning, reads, candidate writes, or commit | Close maintenance admission, cancel, and wait for observed quiescence before reading info. Ordinary reviews never cause `agent_busy` or `runtime_busy`.                                                                       |
-| Drain, rebuild, deactivation, or worker loss of authority       | Do not wait for the model to finish. The old lease cannot produce new side effects, and unfinished short file operations are recovered from observed facts.                                                                                   |
+| Terminal-state rescan, task retry, worker restart               | One task per source. Budget already used is not reset. An unsettled install is resent and settles by digest. A successful source Run never changes because the review failed.                                                                   |
+| Foreground work arrives during review or install                | The Run starts without waiting. Review continues off the Runtime; the Runtime preempts an in-flight install within 2 seconds. Learning never causes `agent_busy`, and causes `runtime_busy` only if preemption exceeds its bound.              |
+| Drain, rebuild, deactivation, or worker loss of authority       | Do not wait for the review or the install, and add no learning barrier. An abandoned install is resent on the next published Runtime and settles by digest.                                                                                  |
 | Two Agents reviewing at the same time                           | At most 1 per Agent and 1 globally, with a bounded queue. Foreground work never consumes a maintenance slot.                                                                                                                                   |
 | Optional user-initiated save, repeated clicks, and text injection | Only an authenticated native action creates a `user_action_id`. Automatic tasks bind to a real Run and policy. Model or tool text cannot forge either basis.                                                                                  |
 | Web or tool output trying to inject long-term rules             | The low-trust marking is carried through extraction. Such content can never become a user correction or a basis for automatic application.                                                                                                     |
@@ -891,10 +868,10 @@ Each row states an invariant that tests cover.
 | Oversized candidate, non-string YAML, directory and `name` mismatch | Rejected by the shared structure examples. A candidate is never activated first and found unpublishable later.                                                                                                                             |
 | Package rules or review prompt updated                          | Both versions are recorded. A task retry keeps the frozen prompt, and the candidate is re-checked against the current package rules. Historical results are never altered, and an apply basis is never reused for modified bytes.              |
 | Base or candidate changed, directory moved, policy invalidated  | Mark a conflict or pause automatic maintenance. An old basis never applies to new bytes, including for manual confirmation.                                                                                                                    |
-| Idle managed MCP and in-flight requests                         | A resident idle process does not block and does not need to exit. In-flight or unsettled requests block. No new dispatch happens during commit, and digests are verified after the directory swap.                                            |
+| Idle managed MCP and in-flight requests                         | A resident idle process does not block and does not need to exit. In-flight or unsettled requests block. No new dispatch happens during an install, and digests are verified after the rename.                                            |
 | Resident Bash dev server or unknown background task             | Learning is deferred and releases its execution slot; chat continues. When the user opens learning results, the reason is visible, and the user may stop the process through an ordinary Run request before learning resumes. There is no persistent warning, no new kill API or button, and no automatic process killing. |
-| Autonomous file changes before or after the swap                | A changed base is rejected. A post-swap mismatch is reported as a conflict after the swap; it is never reported as success and never blindly swapped back. Observed quiescence is not strong isolation and is never described as such.        |
-| Swap, creation, or sync interrupted, or response lost           | Observe digests before and after so the old version is never swapped back twice. A partially updated, mixed active package never appears.                                                                                                     |
+| Autonomous file changes before or after the rename              | A changed base is rejected. A post-rename mismatch is reported as a conflict after the swap; it is never reported as success and never blindly swapped back. Observed quiescence is not strong isolation and is never described as such.        |
+| Install preempted, interrupted, or response lost                | Resend the identical install; its base check finds the target and never renames twice. A partially updated, mixed active package never appears.                                                                                              |
 | Docker file system not supported                                | Return an explicit capability error, keep the old package and the candidate, and never fall back to an unsafe mode.                                                                                                                           |
 | Same-named system package after rebuild, or authorization invalidated | Personal assets are kept, maintenance pauses, old candidates become invalid, and the user must explicitly rebind.                                                                                                                       |
 | Registry offline                                                | Local generation, automatic application, and use do not depend on it. Administrator publishing waits for recovery.                                                                                                                            |
@@ -919,9 +896,10 @@ and no benefit is promised in advance.
   re-reads in the workspace View.
 - **Antnest Runtime:** the private maintenance endpoint, rejection of ordinary
   `tools/call` on reserved names, signature verification against a bounded
-  bootstrap public key set by `kid`, candidate structure checks, observation of
-  managed calls and background tasks, directory swap with post-swap digests,
-  and hidden storage capacity. It adds no new stop interface.
+  bootstrap public key set by `kid`, candidate structure checks, writer checks
+  for managed calls and background tasks, single-call atomic install with
+  post-rename digests, foreground preemption of maintenance calls, and the
+  read-only digest query. It adds no new stop interface.
 - **Runtime Controller:** public key set bootstrap, canonical deployment
   digests, complete snapshots frozen at acceptance so recovery never reads new
   configuration, and the rotation, key leak, and backup restore procedures.
@@ -931,9 +909,9 @@ and no benefit is promised in advance.
 - **Agent ACP Service:** automatic triggering from completed Runs with rescan
   deduplication, bounded review that reads before it changes, managed
   ownership, source checks, policy application records, SDK notice negotiation,
-  publication recovery and permission queries, foreground preemption and Drain
-  cancellation, billing, and the dedicated maintenance client with credential
-  issuance and recovery.
+  publication recovery and permission queries, idle-only install dispatch that
+  never blocks foreground or lifecycle work, billing, and the dedicated
+  maintenance client with credential issuance and resend-based recovery.
 - **Agent UI:** Node SDK notice negotiation, receipt, and bounded re-reads; View
   and SSE system notices with frontend deduplication and recovery; and guidance
   on sources and blocking reasons. It has no kill button.

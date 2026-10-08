@@ -21,6 +21,16 @@ ID syntax rather than requiring generated `org_`, `agent_` or `user_` prefixes.
 Syntactic acceptance never establishes ownership; every read and mutation
 checks the stored organization, owner and current authorization.
 
+### Delivery status
+
+This revision ([#201](https://github.com/tf4fun/antnest-platform/issues/201))
+replaces the earlier `prepare`/`check`/`commit`/`observe`/`cancel`/`release`
+maintenance transaction with one atomic `install` and a read-only `digest`.
+Services still implement the earlier transaction until their batches land, in
+this order: Antnest Runtime, Agent ACP Service, then the cross-service Skill
+learning E2E rewrite. Runtime Controller, Agent Controller and Agent UI need
+no wire change.
+
 ## 1. Ownership and activation
 
 Agent Controller owns one Agent-level learning policy and its independent
@@ -118,19 +128,19 @@ activation cut, in pages of at most 100, and advances its durable scan cursor
 only after a source is enqueued, merged or recorded as skipped. On restart it
 continues from this cursor, not an in-memory wake-up. Enqueue/replay cannot
 reset a task's frozen prompt version, policy revision or consumed budget.
-Existing Runs before policy activation are not retroactively reviewed. One
-candidate per review and a 256 MiB temporary candidate cap per Agent bound
-disk usage. ACP protects bytes needed for unresolved effects; Runtime enforces the
-physical byte cap before adding hidden candidate bytes. For
-admission, bytes means regular-file lengths under candidate and detached-release
-trees, including receipts; directory metadata and filesystem
-allocation overhead are outside this logical 256 MiB bound. A full
-store blocks a new write until ACP releases settled entries; it never evicts
-an entry merely because another candidate needs space. Cleanup never deletes
-an in-flight candidate or bytes needed to resolve an unknown effect.
-Runtime returns `409 skill_storage_full` before a new hidden write when the
-256 MiB cap would be exceeded. Replaying an already present, matching item
-remains possible; ACP can release a settled item and retry the original task.
+Existing Runs before policy activation are not retroactively reviewed. A
+review produces at most one candidate. ACP stores the candidate artifact
+(at most 8 MiB) in its own persistence until the task is terminal; Runtime has
+no learning candidate store, release step or storage-full state. Runtime holds
+at most one install staging tree, only for the duration of one `install` call
+(Section 3).
+
+Review input comes only from ACP persistence: the source Session messages and
+Run records, and ACP's stored artifact of the last applied package for each
+managed path. Review never reads the Runtime workspace, Runtime information or
+Runtime Skill files, so it never takes the Runtime execution slot. A managed
+package edited in the workspace after its last applied change is detected by
+the `install` base check, not by a review read.
 
 `task.state` and `candidate.state` are separate. Paused work has a cause such
 as policy disabled, foreground preemption, writer present, access revoked or
@@ -138,126 +148,134 @@ unknown effect; an actionable cause is not rewritten to generic success.
 
 ## 3. Runtime private maintenance boundary
 
+Learning is read-only until one Runtime call, `install`, atomically creates or
+replaces one managed personal Skill. Everything before that call happens in
+ACP and can be cancelled at any time. Runtime keeps no learning transaction
+state between calls.
+
 Endpoint: `POST /internal/skill-maintenance/{action}`, where `action` is exactly
-`prepare`, `check`, `commit`, `observe`, `cancel` or `release`. The endpoint is
-separate from `/mcp`, never appears in `tools/list` or Runtime information,
-and rejects missing/invalid credentials before it acquires the Execution Actor.
-Ordinary `tools/call` rejects the reserved prefix `antnest_skill_maintenance_`
-even if a managed MCP child advertises it. ACP's foreground Tool dispatcher
-does not expose an HTTP route to this endpoint. `X-Antnest-Expected-Execution-ID`
-is still required, but is only a consistency check.
+`install` or `digest`. The endpoint is separate from `/mcp`, never appears in
+`tools/list` or Runtime information, and rejects missing/invalid credentials
+before it acquires the Execution Actor. Ordinary `tools/call` rejects the
+reserved prefix `antnest_skill_maintenance_` even if a managed MCP child
+advertises it. ACP's foreground Tool dispatcher does not expose an HTTP route
+to this endpoint. `X-Antnest-Expected-Execution-ID` is still required, but is
+only a consistency check.
 
-`prepare` accepts exactly two multipart parts: `metadata` matching
-`prepare_request` (≤4 KiB UTF-8 JSON) and `artifact` (≤8 MiB ZIP). The exact
+### Install
+
+`install` accepts exactly two multipart parts: `metadata` matching
+`install_request` (≤4 KiB UTF-8 JSON) and `artifact` (≤8 MiB ZIP). The exact
 multipart body, including boundary, is hashed for the ticket; decompressed
-regular files cannot exceed 32 MiB. Its package is checked against Registry
-v1 rules and placed as a real directory under
-`/workspace/.antnest/skill-learning/`, outside Skill discovery. `check`
-revalidates its complete file inventory/content, package name/path and source
-candidate digest. Other actions accept one JSON object matching the named
-schema definition, at most 16 KiB including whitespace. No action accepts
-an arbitrary absolute destination or symlink. Candidate ID and request ID
-are opaque identifiers, not file paths.
+regular files cannot exceed 32 MiB. No field accepts an arbitrary absolute
+destination or symlink; the request ID is an opaque identifier, not a path.
+ACP checks the registered managed path and current policy/apply basis before
+it signs the request; Runtime checks the signed path against its own
+filesystem state and never treats unsigned text as authority.
 
-`commit` requires a previously checked candidate, exact target digest,
-and `expected_base_digest`. ACP checks the registered managed path and current
-policy/apply basis before it signs the request; Runtime checks the signed path
-against its candidate record and actual filesystem state. Runtime never treats
-a path or policy claim in unsigned request text as authority. Null base means
-no activity directory may exist;
-new creation uses `RENAME_NOREPLACE`. Replacement uses
-`RENAME_EXCHANGE` for complete directories on the same workspace volume.
-Runtime keeps its single execution slot through checking writer state,
-conditional exchange, full readback digest and applicable sync. It never
-changes the read-only `/skills` volume. The shared package digest is the
-Registry canonical regular-file manifest digest, not a hash of just
-`SKILL.md`. If the filesystem lacks the required atomic operation, fail with
-`atomic_skill_replace_unsupported` and keep the old active package.
+Within one call, holding the Execution Actor slot, Runtime:
 
-`observe` names the original effect request and expected resulting digest;
-after a timeout, lost response or process restart, ACP observes before any
-further mutation. If the target already matches, it settles the original effect and
-must not exchange a second time. An unknown result stays unknown until
-observation or manual resolution. `observe` is a read-only probe: an uncertain
-transport result or an `outcome=unknown` response leaves its intent unknown
-without a settled receipt. Once the prior invocation has ended or its worker
-has lost ownership, ACP may issue the
-same observation request ID, body and execution identity again. Runtime
-re-evaluates the current effect; only an `applied` or `conflict` observation
-settles that intent and becomes immutable. This exception does not permit
-redispatching `commit` or another file-effect action. `cancel` closes a maintenance generation;
-the foreground Run starts preparation only after in-flight Runtime maintenance
-has settled or been cancelled and observed. The foreground barrier is bound to
-the affected Runtime execution. After a completed lifecycle replacement
-publishes a distinct executable Runtime, unresolved intents for the stopped
-old execution remain in the ledger but do not fence the replacement's Run
-slot. A configuration update that retains the same Runtime execution never
-clears that barrier.
-If lifecycle stopping interrupts a `commit` after an atomic directory install,
-the replacement Runtime may observe that original request against the retained
-workspace volume after Controller publishes it as accepting Runs. ACP keeps the
-old intent and its original checked candidate/policy basis, uses a new
-observation request ID bound to the replacement execution, and settles the
-old commit only from a matching observed target digest. A prior unknown
-observation stays in the ledger; it is neither retried against a different
-execution nor treated as proof of failure. Observation may also report
-conflict/unknown, in which case no applied change or success notice is created.
+1. Checks writer state. A running Bash background group, an in-flight managed
+   MCP call or unknown writer ownership returns `blocked` with the bounded
+   subject identity and releases the slot.
+2. Removes any staging tree left by an earlier interrupted install, then
+   extracts the artifact into a fresh staging tree under
+   `/workspace/.antnest/skill-learning/`, on the same volume and outside Skill
+   discovery. It validates the complete Registry v1 package rules and requires
+   the canonical manifest digest to equal `target_digest`.
+3. Reads the active package at `package_path` and decides by digest:
+   - active digest equals `target_digest`: the effect is already present.
+     Runtime syncs the active directory and its parent and returns `applied`
+     without another rename;
+   - `expected_base_digest` is null and no active directory exists, or the
+     active digest equals `expected_base_digest`: continue;
+   - `expected_base_digest` is null and an active directory exists: `conflict`
+     with `target_exists`;
+   - any other active state: `conflict` with `base_changed`.
+4. Installs with one rename: `RENAME_NOREPLACE` for a new package,
+   `RENAME_EXCHANGE` of complete directories for an update. Renaming files one
+   by one, or deleting and then moving, is never an install.
+5. Reads back the complete active inventory and digest and runs the applicable
+   directory syncs. A match returns `applied`. A mismatch returns `conflict`
+   with `content_changed_during_activation`; Runtime never exchanges back.
+6. Removes the staging tree, which after an exchange holds the old package.
+   Version 1 keeps no old versions.
 
-`release` is a separately signed, idempotent physical cleanup of one hidden
-`candidate` directory. Its 64-hex storage key, managed package path and
-expected digest must match the stored receipt.
-`prepare` receipts expose the corresponding storage key. Runtime rejects active paths,
-mismatched bytes and arbitrary paths; its single execution slot keeps release
-from overlapping an active effect. ACP signs
-`release` only after its durable ledger has settled or abandoned the candidate,
-completed observation, and removed every pending recovery reference to
-the item. The call is allowed after a generation was cancelled. Runtime records
-the signed release intent before atomically detaching the directory and keeps
-a durable completion receipt: replaying the same request cannot delete a new
-directory with the same key. A missing item without that receipt is `unknown`,
-not success. Deletion and readback run as UID/GID 1000 and do not affect the
-active Skill directory. Runtime implements this physical boundary; ACP owns
-cleanup after settlement.
+The shared package digest is the Registry canonical regular-file manifest
+digest, not a hash of just `SKILL.md`. Runtime never changes the read-only
+`/skills` volume. If the filesystem lacks the required atomic rename, Runtime
+fails with `atomic_skill_replace_unsupported` and keeps the old active package.
 
-ACP cleanup consumes the durable `prepare` receipt's `storage_key`, package
-path and target digest; it must not derive the release digest from the old
-bytes left in the candidate directory after an update. Runtime validates the
-candidate receipt's target identity even when that directory contains the
-exchanged base package. A completed task remains eligible for cleanup after
-worker restart. Cleanup failure does not undo an applied change, emit another
-success notice, or cause another commit. Terminal-task cleanup includes settled
-preparations from earlier generations; it uses the current task claim for
-authorization and the original preparation receipt for storage identity.
-Unresolved commit/observation intents
-keep the candidate ineligible for release. Cleanup is bounded background work,
-not a prerequisite for foreground Run admission.
-This does not bypass Runtime's single execution slot: while a release is
-actually in flight or its slot ownership is unknown, the existing maintenance
-barrier applies until bounded recovery settles it. A queued cleanup item alone
-does not fence the Agent, and foreground ownership prevents cleanup dispatch.
-After a release response is lost and its prior invocation has ended, ACP may
-replay the identical release request ID, body and execution binding. Runtime's
-durable release receipt makes this safe even after directory deletion. This
-exception does not permit redispatching a commit or changing a cleanup target.
-ACP bounds one release transport attempt to five seconds. Timeout leaves an
-unknown intent for identical recovery rather than abandoning its storage or
-holding the serial learning worker indefinitely.
-Before dispatch, foreground cancellation prevents release. After dispatch,
-foreground/lifecycle handoff waits for the bounded release receipt instead of
-aborting its transport and manufacturing an unknown cleanup effect. Worker
-shutdown and the five-second deadline still cancel that transport.
+`install` is idempotent by content: the decision in step 3 depends only on the
+active bytes, the signed base and the signed target. ACP may resend the
+identical request body with a fresh ticket, for the same or a later Runtime
+execution, after any lost response, preemption, Runtime restart or lifecycle
+replacement. A resend either finds the target already present or performs the
+same conditional install. No `observe`, `cancel` or `release` call exists, and
+Runtime keeps no per-request receipt, generation marker or candidate record.
+
+### Foreground preemption
+
+Learning never waits for foreground work and foreground work never waits for
+learning. A maintenance call that finds the execution slot taken returns
+`blocked` with `foreground_running` immediately. A foreground MCP request, a
+temporary-Skill request or Runtime drain that finds the slot held by a
+maintenance call preempts it: Runtime terminates the maintenance executor and
+hands the slot to the foreground request within 2 seconds, or returns the
+existing retryable `runtime_busy` if the slot is not free by then.
+
+Termination is safe at any point. Before the rename, nothing in the active
+Skill directory has changed and the staging tree is removed by the next
+install or by Runtime startup. The rename itself is one atomic system call.
+After the rename, the active package already holds the target, and the next
+install of the same request settles it as `applied`. The preempted call
+returns `preempted` with `observed_digest:null`, which means only that this
+call did not settle; it does not claim whether the rename happened. ACP treats
+a lost response the same way.
+
+### Digest
+
+`digest` is a read-only query of the canonical digest of one managed package
+path, used by dynamic Skill discovery before it serves a source package. Its
+JSON body matches `digest_request` (≤16 KiB). It returns `observed` with the
+active digest, or `observed_digest:null` when no package exists at that path.
+It is preempted like `install` and never blocks on writers. Learning itself
+does not call `digest`.
+
+### Writers and processes
 
 Runtime tracks live Bash tasks and descendants, managed MCP requests and
 unsettled tool/info operations. Running foreground work, active managed
-requests, live Bash descendants, or unknown writer ownership block commit.
-An idle managed MCP process alone does not. A blocked candidate releases the
+requests, live Bash descendants, or unknown writer ownership block install.
+An idle managed MCP process alone does not. A blocked install releases the
 execution slot; a foreground Run can then ask the Agent to stop its own
 background task through existing permissions. There is no new kill endpoint.
-Only the Runtime executor running as UID/GID 1000 reads/writes candidate and
-activity bytes. Managed MCP processes can still write autonomously, so the
-post-swap digest is mandatory; mismatches return
-`skill_content_changed_during_activation` with unknown/conflict semantics,
-not success or an unconditional reverse exchange.
+Only the Runtime executor running as UID/GID 1000 reads/writes staging and
+active bytes. Managed MCP processes can still write autonomously, so the
+post-rename digest is mandatory.
+
+### ACP obligations
+
+ACP dispatches `install` only while the Agent has no active Run, no pending
+foreground admission and no pending temporary-Skill scope. This check is
+best-effort; Runtime preemption resolves the race. ACP never holds a
+foreground gate, `runtime_barrier_required` state or lifecycle barrier because
+of learning. Foreground admission, Drain, disable and rebuild never wait for,
+cancel-and-observe, or settle a learning call. Foreground admission aborts an
+in-flight install request without waiting for its result. An in-flight install
+request is abandoned when its lifecycle closes; the task keeps its candidate
+and resends the identical install when the Agent is next idle on a published
+Runtime. In the rare race where a Run is admitted just after an install was
+sent, the install may complete between two Runtime calls of that Run; Runtime
+still never runs them concurrently, and the Run's read records identify the
+Skill version it read.
+
+ACP settles the task only from a receipt: `applied` records the change and
+sends the notice once; `conflict` invalidates the candidate and pauses
+maintenance of that path; `blocked` and `preempted` keep the candidate for the
+next idle window. A changed policy, revoked access or invalidated apply basis
+stops resends. The review model call, which never touches Runtime, is not
+cancelled by foreground admission.
 
 ## 4. Credential and bootstrap
 
@@ -275,11 +293,11 @@ body. Runtime compares signed action with URL action, ticket Agent/execution
 with its bootstrap and current process, and request/job/generation with body.
 Tickets expire no later than 60 seconds after issue; allow at most 30 seconds
 of clock skew. Clock failure closes maintenance, not ordinary Run execution.
-The same `(job_id,generation,action,request_id)` with changed body or target
-is `request_conflict`; settled effect retries return or recover the original
-receipt. The read-only unknown-`observe` exception above re-evaluates current
-effect state with the identical request. A cancelled generation cannot commit
-with a fresh ticket.
+Runtime keeps no request ledger: replaying a ticket within its lifetime
+re-runs the same digest-conditioned `install` or read-only `digest`, which is
+safe by construction. ACP owns request identity. It never reuses a request ID
+for a different body, and it stops signing for a task once the task is
+terminal, its policy basis is invalid or its claim generation is superseded.
 
 RC freezes the sorted `skill_maintenance_verifiers.keys` array inside each
 accepted RuntimeSpec/deployment digest. Zero keys disable maintenance; at most
@@ -310,7 +328,7 @@ for that ID or stale revision is 409. Cross-owner, deleted or unknown Agents do
 not reveal policy contents. The operation rejects unknown/pinned/disallowed
 paths and checks Agent access. ACP reads through an authenticated service call,
 not from browser-provided scope. All policy changes are checked again just
-before candidate commit. Disabling/revoking maintenance cancels uncommitted
+before install. Disabling/revoking maintenance cancels uninstalled
 work but does not erase its provenance or applied files.
 
 ACP stores learning tasks, evidence, candidate facts, managed path identities,
@@ -378,18 +396,16 @@ may be reviewed after recovery under the same idle, cooldown and budget limits.
 An inconclusive review reports that no Skill was
 applied. This is one status projection, not a learning-task management API.
 
-Tool-free review inference must stop participating in foreground admission as
-soon as it is cancelled, even if the model adapter has not yet returned. ACP
-still sends the cancellation signal; any late response or error is discarded
-and cannot create a proposal. If final usage is unavailable, retain the
-reserved cost as unknown, do not refund it or redispatch that model call.
-Unknown model cost does not prove the Runtime is busy. This cancellation rule
-does not authorize detaching a Runtime file operation: that operation must
-still be cancelled/observed before sharing its single execution slot.
+Tool-free review inference never participates in foreground admission. When
+ACP cancels it (policy off, access revoked, worker shutdown), any late
+response or error is discarded and cannot create a proposal. If final usage is
+unavailable, retain the reserved cost as unknown, do not refund it or
+redispatch that model call. Unknown model cost does not prove the Runtime is
+busy.
 
 ### Applied learning records
 
-Execution of review/candidate/commit is a separate low-priority maintenance
+Execution of review, candidate and install is a separate low-priority maintenance
 task, not an activity Run or fabricated assistant turn. Only applied changes
 generate a success notice. Each change gets a unique `changeId` and committed
 Agent sequence. Source Session/Run IDs are access-filtered.
@@ -461,8 +477,9 @@ ticket or capability is 400/401/403 according to parsing/authentication;
 stale execution, changed policy, base/target digest or request replay conflict
 is 409. Unsupported atomic filesystem operation is a specific 409;
 temporary Runtime unavailability is 503; capacity pressure is 429/503 and
-does not settle an unaccepted mutation as failed. `unknown` requires observe,
-not a blind new request. `blocked` keeps a candidate and releases the actor.
+does not settle an unaccepted mutation as failed. `blocked`, `preempted` and
+a lost response keep the candidate and release the actor; ACP resends the
+identical install later.
 For `background_task_running` and `managed_call_in_flight`, the bounded
 `blocked_subject_id` names the Bash process group (`bash:<pgid>`) or managed
 server (`managed:<id>`). An unattributed process can use `unknown:<pid>`;
@@ -473,12 +490,14 @@ these identifiers are diagnostic, never authorization or a kill target.
 | Completed ordinary Q&A, failed/cancelled Run, tool output claiming to be a user | No automatic application; no fake user action                                                           |
 | Completed eligible Run, no new reusable rule                                    | Recorded skip without notice or next review recursion                                                   |
 | User correction plus untrusted external text                                    | Only the authenticated correction can support automatic rule scope                                      |
-| Candidate from user-owned/system/pinned path or different Agent                 | Reject before maintenance commit                                                                        |
-| New foreground Prompt during review model call                                  | Cancel review and settle maintenance calls before Run info; no foreground `agent_busy` caused by review |
-| Bash dev server still alive                                                     | Candidate blocked with task identity; execution slot released, foreground can stop it                   |
-| Runtime changed during prepare or signing-key rotation                          | Reject old execution ticket; RC resumes accepted operations from frozen key snapshot                    |
-| Commit response lost after atomic swap                                          | Observe actual target digest; never swap a second time back to old bytes                                |
-| Writer changes package during/after swap                                        | Conflict or unknown, no success notice and no blind rollback                                            |
+| Candidate from user-owned/system/pinned path or different Agent                 | Reject before install                                                                                   |
+| New foreground Prompt during review model call                                  | Run starts at once; review continues off Runtime; no foreground `agent_busy` caused by review           |
+| New foreground call during install                                              | Runtime preempts install and serves the call within 2 seconds; ACP resends install when idle            |
+| Disable, Drain or rebuild during review or install                              | Lifecycle proceeds without waiting; no learning `runtime_barrier_required`; candidate kept              |
+| Bash dev server still alive                                                     | Install blocked with task identity; execution slot released, foreground can stop it                    |
+| Runtime changed during install or signing-key rotation                          | Reject old execution ticket; ACP resends with a fresh ticket; RC resumes from frozen key snapshot       |
+| Install response lost or preempted after the rename                             | Resend settles as `applied` from the active digest; never renames a second time                         |
+| Writer changes package during/after the rename                                  | `conflict`, no success notice and no blind rollback                                                     |
 | Node offline, source Session not subscribed, notice sent twice                  | Learning still completes; record sync restores one system item per change                               |
 
 The [contract tests](../../tests/integration/skill-learning/contracts.test.mjs)

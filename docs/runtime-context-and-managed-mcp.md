@@ -52,7 +52,7 @@ Admin Console edits managed MCP settings in Templates; see the service-local
   uses string paths, 1-based line reads and optional read/bash defaults.
 - The [Skill learning design](skill-learning-design.md) and
   [shared contract](../contracts/skill-learning/learning-api.md) add a separate
-  authenticated Runtime maintenance endpoint. Candidate/check/commit operations
+  authenticated Runtime maintenance endpoint. Its `install` and `digest` actions
   never become MCP tools or enter `tools/list`; the four model built-ins remain
   unchanged. Runtime rejects reserved maintenance names on ordinary
   `tools/call`, independently of ACP's source checks.
