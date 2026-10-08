@@ -10,6 +10,7 @@ import {
 } from "../../src/domain/learning-maintenance-errors.js";
 import type { LearningPolicy } from "../../src/domain/learning-policy.js";
 import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
+import type { RuntimeInformation } from "../../src/domain/runtime-information.js";
 import { snapshot } from "../support/fixtures.js";
 
 const evidenceId = `evidence_${"e".repeat(32)}`;
@@ -61,7 +62,7 @@ const binding = {
   executionId: "execution-1",
   mcpEndpoint: "http://runtime.test/mcp",
 };
-const information = {
+const information: RuntimeInformation = {
   executionId: binding.executionId,
   environment: { os: "linux", arch: "x64", home: "/home/agent", workspace: "/workspace" },
   instructions: null,
@@ -230,6 +231,36 @@ describe("Learning apply attempt", () => {
     });
     expect(f.bases.recordAdmitted).not.toHaveBeenCalled();
     expect(f.runtime.install.mock.calls[0]![0].binding).toEqual(later);
+  });
+
+  it("resends an admitted creation after its interrupted install already landed", async () => {
+    const f = fixture();
+    const landed: RuntimeInformation = {
+      ...information,
+      skills: [
+        {
+          source: "personal",
+          name: "inspect-first",
+          description: "Inspect first.",
+          path: { root: "workspace", path: `${candidatePackage.packagePath}/SKILL.md` },
+        },
+      ],
+    };
+    f.candidates.load.mockResolvedValueOnce(ready);
+    f.inventory.readBinding.mockResolvedValueOnce(landed);
+    f.installRequests.next.mockResolvedValueOnce({ kind: "fresh", requestId: "install-2" });
+    expect(await f.attempt.apply(claim, new AbortController().signal)).toEqual({
+      kind: "applied",
+      changeId: "change-1",
+    });
+    expect(f.runtime.install.mock.calls[0]![0].requestId).toBe("install-2");
+
+    const draft = fixture();
+    draft.inventory.readBinding.mockResolvedValueOnce(landed);
+    await expect(draft.attempt.apply(claim, new AbortController().signal)).rejects.toThrow(
+      "outside the managed scope",
+    );
+    expect(draft.runtime.install).not.toHaveBeenCalled();
   });
 
   it.each([
