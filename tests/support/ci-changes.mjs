@@ -343,6 +343,24 @@ export const suites = [
     ],
   },
   {
+    id: "skill-registry-rc-prepare",
+    name: "Skill Registry to Runtime Controller preparation",
+    tier: "b",
+    setup: ["go"],
+    pull: base,
+    paths: [
+      ...service("skill-registry", "runtime-controller"),
+      "tests/integration/skill-registry/**",
+      "tests/e2e/service-authentication/registry/**",
+      ...go,
+    ],
+    run: [
+      "make integration-stage4-skill-prepare",
+      "make integration-stage4-skill-slow-prepare",
+      "make integration-stage4-skill-restart-prepare",
+    ],
+  },
+  {
     id: "deployment-wiring",
     name: "Deployment Compose wiring",
     tier: "b",
@@ -804,6 +822,7 @@ export const shards = [
     name: "Skill Registry and Runtime Skills",
     suites: [
       "skill-registry-discovery",
+      "skill-registry-rc-prepare",
       "skill-registry-console",
       "skill-temporary-runtime",
       "skill-learning-runtime",

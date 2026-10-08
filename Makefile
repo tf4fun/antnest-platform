@@ -118,7 +118,7 @@ test-repo:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
-	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs
+	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs
