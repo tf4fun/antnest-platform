@@ -289,19 +289,15 @@ async function outageAndExpiry() {
   }
   step = "identity_outage";
   await checkpoint(1);
-  // Each socket keeps its 60s caller context from admission, and Gateway
-  // spends its request timeout waiting for the stopped Identity. Serial probes
-  // would let the later socket expire (1008) before it can observe the outage.
+  // Each socket keeps its 60s caller context from admission; probing both
+  // together keeps the later one well inside it.
   await Promise.all(
     connected.map((item) =>
       rejectedPrompt(item.client, item.sessionId, 1013, "unavailable"),
     ),
   );
-  // Gateway reports the outage only after its 30s Identity dial timeout.
-  const deniedHTTP = await browser.request("/api/session", {
-    status: 503,
-    timeoutMs: 45000,
-  });
+  // Gateway's dependency connect bound must report the outage within the default.
+  const deniedHTTP = await browser.request("/api/session", { status: 503 });
   assert.equal(deniedHTTP.headers.getSetCookie().length, 0);
   assert(browser.cookie === longCookie, "outage destroyed browser cookie");
   step = "identity_recovery_and_natural_expiry";
