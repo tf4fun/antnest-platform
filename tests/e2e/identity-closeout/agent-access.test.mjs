@@ -7,6 +7,7 @@ import {
   createAccessModel,
 } from "./agent-access-model.mjs";
 import {
+  assertAgentsUnchanged,
   assertUnchanged,
   inspectAccessTrace,
   assertPrivateReplay,
@@ -317,6 +318,35 @@ test("negative-effect evidence rejects changed projections or model activity", (
   assert.throws(() =>
     assertUnchanged(before, { ...before, model: ["unexpected-call"] }),
   );
+});
+
+test("unaffected Agent evidence admits only a forward Runtime observation refresh", () => {
+  const record = (observed, changes = {}) => ({
+    agent: {
+      agent_id: "peer",
+      runtime_state: "available",
+      runtime_reason: "",
+      runtime_observed_at: observed,
+      aggregate_sequence: 4,
+      updated_at: "2026-10-08T03:24:30Z",
+      ...changes,
+    },
+    events: [{ event_id: "ready", aggregate_sequence: 4 }],
+  });
+  const before = [record("2026-10-08T03:24:31Z")];
+  assertAgentsUnchanged(before, structuredClone(before));
+  assertAgentsUnchanged(before, [record("2026-10-08T03:24:41.5Z")]);
+  for (const after of [
+    record("2026-10-08T03:24:21Z"),
+    record("not-a-time"),
+    record(undefined),
+    record("2026-10-08T03:24:41Z", { runtime_state: "exited" }),
+    record("2026-10-08T03:24:41Z", { aggregate_sequence: 5 }),
+    record("2026-10-08T03:24:41Z", { updated_at: "2026-10-08T03:24:41Z" }),
+    { ...record("2026-10-08T03:24:41Z"), events: [] },
+  ])
+    assert.throws(() => assertAgentsUnchanged(before, [after]));
+  assert.throws(() => assertAgentsUnchanged(before, []));
 });
 
 test("HTTP model fixture records the execution trace once and rejects repeated execution", async (t) => {
