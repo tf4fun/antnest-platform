@@ -15,6 +15,7 @@ import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
 import { skillClientArgs } from "./client-container.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 
 // Each scenario interrupts the first idle install of a learned Skill once and
 // checks the contract: lifecycle and foreground work never wait for learning,
@@ -100,6 +101,15 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     const image = `antnest/agent-acp-service:skill-learning-${config.project.slice(-8)}`;
     const ownership = `io.antnest.verification.project=${config.project}`;
     const build = dockerClient(config.env, abort.signal, 720_000);
+    const candidate = (name, tag, args) => {
+      const [, ...command] = candidateCommand({
+        name,
+        tag,
+        build: ["docker", ...args],
+        labels: { "io.antnest.verification.project": config.project },
+      });
+      return command;
+    };
     const absent = async (tag) => {
       const existing = await build([
         "image",
@@ -117,7 +127,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       const runtimeImage = `antnest/antnest-runtime:skill-learning-gate-${config.project.slice(-8)}`;
       await absent(runtimeImage);
       await build(
-        [
+        candidate("antnest-runtime-skill-gate", runtimeImage, [
           "build",
           "-f",
           "runtimes/antnest-runtime/Dockerfile",
@@ -130,7 +140,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
           "-t",
           runtimeImage,
           ".",
-        ],
+        ]),
         true,
       );
       const [gatedImage] = JSON.parse(
@@ -182,7 +192,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     const docker = dockerClient(config.env, abort.signal, 720_000);
     await absent(image);
     await docker(
-      [
+      candidate("agent-acp-service", image, [
         "build",
         "-f",
         "services/agent-acp-service/Dockerfile",
@@ -191,7 +201,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
         "-t",
         image,
         ".",
-      ],
+      ]),
       true,
     );
     await docker(

@@ -6,6 +6,7 @@ import {
   fixtureEnvironment,
   prepareFixtureCredentials,
 } from "./authenticated-e2e.mjs";
+import { candidateCommand } from "./candidate-images.mjs";
 import { runCommand } from "./run-command.mjs";
 import { evidenceDirectory, writeEvidenceFile } from "./storage.mjs";
 import {
@@ -161,27 +162,35 @@ export async function runShellAcceptance(profile) {
         "candidate already exists",
       );
       built.push(image);
-      const command =
-        service === "antnest-runtime"
-          ? [
-              "docker",
-              "build",
-              "-f",
-              "runtimes/antnest-runtime/Dockerfile",
-              "-t",
-              image,
-              ".",
-            ]
-          : [
-              "docker",
-              "compose",
-              "--profile",
-              "stage3",
-              "--profile",
-              "observability",
-              "build",
-              service,
-            ];
+      const command = candidateCommand({
+        name: service,
+        tag: image,
+        build:
+          service === "antnest-runtime"
+            ? [
+                "docker",
+                "build",
+                "-f",
+                "runtimes/antnest-runtime/Dockerfile",
+                "-t",
+                image,
+                ".",
+              ]
+            : [
+                "docker",
+                "compose",
+                "--profile",
+                "stage3",
+                "--profile",
+                "observability",
+                "build",
+                service,
+              ],
+        labels:
+          service === "antnest-runtime"
+            ? {}
+            : { "io.antnest.deployment-admission": project },
+      });
       const gate = await runCommand({
         command,
         cwd: root,

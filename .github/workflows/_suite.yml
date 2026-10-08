@@ -153,9 +153,12 @@ jobs:
       # group with a timeout; every suite reports even after a failure.
       # Strict suites that exit 2 pass only with reviewed trace findings
       # (tests/support/strict-findings.mjs).
+      # Runners derive candidate images from the provided images instead of
+      # rebuilding them (tests/support/candidate-images.mjs).
       - name: Run suites
         env:
           SUITES: ${{ fromJSON(inputs.suite).suites }}
+          ANTNEST_CI_PROVIDED_IMAGES: ${{ fromJSON(inputs.suite).images }}
         run: node tests/support/ci-shard.mjs
 
       # Per-run fixture credentials are excluded; everything else is evidence.

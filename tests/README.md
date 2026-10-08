@@ -208,9 +208,9 @@ pulled images and host setup but no platform state.
 
 - **Tier A:** PostgreSQL and Temporal component suites, browser suites,
   deployment render contracts and the Runtime SDK probe.
-- **Tier B:** service-owned Docker E2E runners, which build their own images.
-  Runners that start images with `--no-build` get `antnest/<image>:local`
-  first.
+- **Tier B:** service-owned Docker E2E runners. Each starts its own
+  isolated candidate images; runners that start images with `--no-build` get
+  `antnest/<image>:local` first.
 - **Tier C:** whole-platform scenarios whose rule spans services (stage 3a,
   authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
   skill learning). Platform targets that test one service's rule, or behavior
@@ -237,6 +237,17 @@ artifact; shards that need no image start without waiting for it. Runs on
 `main` build and publish every missing image, so a pull request that does not
 change an image's inputs never rebuilds it. Every shard job runs the steps in
 `.github/workflows/_suite.yml`.
+
+Runners never rebuild a provided image. The shard lists its images in
+`ANTNEST_CI_PROVIDED_IMAGES`, and
+[`support/candidate-images.mjs`](support/candidate-images.mjs) turns each
+candidate build into a label-only build `FROM antnest/<image>:local` that
+keeps the labels cleanup checks ownership with. Outside CI the runner builds
+from source. The catalog also defines Runtime test variants: the `e2e` stage
+with the Skill install gate, the managed MCP fixture alone and the release
+image with that fixture. The image job builds them with their own cache.
+The provided Runtime images passed the Dockerfile's `fmt`, `clippy` and test
+gates when the image job built their inputs.
 
 A manual run (`gh workflow run integration.yml --ref <branch> -f suites='<id> <id>'`)
 runs only the named catalog suites, in their shards; without `suites` it runs

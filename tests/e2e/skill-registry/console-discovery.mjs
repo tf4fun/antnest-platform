@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 import { assertNoOverflow } from "../../integration/admin-console/console-browser-harness.mjs";
 import { skillArtifact } from "./stage3-fixture.mjs";
 import {
@@ -125,12 +126,25 @@ const built = [];
 try {
   baseline = await inventory(docker);
   save("baseline.json", baseline);
-  for (const [image, file] of [
-    [registryImage, "services/skill-registry/Dockerfile"],
-    [consoleImage, "services/admin-console/Dockerfile"],
+  for (const [name, image] of [
+    ["skill-registry", registryImage],
+    ["admin-console", consoleImage],
   ]) {
     console.log(JSON.stringify({ project, stage: "build", image }));
-    await docker(["build", "--tag", image, "--file", file, "."], true);
+    const [, ...build] = candidateCommand({
+      name,
+      tag: image,
+      build: [
+        "docker",
+        "build",
+        "--tag",
+        image,
+        "--file",
+        `services/${name}/Dockerfile`,
+        ".",
+      ],
+    });
+    await docker(build, true);
     built.push(image);
   }
   console.log(JSON.stringify({ project, stage: "start" }));
