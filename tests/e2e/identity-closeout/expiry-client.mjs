@@ -37,12 +37,11 @@ if (phase === "prepare") {
     "/api/admin/account",
     "/api/app/bootstrap",
   ]) {
-    // A stopped Identity keeps its pinned Compose address, so Gateway reports
-    // the outage only after its 30s dial timeout.
+    // A stopped Identity keeps its pinned Compose address and drops connects;
+    // Gateway's dependency connect bound must report it within the default.
     const response = await browser.request(path, {
       headers: { Cookie: saved.cookie },
       status: 503,
-      timeoutMs: 45000,
     });
     assert.equal(response.body.code, "identity_unavailable");
     assert.equal(response.headers.getSetCookie().length, 0);
