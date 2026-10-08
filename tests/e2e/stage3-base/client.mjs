@@ -37,6 +37,7 @@ import {
   publishSkill,
 } from "../skill-registry/stage3-fixture.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const skillMode = process.env.ANTNEST_E2E_SKILL_DELIVERY === "true";
 // The published Skill fixture is "code-review"; v1 lists it as a command.
@@ -261,7 +262,7 @@ async function admitEnableAfterReadyFault(kind, body) {
       );
       assert.equal(progress.body.state, "ready");
       console.log(
-        JSON.stringify({
+        asciiJSON({
           status: "ready_fault_enable_admitted",
           preparation_state: progress.body.state,
           http_retry_observed: sawPreparation,
@@ -393,7 +394,7 @@ async function verifyFencedSkillInvalidation(body, sourceRevision) {
     rejected_request_id: requestId,
     preparation_observed: sawPreparation,
   };
-  console.log(JSON.stringify(evidence));
+  console.log(asciiJSON(evidence));
   return evidence;
 }
 
@@ -615,7 +616,7 @@ async function verifyPostCreateSkillMountRace(body, targetDigest) {
     trace_id: admitted.traceID,
   };
   await writeFile("/tmp/stage3-business.json", JSON.stringify(receipt));
-  console.log(JSON.stringify(receipt));
+  console.log(asciiJSON(receipt));
   expectedUnknown = true;
 }
 async function admitRebuildAfterTargetDrift(
@@ -1098,7 +1099,7 @@ async function main() {
         acp_admission_closed: true,
       };
       await writeFile("/tmp/stage3-business.json", JSON.stringify(receipt));
-      console.log(JSON.stringify(receipt));
+      console.log(asciiJSON(receipt));
       expectedUnknown = true;
       return;
     }
@@ -1451,7 +1452,7 @@ async function main() {
       revocations,
     };
     await writeFile("/tmp/stage3-business.json", JSON.stringify(business));
-    console.log(JSON.stringify(business));
+    console.log(asciiJSON(business));
     const lifecycleTraces = [],
       sessionTraces = [];
     const lifecycleRaw = [];
@@ -1500,7 +1501,7 @@ async function main() {
         ? reviewedFencedRestartOnly([...lifecycleTraces, ...sessionTraces])
         : clockWarningsOnly([...lifecycleTraces, ...sessionTraces]));
     console.log(
-      JSON.stringify({
+      asciiJSON({
         status: "topology_passed",
         strict_trace: strict,
         ...(acceptedKnownTraceExceptions
@@ -1533,7 +1534,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       error: error.message.split("\n")[0],

@@ -19,6 +19,7 @@ import {
   assertTranscript,
   transcript,
 } from "./evidence.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -306,9 +307,7 @@ async function exercise(profile) {
     foreign_session_rejections: 3,
     unsupported_binary_rejections: 1,
   });
-  console.log(
-    JSON.stringify({ status: "transport_passed", ...outcomes.at(-1) }),
-  );
+  console.log(asciiJSON({ status: "transport_passed", ...outcomes.at(-1) }));
   if (profile.http) return;
   stage = `${profile.name}:ordinary-run`;
   const ordinary = await connect(profile, agents[0]);
@@ -435,7 +434,7 @@ async function main() {
   );
   const { accepted, ...strict } = commandStrictOutcome(checked);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       ...strict,
       outcomes,
@@ -452,7 +451,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       ...summarizeFailure(error),
