@@ -42,19 +42,22 @@ async function main() {
   assert.equal(runtime.status, "ready");
   assert.equal(typeof runtime.execution_id, "string");
 
-  const requestId = randomUUID();
   const jobId = randomUUID();
-  const body = Buffer.from(
-    JSON.stringify({
-      action: "cancel",
-      request_id: requestId,
-      job_id: jobId,
-      generation: 1,
-    }),
-  );
-  const digest = `sha256:${createHash("sha256").update(body).digest("hex")}`;
 
-  async function cancel(kid, encodedKey) {
+  // The read-only digest is the probe: a verifier decision never changes the
+  // workspace, whichever key it admits.
+  async function digestWith(kid, encodedKey) {
+    const requestId = randomUUID();
+    const body = Buffer.from(
+      JSON.stringify({
+        action: "digest",
+        request_id: requestId,
+        job_id: jobId,
+        generation: 1,
+        package_path: ".antnest/skills/fixture-procedure",
+      }),
+    );
+    const digest = `sha256:${createHash("sha256").update(body).digest("hex")}`;
     const now = Math.floor(Date.now() / 1000);
     const header = Buffer.from(
       JSON.stringify({
@@ -70,7 +73,7 @@ async function main() {
         execution_id: runtime.execution_id,
         job_id: jobId,
         generation: 1,
-        action: "cancel",
+        action: "digest",
         request_id: requestId,
         body_sha256: digest,
         issued_at: now,
@@ -86,7 +89,7 @@ async function main() {
       type: "pkcs8",
     });
     const signature = sign(null, message, privateKey).toString("base64url");
-    return fetch(`${origin}/internal/skill-maintenance/cancel`, {
+    return fetch(`${origin}/internal/skill-maintenance/digest`, {
       method: "POST",
       headers: {
         [serviceHeader]: `Bearer ${token}`,
@@ -99,7 +102,7 @@ async function main() {
     });
   }
 
-  const removed = await cancel("fixture-key", oldKey);
+  const removed = await digestWith("fixture-key", oldKey);
   const oldTrusted = process.env.ANTNEST_E2E_EXPECT_OLD_TRUSTED === "true";
   const removedText = await removed.clone().text();
   assert.equal(removed.status, oldTrusted ? 200 : 401, removedText);
@@ -111,9 +114,9 @@ async function main() {
       "maintenance_unauthorized",
       removedText,
     );
-  const retained = await cancel("fixture-next", nextKey);
+  const retained = await digestWith("fixture-next", nextKey);
   assert.equal(retained.status, 200, await retained.clone().text());
-  assert.equal((await retained.json()).outcome, "cancelled");
+  assert.equal((await retained.json()).outcome, "observed");
   console.log(
     JSON.stringify({
       status: oldTrusted ? "old_key_still_trusted" : "removed_key_rejected",

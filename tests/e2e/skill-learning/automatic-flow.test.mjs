@@ -71,10 +71,7 @@ const keyCompromise = process.env.ANTNEST_E2E_SKILL_KEY_COMPROMISE === "true";
 const keyRotation =
   keyCompromise || process.env.ANTNEST_E2E_SKILL_KEY_ROTATION === "true";
 const pinned = process.env.ANTNEST_E2E_SKILL_PINNED === "true";
-const cleanupLostResponse =
-  process.env.ANTNEST_E2E_SKILL_CLEANUP_LOST_RESPONSE === "true";
-const verifyCleanup =
-  process.env.ANTNEST_E2E_SKILL_CLEANUP === "true" || cleanupLostResponse;
+const verifyCleanup = process.env.ANTNEST_E2E_SKILL_CLEANUP === "true";
 assert(!verifyCleanup || (!pinned && !keyRotation));
 assert(!browserAcceptance || !verifyCleanup);
 assert(
@@ -109,9 +106,6 @@ const overlay = [
     : "tests/e2e/skill-learning/compose.yaml",
   ...(noticeFailure
     ? ["-f", "tests/e2e/skill-learning/notice-send-failure.compose.yaml"]
-    : []),
-  ...(cleanupLostResponse
-    ? ["-f", "tests/e2e/skill-learning/held-commit.compose.yaml"]
     : []),
   ...(discovery && !deployment
     ? ["-f", "tests/e2e/skill-learning/discovery.compose.yaml"]
@@ -244,7 +238,6 @@ test(
       Object.assign(config.env, {
         ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "false",
         ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "",
-        ANTNEST_E2E_HOLD_RELEASE: String(cleanupLostResponse),
         ANTNEST_E2E_SKILL_LEARNING_DEBUG: String(debugLearning),
         ANTNEST_E2E_TOOL_USABILITY: String(toolUsability),
         ANTNEST_C4_AGENT_ACP_IMAGE: image,
@@ -914,35 +907,6 @@ test(
           true,
         );
       }
-      if (cleanupLostResponse) {
-        const acpContainer = await docker(
-          composeArgs(config.project, [
-            ...overlay,
-            "ps",
-            "-q",
-            "agent-acp-service",
-          ]),
-        );
-        const gate = async (path, method = "GET") =>
-          JSON.parse(
-            await docker([
-              "exec",
-              "-e",
-              "NODE_OPTIONS=",
-              acpContainer,
-              "node",
-              "-e",
-              `fetch('http://127.0.0.1:18093/${path}',{method:'${method}'}).then(r=>r.json()).then(x=>console.log(JSON.stringify(x)))`,
-            ]),
-          );
-        await until(
-          async () => (await gate("status")).pending,
-          "real release response held",
-          abort.signal,
-          30_000,
-        );
-        assert.deepEqual(await gate("drop", "POST"), { dropped: true });
-      }
       let runtimeContainerBeforeRotation;
       if (keyRotation) {
         const runtimeName = `antnest-runtime-${fixture.agentID}`;
@@ -1002,19 +966,6 @@ test(
         assert.deepEqual(injected, { failures: 1 });
       }
       assert.match(fixture.agentID, /^agent_[a-z0-9]+$/u);
-      if (cleanupLostResponse) {
-        await until(
-          async () =>
-            Number(
-              await sql(
-                `SELECT count(*) FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action='release' AND intent.state='settled' AND intent.receipt->>'outcome'='released'`,
-              ),
-            ) === 1,
-          "lost cleanup response recovered before next foreground Run",
-          abort.signal,
-          30_000,
-        );
-      }
       if (!debugLearning) {
         const advanced = await docker([
           "exec",
@@ -1369,16 +1320,28 @@ test(
       }
       let cleanupEvidence;
       if (verifyCleanup) {
-        await until(
-          async () =>
-            Number(
-              await sql(
-                `SELECT count(*) FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action='release' AND intent.state='settled' AND intent.receipt->>'outcome'='released'`,
-              ),
-            ) === 2,
-          "both settled learning candidates must be released",
-          abort.signal,
-          30_000,
+        // Install keeps no candidate in the Runtime: the staging tree is
+        // removed by every completed install and nothing is left to release.
+        const installs = (
+          await sql(
+            `SELECT intent.state||'|'||COALESCE(intent.receipt->>'outcome','') FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action='install' ORDER BY intent.created_at`,
+          )
+        )
+          .split("\n")
+          .filter(Boolean);
+        assert.equal(
+          installs.filter((row) => row === "settled|applied").length,
+          2,
+          `each learned change must settle one install: ${installs.join(", ")}`,
+        );
+        assert.equal(
+          Number(
+            await sql(
+              `SELECT count(*) FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action<>'install'`,
+            ),
+          ),
+          0,
+          "ACP sent a retired maintenance action",
         );
         assert.equal(
           Number(
@@ -1397,19 +1360,16 @@ test(
             `antnest-runtime-${fixture.agentID}`,
             "node",
             "-e",
-            "const fs=require('node:fs');const count=p=>fs.existsSync(p)?fs.readdirSync(p,{withFileTypes:true}).filter(x=>x.isDirectory()).length:0;console.log(JSON.stringify({candidates:count('/workspace/.antnest/skill-learning/candidates'),detached:count('/workspace/.antnest/skill-learning/release-stage'),active:fs.existsSync('/workspace/.antnest/skills/fixture-procedure/SKILL.md')}))",
+            "const fs=require('node:fs');const count=p=>fs.existsSync(p)?fs.readdirSync(p).length:0;console.log(JSON.stringify({staging:count('/workspace/.antnest/skill-learning/staging'),candidates:count('/workspace/.antnest/skill-learning/candidates'),detached:count('/workspace/.antnest/skill-learning/release-stage'),active:fs.existsSync('/workspace/.antnest/skills/fixture-procedure/SKILL.md')}))",
           ]),
         );
         assert.deepEqual(physical, {
+          staging: 0,
           candidates: 0,
           detached: 0,
           active: true,
         });
-        cleanupEvidence = {
-          released: 2,
-          lostResponseInjected: cleanupLostResponse,
-          physical,
-        };
+        cleanupEvidence = { installs, physical };
       }
       if (!uiOutage && !pinned && !discovery) {
         const candidate = JSON.parse(

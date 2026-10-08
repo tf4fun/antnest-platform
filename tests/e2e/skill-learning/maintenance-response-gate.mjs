@@ -1,19 +1,29 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
-// Loaded only by the disposable ACP container. One test delays the real
-// Runtime receipt; another delays dispatch after ACP has recorded its intent.
+// Loaded only by the disposable ACP container of the install interruption
+// E2E. ANTNEST_E2E_INSTALL_GATE selects one interruption of the first Skill
+// install; every later install is the resend and reaches the Runtime as is.
+//   response: the Runtime installs, ACP's receipt is held (lost on /drop)
+//   dispatch: the request is held before the Runtime sees it
+//   observe:  installs pass through; only in-flight aborts are recorded
 // NODE_OPTIONS loads this file into every node process in the container,
 // including the `node -e` healthcheck, which must not take the gate's port.
+const modes = ["response", "dispatch", "observe"];
 if (process.argv[1]?.endsWith("/dist/main.js")) await install();
 
 // ACP reaches Runtime only through RuntimeConnections.fetchFor, which calls
 // undici with its own dispatcher and never the global fetch. Gating anything
-// else would leave every held-commit scenario waiting for a request it can
-// never see, so a missing hook stops ACP instead of starting ungated.
+// else would leave every scenario waiting for a request it can never see, so
+// a missing hook stops ACP instead of starting ungated.
 // The module graph is free of pg, so loading it here does not preempt the
 // instrumentation that main registers before composition.
 async function install() {
+  const mode = process.env.ANTNEST_E2E_INSTALL_GATE;
+  if (!modes.includes(mode))
+    throw new Error(
+      `ANTNEST_E2E_INSTALL_GATE must be one of ${modes.join(", ")}`,
+    );
   const transport = new URL(
     "./adapters/runtime-connections.js",
     pathToFileURL(process.argv[1]),
@@ -31,12 +41,29 @@ async function install() {
     throw new Error(
       `Maintenance gate found no RuntimeConnections.fetchFor in ${transport.pathname}`,
     );
+  let installs = 0;
   let pending = null;
-  let atomicAbortSeen = false;
-  let releaseHeld = false;
+  let aborted = false;
   RuntimeConnections.prototype.fetchFor = function (binding) {
     return gated(fetchFor.call(this, binding));
   };
+  // A held promise must reject on abort exactly as undici does; otherwise the
+  // gate, not ACP, would decide whether lifecycle or foreground work waits.
+  const hold = (signal, entry) =>
+    new Promise((resolve, reject) => {
+      const onAbort = () => {
+        aborted = true;
+        if (pending?.signal === signal) pending = null;
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const settle = (action) => (value) => {
+        signal?.removeEventListener("abort", onAbort);
+        action(value);
+      };
+      pending = { signal, ...entry(settle(resolve), settle(reject)) };
+    });
   const gated = (originalFetch) => async (input, init) => {
     const address =
       input instanceof URL
@@ -44,54 +71,36 @@ async function install() {
         : typeof input === "string"
           ? input
           : input.url;
-    const url = new URL(address);
-    if (process.env.ANTNEST_E2E_HOLD_RELEASE === "true") {
-      if (url.pathname !== "/internal/skill-maintenance/release" || releaseHeld)
-        return originalFetch(input, init);
-      releaseHeld = true;
-    } else if (url.pathname !== "/internal/skill-maintenance/commit") {
+    if (new URL(address).pathname !== "/internal/skill-maintenance/install")
       return originalFetch(input, init);
+    installs += 1;
+    const signal = init?.signal;
+    if (mode === "observe" || installs > 1) {
+      if (mode !== "observe") return originalFetch(input, init);
+      const onAbort = () => {
+        aborted = true;
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        return await originalFetch(input, init);
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+      }
     }
-    if (process.env.ANTNEST_E2E_HOLD_AFTER_INSTALL === "true") {
-      if (init?.signal?.aborted) atomicAbortSeen = true;
-      else
-        init?.signal?.addEventListener(
-          "abort",
-          () => {
-            atomicAbortSeen = true;
-          },
-          { once: true },
-        );
-      return originalFetch(input, init);
-    }
-    if (process.env.ANTNEST_E2E_HOLD_BEFORE_COMMIT === "true") {
-      if (pending) throw new Error("Only one maintenance dispatch may be held");
-      return new Promise((resolve, reject) => {
-        pending = {
-          signal: init?.signal,
-          release: () => {
-            if (init?.signal?.aborted) {
-              reject(
-                init.signal.reason ?? new DOMException("Aborted", "AbortError"),
-              );
-            } else {
-              originalFetch(input, init).then(resolve, reject);
-            }
-          },
-        };
-      });
-    }
+    if (mode === "dispatch")
+      return hold(signal, (resolve, reject) => ({
+        release: () => originalFetch(input, init).then(resolve, reject),
+      }));
     const response = await originalFetch(input, init);
-    if (!response.ok) return response;
-    if (pending) throw new Error("Only one maintenance response may be held");
     const body = await response.arrayBuffer();
     const complete = new Response(body, {
       status: response.status,
       headers: response.headers,
     });
-    return new Promise((resolve, reject) => {
-      pending = { resolve, reject, response: complete, signal: init?.signal };
-    });
+    return hold(signal, (resolve, reject) => ({
+      release: () => resolve(complete),
+      drop: () => reject(new Error("Held Runtime install response lost")),
+    }));
   };
 
   createServer((request, response) => {
@@ -101,24 +110,24 @@ async function install() {
     };
     if (request.method === "GET" && request.url === "/status")
       return reply(200, {
+        mode,
+        installs,
         pending: pending !== null,
-        aborted: pending?.signal?.aborted === true || atomicAbortSeen,
+        aborted,
       });
     if (request.method === "POST" && request.url === "/release") {
-      if (!pending) return reply(409, { error: "no held response" });
+      if (!pending) return reply(409, { error: "no held install" });
       const held = pending;
       pending = null;
-      if (held.release) held.release();
-      else held.resolve(held.response);
+      held.release();
       return reply(200, { released: true });
     }
     if (request.method === "POST" && request.url === "/drop") {
-      if (!pending) return reply(409, { error: "no held response" });
-      if (pending.release)
-        return reply(409, { error: "dispatch cannot be dropped" });
+      if (!pending?.drop)
+        return reply(409, { error: "no held install response" });
       const held = pending;
       pending = null;
-      held.reject(new Error("Held Runtime commit response lost"));
+      held.drop();
       return reply(200, { dropped: true });
     }
     reply(404, { error: "not found" });
