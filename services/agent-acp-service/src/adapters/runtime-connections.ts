@@ -55,7 +55,7 @@ const ordinaryHeaders = new Set([
   "tracestate",
 ]);
 const privateRoute =
-  /^\/internal\/(?:skill-maintenance\/(?:prepare|check|commit|observe|cancel|release)|skill-temporary\/(?:install|release))$/u;
+  /^\/internal\/(?:skill-maintenance\/(?:install|digest)|skill-temporary\/(?:install|release))$/u;
 const unavailable = () =>
   new DomainError("runtime_connection_unavailable", "Runtime connection is unavailable");
 const conflict = () =>

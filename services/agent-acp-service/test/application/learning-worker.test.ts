@@ -16,7 +16,7 @@ const claim: LearningTaskClaim = {
 type PausedResult = {
   after: string | null;
   scanned: number;
-  handled: "none" | "recovered" | "dispatched";
+  handled: "none" | "dispatched";
   exhausted: boolean;
 };
 
@@ -50,10 +50,10 @@ function fixture() {
       async <T>(
         _claim: LearningTaskClaim,
         _signal: AbortSignal,
-        work: (signal: AbortSignal, trackClaim: (next: LearningTaskClaim) => void) => Promise<T>,
+        work: (signal: AbortSignal) => Promise<T>,
       ): Promise<T> => {
         order.push("guard");
-        return work(new AbortController().signal, () => {});
+        return work(new AbortController().signal);
       },
     ),
   };
@@ -86,32 +86,17 @@ function fixture() {
 }
 
 describe("Skill learning worker", () => {
-  it("tries bounded cleanup without blocking new work on cleanup failure", async () => {
+  it("has no Runtime candidate cleanup step", async () => {
     const f = fixture();
-    const cleanup = { tick: vi.fn().mockRejectedValue(new Error("runtime unavailable")) };
-    const diagnostics = vi.fn();
-    const worker = new LearningWorker(
-      f.paused,
-      f.scan,
-      f.admission,
-      f.guard,
-      f.processor,
-      f.outcomes,
-      f.onFailure,
-      f.wait,
-      diagnostics,
-      cleanup,
-    );
-    expect(await worker.tick(new AbortController().signal)).toBe("processed");
-    expect(cleanup.tick).toHaveBeenCalledOnce();
-    expect(diagnostics).toHaveBeenCalledOnce();
+    expect(await f.worker.tick(new AbortController().signal)).toBe("processed");
+    expect(f.order).toEqual(["recover", "scan", "claim", "guard", "process"]);
   });
-  it("settles a paused task before scanning or claiming new work", async () => {
+  it("resumes a paused task before scanning or claiming new work", async () => {
     const f = fixture();
     f.paused.next.mockResolvedValueOnce({
       after: "task-old",
       scanned: 1,
-      handled: "recovered",
+      handled: "dispatched",
       exhausted: false,
     });
     expect(await f.worker.tick(new AbortController().signal)).toBe("recovered");

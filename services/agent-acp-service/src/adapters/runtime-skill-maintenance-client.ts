@@ -18,7 +18,7 @@ type IntentPort = {
   reserve(input: {
     claim: LearningTaskClaim;
     requestId: string;
-    action: "prepare" | "check" | "commit" | "observe" | "cancel" | "release";
+    action: "install";
     executionId: string;
     mcpEndpoint: string;
     revision: string;
@@ -36,75 +36,50 @@ type IntentPort = {
 };
 
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const key = z.string().regex(/^[0-9a-f]{64}$/u);
-const receiptSchema = z.strictObject({
+const receiptIdentity = {
   request_id: z.string(),
-  action: z.literal("prepare"),
+  action: z.literal("install"),
   execution_id: z.string(),
-  outcome: z.literal("prepared"),
-  observed_digest: digest,
-  storage_key: key,
-});
-export type PreparedSkillReceipt = z.infer<typeof receiptSchema>;
-const checkReceiptSchema = z.strictObject({
-  request_id: z.string(),
-  action: z.literal("check"),
-  execution_id: z.string(),
-  outcome: z.literal("checked"),
-  observed_digest: digest,
-});
-export type CheckedSkillReceipt = z.infer<typeof checkReceiptSchema>;
-const commitReceiptSchema = z.union([
+};
+const installReceiptSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({ ...receiptIdentity, outcome: z.literal("applied"), observed_digest: digest }),
   z.strictObject({
-    request_id: z.string(),
-    action: z.literal("commit"),
-    execution_id: z.string(),
-    outcome: z.literal("applied"),
-    observed_digest: digest,
+    ...receiptIdentity,
+    outcome: z.literal("conflict"),
+    observed_digest: digest.nullable(),
+    conflict_reason: z.enum(["base_changed", "target_exists", "content_changed_during_activation"]),
   }),
+  z
+    .strictObject({
+      ...receiptIdentity,
+      outcome: z.literal("blocked"),
+      observed_digest: z.null(),
+      blocked_reason: z.enum([
+        "foreground_running",
+        "managed_call_in_flight",
+        "background_task_running",
+        "writers_unknown",
+      ]),
+      blocked_subject_id: z
+        .string()
+        .regex(/^(bash|managed|unknown):[A-Za-z0-9._-]+$/u)
+        .max(128)
+        .optional(),
+    })
+    .refine(
+      (receipt) =>
+        !["managed_call_in_flight", "background_task_running"].includes(receipt.blocked_reason) ||
+        receipt.blocked_subject_id !== undefined,
+    ),
   z.strictObject({
-    request_id: z.string(),
-    action: z.literal("commit"),
-    execution_id: z.string(),
-    outcome: z.literal("blocked"),
+    ...receiptIdentity,
+    outcome: z.literal("preempted"),
     observed_digest: z.null(),
-    blocked_reason: z.enum([
-      "foreground_running",
-      "managed_call_in_flight",
-      "background_task_running",
-      "writers_unknown",
-      "policy_changed",
-      "execution_changed",
-    ]),
-    blocked_subject_id: z.string().nullable().optional(),
   }),
 ]);
-export type CommittedSkillReceipt = z.infer<typeof commitReceiptSchema>;
-const observeReceiptSchema = z.strictObject({
-  request_id: z.string(),
-  action: z.literal("observe"),
-  execution_id: z.string(),
-  outcome: z.enum(["applied", "conflict", "unknown"]),
-  observed_digest: digest.nullable(),
-});
-export type ObservedSkillReceipt = z.infer<typeof observeReceiptSchema>;
-const cancelReceiptSchema = z.strictObject({
-  request_id: z.string(),
-  action: z.literal("cancel"),
-  execution_id: z.string(),
-  outcome: z.literal("cancelled"),
-  observed_digest: z.null(),
-});
-export type CancelledSkillReceipt = z.infer<typeof cancelReceiptSchema>;
-const releaseReceiptSchema = z.strictObject({
-  request_id: z.string(),
-  action: z.literal("release"),
-  execution_id: z.string(),
-  outcome: z.literal("released"),
-  observed_digest: z.null(),
-});
-export type ReleasedSkillReceipt = z.infer<typeof releaseReceiptSchema>;
+export type InstalledSkillReceipt = z.infer<typeof installReceiptSchema>;
 
+/** Sends the one atomic Skill install; Runtime keeps no transaction between calls. */
 export class RuntimeSkillMaintenanceClient {
   public constructor(
     private readonly signer: RuntimeSkillMaintenanceSigner,
@@ -115,7 +90,7 @@ export class RuntimeSkillMaintenanceClient {
     >,
   ) {}
 
-  public async prepare(input: {
+  public async install(input: {
     claim: LearningTaskClaim;
     binding: RuntimeBinding;
     candidateId: string;
@@ -123,26 +98,23 @@ export class RuntimeSkillMaintenanceClient {
     package: LearningCandidatePackage;
     expectedBaseDigest: string | null;
     signal: AbortSignal;
-  }): Promise<PreparedSkillReceipt> {
+  }): Promise<InstalledSkillReceipt> {
     const { claim, binding, candidateId, requestId } = input;
     input.signal.throwIfAborted();
     if (
-      !/^[!-~]{1,200}$/u.test(candidateId) ||
-      candidateId.includes("/") ||
-      candidateId.includes("\\") ||
+      !validCandidateId(candidateId) ||
       input.package.artifact.length > 8 * 1024 * 1024 ||
       input.package.artifactDigest !== sha256(input.package.artifact) ||
       !digest.safeParse(input.package.targetDigest).success ||
-      !/^\.antnest\/skills\/[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(input.package.packagePath) ||
+      !validPackagePath(input.package.packagePath) ||
       (input.expectedBaseDigest !== null && !digest.safeParse(input.expectedBaseDigest).success)
     )
-      throw new Error("Invalid learning candidate package or preparation target");
+      throw new Error("Invalid learning candidate package or install target");
     const metadataFacts = {
-      action: "prepare",
+      action: "install",
       request_id: requestId,
       job_id: claim.taskId,
       generation: claim.generation,
-      candidate_id: candidateId,
       package_path: input.package.packagePath,
       expected_base_digest: input.expectedBaseDigest,
       target_digest: input.package.targetDigest,
@@ -163,247 +135,35 @@ export class RuntimeSkillMaintenanceClient {
       claim,
       binding,
       requestId,
-      action: "prepare",
       body,
-      requestFacts: metadataFacts,
+      // The candidate identity is ACP's own fact; Runtime never receives it.
+      requestFacts: { ...metadataFacts, candidate_id: candidateId },
       contentType: `multipart/form-data; boundary=${boundary}`,
       signal: input.signal,
     });
-    const receipt = receiptSchema.safeParse(parsed);
+    const receipt = installReceiptSchema.safeParse(parsed);
     if (
       !receipt.success ||
       receipt.data.request_id !== requestId ||
       receipt.data.execution_id !== binding.executionId ||
-      receipt.data.observed_digest !== input.package.targetDigest
-    ) {
-      await this.intents.markUnknown(claim, requestId);
-      throw new RuntimeMaintenanceUnknownError(
-        "Runtime Skill preparation receipt does not match the request",
-      );
-    }
-    await this.settle(claim, requestId, receipt.data);
-    return receipt.data;
-  }
-
-  public async check(input: {
-    claim: LearningTaskClaim;
-    binding: RuntimeBinding;
-    candidateId: string;
-    requestId: string;
-    package: LearningCandidatePackage;
-    signal: AbortSignal;
-  }): Promise<CheckedSkillReceipt> {
-    if (
-      !/^[!-~]{1,200}$/u.test(input.candidateId) ||
-      input.candidateId.includes("/") ||
-      input.candidateId.includes("\\") ||
-      !digest.safeParse(input.package.targetDigest).success ||
-      !/^\.antnest\/skills\/[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(input.package.packagePath)
-    )
-      throw new Error("Invalid learning candidate check target");
-    const requestFacts = {
-      action: "check",
-      request_id: input.requestId,
-      job_id: input.claim.taskId,
-      generation: input.claim.generation,
-      candidate_id: input.candidateId,
-      package_path: input.package.packagePath,
-      target_digest: input.package.targetDigest,
-      package_rules_version: 1,
-    };
-    const body = Buffer.from(JSON.stringify(requestFacts));
-    const parsed = await this.send({
-      claim: input.claim,
-      binding: input.binding,
-      requestId: input.requestId,
-      action: "check",
-      body,
-      requestFacts,
-      contentType: "application/json",
-      signal: input.signal,
-    });
-    const receipt = checkReceiptSchema.safeParse(parsed);
-    if (
-      !receipt.success ||
-      receipt.data.request_id !== input.requestId ||
-      receipt.data.execution_id !== input.binding.executionId ||
-      receipt.data.observed_digest !== input.package.targetDigest
-    ) {
-      await this.intents.markUnknown(input.claim, input.requestId);
-      throw new RuntimeMaintenanceUnknownError(
-        "Runtime Skill check receipt does not match the request",
-      );
-    }
-    await this.settle(input.claim, input.requestId, receipt.data);
-    return receipt.data;
-  }
-
-  public async commit(input: {
-    claim: LearningTaskClaim;
-    binding: RuntimeBinding;
-    candidateId: string;
-    requestId: string;
-    package: LearningCandidatePackage;
-    expectedBaseDigest: string | null;
-    signal: AbortSignal;
-  }): Promise<CommittedSkillReceipt> {
-    if (
-      !validCandidateId(input.candidateId) ||
-      !validPackageTarget(input.package) ||
-      (input.expectedBaseDigest !== null && !digest.safeParse(input.expectedBaseDigest).success)
-    )
-      throw new Error("Invalid learning candidate commit target");
-    const parsed = await this.sendControl(input, "commit", {
-      candidate_id: input.candidateId,
-      package_path: input.package.packagePath,
-      expected_base_digest: input.expectedBaseDigest,
-      target_digest: input.package.targetDigest,
-    });
-    const receipt = commitReceiptSchema.safeParse(parsed);
-    if (
-      !receipt.success ||
-      receipt.data.request_id !== input.requestId ||
-      receipt.data.execution_id !== input.binding.executionId ||
       (receipt.data.outcome === "applied" &&
         receipt.data.observed_digest !== input.package.targetDigest)
     ) {
-      await this.intents.markUnknown(input.claim, input.requestId);
+      await this.intents.markUnknown(claim, requestId);
+      this.connections.releaseOperation(requestId);
       throw new RuntimeMaintenanceUnknownError(
-        "Runtime Skill commit receipt does not match the request",
+        "Runtime Skill install receipt does not match the request",
       );
     }
-    await this.settle(input.claim, input.requestId, receipt.data);
+    await this.intents.settle(claim, requestId, receipt.data);
+    this.connections.releaseOperation(requestId);
     return receipt.data;
-  }
-
-  public async observe(input: {
-    claim: LearningTaskClaim;
-    binding: RuntimeBinding;
-    requestId: string;
-    effectRequestId: string;
-    expectedTargetDigest: string | null;
-    signal: AbortSignal;
-  }): Promise<ObservedSkillReceipt> {
-    if (
-      !/^[!-~]{1,128}$/u.test(input.effectRequestId) ||
-      input.effectRequestId.includes("/") ||
-      input.effectRequestId.includes("\\") ||
-      (input.expectedTargetDigest !== null && !digest.safeParse(input.expectedTargetDigest).success)
-    )
-      throw new Error("Invalid Skill effect observation target");
-    const parsed = await this.sendControl(input, "observe", {
-      effect_request_id: input.effectRequestId,
-      expected_target_digest: input.expectedTargetDigest,
-    });
-    const receipt = observeReceiptSchema.safeParse(parsed);
-    if (
-      !receipt.success ||
-      receipt.data.request_id !== input.requestId ||
-      receipt.data.execution_id !== input.binding.executionId ||
-      (receipt.data.outcome === "applied" &&
-        receipt.data.observed_digest !== input.expectedTargetDigest)
-    ) {
-      await this.intents.markUnknown(input.claim, input.requestId);
-      throw new RuntimeMaintenanceUnknownError(
-        "Runtime Skill observe receipt does not match the request",
-      );
-    }
-    if (receipt.data.outcome === "unknown")
-      await this.intents.markUnknown(input.claim, input.requestId);
-    else await this.settle(input.claim, input.requestId, receipt.data);
-    return receipt.data;
-  }
-
-  public async cancel(input: {
-    claim: LearningTaskClaim;
-    binding: RuntimeBinding;
-    requestId: string;
-    signal: AbortSignal;
-  }): Promise<CancelledSkillReceipt> {
-    const parsed = await this.sendControl(input, "cancel", {});
-    const receipt = cancelReceiptSchema.safeParse(parsed);
-    if (
-      !receipt.success ||
-      receipt.data.request_id !== input.requestId ||
-      receipt.data.execution_id !== input.binding.executionId
-    ) {
-      await this.intents.markUnknown(input.claim, input.requestId);
-      throw new RuntimeMaintenanceUnknownError(
-        "Runtime Skill cancel receipt does not match the request",
-      );
-    }
-    await this.settle(input.claim, input.requestId, receipt.data);
-    return receipt.data;
-  }
-
-  public async release(input: {
-    claim: LearningTaskClaim;
-    binding: RuntimeBinding;
-    requestId: string;
-    storageClass: "candidate";
-    storageKey: string;
-    packagePath: string;
-    expectedDigest: string;
-    signal: AbortSignal;
-  }): Promise<ReleasedSkillReceipt> {
-    if (
-      !key.safeParse(input.storageKey).success ||
-      !validPackagePath(input.packagePath) ||
-      !digest.safeParse(input.expectedDigest).success
-    )
-      throw new Error("Invalid Skill release target");
-    const parsed = await this.sendControl(input, "release", {
-      storage_class: input.storageClass,
-      storage_key: input.storageKey,
-      package_path: input.packagePath,
-      expected_digest: input.expectedDigest,
-    });
-    const receipt = releaseReceiptSchema.safeParse(parsed);
-    if (
-      !receipt.success ||
-      receipt.data.request_id !== input.requestId ||
-      receipt.data.execution_id !== input.binding.executionId
-    ) {
-      await this.intents.markUnknown(input.claim, input.requestId);
-      throw new RuntimeMaintenanceUnknownError(
-        "Runtime Skill release receipt does not match the request",
-      );
-    }
-    await this.settle(input.claim, input.requestId, receipt.data);
-    return receipt.data;
-  }
-
-  private async sendControl(
-    input: {
-      claim: LearningTaskClaim;
-      binding: RuntimeBinding;
-      requestId: string;
-      signal: AbortSignal;
-    },
-    action: "commit" | "observe" | "cancel" | "release",
-    extra: Record<string, unknown>,
-  ): Promise<unknown> {
-    const requestFacts = {
-      action,
-      request_id: input.requestId,
-      job_id: input.claim.taskId,
-      generation: input.claim.generation,
-      ...extra,
-    };
-    return this.send({
-      ...input,
-      action,
-      body: Buffer.from(JSON.stringify(requestFacts)),
-      requestFacts,
-      contentType: "application/json",
-    });
   }
 
   private async send(input: {
     claim: LearningTaskClaim;
     binding: RuntimeBinding;
     requestId: string;
-    action: "prepare" | "check" | "commit" | "observe" | "cancel" | "release";
     body: Buffer;
     requestFacts: Record<string, unknown>;
     contentType: string;
@@ -416,20 +176,18 @@ export class RuntimeSkillMaintenanceClient {
       executionId: input.binding.executionId,
       jobId: input.claim.taskId,
       generation: input.claim.generation,
-      action: input.action,
+      action: "install",
       requestId: input.requestId,
       body: input.body,
     });
-    const url = maintenanceUrl(input.binding.mcpEndpoint, input.action);
+    const url = maintenanceUrl(input.binding.mcpEndpoint, "install");
     // Pin and verify the original sender before creating any durable effect intent.
-    if (["observe", "cancel", "release"].includes(input.action))
-      this.connections.retainOperation(input.requestId, input.binding, { cleanup: true });
-    else this.connections.retainOperation(input.requestId, input.binding);
+    this.connections.retainOperation(input.requestId, input.binding);
     const send = tracedFetch(this.connections.fetchFor(input.binding), "antnest-runtime");
     const reservation = await this.intents.reserve({
       claim: input.claim,
       requestId: input.requestId,
-      action: input.action,
+      action: "install",
       executionId: input.binding.executionId,
       mcpEndpoint: input.binding.mcpEndpoint,
       revision: input.binding.revision,
@@ -456,6 +214,7 @@ export class RuntimeSkillMaintenanceClient {
       });
     } catch (error) {
       await this.intents.markUnknown(input.claim, input.requestId);
+      this.connections.releaseOperation(input.requestId);
       throw new RuntimeMaintenanceUnknownError("Runtime Skill maintenance outcome is unknown", {
         cause: error,
       });
@@ -465,6 +224,7 @@ export class RuntimeSkillMaintenanceClient {
       raw = await boundedResponse(response);
     } catch (error) {
       await this.intents.markUnknown(input.claim, input.requestId);
+      this.connections.releaseOperation(input.requestId);
       throw new RuntimeMaintenanceUnknownError("Runtime Skill maintenance response is incomplete", {
         cause: error,
       });
@@ -474,6 +234,7 @@ export class RuntimeSkillMaintenanceClient {
       parsed = JSON.parse(raw);
     } catch (error) {
       await this.intents.markUnknown(input.claim, input.requestId);
+      this.connections.releaseOperation(input.requestId);
       throw new RuntimeMaintenanceUnknownError("Runtime Skill maintenance response is invalid", {
         cause: error,
       });
@@ -506,6 +267,7 @@ export class RuntimeSkillMaintenanceClient {
         reservation.state === "unknown"
       ) {
         await this.intents.markUnknown(input.claim, input.requestId);
+        this.connections.releaseOperation(input.requestId);
         throw new RuntimeMaintenanceUnknownError("Runtime Skill maintenance outcome is unknown");
       }
       await this.intents.reject(input.claim, input.requestId, {
@@ -517,23 +279,10 @@ export class RuntimeSkillMaintenanceClient {
     }
     return parsed;
   }
-
-  private async settle(
-    claim: LearningTaskClaim,
-    requestId: string,
-    receipt: unknown,
-  ): Promise<void> {
-    await this.intents.settle(claim, requestId, receipt);
-    this.connections.releaseOperation(requestId);
-  }
 }
 
 function validCandidateId(value: string): boolean {
   return /^[!-~]{1,200}$/u.test(value) && !value.includes("/") && !value.includes("\\");
-}
-
-function validPackageTarget(value: LearningCandidatePackage): boolean {
-  return digest.safeParse(value.targetDigest).success && validPackagePath(value.packagePath);
 }
 
 function validPackagePath(value: string): boolean {

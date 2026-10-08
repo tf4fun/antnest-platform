@@ -48,8 +48,8 @@ export class RegistrySkillProjectionClient {
   }
 }
 
-/** Uses the existing signed, read-only observe action. No new learning task,
- * mutable effect intent or model request is created for source verification. */
+/** Uses the signed, read-only digest action. No learning task, effect intent or
+ * model request is created for source verification. */
 export class RuntimeSkillSourceVerifier {
   public constructor(
     private readonly signer: Pick<RuntimeSkillMaintenanceSigner, "sign">,
@@ -67,12 +67,11 @@ export class RuntimeSkillSourceVerifier {
     const requestId = `source-${randomUUID()}`;
     const body = Buffer.from(
       JSON.stringify({
-        action: "observe",
+        action: "digest",
         request_id: requestId,
         job_id: record.taskId,
         generation: record.generation,
-        effect_request_id: record.effectRequestId,
-        expected_target_digest: record.projection.content_digest,
+        package_path: record.packagePath,
       }),
     );
     const url = new URL(binding.mcpEndpoint);
@@ -85,14 +84,14 @@ export class RuntimeSkillSourceVerifier {
       url.hash
     )
       throw new Error("Invalid current Runtime endpoint");
-    url.pathname = "/internal/skill-maintenance/observe";
+    url.pathname = "/internal/skill-maintenance/digest";
     const authorization = this.signer.sign({
       organizationId: record.projection.organization_id,
       agentId: record.projection.agent_id,
       executionId: binding.executionId,
       jobId: record.taskId,
       generation: record.generation,
-      action: "observe",
+      action: "digest",
       requestId,
       body,
     });
@@ -112,37 +111,50 @@ export class RuntimeSkillSourceVerifier {
           signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
         },
       );
-      const result = z
-        .strictObject({
-          request_id: z.string(),
-          action: z.literal("observe"),
-          execution_id: z.string(),
-          outcome: z.enum(["applied", "conflict", "unknown"]),
-          observed_digest: z
-            .string()
-            .regex(/^sha256:[0-9a-f]{64}$/u)
-            .nullable(),
-        })
-        .safeParse(JSON.parse(await boundedText(response, 4096)));
+      const result = digestReceipt.safeParse(JSON.parse(await boundedText(response, 4096)));
       if (
         !response.ok ||
         !result.success ||
         result.data.request_id !== requestId ||
-        result.data.execution_id !== binding.executionId
+        result.data.execution_id !== binding.executionId ||
+        result.data.outcome !== "observed"
       )
         return "unknown";
-      if (result.data.outcome === "conflict") return "changed";
-      if (
-        result.data.outcome !== "applied" ||
-        result.data.observed_digest !== record.projection.content_digest
-      )
-        return "unknown";
-      return "current";
+      return result.data.observed_digest === record.projection.content_digest
+        ? "current"
+        : "changed";
     } finally {
       this.connections.releaseOperation(requestId);
     }
   }
 }
+
+const digestReceiptBase = {
+  request_id: z.string(),
+  action: z.literal("digest"),
+  execution_id: z.string(),
+};
+const digestReceipt = z.discriminatedUnion("outcome", [
+  z.strictObject({
+    ...digestReceiptBase,
+    outcome: z.literal("observed"),
+    observed_digest: z
+      .string()
+      .regex(/^sha256:[0-9a-f]{64}$/u)
+      .nullable(),
+  }),
+  z.strictObject({
+    ...digestReceiptBase,
+    outcome: z.literal("blocked"),
+    observed_digest: z.null(),
+    blocked_reason: z.literal("foreground_running"),
+  }),
+  z.strictObject({
+    ...digestReceiptBase,
+    outcome: z.literal("preempted"),
+    observed_digest: z.null(),
+  }),
+]);
 
 async function boundedText(response: Response, maximum: number): Promise<string> {
   if (response.body === null) throw new Error("Empty source response");

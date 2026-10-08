@@ -5,8 +5,6 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresLearningMaintenanceLedger } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-maintenance-ledger.js";
-import { PostgresLearningCandidateCleanup } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-candidate-cleanup.js";
-import { PostgresWorkerLock } from "../../../../../services/agent-acp-service/src/adapters/postgres/worker-lock.js";
 import { PostgresLearningStatusRead } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-status-read.js";
 import { PostgresLearningCandidates } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-candidates.js";
 import { PostgresLearningApplyBases } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-apply-bases.js";
@@ -15,8 +13,9 @@ import { PostgresSkillSourceProjections } from "../../../../../services/agent-ac
 import { PostgresLearningChanges } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-changes.js";
 import { PostgresLearningChangeRead } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
 import { PostgresLearningTaskOutcomes } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-task-outcomes.js";
-import { PostgresLearningCommitRequests } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-commit-requests.js";
+import { PostgresLearningInstallRequests } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-install-requests.js";
 import { PostgresLearningBudget } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-budget.js";
+import { learningApplyRequestId } from "../../../../../services/agent-acp-service/src/domain/learning-apply-request-id.js";
 import { buildLearningCandidatePackage } from "../../../../../services/agent-acp-service/src/domain/learning-candidate-package.js";
 import type { LearningTaskClaim } from "../../../../../services/agent-acp-service/src/domain/learning-scan.js";
 
@@ -48,24 +47,9 @@ const currentPolicy = {
     daily_model_output_tokens: 80000,
   },
 };
-const intent = {
-  claim,
-  requestId: "prepare-1",
-  action: "prepare" as const,
-  executionId: "execution-1",
-  mcpEndpoint: "http://runtime.test:8093/mcp",
-  revision: `rtv_${"a".repeat(32)}`,
-  connectionId: `rci_${"b".repeat(32)}`,
-  bodySha256: digest,
-  requestFacts: { candidate_id: "candidate-1", target_digest: digest },
-};
-
 describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
   const pool = new Pool({ connectionString: url, max: 2 });
   const statusRead = new PostgresLearningStatusRead(new PostgresKernel(pool));
-  const cleanup = new PostgresLearningCandidateCleanup(
-    new PostgresKernel(pool),
-  );
   const ledger = new PostgresLearningMaintenanceLedger(
     new PostgresKernel(pool),
   );
@@ -76,7 +60,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
   );
   const changeRead = new PostgresLearningChangeRead(new PostgresKernel(pool));
   const outcomes = new PostgresLearningTaskOutcomes(new PostgresKernel(pool));
-  const commitRequests = new PostgresLearningCommitRequests(
+  const installRequests = new PostgresLearningInstallRequests(
     new PostgresKernel(pool),
   );
   const modelBudget = new PostgresLearningBudget(new PostgresKernel(pool));
@@ -105,6 +89,65 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     proposal,
     candidateEvidence,
   );
+  const installFacts = {
+    candidate_id: "candidate-1",
+    package_path: candidatePackage.packagePath,
+    expected_base_digest: null,
+    target_digest: candidatePackage.targetDigest,
+  };
+  const attempt = (ordinal: number) =>
+    learningApplyRequestId(claim, "candidate-1", "install", ordinal);
+  const intent = {
+    claim,
+    requestId: attempt(1),
+    action: "install" as const,
+    executionId: "execution-1",
+    mcpEndpoint: "http://runtime.test:8093/mcp",
+    revision: `rtv_${"a".repeat(32)}`,
+    connectionId: `rci_${"b".repeat(32)}`,
+    bodySha256: digest,
+    requestFacts: installFacts as Record<string, unknown>,
+  };
+  const installIntent = (
+    ordinal: number,
+    overrides: Partial<typeof intent> = {},
+  ) => ({ ...intent, requestId: attempt(ordinal), ...overrides });
+  const receiptFor = (
+    requestId: string,
+    outcome: Record<string, unknown>,
+    executionId = intent.executionId,
+  ) => ({
+    request_id: requestId,
+    action: "install",
+    execution_id: executionId,
+    ...outcome,
+  });
+  const applied = {
+    outcome: "applied",
+    observed_digest: candidatePackage.targetDigest,
+  };
+  const basis = {
+    kind: "policy" as const,
+    policyRevision: "b".repeat(64),
+    packagePath: candidatePackage.packagePath,
+    expectedBaseDigest: null,
+    targetDigest: candidatePackage.targetDigest,
+    evidenceIds: candidatePackage.evidenceIds,
+    executionId: "execution-1",
+  };
+  const intentState = async (requestId: string) =>
+    (
+      await pool.query<{ state: string }>(
+        "SELECT state FROM learning_maintenance_intents WHERE request_id=$1",
+        [requestId],
+      )
+    ).rows[0]?.state;
+  const intentCount = async () =>
+    (
+      await pool.query<{ count: number }>(
+        "SELECT count(*)::integer AS count FROM learning_maintenance_intents",
+      )
+    ).rows[0]?.count;
   const seedProposal = async (decision: unknown = proposal) => {
     await pool.query(
       `INSERT INTO learning_model_calls
@@ -114,6 +157,17 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       VALUES ($1,1,'review-proposal',$2,1,100,100,1000,'settled',10,10,100,$3::jsonb,now())`,
       [claim.taskId, claim.claimId, JSON.stringify(decision)],
     );
+  };
+
+  const admitCandidate = async () => {
+    await seedProposal();
+    await candidates.record({
+      claim,
+      candidateId: "candidate-1",
+      package: candidatePackage,
+      expectedBaseDigest: null,
+    });
+    await applyBases.recordAdmitted(claim, "candidate-1", basis);
   };
 
   beforeEach(async () => {
@@ -174,16 +228,6 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
 
   it("persists complete Runtime authority identity and rejects revision/connection substitution on replay", async () => {
     await ledger.reserve(intent);
-    expect(await ledger.read(claim, intent.requestId)).toMatchObject({
-      revision: intent.revision,
-      connectionId: intent.connectionId,
-    });
-    expect(await ledger.unresolved(claim)).toEqual([
-      expect.objectContaining({
-        revision: intent.revision,
-        connectionId: intent.connectionId,
-      }),
-    ]);
     for (const changed of [
       { revision: `rtv_${"f".repeat(32)}` },
       { connectionId: `rci_${"f".repeat(32)}` },
@@ -194,12 +238,17 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     const saved = await pool.query<{
       runtime_revision: string;
       connection_id: string;
+      action: string;
     }>(
-      "SELECT runtime_revision,connection_id FROM learning_maintenance_intents WHERE request_id=$1",
+      "SELECT runtime_revision,connection_id,action FROM learning_maintenance_intents WHERE request_id=$1",
       [intent.requestId],
     );
     expect(saved.rows).toEqual([
-      { runtime_revision: intent.revision, connection_id: intent.connectionId },
+      {
+        runtime_revision: intent.revision,
+        connection_id: intent.connectionId,
+        action: "install",
+      },
     ]);
   });
 
@@ -215,18 +264,183 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       ownedLedger.settle(claim, intent.requestId, { request_id: "wrong" }),
     ).rejects.toThrow();
     expect(released).not.toHaveBeenCalled();
-    await ownedLedger.settle(claim, intent.requestId, {
-      request_id: intent.requestId,
-      action: intent.action,
-      execution_id: intent.executionId,
-      outcome: "prepared",
-      observed_digest: digest,
-      storage_key: "a".repeat(64),
-    });
-    expect(released).toHaveBeenCalledWith(intent.requestId);
-    expect((await ownedLedger.read(claim, intent.requestId))?.state).toBe(
-      "settled",
+    await ownedLedger.settle(
+      claim,
+      intent.requestId,
+      receiptFor(intent.requestId, applied),
     );
+    expect(released).toHaveBeenCalledWith(intent.requestId);
+    expect(await intentState(intent.requestId)).toBe("settled");
+  });
+
+  it("persists the exact intent before dispatch and prevents changed or blind replay", async () => {
+    expect(await ledger.reserve(intent)).toMatchObject({
+      dispatch: true,
+      state: "pending",
+    });
+    expect(await ledger.reserve(intent)).toMatchObject({
+      dispatch: false,
+      state: "pending",
+    });
+    await ledger.markUnknown(claim, intent.requestId);
+    // A resend is a new attempt with its own identity, never a blind replay.
+    expect(await ledger.reserve(intent)).toMatchObject({
+      dispatch: false,
+      state: "unknown",
+    });
+    await expect(
+      ledger.reserve({ ...intent, bodySha256: `sha256:${"c".repeat(64)}` }),
+    ).rejects.toThrow();
+    await expect(
+      ledger.reserve({ ...intent, claim: { ...claim, claimId: "other" } }),
+    ).rejects.toThrow();
+    expect(await intentCount()).toBe(1);
+  });
+
+  it("settles only a receipt that matches its install intent", async () => {
+    await ledger.reserve(intent);
+    await ledger.markUnknown(claim, intent.requestId);
+    const receipt = receiptFor(intent.requestId, applied);
+    for (const forged of [
+      { ...receipt, execution_id: "other" },
+      { ...receipt, action: "commit" },
+      { ...receipt, outcome: "checked" },
+      { ...receipt, observed_digest: digest },
+    ])
+      await expect(
+        ledger.settle(claim, intent.requestId, forged),
+      ).rejects.toThrow();
+    await ledger.settle(claim, intent.requestId, receipt);
+    await ledger.settle(claim, intent.requestId, receipt);
+    await ledger.markUnknown(claim, intent.requestId);
+    expect(await intentState(intent.requestId)).toBe("settled");
+    await expect(
+      ledger.settle(
+        claim,
+        intent.requestId,
+        receiptFor(intent.requestId, {
+          outcome: "preempted",
+          observed_digest: null,
+        }),
+      ),
+    ).rejects.toThrow("conflicts");
+  });
+
+  it("accepts exactly the contract install outcomes", async () => {
+    const outcomes = [
+      applied,
+      {
+        outcome: "conflict",
+        observed_digest: digest,
+        conflict_reason: "base_changed",
+      },
+      {
+        outcome: "blocked",
+        observed_digest: null,
+        blocked_reason: "foreground_running",
+      },
+      { outcome: "preempted", observed_digest: null },
+    ];
+    for (const [index, outcome] of outcomes.entries()) {
+      await ledger.reserve(installIntent(index + 1));
+      await ledger.settle(
+        claim,
+        attempt(index + 1),
+        receiptFor(attempt(index + 1), outcome),
+      );
+    }
+    for (const outcome of ["prepared", "checked", "released", "unknown"]) {
+      await ledger.reserve(installIntent(10));
+      await expect(
+        ledger.settle(
+          claim,
+          attempt(10),
+          receiptFor(attempt(10), { outcome, observed_digest: null }),
+        ),
+      ).rejects.toThrow();
+    }
+    expect(await intentState(attempt(10))).toBe("pending");
+  });
+
+  it("settles a late install receipt after the claim pauses but rejects new dispatch", async () => {
+    await ledger.reserve(intent);
+    await pool.query(
+      "UPDATE learning_tasks SET state='paused',pause_reason='foreground_preempted' WHERE id=$1",
+      [claim.taskId],
+    );
+    await expect(ledger.reserve(installIntent(2))).rejects.toThrow();
+    await ledger.settle(
+      claim,
+      intent.requestId,
+      receiptFor(intent.requestId, {
+        outcome: "preempted",
+        observed_digest: null,
+      }),
+    );
+    await pool.query(
+      "UPDATE learning_tasks SET state='completed' WHERE id=$1",
+      [claim.taskId],
+    );
+    await expect(ledger.reserve(installIntent(3))).rejects.toThrow();
+    expect(await intentCount()).toBe(1);
+  });
+
+  it("rejects a wrong source Run, malformed facts and retired maintenance actions", async () => {
+    await expect(
+      ledger.reserve({
+        ...intent,
+        claim: { ...claim, sourceRunId: "different-run" },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      ledger.reserve({
+        ...intent,
+        requestFacts: { nested: undefined },
+      }),
+    ).rejects.toThrow();
+    for (const action of [
+      "prepare",
+      "check",
+      "commit",
+      "observe",
+      "cancel",
+      "release",
+      "tool",
+    ])
+      await expect(
+        ledger.reserve({ ...intent, action: action as "install" }),
+      ).rejects.toThrow();
+    expect(await intentCount()).toBe(0);
+  });
+
+  it("settles a deterministic Runtime rejection as the install's final record", async () => {
+    await ledger.reserve(intent);
+    await ledger.reject(claim, intent.requestId, {
+      status: 409,
+      code: "invalid_request",
+    });
+    await ledger.reject(claim, intent.requestId, {
+      status: 409,
+      code: "invalid_request",
+    });
+    await ledger.markUnknown(claim, intent.requestId);
+    expect(await ledger.reserve(intent)).toMatchObject({
+      dispatch: false,
+      state: "settled",
+    });
+    await expect(
+      ledger.reject(claim, intent.requestId, {
+        status: 403,
+        code: "invalid_ticket",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      ledger.settle(
+        claim,
+        intent.requestId,
+        receiptFor(intent.requestId, applied),
+      ),
+    ).rejects.toThrow();
   });
 
   it("projects only paused blockers and filters source identities by current Session access", async () => {
@@ -266,462 +480,6 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       agentId: claim.agentId,
       blocked: null,
     });
-  });
-
-  it("keeps old-generation settled candidates discoverable after claim replacement", async () => {
-    await ledger.reserve({
-      ...intent,
-      requestFacts: {
-        ...intent.requestFacts,
-        package_path: ".antnest/skills/inspect-first",
-      },
-    });
-    await ledger.settle(claim, intent.requestId, {
-      request_id: intent.requestId,
-      action: "prepare",
-      execution_id: "execution-1",
-      outcome: "prepared",
-      observed_digest: digest,
-      storage_key: "c".repeat(64),
-    });
-    await pool.query(
-      "UPDATE learning_tasks SET state='completed',generation=2,claim_id='claim-2' WHERE id=$1",
-      [claim.taskId],
-    );
-    expect(await cleanup.next()).toMatchObject({
-      claim: { ...claim, generation: 2, claimId: "claim-2" },
-      storageKey: "c".repeat(64),
-    });
-  });
-
-  it("selects completed preparation storage only after all effects settle", async () => {
-    await ledger.reserve({
-      ...intent,
-      requestFacts: {
-        ...intent.requestFacts,
-        package_path: ".antnest/skills/inspect-first",
-      },
-    });
-    await ledger.settle(claim, intent.requestId, {
-      request_id: intent.requestId,
-      action: "prepare",
-      execution_id: "execution-1",
-      outcome: "prepared",
-      observed_digest: digest,
-      storage_key: "c".repeat(64),
-    });
-    expect(await cleanup.next()).toBeNull();
-    await pool.query(
-      "UPDATE learning_tasks SET state='completed' WHERE id=$1",
-      [claim.taskId],
-    );
-    expect(await cleanup.next()).toMatchObject({
-      claim,
-      storageKey: "c".repeat(64),
-      expectedDigest: digest,
-      packagePath: ".antnest/skills/inspect-first",
-    });
-    await ledger.reserve({
-      ...intent,
-      requestId: "observe-unresolved",
-      action: "observe",
-    });
-    expect(await cleanup.next()).toBeNull();
-  });
-
-  it("persists the exact intent before dispatch and prevents changed or blind replay", async () => {
-    expect(await ledger.reserve(intent)).toMatchObject({
-      dispatch: true,
-      state: "pending",
-    });
-    expect(await ledger.reserve(intent)).toMatchObject({
-      dispatch: false,
-      state: "pending",
-    });
-    await expect(
-      ledger.reserve({ ...intent, bodySha256: `sha256:${"c".repeat(64)}` }),
-    ).rejects.toThrow();
-    await expect(
-      ledger.reserve({ ...intent, claim: { ...claim, claimId: "other" } }),
-    ).rejects.toThrow();
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT count(*)::integer AS count FROM learning_maintenance_intents",
-        )
-      ).rows[0]?.count,
-    ).toBe(1);
-  });
-
-  it("keeps unknown effects for observation and settles only the matching receipt", async () => {
-    await ledger.reserve(intent);
-    await ledger.markUnknown(claim, intent.requestId);
-    expect(await ledger.reserve(intent)).toMatchObject({
-      dispatch: false,
-      state: "unknown",
-    });
-    expect(await ledger.unresolved(claim)).toMatchObject([
-      { requestId: intent.requestId, state: "unknown" },
-    ]);
-    const receipt = {
-      request_id: intent.requestId,
-      action: "prepare",
-      execution_id: intent.executionId,
-      outcome: "prepared",
-      observed_digest: digest,
-      storage_key: "c".repeat(64),
-    };
-    await ledger.settle(claim, intent.requestId, receipt);
-    await ledger.settle(claim, intent.requestId, receipt);
-    await ledger.markUnknown(claim, intent.requestId);
-    expect(await ledger.unresolved(claim)).toEqual([]);
-    await expect(
-      ledger.settle(claim, intent.requestId, {
-        ...receipt,
-        execution_id: "other",
-      }),
-    ).rejects.toThrow();
-    await expect(
-      ledger.settle(claim, intent.requestId, {
-        ...receipt,
-        storage_key: "d".repeat(64),
-      }),
-    ).rejects.toThrow();
-    await expect(
-      ledger.settle(claim, intent.requestId, {
-        ...receipt,
-        outcome: "applied",
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("recovers a pending completed-task release only under replacement worker ownership", async () => {
-    await pool.query(
-      "UPDATE learning_tasks SET state='completed' WHERE id=$1",
-      [claim.taskId],
-    );
-    const release = {
-      ...intent,
-      requestId: "release-worker-lost",
-      action: "release" as const,
-      requestFacts: {
-        storage_class: "candidate",
-        storage_key: "c".repeat(64),
-        package_path: ".antnest/skills/inspect-first",
-        expected_digest: digest,
-      },
-    };
-    await ledger.reserve(release);
-    expect(await ledger.reserve(release)).toMatchObject({
-      dispatch: false,
-      state: "pending",
-    });
-    const ownership = await PostgresWorkerLock.acquire(pool);
-    try {
-      await ownership.pauseAbandonedLearningTasks();
-    } finally {
-      await ownership.release();
-    }
-    expect(await ledger.reserve(release)).toMatchObject({
-      dispatch: true,
-      state: "unknown",
-    });
-  });
-
-  it("replays the same unknown cleanup using Runtime's durable release receipt", async () => {
-    const release = {
-      ...intent,
-      requestId: "release-retry",
-      action: "release" as const,
-      requestFacts: {
-        storage_class: "candidate",
-        storage_key: "c".repeat(64),
-        package_path: ".antnest/skills/inspect-first",
-        expected_digest: digest,
-      },
-    };
-    await ledger.reserve(release);
-    await ledger.markUnknown(claim, release.requestId);
-    expect(await ledger.reserve(release)).toMatchObject({
-      dispatch: true,
-      state: "unknown",
-    });
-    await expect(
-      ledger.reserve({
-        ...release,
-        requestFacts: { ...release.requestFacts, storage_key: "d".repeat(64) },
-      }),
-    ).rejects.toThrow("conflicts");
-    await ledger.settle(claim, release.requestId, {
-      request_id: release.requestId,
-      action: "release",
-      execution_id: "execution-1",
-      outcome: "released",
-    });
-    expect(await ledger.reserve(release)).toMatchObject({
-      dispatch: false,
-      state: "settled",
-    });
-  });
-
-  it("replays only an identical unknown read-only observation without settling it", async () => {
-    const observation = {
-      ...intent,
-      requestId: "observe-retry-1",
-      action: "observe" as const,
-      requestFacts: {
-        effect_request_id: "commit-1",
-        expected_target_digest: digest,
-      },
-    };
-    expect(await ledger.reserve(observation)).toMatchObject({ dispatch: true });
-    await ledger.markUnknown(claim, observation.requestId);
-    expect(await ledger.read(claim, observation.requestId)).toMatchObject({
-      state: "unknown",
-      receipt: null,
-    });
-    expect(await ledger.reserve(observation)).toMatchObject({
-      dispatch: true,
-      state: "unknown",
-    });
-    await expect(
-      ledger.reserve({
-        ...observation,
-        bodySha256: `sha256:${"f".repeat(64)}`,
-      }),
-    ).rejects.toThrow();
-    await ledger.settle(claim, observation.requestId, {
-      request_id: observation.requestId,
-      action: "observe",
-      execution_id: observation.executionId,
-      outcome: "applied",
-      observed_digest: digest,
-    });
-    expect(await ledger.reserve(observation)).toMatchObject({
-      dispatch: false,
-      state: "settled",
-    });
-  });
-
-  it("permits recovery settlement after a claim is paused but rejects new dispatch", async () => {
-    await ledger.reserve(intent);
-    await pool.query(
-      "UPDATE learning_tasks SET state='paused',pause_reason='worker_restarted' WHERE id=$1",
-      [claim.taskId],
-    );
-    await expect(
-      ledger.reserve({ ...intent, requestId: "prepare-2" }),
-    ).rejects.toThrow();
-    expect(
-      await ledger.reserve({
-        ...intent,
-        requestId: "observe-1",
-        action: "observe",
-        requestFacts: {
-          effect_request_id: intent.requestId,
-          expected_target_digest: digest,
-        },
-      }),
-    ).toMatchObject({ dispatch: true, state: "pending" });
-    await ledger.markUnknown(claim, intent.requestId);
-    await ledger.settle(claim, intent.requestId, {
-      request_id: intent.requestId,
-      action: "prepare",
-      execution_id: intent.executionId,
-      outcome: "prepared",
-      observed_digest: digest,
-      storage_key: "c".repeat(64),
-    });
-    await ledger.settle(claim, "observe-1", {
-      request_id: "observe-1",
-      action: "observe",
-      execution_id: intent.executionId,
-      outcome: "unknown",
-      observed_digest: null,
-    });
-    expect(await ledger.unresolved(claim)).toEqual([]);
-  });
-
-  it("rejects a wrong source Run, malformed facts and invalid maintenance action", async () => {
-    await expect(
-      ledger.reserve({
-        ...intent,
-        claim: { ...claim, sourceRunId: "different-run" },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      ledger.reserve({ ...intent, requestFacts: { nested: undefined } }),
-    ).rejects.toThrow();
-    await expect(
-      ledger.reserve({ ...intent, action: "tool" as "prepare" }),
-    ).rejects.toThrow();
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT count(*)::integer AS count FROM learning_maintenance_intents",
-        )
-      ).rows[0]?.count,
-    ).toBe(0);
-  });
-
-  it("settles a deterministic Runtime rejection without leaving an effect to observe", async () => {
-    await ledger.reserve(intent);
-    await ledger.reject(claim, intent.requestId, {
-      status: 409,
-      code: "request_conflict",
-    });
-    await ledger.reject(claim, intent.requestId, {
-      status: 409,
-      code: "request_conflict",
-    });
-    await ledger.markUnknown(claim, intent.requestId);
-    expect(await ledger.unresolved(claim)).toEqual([]);
-    expect(await ledger.reserve(intent)).toMatchObject({
-      dispatch: false,
-      state: "settled",
-    });
-    await expect(
-      ledger.reject(claim, intent.requestId, {
-        status: 403,
-        code: "invalid_ticket",
-      }),
-    ).rejects.toThrow();
-    await expect(
-      ledger.settle(claim, intent.requestId, {
-        request_id: intent.requestId,
-        action: "prepare",
-        execution_id: intent.executionId,
-        outcome: "prepared",
-        observed_digest: digest,
-        storage_key: "c".repeat(64),
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("settles a lost commit through a matching observation without inventing an original receipt", async () => {
-    const commit = {
-      ...intent,
-      requestId: "commit-1",
-      action: "commit" as const,
-      requestFacts: { target_digest: digest, candidate_id: "candidate-1" },
-    };
-    await ledger.reserve(commit);
-    await ledger.markUnknown(claim, commit.requestId);
-    await pool.query(
-      "UPDATE learning_tasks SET state='paused',pause_reason='worker_restarted' WHERE id=$1",
-      [claim.taskId],
-    );
-    const observe = {
-      ...intent,
-      requestId: "observe-commit-1",
-      action: "observe" as const,
-      requestFacts: {
-        effect_request_id: commit.requestId,
-        expected_target_digest: digest,
-      },
-    };
-    await ledger.reserve(observe);
-    await ledger.settle(claim, observe.requestId, {
-      request_id: observe.requestId,
-      action: "observe",
-      execution_id: intent.executionId,
-      outcome: "applied",
-      observed_digest: digest,
-    });
-    await ledger.settleObservedEffect(
-      claim,
-      commit.requestId,
-      observe.requestId,
-    );
-    await ledger.settleObservedEffect(
-      claim,
-      commit.requestId,
-      observe.requestId,
-    );
-    expect(await ledger.unresolved(claim)).toEqual([]);
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT receipt FROM learning_maintenance_intents WHERE request_id=$1",
-          [commit.requestId],
-        )
-      ).rows[0]?.receipt,
-    ).toMatchObject({
-      kind: "observed_effect",
-      action: "commit",
-      outcome: "applied",
-      observation_request_id: observe.requestId,
-    });
-  });
-
-  it("settles a lost commit observed by a replacement Runtime execution", async () => {
-    const commit = {
-      ...intent,
-      requestId: "commit-replaced",
-      action: "commit" as const,
-      requestFacts: { target_digest: digest, candidate_id: "candidate-1" },
-    };
-    await ledger.reserve(commit);
-    await ledger.markUnknown(claim, commit.requestId);
-    const observe = {
-      ...intent,
-      requestId: "observe-replaced",
-      action: "observe" as const,
-      executionId: "replacement-execution",
-      requestFacts: {
-        effect_request_id: commit.requestId,
-        expected_target_digest: digest,
-      },
-    };
-    await ledger.reserve(observe);
-    await ledger.settle(claim, observe.requestId, {
-      request_id: observe.requestId,
-      action: "observe",
-      execution_id: observe.executionId,
-      outcome: "applied",
-      observed_digest: digest,
-    });
-    expect(
-      await ledger.settleObservedEffect(
-        claim,
-        commit.requestId,
-        observe.requestId,
-      ),
-    ).toBe("settled");
-    expect(await ledger.unresolved(claim)).toEqual([]);
-  });
-
-  it("reads a settled observation under the original claim after restart", async () => {
-    const observation = {
-      ...intent,
-      requestId: "observe-1",
-      action: "observe" as const,
-      requestFacts: {
-        effect_request_id: "commit-1",
-        expected_target_digest: digest,
-      },
-    };
-    await ledger.reserve(observation);
-    await ledger.settle(claim, observation.requestId, {
-      request_id: observation.requestId,
-      action: "observe",
-      execution_id: observation.executionId,
-      outcome: "applied",
-      observed_digest: digest,
-    });
-    await pool.query(
-      "UPDATE learning_tasks SET state='paused',pause_reason='worker_restarted' WHERE id=$1",
-      [claim.taskId],
-    );
-    expect(await ledger.read(claim, observation.requestId)).toMatchObject({
-      action: "observe",
-      state: "settled",
-      requestFacts: observation.requestFacts,
-      receipt: { outcome: "applied", observed_digest: digest },
-    });
-    expect(
-      await ledger.read({ ...claim, ownerId: "other" }, observation.requestId),
-    ).toBeNull();
   });
 
   it("preserves one immutable candidate artifact and evidence reference across replay", async () => {
@@ -802,7 +560,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     ).toBe(0);
   });
 
-  it("freezes the checked package and exact policy apply basis before commit", async () => {
+  it("freezes the admitted package and exact policy apply basis before install", async () => {
     await seedProposal();
     await candidates.record({
       claim,
@@ -810,76 +568,43 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       package: candidatePackage,
       expectedBaseDigest: null,
     });
-    const check = {
-      ...intent,
-      requestId: "check-1",
-      action: "check" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(check);
-    await ledger.settle(claim, check.requestId, {
-      request_id: check.requestId,
-      action: "check",
-      execution_id: check.executionId,
-      outcome: "checked",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    const basis = {
-      kind: "policy" as const,
-      policyRevision: "b".repeat(64),
-      packagePath: candidatePackage.packagePath,
-      expectedBaseDigest: null,
-      targetDigest: candidatePackage.targetDigest,
-      evidenceIds: candidatePackage.evidenceIds,
-      executionId: check.executionId,
-    };
     expect(
-      await applyBases.recordChecked(
-        claim,
-        "candidate-1",
-        check.requestId,
-        basis,
-      ),
+      await applyBases.recordAdmitted(claim, "candidate-1", basis),
     ).toMatchObject({ state: "ready_waiting_idle" });
     expect(await applyBases.read(claim, "candidate-1")).toEqual(basis);
     expect(
       await applyBases.read({ ...claim, ownerId: "other" }, "candidate-1"),
     ).toBeNull();
     expect(
-      await applyBases.recordChecked(
-        claim,
-        "candidate-1",
-        check.requestId,
-        basis,
-      ),
+      await applyBases.recordAdmitted(claim, "candidate-1", basis),
     ).toMatchObject({ state: "ready_waiting_idle" });
     await expect(
-      applyBases.recordChecked(claim, "candidate-1", check.requestId, {
+      applyBases.recordAdmitted(claim, "candidate-1", {
         ...basis,
         policyRevision: "c".repeat(64),
       }),
     ).rejects.toThrow();
     expect(
       (
-        await pool.query<Record<string, unknown>>(
+        await pool.query<{ state: string }>(
           "SELECT state FROM learning_candidates WHERE candidate_id='candidate-1'",
         )
       ).rows[0]?.state,
     ).toBe("ready_waiting_idle");
     expect(
       (
-        await pool.query<Record<string, unknown>>(
-          "SELECT policy_revision FROM learning_apply_bases WHERE candidate_id='candidate-1'",
+        await pool.query(
+          "SELECT policy_revision,check_request_id FROM learning_apply_bases WHERE candidate_id='candidate-1'",
         )
-      ).rows[0]?.policy_revision,
-    ).toBe(basis.policyRevision);
+      ).rows[0],
+    ).toEqual({
+      policy_revision: basis.policyRevision,
+      check_request_id: null,
+    });
+    expect(await intentCount()).toBe(0);
   });
 
-  it("does not make a draft candidate ready from an absent or mismatched check", async () => {
+  it("does not admit a basis that differs from the candidate, policy or running task", async () => {
     await seedProposal();
     await candidates.record({
       claim,
@@ -887,48 +612,338 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       package: candidatePackage,
       expectedBaseDigest: null,
     });
-    const basis = {
-      kind: "policy" as const,
-      policyRevision: "b".repeat(64),
-      packagePath: candidatePackage.packagePath,
-      expectedBaseDigest: null,
-      targetDigest: candidatePackage.targetDigest,
-      evidenceIds: candidatePackage.evidenceIds,
-      executionId: intent.executionId,
-    };
+    for (const changed of [
+      { targetDigest: digest },
+      { expectedBaseDigest: digest },
+      { packagePath: ".antnest/skills/other-skill" },
+      { policyRevision: "c".repeat(64) },
+      { evidenceIds: [`evidence_${"f".repeat(32)}`] },
+    ])
+      await expect(
+        applyBases.recordAdmitted(claim, "candidate-1", {
+          ...basis,
+          ...changed,
+        }),
+      ).rejects.toThrow();
     await expect(
-      applyBases.recordChecked(claim, "candidate-1", "check-1", basis),
+      applyBases.recordAdmitted(
+        { ...claim, ownerId: "other" },
+        "candidate-1",
+        basis,
+      ),
     ).rejects.toThrow();
-    await ledger.reserve({
-      ...intent,
-      requestId: "check-1",
-      action: "check",
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        target_digest: candidatePackage.targetDigest,
-      },
-    });
+    await pool.query(
+      "UPDATE learning_tasks SET state='paused',pause_reason='foreground_preempted' WHERE id=$1",
+      [claim.taskId],
+    );
     await expect(
-      applyBases.recordChecked(claim, "candidate-1", "check-1", basis),
-    ).rejects.toThrow();
-    await ledger.settle(claim, "check-1", {
-      request_id: "check-1",
-      action: "check",
-      execution_id: intent.executionId,
-      outcome: "checked",
-      observed_digest: digest,
-    });
-    await expect(
-      applyBases.recordChecked(claim, "candidate-1", "check-1", basis),
+      applyBases.recordAdmitted(claim, "candidate-1", basis),
     ).rejects.toThrow();
     expect(
       (
-        await pool.query<Record<string, unknown>>(
+        await pool.query<{ state: string }>(
           "SELECT state FROM learning_candidates WHERE candidate_id='candidate-1'",
         )
       ).rows[0]?.state,
     ).toBe("draft");
+    expect(
+      (await pool.query("SELECT 1 FROM learning_apply_bases")).rows,
+    ).toEqual([]);
+  });
+
+  it("supersedes unsettled install attempts and resends until a settled outcome", async () => {
+    await admitCandidate();
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(1),
+    });
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(1),
+    });
+    await ledger.reserve(installIntent(1));
+    // A lost or still-pending install never blocks the next idle window.
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(2),
+    });
+    await ledger.reserve(installIntent(2));
+    await ledger.markUnknown(claim, attempt(2));
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(3),
+    });
+    // A rebuilt Runtime execution receives the identical install.
+    await ledger.reserve(installIntent(3, { executionId: "execution-2" }));
+    await ledger.settle(
+      claim,
+      attempt(3),
+      receiptFor(
+        attempt(3),
+        {
+          outcome: "blocked",
+          observed_digest: null,
+          blocked_reason: "foreground_running",
+        },
+        "execution-2",
+      ),
+    );
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(4),
+    });
+    await ledger.reserve(installIntent(4));
+    await ledger.settle(
+      claim,
+      attempt(4),
+      receiptFor(attempt(4), { outcome: "preempted", observed_digest: null }),
+    );
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(5),
+    });
+    await ledger.reserve(installIntent(5));
+    await ledger.reject(claim, attempt(5), {
+      status: 403,
+      code: "maintenance_disabled",
+    });
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "fresh",
+      requestId: attempt(6),
+    });
+    await ledger.reserve(installIntent(6));
+    await ledger.settle(claim, attempt(6), receiptFor(attempt(6), applied));
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "applied",
+      requestId: attempt(6),
+    });
+  });
+
+  it("ends resends at a settled install conflict", async () => {
+    await admitCandidate();
+    await ledger.reserve(installIntent(1));
+    await ledger.settle(
+      claim,
+      attempt(1),
+      receiptFor(attempt(1), {
+        outcome: "conflict",
+        observed_digest: digest,
+        conflict_reason: "base_changed",
+      }),
+    );
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "conflict",
+      requestId: attempt(1),
+    });
+  });
+
+  it("ends resends at a deterministic install rejection", async () => {
+    await admitCandidate();
+    await ledger.reserve(installIntent(1));
+    await ledger.reject(claim, attempt(1), {
+      status: 409,
+      code: "invalid_request",
+    });
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "rejected",
+      requestId: attempt(1),
+    });
+  });
+
+  it("starts no install outside a running task or for a candidate without a basis", async () => {
+    await seedProposal();
+    await candidates.record({
+      claim,
+      candidateId: "candidate-1",
+      package: candidatePackage,
+      expectedBaseDigest: null,
+    });
+    await expect(installRequests.next(claim, "candidate-1")).rejects.toThrow();
+    await applyBases.recordAdmitted(claim, "candidate-1", basis);
+    await pool.query(
+      "UPDATE learning_tasks SET state='paused',pause_reason='foreground_preempted' WHERE id=$1",
+      [claim.taskId],
+    );
+    expect(await installRequests.next(claim, "candidate-1")).toEqual({
+      kind: "not_ready",
+      requestId: attempt(1),
+    });
+    await expect(
+      installRequests.next({ ...claim, claimId: "other" }, "candidate-1"),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an install sequence with changed targets or a settled earlier outcome", async () => {
+    await admitCandidate();
+    await ledger.reserve(
+      installIntent(1, {
+        requestFacts: { ...installFacts, target_digest: digest },
+      }),
+    );
+    await expect(installRequests.next(claim, "candidate-1")).rejects.toThrow(
+      "conflicts",
+    );
+    await pool.query("DELETE FROM learning_maintenance_intents");
+    await ledger.reserve(installIntent(1));
+    await ledger.settle(claim, attempt(1), receiptFor(attempt(1), applied));
+    await ledger.reserve(installIntent(2));
+    await expect(installRequests.next(claim, "candidate-1")).rejects.toThrow();
+    await pool.query("DELETE FROM learning_maintenance_intents");
+    await ledger.reserve(installIntent(2));
+    await expect(installRequests.next(claim, "candidate-1")).rejects.toThrow();
+  });
+
+  it("moves a deterministically rejected install and its candidate to failure together", async () => {
+    await admitCandidate();
+    await ledger.reserve(installIntent(1));
+    await ledger.reject(claim, attempt(1), {
+      status: 403,
+      code: "maintenance_disabled",
+    });
+    // A resendable rejection keeps the candidate waiting for the next window.
+    await expect(
+      outcomes.recordApplyFailure(claim, "candidate-1", attempt(1), "rejected"),
+    ).rejects.toThrow();
+    await ledger.reserve(installIntent(2));
+    await ledger.reject(claim, attempt(2), {
+      status: 409,
+      code: "invalid_request",
+    });
+    await expect(
+      outcomes.recordApplyFailure(
+        { ...claim, ownerId: "forged" },
+        "candidate-1",
+        attempt(2),
+        "rejected",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      outcomes.recordApplyFailure(claim, "candidate-1", attempt(2), "conflict"),
+    ).rejects.toThrow();
+    expect(
+      await outcomes.recordApplyFailure(
+        claim,
+        "candidate-1",
+        attempt(2),
+        "rejected",
+      ),
+    ).toEqual({ state: "failed", candidateState: "rejected" });
+    expect(
+      await outcomes.recordApplyFailure(
+        claim,
+        "candidate-1",
+        attempt(2),
+        "rejected",
+      ),
+    ).toEqual({ state: "failed", candidateState: "rejected" });
+    expect(
+      (
+        await pool.query(
+          "SELECT task.state AS task_state,candidate.state AS candidate_state FROM learning_tasks task JOIN learning_candidates candidate ON candidate.task_id=task.id",
+        )
+      ).rows[0],
+    ).toEqual({ task_state: "failed", candidate_state: "rejected" });
+  });
+
+  it("records an install conflict without claiming a Skill was applied", async () => {
+    await admitCandidate();
+    await ledger.reserve(installIntent(1));
+    await ledger.markUnknown(claim, attempt(1));
+    await ledger.reserve(installIntent(2));
+    await expect(
+      outcomes.recordApplyFailure(claim, "candidate-1", attempt(2), "conflict"),
+    ).rejects.toThrow();
+    await ledger.settle(
+      claim,
+      attempt(2),
+      receiptFor(attempt(2), {
+        outcome: "conflict",
+        observed_digest: null,
+        conflict_reason: "target_exists",
+      }),
+    );
+    await expect(
+      outcomes.recordApplyFailure(claim, "candidate-1", attempt(2), "rejected"),
+    ).rejects.toThrow();
+    // The superseded unknown attempt does not hold the conflict open.
+    expect(
+      await outcomes.recordApplyFailure(
+        claim,
+        "candidate-1",
+        attempt(2),
+        "conflict",
+      ),
+    ).toEqual({ state: "failed", candidateState: "conflict" });
+    expect(
+      (
+        await pool.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM learning_changes",
+        )
+      ).rows[0]?.count,
+    ).toBe(0);
+  });
+
+  it("pauses an interrupted claim without losing its generation, budget or install attempts", async () => {
+    await pool.query(
+      `UPDATE learning_tasks SET model_calls=1,input_tokens=37,output_tokens=12 WHERE id=$1`,
+      [claim.taskId],
+    );
+    await ledger.reserve(intent);
+    await expect(
+      outcomes.pauseRunning(
+        { ...claim, ownerId: "another-owner" },
+        "foreground_preempted",
+      ),
+    ).rejects.toThrow();
+    expect(await outcomes.pauseRunning(claim, "foreground_preempted")).toEqual({
+      state: "paused",
+      reason: "foreground_preempted",
+    });
+    expect(await outcomes.pauseRunning(claim, "foreground_preempted")).toEqual({
+      state: "paused",
+      reason: "foreground_preempted",
+    });
+    await expect(
+      outcomes.pauseRunning(claim, "runtime_unavailable"),
+    ).rejects.toThrow();
+    expect(
+      (
+        await pool.query(
+          `SELECT state,pause_reason,claim_id,generation,model_calls,input_tokens,output_tokens
+           FROM learning_tasks WHERE id=$1`,
+          [claim.taskId],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      state: "paused",
+      pause_reason: "foreground_preempted",
+      claim_id: claim.claimId,
+      generation: 1,
+      model_calls: 1,
+      input_tokens: 37,
+      output_tokens: 12,
+    });
+    expect(await intentState(intent.requestId)).toBe("pending");
+  });
+
+  it("no longer pauses a claim for an unknown Runtime effect", async () => {
+    await expect(
+      outcomes.pauseRunning(claim, "unknown_effect"),
+    ).rejects.toThrow();
+  });
+
+  it("enumerates paused claims in bounded keyset order for startup recovery", async () => {
+    await outcomes.pauseRunning(claim, "foreground_preempted");
+    expect(await outcomes.listPaused(null, 1)).toEqual([
+      {
+        claim: { ...claim, frozenPolicy: {} },
+        reason: "foreground_preempted",
+        candidateId: null,
+        candidateState: null,
+      },
+    ]);
+    expect(await outcomes.listPaused(claim.taskId, 1)).toEqual([]);
+    await expect(outcomes.listPaused(null, 0)).rejects.toThrow();
   });
 
   it("reads managed identity only within the verified owner scope", async () => {
@@ -979,6 +994,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       {
         packagePath: candidatePackage.packagePath,
         lastDigest: candidatePackage.targetDigest,
+        appliedSkillText: null,
       },
     ]);
     await expect(
@@ -1112,197 +1128,6 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     ).toBe(0);
   });
 
-  it("moves a deterministically rejected commit and its candidate to failure together", async () => {
-    await seedProposal();
-    await candidates.record({
-      claim,
-      candidateId: "candidate-1",
-      package: candidatePackage,
-      expectedBaseDigest: null,
-    });
-    await pool.query(
-      "UPDATE learning_candidates SET state='ready_waiting_idle' WHERE candidate_id='candidate-1'",
-    );
-    const commit = {
-      ...intent,
-      requestId: "commit-rejected",
-      action: "commit" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        expected_base_digest: null,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(commit);
-    await ledger.reject(claim, commit.requestId, {
-      status: 409,
-      code: "invalid_request",
-    });
-    await expect(
-      outcomes.recordApplyFailure(
-        { ...claim, ownerId: "forged" },
-        "candidate-1",
-        commit.requestId,
-        "rejected",
-      ),
-    ).rejects.toThrow();
-    expect(
-      await outcomes.recordApplyFailure(
-        claim,
-        "candidate-1",
-        commit.requestId,
-        "rejected",
-      ),
-    ).toEqual({ state: "failed", candidateState: "rejected" });
-    expect(
-      await outcomes.recordApplyFailure(
-        claim,
-        "candidate-1",
-        commit.requestId,
-        "rejected",
-      ),
-    ).toEqual({ state: "failed", candidateState: "rejected" });
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT state FROM learning_tasks WHERE id=$1",
-          [claim.taskId],
-        )
-      ).rows[0]?.state,
-    ).toBe("failed");
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT state FROM learning_candidates WHERE candidate_id='candidate-1'",
-        )
-      ).rows[0]?.state,
-    ).toBe("rejected");
-  });
-
-  it("records an observed commit conflict without claiming a Skill was applied", async () => {
-    await seedProposal();
-    await candidates.record({
-      claim,
-      candidateId: "candidate-1",
-      package: candidatePackage,
-      expectedBaseDigest: null,
-    });
-    await pool.query(
-      "UPDATE learning_candidates SET state='ready_waiting_idle' WHERE candidate_id='candidate-1'",
-    );
-    const commit = {
-      ...intent,
-      requestId: "commit-conflict",
-      action: "commit" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        expected_base_digest: null,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(commit);
-    await ledger.markUnknown(claim, commit.requestId);
-    const observe = {
-      ...intent,
-      requestId: "observe-conflict",
-      action: "observe" as const,
-      requestFacts: {
-        effect_request_id: commit.requestId,
-        expected_target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(observe);
-    await ledger.settle(claim, observe.requestId, {
-      request_id: observe.requestId,
-      action: "observe",
-      execution_id: intent.executionId,
-      outcome: "conflict",
-      observed_digest: digest,
-    });
-    await ledger.settleObservedEffect(
-      claim,
-      commit.requestId,
-      observe.requestId,
-    );
-    expect(
-      await outcomes.recordApplyFailure(
-        claim,
-        "candidate-1",
-        commit.requestId,
-        "conflict",
-      ),
-    ).toEqual({ state: "failed", candidateState: "conflict" });
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT count(*)::integer AS count FROM learning_changes",
-        )
-      ).rows[0]?.count,
-    ).toBe(0);
-  });
-
-  it("pauses an interrupted claim without losing its generation, budget or unresolved effects", async () => {
-    await pool.query(
-      `UPDATE learning_tasks SET model_calls=1,input_tokens=37,output_tokens=12 WHERE id=$1`,
-      [claim.taskId],
-    );
-    await ledger.reserve(intent);
-    await expect(
-      outcomes.pauseRunning(
-        { ...claim, ownerId: "another-owner" },
-        "foreground_preempted",
-      ),
-    ).rejects.toThrow();
-    expect(await outcomes.pauseRunning(claim, "foreground_preempted")).toEqual({
-      state: "paused",
-      reason: "foreground_preempted",
-    });
-    expect(await outcomes.pauseRunning(claim, "foreground_preempted")).toEqual({
-      state: "paused",
-      reason: "foreground_preempted",
-    });
-    await expect(
-      outcomes.pauseRunning(claim, "unknown_effect"),
-    ).rejects.toThrow();
-    expect(
-      (
-        await pool.query(
-          `SELECT state,pause_reason,claim_id,generation,model_calls,input_tokens,output_tokens
-           FROM learning_tasks WHERE id=$1`,
-          [claim.taskId],
-        )
-      ).rows[0],
-    ).toMatchObject({
-      state: "paused",
-      pause_reason: "foreground_preempted",
-      claim_id: claim.claimId,
-      generation: 1,
-      model_calls: 1,
-      input_tokens: 37,
-      output_tokens: 12,
-    });
-    expect(
-      (await ledger.unresolved(claim)).map((entry) => entry.requestId),
-    ).toContain(intent.requestId);
-  });
-
-  it("enumerates paused claims in bounded keyset order for startup recovery", async () => {
-    await outcomes.pauseRunning(claim, "foreground_preempted");
-    expect(await outcomes.listPaused(null, 1)).toEqual([
-      {
-        claim: { ...claim, frozenPolicy: {} },
-        reason: "foreground_preempted",
-        candidateId: null,
-        candidateState: null,
-        generationCancelled: false,
-      },
-    ]);
-    expect(await outcomes.listPaused(claim.taskId, 1)).toEqual([]);
-    await expect(outcomes.listPaused(null, 0)).rejects.toThrow();
-  });
-
   it("fences an unreturned model reservation as unknown when pausing a claim", async () => {
     await pool.query(
       `INSERT INTO learning_model_calls
@@ -1321,7 +1146,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     ).toBe("unknown");
   });
 
-  it("resumes the same claim only after unresolved effects settle and policy still matches", async () => {
+  it("resumes the same claim after model calls settle and policy still matches, without waiting for installs", async () => {
     await pool.query(
       "UPDATE learning_tasks SET frozen_policy=$2::jsonb WHERE id=$1",
       [claim.taskId, JSON.stringify(currentPolicy)],
@@ -1331,6 +1156,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       [claim.sourceRunId],
     );
     await ledger.reserve(intent);
+    await ledger.markUnknown(claim, intent.requestId);
     await pool.query(
       `INSERT INTO learning_model_calls
       (task_id,call_index,request_id,claim_id,generation,reserved_input_tokens,
@@ -1338,16 +1164,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       VALUES ($1,1,'review-pending',$2,1,100,100,1000,'reserved')`,
       [claim.taskId, claim.claimId],
     );
-    await outcomes.pauseRunning(claim, "unknown_effect");
-    await expect(outcomes.resumePaused(claim, currentPolicy)).rejects.toThrow();
-    await ledger.settle(claim, intent.requestId, {
-      request_id: intent.requestId,
-      action: "prepare",
-      execution_id: intent.executionId,
-      outcome: "prepared",
-      observed_digest: digest,
-      storage_key: "a".repeat(64),
-    });
+    await outcomes.pauseRunning(claim, "foreground_preempted");
     await expect(outcomes.resumePaused(claim, currentPolicy)).rejects.toThrow();
     await modelBudget.settle(claim, "review-pending", {
       inputTokens: 24,
@@ -1357,6 +1174,16 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     await expect(
       outcomes.resumePaused(claim, { ...currentPolicy, mode: "off" }),
     ).rejects.toThrow();
+    await pool.query("UPDATE runs SET updated_at=now() WHERE id=$1", [
+      claim.sourceRunId,
+    ]);
+    await expect(outcomes.resumePaused(claim, currentPolicy)).rejects.toThrow();
+    await pool.query(
+      "UPDATE runs SET updated_at=now()-interval '2 minutes' WHERE id=$1",
+      [claim.sourceRunId],
+    );
+    // An unknown install is resent conditionally; it never holds the task.
+    expect(await intentState(intent.requestId)).toBe("unknown");
     expect(await outcomes.resumePaused(claim, currentPolicy)).toEqual({
       state: "running",
     });
@@ -1375,220 +1202,6 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       claim_id: claim.claimId,
       generation: 1,
     });
-  });
-
-  it("does not reuse a Runtime maintenance generation closed by cancel", async () => {
-    await pool.query(
-      "UPDATE learning_tasks SET frozen_policy=$2::jsonb WHERE id=$1",
-      [claim.taskId, JSON.stringify(currentPolicy)],
-    );
-    await pool.query(
-      "UPDATE runs SET created_at=now()-interval '2 minutes',updated_at=now()-interval '2 minutes' WHERE id=$1",
-      [claim.sourceRunId],
-    );
-    await outcomes.pauseRunning(claim, "foreground_preempted");
-    const cancelled = {
-      ...intent,
-      requestId: "cancel-1",
-      action: "cancel" as const,
-      requestFacts: { job_id: claim.taskId, generation: claim.generation },
-    };
-    await ledger.reserve(cancelled);
-    await ledger.settle(claim, cancelled.requestId, {
-      request_id: cancelled.requestId,
-      action: "cancel",
-      execution_id: cancelled.executionId,
-      outcome: "cancelled",
-      observed_digest: null,
-    });
-    await expect(outcomes.resumePaused(claim, currentPolicy)).rejects.toThrow();
-  });
-
-  it("hands an unapplied candidate to a new generation after Runtime cancellation", async () => {
-    await pool.query(
-      "UPDATE learning_tasks SET frozen_policy=$2::jsonb,model_calls=1,input_tokens=24 WHERE id=$1",
-      [claim.taskId, JSON.stringify(currentPolicy)],
-    );
-    await pool.query(
-      "UPDATE runs SET created_at=now()-interval '20 minutes',updated_at=now()-interval '20 minutes' WHERE id=$1",
-      [claim.sourceRunId],
-    );
-    await pool.query(
-      `INSERT INTO learning_review_attempts(task_id,generation,started_at)
-       VALUES ($1,1,now()-interval '20 minutes')`,
-      [claim.taskId],
-    );
-    await seedProposal();
-    await candidates.record({
-      claim,
-      candidateId: "candidate-1",
-      package: candidatePackage,
-      expectedBaseDigest: null,
-    });
-    const checked = {
-      ...intent,
-      requestId: "check-1",
-      action: "check" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(checked);
-    await ledger.settle(claim, checked.requestId, {
-      request_id: checked.requestId,
-      action: "check",
-      execution_id: checked.executionId,
-      outcome: "checked",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    await applyBases.recordChecked(claim, "candidate-1", checked.requestId, {
-      kind: "policy",
-      policyRevision: currentPolicy.revision,
-      packagePath: candidatePackage.packagePath,
-      expectedBaseDigest: null,
-      targetDigest: candidatePackage.targetDigest,
-      evidenceIds: candidatePackage.evidenceIds,
-      executionId: checked.executionId,
-    });
-    await ledger.reserve(intent);
-    await outcomes.pauseRunning(claim, "foreground_preempted");
-    const cancelled = {
-      ...intent,
-      requestId: "cancel-1",
-      action: "cancel" as const,
-      requestFacts: { job_id: claim.taskId, generation: claim.generation },
-    };
-    await ledger.reserve(cancelled);
-    await ledger.settle(claim, cancelled.requestId, {
-      request_id: cancelled.requestId,
-      action: "cancel",
-      execution_id: cancelled.executionId,
-      outcome: "cancelled",
-      observed_digest: null,
-    });
-    expect(await outcomes.listPaused(null, 1)).toMatchObject([
-      {
-        candidateId: "candidate-1",
-        candidateState: "ready_waiting_idle",
-        generationCancelled: true,
-      },
-    ]);
-    await expect(
-      outcomes.handoffCancelled(claim, currentPolicy),
-    ).rejects.toThrow();
-    await ledger.settle(claim, intent.requestId, {
-      request_id: intent.requestId,
-      action: "prepare",
-      execution_id: intent.executionId,
-      outcome: "prepared",
-      observed_digest: candidatePackage.targetDigest,
-      storage_key: "a".repeat(64),
-    });
-    await pool.query(
-      "UPDATE learning_review_attempts SET started_at=now() WHERE task_id=$1",
-      [claim.taskId],
-    );
-    expect(await outcomes.handoffCancelled(claim, currentPolicy)).toBeNull();
-    await pool.query(
-      "UPDATE learning_review_attempts SET started_at=now()-interval '20 minutes' WHERE task_id=$1",
-      [claim.taskId],
-    );
-    const next = await outcomes.handoffCancelled(claim, currentPolicy);
-    expect(next).toMatchObject({
-      taskId: claim.taskId,
-      generation: 2,
-      organizationId: claim.organizationId,
-      agentId: claim.agentId,
-      ownerId: claim.ownerId,
-      sourceRunId: claim.sourceRunId,
-    });
-    expect(next?.claimId).not.toBe(claim.claimId);
-    expect(await candidates.load(next!)).toMatchObject({
-      candidateId: "candidate-1",
-      state: "draft",
-      package: { targetDigest: candidatePackage.targetDigest },
-    });
-    expect(await candidates.load(claim)).toBeNull();
-    expect(
-      (
-        await pool.query<Record<string, unknown>>(
-          "SELECT count(*)::integer AS count FROM learning_apply_bases WHERE candidate_id='candidate-1'",
-        )
-      ).rows[0]?.count,
-    ).toBe(0);
-    expect(
-      (
-        await pool.query(
-          "SELECT state,generation,model_calls,input_tokens FROM learning_tasks WHERE id=$1",
-          [claim.taskId],
-        )
-      ).rows[0],
-    ).toMatchObject({
-      state: "running",
-      generation: 2,
-      model_calls: 1,
-      input_tokens: 24,
-    });
-    expect(await outcomes.handoffCancelled(claim, currentPolicy)).toEqual(next);
-    await expect(
-      outcomes.handoffCancelled(
-        { ...claim, claimId: "forged-old-claim" },
-        currentPolicy,
-      ),
-    ).rejects.toThrow();
-  });
-
-  it("does not hand off a candidate whose old commit already applied", async () => {
-    await pool.query(
-      "UPDATE learning_tasks SET frozen_policy=$2::jsonb WHERE id=$1",
-      [claim.taskId, JSON.stringify(currentPolicy)],
-    );
-    await seedProposal();
-    await candidates.record({
-      claim,
-      candidateId: "candidate-1",
-      package: candidatePackage,
-      expectedBaseDigest: null,
-    });
-    const applied = {
-      ...intent,
-      requestId: "commit-1",
-      action: "commit" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        expected_base_digest: null,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(applied);
-    await ledger.settle(claim, applied.requestId, {
-      request_id: applied.requestId,
-      action: "commit",
-      execution_id: applied.executionId,
-      outcome: "applied",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    await outcomes.pauseRunning(claim, "foreground_preempted");
-    const cancelled = {
-      ...intent,
-      requestId: "cancel-1",
-      action: "cancel" as const,
-      requestFacts: { job_id: claim.taskId, generation: claim.generation },
-    };
-    await ledger.reserve(cancelled);
-    await ledger.settle(claim, cancelled.requestId, {
-      request_id: cancelled.requestId,
-      action: "cancel",
-      execution_id: cancelled.executionId,
-      outcome: "cancelled",
-      observed_digest: null,
-    });
-    await expect(
-      outcomes.handoffCancelled(claim, currentPolicy),
-    ).rejects.toThrow();
   });
 
   it("does not erase an existing candidate when a model skip is recorded", async () => {
@@ -1635,7 +1248,7 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     ).toBe(1);
   });
 
-  it("atomically records a verified commit, managed identity and gap-free Agent sequence", async () => {
+  it("atomically records a verified install, managed identity and gap-free Agent sequence", async () => {
     const onCommitted = vi.fn();
     const notifiedChanges = new PostgresLearningChanges(
       new PostgresKernel(pool),
@@ -1648,49 +1261,14 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       package: candidatePackage,
       expectedBaseDigest: null,
     });
-    const check = {
-      ...intent,
-      requestId: "check-1",
-      action: "check" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(check);
-    await ledger.settle(claim, "check-1", {
-      request_id: "check-1",
-      action: "check",
-      execution_id: intent.executionId,
-      outcome: "checked",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    await applyBases.recordChecked(claim, "candidate-1", "check-1", {
-      kind: "policy",
-      policyRevision: "b".repeat(64),
-      packagePath: candidatePackage.packagePath,
-      expectedBaseDigest: null,
-      targetDigest: candidatePackage.targetDigest,
-      evidenceIds: candidatePackage.evidenceIds,
-      executionId: intent.executionId,
-    });
-    const commit = {
-      ...intent,
-      requestId: "commit-1",
-      action: "commit" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        expected_base_digest: null,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(commit);
+    await applyBases.recordAdmitted(claim, "candidate-1", basis);
+    // The install that settles may run on a later Runtime execution.
+    const install = installIntent(1, { executionId: "execution-2" });
+    await ledger.reserve(install);
     const input = {
       claim,
       candidateId: "candidate-1",
-      commitRequestId: "commit-1",
+      installRequestId: install.requestId,
     };
     await expect(notifiedChanges.recordApplied(input)).rejects.toThrow();
     expect(onCommitted).not.toHaveBeenCalled();
@@ -1707,26 +1285,14 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     expect(
       await managedSkills.read(claim, candidatePackage.packagePath),
     ).toBeNull();
-    await ledger.markUnknown(claim, "commit-1");
+    await ledger.markUnknown(claim, install.requestId);
     await expect(notifiedChanges.recordApplied(input)).rejects.toThrow();
     expect(onCommitted).not.toHaveBeenCalled();
-    await ledger.reserve({
-      ...intent,
-      requestId: "observe-applied-1",
-      action: "observe",
-      requestFacts: {
-        effect_request_id: "commit-1",
-        expected_target_digest: candidatePackage.targetDigest,
-      },
-    });
-    await ledger.settle(claim, "observe-applied-1", {
-      request_id: "observe-applied-1",
-      action: "observe",
-      execution_id: intent.executionId,
-      outcome: "applied",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    await ledger.settleObservedEffect(claim, "commit-1", "observe-applied-1");
+    await ledger.settle(
+      claim,
+      install.requestId,
+      receiptFor(install.requestId, applied, "execution-2"),
+    );
     // A failed journal write rolls back the learning settlement as well. No
     // Registry network dependency exists in this transaction.
     await pool.query(`CREATE FUNCTION reject_source_projection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'projection test failure'; END $$;
@@ -1772,7 +1338,19 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     });
     expect(source?.package.artifact).toEqual(candidatePackage.artifact);
     expect(source?.generation).toBe(1);
-    expect(source?.effectRequestId).toBe("commit-1");
+    expect(source?.effectRequestId).toBe(install.requestId);
+    await pool.query(
+      "UPDATE learning_maintenance_intents SET action='commit' WHERE request_id=$1",
+      [install.requestId],
+    );
+    expect(
+      (
+        await sourceStore.read(claim.organizationId, {
+          agent_id: claim.agentId,
+          name: "inspect-first",
+        })
+      )?.effectRequestId,
+    ).toBe(install.requestId);
     expect(
       await sourceStore.read("other-org", {
         agent_id: claim.agentId,
@@ -1864,6 +1442,25 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       state: "active",
       lastDigest: candidatePackage.targetDigest,
     });
+    // Review reads the last applied package from ACP, never from the Runtime.
+    expect(await managedSkills.list(claim)).toMatchObject([
+      {
+        packagePath: candidatePackage.packagePath,
+        lastDigest: candidatePackage.targetDigest,
+        appliedSkillText: candidatePackage.skillText,
+      },
+    ]);
+    await pool.query(
+      "UPDATE learning_managed_skills SET last_digest=$1 WHERE package_path=$2",
+      [`sha256:${"f".repeat(64)}`, candidatePackage.packagePath],
+    );
+    expect(await managedSkills.list(claim)).toMatchObject([
+      { packagePath: candidatePackage.packagePath, appliedSkillText: null },
+    ]);
+    await pool.query(
+      "UPDATE learning_managed_skills SET last_digest=$1 WHERE package_path=$2",
+      [candidatePackage.targetDigest, candidatePackage.packagePath],
+    );
     expect(
       (
         await pool.query<Record<string, unknown>>(
@@ -1884,88 +1481,5 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     const hiddenSource = await changeRead.page(scope, { kind: "latest" }, 20);
     expect(hiddenSource.items[0]).not.toHaveProperty("sourceSessionId");
     expect(hiddenSource.items[0]).not.toHaveProperty("sourceRunId");
-  });
-
-  it("allocates a new commit identity only after a settled blocked attempt", async () => {
-    await seedProposal();
-    await candidates.record({
-      claim,
-      candidateId: "candidate-1",
-      package: candidatePackage,
-      expectedBaseDigest: null,
-    });
-    const check = {
-      ...intent,
-      requestId: "check-1",
-      action: "check" as const,
-      requestFacts: {
-        candidate_id: "candidate-1",
-        package_path: candidatePackage.packagePath,
-        target_digest: candidatePackage.targetDigest,
-      },
-    };
-    await ledger.reserve(check);
-    await ledger.settle(claim, "check-1", {
-      request_id: "check-1",
-      action: "check",
-      execution_id: intent.executionId,
-      outcome: "checked",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    await applyBases.recordChecked(claim, "candidate-1", "check-1", {
-      kind: "policy",
-      policyRevision: "b".repeat(64),
-      packagePath: candidatePackage.packagePath,
-      expectedBaseDigest: null,
-      targetDigest: candidatePackage.targetDigest,
-      evidenceIds: candidatePackage.evidenceIds,
-      executionId: intent.executionId,
-    });
-    const first = await commitRequests.next(claim, "candidate-1");
-    expect(first.kind).toBe("fresh");
-    const commitFacts = {
-      candidate_id: "candidate-1",
-      package_path: candidatePackage.packagePath,
-      expected_base_digest: null,
-      target_digest: candidatePackage.targetDigest,
-    };
-    await ledger.reserve({
-      ...intent,
-      requestId: first.requestId,
-      action: "commit",
-      requestFacts: commitFacts,
-    });
-    expect(await commitRequests.next(claim, "candidate-1")).toEqual({
-      kind: "pending",
-      requestId: first.requestId,
-    });
-    await ledger.settle(claim, first.requestId, {
-      request_id: first.requestId,
-      action: "commit",
-      execution_id: intent.executionId,
-      outcome: "blocked",
-      observed_digest: null,
-      blocked_reason: "foreground_running",
-    });
-    const second = await commitRequests.next(claim, "candidate-1");
-    expect(second.kind).toBe("fresh");
-    expect(second.requestId).not.toBe(first.requestId);
-    await ledger.reserve({
-      ...intent,
-      requestId: second.requestId,
-      action: "commit",
-      requestFacts: commitFacts,
-    });
-    await ledger.settle(claim, second.requestId, {
-      request_id: second.requestId,
-      action: "commit",
-      execution_id: intent.executionId,
-      outcome: "applied",
-      observed_digest: candidatePackage.targetDigest,
-    });
-    expect(await commitRequests.next(claim, "candidate-1")).toEqual({
-      kind: "applied",
-      requestId: second.requestId,
-    });
   });
 });

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { LearningForegroundGate } from "../../src/application/learning-foreground-gate.js";
+import {
+  ForegroundLearningPreempted,
+  LearningForegroundGate,
+} from "../../src/application/learning-foreground-gate.js";
 import { LearningMaintenanceGuard } from "../../src/application/learning-maintenance-guard.js";
 import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
 
@@ -15,173 +18,87 @@ const claim: LearningTaskClaim = {
   frozenPolicy: {},
 };
 const scope = { organizationId: claim.organizationId, agentId: claim.agentId };
+function untilAborted(signal: AbortSignal, remote: Promise<void>): Promise<void> {
+  return new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => void remote.then(resolve), { once: true });
+  });
+}
 
 describe("Learning maintenance guard", () => {
   it("checks pending temporary files inside idle admission before any maintenance work", async () => {
     const gate = new LearningForegroundGate(() => false);
     const before = vi.fn(() => Promise.reject(new Error("Temporary cleanup pending")));
     const work = vi.fn(() => Promise.resolve());
-    const guard = new LearningMaintenanceGuard(
-      gate,
-      { unresolved: () => Promise.resolve([]) },
-      before,
-    );
+    const guard = new LearningMaintenanceGuard(gate, before);
     await expect(guard.run(claim, new AbortController().signal, work)).rejects.toThrow(
       "Temporary cleanup pending",
     );
     expect(work).not.toHaveBeenCalled();
     expect(before).toHaveBeenCalledWith(scope, expect.any(AbortSignal));
-    await expect(gate.preempt(scope, new AbortController().signal)).resolves.toBeUndefined();
-  });
-  it("lets a foreground Run proceed only after the task stops and its ledger is settled", async () => {
-    const gate = new LearningForegroundGate(() => false, 1000);
-    const unresolved = vi.fn(() => Promise.resolve([]));
-    const guard = new LearningMaintenanceGuard(gate, { unresolved });
-    const task = guard.run(
-      claim,
-      new AbortController().signal,
-      (signal) =>
-        new Promise<void>((resolve) =>
-          signal.addEventListener("abort", () => resolve(), { once: true }),
-        ),
-    );
-    await gate.preempt(scope, new AbortController().signal);
-    await task;
-    expect(unresolved).toHaveBeenCalledWith(claim);
+    gate.beginLearning(scope, new AbortController().signal).finish();
   });
 
-  it("keeps the foreground fenced when a Runtime intent is unresolved", async () => {
-    const gate = new LearningForegroundGate(() => false, 1000);
-    const guard = new LearningMaintenanceGuard(gate, {
-      unresolved: () => Promise.resolve([{ requestId: "commit-1" }]),
-    });
-    const task = guard.run(
-      claim,
-      new AbortController().signal,
-      (signal) =>
-        new Promise<void>((resolve) =>
-          signal.addEventListener("abort", () => resolve(), { once: true }),
-        ),
-    );
-    await expect(gate.preempt(scope, new AbortController().signal)).rejects.toMatchObject({
-      code: "runtime_barrier_required",
-    });
-    await task;
-    expect(() => gate.begin(scope, new AbortController().signal)).toThrow();
-  });
-
-  it("fails closed if the durable ledger cannot be read", async () => {
-    const gate = new LearningForegroundGate(() => false);
-    const guard = new LearningMaintenanceGuard(gate, {
-      unresolved: () => Promise.reject(new Error("database unavailable")),
-    });
+  it("does not start while the Agent is busy", async () => {
+    const gate = new LearningForegroundGate(() => true);
+    const work = vi.fn(() => Promise.resolve());
     await expect(
-      guard.run(claim, new AbortController().signal, () => Promise.resolve()),
-    ).rejects.toThrow("database unavailable");
-    await expect(gate.preempt(scope, new AbortController().signal)).rejects.toMatchObject({
-      code: "runtime_barrier_required",
-    });
+      new LearningMaintenanceGuard(gate).run(claim, new AbortController().signal, work),
+    ).rejects.toThrow();
+    expect(work).not.toHaveBeenCalled();
   });
 
-  it("checks both old and new generation intents after a claim handoff", async () => {
-    const gate = new LearningForegroundGate(() => false);
-    const next = { ...claim, claimId: "claim-2", generation: 2 };
-    const unresolved = vi.fn((current: LearningTaskClaim) =>
-      Promise.resolve(current.generation === 2 ? [{ requestId: "commit-new" }] : []),
-    );
-    const guard = new LearningMaintenanceGuard(gate, { unresolved });
-    await guard.run(claim, new AbortController().signal, (_signal, trackClaim) => {
-      trackClaim(next);
-      return Promise.resolve();
-    });
-    expect(unresolved).toHaveBeenCalledWith(claim);
-    expect(unresolved).toHaveBeenCalledWith(next);
-    await expect(gate.preempt(scope, new AbortController().signal)).rejects.toMatchObject({
-      code: "runtime_barrier_required",
-    });
-  });
-
-  it("uses a recovery lease to observe and clear an old unsafe intent", async () => {
-    const gate = new LearningForegroundGate(() => false);
-    const old = gate.begin(scope, new AbortController().signal);
-    old.finish(false);
-    const unresolved = vi.fn(() => Promise.resolve([]));
-    const guard = new LearningMaintenanceGuard(gate, { unresolved });
-    await guard.runRecovery(claim, new AbortController().signal, () => Promise.resolve());
-    expect(unresolved).toHaveBeenCalledWith(claim);
-    await expect(gate.preempt(scope, new AbortController().signal)).resolves.toBeUndefined();
-  });
-
-  it("does not fence a replacement Runtime for an unresolved old-execution intent", async () => {
-    const gate = new LearningForegroundGate(() => false);
-    gate.syncOrganization(scope.organizationId, [
-      {
-        agent_id: scope.agentId,
-        accepting_runs: true,
-        runtime: { runtime_execution_id: "new-execution" },
+  it("aborts the task for a foreground Run and admits the Run before the task returns", async () => {
+    const gate = new LearningForegroundGate(() => false, 60_000);
+    const remote = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<AbortSignal>();
+    const task = new LearningMaintenanceGuard(gate).run(
+      claim,
+      new AbortController().signal,
+      (signal) => {
+        entered.resolve(signal);
+        return untilAborted(signal, remote.promise);
       },
-    ]);
-    const guard = new LearningMaintenanceGuard(gate, {
-      unresolved: () =>
-        Promise.resolve([
-          {
-            requestId: "old-commit",
-            executionId: "old-execution",
-          },
-        ]),
-    });
-    await guard.runRecovery(claim, new AbortController().signal, () => Promise.resolve());
+    );
+    const signal = await entered.promise;
     await expect(gate.preempt(scope, new AbortController().signal)).resolves.toBeUndefined();
+    expect(signal.reason).toBeInstanceOf(ForegroundLearningPreempted);
+    remote.resolve();
+    await task;
+    gate.beginLearning(scope, new AbortController().signal).finish();
   });
 
-  it("holds lifecycle settlement until an in-flight file effect reports a settled receipt", async () => {
-    const gate = new LearningForegroundGate(() => false, 1000);
+  it("closes lifecycle without waiting for an in-flight install", async () => {
+    const gate = new LearningForegroundGate(() => false, 60_000);
     gate.syncOrganization(scope.organizationId, [
       { agent_id: scope.agentId, accepting_runs: true },
     ]);
     const remote = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();
-    const intents = { unresolved: vi.fn(() => Promise.resolve([])) };
-    const guard = new LearningMaintenanceGuard(gate, intents);
-    const work = guard.run(claim, new AbortController().signal, async (signal) => {
-      entered.resolve();
-      await remote.promise;
-      expect(signal.aborted).toBe(true);
-    });
+    const task = new LearningMaintenanceGuard(gate).run(
+      claim,
+      new AbortController().signal,
+      (signal) => {
+        entered.resolve();
+        return untilAborted(signal, remote.promise);
+      },
+    );
     await entered.promise;
-    const settled = gate.closeForLifecycle(scope, new AbortController().signal);
-    let completed = false;
-    void settled.then(() => {
-      completed = true;
-    });
-    await Promise.resolve();
-    expect(completed).toBe(false);
-    expect(intents.unresolved).not.toHaveBeenCalled();
+    await expect(gate.closeForLifecycle(scope, new AbortController().signal)).resolves.toBe(true);
     remote.resolve();
-    await work;
-    await expect(settled).resolves.toBe(true);
-    expect(intents.unresolved).toHaveBeenCalledWith(claim);
+    await task;
   });
 
-  it("requires the Runtime barrier when cancellation leaves an unresolved file effect", async () => {
-    const gate = new LearningForegroundGate(() => false, 1000);
-    gate.syncOrganization(scope.organizationId, [
-      { agent_id: scope.agentId, accepting_runs: true },
-    ]);
-    const remote = Promise.withResolvers<void>();
-    const entered = Promise.withResolvers<void>();
-    const guard = new LearningMaintenanceGuard(gate, {
-      unresolved: () => Promise.resolve([{ requestId: "commit-in-flight" }]),
-    });
-    const work = guard.run(claim, new AbortController().signal, async () => {
-      entered.resolve();
-      await remote.promise;
-    });
-    await entered.promise;
-    const settled = gate.closeForLifecycle(scope, new AbortController().signal);
-    remote.resolve();
-    await work;
-    await expect(settled).resolves.toBe(false);
-    expect(gate.canResume(scope)).toBe(false);
+  it("releases its lease after failure so the next idle window can resend", async () => {
+    const gate = new LearningForegroundGate(() => false);
+    const guard = new LearningMaintenanceGuard(gate);
+    await expect(
+      guard.run(claim, new AbortController().signal, () =>
+        Promise.reject(new Error("Runtime outcome unknown")),
+      ),
+    ).rejects.toThrow("unknown");
+    await expect(gate.preempt(scope, new AbortController().signal)).resolves.toBeUndefined();
+    await expect(
+      guard.run(claim, new AbortController().signal, () => Promise.resolve("resent")),
+    ).resolves.toBe("resent");
   });
 });

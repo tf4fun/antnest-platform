@@ -100,17 +100,6 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
     );
   }
 
-  /** Reads only an explicitly named personal Skill; no model tool catalog is exposed. */
-  public async readPersonalSkill(
-    binding: RuntimeBinding,
-    packagePath: string,
-    signal: AbortSignal,
-  ): Promise<string> {
-    if (!/^\.antnest\/skills\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(packagePath))
-      throw new Error("Learning Skill path is invalid");
-    return this.readSkillFile(binding, `${packagePath}/SKILL.md`, signal);
-  }
-
   public async readSkill(
     binding: RuntimeBinding,
     path: RuntimePath,

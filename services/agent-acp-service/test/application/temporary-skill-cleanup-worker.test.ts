@@ -39,7 +39,7 @@ describe("temporary Skill cleanup worker", () => {
       lease = f.gate.begin(scope, new AbortController().signal);
     expect(await f.worker.once(new AbortController().signal)).toBe("pending");
     expect(f.skills.release).not.toHaveBeenCalled();
-    lease.finish(true);
+    lease.finish();
   });
   it("foreground preemption waits for local cleanup to stop and leaves the scope pending", async () => {
     const f = setup(),
@@ -56,14 +56,6 @@ describe("temporary Skill cleanup worker", () => {
     await started.promise;
     await f.gate.preempt(scope, new AbortController().signal);
     expect(await cleanup).toBe("pending");
-  });
-  it("does not interpret temporary cleanup as recovery of an unrelated unknown learning effect", async () => {
-    const f = setup();
-    f.gate.begin(scope, new AbortController().signal).finish(false);
-    expect(await f.worker.once(new AbortController().signal)).toBe("released");
-    await expect(f.gate.preempt(scope, new AbortController().signal)).rejects.toMatchObject({
-      code: "runtime_barrier_required",
-    });
   });
   it("resetting the cursor does not wait in a lease and shutdown observes cancellation", async () => {
     const f = setup();

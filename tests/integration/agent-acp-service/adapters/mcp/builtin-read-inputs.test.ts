@@ -51,15 +51,15 @@ describe("Official MCP flat read inputs", () => {
         arguments: check.calls[0].call.arguments,
         signal,
       });
-      await catalog.readPersonalSkill(
+      await catalog.readSkill(
         execution.runtime,
-        ".antnest/skills/inspect-first",
+        { root: "workspace", path: ".antnest/skills/inspect-first/SKILL.md" },
         signal,
       );
       expect(fixture.receivedArguments).toEqual([
         { path: "demo/check.md", offset: 1, limit: 2000 },
         {
-          path: ".antnest/skills/inspect-first/SKILL.md",
+          path: "/workspace/.antnest/skills/inspect-first/SKILL.md",
           offset: 1,
           limit: 16385,
         },

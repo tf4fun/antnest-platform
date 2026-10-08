@@ -115,14 +115,14 @@ describe("volatile Runtime connections", () => {
   });
   it("retains accepted private operations through closure without allowing a new Run", async () => {
     const original = install();
-    connections.retainOperation("observe-1", original);
+    connections.retainOperation("install-1", original);
     connections.prepare(closed()).commit();
     expect(() => connections.retainRun("later-run", original)).toThrow();
     expect(() => connections.retainOperation("later-source-read", original)).toThrow();
     connections.retainOperation("cleanup-1", original, { cleanup: true });
-    connections.releaseOperation("observe-1");
+    connections.releaseOperation("install-1");
     await connections.fetchFor(original)(
-      new URL("/internal/skill-maintenance/observe", original.mcpEndpoint),
+      new URL("/internal/skill-maintenance/install", original.mcpEndpoint),
       { method: "POST" },
     );
     expect(transport.send).toHaveBeenCalledTimes(1);
@@ -371,19 +371,35 @@ describe("volatile Runtime connections", () => {
     expect(options.dispatcher).toBeDefined();
     expect(headers.Authorization).toBe("Bearer user-key");
   });
-  it("preserves a separate signed maintenance ticket on private Skill routes", async () => {
-    const reference = install();
-    await connections.fetchFor(reference)(
-      new URL("/internal/skill-maintenance/observe", reference.mcpEndpoint),
-      {
-        method: "POST",
-        headers: { Authorization: "AntnestMaintenance a.b.c" },
-      },
-    );
-    expect(new Headers(transport.send.mock.calls[0]![1].headers).get("Authorization")).toBe(
-      "AntnestMaintenance a.b.c",
-    );
-  });
+  it.each(["install", "digest"])(
+    "preserves a separate signed maintenance ticket on the private Skill %s route",
+    async (action) => {
+      const reference = install();
+      await connections.fetchFor(reference)(
+        new URL(`/internal/skill-maintenance/${action}`, reference.mcpEndpoint),
+        {
+          method: "POST",
+          headers: { Authorization: "AntnestMaintenance a.b.c" },
+        },
+      );
+      expect(new Headers(transport.send.mock.calls[0]![1].headers).get("Authorization")).toBe(
+        "AntnestMaintenance a.b.c",
+      );
+    },
+  );
+  it.each(["prepare", "check", "commit", "observe", "cancel", "release", "revert"])(
+    "rejects the unlisted private Skill maintenance action %s before sending",
+    async (action) => {
+      const reference = install();
+      await expect(
+        connections.fetchFor(reference)(
+          new URL(`/internal/skill-maintenance/${action}`, reference.mcpEndpoint),
+          { method: "POST", headers: { Authorization: "AntnestMaintenance a.b.c" } },
+        ),
+      ).rejects.toMatchObject({ code: "runtime_connection_unavailable" });
+      expect(transport.send).not.toHaveBeenCalled();
+    },
+  );
   it.each([
     "http://other-runtime:8080/mcp",
     "https://runtime-1:8080/mcp",

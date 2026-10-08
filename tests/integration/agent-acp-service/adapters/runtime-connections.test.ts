@@ -106,7 +106,7 @@ describe("private Runtime transport over HTTP", () => {
     const paths = [
       "/mcp",
       "/status",
-      ...["prepare", "check", "commit", "observe", "cancel", "release"].map(
+      ...["install", "digest"].map(
         (action) => "/internal/skill-maintenance/" + action,
       ),
       "/internal/skill-temporary/install",

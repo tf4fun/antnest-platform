@@ -123,6 +123,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0017_skill_discovery_tool_attempts.sql",
         "0018_temporary_skill_scopes.sql",
         "0019_runtime_maintenance_connections.sql",
+        "0020_skill_learning_idle_install.sql",
       ]);
       const appendVersions = await pool.query<{
         id: string;

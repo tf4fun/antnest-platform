@@ -30,7 +30,6 @@ type BasisRow = {
   package_path: string;
   expected_base_digest: string | null;
   target_digest: string;
-  execution_id: string;
 };
 type IntentRow = {
   task_id: string;
@@ -66,7 +65,7 @@ export type AppliedLearningChange = {
   afterDigest: string;
 };
 
-/** Settles only an observed Runtime effect; the change and managed identity share one transaction. */
+/** Settles only a confirmed Runtime install; the change and managed identity share one transaction. */
 export class PostgresLearningChanges {
   public constructor(
     private readonly kernel: PostgresKernel,
@@ -76,11 +75,11 @@ export class PostgresLearningChanges {
   public async recordApplied(input: {
     claim: LearningTaskClaim;
     candidateId: string;
-    commitRequestId: string;
+    installRequestId: string;
   }): Promise<AppliedLearningChange> {
     if (
       !/^[A-Za-z0-9_-]{1,200}$/u.test(input.candidateId) ||
-      !/^[A-Za-z0-9_-]{1,200}$/u.test(input.commitRequestId)
+      !/^[A-Za-z0-9_-]{1,200}$/u.test(input.installRequestId)
     )
       throw new Error("Invalid Skill learning change identity");
     const result = await this.kernel.transaction(async (client) => {
@@ -115,7 +114,7 @@ export class PostgresLearningChanges {
       const intent = (
         await client.query<IntentRow>(
           "SELECT * FROM learning_maintenance_intents WHERE request_id=$1 FOR UPDATE",
-          [input.commitRequestId],
+          [input.installRequestId],
         )
       ).rows[0];
       if (
@@ -133,24 +132,24 @@ export class PostgresLearningChanges {
         intent.task_id !== input.claim.taskId ||
         intent.claim_id !== input.claim.claimId ||
         intent.generation !== input.claim.generation ||
-        intent.action !== "commit" ||
+        intent.action !== "install" ||
         intent.state !== "settled" ||
-        intent.execution_id !== basis.execution_id ||
         intent.request_facts.candidate_id !== input.candidateId ||
         intent.request_facts.package_path !== candidate.package_path ||
         intent.request_facts.expected_base_digest !== candidate.expected_base_digest ||
         intent.request_facts.target_digest !== candidate.target_digest ||
-        intent.receipt?.request_id !== input.commitRequestId ||
-        intent.receipt.action !== "commit" ||
-        intent.receipt.execution_id !== basis.execution_id ||
+        intent.receipt?.request_id !== input.installRequestId ||
+        intent.receipt.action !== "install" ||
+        // The admitting execution does not bind a later resend.
+        intent.receipt.execution_id !== intent.execution_id ||
         intent.receipt.outcome !== "applied" ||
         intent.receipt.observed_digest !== candidate.target_digest
       )
-        throw new Error("Learning change lacks a matching confirmed Runtime commit");
+        throw new Error("Learning change lacks a matching confirmed Runtime install");
 
       const existing = (
         await client.query<ChangeRow>("SELECT * FROM learning_changes WHERE effect_request_id=$1", [
-          input.commitRequestId,
+          input.installRequestId,
         ])
       ).rows[0];
       if (existing) {
@@ -216,7 +215,7 @@ export class PostgresLearningChanges {
           source.session_id,
           input.claim.taskId,
           input.candidateId,
-          input.commitRequestId,
+          input.installRequestId,
           candidate.package_path,
           candidate.expected_base_digest,
           candidate.target_digest,

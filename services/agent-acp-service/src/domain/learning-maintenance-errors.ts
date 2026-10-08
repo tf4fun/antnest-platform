@@ -28,3 +28,17 @@ export class RuntimeMaintenanceRejectedError extends Error {
     this.name = "RuntimeMaintenanceRejectedError";
   }
 }
+
+/** Rejections that prove only this ticket or Runtime build failed, never the candidate. */
+const RESENDABLE_INSTALL_REJECTIONS: readonly string[] = [
+  "maintenance_unauthorized",
+  "maintenance_disabled",
+  "unknown_action",
+  "runtime_unauthorized",
+  "caller_not_allowed",
+  "host_not_allowed",
+];
+
+export function installRejectionIsResendable(code: string): boolean {
+  return RESENDABLE_INSTALL_REJECTIONS.includes(code);
+}

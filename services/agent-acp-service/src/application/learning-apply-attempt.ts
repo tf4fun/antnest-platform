@@ -1,11 +1,14 @@
-import { isDeepStrictEqual } from "node:util";
-
 import {
   admitAutomaticSkillCandidate,
+  type AutomaticApplyBasis,
   type ManagedSkillIdentity,
 } from "../domain/learning-apply-admission.js";
 import type { LearningCandidatePackage } from "../domain/learning-candidate-package.js";
-import { learningApplyRequestId } from "../domain/learning-apply-request-id.js";
+import {
+  installRejectionIsResendable,
+  RuntimeMaintenanceRejectedError,
+  RuntimeMaintenanceUnknownError,
+} from "../domain/learning-maintenance-errors.js";
 import type { LearningPolicy } from "../domain/learning-policy.js";
 import type { LearningScanScope, LearningTaskClaim } from "../domain/learning-scan.js";
 import type { RuntimeInformation } from "../domain/runtime-information.js";
@@ -28,55 +31,50 @@ type Managed = {
   read(scope: LearningScanScope, packagePath: string): Promise<ManagedSkillIdentity | null>;
 };
 type Runtime = {
-  prepare(input: MaintenanceInput): Promise<{ outcome: "prepared" }>;
-  check(input: Omit<MaintenanceInput, "expectedBaseDigest">): Promise<{ outcome: "checked" }>;
-  commit(
-    input: MaintenanceInput,
-  ): Promise<
+  install(input: {
+    claim: LearningTaskClaim;
+    binding: Binding;
+    candidateId: string;
+    requestId: string;
+    package: LearningCandidatePackage;
+    expectedBaseDigest: string | null;
+    signal: AbortSignal;
+  }): Promise<
     | { outcome: "applied"; observed_digest: string }
+    | { outcome: "conflict"; observed_digest: string | null }
     | { outcome: "blocked"; observed_digest: null; blocked_reason: string }
+    | { outcome: "preempted"; observed_digest: null }
   >;
 };
-type MaintenanceInput = {
-  claim: LearningTaskClaim;
-  binding: Binding;
-  candidateId: string;
-  requestId: string;
-  package: LearningCandidatePackage;
-  expectedBaseDigest: string | null;
-  signal: AbortSignal;
-};
 type ApplyBases = {
-  read(
+  read(claim: LearningTaskClaim, candidateId: string): Promise<AutomaticApplyBasis | null>;
+  recordAdmitted(
     claim: LearningTaskClaim,
     candidateId: string,
-  ): Promise<ReturnType<typeof admitAutomaticSkillCandidate> | null>;
-  recordChecked(
-    claim: LearningTaskClaim,
-    candidateId: string,
-    checkRequestId: string,
-    basis: ReturnType<typeof admitAutomaticSkillCandidate>,
+    basis: AutomaticApplyBasis,
   ): Promise<{ state: string }>;
 };
-type CommitRequests = {
+type InstallRequests = {
   next(
     claim: LearningTaskClaim,
     candidateId: string,
   ): Promise<{
-    kind: "fresh" | "pending" | "applied" | "conflict" | "rejected" | "blocked" | "not_ready";
+    kind: "fresh" | "applied" | "conflict" | "rejected" | "not_ready";
     requestId: string;
-    reason?: string;
   }>;
 };
 type Changes = {
   recordApplied(input: {
     claim: LearningTaskClaim;
     candidateId: string;
-    commitRequestId: string;
+    installRequestId: string;
   }): Promise<{ changeId: string }>;
 };
 
-/** Fresh or previously checked candidate; unresolved effects go to observation, never redispatch. */
+/**
+ * One idle install of a frozen candidate. Install is conditional on the
+ * active digest, so any attempt whose outcome is unknown is simply resent.
+ */
 export class LearningApplyAttempt {
   public constructor(
     private readonly candidates: Candidates,
@@ -86,7 +84,7 @@ export class LearningApplyAttempt {
     private readonly managed: Managed,
     private readonly runtime: Runtime,
     private readonly bases: ApplyBases,
-    private readonly commitRequests: CommitRequests,
+    private readonly installRequests: InstallRequests,
     private readonly changes: Changes,
   ) {}
 
@@ -96,113 +94,87 @@ export class LearningApplyAttempt {
   ): Promise<
     | { kind: "applied"; changeId: string }
     | { kind: "blocked"; reason: string }
-    | { kind: "pending" }
     | { kind: "conflict" | "rejected"; requestId: string }
   > {
     signal.throwIfAborted();
     const candidate = await this.candidates.load(claim);
     if (!candidate || !["draft", "ready_waiting_idle", "applied"].includes(candidate.state))
-      throw new Error("Learning apply requires one checked or draft candidate");
+      throw new Error("Learning apply requires one admitted or draft candidate");
     if (candidate.state === "applied") {
-      const existing = await this.commitRequests.next(claim, candidate.candidateId);
-      if (existing.kind !== "applied") throw new Error("Applied candidate lacks its commit intent");
-      const change = await this.changes.recordApplied({
-        claim,
-        candidateId: candidate.candidateId,
-        commitRequestId: existing.requestId,
-      });
-      return { kind: "applied", changeId: change.changeId };
+      const existing = await this.installRequests.next(claim, candidate.candidateId);
+      if (existing.kind !== "applied") throw new Error("Applied candidate lacks its install");
+      return this.recordApplied(claim, candidate.candidateId, existing.requestId);
     }
-    const scope = {
-      organizationId: claim.organizationId,
-      agentId: claim.agentId,
-      ownerId: claim.ownerId,
-    };
-    let frozen: ReturnType<typeof admitAutomaticSkillCandidate>;
-    let checkedBinding: Binding | null = null;
-    if (candidate.state === "draft") {
-      const first = await this.admitCurrent(claim, scope, candidate, signal);
-      await this.runtime.prepare({
+    const current = await this.admitCurrent(claim, candidate, signal);
+    if (candidate.state === "draft")
+      await this.bases.recordAdmitted(claim, candidate.candidateId, current.basis);
+    else {
+      const saved = await this.bases.read(claim, candidate.candidateId);
+      if (saved === null) throw new Error("Admitted candidate lost its apply basis");
+      if (!sameAuthority(saved, current.basis))
+        throw new Error("Skill learning apply authority changed before install");
+    }
+    signal.throwIfAborted();
+    const request = await this.installRequests.next(claim, candidate.candidateId);
+    if (request.kind === "conflict" || request.kind === "rejected")
+      return { kind: request.kind, requestId: request.requestId };
+    if (request.kind === "applied")
+      return this.recordApplied(claim, candidate.candidateId, request.requestId);
+    if (request.kind === "not_ready")
+      throw new Error("Learning install task is not ready for a new attempt");
+    let receipt: Awaited<ReturnType<Runtime["install"]>>;
+    try {
+      receipt = await this.runtime.install({
         claim,
-        binding: first.binding,
+        binding: current.binding,
         candidateId: candidate.candidateId,
-        requestId: learningApplyRequestId(claim, candidate.candidateId, "prepare"),
+        requestId: request.requestId,
         package: candidate.package,
         expectedBaseDigest: candidate.expectedBaseDigest,
         signal,
       });
+    } catch (error) {
       signal.throwIfAborted();
-      const checkRequestId = learningApplyRequestId(claim, candidate.candidateId, "check");
-      await this.runtime.check({
-        claim,
-        binding: first.binding,
-        candidateId: candidate.candidateId,
-        requestId: checkRequestId,
-        package: candidate.package,
-        signal,
-      });
-      const checked = await this.admitCurrent(claim, scope, candidate, signal);
-      if (!sameBinding(checked.binding, first.binding))
-        throw new Error("Runtime execution changed after candidate preparation");
-      await this.bases.recordChecked(claim, candidate.candidateId, checkRequestId, checked.basis);
-      frozen = checked.basis;
-      checkedBinding = checked.binding;
-    } else {
-      const saved = await this.bases.read(claim, candidate.candidateId);
-      if (saved === null) throw new Error("Checked candidate lost its apply basis");
-      frozen = saved;
+      if (error instanceof RuntimeMaintenanceUnknownError)
+        return { kind: "blocked", reason: "unsettled" };
+      if (error instanceof RuntimeMaintenanceRejectedError)
+        return installRejectionIsResendable(error.code)
+          ? { kind: "blocked", reason: "unsettled" }
+          : { kind: "rejected", requestId: request.requestId };
+      throw error;
     }
-    const current = await this.admitCurrent(claim, scope, candidate, signal);
-    if (
-      (checkedBinding !== null && !sameBinding(current.binding, checkedBinding)) ||
-      !isDeepStrictEqual(current.basis, frozen)
-    )
-      throw new Error("Skill learning apply authority changed before commit");
-    signal.throwIfAborted();
-    const request = await this.commitRequests.next(claim, candidate.candidateId);
-    if (request.kind === "pending") return { kind: "pending" };
-    if (request.kind === "conflict" || request.kind === "rejected")
-      return { kind: request.kind, requestId: request.requestId };
-    if (request.kind === "blocked")
-      return { kind: "blocked", reason: request.reason ?? "writers_unknown" };
-    if (request.kind === "not_ready")
-      throw new Error("Learning commit task is not ready for a new attempt");
-    if (request.kind === "applied") {
-      const change = await this.changes.recordApplied({
-        claim,
-        candidateId: candidate.candidateId,
-        commitRequestId: request.requestId,
-      });
-      return { kind: "applied", changeId: change.changeId };
-    }
-    const commitRequestId = request.requestId;
-    const receipt = await this.runtime.commit({
-      claim,
-      binding: current.binding,
-      candidateId: candidate.candidateId,
-      requestId: commitRequestId,
-      package: candidate.package,
-      expectedBaseDigest: candidate.expectedBaseDigest,
-      signal,
-    });
     if (receipt.outcome === "blocked") return { kind: "blocked", reason: receipt.blocked_reason };
+    if (receipt.outcome === "preempted") return { kind: "blocked", reason: "preempted" };
+    if (receipt.outcome === "conflict") return { kind: "conflict", requestId: request.requestId };
     if (receipt.observed_digest !== candidate.package.targetDigest)
       throw new Error("Runtime applied a different Skill content digest");
+    return this.recordApplied(claim, candidate.candidateId, request.requestId);
+  }
+
+  private async recordApplied(
+    claim: LearningTaskClaim,
+    candidateId: string,
+    requestId: string,
+  ): Promise<{ kind: "applied"; changeId: string }> {
     const change = await this.changes.recordApplied({
       claim,
-      candidateId: candidate.candidateId,
-      commitRequestId,
+      candidateId,
+      installRequestId: requestId,
     });
     return { kind: "applied", changeId: change.changeId };
   }
 
   private async admitCurrent(
     claim: LearningTaskClaim,
-    scope: LearningScanScope,
     candidate: Candidate,
     signal: AbortSignal,
-  ): Promise<{ binding: Binding; basis: ReturnType<typeof admitAutomaticSkillCandidate> }> {
+  ): Promise<{ binding: Binding; basis: AutomaticApplyBasis }> {
     signal.throwIfAborted();
+    const scope = {
+      organizationId: claim.organizationId,
+      agentId: claim.agentId,
+      ownerId: claim.ownerId,
+    };
     const binding = await this.bindings.current(claim);
     if (binding === null) throw new Error("Learning Runtime binding is unavailable");
     const policy = await this.policies.read(scope);
@@ -217,11 +189,20 @@ export class LearningApplyAttempt {
       managed,
       information,
       executionId: binding.executionId,
+      resend: candidate.state === "ready_waiting_idle",
     });
     return { binding, basis };
   }
 }
 
-function sameBinding(a: Binding, b: Binding): boolean {
-  return a.executionId === b.executionId && a.mcpEndpoint === b.mcpEndpoint;
+/** The execution that admitted a candidate does not bind its install. */
+function sameAuthority(saved: AutomaticApplyBasis, current: AutomaticApplyBasis): boolean {
+  return (
+    saved.policyRevision === current.policyRevision &&
+    saved.packagePath === current.packagePath &&
+    saved.expectedBaseDigest === current.expectedBaseDigest &&
+    saved.targetDigest === current.targetDigest &&
+    saved.evidenceIds.length === current.evidenceIds.length &&
+    saved.evidenceIds.every((id, index) => id === current.evidenceIds[index])
+  );
 }

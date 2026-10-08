@@ -299,8 +299,7 @@ describe("learning review runner", () => {
     const pending = Promise.withResolvers<Awaited<ReturnType<ModelPort["complete"]>>>();
     const app = harness([pending.promise]);
     const gate = new LearningForegroundGate(() => false, 250);
-    const intents = { unresolved: vi.fn(() => Promise.resolve([])) };
-    const guard = new LearningMaintenanceGuard(gate, intents);
+    const guard = new LearningMaintenanceGuard(gate);
     const result = guard
       .run(claim, new AbortController().signal, (signal) => app.runner.execute({ claim, signal }))
       .catch((error: unknown) => error);
@@ -313,7 +312,6 @@ describe("learning review runner", () => {
         ),
       ).resolves.toBeUndefined();
       expect(await result).toBeInstanceOf(ForegroundLearningPreempted);
-      expect(intents.unresolved).toHaveBeenCalledWith(claim);
       expect(app.ledger.markUnknown).toHaveBeenCalledOnce();
       expect(app.ledger.settleReview).not.toHaveBeenCalled();
     } finally {
