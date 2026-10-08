@@ -542,6 +542,7 @@ cleanup() {
   fi
   if [ "$status" -ne 0 ]; then
     compose ps >&2 || true
+    node tests/support/startup-failure-summary.mjs "$COMPOSE_PROJECT_NAME" "$credentials_root/credentials" >&2 || true
     fault_service=
     if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then fault_service=skill-docker-proxy; fi
     compose logs --no-color --tail=200 edge-gateway admin-console agent-ui agent-acp-service \
