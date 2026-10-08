@@ -48,7 +48,7 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
         [
           "-c",
           `
-        node() { :; }
+        node() { printf 'node %s\\n' "$*" >> "$CALLS"; }
         compose() {
           printf 'compose %s\\n' "$*" >> "$CALLS"
           if [ "$1" = logs ]; then
@@ -104,6 +104,12 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
         "docker ps -aq --filter label=com.docker.compose.project=antnest-stage3-fixture",
       );
       assert(stop >= 0 && enumerate > stop);
+      // Startup failure state must be read before services are stopped.
+      const summary = commands.indexOf(
+        `node tests/support/startup-failure-summary.mjs antnest-stage3-fixture ${join(directory, "credentials-root", "credentials")}`,
+      );
+      if (initial !== 0) assert(summary >= 0 && summary < stop);
+      else assert.equal(summary, -1);
       const capture = commands.indexOf(
         "compose logs --no-color identity-service admin-console edge-gateway",
       );

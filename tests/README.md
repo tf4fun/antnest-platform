@@ -178,8 +178,17 @@ part of any default target.
 
 ## Continuous integration
 
-`.github/workflows/integration.yml` runs on every pull request and push to
-`main`. [`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
+`.github/workflows/integration.yml` runs the suites on every push to `main`,
+on manual runs, and on a pull request when it is opened, reopened or marked
+ready for review, or when the `ci:full` label is added. Each later push to a
+pull request, and every push to a draft, runs only `Repository checks` and the
+path-filtered service workflows (lint, unit tests, image build). Such runs
+report `Integration checks (not run)`, so the required `Integration checks`
+stays pending until a full run covers the head commit: add `ci:full` before
+merging. The run removes the label, so add it again after further pushes.
+[`support/ci-mode.mjs`](support/ci-mode.mjs) decides the mode.
+
+[`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
 catalog: each suite lists its commands, host setup, prebuilt images and the
 paths it exercises. The workflow runs only the suites that match the changed
 files (prose-only changes select none). Changes to the workflow, `tests/support/`,
@@ -237,6 +246,15 @@ fails. Add a suite by extending the catalog and naming it in one shard of its
 tier; the catalog's unit tests check that every `make` target and runner it
 names exists and that every suite belongs to exactly one shard. A suite with a `disabled` reason stays in the
 catalog but is never selected until its known breakage is fixed.
+
+A failed Stage 3a run (`tests/e2e/e2e-stage3a.sh`) omits raw service logs
+because they may contain credentials. Instead it prints one
+`{"startup_failures":[...]}` line from `tests/support/startup-failure-summary.mjs`.
+That line covers each exited, restarting, OOM-killed or unhealthy container and
+gives its exit code and health, the `msg` and `error.code` of its ERROR-level
+structured records, and the first line of any panic or uncaught error. A field
+containing a credential the run provisioned is replaced with
+`[withheld: credential]`.
 
 ## Resource hygiene
 
