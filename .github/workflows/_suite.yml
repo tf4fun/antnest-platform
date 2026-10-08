@@ -78,12 +78,12 @@ jobs:
       # Both web packages pin the same Playwright release.
       - name: Install headless Chromium
         if: fromJSON(inputs.suite).setup_chromium
+        timeout-minutes: 28
         run: |
           for package in agent-ui admin-console; do
             playwright="services/$package/web/node_modules/.bin/playwright"
             if [ -x "$playwright" ]; then
-              "$playwright" install --with-deps --only-shell chromium
-              exit 0
+              exec sh tests/support/ci-install-chromium.sh "$playwright"
             fi
           done
           echo "no web package with Playwright is installed" >&2
