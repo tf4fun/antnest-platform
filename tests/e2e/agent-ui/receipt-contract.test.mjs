@@ -23,7 +23,10 @@ import {
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
 import { member, setup, until } from "../workspace-closeout/c4-setup.mjs";
-import { candidateCommand } from "../../support/candidate-images.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -122,7 +125,7 @@ test(
           ],
           labels: { [ownerLabel]: config.project },
         });
-        await docker(build, true);
+        await docker(build, true, { env: candidateEnvironment(config.env) });
       }
       console.log(JSON.stringify({ phase: "start" }));
       await docker(

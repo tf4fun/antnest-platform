@@ -17,7 +17,10 @@ import {
   until,
 } from "../workspace-closeout/c4-setup.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { candidateCommand } from "../../support/candidate-images.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 import { skillClientArgs } from "./client-container.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -159,7 +162,7 @@ test(
             ".",
           ],
         });
-        await docker(build, true);
+        await docker(build, true, { env: candidateEnvironment(config.env) });
       }
       await docker(
         composeArgs(config.project, [

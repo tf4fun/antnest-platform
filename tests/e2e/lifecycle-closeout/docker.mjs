@@ -64,7 +64,11 @@ function startupSummary(project, env) {
 
 export function dockerClient(env, signal, budget = 900000) {
   const deadline = Date.now() + budget;
-  return async function docker(args, long = false) {
+  return async function docker(
+    args,
+    long = false,
+    { env: callEnv = env } = {},
+  ) {
     signal?.throwIfAborted();
     const invocation = dockerInvocation(
       long ? ["--lifecycle", ...args] : args,
@@ -74,7 +78,7 @@ export function dockerClient(env, signal, budget = 900000) {
     const commandFailure = new Error(`Docker ${args[0]} failed`);
     return new Promise((resolve, reject) => {
       const child = spawn("docker", invocation.args, {
-        env,
+        env: callEnv,
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -107,11 +111,11 @@ export function dockerClient(env, signal, budget = 900000) {
         signal?.removeEventListener("abort", terminate);
         if (failure || code !== 0) {
           commandFailure.message += ` (${code})`;
-          const diagnostic = stderrDiagnostic(errors, env);
+          const diagnostic = stderrDiagnostic(errors, callEnv);
           if (diagnostic) commandFailure.message += `\n${diagnostic}`;
           const project = composeUpProject(args);
           if (project)
-            commandFailure.message += `\n${startupSummary(project, env)}`;
+            commandFailure.message += `\n${startupSummary(project, callEnv)}`;
           reject(failure ?? commandFailure);
         } else resolve(output.trim());
       });

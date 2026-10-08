@@ -321,8 +321,16 @@ test("required suites declare every image their runners derive candidates from",
     "deployment-wiring": primary,
     "gateway-security-headers": primary,
     "agent-ui-receipt": primary,
-    "managed-mcp-secrets-v1": [...primary, "antnest-runtime-managed"].sort(),
-    "managed-mcp-secrets-v2": [...primary, "antnest-runtime-managed"].sort(),
+    "managed-mcp-secrets-v1": [
+      ...primary,
+      "antnest-runtime-fixture",
+      "antnest-runtime-managed",
+    ].sort(),
+    "managed-mcp-secrets-v2": [
+      ...primary,
+      "antnest-runtime-fixture",
+      "antnest-runtime-managed",
+    ].sort(),
     "observation-retry": [
       "agent-acp-service",
       "antnest-runtime",

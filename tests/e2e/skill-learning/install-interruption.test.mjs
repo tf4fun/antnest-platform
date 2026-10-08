@@ -15,7 +15,10 @@ import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
 import { skillClientArgs } from "./client-container.mjs";
-import { candidateCommand } from "../../support/candidate-images.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 
 // Each scenario interrupts the first idle install of a learned Skill once and
 // checks the contract: lifecycle and foreground work never wait for learning,
@@ -142,6 +145,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
           ".",
         ]),
         true,
+        { env: candidateEnvironment(config.env) },
       );
       const [gatedImage] = JSON.parse(
         await build(["image", "inspect", runtimeImage]),
@@ -203,6 +207,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
         ".",
       ]),
       true,
+      { env: candidateEnvironment(config.env) },
     );
     await docker(
       composeArgs(config.project, [

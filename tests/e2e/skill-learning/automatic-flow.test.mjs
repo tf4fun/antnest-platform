@@ -24,7 +24,10 @@ import { collectLearningTraces } from "./learning-trace.mjs";
 import { collectDiscoveryTrace } from "./discovery-trace.mjs";
 import { temporaryAcpFlow } from "./temporary-acp-flow.mjs";
 import { callerAcpFlow } from "./caller-flow.mjs";
-import { candidateCommand } from "../../support/candidate-images.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
 import { assertMaintenanceKidStartupRejected } from "./maintenance-kid.mjs";
@@ -301,7 +304,7 @@ test(
           build: ["docker", ...build],
           labels,
         });
-        return docker(args, true);
+        return docker(args, true, { env: candidateEnvironment(config.env) });
       };
       if (propagation) resourceBaseline = await resources(docker);
       for (const { service, image: candidate } of additionalImages) {
