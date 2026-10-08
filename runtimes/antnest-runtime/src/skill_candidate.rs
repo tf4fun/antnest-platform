@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 use crate::roots::{NamedRoot, NamedRoots, TreeFile, TreeInstallMode};
-use crate::skill_package_manifest::validate_skill_manifest;
+use crate::skill_install::{active_digest, digest_snapshot};
 use crate::skill_package_zip::validate_skill_zip;
 use crate::tool_error::{ToolError, ToolErrorCode};
 
@@ -782,16 +782,6 @@ fn unknown_observation() -> CandidateObserved {
     }
 }
 
-fn active_digest(roots: &NamedRoots, path: &str) -> Result<Option<String>, ToolError> {
-    match roots.snapshot_workspace_tree(path) {
-        Ok(entries) => digest_snapshot(&entries, path).map(Some),
-        Err(error) if error.is_not_found() => Ok(None),
-        Err(_) => Err(ToolError::invalid_params(
-            "managed Skill activity is unreadable",
-        )),
-    }
-}
-
 fn write_effect(roots: &NamedRoots, path: &str, effect: &EffectRecord) -> Result<(), ToolError> {
     let bytes = serde_json::to_vec(effect)
         .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?;
@@ -915,83 +905,6 @@ pub(crate) fn check_candidate(
     Ok(CandidateChecked {
         observed_digest: observed,
     })
-}
-
-fn digest_snapshot(
-    entries: &[crate::roots::TreeEntry],
-    package_path: &str,
-) -> Result<String, ToolError> {
-    let files = entries
-        .iter()
-        .filter(|entry| entry.contents.is_some())
-        .collect::<Vec<_>>();
-    if files.is_empty() || files.len() > 256 {
-        return Err(ToolError::invalid_params("invalid candidate inventory"));
-    }
-    let mut expected_directories = BTreeSet::new();
-    let mut total = 0usize;
-    let mut manifest = None;
-    let mut canonical = Sha256::new();
-    canonical.update(b"antnest-skill-manifest-v1\0");
-    for file in files {
-        let path = &file.path;
-        let contents = file.contents.as_ref().expect("selected file");
-        if path.is_empty()
-            || path.len() > 512
-            || path.contains(['\\', '\0'])
-            || path.split('/').count() > 16
-            || path.split('/').any(|part| matches!(part, "" | "." | ".."))
-            || (path == "SKILL.md" && contents.len() > 16 * 1024)
-        {
-            return Err(ToolError::invalid_params("invalid candidate package path"));
-        }
-        total = total.saturating_add(contents.len());
-        if total > 32 * 1024 * 1024 {
-            return Err(ToolError::invalid_params("candidate package exceeds limit"));
-        }
-        if path == "SKILL.md" {
-            manifest = Some(validate_skill_manifest(contents).map_err(ToolError::invalid_params)?);
-        }
-        let mut parent = path.as_str();
-        while let Some((prefix, _)) = parent.rsplit_once('/') {
-            expected_directories.insert(prefix.to_owned());
-            parent = prefix;
-        }
-        canonical.update((path.len() as u32).to_be_bytes());
-        canonical.update(path.as_bytes());
-        canonical.update((contents.len() as u64).to_be_bytes());
-        canonical.update(Sha256::digest(contents));
-        canonical.update([u8::from(file.executable)]);
-    }
-    if entries.len()
-        != entries
-            .iter()
-            .filter(|entry| entry.contents.is_some())
-            .count()
-            + expected_directories.len()
-        || entries
-            .iter()
-            .filter(|entry| entry.contents.is_none())
-            .any(|entry| !expected_directories.contains(&entry.path))
-    {
-        return Err(ToolError::invalid_params(
-            "candidate directory inventory has changed",
-        ));
-    }
-    let manifest = manifest.ok_or_else(|| ToolError::invalid_params("SKILL.md is missing"))?;
-    if package_path != format!(".antnest/skills/{}", manifest.name) {
-        return Err(ToolError::invalid_params(
-            "candidate Skill identity has changed",
-        ));
-    }
-    Ok(format!(
-        "sha256:{}",
-        canonical
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    ))
 }
 
 pub(crate) fn prepare_candidate(

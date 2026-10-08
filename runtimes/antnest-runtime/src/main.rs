@@ -41,6 +41,9 @@ mod service_admission_component_tests {
     ));
 }
 mod skill_candidate;
+mod skill_install;
+#[cfg(all(test, target_os = "linux"))]
+mod skill_install_tests;
 mod skill_maintenance_auth;
 #[cfg(test)]
 mod skill_maintenance_auth_tests;
@@ -649,6 +652,18 @@ async fn serve_runtime(
                 error.message,
             )
         })?;
+    // The next install also removes stale staging, so failure here only
+    // delays reclaiming space and must not block readiness.
+    if let Err(error) = actor.clean_install_staging_before_ready().await {
+        tracing::warn!(
+            component = "skill.install.cleanup",
+            error.type = error.code.as_str(),
+            reason = error.message,
+            "antnest.agent.id" = identity.agent_id(),
+            "antnest.runtime.generation" = %identity.generation(),
+            "Skill install staging cleanup failed before readiness"
+        );
+    }
     actor.probe().await.map_err(|error| {
         runtime_failure(
             identity.clone(),

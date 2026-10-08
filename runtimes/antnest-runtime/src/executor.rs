@@ -18,6 +18,10 @@ use crate::executor_protocol::{
     encode_skill_release_reply, encode_temporary_install_reply, encode_temporary_released_reply,
     encode_write_reply,
 };
+use crate::executor_protocol::{
+    decode_skill_digest_request, decode_skill_install_request, encode_skill_digest_reply,
+    encode_skill_install_cleaned_reply, encode_skill_install_reply,
+};
 use crate::information::RuntimeContext;
 use crate::roots::NamedRoots;
 use crate::tools::ToolEngine;
@@ -112,6 +116,23 @@ pub(crate) fn run(command: ToolCommand) -> Result<(), ExecutorEntryError> {
             let result = decode_skill_release_request(&input)
                 .and_then(|request| crate::skill_candidate::release_candidate(&roots, request));
             write_reply(encode_skill_release_reply(result).map_err(protocol_error)?)
+        }
+        ToolCommand::SkillInstall => {
+            let result = decode_skill_install_request(&input)
+                .and_then(|request| crate::skill_install::install_skill(&roots, request));
+            write_reply(encode_skill_install_reply(result).map_err(protocol_error)?)
+        }
+        ToolCommand::SkillDigest => {
+            let result = decode_skill_digest_request(&input)
+                .and_then(|request| crate::skill_install::skill_digest(&roots, request));
+            write_reply(encode_skill_digest_reply(result).map_err(protocol_error)?)
+        }
+        ToolCommand::SkillInstallClean => {
+            let result = decode_info_request(&input).and_then(|()| {
+                crate::skill_install::clean_install_staging(&roots)
+                    .map(|()| crate::skill_install::SkillInstallStagingCleaned {})
+            });
+            write_reply(encode_skill_install_cleaned_reply(result).map_err(protocol_error)?)
         }
         ToolCommand::SkillTemporaryInstall => {
             let result = decode_temporary_install_request(&input)

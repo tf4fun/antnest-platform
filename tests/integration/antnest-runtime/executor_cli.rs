@@ -435,6 +435,101 @@ fn skill_candidate_is_prepared_by_uid_1000_outside_discovery_and_replayed() {
 }
 
 #[test]
+fn skill_install_is_written_by_uid_1000_with_one_rename_and_resends_settle() {
+    if !getuid().is_root() {
+        eprintln!("executor boundary test requires a root Linux build environment");
+        return;
+    }
+    let root = tempfile::tempdir().expect("temporary Runtime roots");
+    let workspace = root.path().join("workspace");
+    let system_skills = root.path().join("skills");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&system_skills).unwrap();
+    make_traversable(root.path());
+    make_agent_owned(&workspace);
+    fs::set_permissions(&system_skills, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let skill = b"---\nname: retry-timeouts\ndescription: Retry safely\n---\n";
+    let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    writer
+        .start_file("SKILL.md", SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(skill).unwrap();
+    let archive = writer.finish().unwrap().into_inner();
+    let hex = |bytes: &[u8]| {
+        use sha2::{Digest as _, Sha256};
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let target = {
+        use sha2::{Digest as _, Sha256};
+        let mut canonical = Sha256::new();
+        canonical.update(b"antnest-skill-manifest-v1\0");
+        canonical.update(("SKILL.md".len() as u32).to_be_bytes());
+        canonical.update(b"SKILL.md");
+        canonical.update((skill.len() as u64).to_be_bytes());
+        canonical.update(Sha256::digest(skill));
+        canonical.update([0]);
+        format!(
+            "sha256:{}",
+            canonical
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+    };
+    let install = json!({
+        "package_path":".antnest/skills/retry-timeouts",
+        "expected_base_digest":null,
+        "target_digest":target,
+        "artifact_digest":format!("sha256:{}", hex(&archive)),
+        "artifact_base64":STANDARD.encode(&archive)
+    });
+    let digest = json!({"package_path":".antnest/skills/retry-timeouts"});
+
+    let absent = invoke("skill-digest", &workspace, &system_skills, digest.clone());
+    assert_eq!(absent["status"], "success");
+    assert_eq!(absent["result"]["observed_digest"], Value::Null);
+
+    let stale = workspace.join(".antnest/skill-learning/staging/install/package");
+    fs::create_dir_all(&stale).unwrap();
+    fs::write(stale.join("SKILL.md"), b"interrupted").unwrap();
+    make_agent_owned_tree(&workspace.join(".antnest"));
+
+    let applied = invoke("skill-install", &workspace, &system_skills, install.clone());
+    assert_eq!(applied["status"], "success", "{applied}");
+    assert_eq!(applied["result"]["outcome"], "applied");
+    assert_eq!(applied["result"]["observed_digest"], target);
+    let active = workspace.join(".antnest/skills/retry-timeouts");
+    assert_eq!(fs::metadata(active.join("SKILL.md")).unwrap().uid(), 1000);
+    assert!(!workspace.join(".antnest/skill-learning/staging").exists());
+    let inode = fs::metadata(&active).unwrap().ino();
+
+    let resent = invoke("skill-install", &workspace, &system_skills, install.clone());
+    assert_eq!(resent["result"]["outcome"], "applied");
+    assert_eq!(fs::metadata(&active).unwrap().ino(), inode);
+
+    let present = invoke("skill-digest", &workspace, &system_skills, digest);
+    assert_eq!(present["result"]["observed_digest"], target);
+
+    let mut other = install.clone();
+    other["target_digest"] = json!(format!("sha256:{}", "0".repeat(64)));
+    assert_eq!(
+        invoke("skill-install", &workspace, &system_skills, other)["status"],
+        "failure"
+    );
+
+    fs::create_dir_all(&stale).unwrap();
+    make_agent_owned_tree(&workspace.join(".antnest"));
+    let cleaned = invoke("skill-install-clean", &workspace, &system_skills, json!({}));
+    assert_eq!(cleaned["status"], "success");
+    assert!(!workspace.join(".antnest/skill-learning/staging").exists());
+}
+
+#[test]
 fn agent_user_cannot_invoke_private_skill_maintenance_subcommands() {
     if !getuid().is_root() {
         eprintln!("executor boundary test requires a root Linux build environment");
@@ -447,6 +542,9 @@ fn agent_user_cannot_invoke_private_skill_maintenance_subcommands() {
         "skill-observe",
         "skill-cancel",
         "skill-release",
+        "skill-install",
+        "skill-digest",
+        "skill-install-clean",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_antnest-runtime"))
             .arg(command)
@@ -765,6 +863,15 @@ fn invoke(command: &str, workspace: &Path, system_skills: &Path, input: Value) -
 
 fn make_traversable(path: &Path) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("traversable test root");
+}
+
+fn make_agent_owned_tree(path: &Path) {
+    make_agent_owned(path);
+    if path.is_dir() {
+        for entry in fs::read_dir(path).unwrap() {
+            make_agent_owned_tree(&entry.unwrap().path());
+        }
+    }
 }
 
 fn make_agent_owned(path: &Path) {

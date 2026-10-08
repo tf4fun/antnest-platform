@@ -8,6 +8,10 @@ use crate::skill_candidate::{
     CandidateCommitRequest, CandidateCommitted, CandidateObserveRequest, CandidateObserved,
     CandidatePrepareRequest, CandidatePrepared, CandidateReleaseRequest, CandidateReleased,
 };
+use crate::skill_install::{
+    SkillDigestObserved, SkillDigestRequest, SkillInstallRequest, SkillInstallStagingCleaned,
+    SkillInstalled,
+};
 use crate::skill_temporary::{
     TemporaryInstallRequest, TemporaryInstalled, TemporaryReleaseRequest, TemporaryReleased,
 };
@@ -212,6 +216,62 @@ pub(crate) fn encode_skill_release_reply(
 pub(crate) fn decode_skill_release_reply(
     input: &[u8],
 ) -> Result<Result<CandidateReleased, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_install_request(
+    request: &SkillInstallRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_install_request(input: &[u8]) -> Result<SkillInstallRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_install_reply(
+    result: Result<SkillInstalled, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_install_reply(
+    input: &[u8],
+) -> Result<Result<SkillInstalled, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_digest_request(
+    request: &SkillDigestRequest,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode(request)
+}
+
+pub(crate) fn decode_skill_digest_request(input: &[u8]) -> Result<SkillDigestRequest, ToolError> {
+    decode_request(input)
+}
+
+pub(crate) fn encode_skill_digest_reply(
+    result: Result<SkillDigestObserved, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_digest_reply(
+    input: &[u8],
+) -> Result<Result<SkillDigestObserved, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
+
+pub(crate) fn encode_skill_install_cleaned_reply(
+    result: Result<SkillInstallStagingCleaned, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_skill_install_cleaned_reply(
+    input: &[u8],
+) -> Result<Result<SkillInstallStagingCleaned, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, std::convert::identity)
 }
 
