@@ -189,6 +189,7 @@ export class LearningApplyAttempt {
       managed,
       information,
       executionId: binding.executionId,
+      resend: candidate.state === "ready_waiting_idle",
     });
     return { binding, basis };
   }
