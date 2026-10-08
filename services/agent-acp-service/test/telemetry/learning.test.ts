@@ -14,6 +14,7 @@ import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
 import type { ModelResult } from "../../src/ports/model.js";
 import { RuntimeSkillMaintenanceClient } from "../../src/adapters/runtime-skill-maintenance-client.js";
 import { RuntimeSkillMaintenanceSigner } from "../../src/adapters/runtime-skill-maintenance-signer.js";
+import { buildLearningCandidatePackage } from "../../src/domain/learning-candidate-package.js";
 
 const claim: LearningTaskClaim = {
   taskId: "learn-1",
@@ -87,6 +88,29 @@ describe("learning Trace", () => {
 
   it("propagates the task Trace to Runtime maintenance without exporting its authorization", async () => {
     const { privateKey } = generateKeyPairSync("ed25519");
+    const evidenceId = `evidence_${"a".repeat(32)}`;
+    const candidate = buildLearningCandidatePackage(
+      {
+        decision: "propose",
+        name: "inspect-first",
+        description: "Inspect first.",
+        instructions: "unused",
+        rules: [{ text: "Inspect first", evidenceIds: [evidenceId] }],
+      },
+      {
+        sourceRunId: "run-1",
+        truncated: false,
+        items: [
+          {
+            evidenceId,
+            sourceId: "user-1",
+            kind: "authenticated_user",
+            scope: "user_prompt",
+            text: "Inspect first",
+          },
+        ],
+      },
+    );
     let authorization = "";
     let traceparent = "";
     vi.stubGlobal(
@@ -98,11 +122,11 @@ describe("learning Trace", () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              request_id: "cancel-1",
-              action: "cancel",
+              request_id: "install-1",
+              action: "install",
               execution_id: "execution-1",
-              outcome: "cancelled",
-              observed_digest: null,
+              outcome: "applied",
+              observed_digest: candidate.targetDigest,
             }),
           ),
         );
@@ -124,15 +148,18 @@ describe("learning Trace", () => {
         },
       );
       await telemetry.span("skill_learning.task", {}, () =>
-        client.cancel({
+        client.install({
           claim,
+          candidateId: "candidate-1",
+          package: candidate,
+          expectedBaseDigest: null,
           binding: {
             revision: `rtv_${"a".repeat(32)}`,
             connectionId: `rci_${"b".repeat(32)}`,
             mcpEndpoint: "http://runtime.test:8093/mcp",
             executionId: "execution-1",
           },
-          requestId: "cancel-1",
+          requestId: "install-1",
           signal: new AbortController().signal,
         }),
       );

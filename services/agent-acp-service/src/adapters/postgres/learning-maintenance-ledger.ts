@@ -9,7 +9,7 @@ import {
 } from "../../domain/runtime-connection.js";
 import type { PostgresKernel } from "./kernel.js";
 
-type Action = "prepare" | "check" | "commit" | "observe" | "cancel" | "release";
+type Action = "install";
 type State = "pending" | "unknown" | "settled";
 type Intent = {
   claim: LearningTaskClaim;
@@ -27,7 +27,8 @@ type SavedIntent = {
   task_id: string;
   claim_id: string;
   generation: number;
-  action: Action;
+  // Rows written before install replaced the staged actions keep their action.
+  action: string;
   execution_id: string;
   mcp_endpoint: string;
   runtime_revision: string | null;
@@ -71,12 +72,10 @@ export class PostgresLearningMaintenanceLedger {
       if (saved) {
         if (!matchesIntent(saved, input))
           throw new Error("Learning maintenance request conflicts with its durable intent");
-        return {
-          dispatch: ["observe", "release"].includes(saved.action) && saved.state === "unknown",
-          state: saved.state,
-        };
+        // An unsettled install is never replayed blindly; a resend is a new attempt.
+        return { dispatch: false, state: saved.state };
       }
-      if (!actionAllowedInState(input.action, current.state))
+      if (current.state !== "running")
         throw new Error("Learning maintenance action is not allowed in the task state");
       await client.query(
         `INSERT INTO learning_maintenance_intents
@@ -128,7 +127,7 @@ export class PostgresLearningMaintenanceLedger {
         receipt.request_id !== requestId ||
         receipt.action !== saved.action ||
         receipt.execution_id !== saved.execution_id ||
-        !validOutcome(saved.action, receipt.outcome)
+        !validOutcome(saved, receipt)
       )
         throw new Error("Learning maintenance receipt does not match its intent");
       if (saved.state === "settled") {
@@ -182,170 +181,6 @@ export class PostgresLearningMaintenanceLedger {
       );
     });
     this.onSettled?.(requestId);
-  }
-
-  public async settleObservedEffect(
-    claim: LearningTaskClaim,
-    effectRequestId: string,
-    observationRequestId: string,
-  ): Promise<"settled" | "unknown"> {
-    if (effectRequestId === observationRequestId)
-      throw new Error("An effect cannot observe its own request");
-    const outcome = await this.kernel.transaction(async (client) => {
-      const effect = await this.lockClaimIntent(client, claim, effectRequestId);
-      const observation = await this.lockClaimIntent(client, claim, observationRequestId);
-      const expected = effect.action === "commit" ? effect.request_facts.target_digest : undefined;
-      const receipt = observation.receipt;
-      if (
-        expected === undefined ||
-        (expected !== null &&
-          (typeof expected !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(expected))) ||
-        (effect.action === "commit" && expected === null) ||
-        observation.action !== "observe" ||
-        observation.state !== "settled" ||
-        !isRecord(receipt) ||
-        observation.request_facts.effect_request_id !== effectRequestId ||
-        observation.request_facts.expected_target_digest !== expected ||
-        receipt.request_id !== observationRequestId ||
-        receipt.action !== "observe" ||
-        receipt.execution_id !== observation.execution_id ||
-        !["applied", "conflict", "unknown"].includes(String(receipt.outcome)) ||
-        (receipt.observed_digest !== null &&
-          (typeof receipt.observed_digest !== "string" ||
-            !/^sha256:[0-9a-f]{64}$/u.test(receipt.observed_digest)))
-      )
-        throw new Error("Learning effect observation does not match its durable intent");
-      if (receipt.outcome === "unknown") return "unknown";
-      if (
-        (receipt.outcome !== "applied" && receipt.outcome !== "conflict") ||
-        (receipt.outcome === "applied" && receipt.observed_digest !== expected)
-      )
-        throw new Error("Learning effect observation outcome conflicts with its action");
-      const result = {
-        kind: "observed_effect",
-        request_id: effectRequestId,
-        action: effect.action,
-        execution_id: effect.execution_id,
-        observation_request_id: observationRequestId,
-        outcome: receipt.outcome,
-        observed_digest: receipt.observed_digest,
-      };
-      if (effect.state === "settled") {
-        if (!isDeepStrictEqual(effect.receipt, result))
-          throw new Error("Learning effect observation conflicts with a settled outcome");
-        return "settled" as const;
-      }
-      await client.query(
-        `UPDATE learning_maintenance_intents
-        SET state='settled',receipt=$2::jsonb,settled_at=now()
-        WHERE request_id=$1`,
-        [effectRequestId, JSON.stringify(result)],
-      );
-      return "settled" as const;
-    });
-    if (outcome === "settled") {
-      this.onSettled?.(effectRequestId);
-      this.onSettled?.(observationRequestId);
-    }
-    return outcome;
-  }
-
-  public async unresolved(claim: LearningTaskClaim): Promise<
-    Array<{
-      requestId: string;
-      action: Action;
-      executionId: string;
-      mcpEndpoint: string;
-      revision: string | null;
-      connectionId: string | null;
-      bodySha256: string;
-      requestFacts: Record<string, unknown>;
-      state: "pending" | "unknown";
-    }>
-  > {
-    const result = await this.kernel.read<SavedIntent>(
-      `SELECT intent.*
-      FROM learning_maintenance_intents intent
-      JOIN learning_tasks task ON task.id=intent.task_id
-      WHERE intent.task_id=$1 AND intent.claim_id=$2 AND intent.generation=$3
-        AND task.organization_id=$4 AND task.agent_id=$5 AND task.owner_principal_id=$6
-        AND task.source_run_id=$7 AND intent.state<>'settled'
-      ORDER BY intent.created_at,intent.request_id LIMIT 50`,
-      [
-        claim.taskId,
-        claim.claimId,
-        claim.generation,
-        claim.organizationId,
-        claim.agentId,
-        claim.ownerId,
-        claim.sourceRunId,
-      ],
-    );
-    return result.rows.map((row) => {
-      if (row.state === "settled")
-        throw new Error("Settled maintenance intent appeared in unresolved list");
-      return {
-        requestId: row.request_id,
-        action: row.action,
-        executionId: row.execution_id,
-        mcpEndpoint: row.mcp_endpoint,
-        revision: row.runtime_revision,
-        connectionId: row.connection_id,
-        bodySha256: row.body_sha256,
-        requestFacts: row.request_facts,
-        state: row.state,
-      };
-    });
-  }
-
-  public async read(
-    claim: LearningTaskClaim,
-    requestId: string,
-  ): Promise<{
-    requestId: string;
-    action: Action;
-    executionId: string;
-    mcpEndpoint: string;
-    revision: string | null;
-    connectionId: string | null;
-    bodySha256: string;
-    requestFacts: Record<string, unknown>;
-    state: State;
-    receipt: Record<string, unknown> | null;
-  } | null> {
-    const result = await this.kernel.read<SavedIntent>(
-      `SELECT intent.*
-      FROM learning_maintenance_intents intent
-      JOIN learning_tasks task ON task.id=intent.task_id
-      WHERE intent.request_id=$1 AND intent.task_id=$2 AND intent.claim_id=$3
-        AND intent.generation=$4 AND task.organization_id=$5 AND task.agent_id=$6
-        AND task.owner_principal_id=$7 AND task.source_run_id=$8`,
-      [
-        requestId,
-        claim.taskId,
-        claim.claimId,
-        claim.generation,
-        claim.organizationId,
-        claim.agentId,
-        claim.ownerId,
-        claim.sourceRunId,
-      ],
-    );
-    const saved = result.rows[0];
-    return saved
-      ? {
-          requestId: saved.request_id,
-          action: saved.action,
-          executionId: saved.execution_id,
-          mcpEndpoint: saved.mcp_endpoint,
-          revision: saved.runtime_revision,
-          connectionId: saved.connection_id,
-          bodySha256: saved.body_sha256,
-          requestFacts: saved.request_facts,
-          state: saved.state,
-          receipt: saved.receipt,
-        }
-      : null;
   }
 
   private async lockClaimIntent(
@@ -439,7 +274,7 @@ function validateIntent(input: Intent): void {
     Buffer.byteLength(facts) > 16 * 1024 ||
     Array.isArray(input.requestFacts) ||
     !isDeepStrictEqual(JSON.parse(facts), input.requestFacts) ||
-    !["prepare", "check", "commit", "observe", "cancel", "release"].includes(input.action)
+    (input.action as string) !== "install"
   )
     throw new Error("Invalid learning maintenance intent");
 }
@@ -448,22 +283,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validOutcome(action: Action, value: unknown): boolean {
-  const permitted: Record<Action, readonly string[]> = {
-    prepare: ["prepared"],
-    check: ["checked"],
-    commit: ["applied", "blocked"],
-    observe: ["applied", "conflict", "unknown"],
-    cancel: ["cancelled"],
-    release: ["released"],
-  };
-  return typeof value === "string" && permitted[action].includes(value);
-}
-
-function actionAllowedInState(action: Action, state: string): boolean {
-  if (state === "running") return true;
-  if (state === "paused") return ["observe", "cancel", "release"].includes(action);
-  return (
-    ["completed", "cancelled", "failed"].includes(state) && ["observe", "release"].includes(action)
-  );
+function validOutcome(saved: SavedIntent, receipt: Record<string, unknown>): boolean {
+  if (saved.action !== "install") return false;
+  if (receipt.outcome === "applied")
+    return receipt.observed_digest === saved.request_facts.target_digest;
+  return ["conflict", "blocked", "preempted"].includes(String(receipt.outcome));
 }

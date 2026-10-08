@@ -32,7 +32,7 @@ type Dependencies = {
     begin(
       scope: { organizationId: string; agentId: string },
       signal: AbortSignal,
-    ): { signal: AbortSignal; finish(quiescent: boolean): void };
+    ): { signal: AbortSignal; finish(): void };
   };
 };
 
@@ -138,7 +138,7 @@ export class SkillSources {
         return record;
       } finally {
         // Observe is read-only; it never creates a learning effect or unknown-write fence.
-        slot.finish(true);
+        slot.finish();
       }
     } catch (error) {
       if (error instanceof SkillSourceError) throw error;

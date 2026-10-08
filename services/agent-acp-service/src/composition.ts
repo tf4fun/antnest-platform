@@ -77,8 +77,6 @@ import {
 } from "./telemetry/learning.js";
 import { LearningReviewProcessor } from "./application/learning-review-processor.js";
 import { LearningApplyAttempt } from "./application/learning-apply-attempt.js";
-import { LearningApplyRecovery } from "./application/learning-apply-recovery.js";
-import { LearningEffectRecovery } from "./application/learning-effect-recovery.js";
 import { LearningTaskProcessor } from "./application/learning-task-processor.js";
 import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
@@ -88,8 +86,6 @@ import { tracedFetch } from "./telemetry/http.js";
 import { DirectoryLearningRuntimeBinding } from "./adapters/learning-runtime-binding.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
 import { RuntimeSkillMaintenanceClient } from "./adapters/runtime-skill-maintenance-client.js";
-import { PostgresLearningCandidateCleanup } from "./adapters/postgres/learning-candidate-cleanup.js";
-import { LearningCandidateCleanup } from "./application/learning-candidate-cleanup.js";
 import { PostgresLearningScan } from "./adapters/postgres/learning-scan.js";
 import { PostgresLearningEvidence } from "./adapters/postgres/learning-evidence.js";
 import { PostgresLearningBudget } from "./adapters/postgres/learning-budget.js";
@@ -98,7 +94,7 @@ import { PostgresLearningCandidates } from "./adapters/postgres/learning-candida
 import { PostgresLearningManagedSkills } from "./adapters/postgres/learning-managed-skills.js";
 import { PostgresLearningTaskOutcomes } from "./adapters/postgres/learning-task-outcomes.js";
 import { PostgresLearningMaintenanceLedger } from "./adapters/postgres/learning-maintenance-ledger.js";
-import { PostgresLearningCommitRequests } from "./adapters/postgres/learning-commit-requests.js";
+import { PostgresLearningInstallRequests } from "./adapters/postgres/learning-install-requests.js";
 import { PostgresLearningApplyBases } from "./adapters/postgres/learning-apply-bases.js";
 import { PostgresLearningChanges } from "./adapters/postgres/learning-changes.js";
 import { PostgresLearningChangeRead } from "./adapters/postgres/learning-change-read.js";
@@ -630,17 +626,16 @@ function buildLearningWorker(input: {
   const intents = new PostgresLearningMaintenanceLedger(kernel, (requestId) =>
     input.runtimeConnections.releaseOperation(requestId),
   );
-  const commitRequests = new PostgresLearningCommitRequests(kernel);
+  const installRequests = new PostgresLearningInstallRequests(kernel);
   const bases = new PostgresLearningApplyBases(kernel);
   const changes = new PostgresLearningChanges(kernel, onCommitted);
   const binding = new DirectoryLearningRuntimeBinding(directory);
-  const cleanupBinding = { current: binding.forCleanup.bind(binding) };
   const signer = new RuntimeSkillMaintenanceSigner(
     config.skillMaintenanceSigning.kid,
     config.skillMaintenanceSigning.privateKey,
   );
   const runtime = new RuntimeSkillMaintenanceClient(signer, intents, input.runtimeConnections);
-  const guard = new LearningMaintenanceGuard(gate, intents, (scope, signal) =>
+  const guard = new LearningMaintenanceGuard(gate, (scope, signal) =>
     input.temporarySkills.assertClearAgent(scope, signal),
   );
   const modelAdmission = new LearningModelAdmission(policy, budget);
@@ -662,20 +657,16 @@ function buildLearningWorker(input: {
     managed,
     runtime,
     bases,
-    commitRequests,
+    installRequests,
     changes,
   );
   const processor = new InstrumentedLearningTaskProcessor(
     new LearningTaskProcessor(review, new InstrumentedLearningApply(apply, telemetry), outcomes),
     telemetry,
   );
-  const effectRecovery = new LearningEffectRecovery(intents, runtime, cleanupBinding);
-  const applyRecovery = new LearningApplyRecovery(effectRecovery, commitRequests, changes);
   const paused = new LearningPausedRecovery(
     outcomes,
     guard,
-    applyRecovery,
-    intents,
     policy,
     processor,
     gate,
@@ -725,12 +716,6 @@ function buildLearningWorker(input: {
       ),
     undefined,
     (error) => telemetry.log("warn", "skill_learning_cycle_failed", {}, error),
-    new LearningCandidateCleanup(
-      new PostgresLearningCandidateCleanup(kernel),
-      cleanupBinding,
-      runtime,
-      guard,
-    ),
   );
 }
 

@@ -76,7 +76,7 @@ describe("current Agent-owned Skill sources", () => {
   it("finishes an in-flight bounded read before admitting foreground and discards preempted delivery", async () => {
     const s = setup();
     const gate = new LearningForegroundGate(() => false);
-    gate.syncOrganization(organization_id, [{ agent_id, accepting_runs: true, runtime }]);
+    gate.syncOrganization(organization_id, [{ agent_id, accepting_runs: true }]);
     const observed = Promise.withResolvers<"current">();
     const entered = Promise.withResolvers<void>();
     const source = new SkillSources({
@@ -107,7 +107,7 @@ describe("current Agent-owned Skill sources", () => {
     expect(admitted).toBe(true);
     gate
       .begin({ organizationId: organization_id, agentId: agent_id }, new AbortController().signal)
-      .finish(true);
+      .finish();
   });
   it("checks current full-package observation and returns metadata/exact selected bytes without a Run", async () => {
     const s = setup();
@@ -127,7 +127,7 @@ describe("current Agent-owned Skill sources", () => {
       },
       signal,
     );
-    expect(s.finish).toHaveBeenCalledWith(true);
+    expect(s.finish).toHaveBeenCalledWith();
   });
 
   it.each(["runtime_revision", "connection_id"] as const)(

@@ -66,7 +66,7 @@ const source: SkillSourceRecord = {
   candidateId: "candidate-1",
   taskId: claim.taskId,
   generation: claim.generation,
-  effectRequestId: "commit-1",
+  effectRequestId: "install-1",
   package: learningSkillTextPackage(candidate.skillText),
 };
 type Ticket = {
@@ -132,12 +132,7 @@ async function withPeer(
       paths.push(request.url!);
       if (hold?.(ticket, response)) return;
       const outcomes: Record<string, string> = {
-        prepare: "prepared",
-        check: "checked",
-        commit: "applied",
-        observe: "applied",
-        cancel: "cancelled",
-        release: "released",
+        install: "applied",
         digest: "observed",
       };
       response
@@ -151,12 +146,7 @@ async function withPeer(
             action: ticket.action,
             execution_id: current.binding.executionId,
             outcome: outcomes[ticket.action],
-            observed_digest: ["cancel", "release"].includes(ticket.action)
-              ? null
-              : candidate.targetDigest,
-            ...(ticket.action === "prepare"
-              ? { storage_key: "e".repeat(64) }
-              : {}),
+            observed_digest: candidate.targetDigest,
           }),
         );
     })().catch((error: unknown) => {
@@ -209,7 +199,7 @@ function closeAdmission(authority: Authority) {
   authority.connections.prepare(closed).commit();
 }
 
-it("authenticates every maintenance action and source digest read with an independent exact-byte ticket", async () => {
+it("authenticates the install and the source digest read with independent exact-byte tickets", async () => {
   await withPeer(async ({ authority, signer, paths }) => {
     const ledger = intents();
     const client = new RuntimeSkillMaintenanceClient(
@@ -217,52 +207,31 @@ it("authenticates every maintenance action and source digest read with an indepe
       ledger,
       authority.connections,
     );
-    const base = {
+    const signal = new AbortController().signal;
+    await client.install({
       claim,
       binding: authority.binding,
       candidateId: source.candidateId,
+      requestId: "install-1",
       package: candidate,
       expectedBaseDigest: null,
-      signal: new AbortController().signal,
-    };
-    await client.prepare({ ...base, requestId: "prepare-1" });
-    await client.check({ ...base, requestId: "check-1" });
-    await client.commit({ ...base, requestId: "commit-1" });
-    await client.observe({
-      ...base,
-      requestId: "observe-1",
-      effectRequestId: "commit-1",
-      expectedTargetDigest: candidate.targetDigest,
-    });
-    await client.cancel({ ...base, requestId: "cancel-1" });
-    await client.release({
-      ...base,
-      requestId: "release-1",
-      storageClass: "candidate",
-      storageKey: "e".repeat(64),
-      packagePath: candidate.packagePath,
-      expectedDigest: candidate.targetDigest,
+      signal,
     });
     expect(
       await new RuntimeSkillSourceVerifier(
         signer,
         authority.connections,
-      ).verify(source, authority.binding, base.signal),
+      ).verify(source, authority.binding, signal),
     ).toBe("current");
     expect(paths).toEqual(
-      [
-        "prepare",
-        "check",
-        "commit",
-        "observe",
-        "cancel",
-        "release",
-        "digest",
-      ].map((action) => `/internal/skill-maintenance/${action}`),
+      ["install", "digest"].map(
+        (action) => `/internal/skill-maintenance/${action}`,
+      ),
     );
-    expect(ledger.settle).toHaveBeenCalledTimes(6);
+    expect(ledger.settle).toHaveBeenCalledTimes(1);
     expect(ledger.reserve).toHaveBeenCalledWith(
       expect.objectContaining({
+        action: "install",
         revision: authority.binding.revision,
         connectionId: authority.binding.connectionId,
         executionId: authority.binding.executionId,
@@ -322,7 +291,7 @@ it("retains an in-flight source read through closure and rejects later reads bef
   );
 });
 
-it("preserves an unknown commit's original authority through closure and allows only cleanup observation", async () => {
+it("abandons an in-flight install at closure without keeping its authority for a replay", async () => {
   const entered = Promise.withResolvers<void>();
   await withPeer(
     async ({ authority, signer, paths }) => {
@@ -340,49 +309,37 @@ it("preserves an unknown commit's original authority through closure and allows 
         package: candidate,
         expectedBaseDigest: null,
       };
-      const commit = client.commit({
+      const install = client.install({
         ...base,
-        requestId: "commit-1",
+        requestId: "install-1",
         signal: controller.signal,
       });
-      const rejected = expect(commit).rejects.toBeInstanceOf(
+      const rejected = expect(install).rejects.toBeInstanceOf(
         RuntimeMaintenanceUnknownError,
       );
       await entered.promise;
       closeAdmission(authority);
       controller.abort();
       await rejected;
+      expect(ledger.markUnknown).toHaveBeenCalledWith(claim, "install-1");
       const file = join(
         authority.connections.directory,
         authority.binding.connectionId,
         "antnest-runtime",
       );
-      expect(existsSync(file)).toBe(true);
-      expect(ledger.markUnknown).toHaveBeenCalledWith(claim, "commit-1");
+      // The next idle window resends on the current binding; nothing replays this one.
+      expect(existsSync(file)).toBe(false);
       await expect(
-        client.check({
+        client.install({
           ...base,
-          requestId: "late-check",
+          requestId: "install-2",
           signal: new AbortController().signal,
         }),
       ).rejects.toMatchObject({ code: "runtime_connection_unavailable" });
-      await client.observe({
-        claim,
-        binding: authority.binding,
-        requestId: "cleanup-observe",
-        effectRequestId: "commit-1",
-        expectedTargetDigest: candidate.targetDigest,
-        signal: new AbortController().signal,
-      });
-      expect(paths).toEqual([
-        "/internal/skill-maintenance/commit",
-        "/internal/skill-maintenance/observe",
-      ]);
-      // An observation receipt does not itself settle the original durable commit intent.
-      expect(existsSync(file)).toBe(true);
+      expect(paths).toEqual(["/internal/skill-maintenance/install"]);
     },
     (ticket, response) => {
-      if (ticket.action !== "commit") return false;
+      if (ticket.action !== "install") return false;
       response.writeHead(200, { "Content-Type": "application/json" });
       response.flushHeaders();
       entered.resolve();

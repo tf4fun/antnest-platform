@@ -75,10 +75,6 @@ export class PostgresWorkerLock {
     await this.client.query("BEGIN");
     try {
       await this.client.query(
-        `UPDATE learning_maintenance_intents SET state='unknown'
-         WHERE action='release' AND state='pending'`,
-      );
-      await this.client.query(
         `UPDATE learning_model_calls SET state='unknown'
          WHERE state='reserved' AND task_id IN
            (SELECT id FROM learning_tasks WHERE state='running')`,

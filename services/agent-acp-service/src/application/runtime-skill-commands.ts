@@ -19,7 +19,7 @@ export class RuntimeSkillCommands implements SkillCommandsPort {
           signal: AbortSignal,
         ): {
           signal: AbortSignal;
-          finish(quiescent: boolean): void;
+          finish(): void;
         };
       };
       runtime: {
@@ -38,7 +38,7 @@ export class RuntimeSkillCommands implements SkillCommandsPort {
       return { executionId: null, commands: [] };
     const executionId = agent.runtime.runtime_execution_id;
     if (this.dependencies.busy(binding)) return { executionId, commands: null };
-    let lease: { signal: AbortSignal; finish(quiescent: boolean): void } | undefined;
+    let lease: { signal: AbortSignal; finish(): void } | undefined;
     try {
       lease = this.dependencies.gate?.begin(binding, signal);
     } catch {
@@ -63,7 +63,7 @@ export class RuntimeSkillCommands implements SkillCommandsPort {
       // Catalog discovery must not delay or preempt foreground/maintenance work.
       // Skill invocation is independently validated during Run preparation.
     } finally {
-      lease?.finish(true);
+      lease?.finish();
     }
     const current = this.dependencies.directory.inspect(binding).agent;
     if (!current.accepting_runs || current.runtime?.runtime_execution_id !== executionId)

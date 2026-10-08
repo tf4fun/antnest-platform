@@ -37,7 +37,7 @@ it("keeps catalog reads out of a learning/source slot and yields the read before
     commands: null,
   });
   expect(readBinding).not.toHaveBeenCalled();
-  active.finish(true);
+  active.finish();
   const entered = Promise.withResolvers<void>();
   const finished = Promise.withResolvers<ReturnType<typeof runtimeInformation>>();
   readBinding.mockImplementation(() => {
