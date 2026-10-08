@@ -7,7 +7,7 @@ Consumers retain their route caller lists and business authorization.
 - `callercontext` supplies strict signed CCT/JWKS parsing, claim verification, bounded key refresh and verified-token forwarding. Identity retains signing, session validation and revocation.
 - `devsecrets` rejects published credentials and uniform encryption keys unless the exact, independent development opt-in is set. It validates PostgreSQL passwords with the driver's parser and emits variable-only warnings. See the [secret admission contract](../../contracts/platform/development-secrets.md).
 
-Use `CallerContextHeaders` for Console, Controller and RC; use `WorkloadOnlyHeaders` for Registry. HTTP and socket setup apply the same policy. User authority cannot be inferred from unverified headers.
+Use `CallerContextHeaders` for Console, Controller and RC; use `WorkloadOnlyHeaders` for Registry. HTTP and socket setup apply the same policy, including a 5 s connect bound, so an absent dependency fails fast instead of waiting out the 30 s transport default. User authority cannot be inferred from unverified headers.
 
 Run `GOWORK=off go vet ./...` and `GOWORK=off go test -race -count=1 ./...` in this directory. Common rejection vectors live in `contracts/platform/`; protocol tests live beside their implementation. Service integration and Docker E2E stay under root `tests/`.
 
