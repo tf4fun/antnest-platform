@@ -62,7 +62,7 @@ function fixture() {
   };
   for (const s of trace.spans) s.startTime ??= 1000000;
   trace.spans[1].operationName = "HTTP POST identity-service";
-  trace.spans[4].operationName = "HTTP POST agent-acp-service";
+  trace.spans[4].operationName = "HTTP POST agent-acp-workspace";
   return {
     trace,
     expected: { traceID, stopWindow: { start: 1000, end: 3000 } },
