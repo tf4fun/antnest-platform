@@ -14,6 +14,7 @@ import {
   traceTopology,
 } from "../observability/trace-tree.mjs";
 import { skillClientArgs } from "./client-container.mjs";
+import { assertSourceActive } from "./source-projection-check.mjs";
 
 const CALLER_GRANTS = [
   "acp-controller",
@@ -100,14 +101,13 @@ export async function callerAcpFlow({
   );
   assert.equal(learned.status, "skill_created");
   assert.equal(learned.agent_id, peerId);
-  const active = async (agentId, sequence) =>
-    assert.equal(
-      await sql(
-        `SELECT count(*) FROM skill_source_projections WHERE agent_id='${agentId}' AND active AND sequence=${sequence} AND sent_sequence=${sequence}`,
-      ),
-      "1",
-      "actual managed source must remain active and acknowledged",
-    );
+  const active = (agentId, sequence) =>
+    assertSourceActive({
+      sql,
+      agentId,
+      sequence,
+      agentIds: [fixture.agentID, peerId],
+    });
   await until(
     async () =>
       Number(
