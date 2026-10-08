@@ -3,14 +3,14 @@ name: integration
 # Component, browser and service-owned Docker E2E suites. The workflow has no
 # path filter; tests/support/ci-changes.mjs selects the suites a change
 # exercises and groups them into one job per shard of each tier.
-# tests/support/ci-mode.mjs runs them when a pull request is opened, reopened
-# or marked ready, or labeled `ci:full`; other pushes to a pull request run
-# only the repository and service workflows.
+# tests/support/ci-mode.mjs runs them on every push to a pull request in
+# review; a draft runs only the repository and service workflows until it is
+# marked ready.
 on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize, labeled]
+    types: [opened, reopened, ready_for_review, synchronize]
   workflow_dispatch:
     inputs:
       suites:
@@ -21,9 +21,11 @@ on:
 permissions:
   contents: read
 
-# An unrelated label gets its own group so it cannot cancel a full run.
+# GitHub checks a required status against the newest run of this workflow for
+# the head commit, so only events that select a mode trigger it and a newer
+# head cancels the older run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ci:full' && format('-{0}', github.run_id) || '' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -60,7 +62,6 @@ jobs:
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           DRAFT: ${{ github.event.pull_request.draft }}
-          LABEL: ${{ github.event.label.name }}
         run: node tests/support/ci-mode.mjs >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
@@ -243,28 +244,10 @@ jobs:
           echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED"
           [ "$CHANGES" = success ] || exit 1
           if [ "$MODE" != full ]; then
-            echo "::notice::Integration suites did not run ($MODE). Add the ci:full label to run them on this commit."
+            echo "::notice::Integration suites did not run ($MODE). Mark the pull request ready for review to run them."
             exit 0
           fi
           expect() { if [ "$2" = 0 ]; then [ "$1" = skipped ]; else [ "$1" = success ]; fi; }
           expect "$IMAGES" "$BUILDING"
           expect "$SUITE" "$PLAIN"
           expect "$IMAGE_SUITE" "$IMAGED"
-
-  # The label requests one full run; removing it lets a later push be
-  # covered by adding it again. Fork pull requests get a read-only token.
-  release-label:
-    name: Release ci:full label
-    if: github.event.action == 'labeled' && github.event.label.name == 'ci:full'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Remove label
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: gh pr edit "$PR" --remove-label 'ci:full'

@@ -182,13 +182,14 @@ part of any default target.
 ## Continuous integration
 
 `.github/workflows/integration.yml` runs the suites on every push to `main`,
-on manual runs, and on a pull request when it is opened, reopened or marked
-ready for review, or when the `ci:full` label is added. Each later push to a
-pull request, and every push to a draft, runs only `Repository checks` and the
-path-filtered service workflows (lint, unit tests, image build). Such runs
-report `Integration checks (not run)`, so the required `Integration checks`
-stays pending until a full run covers the head commit: add `ci:full` before
-merging. The run removes the label, so add it again after further pushes.
+on manual runs, and on every push to a pull request that is not a draft: when
+it is opened, reopened, marked ready for review or updated. A newer head
+cancels the run for the older one. A draft runs only `Repository checks` and
+the path-filtered service workflows (lint, unit tests, image build) and reports
+`Integration checks (not run)`, so the required `Integration checks` stays
+pending until it is marked ready. Labels never start a run: GitHub checks a
+required status against the newest run of the workflow for the head commit,
+so a run that does nothing would hide the full one.
 [`support/ci-mode.mjs`](support/ci-mode.mjs) decides the mode.
 
 [`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite

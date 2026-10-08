@@ -4,39 +4,33 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { FULL_LABEL, integrationMode } from "./ci-mode.mjs";
+import { integrationMode } from "./ci-mode.mjs";
 
 const pr = (action, extra = {}) => ({
   event: "pull_request",
   action,
   draft: false,
-  label: "",
   ...extra,
 });
 
-test("pull request entry points run the full integration suite", () => {
-  for (const action of ["opened", "reopened", "ready_for_review"])
+test("every head of a pull request in review runs the full integration suite", () => {
+  for (const action of [
+    "opened",
+    "reopened",
+    "ready_for_review",
+    "synchronize",
+  ])
     assert.equal(integrationMode(pr(action)), "full", action);
-  assert.equal(integrationMode(pr("labeled", { label: FULL_LABEL })), "full");
 });
 
-test("ordinary pushes and drafts run only repository and service checks", () => {
-  assert.equal(integrationMode(pr("synchronize")), "light");
-  assert.equal(
-    integrationMode(pr("synchronize", { label: FULL_LABEL })),
-    "light",
-    "a label left on the pull request must not make every push full",
-  );
-  assert.equal(integrationMode(pr("opened", { draft: true })), "light");
-  assert.equal(integrationMode(pr("reopened", { draft: true })), "light");
+test("drafts run only repository and service checks", () => {
+  for (const action of ["opened", "reopened", "synchronize"])
+    assert.equal(integrationMode(pr(action, { draft: true })), "light", action);
 });
 
-test("an unrelated label never starts or replaces an integration run", () => {
-  assert.equal(
-    integrationMode(pr("labeled", { label: "dependencies" })),
-    "ignored",
-  );
-  assert.equal(integrationMode(pr("edited")), "ignored");
+test("no other pull request event selects a mode, labels included", () => {
+  for (const action of ["labeled", "unlabeled", "edited"])
+    assert.equal(integrationMode(pr(action)), "ignored", action);
 });
 
 test("main pushes and manual runs stay full", () => {
@@ -59,13 +53,12 @@ test("the CLI reads the GitHub event from the environment", () => {
   });
   assert.equal(draft.status, 0, draft.stderr);
   assert.equal(draft.stdout, "mode=light\n");
-  const labeled = run({
+  const pushed = run({
     EVENT: "pull_request",
-    ACTION: "labeled",
+    ACTION: "synchronize",
     DRAFT: "false",
-    LABEL: FULL_LABEL,
   });
-  assert.equal(labeled.stdout, "mode=full\n");
+  assert.equal(pushed.stdout, "mode=full\n");
   assert.notEqual(run({}).status, 0, "a missing event must not default");
 });
 
@@ -78,7 +71,7 @@ test("integration.yml reports the required check only from a full run", () => {
   );
   assert.match(
     workflow,
-    /pull_request:\n\s+types: \[opened, reopened, ready_for_review, synchronize, labeled\]/u,
+    /pull_request:\n\s+types: \[opened, reopened, ready_for_review, synchronize\]\n/u,
   );
   assert.match(
     workflow,
@@ -90,11 +83,14 @@ test("integration.yml reports the required check only from a full run", () => {
     /name: \$\{\{ needs\.changes\.outputs\.mode == 'full' && 'Integration checks' \|\| 'Integration checks \(not run\)' \}\}/u,
   );
   assert.doesNotMatch(workflow, /^\s+name: Integration checks$/mu);
-  // Unrelated label runs get their own group so they cannot cancel a full run.
+  // GitHub evaluates a required check against the newest run of this
+  // workflow for the head commit, so no event may start a run that would
+  // stand in front of a full one: labels never trigger it.
   assert.match(
     workflow,
-    /group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\$\{\{ github\.event\.action == 'labeled' && github\.event\.label\.name != 'ci:full' && format\('-\{0\}', github\.run_id\) \|\| '' \}\}/u,
+    /group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n/u,
   );
+  assert.doesNotMatch(workflow, /label/iu);
   // Every suite job is gated on the full mode, not only on its selection.
   for (const job of ["images", "suite", "image-suite", "optional-suite"]) {
     const body = workflow.split(new RegExp(`\\n  ${job}:\\n`, "u"))[1];
@@ -109,6 +105,4 @@ test("integration.yml reports the required check only from a full run", () => {
       `${job} must run only in full mode`,
     );
   }
-  assert.match(workflow, /gh pr edit "\$PR" --remove-label 'ci:full'/u);
-  assert.equal(FULL_LABEL, "ci:full");
 });
