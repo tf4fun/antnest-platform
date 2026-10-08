@@ -11,7 +11,10 @@ import {
 } from "../lifecycle-closeout/docker.mjs";
 import { configureFoundation } from "../lifecycle-closeout/foundation-setup.mjs";
 import { applicationServices } from "../lifecycle-closeout/deployment.mjs";
-import { candidateCommand } from "../../support/candidate-images.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 import { runCommand } from "../../support/run-command.mjs";
 import {
   evidenceDirectory,
@@ -152,7 +155,7 @@ try {
         build: ["docker", ...config.compose(["build", service])],
         labels: { "io.antnest.deployment-admission": config.project },
       }),
-      config.env,
+      candidateEnvironment(config.env),
     );
   }
   console.log(

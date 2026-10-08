@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   candidateCommand,
   candidateContext,
+  candidateEnvironment,
   providedImages,
   providedVariable,
 } from "./candidate-images.mjs";
@@ -87,6 +88,28 @@ test("an image CI did not provide is built from source", () => {
   );
 });
 
+test("candidate builds run without the stack's trace exporter settings", () => {
+  // Buildx exports its own build traces to OTEL_EXPORTER_OTLP_ENDPOINT, and
+  // the stack's collector address does not resolve on the host.
+  const env = {
+    PATH: "/usr/bin",
+    ANTNEST_ADMISSION_TAG: "shell-1",
+    COMPOSE_FILE: "compose.yaml",
+    [providedVariable]: "antnest-runtime",
+    OTEL_SDK_DISABLED: "false",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318",
+    OTEL_TRACES_EXPORTER: "otlp",
+  };
+  const copy = { ...env };
+  assert.deepEqual(candidateEnvironment(env), {
+    PATH: "/usr/bin",
+    ANTNEST_ADMISSION_TAG: "shell-1",
+    COMPOSE_FILE: "compose.yaml",
+    [providedVariable]: "antnest-runtime",
+  });
+  assert.deepEqual(env, copy);
+});
+
 test("candidate names, tags, labels and builds are validated first", () => {
   assert.throws(
     () =>
@@ -141,6 +164,24 @@ test("the command line passes labels and otherwise runs the build", () => {
     "process.exit(3)",
   ]);
   assert.equal(failed.status, 3);
+  const traced = spawnSync(
+    process.execPath,
+    [
+      helper,
+      "antnest-runtime",
+      tag,
+      "--",
+      process.execPath,
+      "-e",
+      "console.log(Object.keys(process.env).filter((k) => k.startsWith('OTEL_')).length)",
+    ],
+    {
+      env: { PATH: process.env.PATH, OTEL_TRACES_EXPORTER: "otlp" },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(traced.status, 0, traced.stderr);
+  assert.equal(traced.stdout.trim(), "0");
   for (const args of [
     ["antnest-runtime"],
     ["antnest-runtime", tag, "--label", "x"],

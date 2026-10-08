@@ -232,3 +232,35 @@ esac
   ]);
   assert(!failure.message.includes(token));
 });
+
+test("a Docker call can run with its own environment under the client deadline", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "docker-client-env-"));
+  try {
+    const bin = join(directory, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "docker"),
+      '#!/bin/sh\necho "$1|${OTEL_TRACES_EXPORTER:-unset}|$ANTNEST_ADMISSION_TAG"\n',
+      { mode: 0o700 },
+    );
+    const env = {
+      PATH: `${bin}:${process.env.PATH}`,
+      ANTNEST_ADMISSION_TAG: "shell-1",
+      OTEL_TRACES_EXPORTER: "otlp",
+    };
+    const docker = dockerClient(env, undefined, 60_000);
+    assert.equal(await docker(["ps"]), "ps|otlp|shell-1");
+    const { OTEL_TRACES_EXPORTER: _, ...build } = env;
+    assert.equal(
+      await docker(["build"], true, { env: build }),
+      "build|unset|shell-1",
+    );
+    const expired = dockerClient(env, undefined, -1);
+    await assert.rejects(
+      expired(["build"], true, { env: build }),
+      /deadline exceeded/u,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

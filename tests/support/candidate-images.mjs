@@ -63,6 +63,16 @@ export function candidateCommand(
   ];
 }
 
+// Buildx exports its own build traces when OTEL_* names an exporter, and a
+// stack's collector address (http://jaeger:4318) only resolves inside the
+// stack, so every build would wait for the export to time out. Builds do not
+// read these settings: the compose files give each one a default.
+export function candidateEnvironment(env = process.env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([name]) => !name.startsWith("OTEL_")),
+  );
+}
+
 function parseCommandLine(args) {
   const [name, tag, ...rest] = args;
   const labels = {};
@@ -84,7 +94,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(64);
   }
   const [command, ...args] = candidateCommand(parsed);
-  const result = spawnSync(command, args, { stdio: "inherit" });
+  const result = spawnSync(command, args, {
+    stdio: "inherit",
+    env: candidateEnvironment(),
+  });
   if (result.error) throw result.error;
   process.exit(result.status ?? 1);
 }

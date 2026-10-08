@@ -385,7 +385,11 @@ export const suites = [
     name: `Managed MCP secrets protocol v${version}`,
     tier: "b",
     setup: [],
-    images: [...platformImages, "antnest-runtime-managed"].sort(),
+    images: [
+      ...platformImages,
+      "antnest-runtime-fixture",
+      "antnest-runtime-managed",
+    ].sort(),
     pull: observed,
     paths: [
       "services/**",
