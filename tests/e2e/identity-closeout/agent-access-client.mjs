@@ -45,6 +45,7 @@ import {
   strictSessionEvidence,
 } from "./session-trace.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const evidenceRoot = evidenceDirectory(
   process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
@@ -703,7 +704,7 @@ try {
   for (const browser of [adminA, adminB, memberB])
     await browser.request("/api/session", { method: "DELETE", status: 204 });
   process.stdout.write(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       versions: [1, 2],
       denied_admin: deniedAdmin,
@@ -719,7 +720,7 @@ try {
   if (evidenceRoot)
     writeEvidenceFile(evidenceRoot, "failure.private.txt", String(error.stack));
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "agent_access_failed",
       step,
       reason: failureCategory(error),

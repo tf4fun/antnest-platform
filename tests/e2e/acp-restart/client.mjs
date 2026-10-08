@@ -40,6 +40,7 @@ import { assertReplay } from "../acp-persistence/evidence.mjs";
 import { seed } from "./setup.mjs";
 import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 const archive = new Map();
 const saveTrace = (label) => (trace) =>
   writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
@@ -500,7 +501,7 @@ async function exercise(version, kind, template) {
     replays: kind === "inflight" ? 3 : 2,
   });
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "interruption_case_passed",
       label,
       run_id: after.run.run_id,
@@ -601,7 +602,7 @@ async function main() {
   await writeFile("/tmp/restart-business.json", JSON.stringify(business), {
     mode: 0o600,
   });
-  console.log(JSON.stringify(business));
+  console.log(asciiJSON(business));
   await mkdir("/tmp/restart-traces", { mode: 0o700, recursive: true });
   const save = (label) => (trace) =>
     writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
@@ -677,7 +678,7 @@ async function main() {
   const { accepted, ...strict } = restartStrictOutcome(results);
   save("results")(results);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "trace_assessment",
       trace_gate_scope: "completed_requests_and_lifecycle",
       interrupted_trace_diagnostics: results.filter(
@@ -693,7 +694,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "restart_failed",
       stage,
       error: error.message,

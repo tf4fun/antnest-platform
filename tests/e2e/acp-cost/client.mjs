@@ -35,6 +35,7 @@ import {
   setModel,
   validate,
 } from "./connection.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -646,7 +647,7 @@ async function main() {
   assert.equal(traces.filter((t) => t.rejection).length, 12);
   assert.equal(pricingTraces.length, 19);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_complete",
       model_requests: requests.length,
       request_traces: traces.length,
@@ -668,7 +669,7 @@ async function main() {
     );
   }
   console.log(
-    JSON.stringify({ status: "request_traces_checked", count: checked.length }),
+    asciiJSON({ status: "request_traces_checked", count: checked.length }),
   );
   assert.equal(new Set(checked.map((t) => t.trace_id)).size, traces.length);
   assert.equal(new Set(checked.map((t) => t.run_id).filter(Boolean)).size, 52);
@@ -687,7 +688,7 @@ async function main() {
   }
   const { accepted, ...strict } = nativeStrictOutcome([...checked, ...pricing]);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       ...strict,
       transports: profiles.map((p) => p.name),
@@ -709,7 +710,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       ...summarizeFailure(error),

@@ -210,6 +210,7 @@ export async function workspaceProtocol({
       kind: "cancelled",
       phase: "c4-cancel",
       runtime: await binding(initial),
+      closedBeforeResponse: true,
     });
     const pgid = processStat(
       await exec(initial.container.Id, `cat /proc/${pid}/stat`),
@@ -325,6 +326,7 @@ export async function workspaceProtocol({
       kind: "ordinary",
       phase: "c4-offline",
       runtime: await binding(initial),
+      closedBeforeResponse: true,
     });
     await watch.wait(
       (state) =>
@@ -497,7 +499,13 @@ export async function workspaceProtocol({
     );
     assertAgentDisabled(await json(`/api/admin/agents/${agentID}`));
     const retained = await resources(agentID);
-    assert.deepEqual(retained.volumes, [initial.volume]);
+    // Disable keeps the workspace and the current Skill set reference; the
+    // generation's receiver volume leaves with its compute.
+    assert.deepEqual(
+      [...retained.volumes].sort(),
+      [rebuilt.skillVolume, rebuilt.volume].sort(),
+      "Disable retained unexpected Runtime storage",
+    );
     assert(
       retained.containers.every((container) => !container.State.Running),
       "revoked owner's Runtime still running",

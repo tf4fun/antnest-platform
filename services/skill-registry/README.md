@@ -183,6 +183,9 @@ docker compose --profile stage3 build skill-registry
   Controller preparation and Runtime Initialize consumption with isolated
   processes, PostgreSQL, a Docker named volume and a test Runtime image. It
   also checks that root and UID 1000 cannot modify the mounted system Skill.
+  Both services run with service authentication: the test publishes as
+  Admin Console with a signed Caller Context, served by a fixture Identity
+  JWKS, and calls Runtime Controller as Agent Controller.
   `make integration-stage4-skill-slow-prepare` and
   `make integration-stage4-skill-restart-prepare` add slow-download and
   graceful-restart variants.

@@ -77,6 +77,18 @@ test("cross-connection cancellation requires complete original Run ancestry and 
   assert.equal(r.strict_trace, "failed");
   assert.deepEqual(f.trace, before);
 });
+test("a closed v1 prompt response error is accepted only when the client closed first", () => {
+  const f = fixture();
+  f.trace.spans[2].tags.push(
+    { key: "antnest.protocol.version", value: "v1" },
+    { key: "antnest.outcome", value: "error" },
+    { key: "antnest.operation.phase", value: "acp.dispatch" },
+    { key: "error", value: true },
+  );
+  assert.throws(() => inspect(f), /unexpected cancellation error/);
+  f.expected.closedBeforeResponse = true;
+  assert.equal(inspect(f).run_id, "run");
+});
 for (const [label, mutate] of [
   [
     "missing parent",
