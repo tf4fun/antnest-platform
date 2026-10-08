@@ -297,40 +297,98 @@ test("Runtime ticket binds execution, job generation, action, request, and body"
     execution_id: "execution-1",
     job_id: "job-1",
     generation: 2,
-    action: "commit",
-    request_id: "commit-1",
+    action: "install",
+    request_id: "install-1",
     body_sha256: digest,
     issued_at: 1790610000,
     expires_at: 1790610060,
   };
   assert(accepts("ticket", ticket));
+  assert(accepts("ticket", { ...ticket, action: "digest" }));
   assert.equal(accepts("ticket", { ...ticket, body_sha256: undefined }), false);
   assert.equal(accepts("ticket", { ...ticket, generation: 0 }), false);
   assert.equal(accepts("ticket", { ...ticket, action: "tools/call" }), false);
   assert.equal(accepts("ticket", { ...ticket, caller_role: "admin" }), false);
+  for (const action of [
+    "prepare",
+    "check",
+    "commit",
+    "observe",
+    "cancel",
+    "release",
+    "revert",
+  ])
+    assert.equal(accepts("ticket", { ...ticket, action }), false, action);
 });
 
-test("maintenance requests carry conditional digest and stable request identity", () => {
+test("install carries the whole candidate with a conditional base and stable request identity", () => {
   const request = {
-    action: "commit",
-    request_id: "commit-1",
+    action: "install",
+    request_id: "install-1",
     job_id: "job-1",
     generation: 2,
-    candidate_id: "candidate-1",
     package_path: path,
     expected_base_digest: null,
     target_digest: digest,
+    artifact_digest: digest,
+    package_rules_version: 1,
   };
-  assert(accepts("commit_request", request));
+  assert(accepts("install_request", request));
+  assert(
+    accepts("install_request", {
+      ...request,
+      expected_base_digest: `sha256:${"f".repeat(64)}`,
+    }),
+  );
+  for (const field of [
+    "expected_base_digest",
+    "target_digest",
+    "artifact_digest",
+    "package_rules_version",
+  ])
+    assert.equal(
+      accepts("install_request", { ...request, [field]: undefined }),
+      false,
+      field,
+    );
   assert.equal(
-    accepts("commit_request", { ...request, target_digest: undefined }),
+    accepts("install_request", { ...request, package_path: "/skills/system" }),
     false,
   );
   assert.equal(
-    accepts("commit_request", { ...request, package_path: "/skills/system" }),
+    accepts("install_request", { ...request, package_rules_version: 2 }),
     false,
   );
-  assert.equal(accepts("commit_request", { ...request, force: true }), false);
+  assert.equal(accepts("install_request", { ...request, force: true }), false);
+  assert.equal(
+    accepts("install_request", { ...request, candidate_id: "candidate-1" }),
+    false,
+  );
+});
+
+test("digest is a read-only query for one managed package path", () => {
+  const request = {
+    action: "digest",
+    request_id: "digest-1",
+    job_id: "job-1",
+    generation: 1,
+    package_path: path,
+  };
+  assert(accepts("digest_request", request));
+  assert.equal(
+    accepts("digest_request", { ...request, package_path: "../etc" }),
+    false,
+  );
+  for (const extra of [
+    { target_digest: digest },
+    { effect_request_id: "install-1" },
+    { artifact_digest: digest },
+  ])
+    assert.equal(
+      accepts("digest_request", { ...request, ...extra }),
+      false,
+      Object.keys(extra)[0],
+    );
 });
 
 test("learning notice metadata has a stable change identity and no authority fields", () => {
@@ -446,6 +504,18 @@ test("first delivery contract has no undo or diff surface", () => {
     assert.equal(Object.hasOwn(schema.$defs, name), false, name);
 });
 
+test("learning has no multi-step Runtime transaction surface", () => {
+  for (const name of [
+    "prepare_request",
+    "check_request",
+    "commit_request",
+    "observe_request",
+    "cancel_request",
+    "release_request",
+  ])
+    assert.equal(Object.hasOwn(schema.$defs, name), false, name);
+});
+
 test("Runtime verifier bootstrap is bounded and uses public keys only", () => {
   const key = {
     kid: "learning-2026-09",
@@ -524,141 +594,87 @@ test("candidate and evidence preserve provenance and do not claim executable ver
   );
 });
 
-test("prepare, check, observe, cancel and release are distinct strict operations", () => {
-  const base = { request_id: "request-1", job_id: "job-1", generation: 2 };
-  const prepare = {
-    ...base,
-    action: "prepare",
-    candidate_id: "candidate-1",
-    package_path: path,
-    expected_base_digest: null,
-    target_digest: digest,
-    artifact_digest: digest,
-    package_rules_version: 1,
-  };
-  const check = {
-    ...base,
-    action: "check",
-    candidate_id: "candidate-1",
-    package_path: path,
-    target_digest: digest,
-    package_rules_version: 1,
-  };
-  const observe = {
-    ...base,
-    action: "observe",
-    effect_request_id: "commit-1",
-    expected_target_digest: digest,
-  };
-  const cancel = { ...base, action: "cancel" };
-  const release = {
-    ...base,
-    action: "release",
-    storage_class: "candidate",
-    storage_key: digest.slice(7),
-    package_path: path,
-    expected_digest: digest,
-  };
-  for (const [name, value] of Object.entries({
-    prepare,
-    check,
-    observe,
-    cancel,
-    release,
-  }))
-    assert(accepts(`${name}_request`, value), name);
-  assert.equal(
-    accepts("prepare_request", { ...prepare, package_rules_version: 2 }),
-    false,
-  );
-  assert.equal(
-    accepts("observe_request", { ...observe, retry_as_new: true }),
-    false,
-  );
-  assert.equal(
-    accepts("ticket", {
-      organization_id: org,
-      agent_id: agent,
-      execution_id: "execution-1",
-      job_id: "job-1",
-      generation: 2,
-      action: "revert",
-      request_id: "request-1",
-      body_sha256: digest,
-      issued_at: 1790610000,
-      expires_at: 1790610060,
-    }),
-    false,
-  );
-  assert.equal(
-    accepts("release_request", { ...release, storage_key: "../skills" }),
-    false,
-  );
-  assert.equal(
-    accepts("release_request", { ...release, storage_class: "workspace" }),
-    false,
-  );
-  assert.equal(
-    accepts("release_request", { ...release, storage_class: "history" }),
-    false,
-  );
-  assert.equal(
-    accepts("release_request", {
-      ...release,
-      storage_key: `revert-${release.storage_key}`,
-    }),
-    false,
-  );
-});
-
-test("maintenance receipt distinguishes settled results, blocked and unknown effects", () => {
+test("maintenance receipt settles install as applied, conflict, blocked or preempted", () => {
   const base = {
-    request_id: "commit-1",
-    action: "commit",
+    request_id: "install-1",
+    action: "install",
     execution_id: "execution-1",
     outcome: "applied",
     observed_digest: digest,
   };
   assert(accepts("maintenance_receipt", base));
   assert.equal(
+    accepts("maintenance_receipt", { ...base, observed_digest: null }),
+    false,
+  );
+  for (const conflict_reason of [
+    "base_changed",
+    "target_exists",
+    "content_changed_during_activation",
+  ])
+    assert(
+      accepts("maintenance_receipt", {
+        ...base,
+        outcome: "conflict",
+        conflict_reason,
+      }),
+      conflict_reason,
+    );
+  assert.equal(
+    accepts("maintenance_receipt", { ...base, outcome: "conflict" }),
+    false,
+  );
+  assert.equal(
     accepts("maintenance_receipt", {
       ...base,
-      action: "prepare",
-      outcome: "prepared",
+      conflict_reason: "base_changed",
     }),
     false,
   );
   assert(
     accepts("maintenance_receipt", {
       ...base,
-      action: "prepare",
-      outcome: "prepared",
-      storage_key: digest.slice(7),
-    }),
-  );
-  assert(
-    accepts("maintenance_receipt", {
-      ...base,
-      action: "release",
-      outcome: "released",
+      outcome: "preempted",
       observed_digest: null,
     }),
   );
-  assert(
-    accepts("maintenance_receipt", {
-      ...base,
-      outcome: "unknown",
-      observed_digest: null,
-    }),
+  assert.equal(
+    accepts("maintenance_receipt", { ...base, outcome: "preempted" }),
+    false,
   );
+  for (const outcome of [
+    "unknown",
+    "prepared",
+    "checked",
+    "released",
+    "cancelled",
+  ])
+    assert.equal(
+      accepts("maintenance_receipt", {
+        ...base,
+        outcome,
+        observed_digest: null,
+      }),
+      false,
+      outcome,
+    );
   assert.equal(
     accepts("maintenance_receipt", { ...base, outcome: "blocked" }),
     false,
   );
+  assert(
+    accepts("maintenance_receipt", {
+      ...base,
+      outcome: "blocked",
+      observed_digest: null,
+      blocked_reason: "foreground_running",
+    }),
+  );
   assert.equal(
     accepts("maintenance_receipt", {
       ...base,
       outcome: "blocked",
+      observed_digest: null,
       blocked_reason: "background_task_running",
     }),
     false,
@@ -667,28 +683,92 @@ test("maintenance receipt distinguishes settled results, blocked and unknown eff
     accepts("maintenance_receipt", {
       ...base,
       outcome: "blocked",
+      observed_digest: null,
       blocked_reason: "background_task_running",
       blocked_subject_id: "bash:42",
     }),
   );
-  assert.equal(
+  assert(
     accepts("maintenance_receipt", {
       ...base,
       outcome: "blocked",
+      observed_digest: null,
       blocked_reason: "managed_call_in_flight",
+      blocked_subject_id: "managed:server-a",
     }),
+  );
+  for (const blocked_reason of ["policy_changed", "execution_changed"])
+    assert.equal(
+      accepts("maintenance_receipt", {
+        ...base,
+        outcome: "blocked",
+        observed_digest: null,
+        blocked_reason,
+      }),
+      false,
+      blocked_reason,
+    );
+  assert.equal(
+    accepts("maintenance_receipt", { ...base, storage_key: digest.slice(7) }),
     false,
+  );
+  assert.equal(
+    accepts("maintenance_receipt", { ...base, shell_output: "secret" }),
+    false,
+  );
+});
+
+test("digest receipt only observes or yields to foreground work", () => {
+  const base = {
+    request_id: "digest-1",
+    action: "digest",
+    execution_id: "execution-1",
+    outcome: "observed",
+    observed_digest: digest,
+  };
+  assert(accepts("maintenance_receipt", base));
+  assert(accepts("maintenance_receipt", { ...base, observed_digest: null }));
+  assert(
+    accepts("maintenance_receipt", {
+      ...base,
+      outcome: "preempted",
+      observed_digest: null,
+    }),
   );
   assert(
     accepts("maintenance_receipt", {
       ...base,
       outcome: "blocked",
-      blocked_reason: "managed_call_in_flight",
-      blocked_subject_id: "managed:server-a",
+      observed_digest: null,
+      blocked_reason: "foreground_running",
     }),
   );
   assert.equal(
-    accepts("maintenance_receipt", { ...base, shell_output: "secret" }),
+    accepts("maintenance_receipt", {
+      ...base,
+      outcome: "blocked",
+      observed_digest: null,
+      blocked_reason: "background_task_running",
+      blocked_subject_id: "bash:42",
+    }),
+    false,
+  );
+  for (const outcome of ["applied", "conflict"])
+    assert.equal(
+      accepts("maintenance_receipt", {
+        ...base,
+        outcome,
+        conflict_reason: "base_changed",
+      }),
+      false,
+      outcome,
+    );
+  assert.equal(
+    accepts("maintenance_receipt", {
+      ...base,
+      request_id: "install-1",
+      action: "install",
+    }),
     false,
   );
 });

@@ -28,7 +28,7 @@
         "agent-acp-service": "operation"
       },
       "request_body": "protocol",
-      "notes": "Workload proof supplements the signed ticket and execution fence. The prepare action is a bounded multipart artifact upload; other actions are strict application/json controls."
+      "notes": "Workload proof supplements the signed ticket and execution fence. The install action is a bounded multipart artifact upload; the read-only digest action is a strict application/json query."
     },
     "POST /internal/skill-temporary/{action}": {
       "callers": ["agent-acp-service"],
