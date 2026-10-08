@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   composeArgs,
+  dockerClient,
   owned,
   scopeLabel,
   networkOctet,
@@ -147,4 +151,84 @@ test("failed Docker inventory never certifies absence", async () => {
       "volume",
     ),
   );
+});
+
+test("a failed Compose up reports why a service failed to start without credentials", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "lifecycle-startup-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const credentials = join(directory, "credentials");
+  mkdirSync(join(credentials, "agent-controller", "tokens"), {
+    recursive: true,
+  });
+  const token = "placeholder-token-xxxxxxxxxxxx";
+  writeFileSync(join(credentials, "agent-controller", "tokens", "peer"), token);
+  const container = {
+    Id: "failed-id",
+    Config: { Labels: { "com.docker.compose.service": "agent-controller" } },
+    State: { Status: "exited", ExitCode: 1, OOMKilled: false },
+  };
+  const bin = join(directory, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(directory, "inspect.json"), JSON.stringify([container]));
+  writeFileSync(
+    join(directory, "logs.txt"),
+    [
+      JSON.stringify({
+        level: "ERROR",
+        msg: "connect Temporal",
+        error: { code: "temporal_unavailable" },
+      }),
+      JSON.stringify({ level: "ERROR", msg: `rejected ${token}` }),
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(bin, "docker"),
+    `#!/bin/sh
+case "$1" in
+  compose) echo 'dependency failed to start: container agent-controller exited (1)' >&2; exit 1 ;;
+  ps) echo failed-id ;;
+  inspect) cat "${directory}/inspect.json" ;;
+  logs) cat "${directory}/logs.txt" ;;
+  *) exit 9 ;;
+esac
+`,
+    { mode: 0o700 },
+  );
+  const docker = dockerClient(
+    {
+      PATH: `${bin}:${process.env.PATH}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: credentials,
+    },
+    undefined,
+    60_000,
+  );
+  const failure = await docker(
+    composeArgs("antnest-lifecycle-aabbccdd", ["up", "-d", "--wait"]),
+    true,
+  ).then(
+    () => assert.fail("Compose up must fail"),
+    (error) => error,
+  );
+  assert.match(failure.message, /dependency failed to start/);
+  const summary = JSON.parse(
+    failure.message
+      .split("\n")
+      .find((line) => line.startsWith('{"startup_failures"')),
+  );
+  assert.deepEqual(summary.startup_failures, [
+    {
+      service: "agent-controller",
+      status: "exited",
+      exit_code: 1,
+      oom_killed: false,
+      health: null,
+      errors: [
+        { msg: "connect Temporal", code: "temporal_unavailable" },
+        { msg: "[withheld: credential]", code: null },
+      ],
+      crash: [],
+    },
+  ]);
+  assert(!failure.message.includes(token));
 });

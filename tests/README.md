@@ -238,6 +238,15 @@ tier; the catalog's unit tests check that every `make` target and runner it
 names exists and that every suite belongs to exactly one shard. A suite with a `disabled` reason stays in the
 catalog but is never selected until its known breakage is fixed.
 
+A failed Stage 3a run (`tests/e2e/e2e-stage3a.sh`) omits raw service logs
+because they may contain credentials. Instead it prints one
+`{"startup_failures":[...]}` line from `tests/support/startup-failure-summary.mjs`.
+That line covers each exited, restarting, OOM-killed or unhealthy container and
+gives its exit code and health, the `msg` and `error.code` of its ERROR-level
+structured records, and the first line of any panic or uncaught error. A field
+containing a credential the run provisioned is replaced with
+`[withheld: credential]`.
+
 ## Resource hygiene
 
 - Run verification commands serially. A runner preserves the failure exit

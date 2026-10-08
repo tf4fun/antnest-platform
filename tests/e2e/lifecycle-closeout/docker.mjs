@@ -11,6 +11,7 @@ import {
   fixtureEnvironment,
   prepareFixtureCredentials,
 } from "../../support/authenticated-e2e.mjs";
+import { collectStartupFailures } from "../../support/startup-failure-summary.mjs";
 
 export const scopeLabel = "io.antnest.runtime-controller-scope";
 export const lines = (value) => value.trim().split(/\s+/).filter(Boolean);
@@ -39,6 +40,26 @@ export function stderrDiagnostic(text, env = {}) {
   let tail = text.trim().split("\n").slice(-12).join("\n");
   for (const secret of secrets) tail = tail.replaceAll(secret, "[redacted]");
   return tail.replace(/(Bearer\s+)\S+/gi, "$1[redacted]").slice(-2000);
+}
+
+function composeUpProject(args) {
+  if (args[0] !== "compose" || !args.includes("up")) return null;
+  const index = args.indexOf("--project-name");
+  return index < 0 ? null : args[index + 1];
+}
+
+// Without the run's credential directory no log field can be checked, so the
+// summary is skipped rather than printed unchecked.
+function startupSummary(project, env) {
+  try {
+    return collectStartupFailures(
+      project,
+      env.ANTNEST_SERVICE_AUTH_DIRECTORY,
+      env,
+    );
+  } catch {
+    return "startup failure summary unavailable";
+  }
 }
 
 export function dockerClient(env, signal, budget = 900000) {
@@ -88,6 +109,9 @@ export function dockerClient(env, signal, budget = 900000) {
           commandFailure.message += ` (${code})`;
           const diagnostic = stderrDiagnostic(errors, env);
           if (diagnostic) commandFailure.message += `\n${diagnostic}`;
+          const project = composeUpProject(args);
+          if (project)
+            commandFailure.message += `\n${startupSummary(project, env)}`;
           reject(failure ?? commandFailure);
         } else resolve(output.trim());
       });
