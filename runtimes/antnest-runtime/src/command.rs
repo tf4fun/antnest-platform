@@ -37,6 +37,9 @@ impl Command {
             "skill-observe" => Ok(Self::Tool(ToolCommand::SkillObserve)),
             "skill-cancel" => Ok(Self::Tool(ToolCommand::SkillCancel)),
             "skill-release" => Ok(Self::Tool(ToolCommand::SkillRelease)),
+            "skill-install" => Ok(Self::Tool(ToolCommand::SkillInstall)),
+            "skill-digest" => Ok(Self::Tool(ToolCommand::SkillDigest)),
+            "skill-install-clean" => Ok(Self::Tool(ToolCommand::SkillInstallClean)),
             "skill-temporary-install" => Ok(Self::Tool(ToolCommand::SkillTemporaryInstall)),
             "skill-temporary-release" => Ok(Self::Tool(ToolCommand::SkillTemporaryRelease)),
             "skill-temporary-clean" => Ok(Self::Tool(ToolCommand::SkillTemporaryClean)),
@@ -58,6 +61,9 @@ pub(crate) enum ToolCommand {
     SkillObserve,
     SkillCancel,
     SkillRelease,
+    SkillInstall,
+    SkillDigest,
+    SkillInstallClean,
     SkillTemporaryInstall,
     SkillTemporaryRelease,
     SkillTemporaryClean,
@@ -73,6 +79,9 @@ impl ToolCommand {
                 | Self::SkillObserve
                 | Self::SkillCancel
                 | Self::SkillRelease
+                | Self::SkillInstall
+                | Self::SkillDigest
+                | Self::SkillInstallClean
                 | Self::SkillTemporaryInstall
                 | Self::SkillTemporaryRelease
                 | Self::SkillTemporaryClean
@@ -92,6 +101,9 @@ impl ToolCommand {
             Self::SkillObserve => "skill-observe",
             Self::SkillCancel => "skill-cancel",
             Self::SkillRelease => "skill-release",
+            Self::SkillInstall => "skill-install",
+            Self::SkillDigest => "skill-digest",
+            Self::SkillInstallClean => "skill-install-clean",
             Self::SkillTemporaryInstall => "skill-temporary-install",
             Self::SkillTemporaryRelease => "skill-temporary-release",
             Self::SkillTemporaryClean => "skill-temporary-clean",
@@ -99,7 +111,10 @@ impl ToolCommand {
     }
 
     pub(crate) const fn may_have_side_effects(self) -> bool {
-        !matches!(self, Self::Read | Self::Info | Self::SkillObserve)
+        !matches!(
+            self,
+            Self::Read | Self::Info | Self::SkillObserve | Self::SkillDigest
+        )
     }
 }
 
@@ -134,6 +149,23 @@ mod temporary_command_tests {
             };
             assert!(tool.is_private_maintenance());
             assert!(tool.may_have_side_effects());
+        }
+    }
+
+    #[test]
+    fn learning_install_executors_are_private_parent_only_commands() {
+        for (name, side_effects) in [
+            ("skill-install", true),
+            ("skill-digest", false),
+            ("skill-install-clean", true),
+        ] {
+            let Command::Tool(tool) = Command::parse([name]).expect("executor command exists")
+            else {
+                panic!("expected executor");
+            };
+            assert!(tool.is_private_maintenance(), "{name}");
+            assert_eq!(tool.may_have_side_effects(), side_effects, "{name}");
+            assert_eq!(tool.as_str(), name);
         }
     }
 }

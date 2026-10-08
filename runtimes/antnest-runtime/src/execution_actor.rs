@@ -1,8 +1,8 @@
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nix::sys::signal::{Signal, kill};
@@ -25,11 +25,13 @@ use crate::executor_protocol::{
     ExecutorFailure, MAX_EXECUTOR_DIAGNOSTIC_BYTES, MAX_EXECUTOR_MESSAGE_BYTES, Outcome,
     decode_bash_reply, decode_edit_reply, decode_info_reply, decode_read_reply,
     decode_skill_cancel_reply, decode_skill_check_reply, decode_skill_commit_reply,
+    decode_skill_digest_reply, decode_skill_install_cleaned_reply, decode_skill_install_reply,
     decode_skill_observe_reply, decode_skill_prepare_reply, decode_skill_release_reply,
     decode_temporary_install_reply, decode_temporary_released_reply, decode_write_reply,
     encode_bash_request, encode_edit_request, encode_read_request, encode_skill_cancel_request,
-    encode_skill_check_request, encode_skill_commit_request, encode_skill_observe_request,
-    encode_skill_prepare_request, encode_skill_release_request, encode_temporary_install_request,
+    encode_skill_check_request, encode_skill_commit_request, encode_skill_digest_request,
+    encode_skill_install_request, encode_skill_observe_request, encode_skill_prepare_request,
+    encode_skill_release_request, encode_temporary_install_request,
     encode_temporary_release_request, encode_write_request,
 };
 use crate::information::RuntimeContext;
@@ -38,6 +40,9 @@ use crate::skill_candidate::{
     CandidateCancelRequest, CandidateCancelled, CandidateCheckRequest, CandidateChecked,
     CandidateCommitRequest, CandidateCommitted, CandidateObserveRequest, CandidateObserved,
     CandidatePrepareRequest, CandidatePrepared, CandidateReleaseRequest, CandidateReleased,
+};
+use crate::skill_install::{
+    SkillDigestObserved, SkillDigestRequest, SkillInstallRequest, SkillInstalled,
 };
 use crate::skill_maintenance_state::{MaintenanceGenerations, MaintenanceLease};
 use crate::skill_temporary::{
@@ -53,6 +58,8 @@ const FILE_TOOL_TIMEOUT: Duration = Duration::from_secs(30);
 // bounded two-second output drain before the Supervisor's outer deadline.
 const EXECUTOR_GRACE: Duration = Duration::from_secs(3);
 const PROCESS_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long foreground admission waits for a preempted learning call.
+pub(crate) const FOREGROUND_PREEMPTION_BOUND: Duration = Duration::from_secs(2);
 const EXECUTOR_PROBE_COMMAND: &str = "test -w . && test -x . && \
     test -r \"$ANTNEST_PROBE_SYSTEM_SKILLS\" && \
     test -x \"$ANTNEST_PROBE_SYSTEM_SKILLS\"";
@@ -336,6 +343,97 @@ impl ExecutionActor {
         result
     }
 
+    pub(crate) async fn install_skill(
+        &self,
+        request: SkillInstallRequest,
+    ) -> Result<SkillInstalled, MaintenanceCallError> {
+        let encoded = encode_skill_install_request(&request)
+            .map_err(|error| MaintenanceCallError::Tool(executor_request_error(error)))?;
+        self.execute_preemptible(
+            ToolCommand::SkillInstall,
+            encoded,
+            decode_skill_install_reply,
+            Duration::from_secs(60),
+        )
+        .await
+    }
+
+    pub(crate) async fn skill_digest(
+        &self,
+        request: SkillDigestRequest,
+    ) -> Result<SkillDigestObserved, MaintenanceCallError> {
+        let encoded = encode_skill_digest_request(&request)
+            .map_err(|error| MaintenanceCallError::Tool(executor_request_error(error)))?;
+        self.execute_preemptible(
+            ToolCommand::SkillDigest,
+            encoded,
+            decode_skill_digest_reply,
+            FILE_TOOL_TIMEOUT,
+        )
+        .await
+    }
+
+    pub(crate) async fn clean_install_staging_before_ready(&self) -> Result<(), ToolError> {
+        self.execute(
+            ToolCommand::SkillInstallClean,
+            b"{}".to_vec(),
+            decode_skill_install_cleaned_reply,
+            CancellationToken::new(),
+            Duration::from_secs(30),
+            ProgressSink::default(),
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Learning holds the slot only while nothing else wants it: it never
+    /// waits for a busy slot, and foreground admission or drain cancels it.
+    async fn execute_preemptible<O>(
+        &self,
+        tool: ToolCommand,
+        request: Vec<u8>,
+        decode_reply: ReplyDecoder<O>,
+        timeout: Duration,
+    ) -> Result<O, MaintenanceCallError>
+    where
+        O: Send + 'static,
+    {
+        if self.shutdown.is_cancelled() {
+            self.gate.close();
+        }
+        let preempt = CancellationToken::new();
+        let lease = match self.gate.try_acquire_preemptible(preempt.clone()) {
+            Ok(lease) => lease,
+            Err(AdmissionError::Busy) => return Err(MaintenanceCallError::ForegroundRunning),
+            Err(error) => {
+                return Err(MaintenanceCallError::Tool(ToolError::new(
+                    error.code(),
+                    error,
+                )));
+            }
+        };
+        let result = self
+            .execute_admitted(
+                tool,
+                request,
+                decode_reply,
+                preempt.clone(),
+                timeout,
+                ProgressSink::default(),
+                None,
+                lease,
+            )
+            .await;
+        match result {
+            Ok(value) => Ok(value),
+            Err(_) if preempt.is_cancelled() || self.shutdown.is_cancelled() => {
+                Err(MaintenanceCallError::Preempted)
+            }
+            Err(error) => Err(MaintenanceCallError::Tool(error)),
+        }
+    }
+
     fn maintenance_lease(
         &self,
         agent_id: &str,
@@ -361,7 +459,7 @@ impl ExecutionActor {
         request: TemporaryInstallRequest,
     ) -> Result<TemporaryInstalled, ToolError> {
         let encoded = encode_temporary_install_request(&request).map_err(executor_request_error)?;
-        let lease = self.admit()?;
+        let lease = self.admit().await?;
         self.temporary
             .begin(
                 &request.job_id,
@@ -399,7 +497,7 @@ impl ExecutionActor {
         request: TemporaryReleaseRequest,
     ) -> Result<TemporaryReleased, ToolError> {
         let encoded = encode_temporary_release_request(&request).map_err(executor_request_error)?;
-        let lease = self.admit()?;
+        let lease = self.admit().await?;
         self.temporary
             .close(&request.job_id, std::time::Instant::now());
         let run = request.job_id;
@@ -465,12 +563,13 @@ impl ExecutionActor {
             .await
     }
 
-    pub(crate) fn admit(&self) -> Result<ExecutionLease, ToolError> {
+    pub(crate) async fn admit(&self) -> Result<ExecutionLease, ToolError> {
         if self.shutdown.is_cancelled() {
             self.gate.close();
         }
         self.gate
-            .try_acquire()
+            .acquire_preempting(FOREGROUND_PREEMPTION_BOUND)
+            .await
             .map_err(|error| ToolError::new(error.code(), error))
     }
 
@@ -499,7 +598,7 @@ impl ExecutionActor {
     where
         O: Send + 'static,
     {
-        let lease = self.admit()?;
+        let lease = self.admit().await?;
         self.execute_admitted(
             tool,
             request,
@@ -544,7 +643,7 @@ impl ExecutionActor {
                 "encoded executor request exceeds the supported limit",
             ));
         }
-        if tool == ToolCommand::SkillCommit {
+        if matches!(tool, ToolCommand::SkillCommit | ToolCommand::SkillInstall) {
             #[cfg(target_os = "linux")]
             {
                 if std::process::id() != 1 {
@@ -676,6 +775,8 @@ struct AdmissionState {
     active: AtomicBool,
     poisoned: AtomicBool,
     idle: Notify,
+    // Set, under this lock, together with `active` by a preemptible holder.
+    preemptible: Mutex<Option<CancellationToken>>,
 }
 
 impl SingleFlight {
@@ -686,6 +787,7 @@ impl SingleFlight {
                 active: AtomicBool::new(false),
                 poisoned: AtomicBool::new(false),
                 idle: Notify::new(),
+                preemptible: Mutex::new(None),
             }),
         }
     }
@@ -715,8 +817,63 @@ impl SingleFlight {
         })
     }
 
+    pub(crate) fn try_acquire_preemptible(
+        &self,
+        preempt: CancellationToken,
+    ) -> Result<ExecutionLease, AdmissionError> {
+        let mut holder = self.state.preemptible.lock().expect("admission holder");
+        let lease = self.try_acquire()?;
+        *holder = Some(preempt);
+        Ok(lease)
+    }
+
+    /// Foreground admission: a preemptible holder is cancelled and the slot
+    /// is taken once it is released, within `bound`. Any other holder still
+    /// makes the call fail at once with `Busy`.
+    pub(crate) async fn acquire_preempting(
+        &self,
+        bound: Duration,
+    ) -> Result<ExecutionLease, AdmissionError> {
+        let deadline = tokio::time::Instant::now() + bound;
+        loop {
+            let idle = self.state.idle.notified();
+            tokio::pin!(idle);
+            idle.as_mut().enable();
+            match self.try_acquire() {
+                Err(AdmissionError::Busy) => {}
+                admitted => return admitted,
+            }
+            {
+                let holder = self.state.preemptible.lock().expect("admission holder");
+                match self.try_acquire() {
+                    Err(AdmissionError::Busy) => {}
+                    admitted => return admitted,
+                }
+                match holder.as_ref() {
+                    Some(preempt) => preempt.cancel(),
+                    None => return Err(AdmissionError::Busy),
+                }
+            }
+            if tokio::time::timeout_at(deadline, idle).await.is_err() {
+                return self.try_acquire();
+            }
+        }
+    }
+
     pub(crate) fn close(&self) {
         self.state.accepting.store(false, Ordering::Release);
+    }
+
+    fn preempt_holder(&self) {
+        if let Some(preempt) = self
+            .state
+            .preemptible
+            .lock()
+            .expect("admission holder")
+            .as_ref()
+        {
+            preempt.cancel();
+        }
     }
 
     pub(crate) fn poison(&self) {
@@ -726,6 +883,7 @@ impl SingleFlight {
 
     pub(crate) async fn close_and_drain(&self) -> Result<(), ExecutionFatal> {
         self.close();
+        self.preempt_holder();
         loop {
             let idle = self.state.idle.notified();
             if !self.state.active.load(Ordering::Acquire) {
@@ -752,7 +910,14 @@ pub(crate) struct ExecutionLease {
 
 impl Drop for ExecutionLease {
     fn drop(&mut self) {
+        let mut holder = self
+            .state
+            .preemptible
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *holder = None;
         self.state.active.store(false, Ordering::Release);
+        drop(holder);
         self.state.idle.notify_waiters();
     }
 }
@@ -777,6 +942,15 @@ impl AdmissionError {
 #[derive(Clone, Debug, Error)]
 #[error("Executor process containment could not be proven")]
 pub(crate) struct ExecutionFatal;
+
+#[derive(Debug)]
+pub(crate) enum MaintenanceCallError {
+    /// The slot was taken; learning never waits for it.
+    ForegroundRunning,
+    /// Foreground admission, drain or shutdown took the slot mid-call.
+    Preempted,
+    Tool(ToolError),
+}
 
 struct ExecutorCall {
     progress: ProgressSink,
@@ -1231,7 +1405,10 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
-    use super::{AdmissionError, ExecutionActor, record_executor_result, validate_probe_result};
+    use super::{
+        AdmissionError, ExecutionActor, FOREGROUND_PREEMPTION_BOUND, SingleFlight,
+        record_executor_result, validate_probe_result,
+    };
     use crate::command::ToolCommand;
     use crate::execution::BashResult;
     use crate::spec::RuntimeIdentity;
@@ -1329,5 +1506,100 @@ mod tests {
             .recv()
             .await
             .expect("Supervisor must receive an execution fatal event");
+    }
+
+    #[tokio::test]
+    async fn foreground_admission_preempts_maintenance_and_takes_the_slot() {
+        let gate = SingleFlight::new();
+        let preempt = CancellationToken::new();
+        let maintenance = gate
+            .try_acquire_preemptible(preempt.clone())
+            .expect("idle slot admits maintenance");
+        let observed = preempt.clone();
+        let holder = tokio::spawn(async move {
+            observed.cancelled().await;
+            // Executor termination takes a moment before the lease drops.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            drop(maintenance);
+        });
+        let started = std::time::Instant::now();
+        let foreground = gate
+            .acquire_preempting(FOREGROUND_PREEMPTION_BOUND)
+            .await
+            .expect("foreground takes the slot from maintenance");
+        assert!(preempt.is_cancelled());
+        assert!(started.elapsed() < FOREGROUND_PREEMPTION_BOUND);
+        holder.await.unwrap();
+        assert!(matches!(
+            gate.try_acquire_preemptible(CancellationToken::new()),
+            Err(AdmissionError::Busy)
+        ));
+        drop(foreground);
+    }
+
+    #[tokio::test]
+    async fn foreground_contention_with_foreground_stays_immediately_busy() {
+        let gate = SingleFlight::new();
+        let first = gate.try_acquire().expect("first foreground call");
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            gate.acquire_preempting(FOREGROUND_PREEMPTION_BOUND).await,
+            Err(AdmissionError::Busy)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_millis(200));
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn maintenance_that_does_not_yield_in_time_leaves_foreground_busy() {
+        let gate = SingleFlight::new();
+        let preempt = CancellationToken::new();
+        let maintenance = gate
+            .try_acquire_preemptible(preempt.clone())
+            .expect("idle slot admits maintenance");
+        let bound = std::time::Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            gate.acquire_preempting(bound).await,
+            Err(AdmissionError::Busy)
+        ));
+        assert!(preempt.is_cancelled());
+        assert!(started.elapsed() >= bound);
+        drop(maintenance);
+        gate.acquire_preempting(bound)
+            .await
+            .expect("slot is free after maintenance yields");
+    }
+
+    #[tokio::test]
+    async fn maintenance_never_waits_for_a_busy_slot() {
+        let gate = SingleFlight::new();
+        let foreground = gate.try_acquire().expect("foreground call");
+        let preempt = CancellationToken::new();
+        assert!(matches!(
+            gate.try_acquire_preemptible(preempt.clone()),
+            Err(AdmissionError::Busy)
+        ));
+        assert!(!preempt.is_cancelled());
+        drop(foreground);
+    }
+
+    #[tokio::test]
+    async fn drain_preempts_maintenance() {
+        let gate = SingleFlight::new();
+        let preempt = CancellationToken::new();
+        let maintenance = gate
+            .try_acquire_preemptible(preempt.clone())
+            .expect("idle slot admits maintenance");
+        let observed = preempt.clone();
+        let holder = tokio::spawn(async move {
+            observed.cancelled().await;
+            drop(maintenance);
+        });
+        tokio::time::timeout(FOREGROUND_PREEMPTION_BOUND, gate.close_and_drain())
+            .await
+            .expect("drain must not wait for learning")
+            .expect("drain settles");
+        holder.await.unwrap();
     }
 }

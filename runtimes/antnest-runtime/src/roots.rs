@@ -299,7 +299,10 @@ mod platform {
                             .bytes()
                             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
                 });
-            if !(matches!(parent, ".antnest/skill-learning/candidates") || temporary_parent)
+            if !(matches!(
+                parent,
+                ".antnest/skill-learning/candidates" | ".antnest/skill-learning/staging"
+            ) || temporary_parent)
                 || name.is_empty()
                 || name.len() > 128
                 || !name
@@ -603,7 +606,94 @@ mod platform {
                 || !candidate_key
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                || skill_name.is_empty()
+            {
+                return Err(RootError::InvalidPath(candidate_key.to_owned()));
+            }
+            self.install_package_tree(
+                &format!(".antnest/skill-learning/candidates/{candidate_key}"),
+                skill_name,
+                mode,
+            )
+        }
+
+        /// Installs `.antnest/skill-learning/staging/install/package` with one
+        /// rename; after an exchange the staging path holds the old package.
+        pub fn install_staged_skill_tree(
+            &self,
+            skill_name: &str,
+            mode: TreeInstallMode,
+        ) -> Result<(), RootError> {
+            self.install_package_tree(".antnest/skill-learning/staging/install", skill_name, mode)
+        }
+
+        /// Makes an already-present managed package durable after a resend.
+        pub fn sync_managed_skill_tree(&self, skill_name: &str) -> Result<(), RootError> {
+            let parent = open_relative(
+                self.workspace.as_raw_fd(),
+                ".antnest/skills",
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+                0,
+            )?;
+            let package = open_relative(
+                parent.as_raw_fd(),
+                skill_name,
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+                0,
+            )?;
+            for fd in [package.as_raw_fd(), parent.as_raw_fd()] {
+                if unsafe { libc::fsync(fd) } != 0 {
+                    return Err(system(
+                        "sync managed Skill directory",
+                        io::Error::last_os_error(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        /// Removes every install staging tree. Callers hold the execution slot,
+        /// so no other install can own a staging tree at the same time.
+        pub fn remove_skill_install_staging(&self) -> Result<(), RootError> {
+            let parent = match open_relative(
+                self.workspace.as_raw_fd(),
+                ".antnest/skill-learning",
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+                0,
+            ) {
+                Ok(fd) => fd,
+                Err(error) if error.is_not_found() => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            match open_relative(
+                parent.as_raw_fd(),
+                "staging",
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+                0,
+            ) {
+                Ok(_) => {}
+                Err(error) if error.is_not_found() => return Ok(()),
+                Err(error) => return Err(error),
+            }
+            // A pinned, openat2-validated parent prevents traversal outside the
+            // reserved namespace. remove_dir_all never follows contained links.
+            fs::remove_dir_all(format!("/proc/self/fd/{}/staging", parent.as_raw_fd()))
+                .map_err(|source| system("remove Skill install staging", source))?;
+            if unsafe { libc::fsync(parent.as_raw_fd()) } != 0 {
+                return Err(system(
+                    "sync Skill install staging cleanup",
+                    io::Error::last_os_error(),
+                ));
+            }
+            Ok(())
+        }
+
+        fn install_package_tree(
+            &self,
+            source_parent: &str,
+            skill_name: &str,
+            mode: TreeInstallMode,
+        ) -> Result<(), RootError> {
+            if skill_name.is_empty()
                 || skill_name.len() > 64
                 || !skill_name
                     .bytes()
@@ -611,12 +701,11 @@ mod platform {
             {
                 return Err(RootError::InvalidPath(skill_name.to_owned()));
             }
-            let source_parent = format!(".antnest/skill-learning/candidates/{candidate_key}");
             let target_parent = ".antnest/skills";
             create_parent_directories(self.workspace.as_raw_fd(), ".antnest/skills/placeholder")?;
             let source_fd = open_relative(
                 self.workspace.as_raw_fd(),
-                &source_parent,
+                source_parent,
                 (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
                 0,
             )?;
@@ -1461,6 +1550,19 @@ mod platform {
             _skill_name: &str,
             _mode: TreeInstallMode,
         ) -> Result<(), RootError> {
+            Err(RootError)
+        }
+        pub fn install_staged_skill_tree(
+            &self,
+            _skill_name: &str,
+            _mode: TreeInstallMode,
+        ) -> Result<(), RootError> {
+            Err(RootError)
+        }
+        pub fn remove_skill_install_staging(&self) -> Result<(), RootError> {
+            Err(RootError)
+        }
+        pub fn sync_managed_skill_tree(&self, _skill_name: &str) -> Result<(), RootError> {
             Err(RootError)
         }
         pub fn retire_active_tree(

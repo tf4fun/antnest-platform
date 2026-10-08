@@ -64,6 +64,49 @@ defines signed install and release endpoints, ordinary read and foreground Bash
 use, effect-aware receipts and local cleanup. These operations stay outside
 `tools/list` and outside personal and system Skill discovery.
 
+#### Install and digest
+
+`install` and `digest` are the current learning actions. Each request is one
+uninterruptible step with no state kept between requests:
+
+- `install` parses the same two bounded multipart parts as `prepare`
+  (`install_request` metadata and the ZIP artifact) and verifies them against
+  the signed ticket before the request reaches the actor. The UID/GID 1000
+  executor first removes any staging left under
+  `/workspace/.antnest/skill-learning/staging/`, writes and verifies the
+  package there, then reads the active digest. If the active digest already
+  equals the target, the receipt is `applied` without another rename, so a
+  resend with a new ticket settles from the active bytes. An absent package
+  with a non-null base is `conflict`/`base_changed`; an existing package with a
+  null base is `conflict`/`target_exists`; a different active digest is
+  `conflict`/`base_changed`. Otherwise one `RENAME_NOREPLACE` (create) or
+  `RENAME_EXCHANGE` (update) with directory `fsync` activates the package. A
+  read back that differs from the target is
+  `conflict`/`content_changed_during_activation`; Runtime never rolls back.
+  Staging is removed after every attempt.
+- `digest` reads the active manifest digest of one managed package path and
+  returns `observed` with the digest or `null` when the package is absent. It
+  never writes.
+
+Learning never waits for the execution slot. If a foreground call holds it,
+both actions return `blocked`/`foreground_running` at once. Before an install
+writes, the actor applies the same live-writer checks as `commit` and returns
+`blocked` with `background_task_running`, `managed_call_in_flight` or
+`writers_unknown` and the bounded subject. A learning request holds the slot
+only as a preemptible holder: foreground admission or drain cancels it and
+kills its executor, and foreground admission takes the slot within 2 seconds
+or returns `runtime_busy`. A cancelled request returns `preempted` with
+`observed_digest: null`; the rename may or may not have happened, and the
+caller resends to settle. Runtime startup removes install staging before it
+reports ready; a failed sweep is logged and the next install removes it again.
+
+Receipts conform to `maintenance_receipt` in the
+[learning API schema](../../../contracts/skill-learning/learning-api.schema.json).
+
+Until Agent ACP moves to `install` and `digest`, Runtime keeps serving
+`prepare`, `check`, `commit`, `observe`, `cancel` and `release` as described
+below. The integration batch removes them.
+
 #### Request parsing
 
 For `check`, `commit`, `observe`, `cancel` and `release`, the route strictly
@@ -146,6 +189,17 @@ authority for model-callable tools.
   cleanup after cancellation and replay after a same-name directory appears;
   and fills hidden storage until `skill_storage_full`, releases space and
   retries successfully.
+- `src/skill_install_tests.rs` covers create, resend without rename, update by
+  exchange, `target_exists`, `base_changed`, stale staging removal, a writer
+  after the rename and `digest`. Execution Actor unit tests cover foreground
+  preemption within the bound, immediate `blocked` for learning behind
+  foreground work, and drain preemption.
+- The same make target then builds the `skill-maintenance-e2e-gate` image and
+  runs `tests/e2e/skill-learning/runtime-install.mjs`: create, resend, update,
+  both conflicts, `digest`, Bash and managed MCP writer blocking,
+  `foreground_running`, foreground preemption of an install held after its
+  rename followed by a settling resend, and startup staging cleanup. Every
+  request and receipt is validated against the learning API schema.
 
 ## Status
 

@@ -12,6 +12,7 @@ use crate::skill_candidate::{
     CandidateCancelRequest, CandidateCheckRequest, CandidateCommitRequest, CandidateObserveRequest,
     CandidatePrepareRequest, CandidateReleaseRequest, StorageClass,
 };
+use crate::skill_install::{SkillDigestRequest, SkillInstallRequest};
 use crate::skill_maintenance_auth::MaintenanceTicket;
 use crate::skill_package_zip::{SkillPackage, validate_skill_zip};
 
@@ -66,7 +67,126 @@ pub(crate) async fn parse_prepare_request(
     body: Bytes,
     ticket: &MaintenanceTicket,
 ) -> Result<PreparedCandidate, &'static str> {
-    if ticket.action != "prepare" || body.len() > MAX_PREPARE_BYTES {
+    if ticket.action != "prepare" {
+        return Err("invalid_request");
+    }
+    let (metadata, artifact) = parse_package_upload(content_type, body).await?;
+    let request: PrepareRequest =
+        serde_json::from_slice(&metadata).map_err(|_| "invalid_request")?;
+    check_binding(
+        &request.action,
+        &request.request_id,
+        &request.job_id,
+        request.generation,
+        "prepare",
+        ticket,
+    )?;
+    if !valid_id(&request.candidate_id)
+        || !valid_package_path(&request.package_path)
+        || !valid_nullable_digest(&request.expected_base_digest)
+        || !valid_digest(&request.target_digest)
+        || !valid_digest(&request.artifact_digest)
+        || request.package_rules_version != 1
+    {
+        return Err("invalid_request");
+    }
+    let package = validate_skill_zip(&artifact)?;
+    if request.package_path.rsplit('/').next() != Some(package.name.as_str())
+        || request.target_digest != package.content_digest
+        || request.artifact_digest != package.artifact_digest
+    {
+        return Err("request_conflict");
+    }
+    Ok(PreparedCandidate {
+        metadata: request,
+        package,
+        artifact,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InstallMetadata {
+    action: String,
+    request_id: String,
+    job_id: String,
+    generation: u64,
+    package_path: String,
+    expected_base_digest: Value,
+    target_digest: String,
+    artifact_digest: String,
+    package_rules_version: u8,
+}
+
+#[derive(Debug)]
+pub(crate) struct InstallPackage {
+    metadata: InstallMetadata,
+    pub(crate) package: SkillPackage,
+    artifact: Bytes,
+}
+
+impl InstallPackage {
+    pub(crate) fn into_executor_request(self) -> SkillInstallRequest {
+        SkillInstallRequest {
+            package_path: self.metadata.package_path,
+            expected_base_digest: self
+                .metadata
+                .expected_base_digest
+                .as_str()
+                .map(str::to_owned),
+            target_digest: self.metadata.target_digest,
+            artifact_digest: self.metadata.artifact_digest,
+            artifact_base64: STANDARD.encode(self.artifact),
+        }
+    }
+}
+
+pub(crate) async fn parse_install_request(
+    content_type: &str,
+    body: Bytes,
+    ticket: &MaintenanceTicket,
+) -> Result<InstallPackage, &'static str> {
+    if ticket.action != "install" {
+        return Err("invalid_request");
+    }
+    let (metadata, artifact) = parse_package_upload(content_type, body).await?;
+    let request: InstallMetadata =
+        serde_json::from_slice(&metadata).map_err(|_| "invalid_request")?;
+    check_binding(
+        &request.action,
+        &request.request_id,
+        &request.job_id,
+        request.generation,
+        "install",
+        ticket,
+    )?;
+    if !valid_package_path(&request.package_path)
+        || !valid_nullable_digest(&request.expected_base_digest)
+        || !valid_digest(&request.target_digest)
+        || !valid_digest(&request.artifact_digest)
+        || request.package_rules_version != 1
+    {
+        return Err("invalid_request");
+    }
+    let package = validate_skill_zip(&artifact)?;
+    if request.package_path.rsplit('/').next() != Some(package.name.as_str())
+        || request.target_digest != package.content_digest
+        || request.artifact_digest != package.artifact_digest
+    {
+        return Err("request_conflict");
+    }
+    Ok(InstallPackage {
+        metadata: request,
+        package,
+        artifact,
+    })
+}
+
+async fn parse_package_upload(
+    content_type: &str,
+    body: Bytes,
+) -> Result<(Bytes, Bytes), &'static str> {
+    if body.len() > MAX_PREPARE_BYTES {
         return Err("invalid_request");
     }
     let boundary = multer::parse_boundary(content_type).map_err(|_| "invalid_request")?;
@@ -102,39 +222,10 @@ pub(crate) async fn parse_prepare_request(
             _ => return Err("invalid_request"),
         }
     }
-    let metadata = metadata.ok_or("invalid_request")?;
-    let request: PrepareRequest =
-        serde_json::from_slice(&metadata).map_err(|_| "invalid_request")?;
-    check_binding(
-        &request.action,
-        &request.request_id,
-        &request.job_id,
-        request.generation,
-        "prepare",
-        ticket,
-    )?;
-    if !valid_id(&request.candidate_id)
-        || !valid_package_path(&request.package_path)
-        || !valid_nullable_digest(&request.expected_base_digest)
-        || !valid_digest(&request.target_digest)
-        || !valid_digest(&request.artifact_digest)
-        || request.package_rules_version != 1
-    {
-        return Err("invalid_request");
-    }
-    let artifact = artifact.ok_or("invalid_request")?;
-    let package = validate_skill_zip(&artifact)?;
-    if request.package_path.rsplit('/').next() != Some(package.name.as_str())
-        || request.target_digest != package.content_digest
-        || request.artifact_digest != package.artifact_digest
-    {
-        return Err("request_conflict");
-    }
-    Ok(PreparedCandidate {
-        metadata: request,
-        package,
-        artifact,
-    })
+    Ok((
+        metadata.ok_or("invalid_request")?,
+        artifact.ok_or("invalid_request")?,
+    ))
 }
 
 #[derive(Debug)]
@@ -144,6 +235,30 @@ pub(crate) enum ControlRequest {
     Observe(ObserveRequest),
     Cancel(CancelRequest),
     Release(ReleaseRequest),
+    Digest(DigestRequest),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DigestRequest {
+    action: String,
+    request_id: String,
+    job_id: String,
+    generation: u64,
+    package_path: String,
+}
+
+impl DigestRequest {
+    #[cfg(test)]
+    pub(crate) fn package_path(&self) -> &str {
+        &self.package_path
+    }
+
+    pub(crate) fn into_executor_request(self) -> SkillDigestRequest {
+        SkillDigestRequest {
+            package_path: self.package_path,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -355,6 +470,12 @@ pub(crate) fn parse_control_request(
                 || !valid_package_path(&value.package_path)
                 || !valid_digest(&value.expected_digest)
             {
+                return Err("invalid_request");
+            }
+            Ok(())
+        }),
+        "digest" => parse!(DigestRequest, Digest, |value: &DigestRequest| {
+            if !valid_package_path(&value.package_path) {
                 return Err("invalid_request");
             }
             Ok(())

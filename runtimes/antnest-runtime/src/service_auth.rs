@@ -319,7 +319,9 @@ pub(crate) async fn admit_http(
         || path.starts_with("/internal/skill-temporary/");
     let skill_upload = matches!(
         path,
-        "/internal/skill-maintenance/prepare" | "/internal/skill-temporary/install"
+        "/internal/skill-maintenance/prepare"
+            | "/internal/skill-maintenance/install"
+            | "/internal/skill-temporary/install"
     );
     if !live {
         let allowed: &[&str] = if path == "/status" {
@@ -388,7 +390,7 @@ pub(crate) async fn admit_http(
             .collect::<Result<Vec<_>, _>>();
         if skill_upload {
             // The existing signed upload parser retains its archive/body limits.
-            // Workload authentication must not turn these two multipart routes
+            // Workload authentication must not turn these multipart routes
             // into JSON RPCs or consume/alter the ticket-bound artifact bytes.
             if !values.is_ok_and(|values| {
                 matches!(values.as_slice(), [value] if multer::parse_boundary(value).is_ok())
