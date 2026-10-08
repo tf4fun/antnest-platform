@@ -19,6 +19,32 @@ export function assertUnchanged(before, after) {
   );
 }
 
+// A Runtime observation that finds the same condition refreshes only
+// runtime_observed_at: no aggregate sequence, update time or event changes
+// (docs/agent-lifecycle-state-model.md). Only that forward refresh is excused.
+export function assertAgentsUnchanged(before, after) {
+  assert(
+    Array.isArray(before) && Array.isArray(after),
+    "Agent evidence must be a list",
+  );
+  assertUnchanged(
+    before,
+    after.map((current, index) => {
+      const previous = before[index]?.agent?.runtime_observed_at;
+      const next = current?.agent?.runtime_observed_at;
+      if (previous === next || previous === undefined) return current;
+      assert(
+        Date.parse(next) > Date.parse(previous),
+        "Runtime observation time must not regress or disappear",
+      );
+      return {
+        ...current,
+        agent: { ...current.agent, runtime_observed_at: previous },
+      };
+    }),
+  );
+}
+
 function differencePath(before, after, path = []) {
   if (
     before &&

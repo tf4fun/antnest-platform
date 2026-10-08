@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { GatewayClient } from "./support.mjs";
-import { assertUnchanged } from "./agent-access-evidence.mjs";
+import {
+  assertAgentsUnchanged,
+  assertUnchanged,
+} from "./agent-access-evidence.mjs";
 import { addPeerMembership, oidcOwner } from "./offboarding-oidc.mjs";
 import { controllerCheckpoint } from "./offboarding-checkpoint.mjs";
 import {
@@ -96,10 +99,10 @@ export async function globalAndSCIMOffboarding({
   }
   assertUnchanged(before, await snapshot());
   assertUnchanged(calls, await modelState());
-  assertUnchanged(unaffected, {
-    agent: await agentDetail(other),
-    events: await agentEvents(other),
-  });
+  assertAgentsUnchanged(
+    [unaffected],
+    [{ agent: await agentDetail(other), events: await agentEvents(other) }],
+  );
   await system.request(`/api/admin/directory/users/${seed.a.user.id}/active`, {
     body: { active: true },
   });
@@ -211,7 +214,7 @@ export async function globalAndSCIMOffboarding({
       agent: await agentDetail(item),
       events: await agentEvents(item),
     });
-  assertUnchanged(stable, afterDelete);
+  assertAgentsUnchanged(stable, afterDelete);
   await sentinel(peer, "read");
   await run(peer, "offboard-scim-peer-a");
   const beforeRestore = await snapshot();
