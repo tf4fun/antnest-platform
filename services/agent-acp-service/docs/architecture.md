@@ -542,7 +542,10 @@ stopping evidence. New prompts cannot reuse a protected Runtime revision.
 Skill learning never fences a Runtime. Settlement aborts in-flight learning
 without waiting, and an unknown install is resent conditionally on the next
 published execution, so lifecycle never reports `runtime_barrier_required`
-for learning work.
+for learning work. A resend re-checks policy, ownership and the frozen apply
+basis but accepts the target Skill already being present, because the
+interrupted install may have renamed it; Runtime's conditional install settles
+identical bytes as `applied` without a second rename.
 
 ## Workspace Bridge Extension
 

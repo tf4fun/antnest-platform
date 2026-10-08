@@ -35,6 +35,13 @@ export function admitAutomaticSkillCandidate(input: {
   managed: ManagedSkillIdentity | null;
   information: RuntimeInformation;
   executionId: string;
+  /**
+   * The candidate was admitted before. An interrupted install may already have
+   * created the target, so its presence is left to Runtime's conditional
+   * install, which settles identical bytes as applied and anything else as a
+   * conflict.
+   */
+  resend?: boolean;
 }): AutomaticApplyBasis {
   validateLearningCandidatePackage(input.candidate);
   const frozen = learningPolicySchema.parse(input.claim.frozenPolicy);
@@ -85,8 +92,8 @@ export function admitAutomaticSkillCandidate(input: {
       !current.scope.auto_generated_personal ||
       current.scope.adopted_paths.includes(input.candidate.packagePath) ||
       input.expectedBaseDigest !== null ||
-      matches.length !== 0 ||
-      personal.length >= 32
+      matches.length > (input.resend === true ? 1 : 0) ||
+      personal.length - matches.length >= 32
     )
       throw new Error("Automatic Skill creation is outside the managed scope");
   } else {
