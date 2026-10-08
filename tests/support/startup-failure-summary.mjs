@@ -13,7 +13,8 @@ const FIELD_LIMIT = 200;
 const ERROR_LIMIT = 20;
 const CRASH_LIMIT = 5;
 const LOG_TAIL = "400";
-const SECRET_NAME = /PASSWORD|SECRET|TOKEN|PRIVATE|(?:^|_)KEY(?:_|$)/u;
+const SECRET_NAME =
+  /PASSWORD|SECRET|TOKEN|PRIVATE|CREDENTIAL|DATABASE_URL|(?:^|_)KEY(?:_|$)/u;
 const ERROR_LEVELS = new Set(["error", "fatal", "panic", "dpanic", "critical"]);
 const CRASH_LINE =
   /^(?:panic: |fatal error: |[A-Za-z]*Error(?: \[[A-Z_]+\])?: )/u;
@@ -131,8 +132,9 @@ export function summarizeStartupFailure(container, logs, canaries) {
   return summary;
 }
 
-function docker(args) {
+function docker(args, env) {
   const result = spawnSync("docker", args, {
+    env,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     timeout: 30_000,
@@ -143,22 +145,29 @@ function docker(args) {
   return result;
 }
 
-export function collectStartupFailures(project, credentials) {
-  const canaries = credentialCanaries(credentials);
-  const ids = docker([
-    "ps",
-    "-aq",
-    "--no-trunc",
-    "--filter",
-    `label=com.docker.compose.project=${project}`,
-  ])
+export function collectStartupFailures(
+  project,
+  credentials,
+  env = process.env,
+) {
+  const canaries = credentialCanaries(credentials, env);
+  const ids = docker(
+    [
+      "ps",
+      "-aq",
+      "--no-trunc",
+      "--filter",
+      `label=com.docker.compose.project=${project}`,
+    ],
+    env,
+  )
     .stdout.split("\n")
     .filter(Boolean);
   const containers = ids.length
-    ? JSON.parse(docker(["inspect", ...ids]).stdout)
+    ? JSON.parse(docker(["inspect", ...ids], env).stdout)
     : [];
   const failures = failedContainers(containers).map((container) => {
-    const logs = docker(["logs", "--tail", LOG_TAIL, container.Id]);
+    const logs = docker(["logs", "--tail", LOG_TAIL, container.Id], env);
     return summarizeStartupFailure(
       container,
       `${logs.stdout}\n${logs.stderr}`,
