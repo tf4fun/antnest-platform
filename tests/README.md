@@ -178,8 +178,17 @@ part of any default target.
 
 ## Continuous integration
 
-`.github/workflows/integration.yml` runs on every pull request and push to
-`main`. [`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
+`.github/workflows/integration.yml` runs the suites on every push to `main`,
+on manual runs, and on a pull request when it is opened, reopened or marked
+ready for review, or when the `ci:full` label is added. Each later push to a
+pull request, and every push to a draft, runs only `Repository checks` and the
+path-filtered service workflows (lint, unit tests, image build). Such runs
+report `Integration checks (not run)`, so the required `Integration checks`
+stays pending until a full run covers the head commit: add `ci:full` before
+merging. The run removes the label, so add it again after further pushes.
+[`support/ci-mode.mjs`](support/ci-mode.mjs) decides the mode.
+
+[`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
 catalog: each suite lists its commands, host setup, prebuilt images and the
 paths it exercises. The workflow runs only the suites that match the changed
 files (prose-only changes select none). Changes to the workflow, `tests/support/`,

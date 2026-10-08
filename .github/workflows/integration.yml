@@ -1,13 +1,16 @@
 name: integration
 
 # Component, browser and service-owned Docker E2E suites. The workflow has no
-# path filter so that `Integration checks` reports on every pull request;
-# tests/support/ci-changes.mjs selects the suites a change exercises and
-# groups them into one job per shard of each tier.
+# path filter; tests/support/ci-changes.mjs selects the suites a change
+# exercises and groups them into one job per shard of each tier.
+# tests/support/ci-mode.mjs runs them when a pull request is opened, reopened
+# or marked ready, or labeled `ci:full`; other pushes to a pull request run
+# only the repository and service workflows.
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
   workflow_dispatch:
     inputs:
       suites:
@@ -18,8 +21,9 @@ on:
 permissions:
   contents: read
 
+# An unrelated label gets its own group so it cannot cancel a full run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ci:full' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -31,6 +35,7 @@ jobs:
       contents: read
       packages: read
     outputs:
+      mode: ${{ steps.mode.outputs.mode }}
       suites: ${{ steps.select.outputs.suites }}
       plain: ${{ steps.select.outputs.plain }}
       image_suites: ${{ steps.select.outputs.image_suites }}
@@ -49,7 +54,17 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Select mode
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          LABEL: ${{ github.event.label.name }}
+        run: node tests/support/ci-mode.mjs >> "$GITHUB_OUTPUT"
+
       - uses: docker/login-action@v3
+        if: steps.mode.outputs.mode == 'full'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -62,6 +77,7 @@ jobs:
       # Runs on main resolve every image so the image job publishes it.
       - name: Select suites
         id: select
+        if: steps.mode.outputs.mode == 'full'
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -80,7 +96,7 @@ jobs:
   images:
     name: Image / ${{ matrix.name }}
     needs: changes
-    if: needs.changes.outputs.building != '0'
+    if: needs.changes.outputs.mode == 'full' && needs.changes.outputs.building != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -147,7 +163,7 @@ jobs:
   suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
     needs: changes
-    if: needs.changes.outputs.plain != '0'
+    if: needs.changes.outputs.mode == 'full' && needs.changes.outputs.plain != '0'
     permissions:
       contents: read
       actions: read
@@ -164,6 +180,7 @@ jobs:
     needs: [changes, images]
     if: >-
       !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.mode == 'full' &&
       needs.changes.outputs.imaged != '0' &&
       (needs.images.result == 'success' || needs.images.result == 'skipped')
     permissions:
@@ -185,6 +202,7 @@ jobs:
     needs: [changes, images]
     if: >-
       !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.mode == 'full' &&
       needs.changes.outputs.optional != '0' &&
       (needs.images.result == 'success' || needs.images.result == 'skipped')
     permissions:
@@ -201,7 +219,10 @@ jobs:
       images: ${{ needs.changes.outputs.images }}
 
   integration:
-    name: Integration checks
+    # GitHub counts a skipped required job as passing, so a run that selects
+    # nothing reports under another name and `Integration checks` stays
+    # pending until a full run covers this head.
+    name: ${{ needs.changes.outputs.mode == 'full' && 'Integration checks' || 'Integration checks (not run)' }}
     needs: [changes, images, suite, image-suite]
     if: always()
     runs-on: ubuntu-24.04
@@ -211,6 +232,7 @@ jobs:
       - name: Check suite results
         env:
           CHANGES: ${{ needs.changes.result }}
+          MODE: ${{ needs.changes.outputs.mode }}
           IMAGES: ${{ needs.images.result }}
           SUITE: ${{ needs.suite.result }}
           IMAGE_SUITE: ${{ needs.image-suite.result }}
@@ -220,7 +242,29 @@ jobs:
         run: |
           echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED"
           [ "$CHANGES" = success ] || exit 1
+          if [ "$MODE" != full ]; then
+            echo "::notice::Integration suites did not run ($MODE). Add the ci:full label to run them on this commit."
+            exit 0
+          fi
           expect() { if [ "$2" = 0 ]; then [ "$1" = skipped ]; else [ "$1" = success ]; fi; }
           expect "$IMAGES" "$BUILDING"
           expect "$SUITE" "$PLAIN"
           expect "$IMAGE_SUITE" "$IMAGED"
+
+  # The label requests one full run; removing it lets a later push be
+  # covered by adding it again. Fork pull requests get a read-only token.
+  release-label:
+    name: Release ci:full label
+    if: github.event.action == 'labeled' && github.event.label.name == 'ci:full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove label
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PR" --remove-label 'ci:full'
