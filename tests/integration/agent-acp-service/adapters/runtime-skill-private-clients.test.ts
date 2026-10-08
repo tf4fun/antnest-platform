@@ -138,6 +138,7 @@ async function withPeer(
         observe: "applied",
         cancel: "cancelled",
         release: "released",
+        digest: "observed",
       };
       response
         .writeHead(200, {
@@ -208,7 +209,7 @@ function closeAdmission(authority: Authority) {
   authority.connections.prepare(closed).commit();
 }
 
-it("authenticates every maintenance action and source observation with an independent exact-byte ticket", async () => {
+it("authenticates every maintenance action and source digest read with an independent exact-byte ticket", async () => {
   await withPeer(async ({ authority, signer, paths }) => {
     const ledger = intents();
     const client = new RuntimeSkillMaintenanceClient(
@@ -256,7 +257,7 @@ it("authenticates every maintenance action and source observation with an indepe
         "observe",
         "cancel",
         "release",
-        "observe",
+        "digest",
       ].map((action) => `/internal/skill-maintenance/${action}`),
     );
     expect(ledger.settle).toHaveBeenCalledTimes(6);
@@ -309,9 +310,9 @@ it("retains an in-flight source read through closure and rejects later reads bef
       response.write(
         JSON.stringify({
           request_id: ticket.request_id,
-          action: "observe",
+          action: "digest",
           execution_id: "execution-1",
-          outcome: "applied",
+          outcome: "observed",
           observed_digest: candidate.targetDigest,
         }).slice(0, -1),
       );

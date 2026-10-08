@@ -131,7 +131,7 @@ read routes. Runtime availability requirements are source-owned, not inferred
 from Registry's directory. ACP requires an available, accepting source Runtime
 and an idle source Agent. Busy/offline/unknown reads
 return source_unavailable without replaying a model or substituting candidate
-bytes. A signed read-only observe checks the full current directory manifest;
+bytes. A signed read-only `digest` checks the full current directory manifest;
 matching content-addressed applied bytes can then be served. Extra files or
 changed modes also invalidate the selection. Source access, binding and managed
 identity are rechecked after observation. Reads and catalog refreshes share idle

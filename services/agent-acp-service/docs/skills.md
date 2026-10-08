@@ -214,12 +214,15 @@ Runtime outbound credentials await the private RC instance connection contract.
   limits, current owner access and exact sequence and digest checks. Both need an
   available source Agent Runtime; otherwise they return `source_unavailable`.
   Retained candidate bytes are never served as an offline substitute.
-- The signed Runtime `observe` operation verifies the complete directory
-  manifest, including extra files and modes. An artifact is returned only when it
-  equals the managed candidate's canonical package digest. Observation runs under
-  the idle maintenance gate, is bounded to five seconds, and never writes a
-  candidate, creates a Run or calls a model. Foreground preemption discards the
-  delivery. Access, binding and identity are checked again afterwards.
+- The signed, read-only Runtime `digest` action reads the manifest digest of the
+  complete active directory, including extra files and modes. An artifact is
+  returned only when it equals the managed candidate's canonical package digest;
+  a different or absent package removes the projection and reports
+  `content_changed`. A `blocked` or `preempted` receipt or an invalid response is
+  `source_unavailable`. The read runs under the idle maintenance gate, is bounded
+  to five seconds, and never writes a candidate, creates a Run or calls a model.
+  Foreground preemption discards the delivery. Access, binding and identity are
+  checked again afterwards.
 - Disabling an Agent makes its sources return 503 without changing the managed
   content identity. Enabling verifies the preserved workspace on the new Runtime.
   Deleting rejects old references with 404 and delivers the tombstone.

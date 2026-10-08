@@ -7,6 +7,7 @@ export type SkillMaintenanceAction =
   | "observe"
   | "cancel"
   | "release"
+  | "digest"
   | "temporary_install"
   | "temporary_release";
 
