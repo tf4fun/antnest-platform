@@ -212,7 +212,10 @@ async fn real_http_mount_admission_precedes_dispatch_and_keeps_liveness_identity
     let retired_upload = client
         .post(format!("{base}/internal/skill-maintenance/prepare"))
         .header(SERVICE_HEADER, format!("Bearer {}", tokens[1]))
-        .header("Content-Type", "multipart/form-data; boundary=skill-boundary")
+        .header(
+            "Content-Type",
+            "multipart/form-data; boundary=skill-boundary",
+        )
         .body("--skill-boundary--\r\n")
         .send()
         .await
