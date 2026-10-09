@@ -91,10 +91,13 @@ if (
       name,
       Number(octet),
       fileURLToPath(new URL("../../", import.meta.url)),
+      // Socket GID detection reads the probe's stdout; this script's own
+      // stdout is reserved for the exported environment.
       (args) =>
         execFileSync("docker", args, {
+          encoding: "utf8",
           timeout: 30000,
-          stdio: ["ignore", "ignore", "pipe"],
+          stdio: ["ignore", "pipe", "pipe"],
         }),
     ),
   );
