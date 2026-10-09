@@ -7,6 +7,8 @@ name: antnest-platform
 services:
   postgres:
     image: postgres:17.11-bookworm
+    entrypoint: [sh, /scripts/postgres-entrypoint.sh]
+    command: [postgres]
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: antnest_test_admin
@@ -30,6 +32,8 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/postgres-init.sh:/docker-entrypoint-initdb.d/10-antnest-services.sh:ro
+      - ./scripts/postgres-entrypoint.sh:/scripts/postgres-entrypoint.sh:ro
+      - ./scripts/development-secret-admission.sh:/scripts/development-secret-admission.sh:ro
     networks:
       postgres-diagnostics:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.162
@@ -55,6 +59,7 @@ services:
     entrypoint: [sh, /scripts/init-databases.sh]
     volumes:
       - ./scripts/temporal/init-databases.sh:/scripts/init-databases.sh:ro
+      - ./scripts/development-secret-admission.sh:/scripts/development-secret-admission.sh:ro
     networks:
       temporal-database: {}
 
@@ -69,6 +74,7 @@ services:
     entrypoint: [sh, /scripts/setup-schema.sh]
     volumes:
       - ./scripts/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
+      - ./scripts/development-secret-admission.sh:/scripts/development-secret-admission.sh:ro
     networks:
       temporal-database: {}
 
@@ -684,6 +690,7 @@ services:
     entrypoint: [sh, /scripts/init-database.sh]
     volumes:
       - ./scripts/skill-registry/init-database.sh:/scripts/init-database.sh:ro
+      - ./scripts/development-secret-admission.sh:/scripts/development-secret-admission.sh:ro
     networks:
       skill-registry-database: {}
 

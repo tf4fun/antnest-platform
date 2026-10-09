@@ -27,6 +27,7 @@ services:
     entrypoint: [sh, /scripts/init-databases.sh]
     volumes:
       - ../../../../scripts/temporal/init-databases.sh:/scripts/init-databases.sh:ro
+      - ../../../../scripts/development-secret-admission.sh:/scripts/development-secret-admission.sh:ro
   temporal-schema:
     image: temporalio/admin-tools:1.32.0
     depends_on:
@@ -37,6 +38,7 @@ services:
     entrypoint: [sh, /scripts/setup-schema.sh]
     volumes:
       - ../../../../scripts/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
+      - ../../../../scripts/development-secret-admission.sh:/scripts/development-secret-admission.sh:ro
   temporal:
     image: antnest/temporal:local
     depends_on:

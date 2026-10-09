@@ -126,6 +126,17 @@ Explicit disposable fixtures can use exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=tru
 with per-variable WARNs. Standard Compose never passes this flag; it is independent
 of other development gates and cannot restore retired Registry authentication.
 
+PostgreSQL admin and Temporal database passwords now pass the same public-secret
+admission on every dependency start (#80). PostgreSQL checks before the official
+entrypoint even with existing data; the derived Temporal image preserves its base
+entrypoint/command/user and checks before the upstream server starts. Temporal
+database/schema jobs and Skill Registry database initialization check before
+using credentials. The shared POSIX shell list is checked against contract
+revision 2, which adds dependency owners without changing values or opt-in
+semantics. Disposable overrides now opt in every checker; private Tier A
+dependency passwords keep working without the exception. Unit/component, Compose
+wiring and required Tier B startup/restart regression cover these entrypoints.
+
 Go workload authentication and CCT verification are consolidated in
 `modules/service-authentication`, consumed by Identity, Gateway, Console,
 Controller, RC and Registry. Services retain route and business authorization;

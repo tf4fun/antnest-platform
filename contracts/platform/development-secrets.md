@@ -1,6 +1,7 @@
 # Development secret admission
 
-Revision 1. Normative values are in [development-secrets.json](development-secrets.json).
+Revision 2 adds dependency owners; published values and gate semantics are unchanged.
+Normative values are in [development-secrets.json](development-secrets.json).
 This contract removes the published deployment credentials tracked in issue #13.
 
 ## Deployment
@@ -42,6 +43,27 @@ driver-supported keyword/query forms. They reject any published value from the
 shared set. Invalid connection syntax is reported by variable name without
 echoing the connection string or driver error.
 
+Platform-owned PostgreSQL and Temporal entrypoints apply the same published-value
+set through `scripts/development-secret-admission.sh` before opening connections,
+creating database roles or starting the server. Dependency owners are recorded in
+the JSON contract. PostgreSQL checks its admin password on every start, including
+retained data, then execs the official entrypoint with the supplied command and
+arguments. Compose explicitly retains its default `postgres` command. Temporal's
+derived image preserves the base image's entrypoint/command/user metadata and
+execs a saved upstream entrypoint after checking the server password. Both wrappers
+preserve signal handling. Init/schema jobs check before running their clients.
+
+Checks use the actual consumed `POSTGRES_PASSWORD`, `PGPASSWORD`, `SQL_PASSWORD`
+or `POSTGRES_PWD`, but errors and warnings name the corresponding contract
+variable. Temporal database initialization also checks
+`ANTNEST_TEMPORAL_POSTGRES_PASSWORD` before writing the role credential.
+Unset/empty values are not published values, matching the other owners' value
+policy; Compose's required substitutions and each dependency's own configuration
+validation remain responsible for missing configuration. An invalid opt-in still
+fails even with unset/empty or private passwords. A contract drift test keeps the
+POSIX shell list synchronized; Debian dash and the pinned Temporal images' `sh`
+entrypoints use no Bash-specific features.
+
 Identity, Controller and ACP retain canonical base64/exactly-32-byte checks and
 also reject keys with 32 identical bytes. With the explicit gate, a matching
 published password or uniform key is accepted and produces one startup WARN for
@@ -66,6 +88,12 @@ test configuration after all owner gates pass. It verifies empty-env Compose
 rejection, private/non-overwriting generation, and an actual fresh Stage 3 stack
 and generated-password login. Fixed fixtures explicitly opt in in their own
 environment; generated operator deployments do not.
+
+The dependency admission batch covers PostgreSQL, Temporal database/schema/server
+entrypoints and Skill Registry database initialization, with shell unit/component
+checks, Compose wiring and isolated Docker startup/restart evidence. Disposable
+fixtures opt in for every dependency checker through their explicit override;
+Tier A dependencies retain private `integration-*` passwords without an opt-in.
 
 Stored-secret key rotation/versioning follows the implemented
 [#42 contract](encryption-key-rotation.md). Keep original keys and database

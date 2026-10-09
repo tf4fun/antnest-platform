@@ -158,7 +158,10 @@ ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
 见 [部署认证与网络合同](contracts/platform/development-authentication.md)（英文）。
 
 `.env.example` 的密码和加密密钥均为空，Compose 要求显式配置；服务启动时拒绝公开
-凭据和重复字节密钥。生成器默认拒绝覆盖已有 `.env`，`--force` 仅用于一次性环境，
+凭据和重复字节密钥。PostgreSQL 和 Temporal 依赖容器的入口脚本在每次启动时（包括使用
+已有 PostgreSQL 数据时）都会在开放连接或写入角色凭据之前拒绝公开的管理员/Temporal
+密码；只有一次性固定测试环境通过测试专用 override 显式放行，标准 Compose 从不传入该开关。
+生成器默认拒绝覆盖已有 `.env`，`--force` 仅用于一次性环境，
 不能轮换已有数据的凭据，详见 [SECURITY.md](SECURITY.md)。
 
 停止：`docker compose -f compose.yaml -f compose.stage3.yaml --profile stage3

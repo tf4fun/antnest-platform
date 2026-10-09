@@ -13,6 +13,31 @@ Fixed disposable workflows explicitly select `tests/support/compose.public-devel
 and opt in through their fixture environment. This setting is absent from standard
 Compose and never inherited from a retained deployment.
 
+Dependency secret admission has shell unit/drift tests in
+`tests/support/development-secret-admission.test.mjs`, entrypoint component tests
+in `tests/support/storage-shell-entrypoints.test.mjs` and source/render wiring
+checks in `tests/integration/deployment/dependency-secrets.test.mjs`. The disposable
+override opts in PostgreSQL, Temporal database/schema/server and Skill Registry
+database initialization as well as the six platform owners. Tier A dependencies
+retain non-published `integration-*` passwords and use no container opt-in.
+
+Run the required Tier B dependency gate serially after rebuilding
+`antnest/temporal:local` from `scripts/temporal/Dockerfile`:
+
+```sh
+docker build -f scripts/temporal/Dockerfile -t antnest/temporal:local .
+node tests/e2e/service-authentication/deployment-credentials/dependency-secrets.mjs
+```
+
+The runner requires local `postgres:17.11-bookworm`,
+`temporalio/admin-tools:1.32.0` and `temporalio/server:1.32.0` images; it never pulls
+or rebuilds. It verifies the actual images' `sh` and inherited Temporal metadata,
+all five dependency rejections with sanitized logs, explicit opt-in readiness and
+per-start WARN counts, generated-password readiness without WARNs, normal server
+stop/restart, and PostgreSQL rejection on an initialized volume. Each scenario
+has an isolated project and ownership-checked cleanup. Private logs and results
+remain under ignored `artifacts/verification/dependency-secrets/`.
+
 `make e2e-stage1`, `make e2e-stage2`, `make e2e-runtime-controller` and
 `make e2e-lifecycle` use `tests/support/authenticated-shell-e2e.mjs`. It builds
 uniquely tagged images from the current checkout, provisions private workload

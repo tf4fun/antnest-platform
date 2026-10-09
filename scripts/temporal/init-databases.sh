@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+ANTNEST_POSTGRES_ADMIN_PASSWORD=${PGPASSWORD-} \
+  sh /scripts/development-secret-admission.sh \
+    ANTNEST_POSTGRES_ADMIN_PASSWORD ANTNEST_TEMPORAL_POSTGRES_PASSWORD
+
 psql --set=ON_ERROR_STOP=1 --dbname=postgres --set=password="$ANTNEST_TEMPORAL_POSTGRES_PASSWORD" <<'SQL'
 SELECT format('CREATE ROLE antnest_temporal LOGIN PASSWORD %L', :'password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'antnest_temporal')

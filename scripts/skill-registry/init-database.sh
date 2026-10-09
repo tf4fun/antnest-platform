@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+ANTNEST_POSTGRES_ADMIN_PASSWORD=${PGPASSWORD-} \
+  sh /scripts/development-secret-admission.sh ANTNEST_POSTGRES_ADMIN_PASSWORD
+
 psql --set=ON_ERROR_STOP=1 --dbname postgres \
   --set=role_password="$ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', 'antnest_skill_registry', :'role_password')

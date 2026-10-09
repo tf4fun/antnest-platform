@@ -272,9 +272,10 @@ export const suites = [
       ...compose,
     ],
     images: ["temporal"],
-    pull: temporal,
+    pull: [...temporal, "temporalio/server:1.32.0"],
     run: [
       "node tests/e2e/service-authentication/deployment-credentials/run.mjs",
+      "node tests/e2e/service-authentication/deployment-credentials/dependency-secrets.mjs",
       "node tests/e2e/service-authentication/development-pki/run.mjs",
       "make e2e-deployment-ports",
     ],
