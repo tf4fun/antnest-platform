@@ -66,6 +66,81 @@ fn prefix_mask(prefix_len: u8) -> u32 {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn kill_switch_rules(tun_name: &str, mcp_port: u16) -> String {
+    format!(
+        "table inet antnest_runtime {{\n\
+           chain output {{ type filter hook output priority -100; policy accept; \
+             meta skuid 1000 meta nfproto ipv6 counter drop; \
+             meta skuid 1000 tcp dport {} counter drop; \
+             meta skuid 1000 ip daddr 127.0.0.11 counter drop; \
+             meta skuid 1000 oifname \"lo\" counter accept; \
+             meta skuid 1000 oifname \"{}\" counter accept; \
+             meta skuid 1000 counter drop; \
+             meta skuid 2000-2007 meta nfproto ipv6 counter drop; \
+             meta skuid 2000-2007 tcp dport {mcp_port} counter drop; \
+             meta skuid 2000-2007 ip daddr 127.0.0.11 counter drop; \
+             meta skuid 2000-2007 oifname \"lo\" counter accept; \
+             meta skuid 2000-2007 oifname \"{tun_name}\" counter accept; \
+             meta skuid 2000-2007 counter drop; \
+           }}\n\
+           chain input {{ type filter hook input priority -100; policy accept; \
+             iifname \"{}\" tcp dport {} counter drop; \
+           }}\n\
+         }}",
+        mcp_port, tun_name, tun_name, mcp_port,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kill_switch_rules;
+
+    #[test]
+    fn kill_switch_classifies_executor_traffic_by_uid() {
+        let rules = kill_switch_rules("antnest0", 8093);
+
+        assert!(rules.contains("meta skuid 1000 meta nfproto ipv6 counter drop"));
+        assert!(rules.contains("meta skuid 1000 tcp dport 8093 counter drop"));
+        assert!(rules.contains("meta skuid 1000 ip daddr 127.0.0.11 counter drop"));
+        assert!(rules.contains("meta skuid 1000 oifname \"lo\" counter accept"));
+        assert!(rules.contains("meta skuid 1000 oifname \"antnest0\" counter accept"));
+        assert!(rules.contains("meta skuid 1000 counter drop"));
+        assert!(rules.contains("iifname \"antnest0\" tcp dport 8093 counter drop"));
+        assert!(rules.contains("meta skuid 2000-2007 tcp dport 8093 counter drop"));
+        assert!(rules.contains("meta skuid 2000-2007 ip daddr 127.0.0.11 counter drop"));
+        assert!(rules.contains("meta skuid 2000-2007 oifname \"lo\" counter accept"));
+        assert!(rules.contains("meta skuid 2000-2007 oifname \"antnest0\" counter accept"));
+        assert!(rules.contains("meta skuid 2000-2007 counter drop"));
+        assert!(!rules.contains("meta mark"));
+        assert!(!rules.contains("172.30.0.0/16"));
+    }
+
+    fn assert_embedded_dns_drop_precedes_loopback(uid: &str) {
+        let rules = kill_switch_rules("antnest0", 8093);
+        let drop = format!("meta skuid {uid} ip daddr 127.0.0.11 counter drop");
+        let accept = format!("meta skuid {uid} oifname \"lo\" counter accept");
+        let drop_position = rules
+            .find(&drop)
+            .expect("protocol-independent Docker DNS drop missing");
+        let accept_position = rules.find(&accept).expect("loopback accept missing");
+        assert!(
+            drop_position < accept_position,
+            "Docker DNS drop must precede loopback accept"
+        );
+    }
+
+    #[test]
+    fn executor_docker_dns_drop_covers_tcp_and_udp_before_loopback_accept() {
+        assert_embedded_dns_drop_precedes_loopback("1000");
+    }
+
+    #[test]
+    fn tool_docker_dns_drop_covers_tcp_and_udp_before_loopback_accept() {
+        assert_embedded_dns_drop_precedes_loopback("2000-2007");
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use std::ffi::{CStr, CString};
@@ -82,7 +157,7 @@ mod platform {
 
     use crate::spec::{NetworkSpec, UdpEndpoint};
 
-    use super::{PlatformNetwork, PlatformRoute};
+    use super::{PlatformNetwork, PlatformRoute, kill_switch_rules};
 
     pub const TUN_NAME: &str = "antnest0";
     const IFREQ_DATA_SIZE: usize = 24;
@@ -545,29 +620,6 @@ mod platform {
         context.run(&kill_switch_rules(tun_name, mcp_port))
     }
 
-    fn kill_switch_rules(tun_name: &str, mcp_port: u16) -> String {
-        format!(
-            "table inet antnest_runtime {{\n\
-               chain output {{ type filter hook output priority -100; policy accept; \
-                 meta skuid 1000 meta nfproto ipv6 counter drop; \
-                 meta skuid 1000 tcp dport {} counter drop; \
-                 meta skuid 1000 oifname \"lo\" counter accept; \
-                 meta skuid 1000 oifname \"{}\" counter accept; \
-                 meta skuid 1000 counter drop; \
-                 meta skuid 2000-2007 meta nfproto ipv6 counter drop; \
-                 meta skuid 2000-2007 tcp dport {mcp_port} counter drop; \
-                 meta skuid 2000-2007 oifname \"lo\" counter accept; \
-                 meta skuid 2000-2007 oifname \"{tun_name}\" counter accept; \
-                 meta skuid 2000-2007 counter drop; \
-               }}\n\
-               chain input {{ type filter hook input priority -100; policy accept; \
-                 iifname \"{}\" tcp dport {} counter drop; \
-               }}\n\
-             }}",
-            mcp_port, tun_name, tun_name, mcp_port,
-        )
-    }
-
     fn ifreq(name: &str) -> Result<IfReq, NetworkError> {
         let bytes = name.as_bytes();
         if bytes.is_empty() || bytes.len() >= libc::IFNAMSIZ {
@@ -684,8 +736,8 @@ mod platform {
 
         use super::{
             agent_route_commands, all_route_tables_query, configure_resolver_file,
-            kill_switch_rules, parse_platform_routes, reserved_route_table_is_used,
-            route_cleanup_commands, validate_resolver_contents,
+            parse_platform_routes, reserved_route_table_is_used, route_cleanup_commands,
+            validate_resolver_contents,
         };
 
         #[test]
@@ -816,22 +868,6 @@ mod platform {
             };
             assert!(agent_route_commands("antnest0", tunnel).contains(&with_action("add")));
             assert!(route_cleanup_commands("antnest0", tunnel).contains(&with_action("del")));
-        }
-
-        #[test]
-        fn kill_switch_classifies_executor_traffic_by_uid() {
-            let rules = kill_switch_rules("antnest0", 8093);
-
-            assert!(rules.contains("meta skuid 1000 meta nfproto ipv6 counter drop"));
-            assert!(rules.contains("meta skuid 1000 tcp dport 8093 counter drop"));
-            assert!(rules.contains("meta skuid 1000 oifname \"antnest0\" counter accept"));
-            assert!(rules.contains("meta skuid 1000 counter drop"));
-            assert!(rules.contains("iifname \"antnest0\" tcp dport 8093 counter drop"));
-            assert!(rules.contains("meta skuid 2000-2007 tcp dport 8093 counter drop"));
-            assert!(rules.contains("meta skuid 2000-2007 oifname \"antnest0\" counter accept"));
-            assert!(rules.contains("meta skuid 2000-2007 counter drop"));
-            assert!(!rules.contains("meta mark"));
-            assert!(!rules.contains("172.30.0.0/16"));
         }
     }
 }

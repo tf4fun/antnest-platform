@@ -464,3 +464,8 @@ validates its private secret bootstrap file, then irreversibly drops to that UID
 and execs. The supervisor and launcher environments contain only read descriptors.
 File/Bash defaults allow shared-group workspace access; every managed UID uses
 the same Agent tunnel table and kill switch as UID 1000.
+For both UID groups, the kill switch drops `127.0.0.11` before allowing
+loopback. The drop covers TCP and UDP at any port, including Docker's translated
+resolver ports; other loopback addresses retain the existing local-tool access.
+Agent DNS uses the virtual TCP resolver, whose Egress answer filter removes
+protected A records, all AAAA records and unusable CNAME chains.

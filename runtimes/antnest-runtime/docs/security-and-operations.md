@@ -66,7 +66,12 @@ A minimal Docker container has this shape. Runtime Controller supplies the
 workspace, system-Skill mounts, DNS upstream, and immutable RuntimeSpec values.
 Docker may initially expose its `127.0.0.11` embedded resolver; the root
 Supervisor replaces that container-local file with the exact virtual resolver
-before any UID/GID 1000 Executor exists:
+before any UID/GID 1000 Executor exists.
+
+The kill switch also drops UID 1000 and managed tool UID 2000..2007 traffic to
+`127.0.0.11` before each loopback accept. This address-wide rule covers TCP and
+UDP on every port, including Docker's translated DNS ports. Other loopback
+traffic remains usable, subject to the existing MCP-listener exclusion.
 
 ```bash
 docker run --rm \
@@ -200,6 +205,10 @@ Egress UDP, and OTLP. UID-based policy rules send UID 1000 and 2000..2007 traffi
 table whose only default path is TUN and whose terminal unreachable route
 prevents fallback to the main table. nftables is the fail-closed backstop: it
 rejects UID 1000 and 2000..2007 bypass traffic, access to Runtime's own listen port, and IPv6.
+Before accepting loopback, it drops all traffic from those UIDs to Docker's
+embedded resolver at `127.0.0.11`. Explicit TCP or UDP DNS queries cannot bypass
+the virtual resolver; local workspace servers on other loopback addresses
+remain usable.
 Internal destinations needed by an Agent are therefore reached through Egress
 policy instead of direct platform routes. The deployment must not publish the
 MCP port outside the trusted Docker or Kubernetes network.
@@ -216,6 +225,15 @@ Agent path because either would bypass TUN and Egress policy. Runtime Controller
 still supplies platform DNS settings as a bootstrap hint, but Runtime owns the
 final resolver state inside its network namespace. Additional name servers are
 never retained.
+
+Egress filters protected IPv4 answers using its forwarding baseline plus its
+tunnel pool and connected subnets, removes all AAAA answers, and removes CNAME
+chains with no usable terminal answer. Filtering away every answer yields
+NXDOMAIN, and AAAA or non-public reverse lookups are answered locally without
+reaching the upstream. Production should configure the Egress upstream as a recursive
+resolver with no view of internal service names; Compose retains its embedded
+upstream for offline development. See the
+[Egress resolver operations](../../../services/runtime-egress/docs/operations.md).
 
 RC-owned deployment input (public descriptors below are illustrative; actual
 IDs and digests must come from the prepared private volume):
