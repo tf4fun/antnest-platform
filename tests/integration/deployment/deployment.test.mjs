@@ -20,7 +20,21 @@ test("deployment example uses generated authentication and separated purpose add
   assert.equal(env.ANTNEST_ACP_MANAGEMENT_IPV4, "172.30.255.6");
   assert.equal(env.ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE, "172.30.255.128/25");
   assert.equal(env.ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4, "172.31.255.4");
+  assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4, "172.31.255.5");
   assert.equal(env.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS, "false");
+});
+
+test("every fixed Compose address is set by the deployment example", async () => {
+  const env = parseEnv(await readFile(new URL(".env.example", root), "utf8"));
+  const compose = await readFile(new URL("compose.yaml", root), "utf8");
+  const variables = new Set(
+    [...compose.matchAll(/\$\{(ANTNEST_[A-Z_]+_IPV4):-/g)].map(
+      ([, name]) => name,
+    ),
+  );
+  assert(variables.size > 0);
+  for (const name of variables)
+    assert.notEqual(env[name], undefined, `${name} is missing`);
 });
 
 test("standard Compose cannot inherit Skill learning debug settings", async () => {

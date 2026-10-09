@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { fixtureEnvironment, shellExports } from "./authenticated-e2e.mjs";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  fixtureEnvironment,
+  shellEnvironment,
+  shellExports,
+} from "./authenticated-e2e.mjs";
 
 test("an E2E deployment cannot inherit retained credentials, providers or topology", () => {
   const env = fixtureEnvironment(
@@ -95,4 +102,31 @@ test("fixture scope and subnet must be valid before preparing credentials", () =
         },
       ),
     );
+});
+
+test("Stage 3 shell credentials give Egress its root-owned bootstrap files", async () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const name = `antnest-stage3-e2e-${process.pid}`;
+  const calls = [];
+  try {
+    const script = await shellEnvironment(name, 7, root, async (args) => {
+      calls.push(args);
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "run");
+    for (const file of ["callers.json", "tunnel-master.key"])
+      assert(
+        calls[0].some((argument) =>
+          argument.endsWith(`/runtime-egress/${file},dst=/auth/${file}`),
+        ),
+        file,
+      );
+    assert.match(script, /^export ANTNEST_SERVICE_AUTH_DIRECTORY='/mu);
+    assert.match(script, /^export COMPOSE_PROJECT_NAME='antnest-stage3-e2e-/mu);
+  } finally {
+    rmSync(resolve(root, "artifacts/verification/authenticated-e2e", name), {
+      recursive: true,
+      force: true,
+    });
+  }
 });
