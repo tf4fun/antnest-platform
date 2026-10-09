@@ -157,6 +157,7 @@ struct NetworkMetrics {
     unsupported_outbound_packets: u64,
     local_rejections: u64,
     malformed_inbound_packets: u64,
+    connection_refused: u64,
 }
 
 impl NetworkMetrics {
@@ -170,6 +171,7 @@ impl NetworkMetrics {
             unsupported_outbound_packets: 0,
             local_rejections: 0,
             malformed_inbound_packets: 0,
+            connection_refused: 0,
         }
     }
 
@@ -200,6 +202,11 @@ impl NetworkMetrics {
         self.malformed_inbound_packets = self.malformed_inbound_packets.saturating_add(1);
     }
 
+    fn connection_refused(&mut self) {
+        self.exporter.network_connection_refused();
+        self.connection_refused = self.connection_refused.saturating_add(1);
+    }
+
     fn log(&self) {
         tracing::info!(
             metric.event = "runtime_network_snapshot",
@@ -210,6 +217,7 @@ impl NetworkMetrics {
             outbound.unsupported = self.unsupported_outbound_packets,
             outbound.local_rejections = self.local_rejections,
             inbound.malformed = self.malformed_inbound_packets,
+            transport.connection_refused = self.connection_refused,
             "Runtime network aggregate"
         );
     }
@@ -249,6 +257,7 @@ impl UdpNetwork {
         let mut outbound = vec![0_u8; self.mtu];
         let mut inbound = vec![0_u8; MAX_DATAGRAM + 1];
         let mut metrics = NetworkMetrics::new(exporter);
+        let mut receive_enabled = true;
         let mut report = tokio::time::interval_at(
             tokio::time::Instant::now() + Duration::from_secs(30),
             Duration::from_secs(30),
@@ -258,7 +267,8 @@ impl UdpNetwork {
                 _ = shutdown.cancelled() => return Ok(()),
                 _ = report.tick() => metrics.log(),
                 _ = crypto_timer.tick() => {
-                    if let Ok(events)=peer.tick() { send_network_events(&self.socket, events).await?; }
+                    receive_enabled = true;
+                    if let Ok(events)=peer.tick() { send_network_events(&self.socket, events, &mut metrics).await?; }
                 },
                 read = read_tun(&tun, &mut outbound) => {
                     let size = read?;
@@ -271,15 +281,19 @@ impl UdpNetwork {
                         }
                         continue;
                     }
-                    if let Ok(events)=peer.send(packet) { send_network_events(&self.socket,events).await?; }
+                    if let Ok(events)=peer.send(packet) { send_network_events(&self.socket,events,&mut metrics).await?; }
                     metrics.outbound(size);
                 }
-                received = self.socket.recv(&mut inbound) => {
-                    let size = received.map_err(transport_error)?;
+                received = self.socket.recv(&mut inbound), if receive_enabled => {
+                    let Some(size) = tunnel_socket_result(received, &mut metrics)? else {
+                        // Resume receive polling on the next normal crypto tick.
+                        receive_enabled = false;
+                        continue;
+                    };
                     let Ok(events)=peer.receive(&inbound[..size],remote) else {metrics.malformed_inbound();continue};
                     for event in events {
                         match event {
-                            Event::Network(frame)=>send_udp_bounded(&self.socket,&frame).await?,
+                            Event::Network(frame)=>{tunnel_socket_result(send_udp_bounded(&self.socket,&frame).await,&mut metrics)?;},
                             Event::Ipv4(inner)=>{
                                 let Some(packet)=validated_inbound_datagram(&inner,self.mtu,self.tunnel_ipv4) else {metrics.malformed_inbound();continue};
                                 write_tun_bounded(&tun,packet).await?;
@@ -300,10 +314,39 @@ fn validated_inbound_datagram(packet: &[u8], mtu: usize, tunnel_ipv4: Ipv4Addr) 
 async fn send_network_events(
     socket: &tokio::net::UdpSocket,
     events: Vec<Event>,
+    metrics: &mut NetworkMetrics,
 ) -> Result<(), NetworkSessionError> {
     for event in events {
         if let Event::Network(frame) = event {
-            send_udp_bounded(socket, &frame).await?;
+            tunnel_socket_result(send_udp_bounded(socket, &frame).await, metrics)?;
+        }
+    }
+    Ok(())
+}
+
+fn tunnel_socket_result<T>(
+    result: io::Result<T>,
+    metrics: &mut NetworkMetrics,
+) -> Result<Option<T>, NetworkSessionError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
+            metrics.connection_refused();
+            Ok(None)
+        }
+        Err(error) => Err(transport_error(error)),
+    }
+}
+
+async fn send_probe_events(
+    socket: &tokio::net::UdpSocket,
+    events: Vec<Event>,
+) -> Result<(), NetworkSessionError> {
+    for event in events {
+        if let Event::Network(frame) = event {
+            send_udp_bounded(socket, &frame)
+                .await
+                .map_err(transport_error)?;
         }
     }
     Ok(())
@@ -325,7 +368,7 @@ async fn verify_egress_path(
     let mut clock = tokio::time::interval(Duration::from_millis(TIMER_MILLIS));
     for _ in 0..attempts {
         let events = peer.send(&probe).map_err(transport_error)?;
-        send_network_events(socket, events).await?;
+        send_probe_events(socket, events).await?;
         let response=tokio::time::timeout(deadline,async {
             loop {
                 tokio::select! {
@@ -334,7 +377,7 @@ async fn verify_egress_path(
                         let Ok(events)=peer.receive(&reply[..size],remote) else {continue};
                         for event in events {
                             match event {
-                                Event::Network(frame)=>send_udp_bounded(socket,&frame).await?,
+                                Event::Network(frame)=>send_udp_bounded(socket,&frame).await.map_err(transport_error)?,
                                 Event::Ipv4(inner)=>{
                                     if is_egress_readiness_reply(&inner,tunnel_ipv4,source_port,sequence) {return Ok(())}
                                 }
@@ -342,7 +385,7 @@ async fn verify_egress_path(
                         }
                     },
                     _=clock.tick()=>{
-                        if let Ok(events)=peer.tick() {send_network_events(socket,events).await?;}
+                        if let Ok(events)=peer.tick() {send_probe_events(socket,events).await?;}
                     }
                 }
             }
@@ -364,16 +407,15 @@ fn connect_management_udp(
     tokio::net::UdpSocket::from_std(socket).map_err(local_error)
 }
 
-async fn send_udp_bounded(
-    socket: &tokio::net::UdpSocket,
-    packet: &[u8],
-) -> Result<(), NetworkSessionError> {
+async fn send_udp_bounded(socket: &tokio::net::UdpSocket, packet: &[u8]) -> io::Result<()> {
     let size = tokio::time::timeout(WRITE_TIMEOUT, socket.send(packet))
         .await
-        .map_err(|_| transport_error("UDP Egress write timed out"))?
-        .map_err(transport_error)?;
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "UDP Egress write timed out"))??;
     if size != packet.len() {
-        return Err(transport_error("UDP Egress write was incomplete"));
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "UDP Egress write was incomplete",
+        ));
     }
     Ok(())
 }
@@ -437,6 +479,7 @@ fn local_error(error: impl std::fmt::Display) -> NetworkSessionError {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::net::{Ipv4Addr, SocketAddrV4};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -445,8 +488,8 @@ mod tests {
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
     use super::{
-        NetworkMetrics, NetworkSession, UdpNetwork, connect_management_udp,
-        validated_inbound_datagram, verify_egress_path,
+        NetworkMetrics, NetworkSession, UdpNetwork, connect_management_udp, send_network_events,
+        tunnel_socket_result, validated_inbound_datagram, verify_egress_path,
     };
     use crate::packet::unsupported_ipv4_rejection;
     use crate::spec::RuntimeIdentity;
@@ -471,6 +514,7 @@ mod tests {
         metrics.inbound(60);
         metrics.unsupported_outbound(true);
         metrics.malformed_inbound();
+        metrics.connection_refused();
 
         assert_eq!(metrics.outbound_packets, 1);
         assert_eq!(metrics.outbound_bytes, 40);
@@ -479,5 +523,51 @@ mod tests {
         assert_eq!(metrics.unsupported_outbound_packets, 1);
         assert_eq!(metrics.local_rejections, 1);
         assert_eq!(metrics.malformed_inbound_packets, 1);
+        assert_eq!(metrics.connection_refused, 1);
+        metrics.connection_refused = u64::MAX;
+        metrics.connection_refused();
+        assert_eq!(metrics.connection_refused, u64::MAX);
+    }
+
+    #[test]
+    fn only_connection_refused_is_transient_tunnel_packet_loss() {
+        let mut metrics = NetworkMetrics::new(RuntimeMetrics::default());
+        assert_eq!(
+            tunnel_socket_result(Ok(42), &mut metrics).unwrap(),
+            Some(42)
+        );
+        assert_eq!(metrics.connection_refused, 0);
+        assert_eq!(
+            tunnel_socket_result::<usize>(
+                Err(io::Error::from_raw_os_error(libc::ECONNREFUSED)),
+                &mut metrics,
+            )
+            .unwrap(),
+            None,
+        );
+        assert_eq!(metrics.connection_refused, 1);
+
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::WriteZero,
+            io::ErrorKind::Interrupted,
+            io::ErrorKind::InvalidInput,
+            io::ErrorKind::Other,
+        ] {
+            let error = tunnel_socket_result::<usize>(Err(io::Error::from(kind)), &mut metrics)
+                .expect_err("every other socket error remains fatal");
+            assert_eq!(error.code().as_str(), "network_transport_failed");
+        }
+        let error = tunnel_socket_result::<usize>(
+            Err(io::Error::other("Connection refused")),
+            &mut metrics,
+        )
+        .expect_err("classify the error kind, not its message");
+        assert_eq!(error.code().as_str(), "network_transport_failed");
+        assert_eq!(metrics.connection_refused, 1);
     }
 }

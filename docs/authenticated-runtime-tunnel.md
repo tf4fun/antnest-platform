@@ -105,6 +105,15 @@ coordinated key/data backup and rewrite, outside automatic packet rekey; loss of
 that key is fail-closed. A leaked generation key requires explicit disable and
 rebuild, not an in-place environment edit.
 
+An established Runtime treats connected UDP `ConnectionRefused` on send or receive
+as dropped traffic, including ICMP port-unreachable feedback while Egress restarts.
+It counts these errors in its bounded network aggregate and OTLP counter. A refused
+receive suspends receive polling until the next existing 250 ms engine tick; sends
+are not retried. Other socket errors, write timeouts and incomplete writes remain
+fatal `network_transport_failed` errors. During preparation, socket errors remain
+fatal: readiness requires a correlated Egress reply and keeps its existing three
+3-second attempts for lost probes, without extending any timeout.
+
 Phase 1 outer IPv4 checks, Controller's non-blocking health journal/rebind worker,
 and the independent nft destination backstop remain. Authentication prevents an
 old-address holder from impersonating the previous Agent even before rebind;

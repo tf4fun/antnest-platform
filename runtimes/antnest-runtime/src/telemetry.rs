@@ -89,6 +89,7 @@ pub(crate) struct RuntimeMetrics {
     network_unsupported_packets: Counter<u64>,
     network_local_rejections: Counter<u64>,
     network_malformed_packets: Counter<u64>,
+    network_connection_refused: Counter<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,6 +176,9 @@ impl RuntimeMetrics {
                 .build(),
             network_malformed_packets: meter
                 .u64_counter("antnest.runtime.network.malformed.packets")
+                .build(),
+            network_connection_refused: meter
+                .u64_counter("antnest.runtime.network.connection_refused")
                 .build(),
         }
     }
@@ -265,6 +269,10 @@ impl RuntimeMetrics {
 
     pub(crate) fn network_malformed(&self) {
         self.network_malformed_packets.add(1, &[]);
+    }
+
+    pub(crate) fn network_connection_refused(&self) {
+        self.network_connection_refused.add(1, &[]);
     }
 }
 
@@ -1241,6 +1249,8 @@ mod tests {
         metrics.tool("read", "success", "", std::time::Duration::from_millis(4));
         metrics.executor("read", "success", "", std::time::Duration::from_millis(5));
         metrics.network_outbound(64);
+        metrics.network_connection_refused();
+        metrics.network_connection_refused();
         provider.force_flush().unwrap();
 
         let exported = exporter.get_finished_metrics().unwrap();
@@ -1256,9 +1266,26 @@ mod tests {
             "antnest.runtime.tool.calls",
             "antnest.runtime.executor.calls",
             "antnest.runtime.network.outbound.packets",
+            "antnest.runtime.network.connection_refused",
         ] {
             assert!(names.contains(&name.to_owned()), "missing metric {name}");
         }
+        let refused = exported
+            .iter()
+            .flat_map(|resource| resource.scope_metrics())
+            .flat_map(|scope| scope.metrics())
+            .find(|metric| metric.name() == "antnest.runtime.network.connection_refused")
+            .unwrap();
+        let opentelemetry_sdk::metrics::data::AggregatedMetrics::U64(
+            opentelemetry_sdk::metrics::data::MetricData::Sum(sum),
+        ) = refused.data()
+        else {
+            panic!("refusals must be an integer counter");
+        };
+        let points = sum.data_points().collect::<Vec<_>>();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].value(), 2);
+        assert_eq!(points[0].attributes().count(), 0);
         provider.shutdown().unwrap();
     }
 }
