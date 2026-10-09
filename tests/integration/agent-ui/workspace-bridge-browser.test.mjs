@@ -609,6 +609,11 @@ test(
             init?.method === "POST"
           ) {
             dropConfigurationResult = false;
+            // The stream applies the change before the client learns that
+            // the response was lost; the test releases the loss explicitly.
+            const deadline = Date.now() + 10_000;
+            while (!window.__releaseLostConfiguration && Date.now() < deadline)
+              await new Promise((resolve) => setTimeout(resolve, 10));
             throw new Error("Configuration response lost after apply");
           }
           if (
@@ -617,6 +622,11 @@ test(
             init?.method === "POST"
           ) {
             dropPermissionResult = false;
+            // The stream removes the card before the client learns that the
+            // response was lost; the test releases the loss explicitly.
+            const deadline = Date.now() + 10_000;
+            while (!window.__releaseLostPermission && Date.now() < deadline)
+              await new Promise((resolve) => setTimeout(resolve, 10));
             throw new Error("Permission response lost after apply");
           }
           return response;
@@ -915,9 +925,19 @@ test(
         true,
         "Closing Usage from another control must leave that control focused",
       );
-      const viewsBeforeLostConfiguration = seenPaths.filter(
-        (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
-      ).length;
+      const agentViewReads = () =>
+        seenPaths.filter(
+          (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
+        ).length;
+      const waitForAgentViewReread = async (before) => {
+        for (
+          let attempt = 0;
+          attempt < 200 && agentViewReads() === before;
+          attempt++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 20));
+      };
+      const viewsBeforeLostConfiguration = agentViewReads();
       await page.getByRole("switch", { name: "Safe mode" }).click();
       await page.waitForFunction(
         () =>
@@ -925,10 +945,17 @@ test(
             .querySelector('[role="switch"][aria-label="Safe mode"]')
             ?.getAttribute("aria-checked") === "false",
       );
+      assert.equal(
+        agentViewReads(),
+        viewsBeforeLostConfiguration,
+        "The stream update, not a reread, must apply the change while the configuration response is outstanding",
+      );
+      await page.evaluate(() => {
+        window.__releaseLostConfiguration = true;
+      });
+      await waitForAgentViewReread(viewsBeforeLostConfiguration);
       assert.ok(
-        seenPaths.filter(
-          (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
-        ).length > viewsBeforeLostConfiguration,
+        agentViewReads() > viewsBeforeLostConfiguration,
         "A lost configuration response must reread the authoritative Agent View",
       );
       assert.equal(
@@ -951,9 +978,7 @@ test(
         configurations[0].headers["x-antnest-csrf-token"],
         "browser-csrf",
       );
-      const viewsBeforeLostPermission = seenPaths.filter(
-        (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
-      ).length;
+      const viewsBeforeLostPermission = agentViewReads();
       const permissionInbox = page.locator(".permission-requests");
       assert.equal(
         await permissionInbox.getAttribute("aria-live"),
@@ -995,10 +1020,17 @@ test(
         true,
         "Keyboard permission decision must restore focus to the conversation after the card closes",
       );
+      assert.equal(
+        agentViewReads(),
+        viewsBeforeLostPermission,
+        "The stream update, not a reread, must close the card while the decision response is outstanding",
+      );
+      await page.evaluate(() => {
+        window.__releaseLostPermission = true;
+      });
+      await waitForAgentViewReread(viewsBeforeLostPermission);
       assert.ok(
-        seenPaths.filter(
-          (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
-        ).length > viewsBeforeLostPermission,
+        agentViewReads() > viewsBeforeLostPermission,
         "A lost permission response must reread the authoritative Agent View",
       );
       assert.deepEqual(
