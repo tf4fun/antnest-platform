@@ -213,3 +213,118 @@ test("containers writing private evidence run as the evidence owner", () => {
       name,
     );
 });
+
+const dependencyEntries = [
+  [
+    "scripts/postgres-entrypoint.sh",
+    "POSTGRES_PASSWORD",
+    "ANTNEST_POSTGRES_ADMIN_PASSWORD",
+  ],
+  [
+    "scripts/temporal/init-databases.sh",
+    "PGPASSWORD",
+    "ANTNEST_POSTGRES_ADMIN_PASSWORD",
+  ],
+  [
+    "scripts/temporal/init-databases.sh",
+    "ANTNEST_TEMPORAL_POSTGRES_PASSWORD",
+    "ANTNEST_TEMPORAL_POSTGRES_PASSWORD",
+  ],
+  [
+    "scripts/temporal/setup-schema.sh",
+    "SQL_PASSWORD",
+    "ANTNEST_TEMPORAL_POSTGRES_PASSWORD",
+  ],
+  [
+    "scripts/temporal/entrypoint.sh",
+    "POSTGRES_PWD",
+    "ANTNEST_TEMPORAL_POSTGRES_PASSWORD",
+  ],
+  [
+    "scripts/skill-registry/init-database.sh",
+    "PGPASSWORD",
+    "ANTNEST_POSTGRES_ADMIN_PASSWORD",
+  ],
+];
+function launchDependency(t, entry, extra) {
+  const work = mkdtempSync(join(tmpdir(), "antnest-dependency-admission-"));
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  copyFileSync(
+    join(root, "scripts/development-secret-admission.sh"),
+    join(work, "development-secret-admission.sh"),
+  );
+  writeFileSync(
+    join(work, "entry.sh"),
+    readFileSync(join(root, entry), "utf8")
+      .replaceAll("/scripts/", work + "/")
+      .replaceAll("/etc/temporal/", work + "/"),
+  );
+  const bin = join(work, "bin");
+  mkdirSync(bin);
+  const stub =
+    '#!/bin/sh\nprintf "%s\\n" "$0" "$@" >> "$ENTRY_CALLS"\ncat >/dev/null\n';
+  for (const command of ["docker-entrypoint.sh", "psql", "temporal-sql-tool"])
+    writeFileSync(join(bin, command), stub, { mode: 0o700 });
+  writeFileSync(join(work, "entrypoint-upstream.sh"), stub, { mode: 0o700 });
+  const marker = join(work, "calls");
+  const env = {
+    PATH: bin + ":/usr/bin:/bin",
+    ENTRY_CALLS: marker,
+    POSTGRES_PASSWORD: "private-admin",
+    PGPASSWORD: "private-admin",
+    ANTNEST_POSTGRES_ADMIN_PASSWORD: "unused-private-admin",
+    ANTNEST_TEMPORAL_POSTGRES_PASSWORD: "private-temporal",
+    SQL_PASSWORD: "private-temporal",
+    POSTGRES_PWD: "private-temporal",
+    ANTNEST_SKILL_REGISTRY_POSTGRES_PASSWORD: "private-registry",
+    ...extra,
+  };
+  const result = spawnSync(
+    "sh",
+    [join(work, "entry.sh"), "postgres", "-c", "test=1"],
+    {
+      cwd: work,
+      env,
+      encoding: "utf8",
+      timeout: 5000,
+    },
+  );
+  assert.ifError(result.error);
+  return {
+    ...result,
+    calls: existsSync(marker) ? readFileSync(marker, "utf8") : "",
+  };
+}
+
+for (const [entry, consumed, variable] of dependencyEntries) {
+  test(`${entry} rejects published ${consumed} before clients, credentials or listeners`, (t) => {
+    const value = "antnest-postgres-dev";
+    const result = launchDependency(t, entry, { [consumed]: value });
+    assert.notEqual(result.status, 0);
+    assert(result.stderr.includes(variable));
+    assert(!(result.stdout + result.stderr).includes(value));
+    assert.equal(result.calls, "");
+  });
+  test(`${entry} admits private ${consumed} silently and forwards server arguments`, (t) => {
+    const result = launchDependency(t, entry, {});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout + result.stderr, "");
+    assert.notEqual(result.calls, "");
+    if (entry.endsWith("entrypoint.sh"))
+      assert(result.calls.endsWith("\npostgres\n-c\ntest=1\n"));
+  });
+  test(`${entry} explicitly admits published ${consumed} with one sanitized WARN`, (t) => {
+    const value = "antnest-temporal-dev";
+    const result = launchDependency(t, entry, {
+      [consumed]: value,
+      ANTNEST_ALLOW_PUBLIC_DEV_SECRETS: "true",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.calls, "");
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^WARN /u);
+    assert.equal(result.stderr.trim().split("\n").length, 1);
+    assert(result.stderr.includes(variable));
+    assert(!result.stderr.includes(value));
+  });
+}

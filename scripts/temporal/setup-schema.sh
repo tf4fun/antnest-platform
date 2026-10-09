@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+ANTNEST_TEMPORAL_POSTGRES_PASSWORD=${SQL_PASSWORD-} \
+  sh /scripts/development-secret-admission.sh ANTNEST_TEMPORAL_POSTGRES_PASSWORD
+
 for schema in temporal visibility; do
   database=antnest_temporal
   if [ "$schema" = visibility ]; then database=antnest_temporal_visibility; fi

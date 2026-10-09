@@ -104,6 +104,7 @@ e2e-deployment-ports:
 
 .PHONY: test-deployment-wiring e2e-deployment-wiring
 test-deployment-wiring:
+	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/service-wiring.test.mjs tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs tests/integration/deployment/temporal/deployment.test.mjs tests/integration/deployment/jaeger-api.test.mjs tests/integration/skill-registry/deployment-config.test.mjs
 
 e2e-deployment-wiring:
@@ -120,6 +121,7 @@ test-node: test-repo
 .PHONY: test-repo
 test-repo:
 	$(MAKE) test-verification-python
+	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
