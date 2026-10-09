@@ -1,11 +1,21 @@
 # ACP authentication, Provider and Runtime instance acceptance
 
-Run serially from the repository root with NVM Node:
+Run serially from the repository root with Node 24 and the locked ACP packages:
 
 ```sh
-docker build -f services/agent-acp-service/Dockerfile -t antnest/agent-acp-service:auth-runtime-30 .
-ANTNEST_ACP_AUDIT_IMAGE=antnest/agent-acp-service:auth-runtime-30 node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs
+docker build -f services/agent-acp-service/Dockerfile -t antnest/agent-acp-service:local .
+docker pull postgres:17.11-bookworm
+docker pull node:24.21.0-bookworm-slim
+make e2e-acp-authentication
 ```
+
+Tier B suite `auth-acp` in shard `b-auth` runs this target and blocks the required
+`Integration checks` status. CI provides the current checkout's ACP production
+image as `antnest/agent-acp-service:local`. The Make target passes it through
+`ANTNEST_ACP_AUDIT_IMAGE` to `sdk-regressions-docker.mjs`, with the TSX loader from
+the locked ACP installation; CI never uses the script's `sdk-fixes` fallback.
+For an isolated local candidate, set `ANTNEST_ACP_AUDIT_IMAGE` explicitly when
+invoking the target. The harness has a three-minute scenario budget.
 
 The owning-service harness uses the production image, isolated PostgreSQL,
 temporary CSPRNG service credentials, an Identity fixture and synthetic model/MCP
