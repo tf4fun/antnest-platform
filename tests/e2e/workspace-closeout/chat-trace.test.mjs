@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inspectChatTrace, inspectChatTraceTopology } from "./chat-trace.mjs";
+import {
+  inspectChatTrace,
+  inspectChatTraceTopology,
+  strictTraceOutcome,
+} from "./chat-trace.mjs";
+import { unreviewedWarnings } from "../../support/strict-findings.mjs";
+import { verdict } from "../../support/ci-shard.mjs";
 
 function fixture() {
   const trace = { traceID: "chat", spans: [], processes: {} };
@@ -104,6 +110,37 @@ test("clock diagnostics retain warnings without passing the strict gate", () => 
   assert.equal(inspectChatTraceTopology(trace, expected).warnings, 1);
   assert.throws(() => inspectChatTrace(trace, expected));
   assert.equal(JSON.stringify(trace), original);
+});
+test("trace-level warnings are kept in the diagnostics the strict gate reads", () => {
+  const trace = fixture();
+  trace.warnings = ["invalid parent span IDs=missing; skipping clock skew"];
+  const checked = inspectChatTraceTopology(trace, expected);
+  assert.equal(checked.warnings, 1);
+  assert.deepEqual(unreviewedWarnings(JSON.stringify(checked)), trace.warnings);
+});
+test("strict-only trace findings exit 2 so the reviewed gate decides", () => {
+  const clock =
+    "clock skew adjustment disabled; not applying calculated delta of -95.2µs";
+  const traces = [
+    { strict: "passed", diagnostics: [] },
+    { strict: "failed", diagnostics: [{ warnings: [clock] }] },
+  ];
+  assert.deepEqual(strictTraceOutcome(traces.slice(0, 1)), {
+    strict_trace: "passed",
+    exitCode: 0,
+  });
+  assert.deepEqual(strictTraceOutcome(traces), {
+    strict_trace: "failed",
+    exitCode: 2,
+  });
+  assert.deepEqual(
+    strictTraceOutcome([{ phase: "cancel", expected_cancellation: true }]),
+    { strict_trace: "passed", exitCode: 0 },
+  );
+  const line = JSON.stringify({ status: "browser_passed", traces });
+  assert.equal(verdict(2, line, true), "warning");
+  traces[1].diagnostics[0].warnings.push("unexpected Jaeger warning");
+  assert.equal(verdict(2, JSON.stringify({ traces }), true), "failed");
 });
 for (const [name, mutate] of [
   [

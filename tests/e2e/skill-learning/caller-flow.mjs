@@ -13,6 +13,15 @@ import {
   tag,
   traceTopology,
 } from "../observability/trace-tree.mjs";
+import { skillClientArgs } from "./client-container.mjs";
+import { assertSourceActive } from "./source-projection-check.mjs";
+
+const CALLER_GRANTS = [
+  "acp-controller",
+  "console-controller",
+  "gateway-identity",
+  "acp-registry",
+];
 
 export async function callerAcpFlow({
   config,
@@ -51,10 +60,9 @@ export async function callerAcpFlow({
           "run",
           "--name",
           name,
-          "--label",
-          `com.docker.compose.project=${config.project}`,
-          "--network",
-          `${config.project}_development`,
+          ...skillClientArgs(config, {
+            grants: script === "caller-client.mjs" ? CALLER_GRANTS : [],
+          }),
           ...Object.entries(env).flatMap(([key, value]) => [
             "-e",
             `${key}=${value}`,
@@ -93,14 +101,13 @@ export async function callerAcpFlow({
   );
   assert.equal(learned.status, "skill_created");
   assert.equal(learned.agent_id, peerId);
-  const active = async (agentId, sequence) =>
-    assert.equal(
-      await sql(
-        `SELECT count(*) FROM skill_source_projections WHERE agent_id='${agentId}' AND active AND sequence=${sequence} AND sent_sequence=${sequence}`,
-      ),
-      "1",
-      "actual managed source must remain active and acknowledged",
-    );
+  const active = (agentId, sequence) =>
+    assertSourceActive({
+      sql,
+      agentId,
+      sequence,
+      agentIds: [fixture.agentID, peerId],
+    });
   await until(
     async () =>
       Number(
@@ -123,8 +130,6 @@ export async function callerAcpFlow({
       ANTNEST_E2E_AGENT_ID: fixture.agentID,
       ANTNEST_E2E_PEER_AGENT_ID: peerId,
       ANTNEST_E2E_ACTOR_ID: fixture.ownerID,
-      ANTNEST_E2E_SKILL_REGISTRY_TOKEN:
-        config.env.ANTNEST_E2E_SKILL_REGISTRY_TOKEN,
       ANTNEST_E2E_CALLER_FORMAL: JSON.stringify(formal),
     },
     "caller-client.mjs",

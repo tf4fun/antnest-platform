@@ -199,7 +199,9 @@ codes and verify dialog retention versus returning to login, including late
 responses from an older in-page session.
 
 Finally the coordinator stops only Identity and proves that protected requests
-return 503 without deleting cookies. It restarts Identity with the token TTL set
+return 503 without deleting cookies. The stopped Identity keeps its pinned
+Compose address and drops connects. Gateway's 5-second dependency connect bound
+must report the outage within the default 15-second request wait. It restarts Identity with the token TTL set
 to five seconds for new tokens: the earlier long-lived cookie must recover, and a
 new short-lived cookie must work before its deadline and fail after it, even when
 replayed manually. A fresh login must then work. The short TTL override exists
@@ -233,9 +235,12 @@ deactivation across A and B, an unaffected second owner, and SCIM Membership
 deletion. The Runtime's own inspection API confirms `disabled/absent`, and a
 sentinel seeded and read through the official MCP client proves workspace
 retention after Enable. The test client joins the Runtime management network
-only for this oracle. ACP-owned read-only snapshots prove that Disable does not
-delete history or Runs. After explicit Enable, fresh Gateway ACP Runs prove that
-admission and the shared model credential still work.
+only for this oracle. It reads Runtime state and the per-instance MCP credential
+with the disposable `controller-runtime` grant, and reads raw Controller events
+with the `console-controller` grant and a caller context resolved from the
+admin's existing Gateway session. ACP-owned read-only snapshots prove that
+Disable does not delete history or Runs. After explicit Enable, fresh Gateway
+ACP Runs prove that admission and the shared model credential still work.
 
 The SCIM owner logs in through the same OIDC fixture, has a peer Membership and
 Agent in A, and owns nonempty chat history in B before deletion. A stays usable
@@ -279,7 +284,10 @@ resume the same Session with no rejected prompt or Run events in its history.
 
 **Identity outage.** Official v1 and v2 clients connect before the coordinator
 stops only Identity. A prompt on each old connection must close with 1013
-without any durable Run, message or Tool change, and the same long-lived cookies
+without any durable Run, message or Tool change. Both prompts are sent at once:
+Gateway waits out its Identity request timeout, and a later serial probe would
+outlive the socket's 60-second caller context and close with 1008 instead. The
+same long-lived cookies
 must reconnect after Identity recovers. An empty recovered Session must contain
 its current command catalog, one untitled Session info update with a valid
 timestamp and, for v2 replay only, exactly one idle control update
@@ -300,12 +308,18 @@ Runtime Tool, finish with a quiescent executor and a settled Tool effect, and
 resume without re-execution on reconnect. The Run and request IDs and the
 captured execution snapshot stay unchanged. The structured Bash result must
 show exit code zero, complete output and an exact ordered file append per Run.
+A v1 prompt answers only after its Run, so its own ACP dispatch span may end
+in error because the socket is already closed; every Run, model and Tool span
+must still be error-free.
 
 Each rejected message has its own Gateway root linked to the connection.
-Successful requests bind the SDK request ID and returned Session ID, and
-execution binds the Provider HTTP span IDs. Traces are scanned for the synthetic
-cookies and model credential, including URL-encoded forms. The service relay
-unit tests separately cover identity changes, dependency failure, timeout,
+Revocation and outage denials carry exactly one failed Gateway Identity check.
+An expiry denial may instead be a lone Gateway root, because Gateway closes on
+an expired caller context before re-resolving the session. Successful requests
+bind the SDK request ID and returned Session ID, and execution binds the
+Provider HTTP span IDs. Traces are scanned for the synthetic cookies and model
+credential, including URL-encoded forms. The service relay unit tests
+separately cover identity changes, dependency failure, timeout,
 fragmented and pipelined messages, bounded capacity and shutdown cleanup. No
 test claims immediate revocation of idle sockets or automatic cancellation of
 admitted Runs.

@@ -21,7 +21,7 @@ The matrix covers anonymous/all-method mount rejection, duplicate/malformed and
 other-instance credentials, RC/ACP route separation, exact Host/port rules, strict
 UTF-8/JSON media types, identity-free liveness, executor file/environment isolation,
 retained execution fences and signed-ticket requirements. Native tools, learning
-prepare/check/commit and temporary install/release remain functional, including
+install/digest and temporary install/release remain functional, including
 multipart artifacts and the optional JSON UTF-8 charset. Restart preserves
 workload authority and retires the previous execution fence.
 

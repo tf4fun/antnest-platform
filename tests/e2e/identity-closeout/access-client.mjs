@@ -196,9 +196,11 @@ for (const index of [0, 1]) {
   assert(listing.Resources.some((item) => item.id === scimUsers[index].id));
   assert(!listing.Resources.some((item) => item.id === scimUsers[other].id));
 }
+// Identity rejects a caller context scoped to another organization as
+// 401 caller_context_invalid before any authorization decision.
 await a.request(
   `/api/admin/provisioning/scim-tokens/${tokens[1].token.id}/revoke`,
-  { body: {}, status: 403 },
+  { body: {}, status: 401 },
 );
 await scim(1, `Users/${scimUsers[1].id}`);
 checks.push("scim-cross-organization-resource-reference-and-revoke-isolation");

@@ -5,6 +5,7 @@ import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { assertCaptureDisabled, tag } from "../observability/trace-tree.mjs";
+import { skillClientArgs } from "./client-container.mjs";
 export async function temporaryAcpFlow({
   config,
   docker,
@@ -30,12 +31,7 @@ export async function temporaryAcpFlow({
         ...(mode === "restart" ? ["-d"] : []),
         "--name",
         name,
-        "--label",
-        `com.docker.compose.project=${config.project}`,
-        "--network",
-        `${config.project}_gateway-ingress`,
-        "-e",
-        `ANTNEST_E2E_MODEL_URL=${config.model.replace("127.0.0.1", "host.docker.internal")}`,
+        ...skillClientArgs(config),
         "-e",
         `ANTNEST_E2E_AGENT_ID=${targetId}`,
         "-e",

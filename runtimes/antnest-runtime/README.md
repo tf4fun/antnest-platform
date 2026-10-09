@@ -232,10 +232,14 @@ Test-only build options and variables:
 - Cargo feature `skill-maintenance-e2e-gate` (explicit Docker target `e2e` and
   build argument `ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate`) holds Skill commits
   while `/workspace/.antnest/skill-learning/e2e-commit-gate/hold` exists, so
-  E2E tests can observe the in-progress commit window. It must never be
-  enabled in published images.
+  E2E tests can observe the in-progress commit window. It also holds a Skill
+  install after its rename while
+  `/workspace/.antnest/skill-learning/e2e-install-gate/hold` exists, so E2E
+  tests can preempt it with foreground work. It must never be enabled in
+  published images.
 - `ANTNEST_RUNTIME_BUILD_IMAGE` and `ANTNEST_RUNTIME_TEST_IMAGE` select images
-  for the isolated E2E suite.
+  for the isolated E2E suite. `ANTNEST_RUNTIME_GATE_IMAGE` selects the
+  test-feature image for `tests/e2e/skill-learning/runtime-install.mjs`.
 
 No production image is published yet. Local images use
 `antnest/antnest-runtime:<tag>`. A shared contract change must pass Runtime,

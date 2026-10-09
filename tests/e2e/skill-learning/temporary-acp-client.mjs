@@ -99,9 +99,9 @@ try {
   } else {
     if (mode === "cancel") {
       await until(async () => {
-        const status = await fetch(
-          `${process.env.ANTNEST_E2E_MODEL_URL}/status`,
-        ).then((reply) => reply.json());
+        const status = await fetch("http://stage3-model:8080/status").then(
+          (reply) => reply.json(),
+        );
         return status.pending.includes("temporary-cancel-reply");
       }, "held temporary cancellation request");
       await acp.notify("cancel", { sessionId });

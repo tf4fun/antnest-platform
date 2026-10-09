@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { requestTraceBoundary } from "../acp-commands/trace.mjs";
-import { hasError, timingEvidence } from "../acp-plan/requests.mjs";
+import {
+  closedV1PromptResponse,
+  hasError,
+  timingEvidence,
+} from "../acp-plan/requests.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import {
   assertCaptureDisabled,
@@ -95,7 +99,7 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
   assert.equal(tag(server, "rpc.method"), "watch_agent_execution_state");
   assert.equal(tag(server, "http.request.method"), "POST");
   assert.equal(tag(server, "http.response.status_code"), 200);
-  const client = forwarded(server, "agent-acp-service");
+  const client = forwarded(server, "agent-acp-workspace");
   assert.equal(tag(client, "http.response.status_code"), 200);
   const cancellation = (s) =>
     inWindow(s) &&
@@ -229,7 +233,9 @@ export function inspectCancelledTrace(trace, expected, secrets, requests) {
   for (const s of trace.spans.filter(hasError)) {
     const type = tag(s, "error.type");
     assert(
-      (s === run && type === "run_unresolved") ||
+      (expected.closedBeforeResponse === true &&
+        closedV1PromptResponse(s, request)) ||
+        (s === run && type === "run_unresolved") ||
         (s === call && type === "McpToolCallError") ||
         (tree.service(s) === "antnest-runtime" &&
           tree.chain(s).includes(call) &&

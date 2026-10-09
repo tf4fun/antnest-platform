@@ -1,4 +1,5 @@
 import { isolateCompromisedRuntime } from "./key-compromise-recovery.mjs";
+import { runKeyRemovalProbe } from "./key-removal-probe.mjs";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -23,6 +24,10 @@ import { collectLearningTraces } from "./learning-trace.mjs";
 import { collectDiscoveryTrace } from "./discovery-trace.mjs";
 import { temporaryAcpFlow } from "./temporary-acp-flow.mjs";
 import { callerAcpFlow } from "./caller-flow.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
 import { assertMaintenanceKidStartupRejected } from "./maintenance-kid.mjs";
@@ -32,6 +37,7 @@ import {
   assertStandardComposeIgnoresDebugSettings,
 } from "./development-settings.mjs";
 import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
+import { skillClientArgs } from "./client-container.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -69,10 +75,7 @@ const keyCompromise = process.env.ANTNEST_E2E_SKILL_KEY_COMPROMISE === "true";
 const keyRotation =
   keyCompromise || process.env.ANTNEST_E2E_SKILL_KEY_ROTATION === "true";
 const pinned = process.env.ANTNEST_E2E_SKILL_PINNED === "true";
-const cleanupLostResponse =
-  process.env.ANTNEST_E2E_SKILL_CLEANUP_LOST_RESPONSE === "true";
-const verifyCleanup =
-  process.env.ANTNEST_E2E_SKILL_CLEANUP === "true" || cleanupLostResponse;
+const verifyCleanup = process.env.ANTNEST_E2E_SKILL_CLEANUP === "true";
 assert(!verifyCleanup || (!pinned && !keyRotation));
 assert(!browserAcceptance || !verifyCleanup);
 assert(
@@ -108,9 +111,6 @@ const overlay = [
   ...(noticeFailure
     ? ["-f", "tests/e2e/skill-learning/notice-send-failure.compose.yaml"]
     : []),
-  ...(cleanupLostResponse
-    ? ["-f", "tests/e2e/skill-learning/held-commit.compose.yaml"]
-    : []),
   ...(discovery && !deployment
     ? ["-f", "tests/e2e/skill-learning/discovery.compose.yaml"]
     : []),
@@ -118,6 +118,11 @@ const overlay = [
     ? ["-f", "tests/e2e/skill-learning/propagation.compose.yaml"]
     : []),
 ];
+// The test builds up to eleven candidate images from source before its
+// workflow starts. On a cold runner those builds alone take over 17 minutes,
+// so they get their own budget instead of consuming the workflow's.
+const imageBuildBudgetMs = 1_200_000;
+const workflowBudgetMs = 1_200_000;
 const logs = (name) => {
   const result = spawnSync("docker", ["logs", "--tail", "200", name], {
     encoding: "utf8",
@@ -154,7 +159,7 @@ test(
                       : "automatic Agent sources, temporary use, real Console promotion and frozen Template rebuild form the full Skill propagation workflow"
                     : "completed Runs create and update a personal Skill, publish notices, and serve the next Run",
   {
-    timeout: 1_200_000,
+    timeout: imageBuildBudgetMs + workflowBudgetMs,
   },
   async () => {
     process.chdir(root);
@@ -237,7 +242,6 @@ test(
       Object.assign(config.env, {
         ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS: "false",
         ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID: "",
-        ANTNEST_E2E_HOLD_RELEASE: String(cleanupLostResponse),
         ANTNEST_E2E_SKILL_LEARNING_DEBUG: String(debugLearning),
         ANTNEST_E2E_TOOL_USABILITY: String(toolUsability),
         ANTNEST_C4_AGENT_ACP_IMAGE: image,
@@ -288,11 +292,26 @@ test(
           ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:
             config.env.ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS,
         });
-      const docker = dockerClient(config.env, abort.signal, 1_200_000);
+      const docker = dockerClient(
+        config.env,
+        abort.signal,
+        imageBuildBudgetMs + workflowBudgetMs,
+      );
+      const buildCandidate = (name, tag, build, labels) => {
+        const [, ...args] = candidateCommand({
+          name,
+          tag,
+          build: ["docker", ...build],
+          labels,
+        });
+        return docker(args, true, { env: candidateEnvironment(config.env) });
+      };
       if (propagation) resourceBaseline = await resources(docker);
       for (const { service, image: candidate } of additionalImages) {
         assert.equal(await docker(["image", "ls", "-q", candidate]), "");
-        await docker(
+        await buildCandidate(
+          service,
+          candidate,
           [
             "build",
             "-f",
@@ -305,7 +324,7 @@ test(
             `io.antnest.authentication-integration=${config.project}`,
             ".",
           ],
-          true,
+          { "io.antnest.authentication-integration": config.project },
         );
       }
       if (callerDiscovery)
@@ -319,17 +338,14 @@ test(
           `Temporary acceptance ${config.project}: building isolated Runtime candidate`,
         );
         temporaryRuntimeImage = `antnest/antnest-runtime:acp-temporary-${config.project.slice(-8)}`;
-        await docker(
-          [
-            "build",
-            "-f",
-            "runtimes/antnest-runtime/Dockerfile",
-            "-t",
-            temporaryRuntimeImage,
-            ".",
-          ],
-          true,
-        );
+        await buildCandidate("antnest-runtime", temporaryRuntimeImage, [
+          "build",
+          "-f",
+          "runtimes/antnest-runtime/Dockerfile",
+          "-t",
+          temporaryRuntimeImage,
+          ".",
+        ]);
         config.resolvedImage = await docker([
           "image",
           "inspect",
@@ -343,54 +359,29 @@ test(
           `Temporary acceptance ${config.project}: Runtime candidate built`,
         );
       }
-      await docker(
-        [
+      const builds = [
+        ["agent-acp-service", image],
+        ["agent-ui", uiImage],
+        ...(discoveryImage ? [["skill-registry", discoveryImage]] : []),
+        ...(pinned || propagation
+          ? [["agent-controller", controllerImage]]
+          : []),
+        ...(propagation
+          ? [
+              ["admin-console", consoleImage],
+              ["runtime-controller", rcImage],
+            ]
+          : []),
+      ];
+      for (const [service, tag] of builds)
+        await buildCandidate(service, tag, [
           "build",
           "-f",
-          "services/agent-acp-service/Dockerfile",
+          `services/${service}/Dockerfile`,
           "-t",
-          image,
+          tag,
           ".",
-        ],
-        true,
-      );
-      await docker(
-        ["build", "-f", "services/agent-ui/Dockerfile", "-t", uiImage, "."],
-        true,
-      );
-      if (discoveryImage)
-        await docker(
-          [
-            "build",
-            "-f",
-            "services/skill-registry/Dockerfile",
-            "-t",
-            discoveryImage,
-            ".",
-          ],
-          true,
-        );
-      if (pinned || propagation)
-        await docker(
-          [
-            "build",
-            "-f",
-            "services/agent-controller/Dockerfile",
-            "-t",
-            controllerImage,
-            ".",
-          ],
-          true,
-        );
-      if (propagation)
-        for (const [service, tag] of [
-          ["admin-console", consoleImage],
-          ["runtime-controller", rcImage],
-        ])
-          await docker(
-            ["build", "-f", `services/${service}/Dockerfile`, "-t", tag, "."],
-            true,
-          );
+        ]);
       if (deployment) {
         const invalidKid = await assertMaintenanceKidStartupRejected({
           docker,
@@ -652,16 +643,11 @@ test(
               "run",
               "--name",
               clientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              `${config.project}_gateway-ingress`,
+              ...skillClientArgs(config),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
               `ANTNEST_E2E_LEARNING_MODE=${mode}`,
-              "-e",
-              `ANTNEST_E2E_MODEL_URL=${config.model.replace("127.0.0.1", "host.docker.internal")}`,
               "-e",
               `ANTNEST_E2E_SKILL_LEARNING_DEBUG=${debugLearning}`,
               ...(noticeFailure
@@ -908,35 +894,6 @@ test(
           true,
         );
       }
-      if (cleanupLostResponse) {
-        const acpContainer = await docker(
-          composeArgs(config.project, [
-            ...overlay,
-            "ps",
-            "-q",
-            "agent-acp-service",
-          ]),
-        );
-        const gate = async (path, method = "GET") =>
-          JSON.parse(
-            await docker([
-              "exec",
-              "-e",
-              "NODE_OPTIONS=",
-              acpContainer,
-              "node",
-              "-e",
-              `fetch('http://127.0.0.1:18093/${path}',{method:'${method}'}).then(r=>r.json()).then(x=>console.log(JSON.stringify(x)))`,
-            ]),
-          );
-        await until(
-          async () => (await gate("status")).pending,
-          "real release response held",
-          abort.signal,
-          30_000,
-        );
-        assert.deepEqual(await gate("drop", "POST"), { dropped: true });
-      }
       let runtimeContainerBeforeRotation;
       if (keyRotation) {
         const runtimeName = `antnest-runtime-${fixture.agentID}`;
@@ -996,19 +953,6 @@ test(
         assert.deepEqual(injected, { failures: 1 });
       }
       assert.match(fixture.agentID, /^agent_[a-z0-9]+$/u);
-      if (cleanupLostResponse) {
-        await until(
-          async () =>
-            Number(
-              await sql(
-                `SELECT count(*) FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action='release' AND intent.state='settled' AND intent.receipt->>'outcome'='released'`,
-              ),
-            ) === 1,
-          "lost cleanup response recovered before next foreground Run",
-          abort.signal,
-          30_000,
-        );
-      }
       if (!debugLearning) {
         const advanced = await docker([
           "exec",
@@ -1043,10 +987,13 @@ test(
               "run",
               "--name",
               clientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              `${config.project}_gateway-ingress`,
+              ...skillClientArgs(config, {
+                grants: [
+                  "acp-controller",
+                  "console-controller",
+                  "gateway-identity",
+                ],
+              }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -1227,10 +1174,7 @@ test(
                 "run",
                 "--name",
                 clientName,
-                "--label",
-                `com.docker.compose.project=${config.project}`,
-                "--network",
-                `${config.project}_gateway-ingress`,
+                ...skillClientArgs(config),
                 "-e",
                 `ANTNEST_E2E_AGENT_ID=${targetId}`,
                 "-e",
@@ -1363,16 +1307,28 @@ test(
       }
       let cleanupEvidence;
       if (verifyCleanup) {
-        await until(
-          async () =>
-            Number(
-              await sql(
-                `SELECT count(*) FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action='release' AND intent.state='settled' AND intent.receipt->>'outcome'='released'`,
-              ),
-            ) === 2,
-          "both settled learning candidates must be released",
-          abort.signal,
-          30_000,
+        // Install keeps no candidate in the Runtime: the staging tree is
+        // removed by every completed install and nothing is left to release.
+        const installs = (
+          await sql(
+            `SELECT intent.state||'|'||COALESCE(intent.receipt->>'outcome','') FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action='install' ORDER BY intent.created_at`,
+          )
+        )
+          .split("\n")
+          .filter(Boolean);
+        assert.equal(
+          installs.filter((row) => row === "settled|applied").length,
+          2,
+          `each learned change must settle one install: ${installs.join(", ")}`,
+        );
+        assert.equal(
+          Number(
+            await sql(
+              `SELECT count(*) FROM learning_maintenance_intents intent JOIN learning_tasks task ON task.id=intent.task_id WHERE task.agent_id='${fixture.agentID}' AND intent.action<>'install'`,
+            ),
+          ),
+          0,
+          "ACP sent a retired maintenance action",
         );
         assert.equal(
           Number(
@@ -1391,19 +1347,16 @@ test(
             `antnest-runtime-${fixture.agentID}`,
             "node",
             "-e",
-            "const fs=require('node:fs');const count=p=>fs.existsSync(p)?fs.readdirSync(p,{withFileTypes:true}).filter(x=>x.isDirectory()).length:0;console.log(JSON.stringify({candidates:count('/workspace/.antnest/skill-learning/candidates'),detached:count('/workspace/.antnest/skill-learning/release-stage'),active:fs.existsSync('/workspace/.antnest/skills/fixture-procedure/SKILL.md')}))",
+            "const fs=require('node:fs');const count=p=>fs.existsSync(p)?fs.readdirSync(p).length:0;console.log(JSON.stringify({staging:count('/workspace/.antnest/skill-learning/staging'),candidates:count('/workspace/.antnest/skill-learning/candidates'),detached:count('/workspace/.antnest/skill-learning/release-stage'),active:fs.existsSync('/workspace/.antnest/skills/fixture-procedure/SKILL.md')}))",
           ]),
         );
         assert.deepEqual(physical, {
+          staging: 0,
           candidates: 0,
           detached: 0,
           active: true,
         });
-        cleanupEvidence = {
-          released: 2,
-          lostResponseInjected: cleanupLostResponse,
-          physical,
-        };
+        cleanupEvidence = { installs, physical };
       }
       if (!uiOutage && !pinned && !discovery) {
         const candidate = JSON.parse(
@@ -1427,22 +1380,17 @@ test(
             "run",
             "--name",
             `${config.project}-skill-learning-registry-check`,
-            "--label",
-            `com.docker.compose.project=${config.project}`,
-            "--network",
-            `${config.project}_gateway-ingress`,
+            ...skillClientArgs(config, {
+              grants: ["console-registry", "gateway-identity"],
+            }),
             "-e",
             `ANTNEST_E2E_CANDIDATE_ARTIFACT_HEX=${candidate.artifact_hex}`,
             "-e",
             `ANTNEST_E2E_ORGANIZATION_ID=${candidate.organization_id}`,
             "-e",
-            `ANTNEST_E2E_ACTOR_ID=${fixture.ownerID}`,
-            "-e",
             `ANTNEST_E2E_CONTENT_DIGEST=${candidate.target_digest}`,
             "-e",
             `ANTNEST_E2E_ARTIFACT_DIGEST=${candidate.artifact_digest}`,
-            "-e",
-            `ANTNEST_E2E_REGISTRY_TOKEN=${config.env.ANTNEST_SKILL_REGISTRY_API_TOKEN ?? "antnest-skill-registry-local-development-token"}`,
             "-v",
             `${root}/tests:/app/tests:ro`,
             image,
@@ -1610,40 +1558,34 @@ test(
           "replacement Runtime must join the management network",
         );
         const clientName = `${config.project}-skill-learning-key-removal`;
-        let output;
         try {
-          output = await docker(
-            [
-              "run",
-              "--name",
-              clientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              managementNetwork,
-              "-e",
-              `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
-              "-e",
-              `ANTNEST_E2E_RUNTIME_IP=${runtimeIp}`,
-              "-e",
-              `ANTNEST_E2E_OLD_SIGNING_KEY=${keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64")}`,
-              "-e",
-              `ANTNEST_E2E_NEXT_SIGNING_KEY=${config.env.ANTNEST_E2E_SKILL_SIGNING_KEY}`,
-              "-v",
-              `${root}/tests:/app/tests:ro`,
-              image,
-              "node",
-              "/app/tests/e2e/skill-learning/key-removal-client.mjs",
-            ],
-            true,
-          );
+          removedKey = await runKeyRemovalProbe({
+            docker,
+            acpContainer: await docker(
+              composeArgs(config.project, [
+                ...overlay,
+                "ps",
+                "-q",
+                "agent-acp-service",
+              ]),
+            ),
+            name: clientName,
+            project: config.project,
+            network: managementNetwork,
+            agentId: fixture.agentID,
+            runtimeIp,
+            oldKey: keys.privateKey
+              .export({ format: "der", type: "pkcs8" })
+              .toString("base64"),
+            nextKey: config.env.ANTNEST_E2E_SKILL_SIGNING_KEY,
+            image,
+          });
         } catch (error) {
           throw new Error(
             `Key removal client failed: ${logs(clientName).slice(-2000)}`,
             { cause: error },
           );
         }
-        removedKey = JSON.parse(output.trim().split("\n").at(-1));
         assert.equal(removedKey.status, "removed_key_rejected");
         const verifyClientName = `${config.project}-skill-learning-post-rebuild`;
         let verifyOutput;
@@ -1653,10 +1595,7 @@ test(
               "run",
               "--name",
               verifyClientName,
-              "--label",
-              `com.docker.compose.project=${config.project}`,
-              "--network",
-              `${config.project}_gateway-ingress`,
+              ...skillClientArgs(config),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -1791,7 +1730,11 @@ test(
           services: {},
         };
         const readDocker = dockerClient(config.env, undefined, 60000);
+        // Gateway and Console sit on every admin request path; without them a
+        // Console 5xx cannot be attributed to the layer that produced it.
         for (const service of [
+          "edge-gateway",
+          "admin-console",
           "agent-acp-service",
           "agent-controller",
           "runtime-controller",

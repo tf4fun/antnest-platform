@@ -28,7 +28,7 @@
         "agent-acp-service": "operation"
       },
       "request_body": "protocol",
-      "notes": "Workload proof supplements the signed ticket and execution fence. The prepare action is a bounded multipart artifact upload; other actions are strict application/json controls."
+      "notes": "Workload proof supplements the signed ticket and execution fence. The install action is a bounded multipart artifact upload; the read-only digest action is a strict application/json query."
     },
     "POST /internal/skill-temporary/{action}": {
       "callers": ["agent-acp-service"],
@@ -69,7 +69,7 @@
   },
   "guarded_sources": {
     "runtimes/antnest-runtime/src/mcp.rs": {
-      "sha256": "679cb2206deb47e05a137dca82554812d1ad88c073528f0d1b768f8f983ae213",
+      "sha256": "2a449a9ead1752debfd997d0c191a3dc37fcc6addf1256a649087fe84a158283",
       "routes": [
         "GET /status",
         "* /mcp",

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertUpdateReceiptCheckpoint,
   assertUpdateReceiptRecovery,
+  inspectUpdateProxyDeployment,
 } from "./interrupted-current.mjs";
 
 function fixture() {
@@ -128,4 +129,40 @@ test("recovered configuration uses the explicitly selected new Template revision
       }),
     );
   }
+});
+
+function proxyRows(networks) {
+  return [
+    {
+      Config: {
+        Labels: {
+          "com.docker.compose.service": "update-proxy",
+          "com.docker.compose.project": "antnest-lifecycle-0000abcd",
+        },
+      },
+      State: { Running: true, Health: { Status: "healthy" } },
+      HostConfig: { PortBindings: {} },
+      NetworkSettings: {
+        Ports: {},
+        Networks: Object.fromEntries(networks.map((n) => [n, {}])),
+      },
+    },
+  ];
+}
+test("update proxy sits only on the Controller-to-Runtime network", () => {
+  const config = { project: "antnest-lifecycle-0000abcd" };
+  assert.deepEqual(
+    inspectUpdateProxyDeployment(
+      proxyRows([`${config.project}_controller-runtime`]),
+      config,
+    ),
+    { update_proxy_private: true },
+  );
+  for (const networks of [
+    [`${config.project}_development`],
+    [`${config.project}_controller-runtime`, `${config.project}_edge`],
+  ])
+    assert.throws(() =>
+      inspectUpdateProxyDeployment(proxyRows(networks), config),
+    );
 });

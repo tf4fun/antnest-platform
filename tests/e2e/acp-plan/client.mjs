@@ -12,6 +12,7 @@ import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { seedPlans } from "./setup.mjs";
 import { collectPlanRequestTrace } from "./requests.mjs";
 import { inspectPlanTrace } from "./trace.mjs";
+import { commandStrictOutcome } from "../acp-commands/trace.mjs";
 import {
   assertPlanEvents,
   planUpdates,
@@ -19,6 +20,7 @@ import {
   appendRunEvidence,
 } from "./evidence.mjs";
 import { caseFor, phases, marker, stepsFor } from "./model.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -170,9 +172,7 @@ async function prompt(client, version, sessionId, phase) {
   for (const frame of client.updates)
     assert(validators[version - 1](frame.update), "invalid live schema");
   outcomes.push({ phase, ...assertPlanEvents(version, phase, client.updates) });
-  console.log(
-    JSON.stringify({ status: "scenario_passed", ...outcomes.at(-1) }),
-  );
+  console.log(asciiJSON({ status: "scenario_passed", ...outcomes.at(-1) }));
   return structuredClone(relevantUpdates(client.updates));
 }
 
@@ -362,15 +362,11 @@ async function main() {
   );
   assert.equal(replays.filter((trace) => !trace.denial).length, 20);
   assert.equal(replays.filter((trace) => trace.denial).length, 6);
-  const strictTrace = [...traces, ...replays].some(
-    (trace) => trace.strict_trace === "failed",
-  )
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = commandStrictOutcome([...traces, ...replays]);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
-      strict_trace: strictTrace,
+      ...strict,
       scenarios: outcomes.length,
       model_requests: observed.requests.length,
       plan_commits: outcomes.reduce((sum, outcome) => sum + outcome.plans, 0),
@@ -384,13 +380,13 @@ async function main() {
       cross_agent_rejections: 4,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       error_type: error.name,

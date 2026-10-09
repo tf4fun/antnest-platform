@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 import { runCommand } from "../../support/run-command.mjs";
 import { skillArtifact } from "./stage3-fixture.mjs";
 import {
@@ -87,8 +88,11 @@ try {
   baseline = await inventory(docker);
   save("baseline.json", baseline);
   console.log(JSON.stringify({ project, stage: "build" }));
-  await docker(
-    [
+  const [, ...build] = candidateCommand({
+    name: "skill-registry",
+    tag: image,
+    build: [
+      "docker",
       "build",
       "--tag",
       image,
@@ -96,8 +100,8 @@ try {
       "services/skill-registry/Dockerfile",
       ".",
     ],
-    true,
-  );
+  });
+  await docker(build, true);
   built = true;
   console.log(JSON.stringify({ project, stage: "start" }));
   await docker(

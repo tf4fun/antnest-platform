@@ -7,7 +7,10 @@ import { assertDeniedSessionError } from "../identity-closeout/agent-access-evid
 import { until } from "../acp-closeout/support.mjs";
 import { transcript } from "../acp-commands/evidence.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { collectNativeTrace } from "../acp-multimodal/trace.mjs";
+import {
+  collectNativeTrace,
+  nativeStrictOutcome,
+} from "../acp-multimodal/trace.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import {
@@ -32,6 +35,7 @@ import {
   setModel,
   validate,
 } from "./connection.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -643,7 +647,7 @@ async function main() {
   assert.equal(traces.filter((t) => t.rejection).length, 12);
   assert.equal(pricingTraces.length, 19);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_complete",
       model_requests: requests.length,
       request_traces: traces.length,
@@ -665,7 +669,7 @@ async function main() {
     );
   }
   console.log(
-    JSON.stringify({ status: "request_traces_checked", count: checked.length }),
+    asciiJSON({ status: "request_traces_checked", count: checked.length }),
   );
   assert.equal(new Set(checked.map((t) => t.trace_id)).size, traces.length);
   assert.equal(new Set(checked.map((t) => t.run_id).filter(Boolean)).size, 52);
@@ -682,15 +686,11 @@ async function main() {
       ),
     );
   }
-  const strictTrace = [...checked, ...pricing].some(
-    (t) => t.strict_trace === "failed",
-  )
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = nativeStrictOutcome([...checked, ...pricing]);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
-      strict_trace: strictTrace,
+      ...strict,
       transports: profiles.map((p) => p.name),
       model_requests: requests.length,
       restored_sessions: saved.length * 3,
@@ -704,13 +704,13 @@ async function main() {
       pricing_traces: pricing,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       ...summarizeFailure(error),

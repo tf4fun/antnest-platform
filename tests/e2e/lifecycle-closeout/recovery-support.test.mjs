@@ -8,11 +8,21 @@ import {
 } from "./recovery-support.mjs";
 import { scopeLabel } from "./docker.mjs";
 
-const config = { project: "antnest-lifecycle-1234abcd", image: "sha256:image" };
+// Docker reports a container's Image as the resolved ID, never the tag.
+const config = {
+  project: "antnest-lifecycle-1234abcd",
+  image: "antnest/antnest-runtime:local",
+  resolvedImage: "sha256:image",
+};
+const storage = [
+  "antnest-runtime-auth-receiver",
+  "antnest-skills-set-m1",
+  "antnest-workspace-agent",
+].join("\n");
 function runtime() {
   return {
     Id: "container",
-    Image: config.image,
+    Image: config.resolvedImage,
     Config: {
       Labels: {
         "io.antnest.agent-id": "agent",
@@ -21,7 +31,24 @@ function runtime() {
       },
     },
     Mounts: [
-      { Destination: "/workspace", Name: "antnest-workspace-agent", RW: true },
+      {
+        Destination: "/workspace",
+        Type: "volume",
+        Name: "antnest-workspace-agent",
+        RW: true,
+      },
+      {
+        Destination: "/skills",
+        Type: "volume",
+        Name: "antnest-skills-set-m1",
+        RW: false,
+      },
+      {
+        Destination: "/run/antnest-auth",
+        Type: "volume",
+        Name: "antnest-runtime-auth-receiver",
+        RW: false,
+      },
     ],
     State: { Running: true, StartedAt: "start", Health: { Status: "healthy" } },
     RestartCount: 0,
@@ -30,7 +57,7 @@ function runtime() {
 function physicalDocker(
   container = runtime(),
   ids = "container",
-  volume = "antnest-workspace-agent",
+  volume = storage,
 ) {
   return async (args) => {
     if (args[0] === "inspect") return JSON.stringify([container]);
@@ -63,8 +90,22 @@ test("absent Runtime preserves the scoped inventory", async () => {
     await runtimePhysical(physicalDocker(runtime(), ""), config, "agent"),
     {
       ids: [],
-      volumes: ["antnest-workspace-agent"],
+      volumes: storage.split("\n"),
     },
+  );
+});
+test("rejects storage left behind by another Runtime generation", async () => {
+  await assert.rejects(
+    runtimePhysical(
+      physicalDocker(
+        runtime(),
+        "container",
+        `antnest-runtime-auth-previous\n${storage}`,
+      ),
+      config,
+      "agent",
+    ),
+    /unmounted or unowned Runtime storage/,
   );
 });
 for (const [name, change] of [
@@ -84,6 +125,18 @@ for (const [name, change] of [
     "read-only workspace",
     (c) => {
       c.Mounts[0].RW = false;
+    },
+  ],
+  [
+    "writable receiver",
+    (c) => {
+      c.Mounts[2].RW = true;
+    },
+  ],
+  [
+    "missing Skill mount",
+    (c) => {
+      c.Mounts.splice(1, 1);
     },
   ],
 ])

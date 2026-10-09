@@ -12,7 +12,9 @@ import { assertFileEvents } from "./evidence.mjs";
 import { seedFiles, assertAgentDenied } from "./setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { inspectFileTrace, collectReplayRequestTrace } from "./trace.mjs";
+import { commandStrictOutcome } from "../acp-commands/trace.mjs";
 import { cases, contentMarker } from "./model.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway);
 const member = new GatewayClient(gateway);
@@ -154,7 +156,7 @@ async function scenario(version, item, agent) {
       replay_and_fork: true,
       tool_status: item.error ? "failed" : "completed",
     });
-    console.log(JSON.stringify(outcomes.at(-1)));
+    console.log(asciiJSON(outcomes.at(-1)));
   } finally {
     client.close();
   }
@@ -248,20 +250,16 @@ assert.equal(
   new Set(replays.map((trace) => trace.trace_id)).size,
   outcomes.length * 3,
 );
-const strictTrace = [...traces, ...replays].some(
-  (trace) => trace.strict_trace === "failed",
-)
-  ? "failed"
-  : "passed";
+const { accepted, ...strict } = commandStrictOutcome([...traces, ...replays]);
 console.log(
-  JSON.stringify({
+  asciiJSON({
     status: "business_passed",
     scenarios: outcomes.length,
     model_requests: observed.requests.length,
     traces,
     replay_traces: replays,
     cross_user_rejections: 2,
-    strict_trace: strictTrace,
+    ...strict,
   }),
 );
-if (strictTrace === "failed") process.exitCode = 1;
+if (!accepted) process.exitCode = 1;

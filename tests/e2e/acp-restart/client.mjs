@@ -3,6 +3,7 @@ import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { publishCheckpoint } from "../acp-closeout/checkpoint.mjs";
 import { commandConnection } from "../acp-commands/connection.mjs";
@@ -27,6 +28,7 @@ import {
   inspectBarrierTrace,
   inspectInterruptedTrace,
   assertRuntimeBinding,
+  restartStrictOutcome,
 } from "./trace.mjs";
 import { captureRuntime } from "../managed-mcp/rebuild-evidence.mjs";
 import {
@@ -38,6 +40,7 @@ import { assertReplay } from "../acp-persistence/evidence.mjs";
 import { seed } from "./setup.mjs";
 import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 const archive = new Map();
 const saveTrace = (label) => (trace) =>
   writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
@@ -89,18 +92,24 @@ const api = async (path, body, status = 200) =>
 const agent = () => api(`/api/admin/agents/${agentId}`);
 const state = async () =>
   (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const services = serviceClient();
+const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
   const r = await fetch(base + path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(base === runtimeController
+        ? services.authorization("controller-runtime")
+        : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(15000),
   });
   assert.equal(r.status, 200, `fixture inspection ${path} failed`);
   return r.json();
 }
-const runtime = () =>
-  peer("http://runtime-controller:8080", `/internal/runtimes/${agentId}`);
+const runtime = () => peer(runtimeController, `/internal/runtimes/${agentId}`);
 const sync = async () =>
   (await api("/api/admin/execution-synchronization")).synchronization;
 async function modelState() {
@@ -140,7 +149,7 @@ async function operation(id, kind) {
     }[kind],
     current = await runtime();
   const result = await peer(
-    "http://runtime-controller:8080",
+    runtimeController,
     `/internal/runtime-operations/${runtimeCommandId(id, phase)}`,
   );
   assertRuntimeOperation(result, {
@@ -437,6 +446,7 @@ async function exercise(version, kind, template) {
       traceID: rebuilt.traceID,
       label: label + "-rebuild",
       settlementOutcome: "runtime_barrier_required",
+      skillPreparation: true,
     });
     await operation(rebuilt.body.request_id, "rebuild");
     await ready();
@@ -491,7 +501,7 @@ async function exercise(version, kind, template) {
     replays: kind === "inflight" ? 3 : 2,
   });
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "interruption_case_passed",
       label,
       run_id: after.run.run_id,
@@ -502,7 +512,10 @@ async function exercise(version, kind, template) {
 }
 async function main() {
   await mkdir("/tmp/restart-traces", { mode: 0o700 });
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[\w.-]+$/,
+  );
   const login = await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
@@ -541,6 +554,7 @@ async function main() {
     agentId,
     requestId: created.body.operation.request_id,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
   for (const version of [1, 2])
@@ -588,7 +602,7 @@ async function main() {
   await writeFile("/tmp/restart-business.json", JSON.stringify(business), {
     mode: 0o600,
   });
-  console.log(JSON.stringify(business));
+  console.log(asciiJSON(business));
   await mkdir("/tmp/restart-traces", { mode: 0o700, recursive: true });
   const save = (label) => (trace) =>
     writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
@@ -661,28 +675,26 @@ async function main() {
       });
     }
   }
-  const strict = results.some((r) => r.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = restartStrictOutcome(results);
   save("results")(results);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "trace_assessment",
       trace_gate_scope: "completed_requests_and_lifecycle",
       interrupted_trace_diagnostics: results.filter(
         (r) => r.strict_trace === "not_applicable",
       ).length,
-      strict_trace: strict,
+      ...strict,
       traces: results,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "restart_failed",
       stage,
       error: error.message,

@@ -65,6 +65,13 @@ startup recovery and stops before the worker lock is released.
   from untrusted Tool output. PostgreSQL truncates text before returning it.
 - A claimed task persists one immutable, idempotent evidence snapshot. Changed
   selected content conflicts on replay.
+- Review never calls the Runtime. It lists the Agent's active, automatically
+  generated, unpinned managed Skills from ACP's stored `SKILL.md` of the last
+  applied package, and passes the bodies of up to two related Skills (24 KiB
+  total) as reference. A Skill whose stored artifact is missing or no longer
+  matches its managed digest is not offered and cannot be updated. A package
+  edited in the workspace since its last applied change is caught by the
+  Runtime base digest check when the change is applied.
 - The immutable review prompt and strict output parser produce only a bounded
   `skip` or a single-Skill proposal with per-rule citations. Evidence is
   serialized as labeled data; Tool output is never promoted to a user instruction.
@@ -92,58 +99,52 @@ startup recovery and stops before the worker lock is released.
   canonical bytes on write and read and rejects a different candidate on replay.
 - Apply admission rejects stale or disabled policy, pinned or unregistered
   updates, system-name collisions, incomplete Runtime inventories and changed
-  execution bindings. A candidate freezes its apply basis only after a matching
-  settled Runtime `check` receipt.
-- The apply coordinator orders `prepare`, `check`, fresh policy and Runtime
-  admission, conditional `commit` and durable change recording. A checked
-  candidate reads Skill inventory from the current execution binding with an
-  execution-ID fence, not from the source Run's Runtime snapshot.
-- Applied changes complete through the change ledger. Blocked or unknown effects
-  pause the task. Settled conflicts and rejections fail the immutable candidate
-  and task in one transaction.
+  execution bindings. Admission is an ACP decision: a draft freezes its apply
+  basis (policy revision, path, base and target digests, evidence IDs) without
+  a Runtime call.
+- Each idle window re-runs admission against the current execution binding and
+  requires the same policy, path, digests and evidence as the frozen basis. A
+  later Runtime execution may install a candidate admitted under an earlier one.
+- The apply coordinator sends one atomic `install` and records the change in the
+  same transaction as the managed identity. Blocked, preempted and unknown
+  installs pause the task and keep the candidate. Settled conflicts and final
+  rejections fail the immutable candidate and task in one transaction.
 
 ### Runtime Maintenance Client
 
-The client signs the exact request body and validates bounded receipts for
-`prepare`, `check`, `commit`, `observe`, `cancel` and `release`.
+The client signs the exact multipart body and validates bounded `install`
+receipts against the shared contract. `install` and the read-only `digest` are
+the only Runtime maintenance routes ACP sends.
 
 - A PostgreSQL intent ledger records request identity, execution binding, body
-  digest and bounded facts before the first dispatch. Replaying the same intent
-  returns a non-dispatch receipt; changed inputs conflict.
-- Network loss, server errors, retryable responses and invalid receipts remain
-  unknown effects. Deterministic 4xx rejections settle as rejections. Outcomes
-  survive restart.
-- File effects are never blindly retried. Only an unknown read-only `observe`
-  can be sent again with the same request identity, and an unknown `release`
-  can replay its identity against Runtime's durable cleanup receipt. `commit` is
-  never redispatched.
-- A lost `commit` can settle from a separately recorded matching `observe`
-  result. The ledger keeps that observation as provenance instead of fabricating
-  a Runtime receipt. An `unknown` observation leaves the effect open.
-- The worker performs at most one settled-candidate cleanup per pass under the
-  foreground maintenance guard, keeps bytes needed by unresolved effects and
-  defers cleanup while the Runtime is closed to Runs.
+  digest and bounded facts before dispatch. Replaying the same intent returns a
+  non-dispatch receipt; changed inputs conflict. New install intents are
+  accepted only while the task is running.
+- Network loss, server errors, retryable responses, aborted requests and invalid
+  receipts leave the attempt unknown. Deterministic 4xx rejections settle as
+  rejections. Configuration rejections such as `maintenance_disabled` keep the
+  candidate for a later window.
+- An install is never replayed under its own identity. Install is conditional on
+  the active digest, so a lost or preempted attempt is superseded by a fresh
+  attempt with the next ordinal identity: the Runtime reports the target as
+  `applied`, performs the install from the unchanged base, or reports a
+  `conflict`. An unknown attempt does not hold the task or the Runtime
+  connection authority.
 
 ### Foreground Priority and Recovery
 
-- Foreground Run admission has a maintenance preemption gate. The task guard
-  closes its gate lease only after reading the durable maintenance ledger.
-  Unresolved Runtime intents or a failed ledger read keep foreground admission
-  fenced. A separate recovery lease can observe old effects and clears the fence
-  only after durable settlement.
-- Maintenance barriers belong to the Runtime execution that produced the unknown
-  effect. A confirmed replacement with a different execution ID can accept
-  foreground Runs while the old ledger entry remains unresolved.
+- Learning work holds a yielding gate lease. Foreground admission and Agent
+  lifecycle abort it and never wait for it, so learning never produces
+  `runtime_barrier_required`. Bounded background reads (catalog refresh and
+  source digest) and temporary-Skill cleanup hold non-yielding leases that
+  foreground admission waits for within a fixed limit.
 - On startup the exclusive worker owner pauses abandoned claims and marks
   unfinished model calls unknown, without erasing budget or claim identity.
-  Same-Agent work stays blocked until the unknown effect is observed.
 - A task outcome can pause a claim with an actionable reason. Resume keeps the
-  claim and spent budget and requires unchanged policy, an idle Agent and settled
-  model and Runtime effects. A Runtime `cancel` closes its generation and blocks
-  same-claim resume; a later transaction can hand the unapplied candidate to a
-  new claim generation while preserving candidate bytes and spent budget.
-- Recovery enumerates paused claims in bounded keyset pages and observes an
-  earlier commit before resuming or handing off a claim. A failed task does not
+  claim and spent budget and requires unchanged policy, an idle Agent and
+  settled model calls. Install attempts never block resume.
+- Recovery enumerates paused claims in bounded keyset pages and resumes one in
+  the next idle window of an Agent that accepts Runs. A failed task does not
   stop recovery of other Agents. Unexpected review or application errors persist
   `paused / runtime_unavailable` and release the global review slot.
 
@@ -214,12 +215,15 @@ Runtime outbound credentials await the private RC instance connection contract.
   limits, current owner access and exact sequence and digest checks. Both need an
   available source Agent Runtime; otherwise they return `source_unavailable`.
   Retained candidate bytes are never served as an offline substitute.
-- The signed Runtime `observe` operation verifies the complete directory
-  manifest, including extra files and modes. An artifact is returned only when it
-  equals the managed candidate's canonical package digest. Observation runs under
-  the idle maintenance gate, is bounded to five seconds, and never writes a
-  candidate, creates a Run or calls a model. Foreground preemption discards the
-  delivery. Access, binding and identity are checked again afterwards.
+- The signed, read-only Runtime `digest` action reads the manifest digest of the
+  complete active directory, including extra files and modes. An artifact is
+  returned only when it equals the managed candidate's canonical package digest;
+  a different or absent package removes the projection and reports
+  `content_changed`. A `blocked` or `preempted` receipt or an invalid response is
+  `source_unavailable`. The read runs under the idle maintenance gate, is bounded
+  to five seconds, and never writes a candidate, creates a Run or calls a model.
+  Foreground preemption discards the delivery. Access, binding and identity are
+  checked again afterwards.
 - Disabling an Agent makes its sources return 503 without changing the managed
   content identity. Enabling verifies the preserved workspace on the new Runtime.
   Deleting rejects old references with 404 and delivers the tombstone.

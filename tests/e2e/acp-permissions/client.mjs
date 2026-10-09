@@ -10,6 +10,7 @@ import { seedPermissions } from "./setup.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { collectPlanRequestTrace } from "../acp-plan/requests.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -147,7 +148,7 @@ async function prompt(client, version, sessionId, phase, decision) {
   if (decision) {
     await until(() => client.pending.length === 1, "approval request");
     if (process.env.TEST_PERMISSION_CRASH === "true") {
-      console.log(JSON.stringify({ status: "crash_ready" }));
+      console.log(asciiJSON({ status: "crash_ready" }));
       await new Promise(() => {});
     }
     const request = client.pending.shift();
@@ -366,7 +367,7 @@ async function main() {
   if (process.env.TEST_BROWSER === "true") {
     stage = "browser-validation";
     console.log(
-      JSON.stringify({ status: "browser_ready", email, agent_id: agents[0] }),
+      asciiJSON({ status: "browser_ready", email, agent_id: agents[0] }),
     );
     await until(
       async () => {
@@ -442,7 +443,7 @@ async function main() {
     ? "failed"
     : "passed";
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       strict_trace: strictTrace,
       scenarios: outcomes.length,
@@ -453,13 +454,13 @@ async function main() {
       cross_user_rejections: 2,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 1;
+  if (strictTrace === "failed") process.exitCode = 2;
 }
 try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       code: error.data?.code,

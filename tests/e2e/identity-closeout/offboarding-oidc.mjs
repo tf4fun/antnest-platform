@@ -1,33 +1,23 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { request } from "node:https";
-import { randomUUID } from "node:crypto";
 import { GatewayClient } from "./support.mjs";
+import { identityFixture } from "./identity-rpc.mjs";
 import { fixtureSecret, providerAccessToken } from "./oidc-provider.mjs";
 
-export async function addPeerMembership(actor, organization, user) {
-  const response = await fetch(
-    "http://identity-service:8080/rpc/identity/add-organization-membership",
-    {
-      method: "POST",
-      signal: AbortSignal.timeout(10000),
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        request_id: randomUUID(),
-        actor_principal_id: actor,
-        organization_id: organization,
-        user_id: user,
-        email: "oidc-scim@example.com",
-        display_name: "SCIM peer",
-        role: "member",
-      }),
-    },
+export async function addPeerMembership(admin, actor, organization, user) {
+  const identity = identityFixture();
+  const session = await identity.browserSession(
+    admin.cookies.get("antnest_session"),
+    { user_id: actor },
   );
-  assert.equal(
-    response.status,
-    200,
-    "owning Identity RPC fixture setup failed",
-  );
+  await identity.admin(session, "add-organization-membership", {
+    organization_id: organization,
+    user_id: user,
+    email: "oidc-scim@example.com",
+    display_name: "SCIM peer",
+    role: "member",
+  });
 }
 
 export async function oidcOwner(admin, slug, secrets) {

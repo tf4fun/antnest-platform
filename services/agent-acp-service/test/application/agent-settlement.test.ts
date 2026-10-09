@@ -115,32 +115,30 @@ describe("Agent lifecycle settlement", () => {
     vi.useRealTimers();
   });
 
-  it("waits for cancelled Skill maintenance before reporting lifecycle settlement", async () => {
+  it("settles a lifecycle without waiting for Skill learning", async () => {
     const test = await setup();
     const scope = { organizationId: "organization-1", agentId: "agent-1" };
-    const maintenance = test.learning.begin(scope, new AbortController().signal);
+    const learning = test.learning.beginLearning(scope, new AbortController().signal);
     await test.directory.apply(test.closed);
-    const settled = test.service.settle(request());
-    await vi.advanceTimersByTimeAsync(0);
-    expect(maintenance.signal.aborted).toBe(true);
-    expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
-    maintenance.finish(true);
-    await expect(settled).resolves.toEqual({ outcome: "settled", applied_revision: 2 });
-  });
-
-  it("does not settle a lifecycle while Skill maintenance has an unknown Runtime effect", async () => {
-    const test = await setup();
-    const scope = { organizationId: "organization-1", agentId: "agent-1" };
-    const maintenance = test.learning.begin(scope, new AbortController().signal);
-    await test.directory.apply(test.closed);
-    const settled = test.service.settle(request());
-    await vi.advanceTimersByTimeAsync(0);
-    maintenance.finish(false);
-    await expect(settled).resolves.toEqual({
-      outcome: "runtime_barrier_required",
+    await expect(test.service.settle(request())).resolves.toEqual({
+      outcome: "settled",
       applied_revision: 2,
     });
+    expect(learning.signal.aborted).toBe(true);
+    learning.finish();
+  });
+
+  it("waits for a bounded background Runtime read before reporting settlement", async () => {
+    const test = await setup();
+    const scope = { organizationId: "organization-1", agentId: "agent-1" };
+    const read = test.learning.begin(scope, new AbortController().signal);
+    await test.directory.apply(test.closed);
+    const settled = test.service.settle(request());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(read.signal.aborted).toBe(true);
     expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+    read.finish();
+    await expect(settled).resolves.toEqual({ outcome: "settled", applied_revision: 2 });
   });
 
   it.each([false, true])(

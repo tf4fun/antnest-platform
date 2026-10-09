@@ -20,6 +20,7 @@ import {
   owned,
   scopeLabel,
 } from "../../lifecycle-closeout/docker.mjs";
+import { candidateCommand } from "../../../support/candidate-images.mjs";
 import { runCommand } from "../../../support/run-command.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -211,18 +212,23 @@ const probes = async (mode, options = {}) => {
 };
 
 try {
+  // In CI the image job ran these gates for the provided images' inputs.
   const build = await runCommand({
     name: "linux-release-build",
-    command: [
-      "docker",
-      "build",
-      "--progress=plain",
-      "-f",
-      "runtimes/antnest-runtime/Dockerfile",
-      "-t",
-      image,
-      ".",
-    ],
+    command: candidateCommand({
+      name: "antnest-runtime",
+      tag: image,
+      build: [
+        "docker",
+        "build",
+        "--progress=plain",
+        "-f",
+        "runtimes/antnest-runtime/Dockerfile",
+        "-t",
+        image,
+        ".",
+      ],
+    }),
     cwd: root,
     output: evidence,
     timeoutMs: 1200000,
@@ -236,20 +242,24 @@ try {
   if (!cacheOnly) {
     const featureBuild = await runCommand({
       name: "linux-feature-build",
-      command: [
-        "docker",
-        "build",
-        "--progress=plain",
-        "--target",
-        "e2e",
-        "--build-arg",
-        "ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate",
-        "-f",
-        "runtimes/antnest-runtime/Dockerfile",
-        "-t",
-        gatedImage,
-        ".",
-      ],
+      command: candidateCommand({
+        name: "antnest-runtime-skill-gate",
+        tag: gatedImage,
+        build: [
+          "docker",
+          "build",
+          "--progress=plain",
+          "--target",
+          "e2e",
+          "--build-arg",
+          "ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate",
+          "-f",
+          "runtimes/antnest-runtime/Dockerfile",
+          "-t",
+          gatedImage,
+          ".",
+        ],
+      }),
       cwd: root,
       output: evidence,
       timeoutMs: 1200000,
@@ -541,17 +551,21 @@ try {
   }
   const fixtureBuild = await runCommand({
     name: "managed-fixture-build",
-    command: [
-      "docker",
-      "build",
-      "--target",
-      "build",
-      "-f",
-      "runtimes/antnest-runtime/Dockerfile",
-      "-t",
-      fixtureImage,
-      ".",
-    ],
+    command: candidateCommand({
+      name: "antnest-runtime-fixture",
+      tag: fixtureImage,
+      build: [
+        "docker",
+        "build",
+        "--target",
+        "build",
+        "-f",
+        "runtimes/antnest-runtime/Dockerfile",
+        "-t",
+        fixtureImage,
+        ".",
+      ],
+    }),
     cwd: root,
     output: evidence,
     timeoutMs: 1200000,

@@ -6,6 +6,7 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
 import { verifyTraces } from "../managed-mcp/trace.mjs";
 import { inspectTrace } from "./trace.mjs";
+import { cancelDiagnostics } from "./cancel-diagnostics.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import {
   assertEarly,
@@ -14,6 +15,7 @@ import {
   terminalStatus,
   previewReceived,
 } from "./evidence.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway);
 const member = new GatewayClient(gateway);
@@ -101,12 +103,29 @@ async function scenario(version, source, ending, agent, gate) {
     }
     if (ending === "cancel") {
       await gate.alive(phase, source);
+      const cancelAt = Date.now();
       await client.notify("cancel", { sessionId });
-      await until(
-        () => gate.stopped(phase, source),
-        `${phase} process cancellation`,
-        10000,
-      );
+      try {
+        await until(
+          () => gate.stopped(phase, source),
+          `${phase} process cancellation`,
+          10000,
+        );
+      } catch (error) {
+        console.log(
+          asciiJSON(
+            await cancelDiagnostics({
+              jaeger: "http://jaeger:16686",
+              model: "http://progress-model:8080",
+              phase,
+              cancelAt,
+              frames: client.updates,
+              stopped: () => gate.stopped(phase, source),
+            }),
+          ),
+        );
+        throw error;
+      }
     } else {
       await gate.release(phase);
     }
@@ -176,7 +195,7 @@ async function scenario(version, source, ending, agent, gate) {
       terminal: status,
       ...(ending === "cancel" ? { actual_execution_stopped: true } : {}),
     });
-    console.log(JSON.stringify(outcomes.at(-1)));
+    console.log(asciiJSON(outcomes.at(-1)));
   } finally {
     client.close();
   }
@@ -254,7 +273,7 @@ const strictTrace = traces.some((trace) => trace.strict_trace === "failed")
   ? "failed"
   : "passed";
 console.log(
-  JSON.stringify({
+  asciiJSON({
     status: "business_passed",
     scenarios: outcomes.length,
     model_requests: observed.requests.length,
@@ -262,4 +281,4 @@ console.log(
     strict_trace: strictTrace,
   }),
 );
-if (strictTrace === "failed") process.exitCode = 1;
+if (strictTrace === "failed") process.exitCode = 2;

@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-managed-mcp-fixtures test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller e2e-skill-learning-runtime e2e-skill-learning-automatic e2e-skill-learning-preempt e2e-skill-learning-policy-off e2e-skill-learning-lifecycle-disable e2e-skill-learning-lifecycle-rebuild e2e-skill-learning-ui-outage e2e-skill-learning-skip e2e-skill-learning-model-failure e2e-skill-learning-restart
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-managed-mcp-fixtures test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller e2e-skill-learning-runtime e2e-skill-learning-preempt e2e-skill-learning-policy-off e2e-skill-learning-lifecycle-disable e2e-skill-learning-lifecycle-rebuild e2e-skill-learning-ui-outage e2e-skill-learning-skip e2e-skill-learning-model-failure e2e-skill-learning-restart
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -122,10 +122,12 @@ test-repo:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
-	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs
+	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/key-removal-probe.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/response-diagnostic.test.mjs
 	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs
 	node --test tests/integration/runtime-controller/readiness-contract.test.mjs
@@ -240,6 +242,13 @@ e2e-lifecycle-loss:
 e2e-rpc-response-loss:
 	ANTNEST_E2E_RPC_RESPONSE_LOSS=true sh tests/e2e/e2e-stage3a.sh
 
+# Test-only Runtime with the managed MCP fixture, layered on the current
+# antnest/antnest-runtime:local image. CI provides it prebuilt
+# (tests/support/candidate-images.mjs).
+.PHONY: docker-build-managed-runtime
+docker-build-managed-runtime:
+	node tests/support/candidate-images.mjs antnest-runtime-managed antnest/antnest-runtime:managed-integration -- sh -c 'docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build . && docker build -f tests/e2e/managed-mcp/Dockerfile -t antnest/antnest-runtime:managed-integration .'
+
 .PHONY: test-tool-progress-fixtures e2e-tool-progress
 test-tool-progress-fixtures:
 	node --test --test-concurrency=1 tests/e2e/acp-progress/*.test.mjs
@@ -313,29 +322,21 @@ docker-build-runtime-controller:
 	docker compose build runtime-controller
 
 e2e-skill-learning-runtime:
-	docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-build .
-	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-local .
-	node tests/e2e/skill-learning/runtime-prepare.mjs
-
-e2e-skill-learning-automatic:
-	node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+	node tests/support/candidate-images.mjs antnest-runtime-fixture antnest/antnest-runtime:skill-learning-build -- docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-build .
+	node tests/support/candidate-images.mjs antnest-runtime antnest/antnest-runtime:skill-learning-local -- docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-local .
+	node tests/e2e/skill-learning/runtime-release.mjs
+	node tests/support/candidate-images.mjs antnest-runtime-skill-gate antnest/antnest-runtime:skill-learning-gate -- docker build --target e2e --build-arg ANTNEST_RUNTIME_FEATURES=skill-maintenance-e2e-gate -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:skill-learning-gate .
+	node tests/e2e/skill-learning/runtime-install.mjs
 
 .PHONY: e2e-runtime-tool-usability
 e2e-runtime-tool-usability:
 	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
 	ANTNEST_E2E_SKILL_LEARNING_DEBUG=true ANTNEST_E2E_TOOL_USABILITY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
 
-.PHONY: e2e-skill-learning-trace
-e2e-skill-learning-trace:
-	ANTNEST_E2E_LEARNING_TRACE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
-
 e2e-skill-learning-cleanup:
 	ANTNEST_E2E_SKILL_CLEANUP=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
 
-.PHONY: e2e-skill-learning-cleanup e2e-skill-learning-cleanup-lost-response
-
-e2e-skill-learning-cleanup-lost-response:
-	ANTNEST_E2E_SKILL_CLEANUP_LOST_RESPONSE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
+.PHONY: e2e-skill-learning-cleanup
 
 e2e-skill-learning-preempt:
 	node --test tests/e2e/skill-learning/preempt-flow.test.mjs
@@ -349,29 +350,29 @@ e2e-skill-learning-lifecycle-disable:
 e2e-skill-learning-lifecycle-rebuild:
 	ANTNEST_E2E_LIFECYCLE_REBUILD=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
 
-.PHONY: e2e-skill-learning-held-commit-disable
-e2e-skill-learning-held-commit-disable:
-	node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-held-disable
+e2e-skill-learning-install-held-disable:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=held-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-held-commit-foreground
-e2e-skill-learning-held-commit-foreground:
-	ANTNEST_E2E_FOREGROUND_DURING_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-held-foreground
+e2e-skill-learning-install-held-foreground:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=held-foreground node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-atomic-commit-foreground
-e2e-skill-learning-atomic-commit-foreground:
-	ANTNEST_E2E_FOREGROUND_DURING_ATOMIC_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-pre-dispatch-disable
+e2e-skill-learning-install-pre-dispatch-disable:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=pre-dispatch-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-lost-commit-disable
-e2e-skill-learning-lost-commit-disable:
-	ANTNEST_E2E_DROP_COMMIT_RESPONSE=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-after-rename-disable
+e2e-skill-learning-install-after-rename-disable:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=after-rename-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-pre-dispatch-disable
-e2e-skill-learning-pre-dispatch-disable:
-	ANTNEST_E2E_HOLD_BEFORE_COMMIT=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-after-rename-foreground
+e2e-skill-learning-install-after-rename-foreground:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=after-rename-foreground node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
-.PHONY: e2e-skill-learning-atomic-commit-disable
-e2e-skill-learning-atomic-commit-disable:
-	ANTNEST_E2E_HOLD_AFTER_INSTALL=true node --test tests/e2e/skill-learning/held-commit-lifecycle.test.mjs
+.PHONY: e2e-skill-learning-install-lost
+e2e-skill-learning-install-lost:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=lost node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
 .PHONY: e2e-skill-learning-notice-send-failure
 e2e-skill-learning-notice-send-failure:
@@ -398,10 +399,6 @@ e2e-skill-learning-ui-outage:
 
 e2e-skill-learning-skip:
 	ANTNEST_E2E_REVIEW_SKIP=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
-
-.PHONY: e2e-skill-learning-debug
-e2e-skill-learning-debug:
-	ANTNEST_E2E_SKILL_LEARNING_DEBUG=true ANTNEST_E2E_LEARNING_TRACE=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
 
 e2e-skill-learning-model-failure:
 	ANTNEST_E2E_REVIEW_FAILURE=true node --test tests/e2e/skill-learning/preempt-flow.test.mjs
@@ -490,29 +487,13 @@ e2e-stage4-skill-target-drift:
 e2e-skill-discovery-registry:
 	node tests/e2e/skill-registry/discovery-docker.mjs
 
-.PHONY: e2e-skill-discovery-acp
-e2e-skill-discovery-acp:
-	ANTNEST_E2E_SKILL_DISCOVERY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
-
-.PHONY: e2e-skill-discovery-tools
-e2e-skill-discovery-tools:
-	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
-
 .PHONY: e2e-skill-temporary-runtime
 e2e-skill-temporary-runtime:
 	node tests/e2e/skill-registry/temporary-runtime.mjs --build
 
-.PHONY: e2e-skill-temporary-acp
-e2e-skill-temporary-acp:
-	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
-
 .PHONY: e2e-skill-discovery-console
 e2e-skill-discovery-console:
 	node tests/e2e/skill-registry/console-discovery.mjs
-
-.PHONY: e2e-skill-propagation
-e2e-skill-propagation:
-	ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
 
 .PHONY: test-skill-deployment e2e-skill-deployment
 test-skill-deployment:

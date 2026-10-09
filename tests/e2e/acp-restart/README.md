@@ -51,7 +51,10 @@ Completed requests and lifecycle operations keep strict Trace checks. Before
 another SIGKILL, completed requests must pass topology, protocol and privacy
 inspection through bounded polling and then be archived. A pause in span
 arrivals alone is not evidence, and the SDK's five-second batch interval does
-not guarantee backend visibility after five seconds.
+not guarantee backend visibility after five seconds. Their only accepted
+strict exception is the reviewed clock-skew warning (`clock skew adjustment
+disabled; not applying calculated delta of ...`); it is reported in
+`strict_trace` but does not fail the exit.
 
 Process observations, physical proof, public audits and raw Traces are private
 artifacts under `artifacts/verification/acp-restart/<project>/`.

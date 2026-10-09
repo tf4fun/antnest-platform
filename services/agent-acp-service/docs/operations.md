@@ -120,8 +120,9 @@ fallback bearer. Recover sender storage by restarting ACP and having Controller
 republish the verified current private reference. A cold database snapshot or
 closed publication cannot create authority.
 
-Accepted Runs and maintenance operations retain original authority for cleanup
-through closure. An authentication failure cannot erase an earlier unknown effect;
+Accepted Runs, source digest reads and temporary-Skill operations retain
+original authority for cleanup through closure. A Skill install keeps its
+authority only until its attempt ends; a resend uses the current binding. An authentication failure cannot erase an earlier unknown effect;
 normal stopping and durable settlement rules still apply. Normal shutdown,
 failed startup and worker ownership loss close the dispatcher and remove owned
 sender files. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)

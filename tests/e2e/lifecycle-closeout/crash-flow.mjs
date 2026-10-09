@@ -12,6 +12,7 @@ import {
   assertCrashCheckpoint,
   assertCrashRecovery,
 } from "./crash-evidence.mjs";
+import { runtimeStatus } from "./runtime-status.mjs";
 export async function runCrash(input) {
   const cases = [];
   for (const phase of ["before-create", "after-start"])
@@ -229,15 +230,10 @@ async function runCase(input, phase) {
     binding.executable_spec_revision_id,
     checkpoint.ac.target_spec_revision_id,
   );
-  const status = JSON.parse(
-    await docker([
-      "exec",
-      final.container.Id,
-      "curl",
-      "--fail",
-      "--silent",
-      "http://127.0.0.1:8093/status",
-    ]),
+  const status = await runtimeStatus(
+    docker,
+    config.project,
+    final.container.Id,
   );
   assert.equal(status.status, "ready");
   assert.equal(status.execution_id, binding.runtime_execution_id);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { publishCheckpoint } from "../acp-closeout/checkpoint.mjs";
 import { commandConnection } from "../acp-commands/connection.mjs";
@@ -22,11 +23,12 @@ import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
-import { inspectFaultTrace } from "./trace.mjs";
+import { inspectFaultTrace, persistenceStrictOutcome } from "./trace.mjs";
 import { assertDurable, assertRecovered, assertReplay } from "./evidence.mjs";
 import { seed } from "./setup.mjs";
 import { stateReady } from "./readiness.mjs";
 import { assertHeldCompletion } from "./completion.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
 const connections = [],
@@ -49,10 +51,17 @@ const api = async (path, body, status = 200) =>
 const agent = () => api(`/api/admin/agents/${agentId}`);
 const state = async () =>
   (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const services = serviceClient();
+const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
   const r = await fetch(base + path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(base === runtimeController
+        ? services.authorization("controller-runtime")
+        : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(15000),
   });
@@ -61,8 +70,7 @@ async function peer(base, path, body) {
 }
 const proxy = (path = "/status", body) =>
   peer("http://persistence-proxy:8080", path, body);
-const runtime = () =>
-  peer("http://runtime-controller:8080", `/internal/runtimes/${agentId}`);
+const runtime = () => peer(runtimeController, `/internal/runtimes/${agentId}`);
 const sync = async () =>
   (await api("/api/admin/execution-synchronization")).synchronization;
 async function modelState() {
@@ -102,7 +110,7 @@ async function operation(id, kind) {
     }[kind],
     current = await runtime();
   const result = await peer(
-    "http://runtime-controller:8080",
+    runtimeController,
     `/internal/runtime-operations/${runtimeCommandId(id, phase)}`,
   );
   assertRuntimeOperation(result, {
@@ -334,7 +342,7 @@ async function exercise(version, phase) {
     terminal_observed_while_receipt_held: terminalObserved,
   });
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "fault_case_passed",
       label,
       run_id: held.run_id,
@@ -343,7 +351,10 @@ async function exercise(version, phase) {
   );
 }
 async function main() {
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[\w.-]+$/,
+  );
   const login = await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
@@ -382,6 +393,7 @@ async function main() {
     agentId,
     requestId: created.body.operation.request_id,
     traceID: created.traceID,
+    skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
   for (const version of [1, 2])
@@ -423,7 +435,7 @@ async function main() {
   await writeFile("/tmp/persistence-business.json", JSON.stringify(business), {
     mode: 0o600,
   });
-  console.log(JSON.stringify(business));
+  console.log(asciiJSON(business));
   await mkdir("/tmp/persistence-traces", { mode: 0o700 });
   const save = (label) => (trace) =>
     writeFileSync(
@@ -483,24 +495,22 @@ async function main() {
       });
     }
   }
-  const strict = results.some((r) => r.strict_trace === "failed")
-    ? "failed"
-    : "passed";
+  const { accepted, ...strict } = persistenceStrictOutcome(results);
   save("results")(results);
   console.log(
-    JSON.stringify({
+    asciiJSON({
       status: "trace_assessment",
-      strict_trace: strict,
+      ...strict,
       traces: results,
     }),
   );
-  if (strict === "failed") process.exitCode = 1;
+  if (!accepted) process.exitCode = 1;
 }
 try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "persistence_failed",
       stage,
       error: error.message,

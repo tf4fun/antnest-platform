@@ -88,7 +88,7 @@ async function matrix() {
     "/status",
     "/mcp",
     "/mcp/session",
-    "/internal/skill-maintenance/prepare",
+    "/internal/skill-maintenance/install",
     "/internal/skill-temporary/install",
   ]) {
     for (const method of ["GET", "POST", "DELETE", "HEAD", "OPTIONS"]) {
@@ -148,7 +148,7 @@ async function matrix() {
   for (const path of [
     "/mcp",
     "/mcp/session",
-    "/internal/skill-maintenance/prepare",
+    "/internal/skill-maintenance/install",
     "/internal/skill-temporary/install",
   ]) {
     expect(
@@ -165,11 +165,7 @@ async function matrix() {
   }
   for (const path of [
     "/mcp",
-    "/internal/skill-maintenance/check",
-    "/internal/skill-maintenance/commit",
-    "/internal/skill-maintenance/observe",
-    "/internal/skill-maintenance/cancel",
-    "/internal/skill-maintenance/release",
+    "/internal/skill-maintenance/digest",
     "/internal/skill-temporary/release",
   ]) {
     for (const media of [
@@ -563,55 +559,55 @@ function ticket(
 async function skills() {
   const current = await status(),
     pkg = archive();
-  const prepareMeta = {
-    action: "prepare",
-    request_id: "prepare-auth",
+  const installMeta = {
+    action: "install",
+    request_id: "install-learning-auth",
     job_id: "auth-learning-job",
     generation: 1,
-    candidate_id: "auth-candidate",
     package_path: ".antnest/skills/auth-learning",
     expected_base_digest: null,
     target_digest: pkg.content_digest,
     artifact_digest: pkg.artifact_digest,
     package_rules_version: 1,
   };
-  const preparedBody = multipart(prepareMeta, pkg.bytes);
+  const installBody = multipart(installMeta, pkg.bytes);
   const uploadHeaders = {
     "Content-Type": "multipart/form-data; boundary=auth-skill",
     "X-Antnest-Expected-Execution-ID": current.execution_id,
   };
-  const signedPrepare = ticket(
-    preparedBody,
+  const signedInstall = ticket(
+    installBody,
     current.execution_id,
-    "prepare",
-    "prepare-auth",
+    "install",
+    installMeta.request_id,
   );
   expect(
-    await request("/internal/skill-maintenance/prepare", {
+    await request("/internal/skill-maintenance/install", {
       method: "POST",
-      headers: { ...uploadHeaders, Authorization: signedPrepare },
-      body: preparedBody,
+      headers: { ...uploadHeaders, Authorization: signedInstall },
+      body: installBody,
     }),
     401,
-    "ticket without workload cannot prepare",
+    "ticket without workload cannot install",
     "runtime_unauthorized",
   );
-  const noTicket = await request("/internal/skill-maintenance/prepare", {
+  const noTicket = await request("/internal/skill-maintenance/install", {
     method: "POST",
     token: input.tokens.acp,
     headers: uploadHeaders,
-    body: preparedBody,
+    body: installBody,
   });
-  expect(noTicket, 401, "workload without ticket cannot prepare");
+  expect(noTicket, 401, "workload without ticket cannot install");
   assert.equal(JSON.parse(noTicket.raw).error.code, "maintenance_unauthorized");
-  const prepared = await request("/internal/skill-maintenance/prepare", {
+  const learned = await request("/internal/skill-maintenance/install", {
     method: "POST",
     token: input.tokens.acp,
-    headers: { ...uploadHeaders, Authorization: signedPrepare },
-    body: preparedBody,
+    headers: { ...uploadHeaders, Authorization: signedInstall },
+    body: installBody,
   });
-  expect(prepared, 200, "native multipart learning preparation");
-  assert.equal(JSON.parse(prepared.raw).outcome, "prepared");
+  expect(learned, 200, "native multipart learning install");
+  assert.equal(JSON.parse(learned.raw).outcome, "applied");
+  assert.equal(JSON.parse(learned.raw).observed_digest, pkg.content_digest);
   checks++;
   const control = async (
     action,
@@ -639,26 +635,16 @@ async function skills() {
     expect(response, 200, "native signed Skill control " + action);
     return JSON.parse(response.raw);
   };
-  const checked = await control("check", {
-    ...prepareMeta,
-    action: "check",
-    request_id: "check-auth",
-    expected_base_digest: undefined,
-    artifact_digest: undefined,
-  });
-  assert.equal(checked.outcome, "checked");
-  const committed = await control("commit", {
-    action: "commit",
-    request_id: "commit-auth",
+  const observed = await control("digest", {
+    action: "digest",
+    request_id: "digest-auth",
     job_id: "auth-learning-job",
     generation: 1,
-    candidate_id: "auth-candidate",
-    package_path: prepareMeta.package_path,
-    expected_base_digest: null,
-    target_digest: pkg.content_digest,
+    package_path: installMeta.package_path,
   });
-  assert.equal(committed.outcome, "applied");
-  checks += 2;
+  assert.equal(observed.outcome, "observed");
+  assert.equal(observed.observed_digest, pkg.content_digest);
+  checks++;
   await withSdk(async (client) => {
     const resource = await client.readResource(
       { uri: "antnest://runtime/info" },

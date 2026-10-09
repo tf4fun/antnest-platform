@@ -131,7 +131,7 @@ read routes. Runtime availability requirements are source-owned, not inferred
 from Registry's directory. ACP requires an available, accepting source Runtime
 and an idle source Agent. Busy/offline/unknown reads
 return source_unavailable without replaying a model or substituting candidate
-bytes. A signed read-only observe checks the full current directory manifest;
+bytes. A signed read-only `digest` checks the full current directory manifest;
 matching content-addressed applied bytes can then be served. Extra files or
 changed modes also invalidate the selection. Source access, binding and managed
 identity are rechecked after observation. Reads and catalog refreshes share idle
@@ -211,4 +211,4 @@ cross-owner/org rejection, current-source checks, digest drift and offline
 failure, promotion rollback/CAS/idempotence and independent formal reads after
 source removal. The complete dual-Agent learning → projection → temporary use →
 promotion → Template/rebuild workflow is covered by the
-`make e2e-skill-propagation` Docker E2E target.
+`make e2e-skill-deployment` Docker E2E target.

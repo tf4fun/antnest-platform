@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { lines, scopeLabel, composeArgs } from "./docker.mjs";
+import { assertRuntimeStorage } from "./failure.mjs";
 
 export async function until(read, predicate, signal, timeout = 90000) {
   const deadline = Date.now() + timeout;
@@ -31,17 +32,14 @@ export async function runtimePhysical(docker, config, agentID) {
   if (!ids.length) return { ids, volumes };
   assert.equal(ids.length, 1);
   const c = JSON.parse(await docker(["inspect", ids[0]]))[0];
-  assert.equal(c.Image, config.image);
-  assert.deepEqual(volumes, [`antnest-workspace-${agentID}`]);
-  const mount = c.Mounts.find((m) => m.Destination === "/workspace");
-  assert.equal(mount?.Name, volumes[0]);
-  assert.equal(mount.RW, true);
+  assert.equal(c.Image, config.resolvedImage);
+  const storage = assertRuntimeStorage({ containers: [c], volumes }, agentID);
   return {
     id: c.Id,
     agent_id: c.Config.Labels["io.antnest.agent-id"],
     generation: Number(c.Config.Labels["io.antnest.runtime-generation"]),
     digest: c.Config.Labels["io.antnest.runtime-spec-digest"],
-    volume: volumes[0],
+    volume: storage.workspace,
     started_at: c.State.StartedAt,
     restarts: c.RestartCount,
     running: c.State.Running,

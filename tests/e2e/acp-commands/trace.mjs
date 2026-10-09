@@ -12,7 +12,10 @@ import {
   requestBoundary,
   timingEvidence,
   hasError,
+  closedV1PromptResponse,
+  inspectCatalogRuntime,
 } from "../acp-plan/requests.mjs";
+import { clockWarningsOnly } from "../stage3-base/trace.mjs";
 
 function boundary(trace, expected, secrets) {
   assert(
@@ -58,7 +61,7 @@ function boundary(trace, expected, secrets) {
     const forwarded = tree.parent(http);
     assert.equal(tree.service(forwarded), "edge-gateway");
     assert.equal(tag(forwarded, "span.kind"), "client");
-    assert.equal(forwarded.operationName, "HTTP POST agent-acp-service");
+    assert.equal(forwarded.operationName, "HTTP POST agent-acp-workspace");
     assert.equal(tag(forwarded, "http.request.method"), "POST");
     assert.equal(tree.parent(forwarded), root);
     result = { tree, root, request, forwarded, http };
@@ -87,6 +90,12 @@ function rejected(trace, tree, request, expected) {
     assert.equal(tag(request, "antnest.error.code"), "-32020");
   }
   for (const span of trace.spans.filter(hasError)) {
+    if (
+      expected.closedBeforeResponse === true &&
+      !rejection &&
+      closedV1PromptResponse(span, request)
+    )
+      continue;
     assert(rejection, "unexpected command/replay/execution error");
     assert.equal(tree.service(span), "agent-acp-service");
     assert.equal(tag(span, "antnest.outcome"), "rejected");
@@ -106,85 +115,6 @@ function rejected(trace, tree, request, expected) {
       rejection === "access_denied" ? "access_denied" : undefined,
     );
   }
-}
-
-function inspectCatalogRuntime(trace, tree, request, expected) {
-  const runtime = trace.spans.filter(
-    (span) => tree.service(span) === "antnest-runtime",
-  );
-  const clients = trace.spans.filter(
-    (span) =>
-      tree.service(span) === "agent-acp-service" &&
-      span.operationName === "HTTP POST antnest-runtime",
-  );
-  if (!runtime.length && !clients.length) return 0;
-  assert(
-    !expected.rejection &&
-      [
-        "session/new",
-        "session/load",
-        "session/fork",
-        "session/resume",
-        "session/prompt",
-      ].includes(expected.method),
-    "request cannot refresh Skill catalog",
-  );
-  const servers = [];
-  for (const span of runtime) {
-    assert(
-      tree.chain(span).includes(request),
-      "catalog read detached from ACP request",
-    );
-    const parent = tree.parent(span);
-    if (span.operationName === "HTTP POST /mcp") {
-      assert(
-        ["discover", "resources/read"].includes(tag(span, "rpc.method")),
-        "catalog called an executable MCP method",
-      );
-      assert.equal(tag(span, "span.kind"), "server");
-      assert.equal(tree.service(parent), "agent-acp-service");
-      assert.equal(parent?.operationName, "HTTP POST antnest-runtime");
-      assert.equal(tag(parent, "span.kind"), "client");
-      servers.push(span);
-    } else if (span.operationName === "runtime.mcp.operation") {
-      assert.equal(parent?.operationName, "HTTP POST /mcp");
-      assert.equal(tree.service(parent), "antnest-runtime");
-      assert(["discover", "resources/read"].includes(tag(span, "rpc.method")));
-      assert.equal(tag(span, "rpc.method"), tag(parent, "rpc.method"));
-    } else {
-      assert.equal(
-        span.operationName,
-        "runtime.executor",
-        "catalog executed a Runtime tool",
-      );
-      assert.equal(parent?.operationName, "runtime.mcp.operation");
-      assert.equal(tree.service(parent), "antnest-runtime");
-      assert.equal(tag(parent, "rpc.method"), "resources/read");
-    }
-  }
-  for (const method of ["discover", "resources/read"])
-    assert(
-      servers.filter((span) => tag(span, "rpc.method") === method).length <= 1,
-      "repeated catalog discovery or information read",
-    );
-  for (const client of clients)
-    assert.equal(
-      servers.filter((span) => tree.parent(span) === client).length,
-      1,
-      "missing or duplicate Runtime catalog server",
-    );
-  for (const server of servers)
-    assert.equal(
-      runtime.filter(
-        (span) =>
-          span.operationName === "runtime.mcp.operation" &&
-          tree.parent(span) === server,
-      ).length,
-      1,
-      "missing or duplicate Runtime catalog operation",
-    );
-  return servers.filter((span) => tag(span, "rpc.method") === "resources/read")
-    .length;
 }
 
 export function inspectCommandTrace(
@@ -432,3 +362,13 @@ export async function collectCommandTrace(
 
 // Shared transport boundary; callers retain their own execution contracts.
 export { boundary as requestTraceBoundary };
+
+// Command traces fail strict only on Jaeger warnings; the shared reviewed rule
+// accepts the clock-skew warning class and nothing else.
+export function commandStrictOutcome(checked) {
+  if (checked.every((trace) => trace.strict_trace === "passed"))
+    return { strict_trace: "passed", accepted: true };
+  return clockWarningsOnly(checked)
+    ? { strict_trace: "failed", clock_warnings_accepted: true, accepted: true }
+    : { strict_trace: "failed", accepted: false };
+}

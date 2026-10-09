@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { crc32 } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
+import { candidateCommand } from "../../support/candidate-images.mjs";
 import { runCommand } from "../../support/run-command.mjs";
 import {
   createRuntimeReceiver,
@@ -336,16 +337,21 @@ async function helper(script, readonly = false) {
 let result, failure;
 try {
   if (build) {
+    // A provided Runtime image already passed the build gates in CI.
     const built = await runCommand({
-      command: [
-        "docker",
-        "build",
-        "-f",
-        "runtimes/antnest-runtime/Dockerfile",
-        "-t",
-        image,
-        ".",
-      ],
+      command: candidateCommand({
+        name: "antnest-runtime",
+        tag: image,
+        build: [
+          "docker",
+          "build",
+          "-f",
+          "runtimes/antnest-runtime/Dockerfile",
+          "-t",
+          image,
+          ".",
+        ],
+      }),
       output,
       name: `${prefix}-build`,
       env: process.env,

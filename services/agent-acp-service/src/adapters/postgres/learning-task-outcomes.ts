@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { learningPolicySchema, type LearningPolicy } from "../../domain/learning-policy.js";
@@ -7,6 +6,7 @@ import type {
   LearningTaskClaim,
   LearningReviewPromptVersion,
 } from "../../domain/learning-scan.js";
+import { installRejectionIsResendable } from "../../domain/learning-maintenance-errors.js";
 import type { PostgresKernel } from "./kernel.js";
 
 type TaskRow = {
@@ -40,7 +40,6 @@ export class PostgresLearningTaskOutcomes {
       reason: string;
       candidateId: string | null;
       candidateState: string | null;
-      generationCancelled: boolean;
     }>
   > {
     if (
@@ -55,18 +54,12 @@ export class PostgresLearningTaskOutcomes {
         id: string;
         candidate_id: string | null;
         candidate_state: string | null;
-        generation_cancelled: boolean;
       }
     >(
       `SELECT task.id,task.organization_id,task.agent_id,task.owner_principal_id,
               task.source_run_id,task.claim_id,task.generation,task.frozen_policy,task.review_prompt_version,
               task.state,task.pause_reason,candidate.candidate_id,
-              candidate.state AS candidate_state,
-              EXISTS(SELECT 1 FROM learning_maintenance_intents intent
-                WHERE intent.task_id=task.id AND intent.claim_id=task.claim_id
-                  AND intent.generation=task.generation AND intent.action='cancel'
-                  AND intent.state='settled' AND intent.receipt->>'outcome'='cancelled')
-                AS generation_cancelled
+              candidate.state AS candidate_state
        FROM learning_tasks task
        LEFT JOIN learning_candidates candidate ON candidate.task_id=task.id
        WHERE task.state='paused' AND ($1::text IS NULL OR task.id>$1)
@@ -91,7 +84,6 @@ export class PostgresLearningTaskOutcomes {
         reason: row.pause_reason,
         candidateId: row.candidate_id,
         candidateState: row.candidate_state,
-        generationCancelled: row.generation_cancelled,
       };
     });
   }
@@ -134,7 +126,10 @@ export class PostgresLearningTaskOutcomes {
     });
   }
 
-  /** Reuses the same claim and spent review budget only after unknown work is settled. */
+  /**
+   * Reuses the same claim and spent review budget once model work is settled.
+   * Install attempts never hold a task: each resend is conditional on digests.
+   */
   public async resumePaused(
     claim: LearningTaskClaim,
     currentPolicyInput: LearningPolicy,
@@ -167,11 +162,6 @@ export class PostgresLearningTaskOutcomes {
         await client.query<{ blocked: boolean }>(
           `SELECT EXISTS(SELECT 1 FROM learning_model_calls
                    WHERE task_id=$1 AND state<>'settled')
-             OR EXISTS(SELECT 1 FROM learning_maintenance_intents
-                   WHERE task_id=$1 AND state<>'settled')
-             OR EXISTS(SELECT 1 FROM learning_maintenance_intents
-                   WHERE task_id=$1 AND claim_id=$4 AND generation=$5
-                     AND action='cancel')
              OR EXISTS(SELECT 1 FROM learning_tasks
                    WHERE id<>$1 AND state='running')
              OR EXISTS(
@@ -181,155 +171,17 @@ export class PostgresLearningTaskOutcomes {
                  AND (foreground.state IN ('admitting','running')
                       OR foreground.updated_at>now()-interval '15 seconds')
              ) AS blocked`,
-          [claim.taskId, claim.organizationId, claim.agentId, claim.claimId, claim.generation],
+          [claim.taskId, claim.organizationId, claim.agentId],
         )
       ).rows[0];
       if (blockers?.blocked !== false)
-        throw new Error("Learning task resume requires settled effects and an idle Agent");
+        throw new Error("Learning task resume requires settled model work and an idle Agent");
       await client.query(
         `UPDATE learning_tasks SET state='running',pause_reason=NULL,updated_at=now()
          WHERE id=$1`,
         [claim.taskId],
       );
       return { state: "running" };
-    });
-  }
-
-  /** Carries an immutable, unapplied candidate across a Runtime-cancelled generation. */
-  public async handoffCancelled(
-    previous: LearningTaskClaim,
-    currentPolicyInput: LearningPolicy,
-  ): Promise<LearningTaskClaim | null> {
-    const currentPolicy = learningPolicySchema.parse(currentPolicyInput);
-    return this.kernel.transaction(async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [2_026_092_902]);
-      const task = (
-        await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
-          previous.taskId,
-        ])
-      ).rows[0];
-      if (
-        !task ||
-        task.organization_id !== previous.organizationId ||
-        task.agent_id !== previous.agentId ||
-        task.owner_principal_id !== previous.ownerId ||
-        task.source_run_id !== previous.sourceRunId
-      )
-        throw new Error("Learning handoff task identity is unavailable");
-      const frozenPolicy = learningPolicySchema.parse(task.frozen_policy);
-      if (currentPolicy.mode !== "automatic" || !isDeepStrictEqual(currentPolicy, frozenPolicy))
-        throw new Error("Learning policy changed before generation handoff");
-      const candidate = (
-        await client.query<{
-          candidate_id: string;
-          claim_id: string;
-          generation: number;
-          state: string;
-        }>(
-          "SELECT candidate_id,claim_id,generation,state FROM learning_candidates WHERE task_id=$1 FOR UPDATE",
-          [previous.taskId],
-        )
-      ).rows[0];
-      const cancelled = (
-        await client.query<{ cancelled: boolean }>(
-          `SELECT EXISTS(SELECT 1 FROM learning_maintenance_intents
-           WHERE task_id=$1 AND claim_id=$2 AND generation=$3
-             AND action='cancel' AND state='settled'
-             AND receipt->>'outcome'='cancelled') AS cancelled`,
-          [previous.taskId, previous.claimId, previous.generation],
-        )
-      ).rows[0]?.cancelled;
-      if (cancelled !== true)
-        throw new Error("Learning handoff requires the previous generation cancellation");
-      if (
-        task.generation === previous.generation + 1 &&
-        task.claim_id !== null &&
-        ["running", "paused"].includes(task.state) &&
-        candidate?.claim_id === task.claim_id &&
-        candidate.generation === task.generation
-      )
-        return {
-          ...previous,
-          claimId: task.claim_id,
-          generation: task.generation,
-          frozenPolicy: task.frozen_policy,
-        };
-      if (
-        task.state !== "paused" ||
-        task.claim_id !== previous.claimId ||
-        task.generation !== previous.generation ||
-        !candidate ||
-        candidate.claim_id !== previous.claimId ||
-        candidate.generation !== previous.generation ||
-        !["draft", "ready_waiting_idle"].includes(candidate.state)
-      )
-        throw new Error("Learning handoff requires an unapplied candidate in the paused claim");
-      const effects = (
-        await client.query<{ unresolved: boolean; applied: boolean }>(
-          `SELECT EXISTS(SELECT 1 FROM learning_maintenance_intents
-             WHERE task_id=$1 AND state<>'settled')
-             OR EXISTS(SELECT 1 FROM learning_model_calls
-             WHERE task_id=$1 AND state<>'settled') AS unresolved,
-           EXISTS(SELECT 1 FROM learning_maintenance_intents
-             WHERE task_id=$1 AND action='commit' AND receipt->>'outcome'='applied') AS applied`,
-          [previous.taskId],
-        )
-      ).rows[0];
-      if (!effects || effects.unresolved || effects.applied)
-        throw new Error("Learning generation cancellation or effects are not settled");
-      const admission = (
-        await client.query<{ blocked: boolean; reviews: number }>(
-          `SELECT EXISTS(SELECT 1 FROM learning_tasks WHERE id<>$1 AND state='running')
-             OR EXISTS(
-               SELECT 1 FROM runs foreground JOIN acp_sessions session
-                 ON session.id=foreground.session_id
-               WHERE session.organization_id=$2 AND session.agent_id=$3
-                 AND (foreground.state IN ('admitting','running')
-                      OR foreground.updated_at>now()-interval '15 seconds')
-             ) OR EXISTS(
-               SELECT 1 FROM learning_review_attempts recent JOIN learning_tasks prior
-                 ON prior.id=recent.task_id
-               WHERE prior.organization_id=$2 AND prior.agent_id=$3
-                 AND recent.started_at>now()-interval '10 minutes'
-             ) AS blocked,
-             (SELECT count(*)::integer FROM learning_review_attempts today
-               JOIN learning_tasks prior ON prior.id=today.task_id
-               WHERE prior.organization_id=$2 AND prior.agent_id=$3
-                 AND today.started_at >=
-                   (date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
-                 AND today.started_at <
-                   (date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
-                     + interval '1 day') AS reviews`,
-          [previous.taskId, previous.organizationId, previous.agentId],
-        )
-      ).rows[0];
-      if (
-        !admission ||
-        admission.blocked ||
-        admission.reviews >= currentPolicy.limits.daily_reviews
-      )
-        return null;
-      const claimId = randomUUID();
-      const generation = previous.generation + 1;
-      await client.query("DELETE FROM learning_apply_bases WHERE candidate_id=$1", [
-        candidate.candidate_id,
-      ]);
-      await client.query(
-        `UPDATE learning_candidates SET claim_id=$2,generation=$3,state='draft',updated_at=now()
-         WHERE candidate_id=$1`,
-        [candidate.candidate_id, claimId, generation],
-      );
-      await client.query(
-        `UPDATE learning_tasks SET claim_id=$2,generation=$3,state='running',
-           pause_reason=NULL,started_at=now(),updated_at=now() WHERE id=$1`,
-        [previous.taskId, claimId, generation],
-      );
-      await client.query(
-        `INSERT INTO learning_review_attempts(task_id,generation,started_at)
-         SELECT id,generation,started_at FROM learning_tasks WHERE id=$1`,
-        [previous.taskId],
-      );
-      return { ...previous, claimId, generation, frozenPolicy: task.frozen_policy };
     });
   }
 
@@ -407,16 +259,16 @@ export class PostgresLearningTaskOutcomes {
     });
   }
 
-  /** A settled commit conflict/rejection is terminal for this immutable candidate. */
+  /** A settled install conflict or final rejection is terminal for this immutable candidate. */
   public async recordApplyFailure(
     claim: LearningTaskClaim,
     candidateId: string,
-    commitRequestId: string,
+    installRequestId: string,
     kind: "conflict" | "rejected",
   ): Promise<{ state: "failed"; candidateState: "conflict" | "rejected" }> {
     if (
       !/^[A-Za-z0-9_-]{1,200}$/u.test(candidateId) ||
-      !/^[A-Za-z0-9_-]{1,200}$/u.test(commitRequestId) ||
+      !/^[A-Za-z0-9_-]{1,200}$/u.test(installRequestId) ||
       !["conflict", "rejected"].includes(kind)
     )
       throw new Error("Invalid learning apply failure identity");
@@ -462,7 +314,7 @@ export class PostgresLearningTaskOutcomes {
           receipt: Record<string, unknown> | null;
         }>(
           "SELECT task_id,claim_id,generation,action,execution_id,state,request_facts,receipt FROM learning_maintenance_intents WHERE request_id=$1 FOR UPDATE",
-          [commitRequestId],
+          [installRequestId],
         )
       ).rows[0];
       if (
@@ -473,20 +325,22 @@ export class PostgresLearningTaskOutcomes {
         intent.task_id !== claim.taskId ||
         intent.claim_id !== claim.claimId ||
         intent.generation !== claim.generation ||
-        intent.action !== "commit" ||
+        intent.action !== "install" ||
         intent.state !== "settled" ||
         intent.request_facts.candidate_id !== candidateId ||
         intent.request_facts.package_path !== candidate.package_path ||
         intent.request_facts.expected_base_digest !== candidate.expected_base_digest ||
         intent.request_facts.target_digest !== candidate.target_digest ||
-        intent.receipt?.request_id !== commitRequestId ||
-        intent.receipt.action !== "commit" ||
+        intent.receipt?.request_id !== installRequestId ||
+        intent.receipt.action !== "install" ||
         intent.receipt.execution_id !== intent.execution_id ||
         (kind === "conflict"
-          ? intent.receipt.outcome !== "conflict" || intent.receipt.kind !== "observed_effect"
-          : intent.receipt.kind !== "rejection")
+          ? intent.receipt.outcome !== "conflict" || intent.receipt.kind !== undefined
+          : intent.receipt.kind !== "rejection" ||
+            typeof intent.receipt.code !== "string" ||
+            installRejectionIsResendable(intent.receipt.code))
       )
-        throw new Error("Learning apply failure lacks a matching settled commit");
+        throw new Error("Learning apply failure lacks a matching settled install");
       if (task.state === "failed") {
         if (candidate.state !== kind)
           throw new Error("Learning apply failure conflicts with terminal candidate");
@@ -494,15 +348,6 @@ export class PostgresLearningTaskOutcomes {
       }
       if (candidate.state !== "ready_waiting_idle")
         throw new Error("Learning candidate cannot be failed from this state");
-      const unresolved = (
-        await client.query<{ blocked: boolean }>(
-          `SELECT EXISTS(SELECT 1 FROM learning_maintenance_intents
-            WHERE task_id=$1 AND state<>'settled') AS blocked`,
-          [claim.taskId],
-        )
-      ).rows[0];
-      if (unresolved?.blocked !== false)
-        throw new Error("Learning apply failure has an unresolved Runtime operation");
       await client.query(
         "UPDATE learning_candidates SET state=$2,updated_at=now() WHERE candidate_id=$1",
         [candidateId, kind],
@@ -522,7 +367,6 @@ const PAUSE_REASONS: readonly LearningPauseReason[] = [
   "lifecycle_closed",
   "writer_present",
   "access_revoked",
-  "unknown_effect",
   "model_unavailable",
   "policy_changed",
   "runtime_unavailable",

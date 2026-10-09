@@ -44,7 +44,11 @@ explicit drop. A proxy hold expiring is a different, failing fault outcome.
 ## Results and evidence
 
 Strict Trace warnings, observed error spans and missing evidence are failures
-and return nonzero even when business checks pass. Abrupt shutdown can lose
+and return nonzero even when business checks pass. Two reviewed exceptions are
+reported in `strict_trace` without failing the exit: the clock-skew warning
+(`clock skew adjustment disabled; not applying calculated delta of ...`), and a
+fault Trace whose intercepted SQL is verified and whose errors are only the
+injected `database_error` and its propagated ACP `Error` spans. Abrupt shutdown can lose
 unexported spans; the fixture reports those gaps instead of inventing them. Raw
 audits, fault receipts, process observations and Traces are private artifacts
 under `artifacts/verification/acp-persistence/<project>/`.

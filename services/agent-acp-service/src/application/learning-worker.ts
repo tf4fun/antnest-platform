@@ -7,7 +7,7 @@ type Paused = {
   ): Promise<{
     after: string | null;
     scanned: number;
-    handled: "none" | "recovered" | "dispatched";
+    handled: "none" | "dispatched";
     exhausted: boolean;
   }>;
 };
@@ -28,7 +28,7 @@ type Guard = {
   run(
     claim: LearningTaskClaim,
     parent: AbortSignal,
-    work: (signal: AbortSignal, trackClaim: (next: LearningTaskClaim) => void) => Promise<unknown>,
+    work: (signal: AbortSignal) => Promise<unknown>,
   ): Promise<unknown>;
 };
 type Processor = { process(claim: LearningTaskClaim, signal: AbortSignal): Promise<unknown> };
@@ -36,7 +36,7 @@ type Outcomes = {
   pauseRunning(claim: LearningTaskClaim, reason: "runtime_unavailable"): Promise<unknown>;
 };
 
-/** One owner-only, serial pass: recover old effects before creating new work. */
+/** One owner-only, serial pass: resume paused tasks before creating new work. */
 export class LearningWorker {
   private pausedAfter: string | null = null;
   private scanAfter: LearningScanScope | null = null;
@@ -51,7 +51,6 @@ export class LearningWorker {
     private readonly onFailure: (claim: LearningTaskClaim, error: unknown) => void = () => {},
     private readonly wait: (signal: AbortSignal) => Promise<void> = waitForNextPass,
     private readonly onCycleFailure: (error: unknown) => void = () => {},
-    private readonly cleanup?: { tick(signal: AbortSignal): Promise<unknown> },
   ) {}
 
   public async run(signal: AbortSignal): Promise<void> {
@@ -81,13 +80,6 @@ export class LearningWorker {
     this.pausedAfter = paused.exhausted ? null : paused.after;
     if (paused.handled !== "none") return "recovered";
     if (!paused.exhausted) return "paging";
-
-    try {
-      await this.cleanup?.tick(signal);
-    } catch (error) {
-      signal.throwIfAborted();
-      this.onCycleFailure(error);
-    }
 
     signal.throwIfAborted();
     const scan = await this.scan.next(this.scanAfter, signal);

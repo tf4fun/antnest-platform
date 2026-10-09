@@ -74,7 +74,9 @@ All Traces require full topology, disabled payload capture and private-content
 checks. Rejection diagnostics are allowed only on the matching rejected ACP
 boundary and domain operation. Stable collection is bounded and requires three
 equal span-ID sets taken one second apart. Timing warnings are strict failures
-and make the command exit nonzero even when the business checks pass.
+and make the command exit nonzero even when the business checks pass. Only
+the reviewed clock-skew warning (`clock skew adjustment disabled; not applying
+calculated delta of ...`) is reported without failing the exit.
 
 The transcript and Trace validators have positive and deliberately corrupted
 fixtures. Missing Traces, missing persistence, duplicated replies, extra

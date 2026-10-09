@@ -127,18 +127,29 @@ scenario and remove every resource they own. They are never part of
 | `e2e-agent-ui-receipt-contract`                                                                                                                                                                                                                                                                               | `agent-ui/`                                                                | A real failed Run through Gateway and Chromium; actual ACP receipt/observation JSON validates against the shared schema and Node parsers; workspace failure survives reload. Builds isolated current ACP, Agent UI, Gateway, Identity and RC candidates without replacing local tags.              |
 | `e2e-gateway-security-headers`                                                                                                                                                                                                                                                                                | `edge-gateway/`                                                            | Existing-conversation navigation/reload through Gateway and Chromium, one upstream CSP, nonce script execution, blob image/audio loading, and zero CSP violations. Uses the local model fixture and isolated current candidates; verifies cleanup preserves the retained Docker environment.       |
 | `e2e-stage3-skill-delivery`, `e2e-stage4-skill-*`, `integration-stage4-skill-*`                                                                                                                                                                                                                               | `stage3-base/`, `lifecycle-closeout/`, `tests/integration/skill-registry/` | Skill package delivery to Runtimes, including Registry outage, races, response loss, drift and restore.                                                                                                                                                                                            |
-| `e2e-skill-learning-*`, `e2e-runtime-tool-usability`                                                                                                                                                                                                                                                          | `skill-learning/`                                                          | Automatic Skill learning: creation and update, notices, preemption, policy and lifecycle cancellation, commit windows, key rotation, model failure and recovery, restart and browser checks.                                                                                                       |
-| `e2e-skill-discovery-*`, `e2e-skill-temporary-*`, `e2e-skill-propagation`, `e2e-skill-deployment`, `e2e-skill-source-lifecycle`, `e2e-skill-registry-trace`                                                                                                                                                   | `skill-registry/`, `skill-learning/`                                       | Skill Registry discovery, temporary Runtime use, Console promotion, Template propagation and source lifecycle.                                                                                                                                                                                     |
+| `e2e-skill-learning-*`, `e2e-runtime-tool-usability`                                                                                                                                                                                                                                                          | `skill-learning/`                                                          | Automatic Skill learning: creation and update, notices, preemption, policy and lifecycle cancellation, install interruption and resend, key rotation, model failure and recovery, restart and browser checks.                                                                                      |
+| `e2e-skill-discovery-*`, `e2e-skill-temporary-*`, `e2e-skill-deployment`, `e2e-skill-source-lifecycle`, `e2e-skill-registry-trace`                                                                                                                                                                            | `skill-registry/`, `skill-learning/`                                       | Skill Registry discovery, temporary Runtime use, Console promotion, Template propagation and source lifecycle.                                                                                                                                                                                     |
 
 `e2e-skill-learning-runtime` verifies that the default Runtime image has an empty
 test-feature label, no test-feature startup opt-in, and `test_features: []` on
-its live `/status`. Atomic held-commit variants explicitly build `--target e2e`
-with `skill-maintenance-e2e-gate`, check its image label and startup opt-in, and
-verify the live status and single feature warning before exercising the commit
-pause. The held-commit harness accepts isolated RC/Identity candidates through
+its live `/status`; that signed requests for the retired transaction actions are
+unknown; and that `install` and `digest` work across dual-key trust and old-key
+removal. It then runs the gate-image install suite. The `e2e-skill-learning-install-after-rename-*` variants
+explicitly build `--target e2e` with `skill-maintenance-e2e-gate`, check its
+image label and startup opt-in, and verify the live status and single feature
+warning before pausing an install after its rename. The install interruption
+harness accepts isolated RC/Identity candidates through
 `ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE` / `ANTNEST_E2E_IDENTITY_IMAGE` and the
 Gateway candidate through `ANTNEST_C4_EDGE_GATEWAY_IMAGE`; deploy the new RC
 reader before using the new Runtime status producer.
+
+The Stage 3a profile runners start their client detached and read its result
+with `docker logs`. Docker splits output lines longer than 16 KiB, and the
+json-file log driver replaces a multi-byte character cut by that split with
+U+FFFD. These clients therefore print every JSON line through
+[`support/ascii-json.mjs`](support/ascii-json.mjs), which escapes non-ASCII
+characters; `support/ascii-json.test.mjs` finds the clients from the runners
+and rejects raw `JSON.stringify` output.
 
 All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
@@ -170,25 +181,95 @@ part of any default target.
 
 ## Continuous integration
 
-`.github/workflows/integration.yml` runs on every pull request and push to
-`main`. [`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
+`.github/workflows/integration.yml` runs the suites on every push to `main`,
+on manual runs, and on every push to a pull request that is not a draft: when
+it is opened, reopened, marked ready for review or updated. A newer head
+cancels the run for the older one. A draft runs only `Repository checks` and
+the path-filtered service workflows (lint, unit tests, image build) and reports
+`Integration checks (not run)`, so the required `Integration checks` stays
+pending until it is marked ready. Labels never start a run: GitHub checks a
+required status against the newest run of the workflow for the head commit,
+so a run that does nothing would hide the full one.
+[`support/ci-mode.mjs`](support/ci-mode.mjs) decides the mode.
+
+[`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
 catalog: each suite lists its commands, host setup, prebuilt images and the
 paths it exercises. The workflow runs only the suites that match the changed
 files (prose-only changes select none). Changes to the workflow, `tests/support/`,
 `contracts/` or the `Makefile` select every suite.
 
+Suites are grouped into shards by product area (`shards` in the catalog).
+Each shard is one CI job, `Tier <tier> / <shard>`: it installs the setup and
+images its selected suites need and runs them in order on one runner through
+[`support/ci-shard.mjs`](support/ci-shard.mjs). Every selected suite runs even
+after an earlier one fails, each in its own process group with a timeout, and
+the job summary lists each suite's result. Destructive suites come last in
+their shard. Every suite starts and removes its own stack, so a shard reuses
+pulled images and host setup but no platform state.
+
 - **Tier A:** PostgreSQL and Temporal component suites, browser suites,
   deployment render contracts and the Runtime SDK probe.
-- **Tier B:** service-owned Docker E2E runners, which build their own images.
-  Runners that start images with `--no-build` get `antnest/<image>:local`
-  built from the checkout first, reusing the image workflows' build cache.
+- **Tier B:** service-owned Docker E2E runners. Each starts its own
+  isolated candidate images; runners that start images with `--no-build` get
+  `antnest/<image>:local` first.
+- **Tier C:** whole-platform scenarios whose rule spans services (stage 3a,
+  authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
+  skill learning). Platform targets that test one service's rule, or behavior
+  that is not settled, stay out of CI; `outsideCI` in `ci-changes.mjs` names
+  the issue that moves each one to its service or re-admits it. At most six
+  tier C shards run at a time. Tier C reports per shard but is not part of
+  `Integration checks` yet. Lifecycle and
+  workspace foundation runners and the Stage 3a identity, tool permission and
+  tool progress profiles exit 2 when business and topology checks pass but
+  strict trace findings remain. The shard passes such a suite with a warning
+  only when [`support/strict-findings.mjs`](support/strict-findings.mjs) finds
+  no Jaeger warning other than clock skew adjustments in its output; error spans on denial and cancellation paths
+  are recorded by contract and checked by each runner's topology. The findings
+  stay in the evidence artifact. The Stage 3a profiles run their make
+  recipe directly because make reports every failed recipe as 2. Tool permission and tool
+  progress first build the test-only `antnest/antnest-runtime:managed-integration`
+  image with `make docker-build-managed-runtime`.
 
-Each suite uploads `artifacts/verification/` (without fixture credentials) as
-the `evidence-<suite>` artifact. The `Integration checks` job is the single
-required status; it fails if suite selection or any selected suite fails. Add a
-suite by extending the catalog; its unit tests check that every `make` target
-and runner it names exists. A suite with a `disabled` reason stays in the
+Each local image is named `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
+where the hash covers the image's Dockerfile, `.dockerignore` and every path
+the Dockerfile copies. Suites pull images that GHCR already has. The image job
+builds each missing image once per run and hands it to the shards as an
+artifact; shards that need no image start without waiting for it. Runs on
+`main` build and publish every missing image, so a pull request that does not
+change an image's inputs never rebuilds it. Every shard job runs the steps in
+`.github/workflows/_suite.yml`.
+
+Runners never rebuild a provided image. The shard lists its images in
+`ANTNEST_CI_PROVIDED_IMAGES`, and
+[`support/candidate-images.mjs`](support/candidate-images.mjs) turns each
+candidate build into a label-only build `FROM antnest/<image>:local` that
+keeps the labels cleanup checks ownership with. Outside CI the runner builds
+from source. The catalog also defines Runtime test variants: the `e2e` stage
+with the Skill install gate, the managed MCP fixture alone and the release
+image with that fixture. The image job builds them with their own cache.
+The provided Runtime images passed the Dockerfile's `fmt`, `clippy` and test
+gates when the image job built their inputs.
+
+A manual run (`gh workflow run integration.yml --ref <branch> -f suites='<id> <id>'`)
+runs only the named catalog suites, in their shards; without `suites` it runs
+every suite.
+
+Each shard uploads `artifacts/verification/` (without fixture credentials) as
+the `evidence-<shard>` artifact. The `Integration checks` job is the single
+required status; it fails if suite selection or any selected tier A or B suite
+fails. Add a suite by extending the catalog and naming it in one shard of its
+tier; the catalog's unit tests check that every `make` target and runner it
+names exists and that every suite belongs to exactly one shard. A suite with a `disabled` reason stays in the
 catalog but is never selected until its known breakage is fixed.
+
+A failed Stage 3a run (`tests/e2e/e2e-stage3a.sh`) omits raw service logs
+because they may contain credentials. Instead it prints one
+`{"startup_failures":[...]}` line from `tests/support/startup-failure-summary.mjs`.
+That line covers each exited, restarting, OOM-killed or unhealthy container and
+gives its exit code and health, the `msg` and `error.code` of its ERROR-level
+structured records, and the first line of any panic or uncaught error. A field
+containing a credential the run provisioned is replaced with
+`[withheld: credential]`.
 
 ## Resource hygiene
 

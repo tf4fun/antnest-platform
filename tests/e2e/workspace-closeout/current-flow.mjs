@@ -38,6 +38,7 @@ import {
 } from "./current-trace.mjs";
 import { observeState, until } from "./state.mjs";
 import { groupAlive, processStat, readProcesses } from "./process.mjs";
+import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 
 export async function workspaceProtocol({
   config,
@@ -82,16 +83,7 @@ export async function workspaceProtocol({
   const binding = async (observed) =>
     runtimeBinding(
       observed,
-      JSON.parse(
-        await docker([
-          "exec",
-          observed.container.Id,
-          "curl",
-          "--fail",
-          "--silent",
-          "http://127.0.0.1:8093/status",
-        ]),
-      ),
+      await runtimeStatus(docker, config.project, observed.container.Id),
     );
   const auditPage = async () => {
     const page = await json(
@@ -218,6 +210,7 @@ export async function workspaceProtocol({
       kind: "cancelled",
       phase: "c4-cancel",
       runtime: await binding(initial),
+      closedBeforeResponse: true,
     });
     const pgid = processStat(
       await exec(initial.container.Id, `cat /proc/${pid}/stat`),
@@ -333,6 +326,7 @@ export async function workspaceProtocol({
       kind: "ordinary",
       phase: "c4-offline",
       runtime: await binding(initial),
+      closedBeforeResponse: true,
     });
     await watch.wait(
       (state) =>
@@ -505,7 +499,13 @@ export async function workspaceProtocol({
     );
     assertAgentDisabled(await json(`/api/admin/agents/${agentID}`));
     const retained = await resources(agentID);
-    assert.deepEqual(retained.volumes, [initial.volume]);
+    // Disable keeps the workspace and the current Skill set reference; the
+    // generation's receiver volume leaves with its compute.
+    assert.deepEqual(
+      [...retained.volumes].sort(),
+      [rebuilt.skillVolume, rebuilt.volume].sort(),
+      "Disable retained unexpected Runtime storage",
+    );
     assert(
       retained.containers.every((container) => !container.State.Running),
       "revoked owner's Runtime still running",

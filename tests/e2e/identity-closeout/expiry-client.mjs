@@ -37,6 +37,8 @@ if (phase === "prepare") {
     "/api/admin/account",
     "/api/app/bootstrap",
   ]) {
+    // A stopped Identity keeps its pinned Compose address and drops connects;
+    // Gateway's dependency connect bound must report it within the default.
     const response = await browser.request(path, {
       headers: { Cookie: saved.cookie },
       status: 503,

@@ -36,8 +36,12 @@ import {
   assertFrozenSkill,
   publishSkill,
 } from "../skill-registry/stage3-fixture.mjs";
+import { serviceClient } from "../../support/service-grants.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const skillMode = process.env.ANTNEST_E2E_SKILL_DELIVERY === "true";
+// The published Skill fixture is "code-review"; v1 lists it as a command.
+const deliveredSkills = skillMode ? ["skill:system:code-review"] : [];
 const readyLossMode = process.env.ANTNEST_E2E_SKILL_READY_LOSS === "true";
 const readyDriftMode = process.env.ANTNEST_E2E_SKILL_READY_DRIFT === "true";
 const targetDriftMode = process.env.ANTNEST_E2E_SKILL_TARGET_DRIFT === "true";
@@ -78,16 +82,29 @@ const api = async (path, body, status = 200) =>
 const agent = () => api(`/api/admin/agents/${agentId}`);
 const state = async () =>
   (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const services = serviceClient();
+const runtimeController = "http://runtime-controller:8080";
+// Runtime Controller admits only the Agent Controller workload; Agent
+// Controller reads need the Console workload and an admin caller context.
 async function internal(base, path, status = 200) {
-  const response = await fetch(base + path, {
-    signal: AbortSignal.timeout(15000),
-  });
-  assert.equal(
-    response.status,
-    status,
-    `internal ${path.split("?")[0]} status`,
+  if (base === runtimeController)
+    return services.json(base + path, "controller-runtime", {
+      method: "GET",
+      status,
+    });
+  const { context } = await services.callerContext(
+    {
+      organization_slug: "stage3",
+      email: "stage3-admin@example.com",
+      password: "stage3-admin-password",
+    },
+    agentId,
   );
-  return response.json();
+  return services.json(base + path, "console-controller", {
+    method: "GET",
+    status,
+    context,
+  });
 }
 async function operation(requestId, kind) {
   let result;
@@ -96,7 +113,7 @@ async function operation(requestId, kind) {
       result = await api(`/api/admin/operations/${requestId}`);
       assert(
         ["running", "completed"].includes(result.state),
-        `${kind} lifecycle failed`,
+        `${kind} lifecycle failed at ${result.phase}: ${result.error_code ?? "unknown"}`,
       );
       return result.state === "completed";
     },
@@ -172,7 +189,9 @@ async function transition(kind, body = {}, admission) {
     traceID: result.traceID,
     agentId,
     requestId,
-    ...(skillMode && (kind === "enable" || kind === "rebuild")
+    // Every create, enable and rebuild prepares the Agent Skill set, even an
+    // empty one, so its admission may be retried while preparation is queued.
+    ...(kind === "enable" || kind === "rebuild"
       ? { skillPreparation: true }
       : {}),
     ...(readyLossMode && kind === "enable" ? { readyVolumeLoss: true } : {}),
@@ -243,7 +262,7 @@ async function admitEnableAfterReadyFault(kind, body) {
       );
       assert.equal(progress.body.state, "ready");
       console.log(
-        JSON.stringify({
+        asciiJSON({
           status: "ready_fault_enable_admitted",
           preparation_state: progress.body.state,
           http_retry_observed: sawPreparation,
@@ -375,7 +394,7 @@ async function verifyFencedSkillInvalidation(body, sourceRevision) {
     rejected_request_id: requestId,
     preparation_observed: sawPreparation,
   };
-  console.log(JSON.stringify(evidence));
+  console.log(asciiJSON(evidence));
   return evidence;
 }
 
@@ -543,6 +562,7 @@ async function verifyPostCreateSkillMountRace(body, targetDigest) {
       const response = await fetch(
         `http://runtime-controller:8080/internal/runtime-operations/${rcRequestId}`,
         {
+          headers: services.authorization("controller-runtime"),
           signal: AbortSignal.timeout(15000),
         },
       );
@@ -596,7 +616,7 @@ async function verifyPostCreateSkillMountRace(body, targetDigest) {
     trace_id: admitted.traceID,
   };
   await writeFile("/tmp/stage3-business.json", JSON.stringify(receipt));
-  console.log(JSON.stringify(receipt));
+  console.log(asciiJSON(receipt));
   expectedUnknown = true;
 }
 async function admitRebuildAfterTargetDrift(
@@ -641,6 +661,7 @@ async function admitRebuildAfterTargetDrift(
         method: "POST",
         signal: AbortSignal.timeout(15000),
         headers: {
+          ...services.authorization("controller-runtime"),
           "content-type": "application/json",
           "Idempotency-Key": preparationKey,
         },
@@ -717,6 +738,7 @@ async function admitRebuildAfterTargetDrift(
       method: "POST",
       signal: AbortSignal.timeout(15000),
       headers: {
+        ...services.authorization("controller-runtime"),
         "content-type": "application/json",
         "Idempotency-Key": randomUUID(),
       },
@@ -769,30 +791,46 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
     (value) => ({ value }),
     (error) => ({ error }),
   );
-  const progress = await until(
-    async () => {
-      const response = await fetch(
-        `${gateway}/api/admin/agent-skill-preparations/by-idempotency-key`,
-        {
-          signal: AbortSignal.timeout(15000),
-          headers: {
-            Cookie: admin.cookie,
-            Origin: gateway,
-            "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
-            "Idempotency-Key": key,
-          },
+  const preparation = async () => {
+    const response = await fetch(
+      `${gateway}/api/admin/agent-skill-preparations/by-idempotency-key`,
+      {
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          Cookie: admin.cookie,
+          Origin: gateway,
+          "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
+          "Idempotency-Key": key,
         },
-      );
-      if (response.status === 404) return false;
-      assert.equal(response.status, 200);
-      return response.json();
-    },
+      },
+    );
+    if (response.status === 404) return false;
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const found = await until(
+    preparation,
     "find durable preparation after uncertain HTTP response",
     60000,
   );
-  assert.equal(progress.agent_id, agentId);
-  assert.equal(progress.kind, "rebuild");
-  assert(["queued", "preparing", "retry_wait"].includes(progress.state));
+  assert.equal(found.agent_id, agentId);
+  assert.equal(found.kind, "rebuild");
+  assert(["queued", "preparing", "retry_wait"].includes(found.state));
+  // Restoring before a failed attempt lets a slow first attempt succeed and
+  // proves nothing about outage handling.
+  const progress = await until(
+    async () => {
+      const current = await preparation();
+      assert(current, "durable preparation disappeared during outage");
+      assert(
+        ["queued", "preparing", "retry_wait"].includes(current.state),
+        `unexpected preparation state during outage: ${current.state}`,
+      );
+      return current.state === "retry_wait" && current;
+    },
+    "Registry outage schedules a durable preparation retry",
+    90000,
+  );
   assert.equal(
     (await state()).availability,
     "ready",
@@ -800,7 +838,7 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
   );
   assert.equal((await agent()).runtime.runtime_revision, sourceRevision);
   await exerciseWorkspace(
-    { name: "v1-ws", version: 1 },
+    { name: "v1-ws", version: 1, skills: deliveredSkills },
     agentId,
     member,
     "registry-outage",
@@ -950,7 +988,10 @@ async function eventStream() {
   }
 }
 async function main() {
-  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.match(
+    process.env.TEST_RUNTIME_IMAGE ?? "",
+    /^antnest\/antnest-runtime:[\w.-]+$/,
+  );
   const { principal, ownerId } = await identity(admin, secrets);
   await login(member);
   secrets.push(...member.cookies.values());
@@ -1018,7 +1059,10 @@ async function main() {
         async () => {
           const response = await fetch(
             `http://runtime-controller:8080/internal/runtime-operations/${rcRequestId}`,
-            { signal: AbortSignal.timeout(15000) },
+            {
+              headers: services.authorization("controller-runtime"),
+              signal: AbortSignal.timeout(15000),
+            },
           );
           if (response.status === 404) return false;
           assert.equal(response.status, 200);
@@ -1055,7 +1099,7 @@ async function main() {
         acp_admission_closed: true,
       };
       await writeFile("/tmp/stage3-business.json", JSON.stringify(receipt));
-      console.log(JSON.stringify(receipt));
+      console.log(asciiJSON(receipt));
       expectedUnknown = true;
       return;
     }
@@ -1068,7 +1112,7 @@ async function main() {
       traceID: created.traceID,
       agentId,
       requestId,
-      ...(skillMode ? { skillPreparation: true } : {}),
+      skillPreparation: true,
     });
     const scoped = await internal(
       "http://agent-controller:8080",
@@ -1086,11 +1130,12 @@ async function main() {
         original.template.skill_refs,
       );
     }
-    await internal(
+    const foreign = await internal(
       "http://agent-controller:8080",
       `/internal/agents/${agentId}?organization_id=stage3-unrelated-organization`,
-      404,
+      403,
     );
+    assert.equal(foreign.code, "organization_mismatch");
     const events = (await api(`/api/admin/agents/${agentId}/events`)).events;
     assert(
       events.some(
@@ -1111,7 +1156,7 @@ async function main() {
     assert(html.body.includes("Antnest Workspace"));
     stage = "v1-workspace";
     const saved = await exerciseWorkspace(
-      { name: "v1-ws", version: 1 },
+      { name: "v1-ws", version: 1, skills: deliveredSkills },
       agentId,
       member,
       "v1-baseline",
@@ -1136,7 +1181,7 @@ async function main() {
     );
     stage = "http-workspace";
     await exerciseWorkspace(
-      { name: "v1-http", version: 1, http: true },
+      { name: "v1-http", version: 1, http: true, skills: deliveredSkills },
       agentId,
       member,
       "http-baseline",
@@ -1192,7 +1237,7 @@ async function main() {
       assert.notEqual(reused.runtime.runtime_revision, before);
       assertBuildSnapshot(reused, original.template, edited.model);
       await exerciseWorkspace(
-        { name: "v1-ws", version: 1 },
+        { name: "v1-ws", version: 1, skills: deliveredSkills },
         agentId,
         member,
         "offline-reuse",
@@ -1321,7 +1366,13 @@ async function main() {
     const revocations = [];
     for (const version of [1, 2])
       revocations.push(
-        await logoutRevocation(agentId, version, requests, secrets),
+        await logoutRevocation(
+          agentId,
+          version,
+          requests,
+          secrets,
+          deliveredSkills,
+        ),
       );
     await transition("delete");
     assert(
@@ -1401,7 +1452,7 @@ async function main() {
       revocations,
     };
     await writeFile("/tmp/stage3-business.json", JSON.stringify(business));
-    console.log(JSON.stringify(business));
+    console.log(asciiJSON(business));
     const lifecycleTraces = [],
       sessionTraces = [];
     const lifecycleRaw = [];
@@ -1450,7 +1501,7 @@ async function main() {
         ? reviewedFencedRestartOnly([...lifecycleTraces, ...sessionTraces])
         : clockWarningsOnly([...lifecycleTraces, ...sessionTraces]));
     console.log(
-      JSON.stringify({
+      asciiJSON({
         status: "topology_passed",
         strict_trace: strict,
         ...(acceptedKnownTraceExceptions
@@ -1483,7 +1534,7 @@ try {
   await main();
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       status: "failed",
       stage,
       error: error.message.split("\n")[0],

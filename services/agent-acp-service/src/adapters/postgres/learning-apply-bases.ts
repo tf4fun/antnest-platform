@@ -25,21 +25,10 @@ type CandidateRow = {
   evidence_ids: string[];
   state: string;
 };
-type IntentRow = {
-  request_id: string;
-  task_id: string;
-  claim_id: string;
-  generation: number;
-  action: string;
-  execution_id: string;
-  state: string;
-  request_facts: Record<string, unknown>;
-  receipt: Record<string, unknown> | null;
-};
 type BasisRow = {
   candidate_id: string;
   task_id: string;
-  check_request_id: string;
+  check_request_id: string | null;
   policy_revision: string;
   package_path: string;
   expected_base_digest: string | null;
@@ -89,10 +78,10 @@ export class PostgresLearningApplyBases {
       : null;
   }
 
-  public async recordChecked(
+  /** Freezes the authority that admitted a draft; no Runtime call is part of admission. */
+  public async recordAdmitted(
     claim: LearningTaskClaim,
     candidateId: string,
-    checkRequestId: string,
     basis: AutomaticApplyBasis,
   ): Promise<{ state: string }> {
     if (
@@ -138,29 +127,6 @@ export class PostgresLearningApplyBases {
         !isDeepStrictEqual(candidate.evidence_ids, basis.evidenceIds)
       )
         throw new Error("Learning apply basis differs from the candidate");
-      const intent = (
-        await client.query<IntentRow>(
-          "SELECT * FROM learning_maintenance_intents WHERE request_id=$1 FOR UPDATE",
-          [checkRequestId],
-        )
-      ).rows[0];
-      if (
-        !intent ||
-        intent.task_id !== claim.taskId ||
-        intent.claim_id !== claim.claimId ||
-        intent.generation !== claim.generation ||
-        intent.action !== "check" ||
-        intent.state !== "settled" ||
-        intent.execution_id !== basis.executionId ||
-        intent.request_facts.candidate_id !== candidateId ||
-        intent.request_facts.package_path !== basis.packagePath ||
-        intent.request_facts.target_digest !== basis.targetDigest ||
-        intent.receipt?.action !== "check" ||
-        intent.receipt.outcome !== "checked" ||
-        intent.receipt.observed_digest !== basis.targetDigest ||
-        intent.receipt.execution_id !== basis.executionId
-      )
-        throw new Error("Learning candidate lacks a matching Runtime check receipt");
       const existing = (
         await client.query<BasisRow>(
           "SELECT * FROM learning_apply_bases WHERE candidate_id=$1 FOR UPDATE",
@@ -168,7 +134,7 @@ export class PostgresLearningApplyBases {
         )
       ).rows[0];
       if (existing) {
-        if (!sameBasis(existing, claim.taskId, checkRequestId, basis))
+        if (!sameBasis(existing, claim.taskId, basis))
           throw new Error("Learning apply basis changed after recording");
         return { state: candidate.state };
       }
@@ -176,13 +142,12 @@ export class PostgresLearningApplyBases {
         throw new Error("Learning candidate is not ready for apply admission");
       await client.query(
         `INSERT INTO learning_apply_bases
-        (candidate_id,task_id,check_request_id,policy_revision,package_path,
+        (candidate_id,task_id,policy_revision,package_path,
          expected_base_digest,target_digest,evidence_ids,execution_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           candidateId,
           claim.taskId,
-          checkRequestId,
           basis.policyRevision,
           basis.packagePath,
           basis.expectedBaseDigest,
@@ -200,15 +165,9 @@ export class PostgresLearningApplyBases {
   }
 }
 
-function sameBasis(
-  saved: BasisRow,
-  taskId: string,
-  checkRequestId: string,
-  input: AutomaticApplyBasis,
-): boolean {
+function sameBasis(saved: BasisRow, taskId: string, input: AutomaticApplyBasis): boolean {
   return (
     saved.task_id === taskId &&
-    saved.check_request_id === checkRequestId &&
     saved.policy_revision === input.policyRevision &&
     saved.package_path === input.packagePath &&
     saved.expected_base_digest === input.expectedBaseDigest &&

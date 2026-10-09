@@ -13,6 +13,10 @@ import {
   owned,
   scopeLabel,
 } from "../../e2e/lifecycle-closeout/docker.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import { runCommand } from "../../support/run-command.mjs";
 import { queryJaeger, jaegerTraceSpans } from "../../support/jaeger-api.mjs";
@@ -188,7 +192,13 @@ try {
         "isolated image tag already exists",
       );
       built.push(image);
-      await docker([...compose, "build", service], true);
+      const [, ...build] = candidateCommand({
+        name: service,
+        tag: image,
+        build: ["docker", ...compose, "build", service],
+        labels: { "io.antnest.deployment-admission": project },
+      });
+      await docker(build, true, { env: candidateEnvironment(env) });
     });
   await phase("startup", async () => {
     await docker(

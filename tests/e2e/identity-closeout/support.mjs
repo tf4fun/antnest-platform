@@ -50,6 +50,7 @@ export class GatewayClient {
       responseType = "json",
       headers = {},
       method = body === undefined ? "GET" : "POST",
+      timeoutMs = 15000,
     } = options;
     const label = `${method} ${new URL(path, this.base).pathname}`;
     this.requests++;
@@ -60,7 +61,7 @@ export class GatewayClient {
       response = await fetch(this.base + path, {
         method,
         redirect: "manual",
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(timeoutMs),
         headers: {
           "content-type": "application/json",
           Cookie: this.cookie,
@@ -76,7 +77,7 @@ export class GatewayClient {
     } catch (error) {
       throw annotateFailure(new Error(`${label}: request failed`), {
         request_phase: requestPhase,
-        timeout_ms: 15000,
+        timeout_ms: timeoutMs,
         http_status: response?.status,
         ...transportFailure(error),
       });

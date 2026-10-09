@@ -12,6 +12,7 @@ import {
   fixtureEnvironment,
   prepareFixtureCredentials,
 } from "../../support/authenticated-e2e.mjs";
+import { collectStartupFailures } from "../../support/startup-failure-summary.mjs";
 
 export const scopeLabel = "io.antnest.runtime-controller-scope";
 export const lines = (value) => value.trim().split(/\s+/).filter(Boolean);
@@ -28,9 +29,47 @@ export async function networkOctet(docker, seed) {
   );
 }
 
+const secretName = /TOKEN|KEY|PASSWORD|SECRET|CREDENTIAL/i;
+
+// Command stderr can contain integration credentials, so failures report only
+// a short tail with every secret-named environment value and bearer redacted.
+export function stderrDiagnostic(text, env = {}) {
+  const secrets = Object.entries(env)
+    .filter(([name, value]) => secretName.test(name) && value?.length >= 8)
+    .map(([, value]) => value)
+    .sort((a, b) => b.length - a.length);
+  let tail = text.trim().split("\n").slice(-12).join("\n");
+  for (const secret of secrets) tail = tail.replaceAll(secret, "[redacted]");
+  return tail.replace(/(Bearer\s+)\S+/gi, "$1[redacted]").slice(-2000);
+}
+
+function composeUpProject(args) {
+  if (args[0] !== "compose" || !args.includes("up")) return null;
+  const index = args.indexOf("--project-name");
+  return index < 0 ? null : args[index + 1];
+}
+
+// Without the run's credential directory no log field can be checked, so the
+// summary is skipped rather than printed unchecked.
+function startupSummary(project, env) {
+  try {
+    return collectStartupFailures(
+      project,
+      env.ANTNEST_SERVICE_AUTH_DIRECTORY,
+      env,
+    );
+  } catch {
+    return "startup failure summary unavailable";
+  }
+}
+
 export function dockerClient(env, signal, budget = 900000) {
   const deadline = Date.now() + budget;
-  return async function docker(args, long = false) {
+  return async function docker(
+    args,
+    long = false,
+    { env: callEnv = env } = {},
+  ) {
     signal?.throwIfAborted();
     const invocation = dockerInvocation(
       long ? ["--lifecycle", ...args] : args,
@@ -40,7 +79,7 @@ export function dockerClient(env, signal, budget = 900000) {
     const commandFailure = new Error(`Docker ${args[0]} failed`);
     return new Promise((resolve, reject) => {
       const child = spawn("docker", invocation.args, {
-        env,
+        env: callEnv,
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -59,8 +98,10 @@ export function dockerClient(env, signal, budget = 900000) {
         output += value;
         if (output.length > 8 * 1024 * 1024) terminate();
       });
-      // Command output can contain integration credentials; never echo raw stderr.
-      child.stderr.resume();
+      let errors = "";
+      child.stderr.on("data", (value) => {
+        errors = (errors + value).slice(-64 * 1024);
+      });
       const timer = setTimeout(terminate, invocation.timeoutMs);
       signal?.addEventListener("abort", terminate, { once: true });
       child.once("error", (error) => {
@@ -71,6 +112,11 @@ export function dockerClient(env, signal, budget = 900000) {
         signal?.removeEventListener("abort", terminate);
         if (failure || code !== 0) {
           commandFailure.message += ` (${code})`;
+          const diagnostic = stderrDiagnostic(errors, callEnv);
+          if (diagnostic) commandFailure.message += `\n${diagnostic}`;
+          const project = composeUpProject(args);
+          if (project)
+            commandFailure.message += `\n${startupSummary(project, callEnv)}`;
           reject(failure ?? commandFailure);
         } else resolve(output.trim());
       });

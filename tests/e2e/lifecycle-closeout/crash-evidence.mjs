@@ -77,3 +77,29 @@ export function assertCrashRecovery(before, after) {
   assert.equal(after.updated, 1);
   assert.equal(after.publications, 2);
 }
+
+// The crash proxy reaches Docker only through its Unix socket and is driven by
+// docker exec, so any network attachment would be an unreviewed path.
+export function inspectCrashProxyDeployment(rows, config) {
+  const service = (row) => row.Config.Labels["com.docker.compose.service"];
+  const peers = rows.filter((r) => service(r) === "crash-proxy");
+  assert.equal(peers.length, 1);
+  const peer = peers[0];
+  assert.equal(
+    peer.Config.Labels["com.docker.compose.project"],
+    config.project,
+  );
+  assert.equal(peer.State.Health.Status, "healthy");
+  assert.deepEqual(peer.HostConfig.PortBindings ?? {}, {});
+  assert.equal(peer.HostConfig.NetworkMode, "none");
+  assert.deepEqual(Object.keys(peer.NetworkSettings.Networks), ["none"]);
+  const rc = rows.find((r) => service(r) === "runtime-controller");
+  assert(
+    rc.Config.Env.includes("ANTNEST_DOCKER_HOST=unix:///fault/docker.sock"),
+  );
+  assert.equal(
+    rc.Mounts.find((m) => m.Destination === "/fault")?.Name,
+    peer.Mounts.find((m) => m.Destination === "/fault")?.Name,
+  );
+  return peer;
+}

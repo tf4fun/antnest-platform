@@ -35,7 +35,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
@@ -43,6 +43,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use crate::diagnostics;
 use crate::execution;
 use crate::execution_actor::ExecutionActor;
+use crate::execution_actor::MaintenanceCallError;
 use crate::executor_protocol::MAX_EXECUTOR_MESSAGE_BYTES;
 use crate::information::{INFORMATION_URI, RuntimeContext};
 use crate::managed_mcp::catalog::Catalog;
@@ -52,9 +53,10 @@ use crate::protocol::types::{
 };
 #[cfg(test)]
 use crate::roots::NamedRoots;
+use crate::skill_install::SkillInstalled;
 use crate::skill_maintenance_auth::verify_maintenance_ticket;
 use crate::skill_maintenance_request::{
-    ControlRequest, parse_control_request, parse_prepare_request,
+    ControlRequest, parse_control_request, parse_install_request,
 };
 use crate::spec::{RuntimeIdentity, SkillMaintenanceVerifier};
 use crate::telemetry::RuntimeMetrics;
@@ -276,19 +278,12 @@ fn skill_maintenance_router_with_actor(
         })
 }
 
-#[expect(
-    clippy::needless_return,
-    reason = "each authenticated action exits from its branch"
-)]
 async fn maintenance_request(
     State(state): State<MaintenanceState>,
     Path(action): Path<String>,
     request: Request,
 ) -> Response {
-    if !matches!(
-        action.as_str(),
-        "prepare" | "check" | "commit" | "observe" | "cancel" | "release"
-    ) {
+    if !matches!(action.as_str(), "install" | "digest") {
         return maintenance_error(StatusCode::NOT_FOUND, "unknown_action");
     }
     if state.verifiers.is_empty() {
@@ -311,7 +306,7 @@ async fn maintenance_request(
     if let Some(reason) = execution_fence_error(request.headers(), &state.status) {
         return execution_fence_response(reason);
     }
-    let limit = if action == "prepare" {
+    let limit = if action == "install" {
         8 * 1024 * 1024 + 8 * 1024
     } else {
         16 * 1024
@@ -336,31 +331,9 @@ async fn maintenance_request(
         Ok(ticket) => ticket,
         Err(_) => return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized"),
     };
-    if action == "prepare" {
-        match parse_prepare_request(&content_type, body, &ticket).await {
-            Ok(candidate) => {
-                let Some(actor) = &state.actor else {
-                    return maintenance_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "maintenance_unavailable",
-                    );
-                };
-                let result = actor
-                    .prepare_skill_candidate(candidate.into_executor_request(&ticket))
-                    .await;
-                return match result {
-                    Ok(prepared) => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "prepare",
-                        "execution_id": state.status.execution_id,
-                        "outcome": "prepared",
-                        "observed_digest": prepared.observed_digest,
-                        "storage_key": prepared.candidate_key,
-                    }))
-                    .into_response(),
-                    Err(error) => maintenance_tool_error(error),
-                };
-            }
+    if action == "install" {
+        let install = match parse_install_request(&content_type, body, &ticket).await {
+            Ok(install) => install,
             Err("request_conflict") => {
                 return maintenance_error(StatusCode::CONFLICT, "request_conflict");
             }
@@ -368,165 +341,90 @@ async fn maintenance_request(
                 return maintenance_error(StatusCode::PAYLOAD_TOO_LARGE, "limit_exceeded");
             }
             Err(_) => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
-        }
-    } else {
-        if content_type != "application/json" {
-            return maintenance_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_content_type");
-        }
-        match parse_control_request(&action, &body, &ticket) {
-            Ok(ControlRequest::Check(check)) => {
-                let Some(actor) = &state.actor else {
-                    return maintenance_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "maintenance_unavailable",
-                    );
-                };
-                let result = actor
-                    .check_skill_candidate(check.into_executor_request(&ticket))
-                    .await;
-                return match result {
-                    Ok(checked) => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "check",
-                        "execution_id": state.status.execution_id,
-                        "outcome": "checked",
-                        "observed_digest": checked.observed_digest,
-                    }))
-                    .into_response(),
-                    Err(error) => maintenance_tool_error(error),
-                };
+        };
+        let Some(actor) = &state.actor else {
+            return maintenance_error(StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable");
+        };
+        let receipt = |outcome: &str, observed_digest: Option<String>| {
+            json!({
+                "request_id": ticket.request_id,
+                "action": "install",
+                "execution_id": state.status.execution_id,
+                "outcome": outcome,
+                "observed_digest": observed_digest,
+            })
+        };
+        return match actor.install_skill(install.into_executor_request()).await {
+            Ok(SkillInstalled::Applied { observed_digest }) => {
+                Json(receipt("applied", Some(observed_digest))).into_response()
             }
-            Ok(ControlRequest::Commit(commit)) => {
-                let Some(actor) = &state.actor else {
-                    return maintenance_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "maintenance_unavailable",
-                    );
-                };
-                let result = actor
-                    .commit_skill_candidate(commit.into_executor_request(&ticket))
-                    .await;
-                return match result {
-                    Ok(committed) => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "commit",
-                        "execution_id": state.status.execution_id,
-                        "outcome": "applied",
-                        "observed_digest": committed.observed_digest,
-                    }))
-                    .into_response(),
-                    Err(error) if error.code == ToolErrorCode::SkillWritersUnknown => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "commit",
-                        "execution_id": state.status.execution_id,
-                        "outcome": "blocked",
-                        "observed_digest": null,
-                        "blocked_reason": "writers_unknown",
-                        "blocked_subject_id": error.blocked_subject_id,
-                    }))
-                    .into_response(),
-                    Err(error) if error.code == ToolErrorCode::SkillBackgroundTaskRunning => {
-                        Json(json!({
-                            "request_id": ticket.request_id,
-                            "action": "commit",
-                            "execution_id": state.status.execution_id,
-                            "outcome": "blocked",
-                            "observed_digest": null,
-                            "blocked_reason": "background_task_running",
-                            "blocked_subject_id": error.blocked_subject_id,
-                        }))
-                        .into_response()
-                    }
-                    Err(error) if error.code == ToolErrorCode::SkillManagedCallInFlight => {
-                        Json(json!({
-                            "request_id": ticket.request_id,
-                            "action": "commit",
-                            "execution_id": state.status.execution_id,
-                            "outcome": "blocked",
-                            "observed_digest": null,
-                            "blocked_reason": "managed_call_in_flight",
-                            "blocked_subject_id": error.blocked_subject_id,
-                        }))
-                        .into_response()
-                    }
-                    Err(error) => maintenance_tool_error(error),
-                };
+            Ok(SkillInstalled::Conflict {
+                conflict_reason,
+                observed_digest,
+            }) => {
+                let mut value = receipt("conflict", observed_digest);
+                value["conflict_reason"] = json!(conflict_reason.as_str());
+                Json(value).into_response()
             }
-            Ok(ControlRequest::Observe(observe)) => {
-                let Some(actor) = &state.actor else {
-                    return maintenance_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "maintenance_unavailable",
-                    );
-                };
-                let result = actor
-                    .observe_skill_candidate(
-                        observe.into_executor_request(&ticket),
-                        CancellationToken::new(),
-                    )
-                    .await;
-                return match result {
-                    Ok(observed) => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "observe",
-                        "execution_id": state.status.execution_id,
-                        "outcome": observed.outcome,
-                        "observed_digest": observed.observed_digest,
-                    }))
-                    .into_response(),
-                    Err(error) => maintenance_tool_error(error),
-                };
-            }
-            Ok(ControlRequest::Cancel(cancel)) => {
-                let Some(actor) = &state.actor else {
-                    return maintenance_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "maintenance_unavailable",
-                    );
-                };
-                let result = actor
-                    .cancel_skill_generation(cancel.into_executor_request(&ticket))
-                    .await;
-                return match result {
-                    Ok(_) => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "cancel",
-                        "execution_id": state.status.execution_id,
-                        "outcome": "cancelled",
-                        "observed_digest": null,
-                    }))
-                    .into_response(),
-                    Err(error) => maintenance_tool_error(error),
-                };
-            }
-            Ok(ControlRequest::Release(release)) => {
-                let Some(actor) = &state.actor else {
-                    return maintenance_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "maintenance_unavailable",
-                    );
-                };
-                let result = actor
-                    .release_skill_candidate(release.into_executor_request(&ticket))
-                    .await;
-                return match result {
-                    Ok(_) => Json(json!({
-                        "request_id": ticket.request_id,
-                        "action": "release",
-                        "execution_id": state.status.execution_id,
-                        "outcome": "released",
-                        "observed_digest": null,
-                    }))
-                    .into_response(),
-                    Err(error) => maintenance_tool_error(error),
-                };
-            }
-            Err("request_conflict") => {
-                return maintenance_error(StatusCode::CONFLICT, "request_conflict");
-            }
-            Err(_) => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
-        }
+            Err(error) => unsettled_install(error, |outcome| receipt(outcome, None)),
+        };
     }
+    if content_type != "application/json" {
+        return maintenance_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_content_type");
+    }
+    let request = match parse_control_request(&action, &body, &ticket) {
+        Ok(ControlRequest::Digest(request)) => request,
+        Err("request_conflict") => {
+            return maintenance_error(StatusCode::CONFLICT, "request_conflict");
+        }
+        _ => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
+    };
+    let Some(actor) = &state.actor else {
+        return maintenance_error(StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable");
+    };
+    let receipt = |outcome: &str, observed_digest: Option<String>| {
+        json!({
+            "request_id": ticket.request_id,
+            "action": "digest",
+            "execution_id": state.status.execution_id,
+            "outcome": outcome,
+            "observed_digest": observed_digest,
+        })
+    };
+    match actor.skill_digest(request.into_executor_request()).await {
+        Ok(observed) => Json(receipt("observed", observed.observed_digest)).into_response(),
+        Err(MaintenanceCallError::ForegroundRunning) => {
+            let mut value = receipt("blocked", None);
+            value["blocked_reason"] = json!("foreground_running");
+            Json(value).into_response()
+        }
+        Err(MaintenanceCallError::Preempted) => Json(receipt("preempted", None)).into_response(),
+        Err(MaintenanceCallError::Tool(error)) => maintenance_tool_error(error),
+    }
+}
+
+/// Answers an install that did not settle with its receipt, or an error.
+fn unsettled_install(error: MaintenanceCallError, receipt: impl Fn(&str) -> Value) -> Response {
+    let (reason, subject) = match error {
+        MaintenanceCallError::ForegroundRunning => ("foreground_running", None),
+        MaintenanceCallError::Preempted => return Json(receipt("preempted")).into_response(),
+        MaintenanceCallError::Tool(error) => match error.code {
+            ToolErrorCode::SkillWritersUnknown => ("writers_unknown", error.blocked_subject_id),
+            ToolErrorCode::SkillBackgroundTaskRunning => {
+                ("background_task_running", error.blocked_subject_id)
+            }
+            ToolErrorCode::SkillManagedCallInFlight => {
+                ("managed_call_in_flight", error.blocked_subject_id)
+            }
+            _ => return maintenance_tool_error(error),
+        },
+    };
+    let mut value = receipt("blocked");
+    value["blocked_reason"] = json!(reason);
+    if let Some(subject) = subject {
+        value["blocked_subject_id"] = json!(subject);
+    }
+    Json(value).into_response()
 }
 
 fn maintenance_tool_error(error: ToolError) -> Response {
@@ -539,12 +437,6 @@ fn maintenance_tool_error(error: ToolError) -> Response {
         ToolErrorCode::AtomicSkillReplaceUnsupported => {
             (StatusCode::CONFLICT, "atomic_skill_replace_unsupported")
         }
-        ToolErrorCode::SkillGenerationCancelled => (StatusCode::CONFLICT, "generation_cancelled"),
-        ToolErrorCode::SkillStorageFull => (StatusCode::CONFLICT, "skill_storage_full"),
-        ToolErrorCode::SkillContentChangedDuringActivation => (
-            StatusCode::CONFLICT,
-            "skill_content_changed_during_activation",
-        ),
         _ => (StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable"),
     };
     maintenance_error(status, code)
@@ -1071,9 +963,11 @@ enum ToolBackend {
 }
 
 impl ToolBackend {
-    fn admit_managed(&self) -> Result<Option<crate::execution_actor::ExecutionLease>, ToolError> {
+    async fn admit_managed(
+        &self,
+    ) -> Result<Option<crate::execution_actor::ExecutionLease>, ToolError> {
         match self {
-            Self::Process(actor) => actor.admit().map(Some),
+            Self::Process(actor) => actor.admit().await.map(Some),
             #[cfg(test)]
             Self::InProcess(_) => Ok(None),
         }
@@ -1436,7 +1330,7 @@ impl RuntimeToolServer {
         let span = tool_span("managed", &self.identity);
         async {
             let started = Instant::now();
-            let result = match self.tools.admit_managed() {
+            let result = match self.tools.admit_managed().await {
                 Ok(_lease) => {
                     crate::mcp_progress::with_progress(&context, |progress| {
                         self.managed.call_with_progress(

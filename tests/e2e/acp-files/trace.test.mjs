@@ -153,3 +153,46 @@ test("replay verifies each independent message trace, exact session and socket l
     assert.throws(() => inspectReplayRequestTrace(trace, expected));
   }
 });
+test("replay may read the Skill catalog but never call executable Runtime methods", () => {
+  for (const method of ["session/load", "session/resume", "session/fork"]) {
+    for (const rpc of ["resources/read", "tools/call"]) {
+      const { trace, add } = fixture(method);
+      add(
+        "catalog",
+        "prompt",
+        "HTTP POST antnest-runtime",
+        "agent-acp-service",
+        3,
+        {
+          "span.kind": "client",
+        },
+      );
+      add("catalog-server", "catalog", "HTTP POST /mcp", "antnest-runtime", 3, {
+        "span.kind": "server",
+        "rpc.method": rpc,
+      });
+      add(
+        "catalog-op",
+        "catalog-server",
+        "runtime.mcp.operation",
+        "antnest-runtime",
+        3,
+        {
+          "rpc.method": rpc,
+        },
+      );
+      const expected = {
+        method,
+        sessionId: "session",
+        connectionTraceID: "connection",
+      };
+      if (rpc === "tools/call")
+        assert.throws(() => inspectReplayRequestTrace(trace, expected));
+      else
+        assert.equal(
+          inspectReplayRequestTrace(trace, expected).runtime_information_reads,
+          1,
+        );
+    }
+  }
+});

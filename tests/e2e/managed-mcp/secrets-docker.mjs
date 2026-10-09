@@ -12,6 +12,10 @@ import {
 } from "../lifecycle-closeout/docker.mjs";
 import { configureFoundation } from "../lifecycle-closeout/foundation-setup.mjs";
 import { applicationServices } from "../lifecycle-closeout/deployment.mjs";
+import {
+  candidateCommand,
+  candidateEnvironment,
+} from "../../support/candidate-images.mjs";
 import { runCommand } from "../../support/run-command.mjs";
 import {
   evidenceDirectory,
@@ -77,39 +81,60 @@ try {
     built.push(candidate);
   }
   console.log(JSON.stringify({ version, tag, stage: "build-runtime" }));
-  await gate("build-runtime-fixture", [
-    "docker",
-    "build",
-    "--target",
-    "build",
-    "-f",
-    "runtimes/antnest-runtime/Dockerfile",
-    "-t",
-    buildImage,
-    ".",
-  ]);
-  await gate("build-runtime", [
-    "docker",
-    "build",
-    "-f",
-    "runtimes/antnest-runtime/Dockerfile",
-    "-t",
-    baseImage,
-    ".",
-  ]);
-  await gate("build-managed-runtime", [
-    "docker",
-    "build",
-    "-f",
-    "tests/e2e/managed-mcp/Dockerfile",
-    "--build-arg",
-    `RUNTIME_BUILD_IMAGE=${buildImage}`,
-    "--build-arg",
-    `RUNTIME_IMAGE=${baseImage}`,
-    "-t",
-    image,
-    ".",
-  ]);
+  await gate(
+    "build-runtime-fixture",
+    candidateCommand({
+      name: "antnest-runtime-fixture",
+      tag: buildImage,
+      build: [
+        "docker",
+        "build",
+        "--target",
+        "build",
+        "-f",
+        "runtimes/antnest-runtime/Dockerfile",
+        "-t",
+        buildImage,
+        ".",
+      ],
+    }),
+  );
+  await gate(
+    "build-runtime",
+    candidateCommand({
+      name: "antnest-runtime",
+      tag: baseImage,
+      build: [
+        "docker",
+        "build",
+        "-f",
+        "runtimes/antnest-runtime/Dockerfile",
+        "-t",
+        baseImage,
+        ".",
+      ],
+    }),
+  );
+  await gate(
+    "build-managed-runtime",
+    candidateCommand({
+      name: "antnest-runtime-managed",
+      tag: image,
+      build: [
+        "docker",
+        "build",
+        "-f",
+        "tests/e2e/managed-mcp/Dockerfile",
+        "--build-arg",
+        `RUNTIME_BUILD_IMAGE=${buildImage}`,
+        "--build-arg",
+        `RUNTIME_IMAGE=${baseImage}`,
+        "-t",
+        image,
+        ".",
+      ],
+    }),
+  );
   config = await configuration(abort.signal, () => {}, image);
   config.env.ANTNEST_ADMISSION_TAG = tag;
   configureFoundation(config);
@@ -123,8 +148,13 @@ try {
     );
     await gate(
       "build-" + service,
-      ["docker", ...config.compose(["build", service])],
-      config.env,
+      candidateCommand({
+        name: service,
+        tag: `antnest/${service}:${tag}`,
+        build: ["docker", ...config.compose(["build", service])],
+        labels: { "io.antnest.deployment-admission": config.project },
+      }),
+      candidateEnvironment(config.env),
     );
   }
   const egressBuild = `antnest/egress-proof:${tag}`;

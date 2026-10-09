@@ -14,6 +14,10 @@ import { runtimeCommandId } from "./contracts.mjs";
 import { inspectWorkflowRestart } from "./workflow-restart.mjs";
 import { inspectUpdateRestart } from "./update-restart.mjs";
 
+import { clockSkewWarning } from "../../support/strict-findings.mjs";
+
+export { clockSkewWarning };
+
 export function clockWarningsOnly(traces) {
   return traces.every(
     (result) =>
@@ -21,11 +25,7 @@ export function clockWarningsOnly(traces) {
       (result.strict_trace === "failed" &&
         result.warning_count > 0 &&
         result.warnings?.length > 0 &&
-        result.warnings.every((warning) =>
-          /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/.test(
-            warning,
-          ),
-        ) &&
+        result.warnings.every((warning) => clockSkewWarning.test(warning)) &&
         (result.platform_probe_errors ?? 0) === 0 &&
         (result.restart_error_spans ?? 0) === 0),
   );
@@ -42,9 +42,7 @@ export function reviewedFencedRestartOnly(traces) {
     result.restart_error_spans === 2 &&
     result.platform_probe_errors === 0 &&
     (result.warnings ?? []).every((warning) =>
-      /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/.test(
-        warning,
-      ),
+      clockSkewWarning.test(warning),
     ) &&
     clockWarningsOnly(traces.filter((item) => item !== result))
   );
@@ -171,11 +169,52 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       skillRetries.add(span);
     }
   }
+  // Runtime Controller reruns a SERIALIZABLE transaction that PostgreSQL
+  // aborted with 40001; the abort is expected only before a committed retry.
+  const serializationRetries = new Set();
+  const retriedTransactions = new Set();
+  for (const error of errors) {
+    if (tree.service(error) !== "runtime-controller") continue;
+    const transaction =
+      error.operationName === "postgresql transaction"
+        ? error
+        : tree.parent(error);
+    if (
+      transaction?.operationName !== "postgresql transaction" ||
+      tree.service(transaction) !== "runtime-controller" ||
+      !["rolled_back", "failed"].includes(
+        tag(transaction, "antnest.transaction.outcome"),
+      ) ||
+      !trace.spans.some(
+        (span) =>
+          tree.parent(span) === transaction &&
+          hasError(span) &&
+          /\(SQLSTATE 40001\)$/.test(tag(span, "otel.status_description")),
+      )
+    )
+      continue;
+    const owner = tree.parent(transaction);
+    const aborted = transaction.startTime + transaction.duration;
+    if (
+      trace.spans.some(
+        (span) =>
+          span.operationName === "postgresql transaction" &&
+          tree.parent(span) === owner &&
+          !hasError(span) &&
+          tag(span, "antnest.transaction.outcome") === "committed" &&
+          span.startTime >= aborted,
+      )
+    ) {
+      serializationRetries.add(error);
+      retriedTransactions.add(transaction);
+    }
+  }
   for (const error of errors)
     if (
       !restart?.errors.has(error) &&
       !skillRetries.has(error) &&
-      !expectedTransportFaults.has(error)
+      !expectedTransportFaults.has(error) &&
+      !serializationRetries.has(error)
     )
       assertDockerProbe(trace, tree, error, expected);
   const absence = trace.spans.filter(
@@ -605,8 +644,11 @@ export function inspectLifecycle(trace, expected, secrets = []) {
           tag(confirmation, "antnest.configuration.applied_revision") >=
             revision,
         );
+        // agent-acp-service server spans carry millisecond-truncated start
+        // times, so ordering is judged on the controller's client spans.
         assert(
-          settled.startTime >= applied.startTime + applied.duration,
+          confirmation.startTime >=
+            publication.startTime + publication.duration,
           "settlement preceded publication",
         );
         settlement = true;
@@ -628,7 +670,11 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       errors.length -
       (restart?.errors.size ?? 0) -
       skillRetries.size -
-      expectedTransportFaults.size,
+      expectedTransportFaults.size -
+      serializationRetries.size,
+    ...(retriedTransactions.size
+      ? { serialization_retries: retriedTransactions.size }
+      : {}),
     ...(expected.startResponseLoss
       ? { expected_transport_faults: expectedTransportFaults.size }
       : {}),
@@ -649,7 +695,10 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       : {}),
     platform_absence_probes: absence.length,
     strict_trace:
-      errors.length > skillRetries.size + expectedTransportFaults.size
+      errors.length >
+      skillRetries.size +
+        expectedTransportFaults.size +
+        serializationRetries.size
         ? "failed"
         : timing.strict_trace,
     timing: {
@@ -712,6 +761,35 @@ export function assertDockerProbe(trace, tree, error, expected) {
   assert.equal(tag(platform, "antnest.agent.id"), expected.agentId);
   assert.equal(tag(platform, "antnest.outcome"), "completed");
   assert.equal(tag(platform, "antnest.platform"), "docker");
+  if (platform.operationName === "runtime.platform.delete") {
+    // Delete cleanup probes optional per-generation resources; absence means
+    // there was nothing left to remove. Disable removes the stopped Runtime and
+    // Rebuild deletes the old generation.
+    const phase = {
+      delete: "runtime_delete",
+      disable: "runtime_disable",
+      rebuild: "runtime_update",
+    }[expected.kind];
+    assert(phase, "unexpected Runtime delete");
+    assert(!hasError(error), "Delete absence was reported as an error");
+    const command = tree
+      .chain(platform)
+      .find((s) => tag(s, "antnest.operation.request_id"));
+    assert.equal(
+      tag(command, "antnest.operation.request_id"),
+      runtimeCommandId(expected.requestId, phase),
+    );
+    assert(
+      !trace.spans.some(
+        (s) =>
+          tree.parent(s) === platform &&
+          tag(s, "http.request.method") === "POST" &&
+          tag(s, "http.response.status_code") === 201,
+      ),
+      "Delete allocated a Docker resource",
+    );
+    return;
+  }
   if (platform.operationName === "runtime.platform.inspect") {
     const generation = expected.missingSourceGeneration;
     assert.equal(expected.kind, "rebuild");

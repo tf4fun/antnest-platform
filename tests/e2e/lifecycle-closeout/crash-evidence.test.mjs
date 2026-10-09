@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertCrashCheckpoint,
   assertCrashRecovery,
+  inspectCrashProxyDeployment,
 } from "./crash-evidence.mjs";
 import { runtimeCommandId } from "../stage3-base/contracts.mjs";
 function fixture(phase) {
@@ -113,3 +114,45 @@ for (const phase of ["before-create", "after-start"]) {
     }
   });
 }
+
+function crashRows() {
+  const fault = { Destination: "/fault", Name: "project_crash-socket" };
+  return [
+    {
+      Config: {
+        Labels: {
+          "com.docker.compose.service": "crash-proxy",
+          "com.docker.compose.project": "antnest-lifecycle-0000abcd",
+        },
+      },
+      State: { Health: { Status: "healthy" } },
+      HostConfig: { PortBindings: {}, NetworkMode: "none" },
+      NetworkSettings: { Networks: { none: {} } },
+      Mounts: [fault],
+    },
+    {
+      Config: {
+        Labels: { "com.docker.compose.service": "runtime-controller" },
+        Env: ["ANTNEST_DOCKER_HOST=unix:///fault/docker.sock"],
+      },
+      Mounts: [{ ...fault }],
+    },
+  ];
+}
+test("crash proxy has no network and shares only the fault socket", () => {
+  const config = { project: "antnest-lifecycle-0000abcd" };
+  const rows = crashRows();
+  assert.equal(inspectCrashProxyDeployment(rows, config), rows[0]);
+  for (const change of [
+    (r) => (r[0].NetworkSettings.Networks = { x_development: {} }),
+    (r) => (r[0].HostConfig.NetworkMode = "bridge"),
+    (r) => (r[0].HostConfig.PortBindings = { "8080/tcp": [{}] }),
+    (r) => (r[1].Config.Env = []),
+    (r) => (r[1].Mounts[0].Name = "other"),
+    (r) => (r[0].Config.Labels["com.docker.compose.project"] = "foreign"),
+  ]) {
+    const changed = crashRows();
+    change(changed);
+    assert.throws(() => inspectCrashProxyDeployment(changed, config));
+  }
+});

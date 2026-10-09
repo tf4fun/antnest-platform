@@ -22,6 +22,7 @@ test("checks both real RPC paths without redisclosing the access credential", as
     requests.push({
       path: new URL(url).pathname,
       body: JSON.parse(options.body),
+      authorization: options.headers["Antnest-Service-Authorization"],
     });
     return Response.json(
       requests.length === 1
@@ -33,6 +34,7 @@ test("checks both real RPC paths without redisclosing the access credential", as
     "http://identity-service:8080",
     { organization, ...credentials },
     fetcher,
+    { "Antnest-Service-Authorization": "Bearer gateway" },
   );
   assert.deepEqual(
     requests.map((request) => request.path),
@@ -40,7 +42,14 @@ test("checks both real RPC paths without redisclosing the access credential", as
   );
   assert.equal(requests[0].body.organization_slug, organization.slug);
   assert.equal(requests[0].body.password, credentials.password);
-  assert.deepEqual(requests[1].body, { access_token: token });
+  assert.deepEqual(requests[1].body, {
+    access_token: token,
+    profile: "console",
+  });
+  assert.deepEqual(
+    requests.map((request) => request.authorization),
+    ["Bearer gateway", "Bearer gateway"],
+  );
   assert.equal(result.status, "business_passed");
   assert(!JSON.stringify(result).includes(token));
   assert(!JSON.stringify(result).includes(credentials.password));

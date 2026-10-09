@@ -111,7 +111,7 @@ describe("production execution configuration composition", () => {
       closed.agents[0]!.operation_id = "operation-1";
       await components.directory.apply(closed);
       expect(maintenance.signal.reason).toBeInstanceOf(LifecycleLearningStopped);
-      maintenance.finish(true);
+      maintenance.finish();
       expect(() => components.learningGate.begin(scope, new AbortController().signal)).toThrow();
     } finally {
       await pool.end();

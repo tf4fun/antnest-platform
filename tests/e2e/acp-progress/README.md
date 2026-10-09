@@ -29,7 +29,12 @@ and cancellation.
   admission without Runtime stopping evidence stays blocked with
   `runtime_barrier_required`. Tool status is `failed` in v1 and `cancelled` in
   v2. The test separately verifies that execution was alive before
-  cancellation and stopped afterwards. Cancellation does not claim rollback.
+  cancellation and stopped within 10 s. Cancellation does not claim rollback.
+- When that deadline is missed, the client prints one `cancel_timeout` line
+  before failing. It reports whether the process stopped within 30 more
+  seconds, the Tool and state frame transitions, and payload-free spans of the
+  prompt and `session/cancel` traces, including
+  `executor.exit.classification`. It never extends the deadline.
 
 Synthetic accounts and all Agent management go through the Gateway. The
 test-only driver mounts the Docker socket solely to release gate files and
@@ -54,8 +59,10 @@ later. The oracle checks complete parent topology, one Run, preparation before
 every model request, exactly one ACP dispatch and one Runtime invocation. A
 deliberate managed Tool failure permits errors only inside that Tool call;
 cancellation also permits the owning Run error. Bash exit 7 and successful paths
-permit no error spans. Clock warnings stay visible and cause exit 1 even when all
-business and topology checks pass (the parent `make` reports exit 2). Warning
+permit no error spans, except that a v1 successful path disconnected before its
+prompt answered may record the failed response dispatch on that ACP prompt span.
+Clock warnings stay visible and cause exit 2 even when all business and
+topology checks pass; any other failure exits 1. Warning
 evidence includes the original cross-service timing differences, without
 rewriting timestamps or exempting small durations. Only compact final counts and
 verdicts are saved.

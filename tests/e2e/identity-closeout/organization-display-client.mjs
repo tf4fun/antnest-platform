@@ -137,7 +137,9 @@ async function createAgent(client, principal, key) {
     name: `Organization display ${key}`,
     modelName: `display-${key}`,
     credential: `synthetic-organization-model-${key}`,
-    baseURL: "http://unused-model-fixture:8080/v1",
+    // Controller resolves Provider hosts on creation; this private literal
+    // needs no DNS and is never contacted because no prompt is submitted.
+    baseURL: "http://10.255.255.1:8080/v1",
     runtimeImage: process.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF,
     systemPrompt: "Organization display fixture; no model request is submitted",
     maxModelRequests: 1,

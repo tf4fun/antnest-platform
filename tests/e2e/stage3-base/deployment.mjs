@@ -15,8 +15,12 @@ export function inspectDeployment(rows, project, mountRace = false) {
     "agent-ui",
     "runtime-egress",
     "skill-registry",
+    "diagnostic-relay",
+    "runtime-telemetry-ingress",
     ...(mountRace ? ["skill-docker-proxy"] : []),
   ];
+  // Loopback diagnostics leave only through the relay (PostgreSQL, Jaeger).
+  const published = { "diagnostic-relay": 2, "edge-gateway": 1 };
   const names = rows.map(
     (row) => row.Config.Labels["com.docker.compose.service"],
   );
@@ -30,7 +34,7 @@ export function inspectDeployment(rows, project, mountRace = false) {
     const bindings = Object.values(row.HostConfig.PortBindings ?? {}).flat();
     assert.equal(
       bindings.length,
-      ["postgres", "jaeger", "edge-gateway"].includes(name) ? 1 : 0,
+      published[name] ?? 0,
       `${name}: unexpected host ports`,
     );
     for (const binding of bindings) assert.equal(binding.HostIp, "127.0.0.1");

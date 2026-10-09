@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import {
   RegistrySkillProjectionClient,
@@ -39,7 +39,7 @@ it("sends only metadata to the fixed Registry route, bounds acknowledgements and
   await expect(client.send(projection, new AbortController().signal)).rejects.toThrow("bound");
 });
 
-it("observes the current complete package with an execution-bound read-only ticket, never prepare/commit", async () => {
+it("reads the active digest with an execution-bound read-only ticket, never install", async () => {
   const signer = new RuntimeSkillMaintenanceSigner(
     "source-test",
     generateKeyPairSync("ed25519").privateKey,
@@ -53,23 +53,21 @@ it("observes the current complete package with an execution-bound read-only tick
     candidateId: "candidate-1",
     taskId: "task-1",
     generation: 2,
-    effectRequestId: "commit-1",
+    effectRequestId: "install-1",
     package: pkg,
   };
-  let outcome = "applied";
+  let receipt: (requestId: string) => unknown = (requestId) => ({
+    request_id: requestId,
+    action: "digest",
+    execution_id: "current-execution",
+    outcome: "observed",
+    observed_digest: pkg.targetDigest,
+  });
   const fetchFn = vi.fn((_url: string, init: RequestInit) => {
     const request = JSON.parse(Buffer.from(init.body as Uint8Array).toString()) as {
       request_id: string;
     };
-    return Promise.resolve(
-      Response.json({
-        request_id: request.request_id,
-        action: "observe",
-        execution_id: "current-execution",
-        outcome,
-        observed_digest: outcome === "applied" ? pkg.targetDigest : null,
-      }),
-    );
+    return Promise.resolve(Response.json(receipt(request.request_id)));
   });
   const connections = {
     fetchFor: vi.fn<(binding: RuntimeBinding) => typeof fetch>(
@@ -90,29 +88,78 @@ it("observes the current complete package with an execution-bound read-only tick
     mcpEndpoint: "http://runtime:8080/mcp",
     connectionId: `rci_${"b".repeat(32)}`,
   };
-  expect(await verifier.verify(record, binding, new AbortController().signal)).toBe("current");
+  const verify = () => verifier.verify(record, binding, new AbortController().signal);
+  expect(await verify()).toBe("current");
   expect(connections.fetchFor).toHaveBeenCalledWith(binding);
   expect(connections.retainOperation).toHaveBeenCalledWith(expect.any(String), binding);
   expect(connections.releaseOperation).toHaveBeenCalledWith(
     connections.retainOperation.mock.calls[0]![0],
   );
-  expect(fetchFn.mock.calls[0]?.[0]).toBe("http://runtime:8080/internal/skill-maintenance/observe");
+  expect(fetchFn.mock.calls[0]?.[0]).toBe("http://runtime:8080/internal/skill-maintenance/digest");
   const init = fetchFn.mock.calls[0]![1];
-  const request: unknown = JSON.parse(Buffer.from(init.body as Uint8Array).toString());
-  expect(request).toMatchObject({
-    action: "observe",
+  const body = Buffer.from(init.body as Uint8Array);
+  const request = JSON.parse(body.toString()) as { request_id: string };
+  expect(request).toEqual({
+    action: "digest",
+    request_id: connections.retainOperation.mock.calls[0]![0],
     job_id: "task-1",
     generation: 2,
-    effect_request_id: "commit-1",
-    expected_target_digest: pkg.targetDigest,
+    package_path: ".antnest/skills/inspect-first",
   });
   const headers = new Headers(init.headers);
+  expect(headers.get("Content-Type")).toBe("application/json");
   expect(headers.get("X-Antnest-Expected-Execution-ID")).toBe("current-execution");
-  expect(headers.get("Authorization")).toMatch(/^AntnestMaintenance /u);
-  outcome = "conflict";
-  expect(await verifier.verify(record, binding, new AbortController().signal)).toBe("changed");
-  outcome = "unknown";
-  expect(await verifier.verify(record, binding, new AbortController().signal)).toBe("unknown");
+  const [, payload] = headers
+    .get("Authorization")!
+    .replace(/^AntnestMaintenance /u, "")
+    .split(".") as [string, string, string];
+  expect(JSON.parse(Buffer.from(payload, "base64url").toString())).toMatchObject({
+    execution_id: "current-execution",
+    job_id: "task-1",
+    generation: 2,
+    action: "digest",
+    request_id: request.request_id,
+    body_sha256: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+  });
+
+  const observed = (digest: string | null) => (requestId: string) => ({
+    request_id: requestId,
+    action: "digest",
+    execution_id: "current-execution",
+    outcome: "observed",
+    observed_digest: digest,
+  });
+  receipt = observed(`sha256:${"e".repeat(64)}`);
+  expect(await verify()).toBe("changed");
+  receipt = observed(null);
+  expect(await verify()).toBe("changed");
+  // Foreground work owns the Runtime; the read did not settle.
+  receipt = (requestId) => ({
+    ...observed(null)(requestId),
+    outcome: "blocked",
+    blocked_reason: "foreground_running",
+  });
+  expect(await verify()).toBe("unknown");
+  receipt = (requestId) => ({ ...observed(null)(requestId), outcome: "preempted" });
+  expect(await verify()).toBe("unknown");
+  for (const invalid of [
+    (requestId: string) => ({ ...observed(pkg.targetDigest)(requestId), request_id: "other" }),
+    (requestId: string) => ({ ...observed(pkg.targetDigest)(requestId), execution_id: "old" }),
+    (requestId: string) => ({ ...observed(pkg.targetDigest)(requestId), action: "install" }),
+    (requestId: string) => ({ ...observed(pkg.targetDigest)(requestId), outcome: "applied" }),
+    (requestId: string) => ({
+      ...observed(pkg.targetDigest)(requestId),
+      conflict_reason: "base_changed",
+    }),
+    (requestId: string) => ({
+      ...observed(pkg.targetDigest)(requestId),
+      outcome: "blocked",
+      blocked_reason: "managed_call_in_flight",
+    }),
+  ]) {
+    receipt = invalid;
+    expect(await verify()).toBe("unknown");
+  }
   fetchFn.mockImplementation(() => Promise.resolve(new Response("busy", { status: 503 })));
-  await expect(verifier.verify(record, binding, new AbortController().signal)).rejects.toThrow();
+  await expect(verify()).rejects.toThrow();
 });

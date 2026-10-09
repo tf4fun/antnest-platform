@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
+// The Runtime denial probe targets the address Registry clients use.
 export function inspectRegistryNetwork(container, network, project) {
-  const name = `${project}_development`;
+  const name = `${project}_registry-clients`;
   assert.equal(container.Config.Labels["com.docker.compose.project"], project);
   assert.equal(
     container.Config.Labels["com.docker.compose.service"],
@@ -17,7 +18,7 @@ export function inspectRegistryNetwork(container, network, project) {
     "IPv6 enabled: add a real IPv6 denial probe",
   );
   const attachment = container.NetworkSettings.Networks[name];
-  assert(attachment, "Registry is not attached to the development network");
+  assert(attachment, "Registry is not attached to its client network");
   for (const attached of Object.values(container.NetworkSettings.Networks))
     assert(
       !attached.GlobalIPv6Address,

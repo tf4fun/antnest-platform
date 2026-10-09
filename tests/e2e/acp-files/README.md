@@ -67,7 +67,10 @@ WebSocket upgrade is not Agent access.
 Scenario reports use `status: file_case_passed` for a successful verification
 and a separate `tool_status` for the expected Tool outcome, so an intentionally
 failed edit does not look like a failed test command to the suite runner. The
-business result and the strict Trace result are reported separately.
+business result and the strict Trace result are reported separately. Strict
+warnings fail the exit, except the reviewed clock-skew warning (`clock skew
+adjustment disabled; not applying calculated delta of ...`), which is reported
+without failing.
 
 ## Trace checks
 
@@ -79,8 +82,10 @@ span is correlated to `model.complete` and `agent.run`.
 
 All replay and fork message Traces are collected independently of model
 requests. Each must match its method and Session, link to its WebSocket
-connection and contain no Run, model or Runtime calls. A missing or ambiguous
-Trace is a failure.
+connection and contain no Run, model or executable Runtime calls. A replay may
+refresh the Runtime Skill catalog with at most one `discover` and one
+`resources/read` request under the ACP request span; any other Runtime method
+fails. A missing or ambiguous Trace is a failure.
 
 Short ASCII sentinels from the complete file context and synthetic credentials
 must be absent from Traces; checking only a full escaped file string is not

@@ -233,6 +233,7 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       container,
       volume: storage.workspace,
       skillVolume: storage.skills,
+      receiverVolume: storage.receiver,
     };
   }
   async function physicalIdentity(agentID) {

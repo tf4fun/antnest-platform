@@ -13,6 +13,7 @@ import {
 } from "./foundation-setup.mjs";
 import { applicationServices, assertDeployment } from "./deployment.mjs";
 import { runFoundationFlow } from "./foundation-flow.mjs";
+import { inspectCrashProxyDeployment } from "./crash-evidence.mjs";
 import {
   foundationTraceExitCode,
   foundationAcceptedTraceExitCode,
@@ -148,32 +149,7 @@ export async function runFoundation(
       );
     }
     if (profile === "crash") {
-      const peers = rows.filter(
-        (r) => r.Config.Labels["com.docker.compose.service"] === "crash-proxy",
-      );
-      assert.equal(peers.length, 1);
-      const peer = peers[0];
-      assert.equal(
-        peer.Config.Labels["com.docker.compose.project"],
-        config.project,
-      );
-      assert.equal(peer.State.Health.Status, "healthy");
-      assert.deepEqual(peer.HostConfig.PortBindings ?? {}, {});
-      assert.deepEqual(Object.keys(peer.NetworkSettings.Networks), [
-        `${config.project}_development`,
-      ]);
-      const rc = rows.find(
-        (r) =>
-          r.Config.Labels["com.docker.compose.service"] ===
-          "runtime-controller",
-      );
-      assert(
-        rc.Config.Env.includes("ANTNEST_DOCKER_HOST=unix:///fault/docker.sock"),
-      );
-      assert.equal(
-        rc.Mounts.find((m) => m.Destination === "/fault")?.Name,
-        peer.Mounts.find((m) => m.Destination === "/fault")?.Name,
-      );
+      const peer = inspectCrashProxyDeployment(rows, config);
       baseRows = rows.filter((r) => r !== peer);
     }
     deployment = {
@@ -235,20 +211,7 @@ export async function runFoundation(
         "failure.private.txt",
         inspect(error, { depth: 8 }),
       );
-    if (
-      config?.evidence &&
-      [
-        "shutdown",
-        "health",
-        "restore",
-        "skill-restore",
-        "loss",
-        "interrupted",
-        "crash",
-        "workspace",
-        "workspace-browser",
-      ].includes(profile)
-    ) {
+    if (config?.evidence) {
       // Preserve bounded, private service diagnostics before owned cleanup.
       const diagnostics = {};
       try {

@@ -38,7 +38,6 @@ function fixture() {
       (): Promise<
         | { kind: "applied"; changeId: string }
         | { kind: "blocked"; reason: string }
-        | { kind: "pending" }
         | { kind: "conflict" | "rejected"; requestId: string }
       > => {
         order.push("apply");
@@ -76,24 +75,48 @@ describe("Skill learning task processor", () => {
     expect(f.outcomes.pauseRunning).not.toHaveBeenCalled();
   });
 
-  it("persists a blocked candidate for another idle opportunity", async () => {
+  it.each([
+    ["background_task_running", "writer_present"],
+    ["managed_call_in_flight", "writer_present"],
+    ["writers_unknown", "writer_present"],
+    ["foreground_running", "foreground_preempted"],
+    ["preempted", "foreground_preempted"],
+    ["unsettled", "runtime_unavailable"],
+  ] as const)(
+    "keeps a candidate blocked by %s for the next idle window as %s",
+    async (blocked, reason) => {
+      const f = fixture();
+      f.apply.apply.mockResolvedValueOnce({ kind: "blocked", reason: blocked });
+      expect(await f.processor.process(claim, new AbortController().signal)).toEqual({
+        kind: "paused",
+        reason,
+      });
+      expect(f.outcomes.pauseRunning).toHaveBeenCalledExactlyOnceWith(claim, reason);
+      expect(f.outcomes.recordApplyFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  it("never pauses for an unknown Runtime effect", async () => {
     const f = fixture();
-    f.apply.apply.mockResolvedValueOnce({ kind: "blocked", reason: "background_task_running" });
-    expect(await f.processor.process(claim, new AbortController().signal)).toEqual({
-      kind: "paused",
-      reason: "writer_present",
-    });
-    expect(f.outcomes.pauseRunning).toHaveBeenCalledWith(claim, "writer_present");
+    for (const blocked of ["foreground_running", "preempted", "unsettled", "writers_unknown"]) {
+      f.apply.apply.mockResolvedValueOnce({ kind: "blocked", reason: blocked });
+      await f.processor.process(claim, new AbortController().signal);
+    }
+    expect(f.outcomes.pauseRunning.mock.calls.flat()).not.toContain("unknown_effect");
   });
 
-  it("keeps an unobserved commit pending without redispatch", async () => {
+  it("settles an install conflict as a failed candidate", async () => {
     const f = fixture();
-    f.apply.apply.mockResolvedValueOnce({ kind: "pending" });
+    f.apply.apply.mockResolvedValueOnce({ kind: "conflict", requestId: "install-1" });
     expect(await f.processor.process(claim, new AbortController().signal)).toEqual({
-      kind: "paused",
-      reason: "unknown_effect",
+      kind: "failed",
     });
-    expect(f.outcomes.pauseRunning).toHaveBeenCalledWith(claim, "unknown_effect");
+    expect(f.outcomes.recordApplyFailure).toHaveBeenCalledWith(
+      claim,
+      "candidate-1",
+      "install-1",
+      "conflict",
+    );
   });
 
   it("pauses a task as policy_changed when its authority is removed before apply", async () => {
@@ -107,16 +130,16 @@ describe("Skill learning task processor", () => {
     expect(f.outcomes.recordApplyFailure).not.toHaveBeenCalled();
   });
 
-  it("settles a deterministic commit rejection as a failed candidate", async () => {
+  it("settles a deterministic install rejection as a failed candidate", async () => {
     const f = fixture();
-    f.apply.apply.mockResolvedValueOnce({ kind: "rejected", requestId: "commit-1" });
+    f.apply.apply.mockResolvedValueOnce({ kind: "rejected", requestId: "install-1" });
     expect(await f.processor.process(claim, new AbortController().signal)).toEqual({
       kind: "failed",
     });
     expect(f.outcomes.recordApplyFailure).toHaveBeenCalledWith(
       claim,
       "candidate-1",
-      "commit-1",
+      "install-1",
       "rejected",
     );
     expect(f.outcomes.pauseRunning).not.toHaveBeenCalled();

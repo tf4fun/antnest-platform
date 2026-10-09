@@ -15,7 +15,9 @@ services:
       start_period: 10s
       timeout: 3s
       retries: 3
-    networks: [development]
+    networks:
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.60
   agent-controller:
     environment:
       ANTNEST_RUNTIME_CONTROLLER_URL: http://update-proxy:8080

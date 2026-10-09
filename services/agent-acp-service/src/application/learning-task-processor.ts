@@ -22,7 +22,6 @@ type Apply = {
   ): Promise<
     | { kind: "applied"; changeId: string }
     | { kind: "blocked"; reason: string }
-    | { kind: "pending" }
     | { kind: "conflict" | "rejected"; requestId: string }
   >;
 };
@@ -31,7 +30,7 @@ type Outcomes = {
   recordApplyFailure(
     claim: LearningTaskClaim,
     candidateId: string,
-    commitRequestId: string,
+    installRequestId: string,
     kind: "conflict" | "rejected",
   ): Promise<unknown>;
 };
@@ -60,7 +59,6 @@ export class LearningTaskProcessor {
       if (review.kind === "undecided") return this.pause(claim, "review_inconclusive");
       const applied = await this.apply.apply(claim, signal);
       if (applied.kind === "applied") return applied;
-      if (applied.kind === "pending") return this.pause(claim, "unknown_effect");
       if (applied.kind === "blocked") return this.pause(claim, pauseReasonForBlock(applied.reason));
       await this.outcomes.recordApplyFailure(
         claim,
@@ -96,9 +94,9 @@ export class LearningTaskProcessor {
   }
 }
 
+/** Every blocked install keeps its candidate; only the next idle window resends it. */
 function pauseReasonForBlock(reason: string): LearningPauseReason {
-  if (reason === "foreground_running") return "foreground_preempted";
-  if (reason === "policy_changed") return "policy_changed";
-  if (reason === "execution_changed") return "runtime_unavailable";
+  if (reason === "foreground_running" || reason === "preempted") return "foreground_preempted";
+  if (reason === "unsettled") return "runtime_unavailable";
   return "writer_present";
 }

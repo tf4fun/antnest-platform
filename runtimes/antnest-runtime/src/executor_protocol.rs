@@ -3,10 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::execution;
 use crate::information::RuntimeContext;
-use crate::skill_candidate::{
-    CandidateCancelRequest, CandidateCancelled, CandidateCheckRequest, CandidateChecked,
-    CandidateCommitRequest, CandidateCommitted, CandidateObserveRequest, CandidateObserved,
-    CandidatePrepareRequest, CandidatePrepared, CandidateReleaseRequest, CandidateReleased,
+use crate::skill_install::{
+    SkillDigestObserved, SkillDigestRequest, SkillInstallRequest, SkillInstallStagingCleaned,
+    SkillInstalled,
 };
 use crate::skill_temporary::{
     TemporaryInstallRequest, TemporaryInstalled, TemporaryReleaseRequest, TemporaryReleased,
@@ -73,145 +72,59 @@ pub(crate) fn decode_info_reply(
     decode_reply(input, std::convert::identity)
 }
 
-pub(crate) fn encode_skill_prepare_request(
-    request: &CandidatePrepareRequest,
+pub(crate) fn encode_skill_install_request(
+    request: &SkillInstallRequest,
 ) -> Result<Vec<u8>, serde_json::Error> {
     encode(request)
 }
 
-pub(crate) fn decode_skill_prepare_request(
-    input: &[u8],
-) -> Result<CandidatePrepareRequest, ToolError> {
+pub(crate) fn decode_skill_install_request(input: &[u8]) -> Result<SkillInstallRequest, ToolError> {
     decode_request(input)
 }
 
-pub(crate) fn encode_skill_prepare_reply(
-    result: Result<CandidatePrepared, ToolError>,
+pub(crate) fn encode_skill_install_reply(
+    result: Result<SkillInstalled, ToolError>,
 ) -> Result<Vec<u8>, serde_json::Error> {
     encode_reply(result)
 }
 
-pub(crate) fn decode_skill_prepare_reply(
+pub(crate) fn decode_skill_install_reply(
     input: &[u8],
-) -> Result<Result<CandidatePrepared, ExecutorFailure>, serde_json::Error> {
+) -> Result<Result<SkillInstalled, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, std::convert::identity)
 }
 
-pub(crate) fn encode_skill_check_request(
-    request: &CandidateCheckRequest,
+pub(crate) fn encode_skill_digest_request(
+    request: &SkillDigestRequest,
 ) -> Result<Vec<u8>, serde_json::Error> {
     encode(request)
 }
 
-pub(crate) fn decode_skill_check_request(input: &[u8]) -> Result<CandidateCheckRequest, ToolError> {
+pub(crate) fn decode_skill_digest_request(input: &[u8]) -> Result<SkillDigestRequest, ToolError> {
     decode_request(input)
 }
 
-pub(crate) fn encode_skill_check_reply(
-    result: Result<CandidateChecked, ToolError>,
+pub(crate) fn encode_skill_digest_reply(
+    result: Result<SkillDigestObserved, ToolError>,
 ) -> Result<Vec<u8>, serde_json::Error> {
     encode_reply(result)
 }
 
-pub(crate) fn decode_skill_check_reply(
+pub(crate) fn decode_skill_digest_reply(
     input: &[u8],
-) -> Result<Result<CandidateChecked, ExecutorFailure>, serde_json::Error> {
+) -> Result<Result<SkillDigestObserved, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, std::convert::identity)
 }
 
-pub(crate) fn encode_skill_commit_request(
-    request: &CandidateCommitRequest,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode(request)
-}
-
-pub(crate) fn decode_skill_commit_request(
-    input: &[u8],
-) -> Result<CandidateCommitRequest, ToolError> {
-    decode_request(input)
-}
-
-pub(crate) fn encode_skill_commit_reply(
-    result: Result<CandidateCommitted, ToolError>,
+pub(crate) fn encode_skill_install_cleaned_reply(
+    result: Result<SkillInstallStagingCleaned, ToolError>,
 ) -> Result<Vec<u8>, serde_json::Error> {
     encode_reply(result)
 }
 
-pub(crate) fn decode_skill_commit_reply(
+pub(crate) fn decode_skill_install_cleaned_reply(
     input: &[u8],
-) -> Result<Result<CandidateCommitted, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, std::convert::identity)
-}
-
-pub(crate) fn encode_skill_observe_request(
-    request: &CandidateObserveRequest,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode(request)
-}
-
-pub(crate) fn decode_skill_observe_request(
-    input: &[u8],
-) -> Result<CandidateObserveRequest, ToolError> {
-    decode_request(input)
-}
-
-pub(crate) fn encode_skill_observe_reply(
-    result: Result<CandidateObserved, ToolError>,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode_reply(result)
-}
-
-pub(crate) fn decode_skill_observe_reply(
-    input: &[u8],
-) -> Result<Result<CandidateObserved, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, std::convert::identity)
-}
-
-pub(crate) fn encode_skill_cancel_request(
-    request: &CandidateCancelRequest,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode(request)
-}
-
-pub(crate) fn decode_skill_cancel_request(
-    input: &[u8],
-) -> Result<CandidateCancelRequest, ToolError> {
-    decode_request(input)
-}
-
-pub(crate) fn encode_skill_cancel_reply(
-    result: Result<CandidateCancelled, ToolError>,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode_reply(result)
-}
-
-pub(crate) fn decode_skill_cancel_reply(
-    input: &[u8],
-) -> Result<Result<CandidateCancelled, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, std::convert::identity)
-}
-
-pub(crate) fn encode_skill_release_request(
-    request: &CandidateReleaseRequest,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode(request)
-}
-
-pub(crate) fn decode_skill_release_request(
-    input: &[u8],
-) -> Result<CandidateReleaseRequest, ToolError> {
-    decode_request(input)
-}
-
-pub(crate) fn encode_skill_release_reply(
-    result: Result<CandidateReleased, ToolError>,
-) -> Result<Vec<u8>, serde_json::Error> {
-    encode_reply(result)
-}
-
-pub(crate) fn decode_skill_release_reply(
-    input: &[u8],
-) -> Result<Result<CandidateReleased, ExecutorFailure>, serde_json::Error> {
+) -> Result<Result<SkillInstallStagingCleaned, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, std::convert::identity)
 }
 

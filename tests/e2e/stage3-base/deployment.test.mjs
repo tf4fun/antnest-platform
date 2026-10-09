@@ -14,7 +14,13 @@ const services = [
   "agent-ui",
   "runtime-egress",
   "skill-registry",
+  "diagnostic-relay",
+  "runtime-telemetry-ingress",
 ];
+const published = {
+  "diagnostic-relay": 2,
+  "edge-gateway": 1,
+};
 const fixture = () =>
   services.map((service) => ({
     Name: service,
@@ -29,13 +35,16 @@ const fixture = () =>
       ...(service !== "jaeger" ? { Health: { Status: "healthy" } } : {}),
     },
     HostConfig: {
-      PortBindings: ["postgres", "jaeger", "edge-gateway"].includes(service)
-        ? { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "45000" }] }
-        : {},
+      PortBindings: Object.fromEntries(
+        Array.from({ length: published[service] ?? 0 }, (_, index) => [
+          `${8080 + index}/tcp`,
+          [{ HostIp: "127.0.0.1", HostPort: String(45000 + index) }],
+        ]),
+      ),
     },
   }));
 test("base deployment has Gateway-only application ingress and loopback diagnostics", () => {
-  assert.equal(inspectDeployment(fixture(), "test-project").services, 12);
+  assert.equal(inspectDeployment(fixture(), "test-project").services, 14);
 });
 test("Skill Docker race proxy adds one private healthy service", () => {
   const rows = fixture();
@@ -50,7 +59,7 @@ test("Skill Docker race proxy adds one private healthy service", () => {
     State: { Running: true, Health: { Status: "healthy" } },
     HostConfig: { PortBindings: {} },
   });
-  assert.equal(inspectDeployment(rows, "test-project", true).services, 13);
+  assert.equal(inspectDeployment(rows, "test-project", true).services, 15);
 });
 for (const [label, mutate] of [
   [
@@ -63,12 +72,21 @@ for (const [label, mutate] of [
   [
     "public diagnostics",
     (rows) =>
-      (rows[0].HostConfig.PortBindings["8080/tcp"][0].HostIp = "0.0.0.0"),
+      (rows.find((r) => r.Name === "edge-gateway").HostConfig.PortBindings[
+        "8080/tcp"
+      ][0].HostIp = "0.0.0.0"),
   ],
   [
     "foreign ownership",
     (rows) =>
       (rows[0].Config.Labels["com.docker.compose.project"] = "retained-dev"),
+  ],
+  [
+    "fixed debug ports",
+    (rows) =>
+      (rows.find((r) => r.Name === "diagnostic-relay").HostConfig.PortBindings[
+        "58080/tcp"
+      ] = [{ HostIp: "127.0.0.1", HostPort: "58080" }]),
   ],
   ["missing service", (rows) => rows.pop()],
   ["unhealthy service", (rows) => (rows[0].State.Health.Status = "unhealthy")],

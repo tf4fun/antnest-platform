@@ -13,6 +13,7 @@ import {
   assertUpdateTemplate,
 } from "./interrupted-current.mjs";
 import { assertControllerStopped } from "./drain-evidence.mjs";
+import { runtimeStatus } from "./runtime-status.mjs";
 export async function runUpdateReceipt(input) {
   const { config, docker, signal, command, ready, json, agentBody, resources } =
     input;
@@ -198,15 +199,10 @@ export async function runUpdateReceipt(input) {
     binding.executable_spec_revision_id,
     checkpoint.ac.target_spec_revision_id,
   );
-  const status = JSON.parse(
-    await docker([
-      "exec",
-      final.container.Id,
-      "curl",
-      "--fail",
-      "--silent",
-      "http://127.0.0.1:8093/status",
-    ]),
+  const status = await runtimeStatus(
+    docker,
+    config.project,
+    final.container.Id,
   );
   assert.equal(status.status, "ready");
   assert.equal(status.execution_id, binding.runtime_execution_id);

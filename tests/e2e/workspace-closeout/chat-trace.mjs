@@ -135,13 +135,28 @@ export function inspectChatTraceTopology(
         (count, span) => count + (span.warnings?.length ?? 0),
         0,
       ),
-    diagnostics: trace.spans
-      .filter((span) => span.warnings?.length)
-      .map((span) => ({
-        service: tree.service(span),
-        span: span.operationName,
-        warnings: span.warnings,
-      })),
+    diagnostics: [
+      ...(trace.warnings?.length
+        ? [{ scope: "trace", warnings: trace.warnings }]
+        : []),
+      ...trace.spans
+        .filter((span) => span.warnings?.length)
+        .map((span) => ({
+          service: tree.service(span),
+          span: span.operationName,
+          warnings: span.warnings,
+        })),
+    ],
+  };
+}
+
+// Strict findings exit 2, never 1: the CI shard gate passes them only when
+// every printed diagnostic warning is a reviewed one (strict-findings.mjs).
+export function strictTraceOutcome(traces) {
+  const failed = traces.some((trace) => trace.strict === "failed");
+  return {
+    strict_trace: failed ? "failed" : "passed",
+    exitCode: failed ? 2 : 0,
   };
 }
 

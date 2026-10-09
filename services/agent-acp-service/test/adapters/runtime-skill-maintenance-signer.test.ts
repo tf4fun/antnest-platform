@@ -10,7 +10,7 @@ const input = {
   executionId: "execution-1",
   jobId: "job-1",
   generation: 2,
-  action: "prepare" as const,
+  action: "install" as const,
   requestId: "request-1",
   body: Buffer.from("exact raw request body"),
 };
@@ -34,7 +34,7 @@ describe("Runtime Skill maintenance ticket signer", () => {
       execution_id: "execution-1",
       job_id: "job-1",
       generation: 2,
-      action: "prepare",
+      action: "install",
       request_id: "request-1",
       body_sha256: `sha256:${createHash("sha256").update(input.body).digest("hex")}`,
       issued_at: 1_800_000_000,
@@ -56,5 +56,25 @@ describe("Runtime Skill maintenance ticket signer", () => {
     const signer = new RuntimeSkillMaintenanceSigner("key-1", privateKey);
     expect(() => signer.sign({ ...input, requestId: "slash/id" })).toThrow();
     expect(() => signer.sign({ ...input, generation: 0 })).toThrow();
+  });
+
+  it("admits a full install artifact but keeps the read-only digest body small", () => {
+    const signer = new RuntimeSkillMaintenanceSigner("key-1", privateKey, () => 1_800_000_000);
+    const multipart = Buffer.alloc(8 * 1024 * 1024 + 4 * 1024);
+    expect(() => signer.sign({ ...input, body: multipart })).not.toThrow();
+    expect(() =>
+      signer.sign({ ...input, body: Buffer.alloc(8 * 1024 * 1024 + 8 * 1024 + 1) }),
+    ).toThrow();
+    expect(() =>
+      signer.sign({ ...input, action: "digest", body: Buffer.alloc(16 * 1024 + 1) }),
+    ).toThrow();
+  });
+
+  it("names only the Runtime actions that still exist", () => {
+    const signer = new RuntimeSkillMaintenanceSigner("key-1", privateKey, () => 1_800_000_000);
+    for (const retired of ["prepare", "check", "commit", "observe", "cancel", "release"])
+      expect(() =>
+        signer.sign({ ...input, action: retired as unknown as typeof input.action }),
+      ).toThrow("Invalid");
   });
 });

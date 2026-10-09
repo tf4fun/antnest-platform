@@ -187,6 +187,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Identity Service SERVER spans now report the contract RPC route, for example
+`/rpc/identity/issue-scim-token`, for Admin Console calls and for calls that
+service authentication rejects. Before this fix they reported the
+`/rpc/identity/` mount prefix (#158).
+
 The ACP MCP input PostgreSQL test waits for the Agent's final update to reach
 the client instead of asserting it as soon as the Run commits (#135).
 

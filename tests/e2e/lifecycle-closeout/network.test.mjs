@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  barrierDiagnostic,
   probeCommand,
   inspectProbe,
   inspectTargetHistory,
@@ -144,3 +145,28 @@ for (const phase of ["held-a", "held-b"])
       );
     }
   });
+test("barrier diagnostic reports model stages and the TCP outcome only", () => {
+  const model = {
+    errors: ["lifecycle model request rejected"],
+    requests: [
+      { phase: "allowed", stage: "tool" },
+      { phase: "held-a", stage: "tool", trace_id: "t" },
+      {
+        phase: "held-a",
+        stage: "reply",
+        report: {
+          tcp: { ok: false, errno: 111, timed_out: false, elapsed_ms: 3 },
+          dns: { addresses: ["172.25.0.3"] },
+        },
+      },
+    ],
+  };
+  assert.equal(
+    barrierDiagnostic(model, "held-a"),
+    "stages=tool,reply model_errors=1 tcp_ok=false errno=111 timed_out=false",
+  );
+  assert.equal(
+    barrierDiagnostic({ errors: [], requests: [] }, "held-b"),
+    "stages=none model_errors=0",
+  );
+});

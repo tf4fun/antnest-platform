@@ -21,7 +21,7 @@ services:
       start_period: 10s
       timeout: 3s
       retries: 3
-    networks: [development]
+    network_mode: none
   runtime-controller:
     environment:
       ANTNEST_DOCKER_HOST: unix:///fault/docker.sock

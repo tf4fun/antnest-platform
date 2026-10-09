@@ -18,6 +18,7 @@ import {
 } from "./loss-current.mjs";
 import { connectOwner } from "./acp.mjs";
 import { lines } from "./docker.mjs";
+import { runtimeControllerRead } from "./runtime-status.mjs";
 import { assertControllerStopped } from "./drain-evidence.mjs";
 import { assertEventPage } from "./evidence.mjs";
 import {
@@ -165,23 +166,8 @@ export async function runLoss(input) {
     ...journalReader(input.docker, postgres.Id),
     lossEvent: (eventID) => readLossEvent(input.docker, postgres.Id, eventID),
   };
-  const model = await serviceContainer(
-    input.docker,
-    config.project,
-    "stage3-model",
-  );
-  const runtimeRead = async (path) =>
-    JSON.parse(
-      await input.docker([
-        "exec",
-        model.Id,
-        "node",
-        "--input-type=module",
-        "-e",
-        "const r=await fetch('http://runtime-controller:8080'+process.argv[1], {signal:AbortSignal.timeout(5000)}); if(r.status!==200) throw Error('Runtime query '+r.status); console.log(JSON.stringify(await r.json()));",
-        path,
-      ]),
-    );
+  const runtimeRead = (path) =>
+    runtimeControllerRead(input.docker, config, path);
   for (const mode of ["live", "cold"])
     cases.push(
       await lossCase(
@@ -332,10 +318,14 @@ async function lossCase(
         signal,
       );
     await docker(["rm", target.Id]);
-    assert.deepEqual(await resources(agentID), {
-      containers: [],
-      volumes: [initial.volume],
-    });
+    // Skills and the generation's receiver stay until Rebuild replaces them;
+    // ready() then proves no stale volume survives.
+    const lostResources = await resources(agentID);
+    assert.deepEqual(lostResources.containers, []);
+    assert.deepEqual(
+      lostResources.volumes.sort(),
+      [initial.volume, initial.skillVolume, initial.receiverVolume].sort(),
+    );
     if (stopped) await startController(config, docker, stopped);
     const eventsPath = `/api/admin/agents/${agentID}/events?limit=100`;
     let lost;

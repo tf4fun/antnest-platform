@@ -96,6 +96,50 @@ describe("automatic Skill apply admission", () => {
     });
   });
 
+  it("re-admits an admitted creation whose interrupted install already landed", () => {
+    const landed = {
+      ...information,
+      skills: [
+        personal,
+        ...Array.from({ length: 31 }, (_, index) => ({
+          source: "personal" as const,
+          name: `other-${index}`,
+          description: "Other",
+          path: { root: "workspace" as const, path: `.antnest/skills/other-${index}/SKILL.md` },
+        })),
+      ],
+    };
+    expect(admitAutomaticSkillCandidate({ ...input, resend: true, information: landed })).toEqual(
+      admitAutomaticSkillCandidate(input),
+    );
+    expect(() => admitAutomaticSkillCandidate({ ...input, information: landed })).toThrow();
+    expect(() =>
+      admitAutomaticSkillCandidate({
+        ...input,
+        resend: true,
+        information: {
+          ...information,
+          skills: [
+            personal,
+            ...Array.from({ length: 32 }, (_, index) => ({
+              source: "personal" as const,
+              name: `other-${index}`,
+              description: "Other",
+              path: { root: "workspace" as const, path: `.antnest/skills/other-${index}/SKILL.md` },
+            })),
+          ],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      admitAutomaticSkillCandidate({
+        ...input,
+        resend: true,
+        information: { ...information, skills: [personal, personal] },
+      }),
+    ).toThrow();
+  });
+
   it("rejects a hidden name collision, system name collision, warnings and capacity uncertainty", () => {
     for (const changed of [
       { information: { ...information, skills: [personal] } },

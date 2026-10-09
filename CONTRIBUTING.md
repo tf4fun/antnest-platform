@@ -90,8 +90,10 @@ in `artifacts/verification/`, which is ignored by Git and Docker.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) style
   subjects, for example `fix(edge-gateway): strip trusted administrator header`.
 - Describe the behavior change, the contracts touched and the checks you ran.
-- CI must pass. It runs lint, unit tests and an image build for every changed
-  component, and the `integration` workflow runs the component, browser and
-  service-owned Docker E2E suites that the change exercises. Only
+- CI must pass. Every push runs lint, unit tests and an image build for every
+  changed component. The `integration` workflow runs the component, browser and
+  Docker E2E suites that the change exercises on every push to a pull request
+  that is not a draft; open a draft to iterate without them. Workflows on a
+  pull request from a fork start after a maintainer approves them. Only
   `Repository checks` and `Integration checks` are required; see
   [tests/README.md](tests/README.md#continuous-integration).

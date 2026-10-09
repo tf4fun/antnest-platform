@@ -93,5 +93,5 @@ These contract tests are not part of `make test` and run directly:
 
 Docker E2E targets in the [Makefile](../Makefile) validate combined data
 paths: `make e2e-stage1` covers the Runtime-to-Egress path, and targets such as
-`make e2e-stage3` and `make e2e-skill-propagation` cover the control plane and
+`make e2e-stage3` and `make e2e-skill-deployment` cover the control plane and
 Skill workflows.

@@ -183,6 +183,9 @@ docker compose --profile stage3 build skill-registry
   Controller preparation and Runtime Initialize consumption with isolated
   processes, PostgreSQL, a Docker named volume and a test Runtime image. It
   also checks that root and UID 1000 cannot modify the mounted system Skill.
+  Both services run with service authentication: the test publishes as
+  Admin Console with a signed Caller Context, served by a fixture Identity
+  JWKS, and calls Runtime Controller as Agent Controller.
   `make integration-stage4-skill-slow-prepare` and
   `make integration-stage4-skill-restart-prepare` add slow-download and
   graceful-restart variants.
@@ -201,7 +204,7 @@ docker compose --profile stage3 build skill-registry
   with the repository root as the build context.
 - `make test-go-unit` and `make test-go` include this module.
   `make e2e-stage3-skill-delivery` runs the full Agent Skill delivery workflow
-  after the Stage 3 images are built, and `make e2e-skill-propagation` runs the
+  after the Stage 3 images are built, and `make e2e-skill-deployment` runs the
   learning, discovery, temporary use and promotion workflow.
 
 Test-only variables:

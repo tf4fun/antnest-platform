@@ -16,21 +16,32 @@ type Row = {
 export class PostgresLearningManagedSkills {
   public constructor(private readonly kernel: PostgresKernel) {}
 
-  public async list(scope: LearningScanScope): Promise<ManagedSkillIdentity[]> {
+  /** Includes ACP's stored SKILL.md of the last applied package while it
+   * still matches the managed digest; otherwise `appliedSkillText` is null. */
+  public async list(
+    scope: LearningScanScope,
+  ): Promise<(ManagedSkillIdentity & { appliedSkillText: string | null })[]> {
     if (
       !learningScopedId.test(scope.organizationId) ||
       !learningScopedId.test(scope.agentId) ||
       !learningScopedId.test(scope.ownerId)
     )
       throw new Error("Invalid managed Skill listing scope");
-    const result = await this.kernel.read<Row>(
-      `SELECT organization_id,agent_id,owner_principal_id,package_path,origin,state,last_digest
-       FROM learning_managed_skills WHERE organization_id=$1 AND agent_id=$2
-         AND owner_principal_id=$3 ORDER BY package_path LIMIT 33`,
+    const result = await this.kernel.read<Row & { applied_skill_text: string | null }>(
+      `SELECT m.organization_id,m.agent_id,m.owner_principal_id,m.package_path,m.origin,m.state,
+         m.last_digest,c.skill_text AS applied_skill_text
+       FROM learning_managed_skills m
+       LEFT JOIN learning_candidates c ON c.candidate_id=m.last_candidate_id
+         AND c.state='applied' AND c.target_digest=m.last_digest
+       WHERE m.organization_id=$1 AND m.agent_id=$2
+         AND m.owner_principal_id=$3 ORDER BY m.package_path LIMIT 33`,
       [scope.organizationId, scope.agentId, scope.ownerId],
     );
     if (result.rows.length > 32) throw new Error("Managed Skill inventory exceeds Runtime limit");
-    return result.rows.map((saved) => parseManagedSkill(saved));
+    return result.rows.map((saved) => ({
+      ...parseManagedSkill(saved),
+      appliedSkillText: saved.applied_skill_text,
+    }));
   }
 
   public async read(

@@ -6,7 +6,7 @@ import test from "node:test";
 
 const entry = fileURLToPath(new URL("../e2e-stage3a.sh", import.meta.url));
 const source = await readFile(entry, "utf8");
-const boundary = source.indexOf("runtime_image=$(docker image inspect");
+const boundary = source.indexOf("runtime_image=antnest/antnest-runtime:local");
 assert(boundary > 0);
 for (const [flag, profile, suite] of [
   [null, "stage3-base", ""],
@@ -38,6 +38,7 @@ for (const [flag, profile, suite] of [
         case "$1" in
           tests/support/verification/stage3-storage.mjs) "$DISPATCH_NODE" "$@" ;;
           tests/e2e/acp-closeout/network.mjs|-e) printf '1' ;;
+          tests/support/authenticated-e2e.mjs) printf ':' ;;
           *) echo "unexpected Node entry: $1" >&2; return 73 ;;
         esac
       }

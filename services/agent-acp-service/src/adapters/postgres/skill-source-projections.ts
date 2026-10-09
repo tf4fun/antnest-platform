@@ -74,7 +74,7 @@ export class PostgresSkillSourceProjections {
       JOIN learning_candidates c ON c.candidate_id=p.candidate_id AND c.state='applied' AND c.target_digest=p.content_digest
       JOIN learning_changes ch ON ch.candidate_id=p.candidate_id AND ch.organization_id=p.organization_id
         AND ch.agent_id=p.agent_id AND ch.owner_principal_id=p.owner_id AND ch.after_digest=p.content_digest
-      JOIN learning_maintenance_intents i ON i.request_id=ch.effect_request_id AND i.state='settled' AND i.action='commit'
+      JOIN learning_maintenance_intents i ON i.request_id=ch.effect_request_id AND i.state='settled' AND i.action IN ('install','commit')
       WHERE p.organization_id=$1 AND p.agent_id=$2 AND p.name=$3 AND p.active`,
       [organizationId, key.agent_id, key.name],
     );

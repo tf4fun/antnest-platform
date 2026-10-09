@@ -16,6 +16,7 @@ import { identityEvidenceExitCode } from "./trace.mjs";
 import { createAccessCatalog } from "./catalog.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertStoredSessionEffects } from "./acp-session-effects.mjs";
+import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const credentials = {
   organization_slug: "stage3",
@@ -288,8 +289,14 @@ async function outageAndExpiry() {
   }
   step = "identity_outage";
   await checkpoint(1);
-  for (const item of connected)
-    await rejectedPrompt(item.client, item.sessionId, 1013, "unavailable");
+  // Each socket keeps its 60s caller context from admission; probing both
+  // together keeps the later one well inside it.
+  await Promise.all(
+    connected.map((item) =>
+      rejectedPrompt(item.client, item.sessionId, 1013, "unavailable"),
+    ),
+  );
+  // Gateway's dependency connect bound must report the outage within the default.
   const deniedHTTP = await browser.request("/api/session", { status: 503 });
   assert.equal(deniedHTTP.headers.getSetCookie().length, 0);
   assert(browser.cookie === longCookie, "outage destroyed browser cookie");
@@ -341,7 +348,11 @@ async function admittedRun(version) {
     "Run not actually admitted",
   );
   execution.push(
-    remember(client, "session/prompt", { kind: "ordinary", phase }),
+    remember(client, "session/prompt", {
+      kind: "ordinary",
+      phase,
+      closedBeforeResponse: version === 1,
+    }),
   );
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await assert.rejects(client.request("list", {}));
@@ -447,7 +458,7 @@ try {
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await admin.request("/api/session", { method: "DELETE", status: 204 });
   process.stdout.write(
-    JSON.stringify({
+    asciiJSON({
       status: "business_passed",
       versions: [1, 2],
       denied_prompts: 6,
@@ -461,7 +472,7 @@ try {
   );
 } catch (error) {
   console.error(
-    JSON.stringify({
+    asciiJSON({
       event: "acp_session_profile_failed",
       step,
       reason: error.message,

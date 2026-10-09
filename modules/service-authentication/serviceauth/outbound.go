@@ -1,13 +1,16 @@
 package serviceauth
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // HeaderPolicy identifies authority that a service adapter is allowed to forward.
@@ -21,6 +24,19 @@ const (
 	// GatewayHeaders preserves Gateway-regenerated hints and protocol Authorization.
 	GatewayHeaders
 )
+
+// Peers share a private network, where an absent peer drops SYNs instead of
+// refusing them. Bound the connect well below the 30 s transport default so
+// callers report the dependency unavailable instead of holding the request.
+var dependencyConnectTimeout = 5 * time.Second
+
+var dialDependency = (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext
+
+func connectDependency(ctx context.Context, network, address string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, dependencyConnectTimeout)
+	defer cancel()
+	return dialDependency(ctx, network, address)
+}
 
 type dependency struct {
 	service   string
@@ -71,6 +87,7 @@ func LoadOutbound(caller string, policy HeaderPolicy, lookup LookupEnv, endpoint
 		}
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.Proxy = nil
+		transport.DialContext = connectDependency
 		if target.Scheme == "https" {
 			if config.ClientTLS == nil {
 				return nil, fmt.Errorf("HTTPS dependency requires complete trusted TLS configuration")

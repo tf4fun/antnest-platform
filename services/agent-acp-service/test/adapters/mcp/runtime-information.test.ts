@@ -163,7 +163,7 @@ describe("Runtime information resource", () => {
     await expect(catalog.readBinding(current, signal)).rejects.toThrow("admitted execution");
   });
 
-  it("reads a bounded personal Skill directly from the current Runtime binding", async () => {
+  it("reads a bounded workspace Skill directly from the current Runtime binding", async () => {
     const current = {
       ...runtimeSnapshot().runtime,
       executionId: "current-execution",
@@ -186,14 +186,15 @@ describe("Runtime information resource", () => {
       revisions: { getClientMcpRevision: vi.fn() },
     });
     const signal = new AbortController().signal;
-    await expect(
-      catalog.readPersonalSkill(current, ".antnest/skills/inspect-first", signal),
-    ).resolves.toBe('---\nname: "inspect-first"\n---\n');
+    const path = { root: "workspace" as const, path: ".antnest/skills/inspect-first/SKILL.md" };
+    await expect(catalog.readSkill(current, path, signal)).resolves.toBe(
+      '---\nname: "inspect-first"\n---\n',
+    );
     expect(callTool).toHaveBeenCalledWith(
       {
         name: "read",
         arguments: {
-          path: ".antnest/skills/inspect-first/SKILL.md",
+          path: "/workspace/.antnest/skills/inspect-first/SKILL.md",
           offset: 1,
           limit: 16385,
         },
@@ -212,8 +213,6 @@ describe("Runtime information resource", () => {
       isError: false,
       structuredContent: { content: "partial", truncated: true, effect_state: "settled" },
     });
-    await expect(
-      catalog.readPersonalSkill(current, ".antnest/skills/inspect-first", signal),
-    ).rejects.toThrow("incomplete");
+    await expect(catalog.readSkill(current, path, signal)).rejects.toThrow("incomplete");
   });
 });
