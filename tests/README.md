@@ -209,9 +209,16 @@ pulled images and host setup but no platform state.
 
 - **Tier A:** PostgreSQL and Temporal component suites, browser suites,
   deployment render contracts and the Runtime SDK probe.
-- **Tier B:** service-owned Docker E2E runners. Each starts its own
-  isolated candidate images; runners that start images with `--no-build` get
-  `antnest/<image>:local` first.
+- **Tier B:** service-owned Docker E2E runners and the protected-listener
+  network/credential matrix. Each starts an isolated stack; runners that start
+  images with `--no-build` get `antnest/<image>:local` first. `b-auth` includes
+  `auth-acp` (`make e2e-acp-authentication`) alongside the Console, Controller,
+  Egress, Gateway, Identity, Runtime Controller and Runtime suites. The separate
+  `b-auth-matrix` shard runs `auth-network-matrix`
+  (`make e2e-service-authentication-matrix`) across every production purpose
+  network, followed by real issuer/context/grant and native Runtime checks.
+  Both shards block `Integration checks` when selected. The full authentication
+  and Skill workflow remains Tier C `c-service-authentication-integration`.
 - **Tier C:** whole-platform scenarios whose rule spans services (stage 3a,
   authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
   skill learning). Platform targets that test one service's rule, or behavior

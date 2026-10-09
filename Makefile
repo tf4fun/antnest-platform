@@ -502,9 +502,16 @@ test-skill-deployment:
 e2e-skill-deployment:
 	$(MAKE) e2e-service-authentication-integration
 
-.PHONY: test-service-authentication-integration e2e-service-authentication-integration
+.PHONY: test-service-authentication-integration e2e-service-authentication-integration e2e-service-authentication-matrix
 test-service-authentication-integration:
-	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+
+.PHONY: e2e-acp-authentication
+e2e-acp-authentication:
+	ANTNEST_ACP_AUDIT_IMAGE="$${ANTNEST_ACP_AUDIT_IMAGE:-antnest/agent-acp-service:local}" node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/e2e/agent-acp-service/sdk-regressions-docker.mjs
+
+e2e-service-authentication-matrix:
+	node tests/e2e/security/run.mjs
 
 e2e-service-authentication-integration:
 	ANTNEST_E2E_SERVICE_AUTHENTICATION=true ANTNEST_E2E_SKILL_DISCOVERY=true ANTNEST_E2E_SKILL_DISCOVERY_TOOLS=true ANTNEST_E2E_SKILL_TEMPORARY=true ANTNEST_E2E_SKILL_PROPAGATION=true ANTNEST_E2E_SKILL_DEPLOYMENT=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs

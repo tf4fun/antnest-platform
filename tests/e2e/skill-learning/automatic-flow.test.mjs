@@ -32,10 +32,16 @@ import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertReleasedSkillSurface } from "../skill-registry/release-surface.mjs";
 import { assertMaintenanceKidStartupRejected } from "./maintenance-kid.mjs";
 import {
-  learningImageOverlay,
   assertLearningDebugWarning,
   assertStandardComposeIgnoresDebugSettings,
 } from "./development-settings.mjs";
+import {
+  workspaceOverlay,
+  productionOverlay,
+  configureWorkspaceNetworks,
+  configureProductionSigning,
+  resources,
+} from "../security/stack.mjs";
 import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
 import { skillClientArgs } from "./client-container.mjs";
 
@@ -100,24 +106,22 @@ assert(
     browserAcceptance,
   ].filter(Boolean).length <= 1,
 );
-const overlay = [
-  "-f",
-  "tests/e2e/workspace-closeout/c4.compose.yaml",
-  ...learningImageOverlay,
-  "-f",
-  deployment
-    ? "tests/e2e/skill-learning/deployment.compose.yaml"
-    : "tests/e2e/skill-learning/compose.yaml",
-  ...(noticeFailure
-    ? ["-f", "tests/e2e/skill-learning/notice-send-failure.compose.yaml"]
-    : []),
-  ...(discovery && !deployment
-    ? ["-f", "tests/e2e/skill-learning/discovery.compose.yaml"]
-    : []),
-  ...(propagation
-    ? ["-f", "tests/e2e/skill-learning/propagation.compose.yaml"]
-    : []),
-];
+const overlay = deployment
+  ? productionOverlay
+  : [
+      ...workspaceOverlay,
+      "-f",
+      "tests/e2e/skill-learning/compose.yaml",
+      ...(noticeFailure
+        ? ["-f", "tests/e2e/skill-learning/notice-send-failure.compose.yaml"]
+        : []),
+      ...(discovery
+        ? ["-f", "tests/e2e/skill-learning/discovery.compose.yaml"]
+        : []),
+      ...(propagation
+        ? ["-f", "tests/e2e/skill-learning/propagation.compose.yaml"]
+        : []),
+    ];
 // The test builds up to eleven candidate images from source before its
 // workflow starts. On a cold runner those builds alone take over 17 minutes,
 // so they get their own budget instead of consuming the workflow's.
@@ -186,17 +190,6 @@ test(
     const additionalImages = [];
     const propagationOutput = () =>
       `${root}/artifacts/verification/${callerDiscovery ? "skill-discovery-caller-di3-20261001" : sourceLifecycle ? "skill-source-lifecycle-di2-20261001" : deployment ? "skill-deployment-20261001" : "skill-propagation-di1-20261001"}/${config.project}`;
-    const resources = async (docker) => {
-      const value = {};
-      for (const [kind, args] of [
-        ["containers", ["ps", "-aq"]],
-        ["running", ["ps", "-q"]],
-        ["networks", ["network", "ls", "-q"]],
-        ["volumes", ["volume", "ls", "-q"]],
-      ])
-        value[kind] = (await docker(args)).split(/\s+/u).filter(Boolean).sort();
-      return value;
-    };
     try {
       config = await configuration(abort.signal);
       if (authenticationIntegration)
@@ -249,13 +242,6 @@ test(
         ...(pinned || propagation
           ? { ANTNEST_E2E_AGENT_CONTROLLER_IMAGE: controllerImage }
           : {}),
-        ANTNEST_C4_CONTROL_DYNAMIC_RANGE:
-          config.env.ANTNEST_EGRESS_CONTROL_SUBNET.replace(".0/24", ".128/25"),
-        ANTNEST_C4_RUNTIME_DYNAMIC_RANGE:
-          config.env.ANTNEST_RUNTIME_MANAGEMENT_SUBNET.replace(
-            ".0/24",
-            ".128/25",
-          ),
         ANTNEST_E2E_SKILL_SIGNING_KEY: keys.privateKey
           .export({
             format: "der",
@@ -283,15 +269,8 @@ test(
           ],
         }),
       });
-      if (deployment)
-        Object.assign(config.env, {
-          ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID:
-            config.env.ANTNEST_E2E_SKILL_SIGNING_KID,
-          ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY:
-            config.env.ANTNEST_E2E_SKILL_SIGNING_KEY,
-          ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS:
-            config.env.ANTNEST_E2E_SKILL_MAINTENANCE_VERIFIERS,
-        });
+      configureWorkspaceNetworks(config);
+      if (deployment) configureProductionSigning(config);
       const docker = dockerClient(
         config.env,
         abort.signal,

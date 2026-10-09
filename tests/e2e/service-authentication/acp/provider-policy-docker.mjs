@@ -35,6 +35,10 @@ export async function providerPolicyChecks({
     network,
     "--network-alias",
     "provider-model-fixture",
+    // Docker Desktop and OrbStack resolve this name implicitly; Linux engines
+    // need the mapping for the relay to reach the host model handler.
+    "--add-host",
+    "host.docker.internal:host-gateway",
     "--user",
     `${process.getuid()}:${process.getgid()}`,
     "--env",

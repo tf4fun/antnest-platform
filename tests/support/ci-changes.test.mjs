@@ -272,6 +272,99 @@ test("required shards split by image need; tier C forms its own matrix", () => {
   });
 });
 
+test("the network and signed-context matrix is a required production-stack suite", () => {
+  const suite = suites.find((item) => item.id === "auth-network-matrix");
+  assert(suite, "missing blocking authentication matrix");
+  assert.equal(suite.tier, "b");
+  assert.deepEqual(suite.setup, []);
+  assert.deepEqual(suite.run, ["make e2e-service-authentication-matrix"]);
+  assert.deepEqual(
+    [...suite.images].sort(),
+    Object.keys(images)
+      .filter((name) => typeof images[name] === "string")
+      .sort(),
+  );
+  assert.deepEqual(suite.pull, [
+    "postgres:17.11-bookworm",
+    "node:24.21.0-bookworm-slim",
+    "temporalio/admin-tools:1.32.0",
+    "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
+  ]);
+  for (const file of [
+    ...suite.images.map((name) =>
+      name === "antnest-runtime"
+        ? "runtimes/antnest-runtime/src/main.rs"
+        : name === "temporal"
+          ? "scripts/temporal/Dockerfile"
+          : `services/${name}/Dockerfile`,
+    ),
+    "modules/service-authentication/token/authentication.go",
+    "tests/e2e/security/network-flow.mjs",
+    "tests/e2e/security/authenticated-flow.mjs",
+    "tests/e2e/acp-closeout/docker.mjs",
+    "tests/e2e/acp-closeout/network.mjs",
+    "tests/e2e/workspace-closeout/c4-setup.mjs",
+    "tests/e2e/skill-learning/deployment.compose.yaml",
+    "tests/e2e/identity-closeout/support.mjs",
+    "tests/e2e/identity-closeout/evidence.mjs",
+    "tests/e2e/observability/collect.mjs",
+    "tests/e2e/observability/trace-tree.mjs",
+    "compose.yaml",
+  ])
+    assert(ids(selectSuites([file])).includes(suite.id), file);
+  const { plain, imaged, optional } = matrices([suite]);
+  assert.deepEqual(plain.include, []);
+  assert.deepEqual(optional.include, []);
+  assert.equal(imaged.include.length, 1);
+  assert.equal(imaged.include[0].id, "b-auth-matrix");
+  assert.equal(imaged.include[0].tier, "B");
+  assert.deepEqual(
+    JSON.parse(imaged.include[0].suites).map(({ id }) => id),
+    [suite.id],
+  );
+  const integration = suites.find(
+    (item) => item.id === "c-service-authentication-integration",
+  );
+  assert.equal(integration.tier, "c");
+  assert.deepEqual(integration.run, [
+    "make e2e-service-authentication-integration",
+  ]);
+});
+
+test("ACP authentication runs in the required auth shard with its CI-built image", () => {
+  const suite = suites.find((item) => item.id === "auth-acp");
+  assert(suite, "missing ACP authentication suite");
+  assert.equal(suite.tier, "b");
+  assert.deepEqual(suite.setup, []);
+  assert.deepEqual(suite.images, ["agent-acp-service"]);
+  assert.deepEqual(suite.pull, [
+    "postgres:17.11-bookworm",
+    "node:24.21.0-bookworm-slim",
+  ]);
+  assert.deepEqual(suite.run, ["make e2e-acp-authentication"]);
+  for (const file of [
+    "services/agent-acp-service/src/server.ts",
+    "services/agent-acp-service/test/fixtures/execution-configuration.ts",
+    "tests/e2e/agent-acp-service/sdk-regressions-docker.mjs",
+    "tests/e2e/service-authentication/acp/auth-fixture.mjs",
+    "tests/e2e/service-authentication/acp/provider-policy-docker.mjs",
+    "compose.yaml",
+  ])
+    assert(ids(selectSuites([file])).includes(suite.id), file);
+  const { plain, imaged, optional } = matrices([suite]);
+  assert.deepEqual(plain.include, []);
+  assert.deepEqual(optional.include, []);
+  assert.equal(imaged.include.length, 1);
+  assert.equal(imaged.include[0].id, "b-auth");
+  assert.equal(imaged.include[0].tier, "B");
+  assert.equal(imaged.include[0].images, "agent-acp-service");
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  assert.match(
+    makefile,
+    /^e2e-acp-authentication:\n\tANTNEST_ACP_AUDIT_IMAGE="\$\$\{ANTNEST_ACP_AUDIT_IMAGE:-antnest\/agent-acp-service:local\}" node --import \.\/services\/agent-acp-service\/node_modules\/tsx\/dist\/loader\.mjs tests\/e2e\/agent-acp-service\/sdk-regressions-docker\.mjs$/mu,
+  );
+});
+
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
   assert.equal(tierC.length, 45);
