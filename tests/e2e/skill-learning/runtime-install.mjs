@@ -14,8 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import {
   createRuntimeReceiver,
   freeLoopbackPort,
@@ -30,10 +29,6 @@ const image =
 const buildImage =
   process.env.ANTNEST_RUNTIME_BUILD_IMAGE ??
   "antnest/antnest-runtime:skill-learning-build";
-const fixture = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../antnest-runtime/fixtures/egress_probe.py",
-);
 const requireFromAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
@@ -65,6 +60,7 @@ const volume = `${prefix}-workspace`;
 const directory = mkdtempSync(join(tmpdir(), `${prefix}-`));
 chmodSync(directory, 0o755);
 const authVolume = `${prefix}-receiver`;
+const helperImage = `${prefix}:readiness`;
 const authDirectory = join(directory, "auth");
 const authentication = createRuntimeReceiver(authDirectory);
 const serviceToken = readFileSync(join(authDirectory, "mcp.headers"), "utf8")
@@ -112,6 +108,11 @@ function cleanup() {
     docker("network", "rm", network);
   } catch {
     /* absent */
+  }
+  try {
+    docker("image", "rm", helperImage);
+  } catch {
+    /* helper was not built */
   }
   rmSync(directory, { recursive: true, force: true });
 }
@@ -276,6 +277,14 @@ try {
   docker("rm", "-f", "--volumes", fixtureSource);
   docker("network", "create", network);
   docker("volume", "create", volume);
+  docker(
+    "build",
+    "-f",
+    "tests/support/runtime-tunnel/Dockerfile",
+    "-t",
+    helperImage,
+    ".",
+  );
   await installRuntimeReceiver(
     (args) => docker(...args),
     image,
@@ -290,11 +299,9 @@ try {
     "--network",
     network,
     "--mount",
-    `type=bind,src=${fixture},dst=/probe.py,readonly`,
-    "--entrypoint",
-    "python",
-    image,
-    "/probe.py",
+    `type=bind,src=${authDirectory}/egress-tunnel.json,dst=/fixture/keys.json,readonly`,
+    helperImage,
+    "/fixture/keys.json",
   );
   const egressIp = JSON.parse(docker("inspect", egress))[0].NetworkSettings
     .Networks[network].IPAddress;
@@ -306,7 +313,7 @@ try {
     generation: 1,
     listen: { host: "0.0.0.0", port: listenPort },
     network: {
-      packet_contract_revision: 1,
+      packet_contract_revision: 2,
       egress_endpoint: { ipv4: egressIp, port: 8092 },
       tunnel_ipv4: "100.64.0.2",
       resolver_ipv4: "100.64.0.1",
@@ -526,7 +533,27 @@ try {
   assert.equal(managed.outcome, "blocked");
   assert.equal(managed.blocked_reason, "managed_call_in_flight");
   assert.equal(managed.blocked_subject_id, "managed:learning");
-  docker("exec", "--user", "0", runtime, "sh", "-c", `kill ${managedPid}`);
+  const stoppedManaged = await bash(
+    port,
+    status.execution_id,
+    `kill ${managedPid}`,
+  );
+  assert.notEqual(
+    stoppedManaged.structuredContent.exit_code,
+    0,
+    "UID 1000 must not signal the MCP UID",
+  );
+  docker(
+    "exec",
+    "--user",
+    "2000:1000",
+    runtime,
+    "sh",
+    "-c",
+    'kill "$1"',
+    "fixture",
+    String(managedPid),
+  );
 
   // Learning never waits for a running foreground call.
   const foreground = bash(port, status.execution_id, "sleep 3", 10_000);

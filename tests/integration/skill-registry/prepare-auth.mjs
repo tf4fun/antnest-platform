@@ -1,5 +1,6 @@
 // Writes the service-authentication material for the host-process Skill
-// Registry and Runtime Controller started by run-registry-rc-prepare.sh.
+// Registry and Runtime Controller started by run-registry-rc-prepare.sh, and
+// the token the Egress registration double admits.
 // Each service gets its own directory: a receiver must not list itself as a
 // caller, so the Registry callers file cannot be shared with Runtime Controller.
 import { createHash, randomBytes } from "node:crypto";
@@ -14,7 +15,9 @@ const hash = (token) =>
 export function prepareAuthentication(directory) {
   const registry = resolve(directory, "registry");
   const controller = resolve(directory, "controller");
+  const egress = resolve(directory, "egress");
   mkdirSync(registry, { recursive: true, mode: 0o700 });
+  mkdirSync(egress, { recursive: true, mode: 0o700 });
   mkdirSync(resolve(controller, "outgoing"), { recursive: true, mode: 0o700 });
   const fixture = createFixture(registry);
   const agentController = randomBytes(32).toString("base64url");
@@ -28,6 +31,12 @@ export function prepareAuthentication(directory) {
     fixture.incoming["runtime-controller"],
     { mode: 0o600 },
   );
+  const egressToken = randomBytes(32).toString("base64url");
+  for (const file of [
+    resolve(controller, "outgoing", "runtime-egress"),
+    resolve(egress, "runtime-egress"),
+  ])
+    writeFileSync(file, egressToken, { mode: 0o600 });
   // Instance records are encrypted with this key, so a restarted controller
   // must read the same file.
   writeFileSync(resolve(controller, "instance-master"), randomBytes(32), {
@@ -45,7 +54,7 @@ export function prepareAuthentication(directory) {
     }),
     { mode: 0o600 },
   );
-  return { registry, controller, credentials };
+  return { registry, controller, egress, credentials };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

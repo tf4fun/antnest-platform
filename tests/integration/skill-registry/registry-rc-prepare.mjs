@@ -297,7 +297,7 @@ const initializeBody = JSON.stringify({
   configuration: {
     image_ref: runtimeImage,
     network: {
-      packet_contract_revision: 1,
+      packet_contract_revision: 2,
       egress_endpoint: { ipv4: "10.20.0.8", port: 8092 },
       tunnel_ipv4: "100.64.0.2",
       resolver_ipv4: "100.64.0.1",

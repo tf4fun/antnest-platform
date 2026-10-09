@@ -13,8 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import {
   createRuntimeReceiver,
   freeLoopbackPort,
@@ -27,10 +26,6 @@ const image =
 const buildImage =
   process.env.ANTNEST_RUNTIME_BUILD_IMAGE ??
   "antnest/antnest-runtime:skill-learning-build";
-const fixture = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../antnest-runtime/fixtures/egress_probe.py",
-);
 const prefix = `antnest-skill-release-${process.pid}`;
 const network = `${prefix}-network`;
 const egress = `${prefix}-egress`;
@@ -40,6 +35,7 @@ const volume = `${prefix}-workspace`;
 const directory = mkdtempSync(join(tmpdir(), `${prefix}-`));
 chmodSync(directory, 0o755);
 const authVolume = `${prefix}-receiver`;
+const helperImage = `${prefix}:readiness`;
 const authDirectory = join(directory, "auth");
 const authentication = createRuntimeReceiver(authDirectory);
 // The ACP credential is admitted on every Runtime route this runner uses.
@@ -76,6 +72,11 @@ function cleanup() {
     docker("network", "rm", network);
   } catch {
     /* absent */
+  }
+  try {
+    docker("image", "rm", helperImage);
+  } catch {
+    /* helper was not built */
   }
   rmSync(directory, { recursive: true, force: true });
 }
@@ -203,6 +204,14 @@ try {
   docker("rm", "-f", "--volumes", fixtureSource);
   docker("network", "create", network);
   docker("volume", "create", volume);
+  docker(
+    "build",
+    "-f",
+    "tests/support/runtime-tunnel/Dockerfile",
+    "-t",
+    helperImage,
+    ".",
+  );
   await installRuntimeReceiver(
     (args) => docker(...args),
     image,
@@ -217,11 +226,9 @@ try {
     "--network",
     network,
     "--mount",
-    `type=bind,src=${fixture},dst=/probe.py,readonly`,
-    "--entrypoint",
-    "python",
-    image,
-    "/probe.py",
+    `type=bind,src=${authDirectory}/egress-tunnel.json,dst=/fixture/keys.json,readonly`,
+    helperImage,
+    "/fixture/keys.json",
   );
   const egressIp = JSON.parse(docker("inspect", egress))[0].NetworkSettings
     .Networks[network].IPAddress;
@@ -241,7 +248,7 @@ try {
     generation: 1,
     listen: { host: "0.0.0.0", port: listenPort },
     network: {
-      packet_contract_revision: 1,
+      packet_contract_revision: 2,
       egress_endpoint: { ipv4: egressIp, port: 8092 },
       tunnel_ipv4: "100.64.0.2",
       resolver_ipv4: "100.64.0.1",

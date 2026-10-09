@@ -361,6 +361,7 @@ export const suites = [
       ...service("skill-registry", "runtime-controller"),
       "tests/integration/skill-registry/**",
       "tests/e2e/service-authentication/registry/**",
+      "tests/e2e/service-authentication/runtime-controller/egress-fixture.mjs",
       ...go,
     ],
     run: [
