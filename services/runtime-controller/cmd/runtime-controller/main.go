@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -123,6 +124,10 @@ func run(ctx context.Context) (resultErr error) {
 	}
 	slog.SetDefault(telemetryRuntime.Logger())
 	defer func() { finishTelemetry(telemetryRuntime, resultErr) }()
+
+	if err := logStartupPrivileges(slog.Default(), os.Geteuid(), os.Getegid(), runtime.GOOS, os.ReadFile); err != nil {
+		return classified("privileges", "process_privileges_unavailable", err)
+	}
 
 	configuration, err := config.Load(os.LookupEnv)
 	if err != nil {
