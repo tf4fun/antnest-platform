@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -111,19 +112,55 @@ test("Stage 3 shell credentials give Egress its root-owned bootstrap files", asy
   try {
     const script = await shellEnvironment(name, 7, root, async (args) => {
       calls.push(args);
+      return args.includes("--pull=never") ? "998\n" : "";
     });
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     assert.equal(calls[0][0], "run");
+    assert.equal(calls[1][0], "run");
+    assert.equal(calls[0][calls[0].indexOf("--cap-drop") + 1], "ALL");
+    assert.equal(calls[1][calls[1].indexOf("--cap-add") + 1], "CHOWN");
     for (const file of ["callers.json", "tunnel-master.key"])
       assert(
-        calls[0].some((argument) =>
+        calls[1].some((argument) =>
           argument.endsWith(`/runtime-egress/${file},dst=/auth/${file}`),
         ),
         file,
       );
     assert.match(script, /^export ANTNEST_SERVICE_AUTH_DIRECTORY='/mu);
     assert.match(script, /^export COMPOSE_PROJECT_NAME='antnest-stage3-e2e-/mu);
+    assert.match(script, /^export ANTNEST_DOCKER_SOCKET_GID='998'$/mu);
   } finally {
+    rmSync(resolve(root, "artifacts/verification/authenticated-e2e", name), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test("the shell entrypoint reads the detected socket GID from Docker's output", () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const name = `antnest-stage3-e2e-${process.pid + 1}`;
+  const bin = mkdtempSync(resolve(tmpdir(), "antnest-fake-docker-"));
+  try {
+    const docker = resolve(bin, "docker");
+    writeFileSync(
+      docker,
+      '#!/bin/sh\ncase " $* " in *" --pull=never "*) echo 998 ;; esac\n',
+    );
+    chmodSync(docker, 0o700);
+    const result = spawnSync(
+      process.execPath,
+      ["tests/support/authenticated-e2e.mjs", name, "7"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^export ANTNEST_DOCKER_SOCKET_GID='998'$/mu);
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
     rmSync(resolve(root, "artifacts/verification/authenticated-e2e", name), {
       recursive: true,
       force: true,

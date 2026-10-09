@@ -39,6 +39,7 @@ const composeEnvironment = {
   ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-secret-contract",
   ANTNEST_SERVICE_AUTH_UID: "65532",
   ANTNEST_SERVICE_AUTH_GID: "65532",
+  ANTNEST_DOCKER_SOCKET_GID: "998",
   ANTNEST_IDENTITY_CCT_SIGNING_KID: "secret-contract-unused",
 };
 function render(env) {
@@ -100,7 +101,7 @@ test("Compose rejects missing fixed secrets and forwards optional encryption mod
       assert.equal(result.stdout, "");
     }
 });
-function fixture(t) {
+function fixture(t, overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), "antnest-dev-secrets-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const output = join(directory, ".env");
@@ -108,7 +109,11 @@ function fixture(t) {
     spawnSync(
       "sh",
       [join(root, "scripts/generate-dev-env.sh"), "--output", output, ...args],
-      { encoding: "utf8", timeout: 10000 },
+      {
+        env: { ...process.env, ANTNEST_DOCKER_SOCKET_GID: "", ...overrides },
+        encoding: "utf8",
+        timeout: 10000,
+      },
     );
   return { directory, output, run };
 }
@@ -193,4 +198,24 @@ test("generator refuses symlinks even when forced and preserves their targets", 
   assert.notEqual(result.status, 0);
   assert.equal(result.stdout, "");
   assert.equal(readFileSync(target, "utf8"), "retained secret\n");
+});
+
+test("the secret generator preserves an explicit socket group without Docker", (t) => {
+  const f = fixture(t, { ANTNEST_DOCKER_SOCKET_GID: "998" });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    parseEnv(readFileSync(f.output, "utf8")).ANTNEST_DOCKER_SOCKET_GID,
+    "998",
+  );
+});
+
+test("the secret generator rejects malformed socket groups before writing", (t) => {
+  for (const gid of ["-1", "01", "1\nINJECTED=value", "4294967295"]) {
+    const f = fixture(t, { ANTNEST_DOCKER_SOCKET_GID: gid });
+    const result = f.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ANTNEST_DOCKER_SOCKET_GID/u);
+    assert.equal(result.stdout, "");
+  }
 });

@@ -25,7 +25,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates conntrack curl iproute2 nftables procps \
+    && apt-get install -y --no-install-recommends ca-certificates conntrack curl iproute2 nftables \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /tmp/runtime-egress /usr/local/bin/runtime-egress
+USER 0:0
 ENTRYPOINT ["/usr/local/bin/runtime-egress"]

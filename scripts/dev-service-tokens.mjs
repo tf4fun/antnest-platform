@@ -4,10 +4,15 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  resolveDockerSocketGid,
+  validateDockerSocketGid,
+} from "./docker-socket-gid.mjs";
 import {
   createPrivateDirectory as directory,
   createPrivateParents as parents,
@@ -102,6 +107,7 @@ function envFile(values) {
 export function provisionTokens({
   output = resolve(root, contract.token_provisioning.output_directory),
   withSkillLearning = false,
+  dockerSocketGid = process.env.ANTNEST_DOCKER_SOCKET_GID ?? "",
 } = {}) {
   if (typeof withSkillLearning !== "boolean")
     throw failure("provisioning_failed");
@@ -110,6 +116,7 @@ export function provisionTokens({
     typeof process.getgid !== "function"
   )
     throw failure("provisioning_failed");
+  if (dockerSocketGid !== "") validateDockerSocketGid(dockerSocketGid);
   const pairs = readPairs();
   let created = false;
   let path;
@@ -171,6 +178,7 @@ export function provisionTokens({
       ANTNEST_SERVICE_AUTH_DIRECTORY: path,
       ANTNEST_SERVICE_AUTH_UID: String(process.getuid()),
       ANTNEST_SERVICE_AUTH_GID: String(process.getgid()),
+      ANTNEST_DOCKER_SOCKET_GID: dockerSocketGid,
       ANTNEST_IDENTITY_CCT_SIGNING_KID: cctKid,
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID: "",
       ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: "",
@@ -240,17 +248,29 @@ if (
           default: resolve(root, contract.token_provisioning.output_directory),
         },
         "with-skill-learning": { type: "boolean", default: false },
+        "docker-socket-gid": { type: "string" },
         help: { type: "boolean", default: false },
       },
     });
     if (values.help) {
       console.log(
-        "Usage: node scripts/dev-service-tokens.mjs [--output PATH] [--with-skill-learning]\nCreates a fresh, private disposable-development credential directory. Existing output is never replaced.",
+        "Usage: node scripts/dev-service-tokens.mjs [--output PATH] [--with-skill-learning] [--docker-socket-gid GID]\nCreates a fresh, private disposable-development credential directory. Existing output is never replaced.",
       );
     } else {
+      validateOutput(values.output);
+      const dockerSocketGid = await resolveDockerSocketGid(
+        (args) =>
+          execFileSync("docker", args, {
+            encoding: "utf8",
+            timeout: 30000,
+            stdio: ["ignore", "pipe", "pipe"],
+          }),
+        values["docker-socket-gid"] ?? process.env.ANTNEST_DOCKER_SOCKET_GID,
+      );
       const manifest = provisionTokens({
         output: values.output,
         withSkillLearning: values["with-skill-learning"],
+        dockerSocketGid,
       });
       console.log(
         JSON.stringify({
@@ -261,8 +281,13 @@ if (
         }),
       );
     }
-  } catch {
-    console.error("Development credential provisioning failed.");
+  } catch (error) {
+    console.error(
+      error instanceof Error &&
+        error.message.startsWith("ANTNEST_DOCKER_SOCKET_GID")
+        ? error.message
+        : "Development credential provisioning failed.",
+    );
     process.exitCode = 1;
   }
 }

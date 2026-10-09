@@ -8,6 +8,8 @@ import { parseEnv } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { prepareEgressOwnership } from "../../../scripts/dev-egress-auth-owner.mjs";
 import { provisionTokens } from "../../../scripts/dev-service-tokens.mjs";
+import { resolveDockerSocketGid } from "../../../scripts/docker-socket-gid.mjs";
+import { assertContainerPrivileges } from "../../support/container-privileges.mjs";
 import {
   dockerClient,
   networkOctet,
@@ -145,7 +147,11 @@ try {
       cwd: root,
     });
     assert.equal(generated.exit_code, 0, "environment generation failed");
-    provisionTokens({ output: credentials, withSkillLearning: true });
+    provisionTokens({
+      output: credentials,
+      withSkillLearning: true,
+      dockerSocketGid: await resolveDockerSocketGid(docker, ""),
+    });
     await prepareEgressOwnership(docker, credentials);
     const octet = await networkOctet(docker, 1 + (process.pid % 200));
     const gatewayPort = await freePort();
@@ -326,11 +332,13 @@ try {
         !row.Mounts.some((item) => item.Source === credentials),
         "full credential root is mounted",
       );
-      if (!["runtime-controller", "runtime-egress"].includes(service))
+      if (service !== "runtime-egress")
         assert.equal(
           row.Config.User,
           `${env.ANTNEST_SERVICE_AUTH_UID}:${env.ANTNEST_SERVICE_AUTH_GID}`,
         );
+      if (["runtime-egress", "runtime-controller"].includes(service))
+        assertContainerPrivileges(service, row, env.ANTNEST_DOCKER_SOCKET_GID);
       for (const [network, item] of Object.entries(topology.networks).filter(
         ([, item]) => service in item.members,
       ))

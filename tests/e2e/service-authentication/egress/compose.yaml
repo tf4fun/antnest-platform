@@ -27,6 +27,10 @@ services:
         condition: service_healthy
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,noexec,nosuid,nodev"]
     group_add: ["${EGRESS_AUTH_GID:?}"]
     devices: [/dev/net/tun:/dev/net/tun]
     sysctls:

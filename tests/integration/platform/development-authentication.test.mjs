@@ -178,6 +178,16 @@ test("bind-mount UID metadata matches the generating user without relaxing secre
   assert.equal(statSync(join(output, "agent-ui/tokens")).mode & 0o777, 0o700);
 });
 
+test("deployment credentials preserve the detected socket GID separately from the credential owner", async (t) => {
+  const { provisionTokens } = await helper();
+  const output = join(fixture(t), "socket-group");
+  provisionTokens({ output, dockerSocketGid: "998" });
+  const env = environment(output);
+  assert.equal(env.ANTNEST_DOCKER_SOCKET_GID, "998");
+  assert.equal(env.ANTNEST_SERVICE_AUTH_UID, String(process.getuid()));
+  assert.equal(env.ANTNEST_SERVICE_AUTH_GID, String(process.getgid()));
+});
+
 test("a restrictive inherited umask does not leave unreadable credential files", async (t) => {
   const { provisionTokens } = await helper();
   const output = join(fixture(t), "new-parent", "umask");
@@ -444,7 +454,14 @@ test("CLI works without npm or external binaries and prints only completion meta
   const output = join(fixture(t), "cli space");
   const result = spawnSync(
     process.execPath,
-    [script, "--output", output, "--with-skill-learning"],
+    [
+      script,
+      "--output",
+      output,
+      "--with-skill-learning",
+      "--docker-socket-gid",
+      "998",
+    ],
     {
       encoding: "utf8",
       timeout: 5000,
@@ -468,6 +485,7 @@ test("CLI works without npm or external binaries and prints only completion meta
     );
   const env = environment(output);
   assert.equal(env.ANTNEST_SERVICE_AUTH_DIRECTORY, output);
+  assert.equal(env.ANTNEST_DOCKER_SOCKET_GID, "998");
   assert(
     !result.stdout.includes(env.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY),
   );

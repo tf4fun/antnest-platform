@@ -99,7 +99,9 @@ chmod 0777 "$workspace"
 
 docker compose up -d --wait postgres runtime-egress runtime-controller
 
-docker compose exec -T runtime-egress curl --fail-with-body -sS http://127.0.0.1:8082/status | grep -q '"status":"ready"'
+docker compose exec -T runtime-egress runtime-egress --healthcheck
+egress_container=$(docker compose ps -q runtime-egress)
+docker inspect "$egress_container" | node tests/support/container-privileges.mjs runtime-egress
 network=$(control_request -X PUT \
   "$control_url/internal/agent-networks/agent-stage1-e2e")
 printf '%s' "$network" | grep -q '"tunnel_ipv4":"100.64.0.2"'

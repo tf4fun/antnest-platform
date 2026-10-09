@@ -133,7 +133,8 @@ loaded once; rotate them with the documented overlap and service restart.
 
 `runtime-egress --healthcheck` reads only the configured loopback health
 endpoint, without workload credentials or database configuration. Ready and
-degraded status both preserve HTTP 200 and the existing four-field document.
+degraded status both preserve HTTP 200 and the existing four-field document;
+the probe exits zero only when the JSON `status` is `ready`.
 On the control listener, anonymous `/status` returns 401 and an authenticated
 Controller receives 404.
 

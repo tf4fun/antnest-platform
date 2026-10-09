@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 import { prepareEgressOwnership } from "../../scripts/dev-egress-auth-owner.mjs";
 import { provisionTokens } from "../../scripts/dev-service-tokens.mjs";
+import { resolveDockerSocketGid } from "../../scripts/docker-socket-gid.mjs";
 import { durablePath } from "./storage.mjs";
 import { publicDevelopmentSecrets } from "./public-development-secrets.mjs";
 
@@ -42,14 +43,14 @@ export function fixtureEnvironment(inherited, { project: name, octet }) {
   };
 }
 
-export function prepareFixtureCredentials(name, root) {
+export function prepareFixtureCredentials(name, root, dockerSocketGid = "") {
   assert.match(name, project);
   const parent = durablePath(
     resolve(root, "artifacts/verification/authenticated-e2e", name),
   );
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const credentials = resolve(parent, "credentials");
-  provisionTokens({ output: credentials });
+  provisionTokens({ output: credentials, dockerSocketGid });
   return {
     credentials,
     environment: parseEnv(
@@ -69,7 +70,11 @@ export function shellExports(env) {
 
 export async function shellEnvironment(name, octet, root, invoke) {
   const environment = fixtureEnvironment({}, { project: name, octet });
-  const prepared = prepareFixtureCredentials(name, root);
+  const prepared = prepareFixtureCredentials(
+    name,
+    root,
+    await resolveDockerSocketGid(invoke, ""),
+  );
   await prepareEgressOwnership(invoke, prepared.credentials);
   return shellExports({ ...environment, ...prepared.environment });
 }
@@ -86,10 +91,13 @@ if (
       name,
       Number(octet),
       fileURLToPath(new URL("../../", import.meta.url)),
+      // Socket GID detection reads the probe's stdout; this script's own
+      // stdout is reserved for the exported environment.
       (args) =>
         execFileSync("docker", args, {
+          encoding: "utf8",
           timeout: 30000,
-          stdio: ["ignore", "ignore", "pipe"],
+          stdio: ["ignore", "pipe", "pipe"],
         }),
     ),
   );

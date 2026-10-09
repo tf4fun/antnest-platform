@@ -30,6 +30,11 @@ cluster network. Before exposing a deployment, understand these boundaries:
   Runtimes and the Internet cannot reach.
 - **Runtime Controller has Docker access.** By default it talks to
   `unix:///var/run/docker.sock`, which is equivalent to root on the host. Its
+  image defaults to UID/GID 65532; Compose uses the non-root credential owner's
+  UID/GID and adds only the Docker-visible socket group. The Controller drops
+  all capabilities, enables `no-new-privileges`, and has a read-only rootfs with
+  a bounded 64 MiB `/tmp` tmpfs for private senders and Skill archives. These
+  restrictions do not reduce the authority granted by the Docker socket. Its
   revision 17 control boundary admits only verified Controller workloads and
   enforces an operator image repository/digest policy before new Docker effects.
   Control uses an explicit purpose-network IP and readiness a separate loopback
@@ -41,7 +46,13 @@ cluster network. Before exposing a deployment, understand these boundaries:
   to ACP relay are implemented. Compose uses separate control and management
   interfaces; real native Runtime, MCP, learning and rebuild acceptance has passed.
 - **Runtime Egress is privileged.** It owns a TUN device, routes and nftables
-  rules. Lifecycle/policy routes admit authenticated Controller calls; the private
+  rules. It stays `0:0` to read the required `root:root`, mode-0600 tunnel master,
+  drops all capabilities and adds only `NET_ADMIN`, enables `no-new-privileges`,
+  and uses a read-only rootfs with a 16 MiB `noexec,nosuid,nodev` `/tmp` tmpfs.
+  Startup logs effective process privileges and rejects missing `NET_ADMIN`.
+  File capabilities for non-root execution conflict with `no-new-privileges`;
+  the secret-file ownership check is preserved. Lifecycle/policy routes admit
+  authenticated Controller calls; the private
   generation-key route admits RC alone on the configured control-purpose address.
   Readiness has a separate loopback listener. These checks do not contain a
   compromised Egress process.
@@ -55,12 +66,16 @@ cluster network. Before exposing a deployment, understand these boundaries:
   including public-address subnets. Host, Docker, RC and Egress administrators
   remain trusted. See [the authenticated transport contract](docs/authenticated-runtime-tunnel.md).
   RC/Runtime bootstrap and Egress database keys are encrypted or delivered in
-  root-only files, excluded from env/Template/public RPCs and content capture.
+  private owner-only files; native Runtime bootstrap and the Egress master stay
+  root-owned. They are excluded from env/Template/public RPCs and content capture.
   Losing the Egress storage master blocks startup. A leaked generation requires
   explicit disable/rebuild; packet rekey cannot repair leaked static authority.
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
-  Runtime Egress policy. Do not mount host paths or secrets into Runtimes.
+  Runtime Egress policy. The trusted Supervisor intentionally starts as `0:0`
+  with `CapDrop: ALL`, the seven-capability allowlist and `no-new-privileges`,
+  then drops Agent commands to UID/GID 1000 with no capabilities. Do not mount
+  host paths or secrets into Runtimes.
 - **Agent DNS uses the filtered Egress resolver.** Its TCP forwarder removes A
   records in the protected forwarding ranges, tunnel pool and connected subnets,
   all AAAA records, and CNAME chains with no usable terminal answer. Filtering

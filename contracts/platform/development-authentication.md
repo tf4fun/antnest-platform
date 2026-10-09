@@ -104,11 +104,29 @@ without changing other services' owners or introducing a running service. Repeat
 after restoring or replacing either file; preserve the master with its database
 instead of generating a new one. See the [tunnel contract](../../docs/authenticated-runtime-tunnel.md).
 
-`deployment.env` supplies the output directory, generating POSIX user's UID/GID
-and Identity signing key ID. Compose must run nonroot Node consumers with those
-numeric IDs so read-only host bind mounts remain readable at 0700/0600; do not
-make credentials world-readable or elevate those services to root. RC and Egress
-retain their existing separately justified Docker/kernel privileges.
+`deployment.env` supplies the output directory, generating POSIX user's UID/GID,
+Docker socket GID and Identity signing key ID. Compose must run nonroot
+consumers, including Runtime Controller, with those numeric IDs so read-only
+host bind mounts remain readable at 0700/0600; do not
+make credentials world-readable or elevate those services to root. Invoke the
+generator as a non-root user. Egress alone stays `0:0` to read its root-owned
+tunnel master, with only `NET_ADMIN` added after dropping all capabilities.
+
+The token CLI detects `ANTNEST_DOCKER_SOCKET_GID` using
+`scripts/docker-socket-gid.mjs`: a one-shot container stats the read-only
+`/var/run/docker.sock` bind mount. This observes the same group as Controller
+on Linux and Docker Desktop; the macOS host socket's group is not the VM's
+container-visible group. The helper is non-root, drops every capability, has
+no network and a read-only rootfs, and uses `--pull=never` with the existing
+`node:24.21.0-bookworm-slim` fixture image. Preload that image or explicitly set
+a verified decimal `ANTNEST_DOCKER_SOCKET_GID` (group `0` is valid). Missing,
+invalid or undetectable groups fail with a named error; Compose has no fallback.
+The shared E2E fixtures detect the group rather than inheriting retained IDs.
+Programmatic `provisionTokens` accepts `dockerSocketGid`; credential-only callers
+can leave it empty but must supply a detected value before starting Controller.
+The secret-only `generate-dev-env.sh` preserves an explicitly exported socket
+GID without requiring Docker; normal credential provisioning supplies the
+detected value in its private `deployment.env`.
 Without `--with-skill-learning`, it also supplies empty Skill maintenance key
 defaults. Explicit exported shell settings still take precedence in Compose;
 the helper does not silently change them. With that explicit

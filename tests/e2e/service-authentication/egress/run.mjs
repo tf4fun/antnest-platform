@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "../../../support/run-command.mjs";
+import { assertContainerPrivileges } from "../../../support/container-privileges.mjs";
 import {
   dockerClient,
   networkOctet,
@@ -33,7 +34,7 @@ const evidence = resolve(
 );
 const directory = resolve(evidence, "credentials");
 mkdirSync(evidence, { recursive: true, mode: 0o700 });
-// Runtime Egress runs as root with every capability dropped, so it cannot
+// Runtime Egress runs as root with only NET_ADMIN, so it cannot
 // bypass permissions on files owned by the invoking user. The credentials are
 // group-readable and the container joins that group instead.
 mkdirSync(directory, { mode: 0o750 });
@@ -327,6 +328,7 @@ try {
   );
   const id = await invoke([...compose, "ps", "-q", "runtime-egress"]);
   const [container] = JSON.parse(await invoke(["inspect", id]));
+  assertContainerPrivileges("runtime-egress", container);
   assert.deepEqual(container.NetworkSettings.Ports, {});
   assert.equal(
     container.NetworkSettings.Networks[project + "_control"].IPAddress,
@@ -766,12 +768,16 @@ try {
   const degraded = await health();
   assert.equal(degraded.status, "degraded");
   assert.equal(degraded.data_plane_ready, true);
-  await invoke(["exec", id, "/usr/local/bin/runtime-egress", "--healthcheck"]);
+  await assert.rejects(
+    invoke(["exec", id, "/usr/local/bin/runtime-egress", "--healthcheck"]),
+    /Egress healthcheck failed/u,
+  );
   await invoke([...compose, "start", "postgres"], true);
   await waitFor("database reconnect", async () => {
     await request({ path: networkPath, auth: "next" });
     return (await health()).control_plane_ready;
   });
+  await invoke(["exec", id, "/usr/local/bin/runtime-egress", "--healthcheck"]);
   const closed = await request({
     path: attachmentPath,
     method: "PUT",

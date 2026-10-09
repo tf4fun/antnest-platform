@@ -21,6 +21,18 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+dev_socket_gid=${ANTNEST_DOCKER_SOCKET_GID:-}
+case "$dev_socket_gid" in
+  ''|0) ;;
+  *[!0-9]*|0*) echo "ANTNEST_DOCKER_SOCKET_GID must be a decimal socket group ID" >&2; exit 1 ;;
+  *)
+    if [ "${#dev_socket_gid}" -gt 10 ] || [ "$dev_socket_gid" -gt 4294967294 ]; then
+      echo "ANTNEST_DOCKER_SOCKET_GID must be a valid socket group ID" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 [ ! -L "$dev_output" ] || { echo "Refusing a symbolic-link output" >&2; exit 1; }
 if [ -e "$dev_output" ]; then
   [ -f "$dev_output" ] || { echo "Output must be a regular file" >&2; exit 1; }
@@ -32,6 +44,8 @@ dev_temp=$(mktemp -d "$dev_directory/.antnest-dev-env.XXXXXX")
 trap 'rm -rf -- "$dev_temp"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+printf 'ANTNEST_DOCKER_SOCKET_GID=%s\n' "$dev_socket_gid" > "$dev_temp/values"
 
 for dev_name in \
   ANTNEST_POSTGRES_ADMIN_PASSWORD \

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const socketPath = "/proxy/docker.sock";
@@ -319,6 +325,11 @@ async function intercept(incoming, outgoing) {
 
 export function startProxy() {
   assert(scope && /^[a-z0-9-]+$/.test(scope));
+  const socketGid = process.env.ANTNEST_DOCKER_SOCKET_GID;
+  assert(
+    /^(?:0|[1-9][0-9]*)$/u.test(socketGid) && Number(socketGid) <= 4294967294,
+    "ANTNEST_DOCKER_SOCKET_GID is required",
+  );
   if (existsSync(socketPath)) unlinkSync(socketPath);
   const dockerServer = createServer((incoming, outgoing) => {
     intercept(incoming, outgoing).catch((error) => {
@@ -326,7 +337,10 @@ export function startProxy() {
       outgoing.end(error.message);
     });
   });
-  dockerServer.listen(socketPath);
+  dockerServer.listen(socketPath, () => {
+    chownSync(socketPath, -1, Number(socketGid));
+    chmodSync(socketPath, 0o660);
+  });
   const control = createServer(async (incoming, outgoing) => {
     try {
       if (incoming.method === "GET" && incoming.url === "/status") {

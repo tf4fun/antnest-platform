@@ -101,6 +101,31 @@ List/Inspect as current-state authority.
 
 ## Identity
 
+The Controller image defaults to `USER 65532:65532`. Development Compose uses
+the generated `ANTNEST_SERVICE_AUTH_UID:GID` of the non-root credential owner
+so its mode-0600 bind-mounted credentials remain readable. Its sole extra group
+is `ANTNEST_DOCKER_SOCKET_GID`, the group of the socket as seen inside Docker;
+it grants Docker API access without running the Controller as UID 0. Compose
+drops every capability, enables `no-new-privileges`, and makes the root
+filesystem read-only. A `64m,noexec,nosuid,nodev,mode=1777` `/tmp` tmpfs holds
+private instance-sender files and downloaded Skill archives. System Skills and
+credentials remain read-only mounts. A read-only socket mount still permits
+Docker API mutations and is host-root-equivalent authority.
+
+Startup logs effective UID/GID and the hexadecimal effective capability set
+(`0000000000000000` in hardened Linux containers); unreadable Linux capability
+state fails startup. Native development on other operating systems logs
+`unsupported` for Linux capabilities. Healthcheck mode bypasses service startup.
+
+Runtime containers intentionally run as `0:0`: the root Supervisor prepares
+TUN, routing and resolver state and drops Agent-selected processes to UID/GID
+1000 with an empty capability set. Every Runtime create request has
+`CapDrop: ALL`, exactly `CHOWN`, `DAC_OVERRIDE`, `KILL`, `NET_ADMIN`, `SETGID`,
+`SETPCAP`, `SETUID` added back, and `no-new-privileges=true`. Helpers explicitly
+select their own user and restricted profiles. Changing the Controller image's
+default user does not change those explicit Runtime/helper settings. Runtime
+writable-rootfs, executable `/tmp` and resource-limit hardening remains #35.
+
 `agent_id` identifies one Runtime Environment. `runtime_revision` is an opaque
 cross-service CAS token. An operation's `target_revision` is derived before
 execution and remains stable through `running`, `unknown`, and terminal retry.

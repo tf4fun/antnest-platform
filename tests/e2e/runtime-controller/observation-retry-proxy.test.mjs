@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, request } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
@@ -52,11 +52,15 @@ test("observation fault proxy removes the Unix socket and restores real forwardi
     await assert.rejects(unixRequest(socketPath), { code: "ENOENT" });
     const online = await fetch(`${proxy.url}/online`, { method: "POST" });
     assert.equal(online.status, 200);
+    const socket = await stat(socketPath);
+    assert.equal(socket.gid, process.getgid());
+    assert.equal(socket.mode & 0o777, 0o660);
     assert.equal(await unixRequest(socketPath), '[{"Id":"fixture-runtime"}]');
     const offline = await fetch(`${proxy.url}/offline`, { method: "POST" });
     assert.equal(offline.status, 200);
     await assert.rejects(unixRequest(socketPath), { code: "ENOENT" });
     await fetch(`${proxy.url}/online`, { method: "POST" });
+    assert.equal((await stat(socketPath)).mode & 0o777, 0o660);
     assert.equal(await unixRequest(socketPath), '[{"Id":"fixture-runtime"}]');
     const status = await (await fetch(`${proxy.url}/status`)).json();
     assert.deepEqual(status, { online: true, forwarded: 2 });

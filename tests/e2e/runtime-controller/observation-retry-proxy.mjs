@@ -1,5 +1,5 @@
 import { createServer, request } from "node:http";
-import { existsSync, unlinkSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,7 +8,10 @@ export async function startObservationProxy({
   upstreamSocket = "/var/run/docker.sock",
   host = "0.0.0.0",
   port = 8081,
+  socketGid = process.env.ANTNEST_DOCKER_SOCKET_GID ?? String(process.getgid()),
 } = {}) {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(socketGid) || Number(socketGid) > 4294967294)
+    throw new Error("ANTNEST_DOCKER_SOCKET_GID is invalid");
   const connections = new Set();
   const watches = new Set();
   let forwarded = 0;
@@ -57,7 +60,13 @@ export async function startObservationProxy({
       docker.once("error", reject);
       docker.listen(socketPath, () => {
         docker.off("error", reject);
-        resolve();
+        try {
+          chownSync(socketPath, -1, Number(socketGid));
+          chmodSync(socketPath, 0o660);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
       });
     });
   }

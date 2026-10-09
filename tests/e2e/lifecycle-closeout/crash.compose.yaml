@@ -4,9 +4,11 @@ services:
     image: antnest/agent-acp-service:local
     user: "0:0"
     command: ["node", "/fixtures/crash-proxy.mjs"]
+    environment:
+      ANTNEST_DOCKER_SOCKET_GID: ${ANTNEST_DOCKER_SOCKET_GID:?ANTNEST_DOCKER_SOCKET_GID is required}
     volumes:
       - ./tests/e2e/lifecycle-closeout:/fixtures:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - crash-socket:/fault
     healthcheck:
       test:

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, request } from "node:http";
 import { once } from "node:events";
+import { chmodSync, chownSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const json = (res, status, value) => {
@@ -25,7 +26,12 @@ export async function startCrashProxy({
   socket = "/fault/docker.sock",
   port = 8080,
   holdMs = 60000,
+  socketGid = process.env.ANTNEST_DOCKER_SOCKET_GID ?? String(process.getgid()),
 } = {}) {
+  assert(
+    /^(?:0|[1-9][0-9]*)$/u.test(socketGid) && Number(socketGid) <= 4294967294,
+    "ANTNEST_DOCKER_SOCKET_GID is invalid",
+  );
   let selection,
     armed = false,
     held,
@@ -185,6 +191,8 @@ export async function startCrashProxy({
   });
   transport.listen(socket);
   await once(transport, "listening");
+  chownSync(socket, -1, Number(socketGid));
+  chmodSync(socket, 0o660);
   control.listen(port, "127.0.0.1");
   await once(control, "listening");
   return {
