@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isIPv4 } from "node:net";
+import { DNS_FIXTURE_IPV4, DNS_FIXTURE_NAME } from "./network-dns.mjs";
 
 export function privateIPv4(ip) {
   assert(isIPv4(ip), "invalid fixture IPv4");
@@ -30,7 +31,7 @@ os.environ['RES_OPTIONS'] = 'attempts:1 timeout:1 use-vc'
 report = {'uid': os.getuid(), 'gid': os.getgid()}
 start = time.monotonic()
 try:
-    addresses = sorted(set(item[4][0] for item in socket.getaddrinfo('network-target', 8080, socket.AF_INET, socket.SOCK_STREAM)))
+    addresses = sorted(set(item[4][0] for item in socket.getaddrinfo('${DNS_FIXTURE_NAME}', 8080, socket.AF_INET, socket.SOCK_STREAM)))
     report['dns'] = {'addresses': addresses}
 except socket.gaierror as error:
     report['dns'] = {'error': error.errno}
@@ -62,7 +63,7 @@ def exchange(phase, connect=False):
     started = time.monotonic()
     try:
         if connect:
-            connection.connect((config.get('target', '1.1.1.1'), 8080 if config['phase']=='private' else 18080))
+            connection.connect((config.get('target', '${DNS_FIXTURE_IPV4}'), 18080))
         connection.sendall((json.dumps({'phase': phase, 'nonce': config['nonce']})+'\\n').encode())
         result = {'ok': True, 'body': receive()}
     except OSError as error:
@@ -86,7 +87,7 @@ if config['phase'].startswith('held-') and report['tcp']['ok']:
     report['same_socket'] = connection.getsockname()[1] == source_port
     report['continued'] = exchange(config['phase']+'-next')
     if config['phase'] == 'held-b':
-        report['dns_after'] = sorted(set(item[4][0] for item in socket.getaddrinfo('network-target', 8080, socket.AF_INET, socket.SOCK_STREAM)))
+        report['dns_after'] = sorted(set(item[4][0] for item in socket.getaddrinfo('${DNS_FIXTURE_NAME}', 8080, socket.AF_INET, socket.SOCK_STREAM)))
 connection.close()
 print(json.dumps(report))
 PY`;
@@ -113,13 +114,14 @@ function denied(result) {
   );
 }
 export function inspectProbe(report, input, targetIP) {
+  privateIPv4(targetIP);
   assert.equal(report.uid, 1000);
   assert.equal(report.gid, 1000);
   if (input.phase === "denied") {
     assert([-2, -3].includes(report.dns.error));
     assert(report.dns.elapsed_ms < 2500);
     denied(report.dns_tcp);
-  } else assert.deepEqual(report.dns.addresses, [targetIP]);
+  } else assert.deepEqual(report.dns.addresses, [DNS_FIXTURE_IPV4]);
   if (["denied", "private"].includes(input.phase)) denied(report.tcp);
   else allowed(report.tcp, input.phase, input.nonce);
   if (input.phase.startsWith("held-")) {
@@ -128,7 +130,7 @@ export function inspectProbe(report, input, targetIP) {
       assert.deepEqual(report.push, { ok: false, timed_out: true });
       denied(report.continued);
     } else {
-      assert.deepEqual(report.dns_after, [targetIP]);
+      assert.deepEqual(report.dns_after, [DNS_FIXTURE_IPV4]);
       assert.deepEqual(report.push, { ok: true, body: { push: input.nonce } });
       allowed(report.continued, "held-b-next", input.nonce);
     }

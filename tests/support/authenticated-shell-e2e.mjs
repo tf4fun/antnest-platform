@@ -148,7 +148,7 @@ export async function runShellAcceptance(profile) {
     env.COMPOSE_FILE = shellComposeFiles(profile).join(":");
     const selected =
       profile === "stage1"
-        ? ["runtime-egress"]
+        ? ["runtime-egress", "runtime-controller"]
         : profile === "runtime-controller"
           ? ["runtime-egress", "runtime-controller"]
           : owners;

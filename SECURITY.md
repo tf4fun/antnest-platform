@@ -61,6 +61,20 @@ cluster network. Before exposing a deployment, understand these boundaries:
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.
+- **Agent DNS uses the filtered Egress resolver.** Its TCP forwarder removes A
+  records in the protected forwarding ranges, tunnel pool and connected subnets,
+  all AAAA records, and CNAME chains with no usable terminal answer. Filtering
+  away every answer returns NXDOMAIN with the original question and ID. AAAA
+  queries and reverse lookups of non-public addresses are answered locally, so
+  the upstream cannot reveal which internal names or addresses exist.
+  Ancillary records and DNSSEC assertions are not exposed; malformed, truncated
+  or oversize upstream replies close the connection. Runtime drops UID 1000 and
+  tool UID 2000..2007 traffic to Docker's `127.0.0.11` before loopback accepts,
+  covering TCP and UDP while other loopback addresses remain usable. Compose
+  retains its embedded Egress upstream for offline development; production
+  should use a recursive resolver with no view of internal service names. See
+  [Egress operations](services/runtime-egress/docs/operations.md) and
+  [Runtime networking](runtimes/antnest-runtime/docs/security-and-operations.md).
 - **Managed MCP credentials have a separate boundary (#37).** Controller stores
   write-only values encrypted with location-bound AAD; Template reads expose only
   set/fingerprint metadata. Only authenticated RC resolves the frozen revision.

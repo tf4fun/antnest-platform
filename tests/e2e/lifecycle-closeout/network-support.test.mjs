@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   guardRules,
-  redirectRules,
+  fixtureRoute,
   flowTuples,
   physicalIdentity,
   assertProducerStopped,
@@ -55,27 +55,31 @@ test("trace producer barrier requires own container and a clean completed exit",
   assert.throws(() => assertProducerStopped(container, "other"));
 });
 
-test("test firewall is fail-closed independently of destination translation", () => {
+test("test firewall and scoped route preserve the public destination for the kernel backstop", () => {
   const guard = guardRules("172.25.0.3");
   assert(
     guard.includes(
-      'iifname "antnest-egress0" ip saddr 100.64.0.0/10 ip daddr != 172.25.0.3 drop',
+      'iifname "antnest-egress0" ip saddr 100.64.0.0/10 ip daddr != 1.1.1.1 drop',
     ),
   );
-  assert(guard.includes("tcp dport != 8080 drop"));
+  assert(guard.includes("tcp dport != 18080 drop"));
   assert(guard.includes("meta l4proto != tcp drop"));
   assert(!guard.includes("dnat") && !guard.includes("flush ruleset"));
-  const nat = redirectRules("172.25.0.3");
-  assert(
-    nat.includes("ip daddr 1.1.1.1 tcp dport 18080 dnat to 172.25.0.3:8080"),
-  );
+  assert.deepEqual(fixtureRoute("172.25.0.3"), [
+    "route",
+    "replace",
+    "1.1.1.1/32",
+    "via",
+    "172.25.0.3",
+  ]);
   for (const ip of ["1.2.3.4", "172.999.0.1", "172.25.0.3; flush ruleset"])
-    assert.throws(() => guardRules(ip));
+    for (const rules of [guardRules, fixtureRoute])
+      assert.throws(() => rules(ip));
 });
 
 test("conntrack evidence matches original tuple, not reply addresses or volatile timeout", () => {
   const entry =
-    "tcp 6 432 ESTABLISHED src=100.64.0.2 dst=1.1.1.1 sport=45678 dport=18080 src=172.25.0.3 dst=172.25.0.2 sport=8080 dport=45678 [ASSURED] mark=0 use=1";
+    "tcp 6 432 ESTABLISHED src=100.64.0.2 dst=1.1.1.1 sport=45678 dport=18080 src=1.1.1.1 dst=172.25.0.2 sport=18080 dport=45678 [ASSURED] mark=0 use=1";
   const expected = [
     {
       source: "100.64.0.2",

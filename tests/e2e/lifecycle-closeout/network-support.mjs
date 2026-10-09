@@ -2,25 +2,22 @@ import assert from "node:assert/strict";
 import { isIPv4 } from "node:net";
 import { composeArgs, lines } from "./docker.mjs";
 import { privateIPv4 } from "./network-evidence.mjs";
+import { DNS_FIXTURE_IPV4 } from "./network-dns.mjs";
 
 export function guardRules(ip) {
   privateIPv4(ip);
   const source = 'iifname "antnest-egress0" ip saddr 100.64.0.0/10';
   return `table ip c3_guard {
     chain forward { type filter hook forward priority 10; policy accept;
-      ${source} ip daddr != ${ip} drop
+      ${source} ip daddr != ${DNS_FIXTURE_IPV4} drop
       ${source} meta l4proto != tcp drop
-      ${source} tcp dport != 8080 drop
+      ${source} tcp dport != 18080 drop
     }
   }`;
 }
-export function redirectRules(ip) {
+export function fixtureRoute(ip) {
   privateIPv4(ip);
-  return `table ip c3_redirect {
-    chain prerouting { type nat hook prerouting priority -110; policy accept;
-      iifname "antnest-egress0" ip saddr 100.64.0.0/10 ip daddr 1.1.1.1 tcp dport 18080 dnat to ${ip}:8080
-    }
-  }`;
+  return ["route", "replace", `${DNS_FIXTURE_IPV4}/32`, "via", ip];
 }
 export function flowTuples(text, source) {
   return text.split("\n").flatMap((line) => {
@@ -176,16 +173,16 @@ export async function networkFixture(config, docker) {
   assert.deepEqual(Object.keys(target.NetworkSettings.Networks), [network]);
   const ip = privateIPv4(target.NetworkSettings.Networks[network].IPAddress);
   const peer = privateIPv4(egress.NetworkSettings.Networks[network].IPAddress);
-  for (const rules of [guardRules(ip), redirectRules(ip)])
-    await docker([
-      "exec",
-      egress.Id,
-      "sh",
-      "-c",
-      "printf '%s' \"$1\" | nft -f -",
-      "sh",
-      rules,
-    ]);
+  await docker([
+    "exec",
+    egress.Id,
+    "sh",
+    "-c",
+    "printf '%s' \"$1\" | nft -f -",
+    "sh",
+    guardRules(ip),
+  ]);
+  await docker(["exec", egress.Id, "ip", ...fixtureRoute(ip)]);
   const control = async (path = "/status", method = "GET") => {
     assert(path === "/status" || /^\/push\/[a-z0-9-]{6,64}$/.test(path));
     assert(["GET", "POST"].includes(method));

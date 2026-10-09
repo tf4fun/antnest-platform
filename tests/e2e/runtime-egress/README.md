@@ -1,4 +1,33 @@
-# Runtime Egress peer binding
+# Runtime Egress acceptance
+
+Run `make e2e-stage1` serially with Docker and public DNS/HTTPS available. Its
+authenticated fixture builds Runtime, Egress and Runtime Controller from the
+current source, allocates host ports dynamically, and opens an `allow_all`
+attachment. Egress must be able to resolve `postgres` and reverse-resolve its
+address, and a root control probe
+inside Runtime must resolve `runtime-controller` through Docker's embedded
+resolver over both TCP and UDP, proving the names and bypass target exist.
+
+The [DNS isolation probe](dns-isolation.py) then runs inside that same Runtime
+as Executor UID 1000 and tool UIDs 2000 and 2007. `getent hosts postgres` and
+`getent hosts runtime-controller` must fail, as must a reverse lookup of the
+Postgres address, `getent hosts example.com` must
+succeed, and explicit TCP/UDP queries to `127.0.0.11` for `runtime-controller`
+must receive no response. Local TCP and UDP echo checks on ephemeral
+`127.0.0.1` ports prove the remaining loopback allowance works. No DNS tooling
+or additional Runtime image dependency is needed. Compose retains the default
+`127.0.0.11:53` upstream; the probe exercises response filtering with real
+internal answers. The harness removes its owned containers, networks, volumes
+and candidate images.
+
+Run `make e2e-lifecycle-network` separately for the existing two-Agent
+allow/deny/restore, DNS and conntrack regression gate. It uses isolated targets
+and a deterministic public DNS answer from its routed fixture resolver, with
+one scoped synthetic public address and no Internet endpoints. The former
+private-address DNS expectation encoded issue #36 and is replaced by an exact public-answer check;
+DNS continuity across the other Agent's policy change is still required.
+
+## Peer binding
 
 Run `make e2e-egress-peer-binding` serially with Docker available. It builds the
 real services from the current source and runs the authenticated managed MCP
