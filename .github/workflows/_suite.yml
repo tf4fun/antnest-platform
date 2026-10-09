@@ -26,9 +26,9 @@ jobs:
       actions: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -37,7 +37,7 @@ jobs:
             services/agent-ui/web/package-lock.json
             services/admin-console/web/package-lock.json
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: fromJSON(inputs.suite).setup_go
         with:
           go-version-file: services/runtime-controller/go.mod
@@ -119,7 +119,7 @@ jobs:
           IMAGES: ${{ fromJSON(inputs.suite).pull }}
         run: for image in $IMAGES; do docker pull "$image"; done
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         if: fromJSON(inputs.suite).images != ''
         with:
           registry: ghcr.io
@@ -164,7 +164,7 @@ jobs:
       # Per-run fixture credentials are excluded; everything else is evidence.
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: evidence-${{ fromJSON(inputs.suite).id }}
           path: |
