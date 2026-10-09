@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { RequestError } from "@agentclientprotocol/sdk";
 import { testScope } from "./support/auth-fixture.ts";
 import {
+  bridgeFetch,
   bridgeHeaders,
   requireBridgeCapabilities,
   requireLoadCut,
@@ -25,6 +30,39 @@ const scope = {
 test("the internal ACP caller forwards signed context without browser credentials or authority hints", () => {
   assert.deepEqual(Object.keys(bridgeHeaders(testScope(scope))), ["Antnest-Caller-Context"]);
   assert.throws(() => bridgeHeaders({ ...scope }));
+});
+
+test("a caller abort closes a streaming ACP response after garbage collection", async () => {
+  setFlagsFromString("--expose-gc");
+  const collect = runInNewContext("gc") as () => void;
+  let closed!: () => void;
+  const disconnected = new Promise<void>((resolve) => { closed = resolve; });
+  const server = createServer((_request, response) => {
+    response.on("close", closed);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write("data: open\n\n");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const caller = new AbortController();
+    const response = await bridgeFetch(testScope(scope), fetch)(
+      `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/acp`,
+      { signal: caller.signal },
+    );
+    assert.equal(response.status, 200);
+    for (let round = 0; round < 3; round++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      collect();
+    }
+    caller.abort(new Error("cancelled"));
+    assert.equal(await Promise.race([
+      disconnected.then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("still open"), 2_000)),
+    ]), "closed");
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("ACP boolean configuration carries the SDK discriminator on the wire", () => {

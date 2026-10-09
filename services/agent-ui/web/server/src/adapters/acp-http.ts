@@ -187,6 +187,17 @@ export function bridgeHeaders(scope: BridgeScope): Record<string, string> {
   return scopeHeaders(scope, "agent-acp-service");
 }
 
+export function bridgeFetch(scope: BridgeScope, fetchImpl: typeof fetch): typeof fetch {
+  return withActiveHttpTrace(async (url, init) => {
+    const request = new Request(url, init);
+    for (const name of [...request.headers.keys()])
+      if (name.startsWith("x-antnest-") || name === "cookie" || name === "authorization") request.headers.delete(name);
+    for (const [name, value] of Object.entries(bridgeHeaders(scope))) request.headers.set(name, value);
+    // A temporary Request's derived signal stops following the caller once the Request is collected.
+    return fetchImpl(request, { signal: init?.signal ?? (url instanceof Request ? url.signal : null) });
+  });
+}
+
 export function requireBridgeCapabilities(
   meta: Record<string, unknown> | null | undefined,
 ): boolean {
@@ -266,13 +277,7 @@ export class AcpHttpBridge {
   }): Promise<AcpHttpBridge> {
     const headers = bridgeHeaders(input.scope);
     if (!input.fetchImpl) throw new BridgeCapabilityError("Authenticated ACP client is required");
-    const tracedFetch = withActiveHttpTrace(async (url, init) => {
-      const request = new Request(url, init);
-      for (const name of [...request.headers.keys()])
-        if (name.startsWith("x-antnest-") || name === "cookie" || name === "authorization") request.headers.delete(name);
-      for (const [name, value] of Object.entries(bridgeHeaders(input.scope))) request.headers.set(name, value);
-      return input.fetchImpl(request);
-    });
+    const tracedFetch = bridgeFetch(input.scope, input.fetchImpl);
     const application = acp
       .client({ name: "antnest-agent-ui-bridge" })
       .onNotification(acp.methods.client.session.update, ({ params }) =>
