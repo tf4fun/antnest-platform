@@ -155,7 +155,13 @@ services:
       ANTNEST_SERVICE_AUTH_CALLERS_FILE: /etc/antnest/service-auth/callers.json
       ANTNEST_SERVICE_AUTH_TOKEN_DIR: /etc/antnest/service-auth/tokens
       ANTNEST_EGRESS_HEALTH_LISTEN: 127.0.0.1:8082
+    user: "0:0"
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
     sysctls:
       net.ipv4.ip_forward: "1"
     devices:
@@ -209,6 +215,14 @@ services:
 
   runtime-controller:
     image: antnest/runtime-controller:local
+    user: ${ANTNEST_SERVICE_AUTH_UID:?prepare development authentication with scripts/dev-service-tokens.mjs}:${ANTNEST_SERVICE_AUTH_GID:?prepare development authentication with scripts/dev-service-tokens.mjs}
+    group_add:
+      - "${ANTNEST_DOCKER_SOCKET_GID:?ANTNEST_DOCKER_SOCKET_GID is required; run scripts/docker-socket-gid.mjs or prepare development authentication}"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev,mode=1777
     restart: unless-stopped
     build:
       context: .
@@ -254,7 +268,7 @@ services:
       ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN: 127.0.0.1:8082
       ANTNEST_RUNTIME_ALLOWED_IMAGES: ${ANTNEST_RUNTIME_ALLOWED_IMAGES:-["antnest/antnest-runtime"]}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - runtime-system-skills:/system-skills-volume:ro
       - type: bind
         source:

@@ -172,7 +172,7 @@ test("every static workload opts into the exact token/HTTP profile and only its 
       mounted(service, "/etc/antnest/service-auth/tokens"),
       `/never-mounted-deployment-credentials/${name}/tokens`,
     );
-    if (!["runtime-controller", "runtime-egress"].includes(name))
+    if (name !== "runtime-egress")
       assert.equal(service.user, "65532:65532", name);
     assert(
       !service.volumes.some(
@@ -403,7 +403,7 @@ test("deployment overrides move all purpose listeners and private mounts togethe
     ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-alternate-credentials",
   });
   for (const name of applications) {
-    if (!["runtime-controller", "runtime-egress"].includes(name))
+    if (name !== "runtime-egress")
       assert.equal(config.services[name].user, "10001:10002", name);
     assert.equal(
       mounted(config.services[name], "/etc/antnest/service-auth/callers.json"),
@@ -422,6 +422,37 @@ test("deployment overrides move all purpose listeners and private mounts togethe
         name,
       );
   }
+});
+
+test("Egress and Runtime Controller deploy with their exact privilege floors", () => {
+  const egress = base.services["runtime-egress"];
+  const controller = base.services["runtime-controller"];
+  for (const service of [egress, controller]) {
+    assert.deepEqual(service.cap_drop, ["ALL"]);
+    assert.deepEqual(service.security_opt, ["no-new-privileges:true"]);
+    assert.equal(service.read_only, true);
+  }
+  assert.equal(egress.user, "0:0");
+  assert.deepEqual(egress.cap_add, ["NET_ADMIN"]);
+  assert.deepEqual(egress.tmpfs, ["/tmp:size=16m,noexec,nosuid,nodev"]);
+  assert.equal(controller.user, "65532:65532");
+  assert.equal(controller.cap_add, undefined);
+  assert.deepEqual(controller.group_add, ["998"]);
+  assert.deepEqual(controller.tmpfs, [
+    "/tmp:size=64m,noexec,nosuid,nodev,mode=1777",
+  ]);
+  const socket = controller.volumes.find(
+    (mount) => mount.target === "/var/run/docker.sock",
+  );
+  assert.equal(socket.read_only, true);
+  const alternate = composeConfig(["compose.yaml"], {
+    ANTNEST_DOCKER_SOCKET_GID: "0",
+  });
+  assert.deepEqual(alternate.services["runtime-controller"].group_add, ["0"]);
+  assert.throws(
+    () => composeConfig(["compose.yaml"], { ANTNEST_DOCKER_SOCKET_GID: "" }),
+    /ANTNEST_DOCKER_SOCKET_GID/u,
+  );
 });
 
 test("Skill discovery/source capabilities are enabled by maintenance keys without retired tokens", () => {

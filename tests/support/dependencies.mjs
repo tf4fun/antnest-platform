@@ -45,6 +45,7 @@ export function dependencyPlan(profile, inherited = process.env) {
     ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-dependency-credentials",
     ANTNEST_SERVICE_AUTH_UID: "65532",
     ANTNEST_SERVICE_AUTH_GID: "65532",
+    ANTNEST_DOCKER_SOCKET_GID: "998",
     ANTNEST_IDENTITY_CCT_SIGNING_KID: "dependency-unused",
   };
   for (const key of Object.keys(roles))

@@ -17,6 +17,13 @@ services:
       retries: 60
   runtime-controller:
     image: ${RC_AUTH_IMAGE:?}
+    user: ${ANTNEST_SERVICE_AUTH_UID:?}:${ANTNEST_SERVICE_AUTH_GID:?}
+    group_add:
+      ["${ANTNEST_DOCKER_SOCKET_GID:?ANTNEST_DOCKER_SOCKET_GID is required}"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,noexec,nosuid,nodev,mode=1777"]
     build:
       context: ../../../..
       dockerfile: services/runtime-controller/Dockerfile
@@ -40,7 +47,7 @@ services:
       ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json
       OTEL_SDK_DISABLED: "true"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${RC_AUTH_DIRECTORY:?}:/run/auth:ro
       - system-skills:/fixture-system-skills:ro
     networks:

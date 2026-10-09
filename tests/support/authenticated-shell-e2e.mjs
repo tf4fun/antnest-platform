@@ -10,6 +10,7 @@ import { candidateCommand } from "./candidate-images.mjs";
 import { runCommand } from "./run-command.mjs";
 import { evidenceDirectory, writeEvidenceFile } from "./storage.mjs";
 import { prepareEgressOwnership } from "../../scripts/dev-egress-auth-owner.mjs";
+import { resolveDockerSocketGid } from "../../scripts/docker-socket-gid.mjs";
 import {
   cleanup,
   dockerClient,
@@ -118,7 +119,11 @@ export async function runShellAcceptance(profile) {
   try {
     before = await identities(docker);
     const octet = await networkOctet(docker, 1 + (process.pid % 200));
-    const prepared = prepareFixtureCredentials(project, root);
+    const prepared = prepareFixtureCredentials(
+      project,
+      root,
+      await resolveDockerSocketGid(docker, ""),
+    );
     const env = shellFixtureEnvironment({
       inherited,
       project,

@@ -69,6 +69,7 @@ function render(files, overrides = {}) {
         ANTNEST_SERVICE_AUTH_DIRECTORY: "/never-mounted-deployment-credentials",
         ANTNEST_SERVICE_AUTH_UID: "65532",
         ANTNEST_SERVICE_AUTH_GID: "65532",
+        ANTNEST_DOCKER_SOCKET_GID: "998",
         ANTNEST_IDENTITY_CCT_SIGNING_KID: "port-contract-unused",
         ...overrides,
       },

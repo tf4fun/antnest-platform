@@ -84,6 +84,7 @@
     "environment_file": "deployment.env",
     "container_uid_environment": "ANTNEST_SERVICE_AUTH_UID",
     "container_gid_environment": "ANTNEST_SERVICE_AUTH_GID",
+    "docker_socket_gid_environment": "ANTNEST_DOCKER_SOCKET_GID",
     "receiver_max_bytes": 8192
   },
   "bootstrap_keys": {

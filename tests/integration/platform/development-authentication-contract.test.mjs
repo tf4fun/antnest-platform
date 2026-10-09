@@ -54,6 +54,10 @@ test("the bootstrap contract retains independent issuer and instance master form
   assert.equal(tokens.directory_mode, "0700");
   assert.equal(tokens.file_mode, "0600");
   assert.equal(tokens.receiver_max_bytes, 8192);
+  assert.equal(
+    tokens.docker_socket_gid_environment,
+    "ANTNEST_DOCKER_SOCKET_GID",
+  );
   assert.equal(keys.identity_cct.algorithm, "Ed25519");
   assert.equal(keys.identity_cct.private_format, "PKCS8-PEM");
   assert.equal(keys.runtime_instance_master.encoding, "raw");

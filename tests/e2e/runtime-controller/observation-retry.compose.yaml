@@ -3,8 +3,10 @@ services:
     image: antnest/agent-acp-service:local
     user: "0:0"
     command: ["node", "/app/tests/e2e/runtime-controller/observation-retry-proxy.mjs"]
+    environment:
+      ANTNEST_DOCKER_SOCKET_GID: ${ANTNEST_DOCKER_SOCKET_GID:?ANTNEST_DOCKER_SOCKET_GID is required}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - observation-docker-socket:/fault
       - ./tests:/app/tests:ro
     ports:

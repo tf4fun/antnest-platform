@@ -111,18 +111,23 @@ test("Stage 3 shell credentials give Egress its root-owned bootstrap files", asy
   try {
     const script = await shellEnvironment(name, 7, root, async (args) => {
       calls.push(args);
+      return args.includes("--pull=never") ? "998\n" : "";
     });
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     assert.equal(calls[0][0], "run");
+    assert.equal(calls[1][0], "run");
+    assert.equal(calls[0][calls[0].indexOf("--cap-drop") + 1], "ALL");
+    assert.equal(calls[1][calls[1].indexOf("--cap-add") + 1], "CHOWN");
     for (const file of ["callers.json", "tunnel-master.key"])
       assert(
-        calls[0].some((argument) =>
+        calls[1].some((argument) =>
           argument.endsWith(`/runtime-egress/${file},dst=/auth/${file}`),
         ),
         file,
       );
     assert.match(script, /^export ANTNEST_SERVICE_AUTH_DIRECTORY='/mu);
     assert.match(script, /^export COMPOSE_PROJECT_NAME='antnest-stage3-e2e-/mu);
+    assert.match(script, /^export ANTNEST_DOCKER_SOCKET_GID='998'$/mu);
   } finally {
     rmSync(resolve(root, "artifacts/verification/authenticated-e2e", name), {
       recursive: true,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer, request } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCrashProxy } from "./crash-proxy.mjs";
@@ -31,6 +31,9 @@ for (const phase of ["before-create", "after-start"])
         port: 0,
         holdMs: ending === "expiry" ? 500 : 2000,
       });
+      const socket = await stat(join(dir, "proxy.sock"));
+      assert.equal(socket.gid, process.getgid());
+      assert.equal(socket.mode & 0o777, 0o660);
       t.after(async () => {
         await proxy.close();
         upstream.closeAllConnections();

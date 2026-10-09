@@ -6,8 +6,9 @@ services:
       ["node", "/app/tests/e2e/stage3-base/docker-socket-fault-proxy.mjs"]
     environment:
       ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${ANTNEST_RUNTIME_CONTROLLER_SCOPE}
+      ANTNEST_DOCKER_SOCKET_GID: ${ANTNEST_DOCKER_SOCKET_GID:?ANTNEST_DOCKER_SOCKET_GID is required}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - skill-docker-proxy-socket:/proxy
       - ./tests:/app/tests:ro
     healthcheck:

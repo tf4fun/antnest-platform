@@ -11,6 +11,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { runCommand } from "../../../support/run-command.mjs";
+import { resolveDockerSocketGid } from "../../../../scripts/docker-socket-gid.mjs";
+import { assertContainerPrivileges } from "../../../support/container-privileges.mjs";
 import {
   dockerClient,
   networkOctet,
@@ -79,6 +81,9 @@ try {
   image = project + ":candidate";
   env = {
     ...process.env,
+    ANTNEST_SERVICE_AUTH_UID: String(process.getuid()),
+    ANTNEST_SERVICE_AUTH_GID: String(process.getgid()),
+    ANTNEST_DOCKER_SOCKET_GID: await resolveDockerSocketGid(docker, ""),
     RC_AUTH_IMAGE: image,
     RC_AUTH_SCOPE: project,
     RC_AUTH_DIRECTORY: directory,
@@ -124,6 +129,11 @@ try {
   );
   const id = await invoke([...compose, "ps", "-q", "runtime-controller"]);
   const [container] = JSON.parse(await invoke(["inspect", id]));
+  assertContainerPrivileges(
+    "runtime-controller",
+    container,
+    env.ANTNEST_DOCKER_SOCKET_GID,
+  );
   assert.deepEqual(container.NetworkSettings.Ports, {});
   assert.equal(
     container.NetworkSettings.Networks[project + "_control"].IPAddress,

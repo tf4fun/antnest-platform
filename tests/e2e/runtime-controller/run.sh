@@ -67,6 +67,42 @@ wait_for_controller() {
   return 1
 }
 
+wait_for_runtime() {
+  attempt=0
+  while [ "$attempt" -lt 60 ]; do
+    if [ "$(docker inspect --format '{{.State.Health.Status}}' "$runtime_name")" = healthy ]; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  echo "Agent Runtime did not become healthy" >&2
+  return 1
+}
+
+probe_allowed_egress() {
+  # This fixture performs the Controller-owned attachment transition using the
+  # current generation's public key ID, then restores the closed attachment.
+  runtime_endpoint=$(docker inspect --format "{{(index .NetworkSettings.Networks \"$ANTNEST_RUNTIME_MANAGEMENT_NETWORK\").IPAddress}}" "$runtime_name")
+  tunnel_key_id=$(docker inspect "$runtime_name" | node -e 'let text="";process.stdin.on("data",part=>text+=part);process.stdin.on("end",()=>{const [container]=JSON.parse(text);const env=container.Config.Env.find(value=>value.startsWith("ANTNEST_RUNTIME_SPEC="));process.stdout.write(JSON.parse(env.slice("ANTNEST_RUNTIME_SPEC=".length)).authentication.tunnel.key_id);});')
+  network=$(egress_request "$egress_url/internal/agent-networks/${agent_id}")
+  attachment_version=$(printf '%s' "$network" | sed -n 's/.*"attachment_resource_version":\([0-9][0-9]*\).*/\1/p')
+  test -n "$runtime_endpoint"
+  test -n "$tunnel_key_id"
+  test -n "$attachment_version"
+  opened=$(egress_request -X PUT -H 'content-type: application/json' \
+    -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_version},\"runtime_endpoint\":\"${runtime_endpoint}\",\"tunnel_key_id\":\"${tunnel_key_id}\"}" \
+    "$egress_url/internal/agent-network-attachments/${agent_id}")
+  printf '%s' "$opened" | grep -q '"attachment_state":"open"'
+  docker exec --user 1000:1000 "$runtime_name" curl -kfsS --connect-timeout 5 --max-time 10 https://1.1.1.1 >/dev/null
+  docker exec --user 1000:1000 "$runtime_name" curl -fsS --connect-timeout 5 --max-time 10 https://example.com | grep -q 'Example Domain'
+  attachment_version=$(printf '%s' "$opened" | sed -n 's/.*"attachment_resource_version":\([0-9][0-9]*\).*/\1/p')
+  test -n "$attachment_version"
+  egress_request -X PUT -H 'content-type: application/json' \
+    -d "{\"state\":\"closed\",\"expected_resource_version\":${attachment_version}}" \
+    "$egress_url/internal/agent-network-attachments/${agent_id}" | grep -q '"attachment_state":"closed"'
+}
+
 docker compose up -d --wait postgres runtime-egress runtime-controller
 docker compose up -d --no-deps --wait diagnostic-relay
 
@@ -80,7 +116,13 @@ if [ "${#runtime_image}" -ne 71 ]; then
   exit 1
 fi
 
-docker compose exec -T runtime-egress curl --fail-with-body -sS http://127.0.0.1:8082/status | grep -q '"status":"ready"'
+docker compose exec -T runtime-egress runtime-egress --healthcheck
+for service in runtime-egress runtime-controller; do
+  container_id=$(docker compose ps -q "$service")
+  docker inspect "$container_id" | node tests/support/container-privileges.mjs "$service"
+done
+docker compose logs --no-color runtime-egress | grep -q '"effective_capabilities":"0000000000001000"'
+docker compose logs --no-color runtime-controller | grep -q '"effective_capabilities":"0000000000000000"'
 egress_request -X PUT "$egress_url/internal/agent-networks/${agent_id}" | grep -q '"tunnel_ipv4":"100.64.0.2"'
 egress_request -X PUT -H 'content-type: application/json' \
   -d '{"spec":{"schema_version":1,"action":"allow_all"}}' \
@@ -122,6 +164,8 @@ done
 runtime_revision=$(printf '%s' "$created" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$first_execution"
 test -n "$runtime_revision"
+
+probe_allowed_egress
 
 controller_request "$controller_url/internal/runtimes/${agent_id}" \
   | grep -q "\"runtime_execution_id\":\"${first_execution}\""
@@ -183,6 +227,9 @@ updated=$(controller_request -X POST -H 'content-type: application/json' \
 printf '%s' "$updated" | grep -q '"state":"completed"'
 runtime_revision=$(printf '%s' "$updated" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$runtime_revision"
+
+wait_for_runtime
+probe_allowed_egress
 
 revision_payload=$(printf '%s' "{\"expected_revision\":\"${runtime_revision}\"}")
 disabled=$(controller_request -X POST -H 'content-type: application/json' \
