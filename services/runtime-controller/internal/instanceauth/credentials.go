@@ -35,10 +35,11 @@ type Envelope struct {
 
 // Record contains no bearer. It is committed with the generation's operation.
 type Record struct {
-	ConnectionID   string   `json:"connection_id"`
-	ReceiverDigest string   `json:"receiver_digest"`
-	Controller     Envelope `json:"runtime_controller"`
-	ACP            Envelope `json:"agent_acp_service"`
+	Tunnel         *TunnelRecord `json:"tunnel"`
+	ConnectionID   string        `json:"connection_id"`
+	ReceiverDigest string        `json:"receiver_digest"`
+	Controller     Envelope      `json:"runtime_controller"`
+	ACP            Envelope      `json:"agent_acp_service"`
 }
 
 type Manager struct{ aead cipher.AEAD }
@@ -128,6 +129,9 @@ func (m *Manager) Issue(id Identity) (*Record, error) {
 		return nil, err
 	}
 	record.ReceiverDigest = Digest(profile)
+	if err := m.issueTunnel(id, record); err != nil {
+		return nil, err
+	}
 	return record, nil
 }
 
@@ -198,6 +202,9 @@ func Decode(data []byte) (*Record, error) {
 		if nerr != nil || serr != nil || len(nonce) != 12 || len(sealed) != 59 || base64.RawURLEncoding.EncodeToString(nonce) != e.Nonce || base64.RawURLEncoding.EncodeToString(sealed) != e.Ciphertext {
 			return nil, fmt.Errorf("accepted instance credential record is invalid")
 		}
+	}
+	if !validTunnelRecord(record.Tunnel) {
+		return nil, fmt.Errorf("accepted tunnel credential record is invalid")
 	}
 	return &record, nil
 }

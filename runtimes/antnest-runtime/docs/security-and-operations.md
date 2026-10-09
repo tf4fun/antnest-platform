@@ -30,8 +30,9 @@ generation. The workspace and system-Skill roots must be
 normalized absolute paths without `..` and must not overlap. The nonsecret
 `authentication` descriptor is mandatory for `serve`; raw bearers are not injected.
 RC prepares a separate read-only named volume at `/run/antnest-auth`, with a
-UID/GID 0 mode-0700 directory and sole regular mode-0600 `callers.json`. Runtime
-checks ownership, modes, complete digest and exact RC/ACP hash identities before
+UID/GID 0 mode-0700 directory and regular mode-0600 `callers.json` and `tunnel.json`. Runtime
+checks ownership, modes, both complete digests, exact RC/ACP hash identities and
+canonical tunnel keys before
 network setup. Symlinks, FIFOs, malformed or ambiguous JSON and mount loss stop
 bootstrap. The UID/GID 1000 executor cannot read this volume.
 
@@ -189,8 +190,10 @@ Runtime listens on:
 
 There is no reverse Controller connection and no Runtime self-registration.
 Runtime Controller gives Agent Controller the endpoint. Runtime opens one connected UDP socket
-to Egress. Each datagram contains one complete, unfragmented IPv4/TCP packet;
-there is no WebSocket or tunnel authentication protocol.
+to Egress. Revision 2 carries `ANT2`, an opaque generation key ID and a WireGuard
+message, authenticated with independent endpoint keys and a 32-byte PSK. Only
+decrypted complete unfragmented IPv4/TCP data enters the policy path. BoringTun
+owns nonces, bounded replay checks and session rotation; no raw fallback exists.
 
 The root Supervisor retains the platform main routing table for MCP replies,
 Egress UDP, and OTLP. UID-based policy rules send UID 1000 and 2000..2007 traffic to an Agent
@@ -214,10 +217,11 @@ still supplies platform DNS settings as a bootstrap hint, but Runtime owns the
 final resolver state inside its network namespace. Additional name servers are
 never retained.
 
-Runtime deployment input:
+RC-owned deployment input (public descriptors below are illustrative; actual
+IDs and digests must come from the prepared private volume):
 
 ```dotenv
-ANTNEST_RUNTIME_SPEC={"agent_id":"agent-123","generation":1,"listen":{"host":"0.0.0.0","port":8093},"network":{"packet_contract_revision":1,"egress_endpoint":{"ipv4":"172.30.255.3","port":8092},"tunnel_ipv4":"100.96.0.2","resolver_ipv4":"100.64.0.1"},"filesystem":{"workspace":"/workspace","system_skills":"/skills"}}
+ANTNEST_RUNTIME_SPEC={"agent_id":"agent-123","generation":1,"listen":{"host":"0.0.0.0","port":8093},"network":{"packet_contract_revision":2,"egress_endpoint":{"ipv4":"172.30.255.3","port":8092},"tunnel_ipv4":"100.96.0.2","resolver_ipv4":"100.64.0.1"},"filesystem":{"workspace":"/workspace","system_skills":"/skills"},"authentication":{"connection_id":"rci_00000000000000000000000000000001","callers_file":"/run/antnest-auth/callers.json","receiver_digest":"sha256:<prepared callers digest>","tunnel":{"key_id":"rtk_<generation identity>","keys_file":"/run/antnest-auth/tunnel.json","keys_digest":"sha256:<prepared keys digest>"}}}
 ```
 
 Egress is the sole authority for this endpoint. Its Agent network attachment

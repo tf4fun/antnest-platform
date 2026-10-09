@@ -126,7 +126,7 @@ func TestInvalidatedSkillRebuildClosesThenRestoresACPSnapshotAdmission(t *testin
 		t.Fatal(err)
 	}
 	attachment := ports.NetworkAttachment{AgentID: base.Agent.AgentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		PacketContractRevision: 2, EgressIPv4: "10.20.0.8", EgressPort: 8092,
 		State: ports.NetworkStateActive, NetworkResourceVersion: 1, AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 2}
 	fenced, err := repository.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeUpdate,

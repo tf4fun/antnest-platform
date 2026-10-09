@@ -498,6 +498,20 @@ async function main() {
     egressOutage = await proveHealthDuringEgressOutage(agentId, agent);
     stage = "restart-new-peer";
     peerChecks.push(await restartWithNewPeer(agentId, runtime));
+    const issued = peerChecks.filter((entry) =>
+      ["create", "rebuild", "enable"].includes(entry.phase),
+    );
+    assert.equal(issued.length, 3);
+    assert.equal(
+      new Set(issued.map((entry) => entry.tunnel_key_id)).size,
+      3,
+      "a new compute generation reused tunnel authority",
+    );
+    assert.equal(
+      peerChecks.at(-1).tunnel_key_id,
+      issued.at(-1).tunnel_key_id,
+      "ordinary restart changed generation authority",
+    );
     stage = "delete";
   }
   const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
@@ -615,6 +629,12 @@ async function main() {
 try {
   await main();
 } catch (error) {
+  if (output)
+    writeFileSync(
+      join(output, "business-failure.private.txt"),
+      error.stack ?? String(error),
+      { mode: 0o600 },
+    );
   console.error(
     asciiJSON({
       status: "failed",
@@ -624,7 +644,7 @@ try {
       code: error.code,
       location: error.stack
         ?.split("\n")
-        .find((line) => line.includes("/app/tests/e2e/"))
+        .find((line) => line.includes("/tests/e2e/"))
         ?.trim(),
     }),
   );

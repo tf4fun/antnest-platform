@@ -6,7 +6,7 @@ Workload authentication protects the control operation that installs the
 binding. Packet admission requires both the inner allocation and the bound
 outer IPv4. The UDP source port may change. This is address binding within the
 managed network's trust model; per-generation encrypted datagrams and replay
-protection remain Phase 2.
+protection are implemented by [Phase 2](authenticated-runtime-tunnel.md).
 
 ## Contract and lifecycle
 
@@ -98,3 +98,14 @@ Migration 0002 constrains stored peer addresses to IPv4 host addresses; it does
 not turn a nullable database row into an admission proof. The API requires a
 peer for open operations, and restored unbound open rows remain fail-closed in
 the data plane. Direct database/host administration remains a trusted boundary.
+
+## Phase 2 transport identity
+
+Current RC revision 19 adds the public generation key ID; Egress revision 7
+requires it alongside IPv4 on open CAS. RC alone prepares private generation
+keys, before compute mutation. WireGuard authentication and replay rejection
+precede all inner attribution. Controller compares both fields, preserves the
+nonblocking health journal, and cannot reopen a closed attachment through
+observation. The
+[Phase 2 delivery record](authenticated-runtime-tunnel.md#current-delivery-record)
+separates owning-service gates from final cross-service evidence.

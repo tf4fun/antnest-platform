@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
+import { prepareEgressOwnership } from "../../scripts/dev-egress-auth-owner.mjs";
 import { provisionTokens } from "../../scripts/dev-service-tokens.mjs";
 import { durablePath } from "./storage.mjs";
 import { publicDevelopmentSecrets } from "./public-development-secrets.mjs";
@@ -34,6 +36,7 @@ export function fixtureEnvironment(inherited, { project: name, octet }) {
     ANTNEST_EGRESS_CONTROL_SUBNET: `10.242.${octet}.0/24`,
     ANTNEST_EGRESS_CONTROL_IPV4: `10.242.${octet}.3`,
     ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4: `10.242.${octet}.4`,
+    ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4: `10.242.${octet}.5`,
     ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT: `http://10.243.${octet}.4:4318`,
     ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "false",
   };
@@ -64,6 +67,13 @@ export function shellExports(env) {
     .join("");
 }
 
+export async function shellEnvironment(name, octet, root, invoke) {
+  const environment = fixtureEnvironment({}, { project: name, octet });
+  const prepared = prepareFixtureCredentials(name, root);
+  await prepareEgressOwnership(invoke, prepared.credentials);
+  return shellExports({ ...environment, ...prepared.environment });
+}
+
 // Shell entrypoints evaluate this output to join the same disposable
 // deployment as the Node fixtures.
 if (
@@ -71,12 +81,16 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const [name, octet] = process.argv.slice(2);
-  const root = fileURLToPath(new URL("../../", import.meta.url));
-  const prepared = prepareFixtureCredentials(name, root);
   process.stdout.write(
-    shellExports({
-      ...fixtureEnvironment({}, { project: name, octet: Number(octet) }),
-      ...prepared.environment,
-    }),
+    await shellEnvironment(
+      name,
+      Number(octet),
+      fileURLToPath(new URL("../../", import.meta.url)),
+      (args) =>
+        execFileSync("docker", args, {
+          timeout: 30000,
+          stdio: ["ignore", "ignore", "pipe"],
+        }),
+    ),
   );
 }

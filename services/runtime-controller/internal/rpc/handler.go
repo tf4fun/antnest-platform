@@ -699,6 +699,8 @@ func writeOperationError(response http.ResponseWriter, operation deployment.Oper
 		status = http.StatusInternalServerError
 	case "runtime_drift":
 		message = "managed Runtime has different immutable identity"
+	case "tunnel_key_registration_rejected":
+		message = "Egress rejected the prepared tunnel identity"
 	case "storage_in_use":
 		message = "Agent storage is still used by a managed Runtime"
 	case "storage_ownership_conflict":
@@ -772,6 +774,9 @@ func classifyError(err error) errorDescriptor {
 	case errors.Is(err, control.ErrSkillPreflightUnavailable):
 		result.status = http.StatusServiceUnavailable
 		result.response = errorResponse{Code: "skill_preflight_unavailable", Message: "prepared Skill volume inspection is unavailable", Retryable: true}
+	case errors.Is(err, control.ErrTunnelRegistrationUnavailable):
+		result.status = http.StatusServiceUnavailable
+		result.response = errorResponse{Code: "tunnel_registration_unavailable", Message: "Egress tunnel registration is unavailable; retry the same request", Retryable: true}
 	case errors.Is(err, repositoryport.ErrSkillCleanupInProgress):
 		result.status = http.StatusServiceUnavailable
 		result.response = errorResponse{Code: "skill_cleanup_in_progress", Message: "Skill set cleanup is in progress", Retryable: true}

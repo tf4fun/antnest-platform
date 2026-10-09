@@ -132,6 +132,9 @@ set +a
 # 构建全部镜像（串行构建，内存占用更可控）
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
 
+# 通过一次性容器设置两个 Egress 引导文件的 root 属主。
+node scripts/dev-egress-auth-owner.mjs
+
 # 启动平台和 Jaeger
 ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
   docker compose -f compose.yaml -f compose.stage3.yaml \

@@ -504,7 +504,7 @@ func testDeployment() deployment.Deployment {
 			AgentID: "agent-1", Generation: 7,
 			Listen: deployment.SocketAddress{Host: "0.0.0.0", Port: 8093},
 			Network: deployment.NetworkSpec{
-				PacketContractRevision: 1,
+				PacketContractRevision: 2,
 				EgressEndpoint:         deployment.IPv4Endpoint{IPv4: "10.20.0.8", Port: 8092},
 				TunnelIPv4:             "100.64.0.2", ResolverIPv4: "100.64.0.1",
 			},

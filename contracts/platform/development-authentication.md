@@ -10,7 +10,8 @@ acceptance; their status remains in the [rollout ledger](service-authentication-
 The token/bootstrap helper passed 20 contract/CLI checks and 13 isolated Docker
 mount/replacement checks. PKI passed eight native/CLI/TLS tests and 18 isolated
 Docker mount/TLS checks. Generated mounts remain read-only and private under
-the generating user's numeric UID/GID. Host-port publication/tooling passed 24
+the generating user's numeric UID/GID, except Egress's root-owned bootstrap
+files described below. Host-port publication/tooling passed 24
 rendered configuration and related fixture tests and three real PostgreSQL/Temporal
 host-protocol checks, with owned Docker resource cleanup. The subsequent
 Compose cutover is deployment-admitted: 44 wiring/port/dependency/v3 HTTP checks
@@ -34,7 +35,7 @@ share that pair's credential; public, health, fallback and delegate records do
 not create grants. Unknown callers, catalog/service mismatches and self-calls
 without an explicit workload grant fail before writing credentials.
 
-The nine current static workloads produce 24 pairs. The count is a reviewed
+The nine current static workloads produce 25 pairs. The count is a reviewed
 result of the catalogs, not a hardcoded authorization table. No static
 `antnest-runtime` token is produced: RC owns its separate per-Agent/generation
 issuance under the [instance connection contract](../runtime/instance-connection.md).
@@ -60,6 +61,8 @@ artifacts/service-authentication/
     cct-jwks.json
   runtime-controller/
     instance-master.key
+  runtime-egress/
+    tunnel-master.key
 ```
 
 The root and its child directories are mode 0700; all files are mode 0600.
@@ -91,6 +94,16 @@ the RC journal and backups. Re-running the generator into a different output
 is a new deployment, not a way to rotate an existing master. Replacing or losing
 the master makes existing sealed instance authority unusable.
 
+Egress gets an independent exactly 32-byte raw master for its encrypted
+per-generation tunnel rows. Before startup, run
+`node scripts/dev-egress-auth-owner.mjs` with the generated
+`ANTNEST_SERVICE_AUTH_DIRECTORY` sourced. The one-shot, network-isolated Docker
+helper mounts only `runtime-egress/callers.json` and `tunnel-master.key`, changes
+their owner to UID/GID 0 and keeps mode 0600. This handles Linux bind mounts
+without changing other services' owners or introducing a running service. Repeat
+after restoring or replacing either file; preserve the master with its database
+instead of generating a new one. See the [tunnel contract](../../docs/authenticated-runtime-tunnel.md).
+
 `deployment.env` supplies the output directory, generating POSIX user's UID/GID
 and Identity signing key ID. Compose must run nonroot Node consumers with those
 numeric IDs so read-only host bind mounts remain readable at 0700/0600; do not
@@ -116,7 +129,7 @@ credentials are for disposable development, not a production transport policy.
 
 Mount each receiver JSON file and each sender directory read-only at separate
 paths outside the workspace and Skill volumes. Mount Identity's two CCT files
-and RC's master separately; never mount the whole credential root into a
+and RC's and Egress's independent masters separately; never mount the whole credential root into a
 service. Bind sender directories, rather than individual token leaves, so
 atomic file replacement remains visible in containers. The receiver hash file
 is loaded once; a receiver restart is required after replacement.

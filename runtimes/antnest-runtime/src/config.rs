@@ -462,6 +462,7 @@ mod tests {
             "connection_id":"rci_00000000000000000000000000000001",
             "callers_file":"/run/antnest-auth/callers.json",
             "receiver_digest":format!("sha256:{}", "0".repeat(64)),
+            "tunnel":{"key_id":"rtk_00000000000000000000000000000001","keys_file":"/run/antnest-auth/tunnel.json","keys_digest":format!("sha256:{}","0".repeat(64))},
         });
         let mut value = serde_json::to_value(valid_input()).unwrap();
         value["authentication"] = descriptor.clone();

@@ -71,19 +71,21 @@ func (client *Client) SetAgentNetworkAttachment(
 	state string,
 	expectedResourceVersion uint64,
 	runtimeEndpoint string,
+	tunnelKeyID string,
 ) (ports.NetworkAttachment, error) {
 	if state != ports.NetworkAttachmentClosed && state != ports.NetworkAttachmentOpen {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
-	if (state == ports.NetworkAttachmentOpen && !ports.ValidRuntimePeer(runtimeEndpoint)) ||
-		(state == ports.NetworkAttachmentClosed && runtimeEndpoint != "") {
+	if (state == ports.NetworkAttachmentOpen && (!ports.ValidRuntimePeer(runtimeEndpoint) || !ports.ValidTunnelKeyID(tunnelKeyID))) ||
+		(state == ports.NetworkAttachmentClosed && (runtimeEndpoint != "" || tunnelKeyID != "")) {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	payload, err := json.Marshal(struct {
 		State                   string `json:"state"`
 		ExpectedResourceVersion uint64 `json:"expected_resource_version"`
 		RuntimeEndpoint         string `json:"runtime_endpoint,omitempty"`
-	}{State: state, ExpectedResourceVersion: expectedResourceVersion, RuntimeEndpoint: runtimeEndpoint})
+		TunnelKeyID             string `json:"tunnel_key_id,omitempty"`
+	}{State: state, ExpectedResourceVersion: expectedResourceVersion, RuntimeEndpoint: runtimeEndpoint, TunnelKeyID: tunnelKeyID})
 	if err != nil || expectedResourceVersion == 0 {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
@@ -95,7 +97,7 @@ func (client *Client) SetAgentNetworkAttachment(
 		bytes.NewReader(payload),
 		state,
 	)
-	if err == nil && result.RuntimeEndpoint != runtimeEndpoint {
+	if err == nil && (result.RuntimeEndpoint != runtimeEndpoint || result.TunnelKeyID != tunnelKeyID) {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
 	return result, err
@@ -295,6 +297,7 @@ func decodeNetworkAttachment(
 		AttachmentState           string `json:"attachment_state"`
 		AttachmentResourceVersion uint64 `json:"attachment_resource_version"`
 		RuntimeEndpoint           string `json:"runtime_endpoint,omitempty"`
+		TunnelKeyID               string `json:"tunnel_key_id,omitempty"`
 	}
 	expectedAttachmentState := ""
 	if len(requiredAttachmentState) > 0 {
@@ -303,11 +306,11 @@ func decodeNetworkAttachment(
 	if err := json.Unmarshal(body, &payload); err != nil || payload.AgentID != agentID ||
 		!validIPv4(payload.TunnelIPv4) || !validIPv4(payload.ResolverIPv4) ||
 		!validIPv4(payload.EgressEndpoint.IPv4) || payload.EgressEndpoint.Port == 0 ||
-		payload.PacketContractRevision == 0 || !validNetworkState(payload.State) ||
+		payload.PacketContractRevision != 2 || !validNetworkState(payload.State) ||
 		payload.NetworkResourceVersion == 0 || !validAttachmentState(payload.AttachmentState) ||
 		payload.AttachmentResourceVersion == 0 ||
-		(payload.AttachmentState == ports.NetworkAttachmentOpen && !ports.ValidRuntimePeer(payload.RuntimeEndpoint)) ||
-		(payload.AttachmentState == ports.NetworkAttachmentClosed && payload.RuntimeEndpoint != "") ||
+		(payload.AttachmentState == ports.NetworkAttachmentOpen && (!ports.ValidRuntimePeer(payload.RuntimeEndpoint) || !ports.ValidTunnelKeyID(payload.TunnelKeyID))) ||
+		(payload.AttachmentState == ports.NetworkAttachmentClosed && (payload.RuntimeEndpoint != "" || payload.TunnelKeyID != "")) ||
 		(requiredState != "" && payload.State != requiredState) ||
 		(expectedAttachmentState != "" && payload.AttachmentState != expectedAttachmentState) {
 		return ports.NetworkAttachment{}, fmt.Errorf("invalid Agent network attachment")
@@ -321,6 +324,7 @@ func decodeNetworkAttachment(
 		AttachmentState:           payload.AttachmentState,
 		AttachmentResourceVersion: payload.AttachmentResourceVersion,
 		RuntimeEndpoint:           payload.RuntimeEndpoint,
+		TunnelKeyID:               payload.TunnelKeyID,
 	}, nil
 }
 

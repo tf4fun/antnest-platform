@@ -26,7 +26,7 @@ func (e *instanceArchiveEngine) GetArchive(_ context.Context, _, _ string) (io.R
 	return io.NopCloser(bytes.NewReader(e.archive)), nil
 }
 
-func instanceArchive(t *testing.T, profile []byte, mode int64) []byte {
+func instanceArchive(t *testing.T, profile, tunnel []byte, mode int64) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	w := tar.NewWriter(&b)
@@ -40,6 +40,12 @@ func instanceArchive(t *testing.T, profile []byte, mode int64) []byte {
 			}
 		}
 	}
+	if err := w.WriteHeader(&tar.Header{Name: "antnest-auth/tunnel.json", Mode: mode, Typeflag: tar.TypeReg, Size: int64(len(tunnel))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(tunnel); err != nil {
+		t.Fatal(err)
+	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -52,12 +58,13 @@ func TestInstanceMountChecksActualVolumeAndRootOnlyProfile(t *testing.T) {
 	issuer, _ := instanceauth.New(bytes.Repeat([]byte{42}, 32))
 	record, _ := issuer.Issue(id)
 	profile, _ := issuer.Receiver(id, record)
-	engine := &instanceArchiveEngine{fakeEngine: newFakeEngine(), archive: instanceArchive(t, profile, 0600)}
+	tunnel, _ := issuer.TunnelFile(id, record)
+	engine := &instanceArchiveEngine{fakeEngine: newFakeEngine(), archive: instanceArchive(t, profile, tunnel, 0600)}
 	writer, err := NewInstanceVolumeWriter(engine, "preparer:local", issuer, id.Scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor := &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest}
+	descriptor := &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest, Tunnel: record.Tunnel.Descriptor()}
 	name := instanceVolumeName(id)
 	engine.volumes[name] = Volume{Name: name, Labels: instanceVolumeLabels(id, descriptor)}
 	engine.container = exactContainer()
@@ -71,14 +78,23 @@ func TestInstanceMountChecksActualVolumeAndRootOnlyProfile(t *testing.T) {
 		t.Fatal("Docker-created empty replacement volume admitted")
 	}
 	engine.volumes[name] = Volume{Name: name, Labels: instanceVolumeLabels(id, descriptor)}
-	engine.archive = instanceArchive(t, profile, 0644)
+	engine.archive = instanceArchive(t, profile, tunnel, 0644)
 	if err := writer.VerifyRuntimeMount(ctx, key, descriptor, engine.container.ID); err == nil {
 		t.Fatal("executor-readable receiver accepted")
 	}
-	engine.archive = instanceArchive(t, []byte(`{}`), 0600)
+	engine.archive = instanceArchive(t, []byte(`{}`), tunnel, 0600)
 	if err := writer.VerifyRuntimeMount(ctx, key, descriptor, engine.container.ID); err == nil {
 		t.Fatal("different receiver profile accepted")
 	}
+	engine.archive = instanceArchive(t, profile, []byte(`{}`), 0600)
+	if err := writer.VerifyRuntimeMount(ctx, key, descriptor, engine.container.ID); err == nil {
+		t.Fatal("changed tunnel keys admitted")
+	}
+	engine.archive = instanceArchive(t, profile, nil, 0600)
+	if err := writer.VerifyRuntimeMount(ctx, key, descriptor, engine.container.ID); err == nil {
+		t.Fatal("missing tunnel keys admitted")
+	}
+
 }
 
 type rejectingInstanceGate struct{ calls int }
@@ -103,7 +119,7 @@ func TestRuntimeCannotStartBeforeInstanceMountAdmission(t *testing.T) {
 	record, _ := issuer.Issue(id)
 	physical := testDeployment()
 	physical.InstanceAuthentication = record
-	physical.RuntimeSpec.Authentication = &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest}
+	physical.RuntimeSpec.Authentication = &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest, Tunnel: record.Tunnel.Descriptor()}
 	digest, err := driver.DeploymentDigest(physical)
 	if err != nil {
 		t.Fatal(err)

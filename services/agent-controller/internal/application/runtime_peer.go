@@ -13,12 +13,12 @@ func (service *LifecycleService) openRuntimeNetwork(ctx context.Context, agentID
 	}
 	if inspection.AgentID != agentID || inspection.RuntimeRevision != revision ||
 		inspection.LifecycleState != "provisioned" || inspection.Phase != "running" ||
-		!ports.ValidRuntimePeer(inspection.RuntimeEndpoint) {
+		(!ports.ValidRuntimePeer(inspection.RuntimeEndpoint) || !ports.ValidTunnelKeyID(inspection.TunnelKeyID)) {
 		return ports.NetworkAttachment{}, &ports.DependencyError{
 			Service: "runtime-controller", Code: "runtime_peer_unavailable", Retryable: true,
 		}
 	}
-	result, err := service.egress.SetAgentNetworkAttachment(ctx, agentID, ports.NetworkAttachmentOpen, attachment.AttachmentResourceVersion, inspection.RuntimeEndpoint)
+	result, err := service.egress.SetAgentNetworkAttachment(ctx, agentID, ports.NetworkAttachmentOpen, attachment.AttachmentResourceVersion, inspection.RuntimeEndpoint, inspection.TunnelKeyID)
 	var conflict *ports.DependencyError
 	if !errors.As(err, &conflict) || conflict.Service != "runtime-egress" || conflict.Code != "resource_version_conflict" {
 		return result, err
@@ -30,12 +30,12 @@ func (service *LifecycleService) openRuntimeNetwork(ctx context.Context, agentID
 	if !networkAttachmentReady(current, agentID) || !sameNetworkCoordinates(current, attachment) ||
 		current.AttachmentResourceVersion <= attachment.AttachmentResourceVersion ||
 		current.AttachmentResourceVersion-attachment.AttachmentResourceVersion != 1 ||
-		current.RuntimeEndpoint == inspection.RuntimeEndpoint {
+		(current.RuntimeEndpoint == inspection.RuntimeEndpoint && current.TunnelKeyID == inspection.TunnelKeyID) {
 		return ports.NetworkAttachment{}, err
 	}
 	// The immediately preceding CAS may be this operation's lost open response.
 	// A restart changed its peer, so consume a new CAS without borrowing a later cycle.
-	return service.egress.SetAgentNetworkAttachment(ctx, agentID, ports.NetworkAttachmentOpen, current.AttachmentResourceVersion, inspection.RuntimeEndpoint)
+	return service.egress.SetAgentNetworkAttachment(ctx, agentID, ports.NetworkAttachmentOpen, current.AttachmentResourceVersion, inspection.RuntimeEndpoint, inspection.TunnelKeyID)
 }
 
 func (worker *RuntimeObservationWorker) bindObservedPeer(ctx context.Context, pending ports.PendingRuntimeBinding, inspection ports.RuntimeInspection) error {
@@ -47,7 +47,7 @@ func (worker *RuntimeObservationWorker) bindObservedPeer(ctx context.Context, pe
 }
 
 func (worker *RuntimeObservationWorker) bindCurrentOpenPeer(ctx context.Context, inspection ports.RuntimeInspection, confirm, requireOpen bool) error {
-	if !ports.ValidRuntimePeer(inspection.RuntimeEndpoint) {
+	if !ports.ValidRuntimePeer(inspection.RuntimeEndpoint) || !ports.ValidTunnelKeyID(inspection.TunnelKeyID) {
 		return ErrDependencyUnavailable
 	}
 	network, err := worker.egress.GetAgentNetwork(ctx, inspection.AgentID)
@@ -60,12 +60,12 @@ func (worker *RuntimeObservationWorker) bindCurrentOpenPeer(ctx context.Context,
 		}
 		return nil
 	}
-	if network.RuntimeEndpoint != inspection.RuntimeEndpoint || confirm {
-		rebound, err := worker.egress.SetAgentNetworkAttachment(ctx, inspection.AgentID, ports.NetworkAttachmentOpen, network.AttachmentResourceVersion, inspection.RuntimeEndpoint)
+	if network.RuntimeEndpoint != inspection.RuntimeEndpoint || network.TunnelKeyID != inspection.TunnelKeyID || confirm {
+		rebound, err := worker.egress.SetAgentNetworkAttachment(ctx, inspection.AgentID, ports.NetworkAttachmentOpen, network.AttachmentResourceVersion, inspection.RuntimeEndpoint, inspection.TunnelKeyID)
 		if err != nil {
 			return err
 		}
-		if !networkAttachmentReady(rebound, inspection.AgentID) || rebound.RuntimeEndpoint != inspection.RuntimeEndpoint {
+		if !networkAttachmentReady(rebound, inspection.AgentID) || (rebound.RuntimeEndpoint != inspection.RuntimeEndpoint || rebound.TunnelKeyID != inspection.TunnelKeyID) {
 			return ErrDependencyUnavailable
 		}
 	}

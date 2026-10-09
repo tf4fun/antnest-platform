@@ -11,7 +11,9 @@ This is an Antnest Runtime owning-service gate. It builds the release and explic
 test-feature images; those builds run Linux unit, contract, component, Clippy and
 executor checks. It then starts the actual PID 1 release process with TUN,
 root-only receiver and workspace volumes on a test-owned internal Docker network.
-There are no host ports. A readiness-only UDP fixture never forwards traffic.
+There are no host ports. A BoringTun readiness-only fixture verifies encrypted
+datagrams and returns authenticated resets; it never forwards traffic. Both
+root-only bootstrap files are generated from fresh CSPRNG key pairs.
 The probe uses the installed official MCP client as a dependency, without running
 ACP, RC, Controller, Identity, Registry or any model provider.
 

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -148,11 +154,12 @@ test("credential canaries cover provisioned files, env values and secret env", (
     join(directory, "nested", "service.key"),
     "-----BEGIN PLACEHOLDER KEY-----\nplaceholderKeyMaterialLine0123456789xxxx\n-----END PLACEHOLDER KEY-----\n",
   );
-  const canaries = credentialCanaries(directory, {
+  const { canaries, unreadable } = credentialCanaries(directory, {
     ANTNEST_BOOTSTRAP_ADMIN_PASSWORD: "stage3-admin-password",
     ANTNEST_EDGE_HOST_PORT: "42001",
     HOME: "/home/runner",
   });
+  assert.equal(unreadable, 0);
   assert(canaries.includes("placeholder-env-value-xxxxxxxx"));
   assert(canaries.includes("placeholderKeyMaterialLine0123456789xxxx"));
   assert(canaries.includes("stage3-admin-password"));
@@ -160,4 +167,35 @@ test("credential canaries cover provisioned files, env values and secret env", (
   assert(!canaries.includes("42001"));
   assert(!canaries.includes("/home/runner"));
   assert(!canaries.includes("-----BEGIN PLACEHOLDER KEY-----"));
+});
+
+test("an unreadable credential file withholds every log-derived field", (t) => {
+  if (process.getuid?.() === 0) t.skip("root reads every file");
+  const directory = mkdtempSync(join(tmpdir(), "startup-canaries-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, "runtime-egress"));
+  const owned = join(directory, "runtime-egress", "tunnel-master.key");
+  writeFileSync(owned, "placeholder-root-owned-key-xxxxxxxx");
+  chmodSync(owned, 0);
+  const scan = credentialCanaries(directory, {});
+  assert.equal(scan.unreadable, 1);
+  const summary = summarizeStartupFailure(
+    container("runtime-egress", { ExitCode: 1 }),
+    [
+      JSON.stringify({
+        level: "ERROR",
+        msg: "bootstrap",
+        error: { code: "x" },
+      }),
+      "Error: Error",
+    ].join("\n"),
+    scan.canaries,
+    { withholdText: scan.unreadable > 0 },
+  );
+  assert.equal(summary.service, "runtime-egress");
+  assert.equal(summary.exit_code, 1);
+  assert.deepEqual(summary.errors, [
+    { msg: "[withheld: credential]", code: "[withheld: credential]" },
+  ]);
+  assert.deepEqual(summary.crash, ["[withheld: credential]"]);
 });

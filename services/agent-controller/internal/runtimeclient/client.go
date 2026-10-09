@@ -190,6 +190,7 @@ func (client *Client) InspectRuntime(
 		RuntimeExecutionID: inspection.RuntimeExecutionID,
 		MCPEndpoint:        inspection.MCPEndpoint,
 		RuntimeEndpoint:    inspection.RuntimeEndpoint,
+		TunnelKeyID:        inspection.TunnelKeyID,
 		LifecycleState:     inspection.LifecycleState, Health: inspection.Health,
 	}, nil
 }
@@ -328,7 +329,7 @@ func validUnreadyRuntimeOperation(operation runtimeOperationDTO, lifecycle strin
 }
 
 func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
-	if inspection.RuntimeEndpoint != "" && !ports.ValidRuntimePeer(inspection.RuntimeEndpoint) {
+	if inspection.RuntimeEndpoint != "" && (!ports.ValidRuntimePeer(inspection.RuntimeEndpoint) || !ports.ValidTunnelKeyID(inspection.TunnelKeyID)) || inspection.RuntimeEndpoint == "" && inspection.TunnelKeyID != "" {
 		return false
 	}
 	if !runtimeRevisionPattern.MatchString(inspection.RuntimeRevision) ||
@@ -443,6 +444,7 @@ type runtimeOperationDTO struct {
 
 type runtimeInspectionDTO struct {
 	RuntimeEndpoint    string    `json:"runtime_endpoint,omitempty"`
+	TunnelKeyID        string    `json:"tunnel_key_id,omitempty"`
 	Phase              string    `json:"phase"`
 	Reason             string    `json:"reason,omitempty"`
 	DiagnosticSummary  string    `json:"diagnostic_summary,omitempty"`

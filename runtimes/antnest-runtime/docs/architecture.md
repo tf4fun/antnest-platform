@@ -375,8 +375,11 @@ the existing operation must reconcile before another lifecycle mutation.
 - Agent-originated public traffic still enters TUN;
 - changing an Agent policy does not create a new Runtime generation.
 
-The UDP tunnel has no custom framing, batching, identity, heartbeat, retry, or
-Trace envelope. Inner TCP owns retransmission and congestion control. MCP never
+The revision 2 UDP tunnel adds the public `ANT2` + key-ID routing prefix to
+WireGuard messages. BoringTun owns authenticated encryption, replay admission,
+handshake retry, keepalive and session rekey. RC privately bootstraps both
+endpoint identities. Handshake traffic never enters TUN and no packet is traced.
+Inner TCP owns data retransmission and congestion control. MCP never
 carries packet data and Runtime Egress never carries tool calls.
 
 ## Module Map
@@ -390,7 +393,7 @@ carries packet data and Runtime Egress never carries tool calls.
 | `execution`                                  | Transport-neutral tool requests, results, and invariants                                                        |
 | `privilege` / `evidence`                     | Root Supervisor and Executor privilege verification                                                             |
 | `network` / `packet`                         | TUN, routes, kill switch, packet validation, and local rejection                                                |
-| `network_session`                            | Single raw-IP-over-UDP TUN tunnel loop                                                                          |
+| `network_session`                            | Authenticated WireGuard TUN tunnel loop and protocol timers                                                                          |
 | `protocol`                                   | MCP input/output DTOs and generated JSON Schemas                                                                |
 | `roots`                                      | Named-root reads and atomic workspace writes                                                                    |
 | `executor`                                   | Shared subcommand entry, privilege drop, and bounded JSON exchange                                              |

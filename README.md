@@ -150,6 +150,9 @@ set +a
 # Build all images (sequential builds keep memory use predictable).
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
 
+# Give the two Egress bootstrap files their container root ownership.
+node scripts/dev-egress-auth-owner.mjs
+
 # Start the platform with Jaeger.
 ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
   docker compose -f compose.yaml -f compose.stage3.yaml \

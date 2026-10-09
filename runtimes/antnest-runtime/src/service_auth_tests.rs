@@ -126,7 +126,12 @@ fn receiver_directory_checks_opened_files_permissions_owner_and_complete_digest(
     let root = tempfile::tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let raw = br#"{"runtime-controller":["sha256:ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0"],"agent-acp-service":["sha256:cf0931e168b49e987503caf18af6fe253b6b3d82a81008c3e8e1ee67c7c8dc55"]}"#;
+    let (tunnel_descriptor, tunnel_raw) = crate::tunnel_auth_tests::fixture();
+    let tunnel_path = root.path().join("tunnel.json");
+    fs::write(&tunnel_path, tunnel_raw).unwrap();
+    fs::set_permissions(&tunnel_path, fs::Permissions::from_mode(0o600)).unwrap();
     let descriptor = BootstrapDescriptor {
+        tunnel: tunnel_descriptor,
         connection_id: "rci_00000000000000000000000000000001".into(),
         callers_file: crate::service_auth::CALLERS_FILE.into(),
         receiver_digest: "sha256:".to_owned()

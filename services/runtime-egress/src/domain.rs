@@ -47,6 +47,7 @@ pub struct PolicyAssignment {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeAttachment {
+    pub tunnel_key_id: Option<antnest_runtime_tunnel::KeyId>,
     pub agent_id: AgentId,
     pub state: AttachmentState,
     pub resource_version: u64,

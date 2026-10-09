@@ -5,11 +5,13 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 
+use antnest_runtime_tunnel::{Event, MAX_DATAGRAM, Peer, TIMER_MILLIS};
 use thiserror::Error;
 use tokio::io::unix::AsyncFd;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 
+#[cfg(target_os = "linux")]
 use crate::network::{NetworkTransport, RuntimeNetwork};
 use crate::packet::{
     egress_readiness_probe, inbound_tunnel_datagram, is_egress_readiness_reply,
@@ -21,7 +23,7 @@ use crate::telemetry::RuntimeMetrics;
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const READINESS_PROBE_ATTEMPTS: usize = 3;
-const READINESS_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+const READINESS_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Error)]
 pub(crate) enum NetworkSessionError {
@@ -43,9 +45,11 @@ impl NetworkSessionError {
 pub(crate) struct NetworkSession(UdpNetwork);
 
 impl NetworkSession {
+    #[cfg(target_os = "linux")]
     pub(crate) async fn prepare(
         network: RuntimeNetwork,
         generation: u64,
+        descriptor: &crate::tunnel_auth::Descriptor,
     ) -> Result<Self, NetworkSessionError> {
         let NetworkTransport {
             tun,
@@ -53,16 +57,19 @@ impl NetworkSession {
             egress_endpoint,
             tunnel_ipv4,
         } = network.into_transport();
-        let transport = UdpNetwork::connect(
+        let peer = crate::tunnel_auth::load(descriptor)
+            .map_err(|_| transport_error("private tunnel bootstrap rejected"))?;
+        let mut transport = UdpNetwork::connect(
             SocketAddr::V4(egress_endpoint.address()),
             usize::from(mtu),
             tun,
             tunnel_ipv4,
+            peer,
         )?;
         verify_egress_path(
             &transport.socket,
+            &mut transport.peer,
             tunnel_ipv4,
-            usize::from(mtu),
             generation,
             READINESS_PROBE_ATTEMPTS,
             READINESS_PROBE_TIMEOUT,
@@ -82,7 +89,7 @@ impl NetworkSession {
             "service.name" = crate::telemetry::SERVICE_NAME,
             "antnest.agent.id" = identity.agent_id(),
             "antnest.runtime.generation" = %identity.generation(),
-            "network.transport" = "udp_tunnel",
+            "network.transport" = "wireguard_over_udp",
             "network.session.outcome" = tracing::field::Empty,
             "network.session.duration_ms" = tracing::field::Empty,
             otel.status_code = tracing::field::Empty,
@@ -134,6 +141,7 @@ fn record_network_result(
 }
 
 pub(crate) struct UdpNetwork {
+    peer: Peer,
     socket: tokio::net::UdpSocket,
     mtu: usize,
     tun: Arc<AsyncFd<File>>,
@@ -213,10 +221,12 @@ impl UdpNetwork {
         mtu: usize,
         tun: File,
         tunnel_ipv4: Ipv4Addr,
+        peer: Peer,
     ) -> Result<Self, NetworkSessionError> {
         let socket = connect_management_udp(address)?;
         let tun = Arc::new(AsyncFd::new(tun).map_err(local_error)?);
         Ok(Self {
+            peer,
             socket,
             mtu,
             tun,
@@ -229,9 +239,15 @@ impl UdpNetwork {
         shutdown: CancellationToken,
         exporter: RuntimeMetrics,
     ) -> Result<(), NetworkSessionError> {
+        if shutdown.is_cancelled() {
+            return Ok(());
+        }
         let tun = self.tun;
+        let mut peer = self.peer;
+        let remote = self.socket.peer_addr().map_err(transport_error)?.ip();
+        let mut crypto_timer = tokio::time::interval(Duration::from_millis(TIMER_MILLIS));
         let mut outbound = vec![0_u8; self.mtu];
-        let mut inbound = vec![0_u8; self.mtu];
+        let mut inbound = vec![0_u8; MAX_DATAGRAM + 1];
         let mut metrics = NetworkMetrics::new(exporter);
         let mut report = tokio::time::interval_at(
             tokio::time::Instant::now() + Duration::from_secs(30),
@@ -241,6 +257,9 @@ impl UdpNetwork {
             tokio::select! {
                 _ = shutdown.cancelled() => return Ok(()),
                 _ = report.tick() => metrics.log(),
+                _ = crypto_timer.tick() => {
+                    if let Ok(events)=peer.tick() { send_network_events(&self.socket, events).await?; }
+                },
                 read = read_tun(&tun, &mut outbound) => {
                     let size = read?;
                     let packet = &outbound[..size];
@@ -252,21 +271,22 @@ impl UdpNetwork {
                         }
                         continue;
                     }
-                    send_udp_bounded(&self.socket, packet).await?;
+                    if let Ok(events)=peer.send(packet) { send_network_events(&self.socket,events).await?; }
                     metrics.outbound(size);
                 }
                 received = self.socket.recv(&mut inbound) => {
                     let size = received.map_err(transport_error)?;
-                    let Some(packet) = validated_inbound_datagram(
-                        &inbound[..size],
-                        self.mtu,
-                        self.tunnel_ipv4,
-                    ) else {
-                        metrics.malformed_inbound();
-                        continue;
-                    };
-                    write_tun_bounded(&tun, packet).await?;
-                    metrics.inbound(size);
+                    let Ok(events)=peer.receive(&inbound[..size],remote) else {metrics.malformed_inbound();continue};
+                    for event in events {
+                        match event {
+                            Event::Network(frame)=>send_udp_bounded(&self.socket,&frame).await?,
+                            Event::Ipv4(inner)=>{
+                                let Some(packet)=validated_inbound_datagram(&inner,self.mtu,self.tunnel_ipv4) else {metrics.malformed_inbound();continue};
+                                write_tun_bounded(&tun,packet).await?;
+                                metrics.inbound(packet.len());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -277,10 +297,22 @@ fn validated_inbound_datagram(packet: &[u8], mtu: usize, tunnel_ipv4: Ipv4Addr) 
     inbound_tunnel_datagram(packet, mtu, tunnel_ipv4).ok()
 }
 
+async fn send_network_events(
+    socket: &tokio::net::UdpSocket,
+    events: Vec<Event>,
+) -> Result<(), NetworkSessionError> {
+    for event in events {
+        if let Event::Network(frame) = event {
+            send_udp_bounded(socket, &frame).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn verify_egress_path(
     socket: &tokio::net::UdpSocket,
+    peer: &mut Peer,
     tunnel_ipv4: Ipv4Addr,
-    mtu: usize,
     generation: u64,
     attempts: usize,
     deadline: Duration,
@@ -288,30 +320,35 @@ async fn verify_egress_path(
     let source_port = readiness_probe_source_port(generation);
     let sequence = readiness_probe_sequence(generation);
     let probe = egress_readiness_probe(tunnel_ipv4, source_port, sequence);
-    let mut reply = vec![0_u8; mtu];
-
+    let mut reply = vec![0_u8; MAX_DATAGRAM + 1];
+    let remote = socket.peer_addr().map_err(transport_error)?.ip();
+    let mut clock = tokio::time::interval(Duration::from_millis(TIMER_MILLIS));
     for _ in 0..attempts {
-        let sent = tokio::time::timeout(deadline, socket.send(&probe))
-            .await
-            .map_err(|_| transport_error("Egress readiness probe write timed out"))?
-            .map_err(transport_error)?;
-        if sent != probe.len() {
-            return Err(transport_error(
-                "Egress readiness probe write was incomplete",
-            ));
-        }
-        let response = tokio::time::timeout(deadline, async {
+        let events = peer.send(&probe).map_err(transport_error)?;
+        send_network_events(socket, events).await?;
+        let response=tokio::time::timeout(deadline,async {
             loop {
-                let size = socket.recv(&mut reply).await.map_err(transport_error)?;
-                if is_egress_readiness_reply(&reply[..size], tunnel_ipv4, source_port, sequence) {
-                    return Ok(());
+                tokio::select! {
+                    received=socket.recv(&mut reply)=>{
+                        let size=received.map_err(transport_error)?;
+                        let Ok(events)=peer.receive(&reply[..size],remote) else {continue};
+                        for event in events {
+                            match event {
+                                Event::Network(frame)=>send_udp_bounded(socket,&frame).await?,
+                                Event::Ipv4(inner)=>{
+                                    if is_egress_readiness_reply(&inner,tunnel_ipv4,source_port,sequence) {return Ok(())}
+                                }
+                            }
+                        }
+                    },
+                    _=clock.tick()=>{
+                        if let Ok(events)=peer.tick() {send_network_events(socket,events).await?;}
+                    }
                 }
             }
-        })
-        .await;
-        match response {
-            Ok(result) => return result,
-            Err(_) => continue,
+        }).await;
+        if let Ok(result) = response {
+            return result;
         }
     }
     Err(transport_error("Egress readiness probe timed out"))

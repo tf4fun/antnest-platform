@@ -2,6 +2,8 @@ FROM rust:1.98.1-bookworm AS build
 ARG CARGO_BUILD_JOBS=2
 WORKDIR /src
 COPY services/runtime-egress ./services/runtime-egress
+COPY modules/runtime-tunnel ./modules/runtime-tunnel
+COPY tests/support/runtime-tunnel ./tests/support/runtime-tunnel
 COPY tests/integration/runtime-egress ./tests/integration/runtime-egress
 COPY tests/support/egress-auth.rs ./tests/support/egress-auth.rs
 COPY contracts/runtime ./contracts/runtime
@@ -16,6 +18,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cargo test --locked --test kernel_backstop --no-run --message-format=json > /tmp/kernel-backstop-artifacts.json \
     && sed -n 's/.*"executable":"\([^"]*kernel_backstop-[^"]*\)".*/\1/p' /tmp/kernel-backstop-artifacts.json | while IFS= read -r test_binary; do cp "$test_binary" /tmp/kernel-backstop-test; done \
     && test -f /tmp/kernel-backstop-test \
+    && cargo build --locked --release --example wire-probe \
+    && cp target/release/examples/wire-probe /tmp/wire-probe \
     && cargo build --locked --release \
     && cp target/release/antnest-runtime-egress /tmp/runtime-egress
 

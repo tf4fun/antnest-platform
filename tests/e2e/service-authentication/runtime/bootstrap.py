@@ -20,6 +20,10 @@ target = root / "callers.json"
 target.write_text(source["callers_raw"])
 os.chown(target, 0, 0)
 os.chmod(target, 0o600)
+tunnel = root / "tunnel.json"
+tunnel.write_text(source["tunnel_raw"])
+os.chown(tunnel, 0, 0)
+os.chmod(tunnel, 0o600)
 if mode == "empty":
     target.unlink()
 elif mode == "directory-mode":

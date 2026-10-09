@@ -26,6 +26,8 @@ struct ContractRoute {
     method: String,
     path: String,
     request_schema: Option<String>,
+    caller: Option<String>,
+    content_capture: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -43,9 +45,12 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 6);
+    assert_eq!(contract.revision, 7);
     assert_eq!(contract.transport, "json-over-http");
-    assert_eq!(contract.trust_boundary, "verified-controller-workload");
+    assert_eq!(
+        contract.trust_boundary,
+        "verified-controller-or-runtime-controller-workload"
+    );
     assert_eq!(contract.status_values, ["ready", "degraded"]);
     assert_eq!(
         contract.builtin_policies["deny_all"].policy_id,
@@ -87,13 +92,21 @@ fn machine_contract_matches_the_complete_control_surface() {
         .iter()
         .filter(|route| route.request_schema.is_some())
         .collect::<Vec<_>>();
-    assert_eq!(state_routes.len(), 2);
+    assert_eq!(state_routes.len(), 3);
     assert!(state_routes.iter().any(|route| {
         route.request_schema.as_deref() == Some("attachment-state-request.schema.json")
     }));
     assert!(state_routes.iter().any(|route| {
         route.request_schema.as_deref() == Some("resource-version-request.schema.json")
     }));
+
+    let private_route = &contract.routes[0];
+    assert_eq!(private_route.caller.as_deref(), Some("runtime-controller"));
+    assert_eq!(private_route.content_capture.as_deref(), Some("never"));
+    assert_eq!(
+        contract.schemas["tunnel_key_request"],
+        "tunnel-key-request.schema.json"
+    );
 
     let prose = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -157,7 +170,7 @@ async fn ensure_endpoint_returns_runtime_attachment() {
     let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(document["agent_id"], "agent-1");
     assert_eq!(document["tunnel_ipv4"], "100.64.0.2");
-    assert_eq!(document["packet_contract_revision"], 1);
+    assert_eq!(document["packet_contract_revision"], 2);
     assert_eq!(document["egress_endpoint"]["ipv4"], "10.20.0.8");
     assert_eq!(document["egress_endpoint"]["port"], 8092);
     assert_eq!(document["network_resource_version"], 1);
@@ -180,13 +193,20 @@ async fn ensure_endpoint_returns_runtime_attachment() {
             "resolver_ipv4".to_owned(),
             "state".to_owned(),
             "tunnel_ipv4".to_owned(),
+            "tunnel_key_id".to_owned(),
         ])
     );
 }
 
 #[tokio::test]
 async fn attachment_endpoint_opens_with_a_versioned_cas() {
-    let app = app().await;
+    let service = support::service().await;
+    let app = antnest_runtime_egress::control::router_with_capture_rpc_content(
+        service.clone(),
+        antnest_runtime_egress::telemetry::EgressMetrics::default(),
+        support::admission_for("agent-controller"),
+        false,
+    );
     let ensure = app
         .clone()
         .oneshot(
@@ -198,6 +218,15 @@ async fn attachment_endpoint_opens_with_a_versioned_cas() {
         .await
         .unwrap();
     assert_eq!(ensure.status(), StatusCode::OK);
+    let agent = antnest_runtime_egress::domain::AgentId::parse("agent-attachment").unwrap();
+    let network = service.agent_network(&agent).await.unwrap();
+    service
+        .register_tunnel(
+            agent.clone(),
+            support::auth::tunnel_registration(agent.as_str(), network.tunnel_ipv4),
+        )
+        .await
+        .unwrap();
 
     let response = app
         .oneshot(
@@ -205,7 +234,7 @@ async fn attachment_endpoint_opens_with_a_versioned_cas() {
                 .header("content-type", "application/json")
                 .header("antnest-service-authorization", support::workload_header())
                 .body(Body::from(
-                    r#"{"state":"open","expected_resource_version":1,"runtime_endpoint":"10.20.0.9"}"#,
+                    serde_json::json!({"state":"open","expected_resource_version":1,"runtime_endpoint":"10.20.0.9","tunnel_key_id":support::auth::key_id("agent-attachment").to_string()}).to_string(),
                 ))
                 .unwrap(),
         )
@@ -520,4 +549,75 @@ async fn assert_stable_error(response: axum::response::Response, status: StatusC
     let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(document["code"], code);
     assert_eq!(document["retryable"], false);
+}
+
+#[tokio::test]
+async fn open_without_prepared_authority_does_not_mutate_attachment() {
+    let service = support::service().await;
+    let agent = antnest_runtime_egress::domain::AgentId::parse("agent-unready").unwrap();
+    service.ensure_agent_network(agent.clone()).await.unwrap();
+    let app = antnest_runtime_egress::control::router_with_capture_rpc_content(
+        service.clone(),
+        antnest_runtime_egress::telemetry::EgressMetrics::default(),
+        support::admission_for("agent-controller"),
+        false,
+    );
+    for (key, expected) in [
+        (None, StatusCode::BAD_REQUEST),
+        (
+            Some(support::auth::key_id(agent.as_str()).to_string()),
+            StatusCode::CONFLICT,
+        ),
+    ] {
+        let body = serde_json::json!({"state":"open","expected_resource_version":1,"runtime_endpoint":"10.20.0.9","tunnel_key_id":key});
+        let response = app
+            .clone()
+            .oneshot(
+                Request::put("/internal/agent-network-attachments/agent-unready")
+                    .header("content-type", "application/json")
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        let network = service.agent_network(&agent).await.unwrap();
+        assert_eq!(network.attachment_resource_version, 1);
+        assert_eq!(
+            network.attachment_state,
+            antnest_runtime_egress::domain::AttachmentState::Closed
+        );
+    }
+}
+
+#[tokio::test]
+async fn private_key_route_accepts_only_runtime_controller() {
+    let service = support::service().await;
+    let agent = antnest_runtime_egress::domain::AgentId::parse("agent-private").unwrap();
+    let network = service.ensure_agent_network(agent.clone()).await.unwrap();
+    let input = support::auth::tunnel_registration(agent.as_str(), network.tunnel_ipv4);
+    let body = serde_json::json!({"key_id":input.key_id,"runtime_revision":input.runtime_revision,"tunnel_ipv4":input.tunnel_ipv4,"egress_private_key":input.egress_private_key,"runtime_public_key":input.runtime_public_key,"preshared_key":input.preshared_key}).to_string();
+    for (caller, expected) in [
+        ("agent-controller", StatusCode::FORBIDDEN),
+        ("runtime-controller", StatusCode::NO_CONTENT),
+    ] {
+        let app = antnest_runtime_egress::control::router_with_capture_rpc_content(
+            service.clone(),
+            antnest_runtime_egress::telemetry::EgressMetrics::default(),
+            support::admission_for(caller),
+            true,
+        );
+        let response = app
+            .oneshot(
+                Request::put("/internal/agent-tunnel-keys/agent-private")
+                    .header("content-type", "application/json")
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
 }

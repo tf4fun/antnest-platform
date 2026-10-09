@@ -379,8 +379,7 @@ func (dependency *enableDependenciesStub) EnsureAgentNetwork(
 }
 
 func (dependency *enableDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string,
-) (ports.NetworkAttachment, error) {
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string, tunnelKeyID string) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	if state == ports.NetworkAttachmentOpen && dependency.attachmentOpenErr != nil {
 		return ports.NetworkAttachment{}, dependency.attachmentOpenErr
@@ -390,6 +389,7 @@ func (dependency *enableDependenciesStub) SetAgentNetworkAttachment(
 	result.State = ports.NetworkStateActive
 	result.AttachmentState = state
 	result.RuntimeEndpoint = runtimeEndpoint
+	result.TunnelKeyID = tunnelKeyID
 	result.AttachmentResourceVersion = expectedResourceVersion + 1
 	dependency.network = result
 	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed

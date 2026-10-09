@@ -134,26 +134,35 @@
       "default_subnet": "172.31.255.0/24",
       "members": {
         "runtime-egress": 3,
-        "agent-controller": 4
+        "agent-controller": 4,
+        "runtime-controller": 5
       }
     }
   },
   "outbound_networks": {
     "identity-outbound": {
       "internal": false,
-      "members": ["identity-service"]
+      "members": [
+        "identity-service"
+      ]
     },
     "controller-provider": {
       "internal": false,
-      "members": ["agent-controller"]
+      "members": [
+        "agent-controller"
+      ]
     },
     "acp-provider": {
       "internal": false,
-      "members": ["agent-acp-service"]
+      "members": [
+        "agent-acp-service"
+      ]
     },
     "egress": {
       "internal": false,
-      "members": ["runtime-egress"]
+      "members": [
+        "runtime-egress"
+      ]
     }
   },
   "database_networks": {
@@ -386,6 +395,10 @@
       "skill-registry": {
         "receiver": "skill-registry",
         "listener": "primary"
+      },
+      "runtime-egress": {
+        "receiver": "runtime-egress",
+        "listener": "primary"
       }
     },
     "skill-registry": {
@@ -430,8 +443,14 @@
       "bind_network": "runtime-management",
       "bind_address_suffix": 4,
       "port": 4318,
-      "methods": ["POST"],
-      "paths": ["/v1/traces", "/v1/metrics", "/v1/logs"],
+      "methods": [
+        "POST"
+      ],
+      "paths": [
+        "/v1/traces",
+        "/v1/metrics",
+        "/v1/logs"
+      ],
       "query_strings": false,
       "upstream": "jaeger",
       "upstream_network": "observability",
@@ -440,7 +459,10 @@
       "max_upstream_response_bytes": 1048576,
       "max_inflight": 8,
       "timeout_ms": 15000,
-      "forwarded_request_headers": ["content-type", "content-encoding"],
+      "forwarded_request_headers": [
+        "content-type",
+        "content-encoding"
+      ],
       "forward_authority_headers": false,
       "business_credential_mounts": false,
       "host_publications": false,

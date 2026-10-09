@@ -144,7 +144,7 @@ func TestNeverReadyRejectedRebuildRestoresNetworkBeforePublication(t *testing.T)
 	base, seed := seedConfiguredAgentForTest(t, ctx, repo, false)
 	deps := newRuntimeRebuildDependencies(base.Agent)
 	deps.updateError = &ports.DependencyError{Service: "runtime-controller", Code: "image_not_found"}
-	deps.inspection = &ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "provisioned", Phase: "running", RuntimeEndpoint: "10.20.0.9", Health: "starting"}
+	deps.inspection = &ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "provisioned", Phase: "running", RuntimeEndpoint: "10.20.0.9", TunnelKeyID: "rtk_0123456789abcdef0123456789abcdef", Health: "starting"}
 	service, worker := runtimeRebuildServices(t, repo, deps)
 	input := application.RebuildAgentInput{RequestID: "rejected-before-ready", AgentID: base.Agent.AgentID,
 		TemplateID: seed.Revision.Snapshot().TemplateID, TemplateRevision: seed.Revision.Revision()}

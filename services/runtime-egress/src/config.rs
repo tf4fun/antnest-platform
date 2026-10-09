@@ -14,6 +14,7 @@ pub use crate::repository::DatabaseTlsMode;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
+    pub tunnel_key_file: String,
     pub database_url: String,
     pub development_secret_warnings: Vec<&'static str>,
     pub database_tls_mode: DatabaseTlsMode,
@@ -133,6 +134,10 @@ impl Config {
         }
         let command_timeout = parse_duration(&values, "ANTNEST_EGRESS_COMMAND_TIMEOUT", "5s")?;
         Ok(Self {
+            tunnel_key_file: values
+                .get("ANTNEST_EGRESS_TUNNEL_KEY_FILE")
+                .cloned()
+                .unwrap_or_else(|| "/run/antnest-egress-auth/tunnel-master".into()),
             database_url,
             development_secret_warnings,
             database_tls_mode,

@@ -28,7 +28,7 @@ func TestEnsureAgentNetworkUsesEgressControlContract(t *testing.T) {
 			"agent_id":"agent-1",
 			"tunnel_ipv4":"100.64.0.2",
 			"resolver_ipv4":"100.64.0.1",
-			"packet_contract_revision":1,
+			"packet_contract_revision":2,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
 			"state":"active",
 			"network_resource_version":1,
@@ -64,11 +64,11 @@ func TestGetAgentNetworkReadsAuthoritativeActiveAttachment(t *testing.T) {
 			"agent_id":"agent-1",
 			"tunnel_ipv4":"100.64.0.2",
 			"resolver_ipv4":"100.64.0.1",
-			"packet_contract_revision":1,
+			"packet_contract_revision":2,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
 			"state":"active",
 			"network_resource_version":1,
-			"attachment_state":"open",
+			"attachment_state":"open","tunnel_key_id":"rtk_0123456789abcdef0123456789abcdef",
 			"runtime_endpoint":"10.20.0.9",
 			"attachment_resource_version":2
 		}`))
@@ -109,7 +109,7 @@ func TestSetAgentNetworkAttachmentUsesEgressControlContract(t *testing.T) {
 			"agent_id":"agent-1",
 			"tunnel_ipv4":"100.64.0.2",
 			"resolver_ipv4":"100.64.0.1",
-			"packet_contract_revision":1,
+			"packet_contract_revision":2,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
 			"state":"active",
 			"network_resource_version":3,
@@ -124,8 +124,7 @@ func TestSetAgentNetworkAttachmentUsesEgressControlContract(t *testing.T) {
 	}
 
 	attachment, err := client.SetAgentNetworkAttachment(
-		context.Background(), "agent-1", ports.NetworkAttachmentClosed, 7, "",
-	)
+		context.Background(), "agent-1", ports.NetworkAttachmentClosed, 7, "", "")
 	if err != nil || attachment.AttachmentState != ports.NetworkAttachmentClosed ||
 		attachment.AttachmentResourceVersion != 8 {
 		t.Fatalf("set attachment = %+v, %v", attachment, err)
@@ -151,7 +150,7 @@ func TestReleaseAgentNetworkRequiresQuarantinedAttachment(t *testing.T) {
 			"agent_id":"agent-1",
 			"tunnel_ipv4":"100.64.0.2",
 			"resolver_ipv4":"100.64.0.1",
-			"packet_contract_revision":1,
+			"packet_contract_revision":2,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
 			"state":"quarantined",
 			"network_resource_version":12,
@@ -206,7 +205,7 @@ func TestEnsureAgentNetworkRejectsInactiveAttachment(t *testing.T) {
 			"agent_id":"agent-1",
 			"tunnel_ipv4":"100.64.0.2",
 			"resolver_ipv4":"100.64.0.1",
-			"packet_contract_revision":1,
+			"packet_contract_revision":2,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
 			"state":"quarantined",
 			"network_resource_version":2,
@@ -242,7 +241,7 @@ func TestEnsureAgentNetworkPropagatesTraceContext(t *testing.T) {
 			"agent_id":"agent-1",
 			"tunnel_ipv4":"100.64.0.2",
 			"resolver_ipv4":"100.64.0.1",
-			"packet_contract_revision":1,
+			"packet_contract_revision":2,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
 			"state":"active",
 			"network_resource_version":1,

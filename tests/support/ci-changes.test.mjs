@@ -74,6 +74,19 @@ test("a service change selects only suites that exercise that service", () => {
     assert(!selected.includes(id), id);
 });
 
+test("shared Runtime tunnel changes select both transport owners and their integration", () => {
+  const selected = ids(selectSuites(["modules/runtime-tunnel/src/lib.rs"]));
+  for (const id of [
+    "auth-runtime",
+    "auth-egress",
+    "egress-postgres",
+    "shell-stage1",
+    "skill-learning-runtime",
+    "skill-temporary-runtime",
+  ])
+    assert(selected.includes(id), id);
+});
+
 test("test sources select the suites that run them", () => {
   assert.deepEqual(
     ids(selectSuites(["tests/integration/admin-console/catalog-browser.mjs"])),

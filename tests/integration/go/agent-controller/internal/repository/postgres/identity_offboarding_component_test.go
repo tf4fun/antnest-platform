@@ -216,9 +216,10 @@ func (deps *offboardingDependencies) GetAgentNetwork(context.Context, string) (p
 func (deps *offboardingDependencies) EnsureAgentNetwork(context.Context, string) (ports.NetworkAttachment, error) {
 	return deps.network, nil
 }
-func (deps *offboardingDependencies) SetAgentNetworkAttachment(_ context.Context, _ string, state string, _ uint64, runtimeEndpoint string) (ports.NetworkAttachment, error) {
+func (deps *offboardingDependencies) SetAgentNetworkAttachment(_ context.Context, _ string, state string, _ uint64, runtimeEndpoint string, tunnelKeyID string) (ports.NetworkAttachment, error) {
 	deps.network.AttachmentState = state
 	deps.network.RuntimeEndpoint = runtimeEndpoint
+	deps.network.TunnelKeyID = tunnelKeyID
 	deps.network.AttachmentResourceVersion++
 	return deps.network, nil
 }
@@ -300,6 +301,7 @@ func (deps *offboardingDependencies) InspectRuntime(_ context.Context, id string
 	if inspection.LifecycleState == "provisioned" {
 		inspection.Phase = "running"
 		inspection.RuntimeEndpoint = "10.20.0.9"
+		inspection.TunnelKeyID = "rtk_0123456789abcdef0123456789abcdef"
 	}
 	return inspection, nil
 }

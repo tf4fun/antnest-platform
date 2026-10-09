@@ -41,16 +41,23 @@ cluster network. Before exposing a deployment, understand these boundaries:
   to ACP relay are implemented. Compose uses separate control and management
   interfaces; real native Runtime, MCP, learning and rebuild acceptance has passed.
 - **Runtime Egress is privileged.** It owns a TUN device, routes and nftables
-  rules. Its control listener admits only authenticated Controller calls on its
-  configured purpose address; readiness uses a separate loopback listener.
-  These checks do not contain a compromised Egress process.
-  Open tunnel routes also require the Controller-installed outer Runtime IPv4.
-  Independent nft rules block special-use destinations and all connected Egress
-  subnets, including public-address deployment subnets. This Phase 1 peer binding
-  assumes management-network hosts cannot spoof outer packet sources; hosts
-  with raw-network authority remain trusted. Per-generation tunnel encryption
-  and replay protection are a separate phase. See
-  [the binding contract](docs/egress-peer-binding.md).
+  rules. Lifecycle/policy routes admit authenticated Controller calls; the private
+  generation-key route admits RC alone on the configured control-purpose address.
+  Readiness has a separate loopback listener. These checks do not contain a
+  compromised Egress process.
+  Runtime datagrams use the pinned embedded BoringTun WireGuard profile, with
+  independent per-generation static keys and PSK. The public `ANT2` selector grants
+  no authority. Authentication and bounded replay rejection precede inner-IP
+  attribution, policy and flow creation; open routes additionally require the
+  Controller-installed IPv4 and selected key ID. A holder of a reused outer IP
+  cannot impersonate an Agent without its generation authority. Independent nft
+  rules still block protected destinations and connected deployment subnets,
+  including public-address subnets. Host, Docker, RC and Egress administrators
+  remain trusted. See [the authenticated transport contract](docs/authenticated-runtime-tunnel.md).
+  RC/Runtime bootstrap and Egress database keys are encrypted or delivered in
+  root-only files, excluded from env/Template/public RPCs and content capture.
+  Losing the Egress storage master blocks startup. A leaked generation requires
+  explicit disable/rebuild; packet rekey cannot repair leaked static authority.
 - **Agent Runtimes execute untrusted, model-selected commands.** They run as an
   unprivileged executor user, and their network traffic is forced through
   Runtime Egress policy. Do not mount host paths or secrets into Runtimes.

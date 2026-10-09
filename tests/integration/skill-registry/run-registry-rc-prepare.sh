@@ -5,6 +5,7 @@ root_dir=$(cd "$(dirname "$0")/../../.." && pwd)
 suffix=$$
 postgres_name="antnest-skill-prepare-pg-$suffix"
 identity_name="antnest-skill-prepare-identity-$suffix"
+egress_name="antnest-skill-prepare-egress-$suffix"
 network_name="antnest-skill-prepare-network-$suffix"
 runtime_image="antnest/skill-runtime-integration:$suffix"
 temp_root=${TMPDIR:-/tmp}
@@ -27,6 +28,7 @@ cleanup() {
   docker network rm "$network_name" >/dev/null 2>&1 || true
   docker rm -f "$postgres_name" >/dev/null 2>&1 || true
   docker rm -f "$identity_name" >/dev/null 2>&1 || true
+  docker rm -f "$egress_name" >/dev/null 2>&1 || true
   rm -rf "$temp_dir"
 }
 trap cleanup EXIT
@@ -70,6 +72,19 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 docker exec "$identity_name" node /fixtures/identity-peer.mjs --healthcheck >/dev/null
+# Runtime Controller registers each generation's tunnel keys with Egress
+# before it creates compute; this double admits the registration only.
+docker run --rm -d --name "$egress_name" -p 127.0.0.1::8081 \
+  -v "$root_dir/tests/e2e/service-authentication/runtime-controller/egress-fixture.mjs:/fixture/egress-fixture.mjs:ro" \
+  -v "$auth_dir/egress:/run/auth:ro" \
+  node:24.21.0-bookworm-slim node /fixture/egress-fixture.mjs >/dev/null
+egress_port=$(docker port "$egress_name" 8081/tcp | sed 's/.*://')
+for _ in $(seq 1 30); do
+  # An unauthenticated probe answers 401 once the double is listening.
+  if [[ $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$egress_port/") == 401 ]]; then break; fi
+  sleep 1
+done
+[[ $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$egress_port/") == 401 ]]
 export ANTNEST_TEST_CREDENTIALS_FILE="$auth_dir/test-credentials.json"
 export ANTNEST_TEST_REGISTRY_URL="http://127.0.0.1:$registry_port"
 export ANTNEST_TEST_RUNTIME_CONTROLLER_URL="http://127.0.0.1:$controller_port"
@@ -105,6 +120,7 @@ start_controller() {
     ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL="postgres://postgres:antnest_test@127.0.0.1:$pg_port/postgres?sslmode=disable" \
     ANTNEST_RUNTIME_MANAGEMENT_NETWORK="$network_name" \
     ANTNEST_SKILL_REGISTRY_URL="$registry_for_controller" \
+    ANTNEST_RUNTIME_EGRESS_URL="http://127.0.0.1:$egress_port" \
     ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE=postgres:17.11-bookworm \
     "$temp_dir/runtime-controller" >"$temp_dir/controller-$1.log" 2>&1 &
   controller_pid=$!

@@ -40,7 +40,7 @@ func policyFlowHandler(t *testing.T, upstream http.HandlerFunc) (http.Handler, *
 }
 
 const policyFlowAssignment = `{"agent_id":"agent-1","policy_id":"builtin/allow-all","revision":1,"resource_version":8}`
-const policyFlowAttachment = `{"agent_id":"agent-1","tunnel_ipv4":"10.90.0.2","resolver_ipv4":"10.90.0.1","egress_endpoint":{"ipv4":"172.20.0.5","port":9000},"packet_contract_revision":1,"state":"active","network_resource_version":1,"attachment_state":"closed","attachment_resource_version":4}`
+const policyFlowAttachment = `{"agent_id":"agent-1","tunnel_ipv4":"10.90.0.2","resolver_ipv4":"10.90.0.1","egress_endpoint":{"ipv4":"172.20.0.5","port":9000},"packet_contract_revision":2,"state":"active","network_resource_version":1,"attachment_state":"closed","attachment_resource_version":4}`
 
 func policyFlowReadBody(path string) string {
 	switch path {

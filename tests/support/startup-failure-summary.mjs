@@ -19,8 +19,11 @@ const ERROR_LEVELS = new Set(["error", "fatal", "panic", "dpanic", "critical"]);
 const CRASH_LINE =
   /^(?:panic: |fatal error: |[A-Za-z]*Error(?: \[[A-Z_]+\])?: )/u;
 
+// Egress bootstrap files are root-owned, so a scan can meet files it cannot
+// read; the caller must then withhold free text it cannot check.
 export function credentialCanaries(directory, environment = process.env) {
   const canaries = new Set();
+  let unreadable = 0;
   const add = (value) => {
     if (typeof value === "string" && value.length >= 8) canaries.add(value);
   };
@@ -32,7 +35,14 @@ export function credentialCanaries(directory, environment = process.env) {
         continue;
       }
       if (!entry.isFile()) continue;
-      const bytes = readFileSync(file);
+      let bytes;
+      try {
+        bytes = readFileSync(file);
+      } catch (error) {
+        if (error.code !== "EACCES") throw error;
+        unreadable++;
+        continue;
+      }
       if (entry.name.endsWith(".env")) {
         for (const [name, value] of Object.entries(
           parseEnv(bytes.toString("utf8")),
@@ -53,7 +63,7 @@ export function credentialCanaries(directory, environment = process.env) {
   visit(directory);
   for (const [name, value] of Object.entries(environment))
     if (SECRET_NAME.test(name)) add(value);
-  return [...canaries];
+  return { canaries: [...canaries], unreadable };
 }
 
 export function failedContainers(containers) {
@@ -77,10 +87,12 @@ function leaks(text, canaries) {
 
 // The full value is checked before truncation so a cut cannot expose part
 // of a credential that straddles the limit.
-function guard(value, canaries) {
+function guard(value, canaries, withholdText = false) {
   if (value === undefined || value === null) return null;
   const text = String(value);
-  return leaks(text, canaries) ? WITHHELD : text.slice(0, FIELD_LIMIT);
+  return withholdText || leaks(text, canaries)
+    ? WITHHELD
+    : text.slice(0, FIELD_LIMIT);
 }
 
 function errorRecord(line) {
@@ -103,7 +115,12 @@ function errorRecord(line) {
   };
 }
 
-export function summarizeStartupFailure(container, logs, canaries) {
+export function summarizeStartupFailure(
+  container,
+  logs,
+  canaries,
+  { withholdText = false } = {},
+) {
   const state = container.State;
   const errors = [];
   const crash = [];
@@ -112,11 +129,11 @@ export function summarizeStartupFailure(container, logs, canaries) {
     const record = errorRecord(line);
     if (record)
       errors.push({
-        msg: guard(record.msg, canaries),
-        code: guard(record.code, canaries),
+        msg: guard(record.msg, canaries, withholdText),
+        code: guard(record.code, canaries, withholdText),
       });
     else if (CRASH_LINE.test(line) && crash.length < CRASH_LIMIT)
-      crash.push(guard(line, canaries));
+      crash.push(guard(line, canaries, withholdText));
   }
   const summary = {
     service: container.Config.Labels["com.docker.compose.service"],
@@ -150,7 +167,7 @@ export function collectStartupFailures(
   credentials,
   env = process.env,
 ) {
-  const canaries = credentialCanaries(credentials, env);
+  const { canaries, unreadable } = credentialCanaries(credentials, env);
   const ids = docker(
     [
       "ps",
@@ -172,6 +189,7 @@ export function collectStartupFailures(
       container,
       `${logs.stdout}\n${logs.stderr}`,
       canaries,
+      { withholdText: unreadable > 0 },
     );
   });
   const output = JSON.stringify({ startup_failures: failures });

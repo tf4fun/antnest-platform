@@ -220,7 +220,7 @@ func TestFencedRebuildInvalidatedSetRestoresSourceAndReleasesReference(t *testin
 	}, inspection: ports.RuntimeInspection{
 		AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 		RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID, MCPEndpoint: base.SourceExecution.RuntimeMCPEndpoint,
-		Phase: "running", RuntimeEndpoint: "10.20.0.9",
+		Phase: "running", RuntimeEndpoint: "10.20.0.9", TunnelKeyID: "rtk_0123456789abcdef0123456789abcdef",
 		LifecycleState: "provisioned", Health: "healthy",
 	}}
 	intent, client := &skillIntentStub{}, &skillPreparationClientStub{state: "ready"}

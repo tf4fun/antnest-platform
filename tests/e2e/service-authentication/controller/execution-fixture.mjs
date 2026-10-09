@@ -19,7 +19,7 @@ export function executionPeers(fixture, stats, json) {
         agent_id: agent,
         tunnel_ipv4: "10.245.1.2",
         resolver_ipv4: "10.245.1.1",
-        packet_contract_revision: 1,
+        packet_contract_revision: 2,
         egress_endpoint: { ipv4: "10.244.1.3", port: 8083 },
         state: "active",
         network_resource_version: 1,
@@ -29,7 +29,9 @@ export function executionPeers(fixture, stats, json) {
     return networks.get(agent);
   };
   const inspection = (value) => {
-    const { connection_id, token, ...publicValue } = value;
+    const publicValue = { ...value };
+    delete publicValue.connection_id;
+    delete publicValue.token;
     return { ...publicValue, observed_at: new Date().toISOString() };
   };
   const handled = (w, value, status) => {
@@ -56,15 +58,22 @@ export function executionPeers(fixture, stats, json) {
           );
           assert(["open", "closed"].includes(body.state));
           const peer = body.runtime_endpoint;
+          const key = body.tunnel_key_id;
+          if (body.state === "open")
+            assert.equal(key, runtimes.get(attachment[1]).tunnel_key_id);
+          else assert.equal(key, undefined);
           if (body.state === "open") assert.equal(peer, "10.243.1.20");
           else assert.equal(peer, undefined);
           if (
             body.state !== value.attachment_state ||
-            peer !== value.runtime_endpoint
+            peer !== value.runtime_endpoint ||
+            key !== value.tunnel_key_id
           ) {
             value.attachment_state = body.state;
             value.attachment_resource_version++;
           }
+          if (key === undefined) delete value.tunnel_key_id;
+          else value.tunnel_key_id = key;
           if (peer === undefined) delete value.runtime_endpoint;
           else value.runtime_endpoint = peer;
           return handled(w, value);
@@ -130,6 +139,7 @@ export function executionPeers(fixture, stats, json) {
             runtime_execution_id: randomUUID(),
             mcp_endpoint: "http://" + initialize[1] + ":8093/mcp",
             runtime_endpoint: "10.243.1.20",
+            tunnel_key_id: "rtk_" + randomBytes(16).toString("hex"),
             lifecycle_state: "provisioned",
             health: "healthy",
             phase: "running",
@@ -204,6 +214,8 @@ export function executionPeers(fixture, stats, json) {
             health: "absent",
             phase: "absent",
           });
+          delete value.runtime_endpoint;
+          delete value.tunnel_key_id;
           return handled(w, {
             request_id: r.headers["idempotency-key"],
             agent_id: value.agent_id,

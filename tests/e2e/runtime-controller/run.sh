@@ -16,6 +16,7 @@ export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-1
 export ANTNEST_EGRESS_IPV4="${ANTNEST_EGRESS_IPV4:-10.253.${network_octet}.3}"
 export ANTNEST_EGRESS_CONTROL_SUBNET="${ANTNEST_EGRESS_CONTROL_SUBNET:-10.252.${network_octet}.0/24}"
 export ANTNEST_EGRESS_CONTROL_IPV4="${ANTNEST_EGRESS_CONTROL_IPV4:-10.252.${network_octet}.3}"
+export ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4="${ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4:-10.252.${network_octet}.5}"
 
 agent_id="agent-runtime-controller-e2e-$$"
 runtime_name="antnest-runtime-${agent_id}"
@@ -94,7 +95,7 @@ resolution=$(controller_request --get --data-urlencode "reference=${ANTNEST_E2E_
 printf '%s' "$resolution" | grep -q "\"image_ref\":\"${runtime_image}\""
 # The configured repository reference passes operator policy; RC freezes its
 # immutable image ID for each accepted operation.
-runtime_configuration=$(printf '%s' "{\"image_ref\":\"${ANTNEST_E2E_RUNTIME_IMAGE}\",\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"resources\":{\"memory_bytes\":536870912,\"pids_limit\":256,\"tmpfs_bytes\":67108864}}")
+runtime_configuration=$(printf '%s' "{\"image_ref\":\"${ANTNEST_E2E_RUNTIME_IMAGE}\",\"network\":{\"packet_contract_revision\":2,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"resources\":{\"memory_bytes\":536870912,\"pids_limit\":256,\"tmpfs_bytes\":67108864}}")
 initialize_payload=$(printf '%s' "{\"configuration\":${runtime_configuration}}")
 created=$(controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: initialize-${agent_id}" -d "$initialize_payload" \

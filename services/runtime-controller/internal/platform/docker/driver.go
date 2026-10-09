@@ -231,7 +231,7 @@ func (d *Driver) Create(
 		}
 	}
 	if d.config.InstanceMountGate != nil || value.RuntimeSpec.Authentication != nil {
-		if d.config.InstanceMountGate == nil || value.RuntimeSpec.Authentication == nil || value.InstanceAuthentication == nil || value.InstanceAuthentication.ConnectionID != value.RuntimeSpec.Authentication.ConnectionID || value.InstanceAuthentication.ReceiverDigest != value.RuntimeSpec.Authentication.ReceiverDigest {
+		if d.config.InstanceMountGate == nil || value.RuntimeSpec.Authentication == nil || value.InstanceAuthentication == nil || value.InstanceAuthentication.ConnectionID != value.RuntimeSpec.Authentication.ConnectionID || value.InstanceAuthentication.ReceiverDigest != value.RuntimeSpec.Authentication.ReceiverDigest || value.InstanceAuthentication.Tunnel == nil || value.InstanceAuthentication.Tunnel.Descriptor() != value.RuntimeSpec.Authentication.Tunnel {
 			return failed(deployment.EffectNotStarted, "invalid_request", errors.New("accepted instance authority and mount gate are required"))
 		}
 		if err := d.config.InstanceMountGate.Prepare(ctx, key, value.InstanceAuthentication); err != nil {

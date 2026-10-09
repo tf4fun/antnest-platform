@@ -120,7 +120,7 @@ Initialize, Update, and Enable carry a Runtime configuration:
   "configuration": {
     "image_ref": "antnest/antnest-runtime@sha256:...",
     "network": {
-      "packet_contract_revision": 1,
+      "packet_contract_revision": 2,
       "egress_endpoint": { "ipv4": "10.20.0.8", "port": 8092 },
       "tunnel_ipv4": "100.64.0.2",
       "resolver_ipv4": "100.64.0.1"
@@ -386,6 +386,17 @@ actual platform-dependent calls to fail. See
 [operations](../docs/operations.md#observation-dependency-recovery) for startup
 and probe thresholds. The Controller's own `--healthcheck` consumes only the
 HTTP status code.
+
+## Tunnel generation registration
+
+Revision 19 reports `tunnel_key_id` alongside the current management IPv4 in
+live Inspect/List. RC privately registers prepared Egress keys before platform
+effects; transient failure leaves the accepted operation running and returns
+503 `tunnel_registration_unavailable` (retry the same request). Deterministic
+rejection returns `tunnel_key_registration_rejected`, preserves the source, and
+never starts a candidate. Generation material is sealed with the RC instance
+master key and copied only into its private bootstrap volume. See
+[the authenticated tunnel design](../../../docs/authenticated-runtime-tunnel.md).
 
 ## Failure Semantics
 

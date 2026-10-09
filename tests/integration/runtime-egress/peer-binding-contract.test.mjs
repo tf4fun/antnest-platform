@@ -25,7 +25,11 @@ test("attachment open requires a peer IPv4; close removes its peer binding", () 
   const validate = ajv.compile(
     read("contracts/egress/attachment-state-request.schema.json"),
   );
-  const request = { state: "open", expected_resource_version: 1 };
+  const request = {
+    state: "open",
+    expected_resource_version: 1,
+    tunnel_key_id: "rtk_" + "a".repeat(32),
+  };
   assert(validate({ ...request, runtime_endpoint: "10.243.1.20" }));
   for (const value of [
     undefined,
@@ -39,8 +43,14 @@ test("attachment open requires a peer IPv4; close removes its peer binding", () 
     " 10.243.1.20 ",
   ])
     assert.equal(validate({ ...request, runtime_endpoint: value }), false);
-  assert(validate({ ...request, state: "closed" }));
-  assert(validate({ ...request, state: "closed", runtime_endpoint: null }));
+  assert(validate({ state: "closed", expected_resource_version: 1 }));
+  assert(
+    validate({
+      state: "closed",
+      expected_resource_version: 1,
+      runtime_endpoint: null,
+    }),
+  );
   assert.equal(
     validate({ ...request, state: "closed", runtime_endpoint: "10.243.1.20" }),
     false,

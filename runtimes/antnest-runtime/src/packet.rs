@@ -17,7 +17,7 @@ const READINESS_PROBE_SEQUENCE_BASE: u32 = 0x414e_544e;
 const READINESS_PROBE_DESTINATION: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const READINESS_PROBE_DESTINATION_PORT: u16 = 9;
 pub(crate) const INNER_MTU: u16 = 1400;
-pub(crate) const PACKET_CONTRACT_REVISION: u32 = 1;
+pub(crate) const PACKET_CONTRACT_REVISION: u32 = antnest_runtime_tunnel::REVISION;
 
 #[derive(Debug, Error)]
 pub(crate) enum PacketError {
@@ -325,6 +325,7 @@ mod tests {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct PacketContract {
+        authentication: serde_json::Value,
         revision: u32,
         transport: String,
         inner_ip_version: u8,
@@ -362,14 +363,15 @@ mod tests {
             "/../../contracts/runtime/packet-fixtures.json"
         )))
         .expect("decode packet fixtures");
-        assert_eq!(fixtures.contract, "raw-ipv4-tcp-over-udp");
+        assert_eq!(fixtures.contract, "decoded-inner-ipv4-tcp");
         let contract: PacketContract = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../contracts/runtime/packet-contract.json"
         )))
         .expect("decode packet contract");
         assert_eq!(contract.revision, PACKET_CONTRACT_REVISION);
-        assert_eq!(contract.transport, "raw-ip-over-udp");
+        assert_eq!(contract.transport, "wireguard-over-udp");
+        assert_eq!(contract.authentication["raw_packet_fallback"], false);
         assert_eq!(contract.inner_ip_version, 4);
         assert_eq!(contract.inner_transport_protocol, "tcp");
         assert_eq!(contract.inner_mtu, usize::from(INNER_MTU));

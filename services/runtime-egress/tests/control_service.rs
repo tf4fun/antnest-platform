@@ -1,3 +1,6 @@
+#[path = "../../../tests/support/egress-auth.rs"]
+mod auth;
+use auth::TestAttachment as _;
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
     sync::{
@@ -33,7 +36,7 @@ async fn peer_rebinding_is_a_versioned_cleanup_barrier_and_survives_recovery() {
     let first_peer = "10.20.0.9".parse().unwrap();
     let next_peer = "10.20.0.10".parse().unwrap();
     let opened = service
-        .set_runtime_attachment(agent.clone(), AttachmentState::Open, 1, Some(first_peer))
+        .set_test_attachment(agent.clone(), AttachmentState::Open, 1, Some(first_peer))
         .await
         .unwrap();
     let mut packet = readiness_probe(network.tunnel_ipv4);
@@ -49,7 +52,7 @@ async fn peer_rebinding_is_a_versioned_cleanup_barrier_and_survives_recovery() {
     ));
     let before = kernel.cleared.lock().unwrap().len();
     let rebound = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             opened.attachment_resource_version,
@@ -66,7 +69,7 @@ async fn peer_rebinding_is_a_versioned_cleanup_barrier_and_survives_recovery() {
     assert_eq!(service.dataplane().lock().unwrap().flow_count(), 0);
     assert_eq!(
         service
-            .set_runtime_attachment(
+            .set_test_attachment(
                 agent.clone(),
                 AttachmentState::Open,
                 opened.attachment_resource_version,
@@ -107,7 +110,7 @@ async fn invalid_peer_state_pairs_have_no_control_effect() {
     ] {
         assert_eq!(
             service
-                .set_runtime_attachment(agent.clone(), state, 1, peer)
+                .set_test_attachment(agent.clone(), state, 1, peer)
                 .await,
             Err(ControlError::InvalidRequest)
         );
@@ -163,6 +166,7 @@ fn toggle_service() -> (
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        auth::key_box(),
     );
     (service, kernel)
 }
@@ -173,7 +177,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
     let agent = AgentId::parse("agent-reconcile").unwrap();
     let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
     let opened = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -186,7 +190,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
     kernel.fail_next.store(true, Ordering::Release);
     assert_eq!(
         service
-            .set_runtime_attachment(
+            .set_test_attachment(
                 agent.clone(),
                 AttachmentState::Closed,
                 opened.attachment_resource_version,
@@ -206,7 +210,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
     assert!(service.dataplane().lock().unwrap().is_agent_fenced(&agent));
 
     let reconciled = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Closed,
             opened.attachment_resource_version,
@@ -230,7 +234,7 @@ async fn healthy_same_policy_submission_preserves_existing_flow_and_reply_peer()
         .await
         .unwrap();
     service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -288,7 +292,7 @@ async fn same_policy_repairs_a_failed_barrier_instead_of_skipping_cleanup() {
         .await
         .unwrap();
     service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -353,7 +357,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
         packet[22..24].copy_from_slice(&443_u16.to_be_bytes());
         let peer = "10.20.0.9:12345".parse().unwrap();
         let opened = service
-            .set_runtime_attachment(
+            .set_test_attachment(
                 agent.clone(),
                 AttachmentState::Open,
                 allocated.attachment_resource_version,
@@ -364,7 +368,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
         kernel.fail_next.store(true, Ordering::Release);
         let failed = if fail_close {
             service
-                .set_runtime_attachment(
+                .set_test_attachment(
                     agent.clone(),
                     AttachmentState::Closed,
                     opened.attachment_resource_version,
@@ -396,7 +400,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
             service.ensure_agent_network(agent.clone()).await
         } else {
             service
-                .set_runtime_attachment(
+                .set_test_attachment(
                     agent.clone(),
                     AttachmentState::Open,
                     opened.attachment_resource_version,
@@ -425,7 +429,7 @@ async fn reopening_a_failed_barrier_requires_successful_cleanup() {
             service.ensure_agent_network(agent.clone()).await
         } else {
             service
-                .set_runtime_attachment(
+                .set_test_attachment(
                     agent.clone(),
                     AttachmentState::Open,
                     opened.attachment_resource_version,
@@ -465,7 +469,7 @@ async fn failed_initial_open_keeps_durable_attachment_closed() {
     let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
     kernel.fail_next.store(true, Ordering::Release);
     let result = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -476,7 +480,7 @@ async fn failed_initial_open_keeps_durable_attachment_closed() {
     assert_eq!(service.agent_network(&agent).await.unwrap(), allocated);
     assert!(service.dataplane().lock().unwrap().is_agent_fenced(&agent));
     let opened = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -522,6 +526,7 @@ fn service() -> (
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        auth::key_box(),
     );
     (control, kernel)
 }
@@ -539,6 +544,7 @@ fn control_with_repository(
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        auth::key_box(),
     )
 }
 
@@ -718,7 +724,7 @@ async fn desired_policy_survives_close_and_reopen() {
         .await
         .unwrap();
     let opened = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -727,7 +733,7 @@ async fn desired_policy_survives_close_and_reopen() {
         .await
         .unwrap();
     let closed = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Closed,
             opened.attachment_resource_version,
@@ -737,7 +743,7 @@ async fn desired_policy_survives_close_and_reopen() {
         .unwrap();
     let assignment = service.policy_assignment(&agent).await.unwrap();
     let reopened = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             closed.attachment_resource_version,
@@ -751,7 +757,7 @@ async fn desired_policy_survives_close_and_reopen() {
     assert_eq!(reopened.attachment_state, AttachmentState::Open);
     assert_eq!(
         service
-            .set_runtime_attachment(
+            .set_test_attachment(
                 agent,
                 AttachmentState::Closed,
                 opened.attachment_resource_version,
@@ -768,7 +774,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
     let agent = AgentId::parse("agent-stale-close").unwrap();
     let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
     let opened = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -777,7 +783,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
         .await
         .unwrap();
     let first_close = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Closed,
             opened.attachment_resource_version,
@@ -786,7 +792,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
         .await
         .unwrap();
     let reopened = service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             first_close.attachment_resource_version,
@@ -795,7 +801,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
         .await
         .unwrap();
     service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Closed,
             reopened.attachment_resource_version,
@@ -807,7 +813,7 @@ async fn stale_same_state_attachment_replay_is_rejected_without_cleanup() {
 
     assert_eq!(
         service
-            .set_runtime_attachment(
+            .set_test_attachment(
                 agent,
                 AttachmentState::Closed,
                 opened.attachment_resource_version,
@@ -888,6 +894,7 @@ async fn quarantine_sweeper_isolates_one_agents_cleanup_failure() {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        auth::key_box(),
     );
     let first = AgentId::parse("agent-first").unwrap();
     let second = AgentId::parse("agent-second").unwrap();
@@ -935,7 +942,12 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
         max_agent_flows: 16,
         flow_idle: Duration::from_secs(60),
     };
-    let first = ControlService::new(repository.clone(), kernel.clone(), config.clone());
+    let first = ControlService::new(
+        repository.clone(),
+        kernel.clone(),
+        config.clone(),
+        auth::key_box(),
+    );
     let agent = AgentId::parse("agent-1").unwrap();
     let allocated = first.ensure_agent_network(agent.clone()).await.unwrap();
     let policy = PolicyId::parse("internet-enabled").unwrap();
@@ -948,7 +960,7 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
         .await
         .unwrap();
     first
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent.clone(),
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -957,7 +969,7 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
         .await
         .unwrap();
 
-    let recovered = ControlService::new(repository, kernel, config);
+    let recovered = ControlService::new(repository, kernel, config, auth::key_box());
     assert_eq!(recovered.recover().await.unwrap(), 1);
     let route = recovered
         .dataplane()
@@ -992,7 +1004,7 @@ async fn status_tracks_published_snapshots_instead_of_a_static_constant() {
     let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
     assert_eq!(service.status().snapshot_revision, 2);
     service
-        .set_runtime_attachment(
+        .set_test_attachment(
             agent,
             AttachmentState::Open,
             allocated.attachment_resource_version,
@@ -1066,6 +1078,7 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
             max_agent_flows: 16,
             flow_idle: Duration::from_secs(60),
         },
+        auth::key_box(),
     );
     service.recover().await.unwrap();
     let failed = AgentId::parse("agent-failed").unwrap();
@@ -1076,7 +1089,7 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
         .await
         .unwrap();
     service
-        .set_runtime_attachment(
+        .set_test_attachment(
             failed.clone(),
             AttachmentState::Open,
             failed_network.attachment_resource_version,
@@ -1085,7 +1098,7 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
         .await
         .unwrap();
     service
-        .set_runtime_attachment(
+        .set_test_attachment(
             unaffected.clone(),
             AttachmentState::Open,
             unaffected_network.attachment_resource_version,

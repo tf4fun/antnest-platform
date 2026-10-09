@@ -21,6 +21,7 @@ import (
 const MonitorRetryDelay = time.Second
 
 type Config struct {
+	RuntimeEgressURL          string
 	AgentControllerURL        string
 	InstanceCredentials       *instanceauth.Manager
 	RuntimeAuthentication     map[string]string
@@ -112,6 +113,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		),
 		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
 		AgentControllerURL:    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
+		RuntimeEgressURL:      strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
 		SkillRegistryURL:      strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
 		SkillPreparerImage:    valueOr(lookup, "ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE", "antnest/runtime-controller:local"),
 		RuntimeStatusTimeout:  statusTimeout,
@@ -164,6 +166,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_ALLOWED_IMAGES: %w", err)
 	}
 	endpoints := map[string]string{}
+	if config.RuntimeEgressURL == "" {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_EGRESS_URL is required")
+	}
+	endpoints["runtime-egress"] = config.RuntimeEgressURL
 	if config.AgentControllerURL != "" {
 		endpoints["agent-controller"] = config.AgentControllerURL
 	}

@@ -16,6 +16,7 @@ use antnest_runtime_egress::{
     repository::{PostgresRepository, RepositoryConfig},
     telemetry::{EgressMetrics, Telemetry},
     transport::{SecurityConfig, VerifiedPeer, healthcheck},
+    tunnel::KeyBox,
 };
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -40,11 +41,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let security = SecurityConfig::from_env()?;
     let config = Config::from_env()?;
+    let key_box = KeyBox::load(&config.tunnel_key_file)?;
     let telemetry = Telemetry::init()?;
     for variable in &config.development_secret_warnings {
         tracing::warn!(variable, "Published development secret explicitly enabled");
     }
-    let result = run(config, security, telemetry.metrics()).await;
+    let result = run(config, security, telemetry.metrics(), key_box).await;
     if let Err(error) = &result {
         tracing::error!(%error, "Runtime Egress stopped with an error");
     }
@@ -56,6 +58,7 @@ async fn run(
     config: Config,
     security: SecurityConfig,
     metrics: EgressMetrics,
+    key_box: KeyBox,
 ) -> Result<(), Box<dyn Error>> {
     let repository = Arc::new(
         PostgresRepository::connect_with_retry(
@@ -91,6 +94,7 @@ async fn run(
             max_agent_flows: config.max_agent_flows,
             flow_idle: config.flow_idle,
         },
+        key_box,
     ));
     let recovered = service.recover().await?;
 
@@ -292,6 +296,9 @@ where
                     flow.reverse_misses = metrics.reverse_flow_misses,
                     peer_output.failures = metrics.peer_output_failures,
                     peer.mismatches = metrics.peer_mismatches,
+                    tunnel.authentication_drops = metrics.authentication_drops,
+                    tunnel.replay_drops = metrics.replay_drops,
+                    tunnel.unknown_context_drops = metrics.unknown_context_drops,
                     udp.receive_errors.unattributed = metrics.unattributed_udp_receive_errors,
                     dns.connections.accepted = dns.accepted_connections,
                     dns.connections.rejected = dns.rejected_connections,

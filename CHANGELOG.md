@@ -4,13 +4,18 @@
 
 ### Upgrade requirement
 
-**#34 requires a coordinated RC → Egress → Controller cutover with Agent
-admission stopped.** Disable active development Agents before upgrading, then
-enable/rebuild them after all three services are updated. RC inspection contract
-revision 18 reports the current Runtime management IPv4; Egress revision 6
-requires that address on every attachment open. Older Controller requests are
-rejected, and previously open attachments without a peer drop traffic. Mixed
-contracts are unsupported. See [Egress peer binding](docs/egress-peer-binding.md).
+**#111 requires a coordinated RC → Runtime → Egress → Controller cutover with
+Agent admission stopped.** Packet revision 2 replaces raw UDP packets with the
+embedded BoringTun 0.7.1 WireGuard profile; there is no revision 1 decoder or
+rolling mixed-version deployment. RC inspection revision 19 and Egress control
+revision 7 bind every open attachment to both the management IPv4 and prepared
+generation key ID. Provision the independent private Egress master file with the
+updated development credential helper and run `scripts/dev-egress-auth-owner.mjs`
+before startup to set the two Egress files' root ownership on Linux bind mounts.
+Disable development Agents before the
+cutover and enable/rebuild them after all four components are upgraded. Old
+open bindings without keys fail closed. Recovery needs matching encrypted
+records and master files. See [authenticated Runtime tunnel](docs/authenticated-runtime-tunnel.md).
 
 **#37 requires a coordinated Controller → RC → Runtime → Console cutover with
 Agent admission stopped; mixed contracts are unsupported.** Reconfigure managed
@@ -44,18 +49,27 @@ separate from the subsequent online key rotation. See
 
 Controller reads the current RC Runtime address before opening create/rebuild/
 enable traffic or restoring a source. The observation worker rebinds changed
-addresses on open attachments before readiness publication and never reopens
-lifecycle-closed attachments (#34). Address binding uses the existing managed
-network trust model; authenticated datagrams and replay protection remain a
-separate Phase 2.
+addresses and generation key IDs on open attachments before readiness publication
+and never reopens lifecycle-closed attachments (#34, #111). Generation keys and
+protocol-owned replay rejection protect the inner allocation before policy or
+flow attribution. TUN and the independent nft backstop retain their roles.
 
 Runtime health observations and journal cursors now commit independently of
 Egress availability. Failed peer updates retry within one observation poll
 budget, restoring work from RC inventory after startup or cursor reset. New
 execution publication still requires peer confirmation. RC reports a missing
 management IPv4 as one unknown-health `runtime_peer_unavailable` instance rather
-than failing the whole inventory (#34). Authentication, encryption and replay
-protection are tracked separately in [#111](https://github.com/tf4fun/antnest-platform/issues/111).
+than failing the whole inventory (#34).
+
+RC issues and seals independent X25519/PSK material per compute generation and
+privately registers Egress before platform mutation (#111). Runtime loads its
+root-only read-only bootstrap; Egress seals its recipient keys in owned storage.
+Open CAS retires previous keys under the packet-output barrier. Restarts create
+fresh ephemeral WireGuard sessions. Authentication, replay and unknown-context
+drops expose only aggregate metrics; private key RPC content is never captured.
+The development helper now creates 25 static workload pairs and the independent
+Egress master file. No WireGuard daemon, kernel WireGuard module or extra running
+production service is added.
 
 Managed MCP configuration separates public `env` from write-only `secret_env`
 (#37). Console supports set/keep/clear and reads only set/fingerprint metadata.

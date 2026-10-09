@@ -26,7 +26,7 @@ the [service README](../README.md#configuration). Configuration is immutable
 after startup. Agent policy changes use the control API and PostgreSQL rather
 than environment variables.
 
-Control contract revision 5 requires exact `ANTNEST_SERVICE_AUTH_MODE=token`
+Control contract revision 7 requires exact `ANTNEST_SERVICE_AUTH_MODE=token`
 or `mtls`; missing mode fails startup. Token mode reads a bounded receiver hash
 file from `ANTNEST_SERVICE_AUTH_CALLERS_FILE`, never a shared plaintext API key.
 The file may contain current and next hashes per caller for overlap rotation.
@@ -39,7 +39,7 @@ Plain token HTTP requires exact
 Otherwise supply all of `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`,
 `ANTNEST_TLS_KEY_FILE` and `ANTNEST_TLS_SERVER_NAME`. Selecting any TLS field
 requires the complete validated profile and enables TLS, even with HTTP opt-in.
-mTLS requires TLS, valid client usage and the Controller workload URI SAN;
+mTLS requires TLS, valid client usage and the route-specific Controller or RC workload URI SAN;
 headers, common names and source addresses cannot substitute for that identity.
 The Egress server certificate must validate against its trust roots and DNS
 name, with exactly one workload URI `antnest://service/runtime-egress` and a
@@ -264,6 +264,7 @@ snapshot record:
 - policy allows and rejections;
 - malformed and unsupported packets as separate counters;
 - UDP/TUN packet and byte counts;
+- authentication, replay and unknown-context drops, before policy/flow effects and without Agent attribution;
 - bound-peer mismatch drops, before policy and flow effects;
 - Agent-attributed Runtime-peer UDP output failures;
 - unattributed destination-level UDP receive errors from asynchronous ICMP;
@@ -373,8 +374,8 @@ are removed on completion or interruption; evidence is kept privately under
 `artifacts/verification/egress-authentication/`.
 
 The packet proof has two distinct paths. An unrelated container sends a valid
-SYN with the victim Agent's inner source; Egress must increment peer mismatch
-without policy/flow effects or an outbound connection. The bound container's
+SYN with the victim Agent's inner source; Egress must increment an aggregate authentication/unknown-context drop
+without policy/flow effects or an outbound connection. The bound container's authenticated encrypted
 SYN to a connected public subnet passes userspace policy and must hit the kernel
 drop counter. A separate Linux integration binary then writes a valid database-
 destination SYN directly to the production TUN adapter, bypassing userspace
@@ -401,3 +402,26 @@ document and verify backward-readable rollout before promotion. If that cannot
 be guaranteed, restore the pre-release database backup rather than editing
 migration history. After rollback, require `/status` readiness and repeat the
 allow/deny path before routing Runtime traffic.
+
+## 11. Generation-key cutover
+
+Provision the root-only master file described in the
+[service README](../README.md#authenticated-tunnel-deployment) before startup.
+Back up this file with Egress's encrypted private rows. The owner process alone
+loads it; the file must not be mounted into Runtime, Controller, Agent tools or
+packet-probe containers. New candidate registration is RC-only and requires a
+closed attachment. Controller opens only with RC's current public key ID and
+outer IPv4 after provisioning completes. A rejected key selection has no fence,
+flow-reset or CAS side effect. Retired IDs cannot be reopened.
+
+Restart restores the selected static keys and establishes fresh ephemeral
+WireGuard sessions. No persisted packet counters or replay bitmaps are needed.
+Private-key corruption/loss blocks readiness; recover the matching protected
+backup. A leaked generation is retired by explicit disable/rebuild. Master-key
+rotation requires a coordinated rewrite/backup; editing the file alone is not
+rotation. Authentication failure never creates a victim-labelled event or span.
+
+Revision 1 and 2 are incompatible on the wire. Stop the previous deployment,
+upgrade RC/Runtime/Egress/Controller and bootstrap together, then re-enable or
+rebuild Agents to issue generation keys. No rolling raw-packet fallback exists.
+The Controller and deployment acceptance is the final #111 integration batch.

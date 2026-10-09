@@ -8,16 +8,17 @@
   "properties": {
     "state": {"enum": ["closed", "open"]},
     "expected_resource_version": {"type": "integer", "minimum": 1},
-    "runtime_endpoint": {"type": ["string", "null"], "format": "ipv4"}
+    "runtime_endpoint": {"type": ["string", "null"], "format": "ipv4"},
+    "tunnel_key_id": {"type": ["string", "null"], "pattern": "^rtk_[0-9a-f]{32}$"}
   },
   "allOf": [
     {
       "if": {"properties": {"state": {"const": "open"}}, "required": ["state"]},
       "then": {
-        "required": ["runtime_endpoint"],
-        "properties": {"runtime_endpoint": {"type": "string"}}
+        "required": ["runtime_endpoint", "tunnel_key_id"],
+        "properties": {"runtime_endpoint": {"type": "string"}, "tunnel_key_id": {"type": "string"}}
       },
-      "else": {"properties": {"runtime_endpoint": {"type": "null"}}}
+      "else": {"properties": {"runtime_endpoint": {"type": "null"}, "tunnel_key_id": {"type": "null"}}}
     }
   ]
 }

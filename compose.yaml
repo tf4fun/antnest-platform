@@ -141,6 +141,7 @@ services:
     environment:
       ANTNEST_EGRESS_DATABASE_URL: postgres://antnest_egress:${ANTNEST_EGRESS_POSTGRES_PASSWORD:?ANTNEST_EGRESS_POSTGRES_PASSWORD is required; run scripts/generate-dev-env.sh}@postgres:5432/antnest_egress
       ANTNEST_EGRESS_DATABASE_TLS_MODE: disable
+      ANTNEST_EGRESS_TUNNEL_KEY_FILE: /etc/antnest/runtime-tunnel/master.key
       ANTNEST_EGRESS_CONTROL_LISTEN: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081
       ANTNEST_EGRESS_UDP_ADVERTISE: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}:8092
       ANTNEST_EGRESS_TUNNEL_CIDR: 100.64.0.0/10
@@ -182,6 +183,12 @@ services:
     stop_grace_period: 10s
     volumes:
       - type: bind
+        source: ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with scripts/dev-service-tokens.mjs}/runtime-egress/tunnel-master.key
+        target: /etc/antnest/runtime-tunnel/master.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source:
           ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
           scripts/dev-service-tokens.mjs}/runtime-egress/callers.json
@@ -221,6 +228,7 @@ services:
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
       ANTNEST_SKILL_REGISTRY_URL: http://skill-registry:8080
+      ANTNEST_RUNTIME_EGRESS_URL: http://runtime-egress:8081
       ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: antnest/runtime-controller:local
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
@@ -280,6 +288,8 @@ services:
       start_period: 30s
       start_interval: 2s
     networks:
+      control:
+        ipv4_address: ${ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4:-172.31.255.5}
       controller-runtime:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50
       controller-clients:
@@ -293,6 +303,7 @@ services:
         ipv4_address: ${ANTNEST_RUNTIME_CONTROLLER_MANAGEMENT_IPV4:-172.30.255.5}
     stop_grace_period: 30s
     extra_hosts:
+      runtime-egress: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
       skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
       agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
       jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114

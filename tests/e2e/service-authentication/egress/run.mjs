@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -34,7 +39,7 @@ mkdirSync(evidence, { recursive: true, mode: 0o700 });
 mkdirSync(directory, { mode: 0o750 });
 chmodSync(directory, 0o750);
 const keys = Object.fromEntries(
-  ["current", "next", "wrong", "context"].map((name) => [
+  ["current", "next", "wrong", "context", "rc"].map((name) => [
     name,
     randomBytes(32).toString("base64url"),
   ]),
@@ -51,6 +56,7 @@ const saveCallers = (tokens) => {
     JSON.stringify({
       "agent-controller": tokens.map(digest),
       "skill-registry": [digest(keys.wrong)],
+      "runtime-controller": [digest(keys.rc)],
     }),
     { mode: 0o640 },
   );
@@ -61,6 +67,52 @@ const saveCallers = (tokens) => {
   );
 };
 saveCallers([keys.current, keys.next]);
+const privateDirectory = resolve(evidence, "tunnel-private");
+const runtimeDirectory = resolve(privateDirectory, "runtime");
+const attackerDirectory = resolve(privateDirectory, "attacker");
+mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
+mkdirSync(attackerDirectory, { recursive: true, mode: 0o700 });
+const master = randomBytes(32);
+const masterPath = resolve(privateDirectory, "tunnel-master");
+writeFileSync(masterPath, master, { mode: 0o600 });
+const pair = () => {
+  const value = generateKeyPairSync("x25519");
+  return {
+    private: value.privateKey
+      .export({ type: "pkcs8", format: "der" })
+      .subarray(-32)
+      .toString("base64url"),
+    public: value.publicKey
+      .export({ type: "spki", format: "der" })
+      .subarray(-32)
+      .toString("base64url"),
+  };
+};
+const runtimeKey = pair(),
+  egressKey = pair();
+const keyId = "rtk_" + randomBytes(16).toString("hex");
+const psk = randomBytes(32).toString("base64url");
+writeFileSync(
+  resolve(runtimeDirectory, "keys.json"),
+  JSON.stringify({
+    key_id: keyId,
+    runtime_private_key: runtimeKey.private,
+    egress_public_key: egressKey.public,
+    preshared_key: psk,
+  }),
+  { mode: 0o600 },
+);
+writeFileSync(
+  resolve(attackerDirectory, "keys.json"),
+  JSON.stringify({
+    key_id: keyId,
+    runtime_private_key: pair().private,
+    egress_public_key: egressKey.public,
+    preshared_key: randomBytes(32).toString("base64url"),
+  }),
+  { mode: 0o600 },
+);
+
 const sourceFiles = [
   "services/runtime-egress/Cargo.toml",
   "services/runtime-egress/Cargo.lock",
@@ -79,6 +131,14 @@ const sourceFiles = [
   "services/runtime-egress/src/policy.rs",
   "services/runtime-egress/src/telemetry.rs",
   "services/runtime-egress/migrations/0002_runtime_peer.sql",
+  "services/runtime-egress/migrations/0003_authenticated_tunnel.sql",
+  "services/runtime-egress/src/tunnel.rs",
+  "services/runtime-egress/src/dataplane/tunnel.rs",
+  "services/runtime-egress/src/repository/postgres/tunnel.rs",
+  "modules/runtime-tunnel/Cargo.toml",
+  "modules/runtime-tunnel/src/lib.rs",
+  "tests/support/runtime-tunnel/wire-probe.rs",
+  "tests/support/runtime-tunnel/wire-probe.Dockerfile",
   "tests/integration/runtime-egress/kernel_backstop.rs",
   "tests/integration/runtime-egress/kernel-backstop.Dockerfile",
   "contracts/egress/control-contract.json",
@@ -135,6 +195,10 @@ try {
     EGRESS_AUTH_IMAGE: image,
     EGRESS_AUTH_DIRECTORY: directory,
     EGRESS_AUTH_GID: String(process.getegid()),
+    EGRESS_AUTH_MASTER_FILE: masterPath,
+    EGRESS_AUTH_RUNTIME_KEYS: runtimeDirectory,
+    EGRESS_AUTH_ATTACKER_KEYS: attackerDirectory,
+    EGRESS_AUTH_PACKET_IMAGE: project + ":packet-proof",
     EGRESS_AUTH_DATABASE_PASSWORD: randomBytes(32).toString("hex"),
     EGRESS_AUTH_CONTROL_SUBNET: `10.242.${octet}.0/24`,
     EGRESS_AUTH_CONTROL_IP: `10.242.${octet}.10`,
@@ -157,6 +221,28 @@ try {
     resolve(root, "tests/e2e/service-authentication/egress/compose.yaml"),
   ];
   const invoke = dockerClient(env, abort.signal, budget);
+  // The new storage master must be root-only even on Linux host bind mounts.
+  await invoke([
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--read-only",
+    "--label",
+    scopeLabel + "=" + project,
+    "--user",
+    "0:0",
+    "--cap-drop",
+    "ALL",
+    "--cap-add",
+    "CHOWN",
+    "--mount",
+    `type=bind,src=${masterPath},dst=/master`,
+    "node:24.21.0-bookworm-slim",
+    "node",
+    "-e",
+    "require('node:fs').chownSync('/master',0,0)",
+  ]);
   progress("production-image-build");
   const build = await runCommand({
     name: "production-image-build",
@@ -185,6 +271,20 @@ try {
         "services/runtime-egress/Dockerfile",
         "-t",
         project + ":kernel-build",
+        ".",
+      ],
+    ],
+    [
+      "packet-test-image",
+      [
+        "docker",
+        "build",
+        "-f",
+        "tests/support/runtime-tunnel/wire-probe.Dockerfile",
+        "--build-arg",
+        "EGRESS_TEST_BUILD_IMAGE=" + project + ":kernel-build",
+        "-t",
+        env.EGRESS_AUTH_PACKET_IMAGE,
         ".",
       ],
     ],
@@ -313,6 +413,7 @@ try {
       "policy_revisions",
       "agent_policy_assignments",
       "runtime_attachments",
+      "runtime_tunnel_keys",
     ])
       entries.push(
         JSON.parse(
@@ -414,6 +515,21 @@ try {
   const [runtimeProbe] = JSON.parse(await invoke(["inspect", runtimeProbeID]));
   const boundPeer =
     runtimeProbe.NetworkSettings.Networks[project + "_packet"].IPAddress;
+  const registration = {
+    key_id: keyId,
+    runtime_revision: "rtv_" + randomBytes(16).toString("hex"),
+    tunnel_ipv4: network.tunnel_ipv4,
+    egress_private_key: egressKey.private,
+    runtime_public_key: runtimeKey.public,
+    preshared_key: psk,
+  };
+  writeFileSync(
+    resolve(directory, "tunnel-registration.json"),
+    JSON.stringify(registration),
+    { mode: 0o600 },
+  );
+  await probe("control-probe", "register");
+  checks++;
   const open = await request({
     method: "PUT",
     path: attachmentPath,
@@ -421,6 +537,7 @@ try {
       state: "open",
       expected_resource_version: 1,
       runtime_endpoint: boundPeer,
+      tunnel_key_id: keyId,
     },
   });
   assert.equal(open.attachment_resource_version, 2);
@@ -505,17 +622,41 @@ try {
     destination: env.EGRESS_AUTH_EXTERNAL_PROBE_IP,
   });
   const rejected = await dataSnapshot(
-    (fields) => fields["peer.mismatches"] >= 1,
+    (fields) => fields["tunnel.unknown_context_drops"] >= 1,
   );
   assert.equal(rejected["policy.allows"], 0);
   assert.equal(rejected["flow.active"], 0);
   assert.equal((await peerProbe("database-probe", "count")).connections, 0);
   checks += 4;
+  const encryptedProbe = async (service, mode) =>
+    JSON.parse(
+      await invoke([
+        ...compose,
+        "exec",
+        "-T",
+        service,
+        "/usr/local/bin/wire-probe",
+        "/run/tunnel/keys.json",
+        env.EGRESS_AUTH_PACKET_IP + ":8092",
+        network.tunnel_ipv4,
+        env.EGRESS_AUTH_EXTERNAL_PROBE_IP + ":9010",
+        mode,
+        "/tmp/captured.bin",
+      ]),
+    );
+  await encryptedProbe("packet-probe", "wrong");
+  await encryptedProbe("runtime-probe", "tamper");
+  const cryptoRejected = await dataSnapshot(
+    (fields) => fields["tunnel.authentication_drops"] >= 1,
+  );
+  assert.equal(cryptoRejected["policy.allows"], 0);
+  assert.equal(cryptoRejected["flow.active"], 0);
+  checks += 2;
   const beforeDrop = await kernelDrops();
-  await peerProbe("runtime-probe", "send", {
-    source: network.tunnel_ipv4,
-    destination: env.EGRESS_AUTH_EXTERNAL_PROBE_IP,
-  });
+  await encryptedProbe("runtime-probe", "replay");
+  await dataSnapshot((fields) => fields["tunnel.replay_drops"] >= 1);
+  checks++;
+
   await waitFor(
     "connected public subnet kernel drop",
     async () => (await kernelDrops()) > beforeDrop,
@@ -789,6 +930,10 @@ try {
   for (const secret of [
     ...Object.values(keys),
     env.EGRESS_AUTH_DATABASE_PASSWORD,
+    runtimeKey.private,
+    egressKey.private,
+    psk,
+    master.toString("base64url"),
   ])
     assert(!logs.includes(secret), "service logs leaked an authority carrier");
   assert.deepEqual(
@@ -873,6 +1018,7 @@ try {
   await attempt(async () => {
     for (const tag of [
       env?.EGRESS_AUTH_KERNEL_IMAGE,
+      env?.EGRESS_AUTH_PACKET_IMAGE,
       image,
       project + ":kernel-build",
     ].filter(Boolean)) {
@@ -882,6 +1028,7 @@ try {
   });
   cleaned = errors.length === 0;
   rmSync(directory, { recursive: true, force: true });
+  rmSync(privateDirectory, { recursive: true, force: true });
   for (const signal of ["SIGINT", "SIGTERM"])
     process.removeListener(signal, stop);
   writeFileSync(

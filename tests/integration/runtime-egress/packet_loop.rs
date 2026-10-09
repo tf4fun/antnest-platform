@@ -1,3 +1,7 @@
+#[path = "../../support/egress-auth.rs"]
+mod auth;
+use antnest_runtime_tunnel::{Event, MAX_DATAGRAM, Peer};
+
 use std::{
     io,
     net::Ipv4Addr,
@@ -59,7 +63,7 @@ impl PacketDevice for TestTun {
 }
 
 #[tokio::test]
-async fn packet_loop_moves_uplink_and_downlink_without_an_application_envelope() {
+async fn packet_loop_moves_uplink_and_downlink_through_authenticated_wireguard_datagrams() {
     let egress = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let egress_address = egress.local_addr().unwrap();
     let runtime = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -80,6 +84,7 @@ async fn packet_loop_moves_uplink_and_downlink_without_an_application_envelope()
         16,
         Duration::from_secs(60),
     )));
+    let mut crypto = install_tunnel(&engine);
     let cancellation = CancellationToken::new();
     let task = tokio::spawn(run_packet_loop(
         egress,
@@ -92,16 +97,18 @@ async fn packet_loop_moves_uplink_and_downlink_without_an_application_envelope()
     ));
     let packet = decode_hex(SYN);
 
-    runtime.send(&packet).await.unwrap();
+    send_encrypted(&runtime, &mut crypto, &packet).await;
     let mut uplink = vec![0_u8; 1400];
-    let read = kernel_tun.read(&mut uplink).await.unwrap();
+    let read = tokio::time::timeout(Duration::from_secs(2), kernel_tun.read(&mut uplink))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(&uplink[..read], packet.as_slice());
 
     let reply = reverse_packet(&packet);
     kernel_tun.write_all(&reply).await.unwrap();
-    let mut downlink = vec![0_u8; 1400];
-    let read = runtime.recv(&mut downlink).await.unwrap();
-    assert_eq!(&downlink[..read], reply.as_slice());
+    let downlink = receive_inner(&runtime, &mut crypto).await;
+    assert_eq!(downlink, reply);
 
     cancellation.cancel();
     task.await.unwrap().unwrap();
@@ -128,6 +135,7 @@ async fn deny_policy_fails_the_runtime_connection_fast() {
         16,
         Duration::from_secs(60),
     )));
+    let mut crypto = install_tunnel(&engine);
     let cancellation = CancellationToken::new();
     let task = tokio::spawn(run_packet_loop(
         egress,
@@ -139,13 +147,14 @@ async fn deny_policy_fails_the_runtime_connection_fast() {
         cancellation.clone(),
     ));
 
-    runtime.send(&decode_hex(SYN)).await.unwrap();
-    let mut reply = vec![0_u8; 1400];
-    let read = tokio::time::timeout(Duration::from_millis(200), runtime.recv(&mut reply))
-        .await
-        .expect("fast rejection")
-        .unwrap();
-    assert_eq!(reply[read.min(34) - 1] & 0x04, 0x04);
+    send_encrypted(&runtime, &mut crypto, &decode_hex(SYN)).await;
+    let reply = tokio::time::timeout(
+        Duration::from_millis(200),
+        receive_inner(&runtime, &mut crypto),
+    )
+    .await
+    .expect("fast encrypted rejection");
+    assert_eq!(reply[33] & 0x04, 0x04);
 
     cancellation.cancel();
     task.await.unwrap().unwrap();
@@ -174,6 +183,7 @@ async fn output_barrier_is_held_until_the_packet_write_completes() {
     let barrier = Arc::new(tokio::sync::Mutex::new(()));
     let (started_tx, started_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
+    let mut crypto = install_tunnel(&engine);
     let cancellation = CancellationToken::new();
     let task = tokio::spawn(run_packet_loop(
         egress,
@@ -188,8 +198,11 @@ async fn output_barrier_is_held_until_the_packet_write_completes() {
         cancellation.clone(),
     ));
 
-    runtime.send(&decode_hex(SYN)).await.unwrap();
-    started_rx.await.unwrap();
+    send_encrypted(&runtime, &mut crypto, &decode_hex(SYN)).await;
+    tokio::time::timeout(Duration::from_secs(2), started_rx)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(20), barrier.clone().lock_owned())
             .await
@@ -221,4 +234,60 @@ fn decode_hex(value: &str) -> Vec<u8> {
         .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect()
+}
+
+fn install_tunnel(engine: &Arc<Mutex<DataPlaneEngine>>) -> Peer {
+    let agent = AgentId::parse("agent-1").unwrap();
+    let row = auth::key_box()
+        .seal(
+            agent.clone(),
+            &auth::tunnel_registration(agent.as_str(), "100.96.0.10".parse().unwrap()),
+        )
+        .unwrap();
+    let peer = auth::key_box().open(&row).unwrap().peer(row.key_id);
+    let mut guard = engine.lock().unwrap();
+    guard.replace_agent_tunnels(&agent, vec![(row, peer)]);
+    guard.select_tunnel_key(agent, Some(auth::key_id("agent-1")));
+    auth::runtime_peer("agent-1")
+}
+async fn send_events(socket: &UdpSocket, events: Vec<Event>) {
+    for event in events {
+        if let Event::Network(frame) = event {
+            socket.send(&frame).await.unwrap();
+        }
+    }
+}
+async fn send_encrypted(socket: &UdpSocket, peer: &mut Peer, packet: &[u8]) {
+    send_events(socket, peer.send(packet).unwrap()).await;
+    let mut buffer = [0; MAX_DATAGRAM + 1];
+    let size = tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut buffer))
+        .await
+        .unwrap()
+        .unwrap();
+    send_events(
+        socket,
+        peer.receive(&buffer[..size], Ipv4Addr::LOCALHOST.into())
+            .unwrap(),
+    )
+    .await;
+}
+async fn receive_inner(socket: &UdpSocket, peer: &mut Peer) -> Vec<u8> {
+    let mut buffer = [0; MAX_DATAGRAM + 1];
+    loop {
+        let size = tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        for event in peer
+            .receive(&buffer[..size], Ipv4Addr::LOCALHOST.into())
+            .unwrap()
+        {
+            match event {
+                Event::Ipv4(inner) => return inner,
+                Event::Network(frame) => {
+                    socket.send(&frame).await.unwrap();
+                }
+            }
+        }
+    }
 }

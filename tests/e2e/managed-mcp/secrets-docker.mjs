@@ -8,6 +8,7 @@ import {
   dockerClient,
   cleanup,
   lines,
+  scopeLabel,
 } from "../lifecycle-closeout/docker.mjs";
 import { configureFoundation } from "../lifecycle-closeout/foundation-setup.mjs";
 import { applicationServices } from "../lifecycle-closeout/deployment.mjs";
@@ -38,10 +39,7 @@ const timer = setTimeout(stop, 1800000);
 const docker = dockerClient(process.env, abort.signal, 1800000);
 const built = [],
   failures = [];
-let config,
-  before,
-  business,
-  cleaned = false;
+let config, before, business, cleaned;
 async function identities(client) {
   const result = {};
   for (const [kind, args] of [
@@ -66,6 +64,7 @@ const gate = async (name, command, env = process.env) => {
 };
 try {
   before = await identities(docker);
+  writeEvidenceFile(output, "docker-before.json", JSON.stringify(before));
   for (const candidate of [
     buildImage,
     baseImage,
@@ -158,6 +157,39 @@ try {
       candidateEnvironment(config.env),
     );
   }
+  const egressBuild = `antnest/egress-proof:${tag}`;
+  built.push(egressBuild);
+  await gate(
+    "build-egress-proof",
+    [
+      "docker",
+      "build",
+      "--target",
+      "build",
+      "-f",
+      "services/runtime-egress/Dockerfile",
+      "-t",
+      egressBuild,
+      ".",
+    ],
+    config.env,
+  );
+  const fixtureSource = config.project + "-wire-source";
+  const wireBinary = resolve(output, "wire-probe");
+  try {
+    await invoke([
+      "create",
+      "--name",
+      fixtureSource,
+      "--label",
+      scopeLabel + "=" + config.project,
+      egressBuild,
+      "/bin/true",
+    ]);
+    await invoke(["cp", fixtureSource + ":/tmp/wire-probe", wireBinary]);
+  } finally {
+    await invoke(["rm", "-f", "-v", fixtureSource]);
+  }
   console.log(
     JSON.stringify({ version, project: config.project, stage: "business" }),
   );
@@ -195,6 +227,7 @@ try {
       ),
       TEST_EVIDENCE_DIRECTORY: output,
       TEST_DOCKER_PROJECT: config.project,
+      TEST_TUNNEL_WIRE_BINARY: wireBinary,
     },
   );
   business = JSON.parse(readFileSync(resolve(output, "business.json"), "utf8"));
@@ -250,16 +283,24 @@ try {
     }
   }
   try {
+    const after = await identities(cleaning);
+    writeEvidenceFile(output, "docker-after.json", JSON.stringify(after));
     if (before)
-      assert.deepEqual(
-        await identities(cleaning),
-        before,
-        "retained Docker identities changed",
-      );
+      assert.deepEqual(after, before, "retained Docker identities changed");
   } catch (error) {
     failures.push(error);
   }
   cleaned = failures.length === priorFailures;
+  if (!cleaned)
+    writeEvidenceFile(
+      output,
+      "cleanup-failures.private.json",
+      JSON.stringify(
+        failures
+          .slice(priorFailures)
+          .map((error) => error.stack ?? String(error)),
+      ),
+    );
   for (const signal of ["SIGINT", "SIGTERM"])
     process.removeListener(signal, stop);
 }

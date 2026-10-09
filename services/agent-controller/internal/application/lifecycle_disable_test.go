@@ -330,7 +330,7 @@ func newDisableDependencies(
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 			RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID,
 			MCPEndpoint:        base.SourceExecution.RuntimeMCPEndpoint,
-			Phase:              "running", RuntimeEndpoint: "10.20.0.9",
+			Phase:              "running", RuntimeEndpoint: "10.20.0.9", TunnelKeyID: "rtk_0123456789abcdef0123456789abcdef",
 			LifecycleState: "provisioned", Health: "healthy",
 		},
 	}
@@ -358,8 +358,7 @@ func (dependency *disableDependenciesStub) GetAgentNetwork(
 }
 
 func (dependency *disableDependenciesStub) SetAgentNetworkAttachment(
-	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string,
-) (ports.NetworkAttachment, error) {
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64, runtimeEndpoint string, tunnelKeyID string) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.attachment."+state)
 	if state == ports.NetworkAttachmentClosed && dependency.fenceErr != nil {
 		return ports.NetworkAttachment{}, dependency.fenceErr
@@ -369,6 +368,7 @@ func (dependency *disableDependenciesStub) SetAgentNetworkAttachment(
 	result.State = ports.NetworkStateActive
 	result.AttachmentState = state
 	result.RuntimeEndpoint = runtimeEndpoint
+	result.TunnelKeyID = tunnelKeyID
 	result.AttachmentResourceVersion = expectedResourceVersion + 1
 	dependency.network = result
 	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed

@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverNetworkOctet } from "../acp-closeout/network.mjs";
 import { dockerInvocation } from "../acp-closeout/docker.mjs";
+import { prepareEgressOwnership } from "../../../scripts/dev-egress-auth-owner.mjs";
 import {
   fixtureEnvironment,
   prepareFixtureCredentials,
@@ -159,6 +160,7 @@ export async function configuration(
   const gateway = `http://127.0.0.1:${edge}`;
   const root = fileURLToPath(new URL("../../../", import.meta.url));
   const prepared = prepareFixtureCredentials(project, root);
+  await prepareEgressOwnership(docker, prepared.credentials);
   const env = {
     ...fixtureEnvironment(process.env, { project, octet }),
     ...prepared.environment,

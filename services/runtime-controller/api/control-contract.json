@@ -1,5 +1,5 @@
 {
-  "revision": 18,
+  "revision": 19,
   "transport": "json-over-http",
   "trust_boundary": "authenticated-controller-workload",
   "schemas": {
@@ -218,6 +218,8 @@
         "runtime_lifecycle_conflict",
         "prepared_skill_set_invalidated",
         "skill_preflight_unavailable",
+        "tunnel_registration_unavailable",
+        "tunnel_key_registration_rejected",
         "runtime_drift",
         "storage_not_found",
         "storage_ownership_conflict",
@@ -261,6 +263,8 @@
         "runtime_revision_conflict",
         "prepared_skill_set_invalidated",
         "skill_preflight_unavailable",
+        "tunnel_registration_unavailable",
+        "tunnel_key_registration_rejected",
         "runtime_drift",
         "platform_unavailable",
         "deadline_exceeded",
@@ -338,6 +342,8 @@
         "runtime_revision_conflict",
         "prepared_skill_set_invalidated",
         "skill_preflight_unavailable",
+        "tunnel_registration_unavailable",
+        "tunnel_key_registration_rejected",
         "runtime_drift",
         "storage_not_found",
         "storage_ownership_conflict",
@@ -569,6 +575,16 @@
       "retryable": false,
       "body": "control-api.schema.json#/$defs/error"
     },
+    "tunnel_registration_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
+    "tunnel_key_registration_rejected": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
     "skill_preflight_unavailable": {
       "status": 503,
       "retryable": true,
@@ -666,6 +682,12 @@
     }
   },
   "operation_error_codes": {
+    "tunnel_key_registration_rejected": {
+      "operation_states": ["failed", "unknown"],
+      "effects": ["not_started", "unknown"],
+      "http_statuses": [409, 202],
+      "retry_same_request_only": true
+    },
     "runtime_not_ready": {
       "historical_only": true,
       "operation_states": ["failed", "unknown"],

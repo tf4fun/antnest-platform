@@ -56,6 +56,7 @@ type NetworkAttachment struct {
 	AttachmentState           string `json:"attachment_state"`
 	AttachmentResourceVersion uint64 `json:"attachment_resource_version"`
 	RuntimeEndpoint           string `json:"runtime_endpoint,omitempty"`
+	TunnelKeyID               string `json:"tunnel_key_id,omitempty"`
 }
 
 type RuntimeConfiguration struct {
@@ -84,6 +85,7 @@ type RuntimeOperation struct {
 
 type RuntimeInspection struct {
 	RuntimeEndpoint    string    `json:"runtime_endpoint,omitempty"`
+	TunnelKeyID        string    `json:"tunnel_key_id,omitempty"`
 	Phase              string    `json:"phase"`
 	Reason             string    `json:"reason,omitempty"`
 	DiagnosticSummary  string    `json:"diagnostic_summary,omitempty"`
@@ -105,7 +107,7 @@ type RuntimeAbsenceProof struct {
 type EgressClient interface {
 	GetAgentNetwork(context.Context, string) (NetworkAttachment, error)
 	EnsureAgentNetwork(context.Context, string) (NetworkAttachment, error)
-	SetAgentNetworkAttachment(context.Context, string, string, uint64, string) (NetworkAttachment, error)
+	SetAgentNetworkAttachment(context.Context, string, string, uint64, string, string) (NetworkAttachment, error)
 	ReleaseAgentNetwork(context.Context, string, uint64) (NetworkAttachment, error)
 }
 

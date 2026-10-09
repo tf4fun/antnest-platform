@@ -18,6 +18,7 @@ use super::{
     observation::{Client, Transaction},
     policy_revision,
 };
+use crate::tunnel::PreparedKey;
 use crate::{
     allocator::{AddressPool, AllocationError},
     domain::{
@@ -26,6 +27,8 @@ use crate::{
     },
     policy::PolicySpec,
 };
+use antnest_runtime_tunnel::KeyId;
+mod tunnel;
 
 struct Migration {
     version: i64,
@@ -48,6 +51,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         name: "runtime_peer",
         sql: include_str!("../../migrations/0002_runtime_peer.sql"),
+    },
+    Migration {
+        version: 3,
+        name: "authenticated_tunnel",
+        sql: include_str!("../../migrations/0003_authenticated_tunnel.sql"),
     },
 ];
 
@@ -657,6 +665,16 @@ async fn verify_pool(
 
 #[async_trait]
 impl Repository for PostgresRepository {
+    async fn prepare_tunnel(&self, row: PreparedKey) -> Result<PreparedKey, RepositoryError> {
+        self.prepare_generation_key(row).await
+    }
+    async fn prepared_tunnels(&self, agent: &AgentId) -> Result<Vec<PreparedKey>, RepositoryError> {
+        self.load_generation_keys(Some(agent)).await
+    }
+    async fn all_prepared_tunnels(&self) -> Result<Vec<PreparedKey>, RepositoryError> {
+        self.load_generation_keys(None).await
+    }
+
     async fn ensure_agent_network(
         &self,
         agent_id: AgentId,
@@ -859,8 +877,11 @@ impl Repository for PostgresRepository {
         desired: AttachmentState,
         expected_resource_version: u64,
         runtime_endpoint: Option<Ipv4Addr>,
+        tunnel_key_id: Option<KeyId>,
     ) -> Result<RuntimeAttachment, RepositoryError> {
-        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint) {
+        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint)
+            || (desired == AttachmentState::Open) != tunnel_key_id.is_some()
+        {
             return Err(RepositoryError::InvalidRuntimeEndpoint);
         }
         let mut client = self.pool.acquire().await?;
@@ -878,7 +899,11 @@ impl Repository for PostgresRepository {
             let current = select_attachment(&transaction, agent_id, true)
                 .await?
                 .ok_or(RepositoryError::AgentNetworkNotFound)?;
-            if current.state == desired && current.runtime_endpoint == runtime_endpoint {
+            if let Some(key)=tunnel_key_id {
+                let prepared=transaction.query_opt("SELECT key_id FROM runtime_egress.runtime_tunnel_keys WHERE agent_id=$1 AND key_id=$2 AND tunnel_ipv4=$3::text::inet",&[&agent_id.as_str(),&key.to_string(),&network.tunnel_ipv4.to_string()]).await.map_err(database_operation_error)?;
+                if prepared.is_none(){return Err(RepositoryError::TunnelKeyUnavailable)}
+            }
+            if current.state == desired && current.runtime_endpoint == runtime_endpoint && current.tunnel_key_id==tunnel_key_id {
                 if !retry_version_matches(current.resource_version, expected_resource_version) {
                     return Err(RepositoryError::ResourceVersionConflict);
                 }
@@ -896,11 +921,12 @@ impl Repository for PostgresRepository {
                 state: desired,
                 resource_version: current.resource_version + 1,
                 runtime_endpoint,
+                tunnel_key_id,
             };
             transaction
                 .execute(
                     "UPDATE runtime_egress.runtime_attachments
-                     SET state = $2, resource_version = $3, runtime_endpoint = $4::text::inet,
+                     SET state = $2, resource_version = $3, runtime_endpoint = $4::text::inet, tunnel_key_id=$5,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE agent_id = $1",
                     &[
@@ -910,10 +936,15 @@ impl Repository for PostgresRepository {
                         &attachment
                             .runtime_endpoint
                             .map(|address| address.to_string()),
+                        &tunnel_key_id.map(|id|id.to_string()),
                     ],
                 )
                 .await
                 .map_err(database_operation_error)?;
+            if let Some(key)=tunnel_key_id {
+                transaction.execute("DELETE FROM runtime_egress.runtime_tunnel_keys WHERE agent_id=$1 AND key_id<>$2",&[&agent_id.as_str(),&key.to_string()]).await.map_err(database_operation_error)?;
+                transaction.execute("UPDATE runtime_egress.runtime_tunnel_keys SET role='current' WHERE key_id=$1",&[&key.to_string()]).await.map_err(database_operation_error)?;
+            }
             transaction
                 .commit()
                 .await
@@ -1052,6 +1083,13 @@ impl Repository for PostgresRepository {
                 .map_err(database_operation_error)?;
             let network = network_from_row(&row)?;
             transaction
+                .execute(
+                    "DELETE FROM runtime_egress.runtime_tunnel_keys WHERE agent_id=$1",
+                    &[&agent_id.as_str()],
+                )
+                .await
+                .map_err(database_operation_error)?;
+            transaction
                 .commit()
                 .await
                 .map_err(database_operation_error)?;
@@ -1070,7 +1108,7 @@ impl Repository for PostgresRepository {
                             n.resource_version, n.quarantine_until,
                             t.state, t.resource_version,
                             a.policy_id, a.revision, a.resource_version,
-                            p.canonical_spec, p.digest, host(t.runtime_endpoint)
+                            p.canonical_spec, p.digest, host(t.runtime_endpoint), t.tunnel_key_id
                      FROM runtime_egress.agent_networks n
                      JOIN runtime_egress.runtime_attachments t USING (agent_id)
                      JOIN runtime_egress.agent_policy_assignments a USING (agent_id)
@@ -1141,6 +1179,7 @@ fn binding_from_row(row: Row) -> Result<ActiveBinding, RepositoryError> {
         state: parse_attachment_state(row.get(6))?,
         resource_version: i64_to_u64(row.get(7))?,
         runtime_endpoint: parse_runtime_endpoint(row.get(13))?,
+        tunnel_key_id: parse_tunnel_key_id(row.get(14))?,
     };
     let policy_id = PolicyId::parse(row.get::<_, String>(8)).map_err(operation_failed)?;
     let revision_number = i64_to_u64(row.get(9))?;
@@ -1321,7 +1360,7 @@ async fn select_attachment_client(
 ) -> Result<Option<RuntimeAttachment>, RepositoryError> {
     client
         .query_opt(
-            "SELECT state, resource_version, host(runtime_endpoint)
+            "SELECT state, resource_version, host(runtime_endpoint), tunnel_key_id
              FROM runtime_egress.runtime_attachments WHERE agent_id = $1",
             &[&agent_id.as_str()],
         )
@@ -1338,7 +1377,7 @@ async fn select_attachment(
 ) -> Result<Option<RuntimeAttachment>, RepositoryError> {
     let suffix = if for_update { " FOR UPDATE" } else { "" };
     let query = format!(
-        "SELECT state, resource_version, host(runtime_endpoint)
+        "SELECT state, resource_version, host(runtime_endpoint), tunnel_key_id
          FROM runtime_egress.runtime_attachments WHERE agent_id = $1{suffix}"
     );
     transaction
@@ -1355,6 +1394,7 @@ fn attachment_from_row(agent_id: AgentId, row: &Row) -> Result<RuntimeAttachment
         state: parse_attachment_state(row.get(0))?,
         resource_version: i64_to_u64(row.get(1))?,
         runtime_endpoint: parse_runtime_endpoint(row.get(2))?,
+        tunnel_key_id: parse_tunnel_key_id(row.get(3))?,
     })
 }
 
@@ -1648,4 +1688,10 @@ mod tests {
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
+}
+
+fn parse_tunnel_key_id(value: Option<String>) -> Result<Option<KeyId>, RepositoryError> {
+    value
+        .map(|s| KeyId::parse(&s).map_err(|_| RepositoryError::TunnelKeyUnavailable))
+        .transpose()
 }

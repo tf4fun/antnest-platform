@@ -31,3 +31,21 @@ test("native fixture delivers only receiver hashes in its bootstrap identity", (
     assert.equal(statSync(join(path, file)).mode & 0o777, 0o600);
   assert.throws(() => createRuntimeReceiver(path));
 });
+
+test("native receiver delivers private generation keys with a public digest descriptor", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "antnest-native-tunnel-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "auth");
+  const descriptor = createRuntimeReceiver(path);
+  assert(descriptor.tunnel, "missing authenticated transport bootstrap");
+  const raw = readFileSync(join(path, "tunnel.json"));
+  const keys = JSON.parse(raw);
+  assert.equal(keys.key_id, descriptor.tunnel.key_id);
+  assert.equal(
+    descriptor.tunnel.keys_digest,
+    "sha256:" + createHash("sha256").update(raw).digest("hex"),
+  );
+  assert(!JSON.stringify(descriptor).includes(keys.runtime_private_key));
+  assert(!JSON.stringify(descriptor).includes(keys.preshared_key));
+  assert.equal(statSync(join(path, "tunnel.json")).mode & 0o777, 0o600);
+});

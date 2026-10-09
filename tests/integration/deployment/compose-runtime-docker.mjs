@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
+import { prepareEgressOwnership } from "../../../scripts/dev-egress-auth-owner.mjs";
 import { provisionTokens } from "../../../scripts/dev-service-tokens.mjs";
 import {
   dockerClient,
@@ -145,6 +146,7 @@ try {
     });
     assert.equal(generated.exit_code, 0, "environment generation failed");
     provisionTokens({ output: credentials, withSkillLearning: true });
+    await prepareEgressOwnership(docker, credentials);
     const octet = await networkOctet(docker, 1 + (process.pid % 200));
     const gatewayPort = await freePort();
     Object.assign(
@@ -167,6 +169,7 @@ try {
         ANTNEST_EGRESS_CONTROL_SUBNET: `10.243.${octet}.0/25`,
         ANTNEST_EGRESS_CONTROL_IPV4: `10.243.${octet}.3`,
         ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4: `10.243.${octet}.4`,
+        ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4: `10.243.${octet}.5`,
         ANTNEST_EDGE_HOST_PORT: String(gatewayPort),
         ANTNEST_EDGE_PUBLIC_BASE_URL: `http://127.0.0.1:${gatewayPort}`,
         ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: "deployment-admission",
@@ -335,9 +338,12 @@ try {
           row.NetworkSettings.Networks[`${project}_${network}`].IPAddress,
           network === "control"
             ? env[
-                service === "runtime-egress"
-                  ? "ANTNEST_EGRESS_CONTROL_IPV4"
-                  : "ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4"
+                {
+                  "runtime-egress": "ANTNEST_EGRESS_CONTROL_IPV4",
+                  "agent-controller": "ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4",
+                  "runtime-controller":
+                    "ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4",
+                }[service]
               ]
             : `${env.ANTNEST_SERVICE_NETWORK_PREFIX}.${item.members[service]}`,
         );

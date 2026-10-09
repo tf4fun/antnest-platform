@@ -40,7 +40,7 @@ Startup rejects published PostgreSQL passwords under the [development secret pol
 - Complete creation after confirmed platform create/start, without waiting for
   health (see [creation and observation](docs/creation-and-observation.md)).
 - Report the current Docker IPv4 from the configured management-network
-  attachment as `runtime_endpoint` in Inspect/List (contract revision 18).
+  attachment as `runtime_endpoint` in Inspect/List (contract revision 19).
   Controller reads this address before binding Egress traffic; it is independent
   of MCP URLs and execution readiness. Controller forwards the fresh address
   for Egress attachment opens and restart rebinding; see
@@ -89,11 +89,30 @@ The first instance receiver supports token mode with the explicit
 internal network. Native Runtime TLS/mTLS is unsupported and unsupported profiles
 fail RC startup; no opt-in is synthesized. The control-service TLS library still
 validates TLS when configured. Production transport expansion is separate work.
-Runtime, Controller relay and ACP consumption remain the next #30 owning batches.
+The token-profile Runtime, Controller relay and ACP consumers are implemented.
 
 - It does not read another service's database.
 - It does not hold the Skill maintenance signing key; that belongs to Agent ACP
   Service.
+
+### Authenticated tunnel generation (#111)
+
+RC also seals independent WireGuard endpoint keys and a 32-byte PSK with every
+Initialize/Update/Enable operation. Exact recovery keeps the accepted key ID.
+The same root-only private volume now contains `tunnel.json`; both file digests,
+mode 0600 and actual read-only mount ownership are checked before start.
+`RuntimeSpec.authentication.tunnel` carries only ID, fixed path and digest.
+Inspect/List reports the live generation's `tunnel_key_id`; compute completion
+receipts do not claim a currently verified peer or execution identity.
+
+`ANTNEST_RUNTIME_EGRESS_URL` and the workload sender file for `runtime-egress`
+are required. RC privately registers Egress's endpoint material before any
+platform effect. Dependency outages return retryable `tunnel_registration_unavailable`
+while the admitted operation stays running; retry the same request ID.
+Deterministic rejection preserves an existing source Runtime. Keys never enter
+HTTP content capture. Runtime, Egress and Controller adoption plus deployment
+wiring remain subsequent #111 batches; this producer alone is not a tunnel.
+See the [shared design](../../docs/authenticated-runtime-tunnel.md).
 
 ## Interfaces
 

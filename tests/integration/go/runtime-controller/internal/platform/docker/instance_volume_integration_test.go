@@ -67,7 +67,7 @@ func TestInstanceReceiverPreparedInStoppedDockerVolume(t *testing.T) {
 			t.Fatalf("stopped-volume receiver preparation: %v", err)
 		}
 	}
-	descriptor := &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest}
+	descriptor := &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest, Tunnel: record.Tunnel.Descriptor()}
 	create := func() string {
 		t.Helper()
 		labels := instanceVolumeLabels(id, descriptor)

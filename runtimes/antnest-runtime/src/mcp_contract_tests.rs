@@ -84,6 +84,7 @@ struct Transport {
 
 #[derive(Deserialize)]
 struct EgressTunnel {
+    inner_payload: String,
     kind: String,
     payload: String,
     packet_contract: String,
@@ -94,6 +95,7 @@ struct EgressTunnel {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PacketContract {
+    authentication: serde_json::Value,
     revision: u32,
     transport: String,
     inner_ip_version: u8,
@@ -150,7 +152,14 @@ fn shared_contract_matches_runtime_http_surface() {
         EXPECTED_EXECUTION_HEADER
     );
     assert_eq!(contract.egress_tunnel.kind, "udp");
-    assert_eq!(contract.egress_tunnel.payload, "one-complete-ipv4-packet");
+    assert_eq!(
+        contract.egress_tunnel.payload,
+        "ant2-prefixed-wireguard-message"
+    );
+    assert_eq!(
+        contract.egress_tunnel.inner_payload,
+        "one-complete-ipv4-packet"
+    );
     assert_eq!(
         contract.egress_tunnel.packet_contract,
         "packet-contract.json"
@@ -161,7 +170,9 @@ fn shared_contract_matches_runtime_http_surface() {
     )))
     .expect("decode packet contract");
     assert_eq!(packet.revision, crate::packet::PACKET_CONTRACT_REVISION);
-    assert_eq!(packet.transport, "raw-ip-over-udp");
+    assert_eq!(packet.transport, "wireguard-over-udp");
+    assert_eq!(packet.authentication["implementation"], "boringtun");
+    assert_eq!(packet.authentication["raw_packet_fallback"], false);
     assert_eq!(packet.inner_ip_version, 4);
     assert_eq!(packet.inner_transport_protocol, "tcp");
     assert_eq!(packet.inner_mtu, crate::packet::INNER_MTU);
@@ -255,6 +266,7 @@ fn shared_contract_matches_runtime_http_surface() {
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
     let input = RuntimeSpecInput {
         authentication: Some(crate::service_auth::BootstrapDescriptor {
+            tunnel: crate::tunnel_auth_tests::fixture().0,
             connection_id: "rci_00000000000000000000000000000001".into(),
             callers_file: crate::service_auth::CALLERS_FILE.into(),
             receiver_digest: format!("sha256:{}", "0".repeat(64)),

@@ -1,9 +1,11 @@
 # Runtime Egress Control API
 
-Runtime Egress exposes a small JSON-over-HTTP RPC API to Agent Controller on a
-private Controller-purpose network with verified Controller workload authority.
+Runtime Egress exposes a small JSON-over-HTTP RPC API on a
+private control-purpose network with verified workload authority. Agent Controller
+owns lifecycle and policy calls; Runtime Controller owns only private generation-key registration.
 It performs no end-user authentication and carries no
-Runtime generation, deployment-provider, Run, Tool, or Channel state.
+deployment-provider, Run, Tool, or Channel state. Generation identity is limited
+to the opaque key ID and Runtime revision required for transport authentication.
 
 JSON requests and responses use `application/json`; Ensure and GET requests
 have no body. Unknown and duplicate fields are rejected. Exact workload grants,
@@ -24,7 +26,7 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 5.
+This document describes control contract revision 7.
 
 ## Status
 
@@ -67,12 +69,13 @@ lifecycle traffic changes only through the attachment CAS operation.
   "agent_id": "agent-1",
   "tunnel_ipv4": "100.64.0.2",
   "resolver_ipv4": "100.64.0.1",
-  "packet_contract_revision": 1,
+  "packet_contract_revision": 2,
   "egress_endpoint": { "ipv4": "10.20.0.8", "port": 8092 },
   "state": "active",
   "network_resource_version": 1,
   "attachment_state": "closed",
-  "attachment_resource_version": 1
+  "attachment_resource_version": 1,
+  "tunnel_key_id": null
 }
 ```
 
@@ -88,24 +91,46 @@ policy and attachment state are independent durable records.
 `GET /internal/agent-networks/{agent_id}` returns the same document. A missing
 Agent returns `agent_network_not_found`.
 
+## Private generation key preparation
+
+`PUT /internal/agent-tunnel-keys/{agent_id}` is restricted to Runtime Controller.
+Its strict request follows [tunnel-key-request.schema.json](tunnel-key-request.schema.json).
+RC sends Egress's private X25519 key, the Runtime public key and a shared 32-byte
+PSK, with the opaque key ID, Runtime revision and allocated inner IPv4. The
+response is `204` without a body. No other caller can register generation keys.
+
+The key ID is immutable: exact replay succeeds, different identity or key
+material conflicts. New preparation requires a closed attachment and keeps at
+most the current generation and one candidate. Opening selects the prepared
+key and retires all other generations under the output barrier. Release deletes
+all private generation records. Egress seals private material in its database
+using its independent root-only 32-byte master file; restart restores the
+static generation keys and establishes fresh WireGuard sessions. Private RPC
+content is never captured, even when diagnostic content capture is enabled.
+
+Only authenticated revision 2 datagrams can reach readiness or policy; no raw
+revision 1 fallback exists. Authentication, replay and unknown-context drops
+have aggregate counters without Agent labels. See the
+[transport contract](../../docs/authenticated-runtime-tunnel.md).
+
 ## Runtime Attachment
 
 `PUT /internal/agent-network-attachments/{agent_id}`
 
 ```json
-{ "state": "open", "expected_resource_version": 7, "runtime_endpoint": "10.243.1.20" }
+{ "state": "open", "expected_resource_version": 7, "runtime_endpoint": "10.243.1.20", "tunnel_key_id": "rtk_0123456789abcdef0123456789abcdef" }
 ```
 
 Attachment state is `closed` or `open` and has its own monotonic resource
 version. It never rewrites the Agent's desired policy.
 
-Revision 6 binds each open attachment to `runtime_endpoint`, the canonical IPv4
+Revision 7 binds each open attachment to the prepared `tunnel_key_id` and `runtime_endpoint`, the canonical IPv4
 address reported by RC for that Runtime on its management network. This is an
 address, not a URL or an inner tunnel address; the UDP source port is not pinned.
-Open requires this field. Close omits it or sends null and clears the binding.
-Network responses include the address while bound. State and address form one
+Open requires both fields and a previously prepared generation key. Close omits them or sends null and clears the public binding, retaining the private generation for authenticated readiness.
+Network responses include the address while bound. State, address and key ID form one
 CAS value: changing either consumes a new resource version; same-state replay
-with an older version succeeds only for the exact same address. Policy changes,
+with an older version succeeds only for the exact same address and key ID. Policy changes,
 Ensure and Egress restart preserve the committed peer binding.
 
 Controller uses the provisioned lifecycle result and reconciles RC's current
@@ -271,7 +296,7 @@ Errors have one stable shape:
 | Code                        |    HTTP | Meaning                                                                                                  |
 | --------------------------- | ------: | -------------------------------------------------------------------------------------------------------- |
 | `service_unauthenticated`   |     401 | Missing or invalid workload authority; nonretryable, exact service challenge                             |
-| `caller_not_allowed`        |     403 | Verified workload is not Controller; nonretryable, no challenge                                          |
+| `caller_not_allowed`        |     403 | Verified workload is not the permitted caller for this route; nonretryable, no challenge                                          |
 | `unsupported_media_type`    |     415 | JSON carrier is missing, ambiguous or unsupported; nonretryable                                          |
 | `invalid_request`           | 400/413 | JSON, body size, query, identifier, address, revision, or policy validation failed                       |
 | `route_not_found`           |     404 | The control route does not exist                                                                         |
@@ -285,6 +310,10 @@ Errors have one stable shape:
 | `cleanup_failed`            |     503 | Flow or conntrack barrier did not complete                                                               |
 | `operation_failed`          |     503 | This bounded database/control operation failed; shared readiness may remain healthy and retry is allowed |
 | `control_plane_unavailable` |     503 | Database or control mutation path is unavailable                                                         |
+
+| `tunnel_key_unavailable`    |     409 | Open references an absent or unreadable prepared generation; no mutation occurs                          |
+| `tunnel_key_conflict`       |     409 | Existing key ID has different identity or key material                                                   |
+| `attachment_open`          |     409 | A new candidate cannot be registered while traffic is open                                              |
 
 Internal failures never expose SQL, credentials, packet payloads, or command
 stderr in the response.

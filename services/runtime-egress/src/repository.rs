@@ -6,6 +6,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::tunnel::PreparedKey;
+use antnest_runtime_tunnel::KeyId;
 use async_trait::async_trait;
 use ipnet::Ipv4Net;
 use sha2::{Digest, Sha256};
@@ -23,6 +25,8 @@ use crate::{
 
 mod observation;
 mod postgres;
+#[cfg(test)]
+mod tunnel_tests;
 
 pub use postgres::PostgresRepository;
 
@@ -46,6 +50,12 @@ pub struct RepositoryConfig {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum RepositoryError {
+    #[error("prepared tunnel key is unavailable")]
+    TunnelKeyUnavailable,
+    #[error("prepared tunnel key conflicts")]
+    TunnelKeyConflict,
+    #[error("attachment must be closed before preparing a new key")]
+    AttachmentOpen,
     #[error("Runtime peer does not match attachment state")]
     InvalidRuntimeEndpoint,
     #[error("database connection is unavailable; raw detail omitted")]
@@ -119,6 +129,24 @@ impl RepositoryError {
 
 #[async_trait]
 pub trait Repository: Send + Sync + 'static {
+    async fn prepare_tunnel(&self, _row: PreparedKey) -> Result<PreparedKey, RepositoryError> {
+        Err(RepositoryError::Unavailable(
+            "tunnel storage unsupported".into(),
+        ))
+    }
+    async fn prepared_tunnels(
+        &self,
+        _agent: &AgentId,
+    ) -> Result<Vec<PreparedKey>, RepositoryError> {
+        Err(RepositoryError::Unavailable(
+            "tunnel storage unsupported".into(),
+        ))
+    }
+    async fn all_prepared_tunnels(&self) -> Result<Vec<PreparedKey>, RepositoryError> {
+        Err(RepositoryError::Unavailable(
+            "tunnel storage unsupported".into(),
+        ))
+    }
     async fn ensure_agent_network(
         &self,
         agent_id: AgentId,
@@ -155,6 +183,7 @@ pub trait Repository: Send + Sync + 'static {
         state: AttachmentState,
         expected_resource_version: u64,
         runtime_endpoint: Option<Ipv4Addr>,
+        tunnel_key_id: Option<KeyId>,
     ) -> Result<RuntimeAttachment, RepositoryError>;
 
     async fn compare_and_swap_assignment(
@@ -193,6 +222,8 @@ pub struct InMemoryRepository {
 
 #[derive(Debug)]
 struct MemoryState {
+    tunnels: HashMap<KeyId, PreparedKey>,
+    active_keys: HashMap<AgentId, KeyId>,
     config: RepositoryConfig,
     next_slot: u32,
     networks: HashMap<AgentId, AgentNetwork>,
@@ -213,6 +244,8 @@ impl InMemoryRepository {
         let revisions = builtin_revisions();
         Ok(Self {
             state: Mutex::new(MemoryState {
+                tunnels: HashMap::new(),
+                active_keys: HashMap::new(),
                 config,
                 next_slot: pool.next_slot(),
                 networks: HashMap::new(),
@@ -226,6 +259,50 @@ impl InMemoryRepository {
 
 #[async_trait]
 impl Repository for InMemoryRepository {
+    async fn prepare_tunnel(&self, row: PreparedKey) -> Result<PreparedKey, RepositoryError> {
+        let mut state = self.state.lock().await;
+        let network = state
+            .networks
+            .get(&row.agent_id)
+            .ok_or(RepositoryError::AgentNetworkNotFound)?;
+        if network.state != NetworkState::Active || network.tunnel_ipv4 != row.tunnel_ipv4 {
+            return Err(RepositoryError::AgentNetworkUnavailable);
+        }
+        if let Some(existing) = state.tunnels.get(&row.key_id) {
+            return if existing.same_identity(&row) {
+                Ok(existing.clone())
+            } else {
+                Err(RepositoryError::TunnelKeyConflict)
+            };
+        }
+        if state
+            .attachments
+            .get(&row.agent_id)
+            .is_none_or(|a| a.state != AttachmentState::Closed)
+        {
+            return Err(RepositoryError::AttachmentOpen);
+        }
+        let active = state.active_keys.get(&row.agent_id).copied();
+        state
+            .tunnels
+            .retain(|id, r| r.agent_id != row.agent_id || Some(*id) == active);
+        state.tunnels.insert(row.key_id, row.clone());
+        Ok(row)
+    }
+    async fn prepared_tunnels(&self, agent: &AgentId) -> Result<Vec<PreparedKey>, RepositoryError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .tunnels
+            .values()
+            .filter(|r| &r.agent_id == agent)
+            .cloned()
+            .collect())
+    }
+    async fn all_prepared_tunnels(&self) -> Result<Vec<PreparedKey>, RepositoryError> {
+        Ok(self.state.lock().await.tunnels.values().cloned().collect())
+    }
     async fn ensure_agent_network(
         &self,
         agent_id: AgentId,
@@ -271,6 +348,7 @@ impl Repository for InMemoryRepository {
             resource_version: 1,
         };
         let attachment = RuntimeAttachment {
+            tunnel_key_id: None,
             agent_id: agent_id.clone(),
             state: AttachmentState::Closed,
             resource_version: 1,
@@ -358,8 +436,11 @@ impl Repository for InMemoryRepository {
         desired: AttachmentState,
         expected_resource_version: u64,
         runtime_endpoint: Option<Ipv4Addr>,
+        tunnel_key_id: Option<KeyId>,
     ) -> Result<RuntimeAttachment, RepositoryError> {
-        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint) {
+        if !crate::domain::valid_runtime_endpoint(desired, runtime_endpoint)
+            || (desired == AttachmentState::Open) != tunnel_key_id.is_some()
+        {
             return Err(RepositoryError::InvalidRuntimeEndpoint);
         }
         let mut state = self.state.lock().await;
@@ -375,7 +456,18 @@ impl Repository for InMemoryRepository {
             .get(agent_id)
             .cloned()
             .ok_or(RepositoryError::AgentNetworkNotFound)?;
-        if current.state == desired && current.runtime_endpoint == runtime_endpoint {
+        if let Some(key) = tunnel_key_id
+            && state
+                .tunnels
+                .get(&key)
+                .is_none_or(|r| &r.agent_id != agent_id || r.tunnel_ipv4 != network.tunnel_ipv4)
+        {
+            return Err(RepositoryError::TunnelKeyUnavailable);
+        }
+        if current.state == desired
+            && current.runtime_endpoint == runtime_endpoint
+            && current.tunnel_key_id == tunnel_key_id
+        {
             return if retry_version_matches(current.resource_version, expected_resource_version) {
                 Ok(current)
             } else {
@@ -386,6 +478,7 @@ impl Repository for InMemoryRepository {
             return Err(RepositoryError::ResourceVersionConflict);
         }
         let attachment = RuntimeAttachment {
+            tunnel_key_id,
             agent_id: agent_id.clone(),
             state: desired,
             resource_version: current.resource_version + 1,
@@ -394,6 +487,12 @@ impl Repository for InMemoryRepository {
         state
             .attachments
             .insert(agent_id.clone(), attachment.clone());
+        if let Some(key) = tunnel_key_id {
+            state
+                .tunnels
+                .retain(|id, r| &r.agent_id != agent_id || *id == key);
+            state.active_keys.insert(agent_id.clone(), key);
+        }
         Ok(attachment)
     }
 
@@ -479,7 +578,10 @@ impl Repository for InMemoryRepository {
         network.state = NetworkState::Quarantined;
         network.resource_version += 1;
         network.quarantine_until = Some(now + quarantine);
-        Ok(network.clone())
+        let result = network.clone();
+        state.tunnels.retain(|_, r| &r.agent_id != agent_id);
+        state.active_keys.remove(agent_id);
+        Ok(result)
     }
 
     async fn active_bindings(&self) -> Result<Vec<ActiveBinding>, RepositoryError> {

@@ -70,6 +70,7 @@ node scripts/dev-service-tokens.mjs --with-skill-learning
 set -a
 . artifacts/service-authentication/deployment.env
 set +a
+node scripts/dev-egress-auth-owner.mjs
 ```
 
 It generates independent per-pair workload authority, Identity/RC bootstrap keys

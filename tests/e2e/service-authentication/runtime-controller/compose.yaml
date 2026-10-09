@@ -30,6 +30,9 @@ services:
       ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${RC_AUTH_SCOPE:?}
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${RC_AUTH_MANAGEMENT_NETWORK:?}
       ANTNEST_RUNTIME_INSTANCE_KEY_FILE: /run/auth/instance-master
+
+      ANTNEST_RUNTIME_EGRESS_URL: http://egress-fixture:8081
+      ANTNEST_SERVICE_AUTH_TOKEN_DIR: /run/auth
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${RC_AUTH_IMAGE:?}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${RC_AUTH_SYSTEM_SKILLS_VOLUME:?}
       ANTNEST_SERVICE_AUTH_MODE: token
@@ -56,6 +59,13 @@ services:
     volumes:
       - ./probe.mjs:/fixture/probe.mjs:ro
       - ../../../../services/runtime-controller/api/control-contract.json:/fixture/control-contract.json:ro
+      - ${RC_AUTH_DIRECTORY:?}:/run/auth:ro
+    networks: [control]
+  egress-fixture:
+    image: node:24.21.0-bookworm-slim
+    command: [node, /fixture/egress-fixture.mjs]
+    volumes:
+      - ./egress-fixture.mjs:/fixture/egress-fixture.mjs:ro
       - ${RC_AUTH_DIRECTORY:?}:/run/auth:ro
     networks: [control]
   management-probe:

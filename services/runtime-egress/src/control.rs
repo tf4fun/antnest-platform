@@ -1,5 +1,7 @@
 use std::{error::Error as _, net::Ipv4Addr, sync::Arc, time::Duration};
 
+use crate::tunnel::Registration;
+use antnest_runtime_tunnel::KeyId;
 use async_trait::async_trait;
 use axum::{
     Router,
@@ -40,6 +42,7 @@ use observation::{
 
 pub use crate::application::ServiceStatus;
 
+pub(crate) const TUNNEL_KEY_ROUTE: &str = "/internal/agent-tunnel-keys/{agent_id}";
 const STATUS_ROUTE: &str = "/status";
 const AGENT_NETWORK_ROUTE: &str = "/internal/agent-networks/{agent_id}";
 const ATTACHMENT_ROUTE: &str = "/internal/agent-network-attachments/{agent_id}";
@@ -48,6 +51,7 @@ const POLICY_REVISION_ROUTE: &str = "/internal/policies/{policy_id}/revisions/{r
 const POLICY_ASSIGNMENT_ROUTE: &str = "/internal/agent-policy-assignments/{agent_id}";
 
 pub const CONTROL_ROUTES: &[(&str, &str)] = &[
+    ("PUT", TUNNEL_KEY_ROUTE),
     ("GET", STATUS_ROUTE),
     ("GET", AGENT_NETWORK_ROUTE),
     ("PUT", AGENT_NETWORK_ROUTE),
@@ -75,19 +79,29 @@ pub const CONTROL_ERROR_CODES: &[&str] = &[
     "cleanup_failed",
     "operation_failed",
     "control_plane_unavailable",
+    "tunnel_key_unavailable",
+    "tunnel_key_conflict",
+    "attachment_open",
 ];
 
 #[async_trait]
 trait ControlApi: Send + Sync {
+    async fn register_tunnel(
+        &self,
+        agent: AgentId,
+        input: Registration,
+    ) -> Result<(), ControlError>;
     fn status(&self) -> ServiceStatus;
     async fn ensure(&self, agent_id: AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn network(&self, agent_id: &AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
+
     async fn set_attachment(
         &self,
         agent_id: AgentId,
         state: AttachmentState,
         expected_resource_version: u64,
         runtime_endpoint: Option<Ipv4Addr>,
+        tunnel_key_id: Option<KeyId>,
     ) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn release(
         &self,
@@ -121,6 +135,13 @@ where
     R: Repository,
     K: KernelCleanup,
 {
+    async fn register_tunnel(
+        &self,
+        agent: AgentId,
+        input: Registration,
+    ) -> Result<(), ControlError> {
+        ControlService::register_tunnel(self, agent, input).await
+    }
     fn status(&self) -> ServiceStatus {
         ControlService::status(self)
     }
@@ -139,9 +160,16 @@ where
         state: AttachmentState,
         expected_resource_version: u64,
         runtime_endpoint: Option<Ipv4Addr>,
+        tunnel_key_id: Option<KeyId>,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
-        self.set_runtime_attachment(agent_id, state, expected_resource_version, runtime_endpoint)
-            .await
+        self.set_runtime_attachment(
+            agent_id,
+            state,
+            expected_resource_version,
+            runtime_endpoint,
+            tunnel_key_id,
+        )
+        .await
     }
 
     async fn release(
@@ -228,6 +256,7 @@ where
     Router::new()
         .route(AGENT_NETWORK_ROUTE, get(get_network).put(ensure_network))
         .route(ATTACHMENT_ROUTE, put(set_attachment))
+        .route(TUNNEL_KEY_ROUTE, put(register_tunnel))
         .route(RELEASE_ROUTE, post(release_network))
         .route(
             POLICY_REVISION_ROUTE,
@@ -477,7 +506,9 @@ async fn trace_request(
         span.set_attribute("rpc.service", "runtime-egress.control");
         span.set_attribute("rpc.method", operation);
     }
-    let enabled = state.capture_rpc_content && control_operation(&method, &route).is_some();
+    let enabled = state.capture_rpc_content
+        && route != TUNNEL_KEY_ROUTE
+        && control_operation(&method, &route).is_some();
     let capture = CaptureHandle::new();
     let completion = Completion::new(span.clone(), method, route, state.metrics, capture.clone());
     let (mut parts, body) = request.into_parts();
@@ -496,6 +527,7 @@ async fn trace_request(
 fn control_operation(method: &str, route: &str) -> Option<&'static str> {
     match (method, route) {
         ("PUT", AGENT_NETWORK_ROUTE) => Some("ensure_agent_network"),
+        ("PUT", TUNNEL_KEY_ROUTE) => Some("register_tunnel"),
         ("GET", AGENT_NETWORK_ROUTE) => Some("agent_network"),
         ("PUT", ATTACHMENT_ROUTE) => Some("set_runtime_attachment"),
         ("POST", RELEASE_ROUTE) => Some("release_agent_network"),
@@ -569,6 +601,21 @@ async fn get_network(
         .map_err(ApiError::from)
 }
 
+async fn register_tunnel(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+    request: Result<ControlJson<Registration>, JsonRejection>,
+) -> Result<StatusCode, ApiError> {
+    let ControlJson(input) = request.map_err(|_| ApiError::invalid_request())?;
+    let agent = parse_agent_id(agent)?;
+    state
+        .api
+        .register_tunnel(agent, input)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn set_attachment(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
@@ -585,6 +632,12 @@ async fn set_attachment(
             request.state,
             request.expected_resource_version,
             request.runtime_endpoint,
+            request
+                .tunnel_key_id
+                .as_deref()
+                .map(KeyId::parse)
+                .transpose()
+                .map_err(|_| ApiError::invalid_request())?,
         )
         .await
         .map(NetworkResponse::from)
@@ -595,6 +648,7 @@ async fn set_attachment(
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SetAttachmentRequest {
+    tunnel_key_id: Option<String>,
     state: AttachmentState,
     expected_resource_version: u64,
     runtime_endpoint: Option<Ipv4Addr>,
@@ -721,6 +775,7 @@ async fn assign_policy(
 
 #[derive(Serialize)]
 struct NetworkResponse {
+    tunnel_key_id: Option<String>,
     agent_id: AgentId,
     tunnel_ipv4: Ipv4Addr,
     resolver_ipv4: Ipv4Addr,
@@ -756,6 +811,7 @@ impl From<RuntimeNetworkAttachment> for NetworkResponse {
             attachment_state: value.attachment_state,
             attachment_resource_version: value.attachment_resource_version,
             runtime_endpoint: value.runtime_endpoint,
+            tunnel_key_id: value.tunnel_key_id.map(|id| id.to_string()),
         }
     }
 }
@@ -860,6 +916,24 @@ impl From<ControlError> for ApiError {
         let diagnostic = error.diagnostic();
         let mut api = match error {
             ControlError::InvalidRequest => Self::invalid_request(),
+            ControlError::TunnelKeyUnavailable => Self::new(
+                StatusCode::CONFLICT,
+                "tunnel_key_unavailable",
+                "prepared tunnel key unavailable",
+                false,
+            ),
+            ControlError::TunnelKeyConflict => Self::new(
+                StatusCode::CONFLICT,
+                "tunnel_key_conflict",
+                "prepared tunnel key conflicts",
+                false,
+            ),
+            ControlError::AttachmentOpen => Self::new(
+                StatusCode::CONFLICT,
+                "attachment_open",
+                "close attachment before preparing new tunnel key",
+                false,
+            ),
             ControlError::AgentNetworkNotFound => Self::new(
                 StatusCode::NOT_FOUND,
                 "agent_network_not_found",

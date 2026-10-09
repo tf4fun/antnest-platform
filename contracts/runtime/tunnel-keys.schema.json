@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/tunnel-keys.schema.json",
+  "title": "Private Runtime tunnel keys, revision 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["key_id", "runtime_private_key", "egress_public_key", "preshared_key"],
+  "properties": {
+    "key_id": { "type": "string", "pattern": "^rtk_[0-9a-f]{32}$" },
+    "runtime_private_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$", "writeOnly": true },
+    "egress_public_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "preshared_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$", "writeOnly": true }
+  }
+}

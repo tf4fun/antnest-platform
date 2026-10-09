@@ -1,5 +1,5 @@
 {
-  "contract": "raw-ipv4-tcp-over-udp",
+  "contract": "decoded-inner-ipv4-tcp",
   "fixtures": [
     {
       "name": "minimal_tcp_syn",
@@ -26,5 +26,6 @@
       "accepted": false,
       "hex": "4500002800004000400600006460000a5db8d8229c4001bb0000002900000000500200000000000000"
     }
-  ]
+  ],
+  "contract_revision": 2
 }

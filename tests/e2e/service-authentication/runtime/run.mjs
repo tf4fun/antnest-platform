@@ -37,6 +37,7 @@ chmodSync(directory, 0o700);
 const image = "antnest/antnest-runtime:auth-instance-" + scope.slice(-8);
 const gatedImage = image + "-gated";
 const fixtureImage = image + "-fixture";
+const tunnelImage = image + "-tunnel";
 const network = scope + "-network",
   workspace = scope + "-workspace",
   receiver = scope + "-receiver",
@@ -59,7 +60,33 @@ const callersRaw = JSON.stringify({
   "agent-acp-service": [hash(tokens.acp)],
 });
 const key = generateKeyPairSync("ed25519");
+const runtimePair = generateKeyPairSync("x25519"),
+  egressPair = generateKeyPairSync("x25519");
+const tunnelKeyID = "rtk_" + randomBytes(16).toString("hex"),
+  psk = randomBytes(32).toString("base64url");
+const tunnelRaw = JSON.stringify({
+  key_id: tunnelKeyID,
+  runtime_private_key: runtimePair.privateKey.export({ format: "jwk" }).d,
+  egress_public_key: egressPair.publicKey.export({ format: "jwk" }).x,
+  preshared_key: psk,
+});
+writeFileSync(
+  resolve(directory, "egress.json"),
+  JSON.stringify({
+    key_id: tunnelKeyID,
+    egress_private_key: egressPair.privateKey.export({ format: "jwk" }).d,
+    runtime_public_key: runtimePair.publicKey.export({ format: "jwk" }).x,
+    preshared_key: psk,
+    tunnel_ipv4: "100.64.0.2",
+  }),
+  { mode: 0o600 },
+);
 const descriptor = {
+  tunnel: {
+    key_id: tunnelKeyID,
+    keys_file: "/run/antnest-auth/tunnel.json",
+    keys_digest: hash(tunnelRaw),
+  },
   connection_id: "rci_" + randomBytes(16).toString("hex"),
   callers_file: "/run/antnest-auth/callers.json",
   receiver_digest: hash(callersRaw),
@@ -69,6 +96,7 @@ const fixture = {
   endpoint: "http://" + alias + ":8093",
   tokens,
   callers_raw: callersRaw,
+  tunnel_raw: tunnelRaw,
   signing_key: key.privateKey.export({ format: "pem", type: "pkcs8" }),
 };
 writeFileSync(resolve(directory, "input.json"), JSON.stringify(fixture), {
@@ -81,7 +109,7 @@ const timer = setTimeout(stop, 1800000);
 const docker = dockerClient(process.env, aborted.signal, 1800000);
 const labelArgs = ["--label", scopeLabel + "=" + scope];
 let complete = false,
-  cleaned = false,
+  cleaned,
   checks = 0,
   spec;
 const containers = new Set();
@@ -253,6 +281,28 @@ try {
   for (const name of [workspace, receiver, invalidReceiver])
     await invoke(["volume", "create", ...labelArgs, name]);
   await prepare(receiver, "valid");
+  const tunnelBuild = await runCommand({
+    name: "tunnel-fixture-build",
+    command: [
+      "docker",
+      "build",
+      "--progress=plain",
+      "-f",
+      "tests/support/runtime-tunnel/Dockerfile",
+      "-t",
+      tunnelImage,
+      ".",
+    ],
+    cwd: root,
+    output: evidence,
+    timeoutMs: 600000,
+    graceMs: 30000,
+  });
+  assert.equal(
+    tunnelBuild.exit_code,
+    0,
+    "encrypted readiness fixture build failed",
+  );
   await invoke([
     "run",
     "-d",
@@ -261,14 +311,10 @@ try {
     ...labelArgs,
     "--network",
     network,
-    "--entrypoint",
-    "python",
     "--mount",
-    "type=bind,src=" +
-      resolve(root, "tests/e2e/antnest-runtime/fixtures/egress_probe.py") +
-      ",dst=/probe.py,readonly",
-    image,
-    "/probe.py",
+    `type=bind,src=${directory},dst=/fixture,readonly`,
+    tunnelImage,
+    "/fixture/egress.json",
   ]);
   const [egressDetails] = JSON.parse(await invoke(["inspect", egress]));
   spec = {
@@ -276,7 +322,7 @@ try {
     generation: 1,
     listen: { host: "0.0.0.0", port: 8093 },
     network: {
-      packet_contract_revision: 1,
+      packet_contract_revision: 2,
       egress_endpoint: {
         ipv4: egressDetails.NetworkSettings.Networks[network].IPAddress,
         port: 8092,
@@ -662,7 +708,7 @@ try {
       await cleanupDocker([kind, "rm", id]);
     }
   }
-  for (const candidate of [image, gatedImage, fixtureImage]) {
+  for (const candidate of [image, gatedImage, fixtureImage, tunnelImage]) {
     try {
       await cleanupDocker(["image", "rm", candidate]);
     } catch {

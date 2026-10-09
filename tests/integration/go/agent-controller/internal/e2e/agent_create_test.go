@@ -162,14 +162,17 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 				State                   string `json:"state"`
 				ExpectedResourceVersion uint64 `json:"expected_resource_version"`
 				RuntimeEndpoint         string `json:"runtime_endpoint,omitempty"`
+				TunnelKeyID             string `json:"tunnel_key_id,omitempty"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode Egress attachment payload: %v", err)
 			}
 			if payload.State == ports.NetworkAttachmentOpen {
 				require.Equal(t, "10.20.0.9", payload.RuntimeEndpoint)
+				require.Equal(t, "rtk_0123456789abcdef0123456789abcdef", payload.TunnelKeyID)
 			} else {
 				require.Empty(t, payload.RuntimeEndpoint)
+				require.Empty(t, payload.TunnelKeyID)
 			}
 			policyMu.Lock()
 			state := stateForAgent(agentID)
@@ -301,6 +304,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 				inspection["phase"] = "absent"
 			} else if currentRuntimeLifecycle == "provisioned" {
 				inspection["runtime_endpoint"] = "10.20.0.9"
+				inspection["tunnel_key_id"] = "rtk_0123456789abcdef0123456789abcdef"
 			}
 			if currentRuntimeExecutionID != "" {
 				inspection["runtime_execution_id"] = currentRuntimeExecutionID
@@ -881,7 +885,7 @@ func egressNetworkResponse(
 ) map[string]any {
 	result := map[string]any{
 		"agent_id": agentID, "tunnel_ipv4": "100.64.0.2",
-		"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 1,
+		"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 2,
 		"egress_endpoint":             map[string]any{"ipv4": "10.20.0.8", "port": 8092},
 		"state":                       networkState,
 		"network_resource_version":    networkResourceVersion,
@@ -890,6 +894,7 @@ func egressNetworkResponse(
 	}
 	if attachmentState == ports.NetworkAttachmentOpen {
 		result["runtime_endpoint"] = "10.20.0.9"
+		result["tunnel_key_id"] = "rtk_0123456789abcdef0123456789abcdef"
 	}
 	return result
 }

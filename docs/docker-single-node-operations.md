@@ -67,9 +67,14 @@ node scripts/dev-service-tokens.mjs
 set -a
 . artifacts/service-authentication/deployment.env
 set +a
+node scripts/dev-egress-auth-owner.mjs
 ```
 
-The helper refuses existing output and does not rotate a retained deployment.
+The token helper refuses existing output and does not rotate a retained deployment.
+The ownership helper runs one short-lived, network-isolated container to give
+only Egress's receiver and tunnel master files UID/GID 0 while retaining 0600.
+This is required for Linux bind mounts; other services retain the generated host
+UID/GID. Run it before first startup and after replacing either Egress file.
 Retain this private directory and use the same settings for subsequent starts
 and shutdown. Add `--with-skill-learning` to the helper on the first invocation
 when automatic maintenance and dynamic discovery are wanted. See the

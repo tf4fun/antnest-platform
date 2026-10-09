@@ -30,10 +30,8 @@ const network = `${prefix}-network`,
   volume = `${prefix}-workspace`,
   runtime = `${prefix}-runtime`,
   egress = `${prefix}-egress`;
-const fixture = fileURLToPath(
-  new URL("../antnest-runtime/fixtures/egress_probe.py", import.meta.url),
-);
 const authVolume = `${prefix}-receiver`,
+  helperImage = `${prefix}:readiness`,
   authDirectory = fileURLToPath(
     new URL(`../../../${output}/${prefix}-auth`, import.meta.url),
   );
@@ -378,6 +376,21 @@ try {
     `io.antnest.test=${prefix}`,
     volume,
   ]);
+  const helperBuild = await runCommand({
+    name: prefix + "-readiness-build",
+    command: [
+      "docker",
+      "build",
+      "-f",
+      "tests/support/runtime-tunnel/Dockerfile",
+      "-t",
+      helperImage,
+      ".",
+    ],
+    output,
+    timeoutMs: 1200000,
+  });
+  assert.equal(helperBuild.exit_code, 0);
   await installRuntimeReceiver(docker, image, authVolume, authDirectory);
   await docker([
     "run",
@@ -389,11 +402,9 @@ try {
     "--network",
     network,
     "--mount",
-    `type=bind,src=${fixture},dst=/probe.py,readonly`,
-    "--entrypoint",
-    "python",
-    image,
-    "/probe.py",
+    `type=bind,src=${authDirectory}/egress-tunnel.json,dst=/fixture/keys.json,readonly`,
+    helperImage,
+    "/fixture/keys.json",
   ]);
   port = await freeLoopbackPort();
   const ip = JSON.parse(await docker(["inspect", egress]))[0].NetworkSettings
@@ -404,7 +415,7 @@ try {
     generation: 1,
     listen: { host: "0.0.0.0", port },
     network: {
-      packet_contract_revision: 1,
+      packet_contract_revision: 2,
       egress_endpoint: { ipv4: ip, port: 8092 },
       tunnel_ipv4: "100.64.0.2",
       resolver_ipv4: "100.64.0.1",
@@ -753,6 +764,9 @@ try {
       errors.push(error);
     }
   }
+  await clean(["image", "rm", helperImage]).catch((error) =>
+    errors.push(error),
+  );
   if (build) {
     try {
       const found = await clean(["image", "ls", "-q", image]);

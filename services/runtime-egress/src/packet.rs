@@ -9,7 +9,7 @@ const READINESS_PROBE_DESTINATION: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const READINESS_PROBE_DESTINATION_PORT: u16 = 9;
 const READINESS_PROBE_SOURCE_PORT_MIN: u16 = 49_152;
 pub const INNER_MTU: usize = 1400;
-pub const PACKET_CONTRACT_REVISION: u32 = 1;
+pub const PACKET_CONTRACT_REVISION: u32 = antnest_runtime_tunnel::REVISION;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FlowKey {

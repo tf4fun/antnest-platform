@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/egress/tunnel-key-request.schema.json",
+  "title": "Private RC generation tunnel key registration, revision 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["key_id", "runtime_revision", "tunnel_ipv4", "egress_private_key", "runtime_public_key", "preshared_key"],
+  "properties": {
+    "key_id": {"type": "string", "pattern": "^rtk_[0-9a-f]{32}$"},
+    "runtime_revision": {"type": "string", "pattern": "^rtv_[0-9a-f]{32}$"},
+    "tunnel_ipv4": {"type": "string", "format": "ipv4"},
+    "egress_private_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$", "writeOnly": true},
+    "runtime_public_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "preshared_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$", "writeOnly": true}
+  }
+}

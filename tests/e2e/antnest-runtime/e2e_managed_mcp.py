@@ -8,6 +8,7 @@ import http.client
 import itertools
 import json
 import os
+import socket
 from pathlib import Path
 import subprocess
 import tempfile
@@ -61,12 +62,29 @@ class ManagedMcpE2E(unittest.TestCase):
         finally:
             docker("rm", "-f", "--volumes", source, check=False)
         (cls.directory / "mcp-fixture").chmod(0o755)
+        repository = Path(__file__).resolve().parents[3]
+        cls.auth_directory = cls.directory / "auth"
+        cls.authentication = json.loads(subprocess.check_output(
+            ["node", str(repository / "tests/support/runtime-receiver-fixture.mjs"), str(cls.auth_directory)],
+            text=True, timeout=30))
+        cls.auth_volume = cls.prefix + "-auth"
+        cls.addClassCleanup(lambda: docker("volume", "rm", cls.auth_volume, check=False))
+        docker("volume", "create", cls.auth_volume)
+        docker("run", "--rm", "--network", "none", "--entrypoint", "sh",
+               "--mount", f"type=bind,src={cls.auth_directory},dst=/fixture/auth,readonly",
+               "--mount", f"type=volume,src={cls.auth_volume},dst=/run/antnest-auth", cls.runtime_image,
+               "-c", "chmod 700 /run/antnest-auth; cp /fixture/auth/callers.json /fixture/auth/tunnel.json /run/antnest-auth/; chown 0:0 /run/antnest-auth /run/antnest-auth/*; chmod 600 /run/antnest-auth/*")
+        cls.mcp_authority = (cls.auth_directory / "mcp.headers").read_text().strip().split(": ", 1)[1]
+        cls.status_authority = (cls.auth_directory / "status.headers").read_text().strip().split(": ", 1)[1]
+        cls.probe_image = cls.prefix + ":readiness"
+        cls.addClassCleanup(lambda: docker("image", "rm", cls.probe_image, check=False))
+        docker("build", "-f", str(repository / "tests/support/runtime-tunnel/Dockerfile"),
+               "-t", cls.probe_image, str(repository))
         cls.egress = cls.prefix + "-probe"
         cls.addClassCleanup(lambda: docker("rm", "-f", "--volumes", cls.egress, check=False))
-        fixture = Path(__file__).resolve().parent / "fixtures" / "egress_probe.py"
         docker("run", "-d", "--name", cls.egress, "--network", cls.network,
-               "--mount", f"type=bind,src={fixture},dst=/probe.py,readonly",
-               "--entrypoint", "python", cls.runtime_image, "/probe.py")
+               "--mount", f"type=bind,src={cls.auth_directory / 'egress-tunnel.json'},dst=/fixture/keys.json,readonly",
+               cls.probe_image, "/fixture/keys.json")
         inspection = json.loads(docker("inspect", cls.egress))[0]
         cls.egress_ip = inspection["NetworkSettings"]["Networks"][cls.network]["IPAddress"]
 
@@ -77,28 +95,36 @@ class ManagedMcpE2E(unittest.TestCase):
         self.workspace.mkdir(mode=0o777)
         self.workspace.chmod(0o777)
         self.requests = itertools.count(1)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.listen_port = listener.getsockname()[1]
 
     def start(self, servers=None, telemetry=None):
         if servers is None:
             servers = [{"id": name, "command": "/opt/mcp-fixture", "env": {"FIXTURE_SECRET": "config-canary"}} for name in ["a", "b"]]
         spec = {
-            "agent_id": self.name, "generation": 1, "listen": {"host": "0.0.0.0", "port": 8093},
-            "network": {"packet_contract_revision": 1, "egress_endpoint": {"ipv4": self.egress_ip, "port": 8092}, "tunnel_ipv4": "100.64.0.2", "resolver_ipv4": "100.64.0.1"},
+            "agent_id": self.name, "generation": 1, "listen": {"host": "0.0.0.0", "port": self.listen_port},
+            "authentication": self.authentication,
+            "network": {"packet_contract_revision": 2, "egress_endpoint": {"ipv4": self.egress_ip, "port": 8092}, "tunnel_ipv4": "100.64.0.2", "resolver_ipv4": "100.64.0.1"},
             "filesystem": {"workspace": "/workspace", "system_skills": "/skills"},
             "mcp_servers": servers,
         }
         args = ["run", "-d", "--name", self.name, "--network", self.network,
                 "--cap-drop", "ALL", "--device", "/dev/net/tun", "--dns", "100.64.0.1", "--dns-option", "use-vc",
+                "--tmpfs", "/run/antnest-mcp-home:rw,exec,nosuid,nodev,size=64m,mode=0711,uid=0,gid=0",
                 "--mount", f"type=bind,src={self.workspace},dst=/workspace",
                 "--mount", f"type=bind,src={self.directory / 'mcp-fixture'},dst=/opt/mcp-fixture,readonly",
-                "-p", "127.0.0.1::8093", "-e", "ANTNEST_RUNTIME_SPEC=" + json.dumps(spec)]
+                "--mount", f"type=volume,src={self.auth_volume},dst=/run/antnest-auth,readonly",
+                "-e", "ANTNEST_SERVICE_AUTH_MODE=token", "-e", "ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT=true",
+                "-e", "ANTNEST_SERVICE_AUTH_CALLERS_FILE=/run/antnest-auth/callers.json",
+                "-p", f"127.0.0.1:{self.listen_port}:{self.listen_port}", "-e", "ANTNEST_RUNTIME_SPEC=" + json.dumps(spec)]
         for key, value in (telemetry or {"OTEL_SDK_DISABLED": "true"}).items():
             args.extend(["-e", f"{key}={value}"])
         for cap in ["CHOWN", "DAC_OVERRIDE", "KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID"]:
             args.extend(["--cap-add", cap])
         docker(*args, self.runtime_image)
         state = json.loads(docker("inspect", self.name))[0]
-        bindings = state["NetworkSettings"]["Ports"].get("8093/tcp")
+        bindings = state["NetworkSettings"]["Ports"].get(f"{self.listen_port}/tcp")
         # A fast, expected initialization failure may exit before inspection.
         self.port = int(bindings[0]["HostPort"]) if bindings else None
 
@@ -107,7 +133,8 @@ class ManagedMcpE2E(unittest.TestCase):
             if self.port is None:
                 return False
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/status", timeout=1) as response:
+                request = urllib.request.Request(f"http://127.0.0.1:{self.port}/status", headers={"Antnest-Service-Authorization": self.status_authority})
+                with urllib.request.urlopen(request, timeout=1) as response:
                     status = json.load(response)
                 self.execution_id = status["execution_id"]
                 return status["status"] == "ready"
@@ -123,6 +150,7 @@ class ManagedMcpE2E(unittest.TestCase):
         params.setdefault("_meta", {}).update({"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}})
         body = {"jsonrpc": "2.0", "id": next(self.requests), "method": method, "params": params}
         headers = {"content-type": "application/json", "accept": "application/json, text/event-stream",
+                   "Antnest-Service-Authorization": self.mcp_authority,
                    "mcp-protocol-version": "2026-07-28", "mcp-method": method,
                    "X-Antnest-Expected-Execution-ID": self.execution_id}
         if "name" in params:
@@ -167,7 +195,7 @@ class ManagedMcpE2E(unittest.TestCase):
         success_trace, failure_trace = uuid.uuid4().hex, uuid.uuid4().hex
         fixture = Path(__file__).resolve().parent / "fixtures" / "http_close_client.mjs"
         subprocess.run(["node", str(fixture), f"http://127.0.0.1:{self.port}/mcp",
-                        self.execution_id, success_trace, failure_trace], check=True, timeout=30)
+                        self.execution_id, success_trace, failure_trace, str(self.auth_directory / "mcp.headers")], check=True, timeout=30)
         # Flush the real Runtime exporter; no shared development services are changed.
         docker("stop", "--time", "15", self.name)
         self.assertEqual(json.loads(docker("inspect", self.name))[0]["State"]["ExitCode"], 0)
@@ -217,7 +245,7 @@ class ManagedMcpE2E(unittest.TestCase):
         first = self.tool("mcp__a__echo", {"value": "one"})["structuredContent"]
         second = self.tool("mcp__a__echo", {"value": "two"})["structuredContent"]
         other = self.tool("mcp__b__echo", {"value": "other"})["structuredContent"]
-        self.assertEqual((first["uid"], first["gid"], first["home"]), (1000, 1000, "/workspace"))
+        self.assertEqual((first["uid"], first["gid"], first["home"]), (2000, 1000, "/run/antnest-mcp-home/2000"))
         self.assertTrue(first["explicit_env"])
         self.assertFalse(first["supervisor_env"] or first["launcher_env"])
         self.assertEqual(first["pid"], second["pid"])
@@ -336,7 +364,10 @@ class ManagedMcpE2E(unittest.TestCase):
             connection.close()
         eventually(lambda: (self.workspace / "progress-cancel-canceled").exists())
         eventually(lambda: (self.workspace / "cancel-received").exists())
-        self.assertEqual(json.loads((self.workspace / "cancel-received").read_text()), json.loads((self.workspace / "progress-cancel-started").read_text()))
+        # MCP output defaults to 0600 under its separate UID. Read the two
+        # synthetic fixture markers as the trusted test supervisor on Linux.
+        marker = lambda name: json.loads(docker("exec", "--user", "0", self.name, "cat", "/workspace/" + name))
+        self.assertEqual(marker("cancel-received"), marker("progress-cancel-started"))
         self.assertFalse(self.tool("mcp__a__echo", {"value": "after-progress-cancel"}).get("isError", False))
 
     def assert_failed_start(self, config, seconds=10):

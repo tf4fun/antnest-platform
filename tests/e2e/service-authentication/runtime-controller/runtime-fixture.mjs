@@ -8,11 +8,14 @@ const spec = JSON.parse(process.env.ANTNEST_RUNTIME_SPEC);
 const auth = spec.authentication;
 assert(auth && /^rci_[0-9a-f]{32}$/.test(auth.connection_id));
 assert.equal(auth.callers_file, "/run/antnest-auth/callers.json");
+assert.equal(spec.network.packet_contract_revision, 2);
+assert.equal(auth.tunnel.keys_file, "/run/antnest-auth/tunnel.json");
 assert.equal(process.env.ANTNEST_SERVICE_AUTH_MODE, "token");
 assert.equal(process.env.ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT, "true");
 for (const [path, mode, file] of [
   ["/run/antnest-auth", 0o700, false],
   [auth.callers_file, 0o600, true],
+  [auth.tunnel.keys_file, 0o600, true],
 ]) {
   const stat = lstatSync(path);
   assert.equal(stat.uid, 0);
@@ -25,6 +28,12 @@ assert.equal(
   auth.receiver_digest,
 );
 const callers = JSON.parse(raw);
+const tunnel = readFileSync(auth.tunnel.keys_file);
+assert.equal(
+  "sha256:" + createHash("sha256").update(tunnel).digest("hex"),
+  auth.tunnel.keys_digest,
+);
+assert.equal(JSON.parse(tunnel).key_id, auth.tunnel.key_id);
 assert.deepEqual(Object.keys(callers).sort(), [
   "agent-acp-service",
   "runtime-controller",
