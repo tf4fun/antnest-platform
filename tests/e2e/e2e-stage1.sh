@@ -189,6 +189,16 @@ wait_runtime_ready() {
 }
 wait_runtime_ready
 
+assert_runtime_execution() {
+  runtime_status=$(cat "$temporary_root/runtime-auth/status.headers" | docker exec -i "$runtime_name" curl --header @- -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:8093/status)
+  printf '%s' "$runtime_status" | node -e '
+    const assert = require("node:assert/strict");
+    const status = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    assert.equal(status.status, "ready");
+    assert.equal(status.execution_id, process.argv[1], "Egress outage replaced Runtime execution");
+  ' "$runtime_execution_id"
+}
+
 echo "Checking the production MCP and Executor boundary"
 mcp_tools=$(mcp_request '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' 'tools/list')
 for tool_name in bash edit read write; do
@@ -297,8 +307,34 @@ docker exec --user 1000 "$runtime_name" \
   curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
   | grep -q 'Example Domain'
 
+echo "Checking port-unreachable survival before Egress restart"
+# Reproduce the kernel feedback deterministically before the short restart window.
+docker compose exec -T runtime-egress nft -f - <<EOF
+table ip antnest_stage1_refused {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    ip saddr $runtime_endpoint ip daddr $ANTNEST_EGRESS_IPV4 udp dport 8092 counter reject with icmp type port-unreachable
+  }
+}
+EOF
+if docker exec --user 1000 "$runtime_name" \
+  curl -kfsS --connect-timeout 1 --max-time 1 https://1.1.1.1 \
+  >/dev/null 2>&1; then
+  echo "The rejected tunnel unexpectedly forwarded traffic" >&2
+  exit 1
+fi
+docker compose exec -T runtime-egress nft --json list table ip antnest_stage1_refused \
+  | node -e '
+    const rules = JSON.parse(require("node:fs").readFileSync(0, "utf8")).nftables;
+    const counters = rules.flatMap(({ rule }) => rule?.expr ?? []).flatMap(({ counter }) => counter ? [counter] : []);
+    if (!counters.some(({ packets }) => packets > 0)) throw new Error("No tunnel datagram received port-unreachable feedback");
+  '
+assert_runtime_execution
 docker compose restart runtime-egress
 docker compose up -d --wait runtime-egress
+if docker compose exec -T runtime-egress nft list table ip antnest_stage1_refused >/dev/null 2>&1; then
+  docker compose exec -T runtime-egress nft delete table ip antnest_stage1_refused
+fi
 echo "Checking persisted state after Egress restart"
 control_request "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
   | grep -q '"resource_version":4'
@@ -312,6 +348,7 @@ docker exec --user 1000 "$runtime_name" \
 docker exec --user 1000 "$runtime_name" \
   curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
   | grep -q 'Example Domain'
+assert_runtime_execution
 
 echo "Checking attachment closure and independent network release"
 closed=$(control_request -X PUT \

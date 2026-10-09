@@ -141,6 +141,14 @@ emits the network aggregate as one local structured log. Metrics use bounded
 operation, outcome, and stable error-code labels; Agent IDs, generations,
 paths, packet addresses, flow keys, and Agent-selected content are excluded.
 
+The saturating process-local `transport.connection_refused` field in
+`runtime_network_snapshot` counts UDP send and receive `ConnectionRefused`
+errors dropped by an established session. Its OTLP counter is
+`antnest.runtime.network.connection_refused`, with no metric labels. These errors
+do not complete the session span or emit per-datagram logs. Preparation remains
+fail-closed on socket errors; readiness failures are reported as
+`network_transport_failed` rather than counted as established-session loss.
+
 Runtime emits no reverse-session, heartbeat, or queue spans. Single-flight is a
 local invariant: a rejected concurrent call is recorded as `runtime_busy`, not
 as queued work.

@@ -20,6 +20,15 @@ or additional Runtime image dependency is needed. Compose retains the default
 internal answers. The harness removes its owned containers, networks, volumes
 and candidate images.
 
+Before restarting Egress, stage-1 installs a disposable nft input rule scoped to
+the live Runtime's UDP tunnel and rejects a real outbound request with ICMP
+port-unreachable. A positive rule counter proves the datagram hit the rejection;
+Runtime must still report ready with the same execution ID. The real Egress
+restart then exercises rehandshake and TCP/DNS recovery within the existing
+30-second retry window, with the execution ID checked again. This adds a bounded
+one-second request and no timing dependency on the short Docker restart window.
+The scoped rule is removed on restart or explicitly deleted before recovery.
+
 Run `make e2e-lifecycle-network` separately for the existing two-Agent
 allow/deny/restore, DNS and conntrack regression gate. It uses isolated targets
 and a deterministic public DNS answer from its routed fixture resolver, with

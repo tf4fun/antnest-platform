@@ -198,6 +198,12 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Runtime survives connected UDP `ConnectionRefused` while Runtime Egress restarts
+(#219). Established sessions count refused sends and receives as dropped traffic
+and recover through WireGuard's existing timers. Readiness remains fail-closed;
+other socket errors, write timeouts and incomplete writes remain fatal. The bounded
+network snapshot and OTLP metrics now include the aggregate refusal count.
+
 Identity Service SERVER spans now report the contract RPC route, for example
 `/rpc/identity/issue-scim-token`, for Admin Console calls and for calls that
 service authentication rejects. Before this fix they reported the

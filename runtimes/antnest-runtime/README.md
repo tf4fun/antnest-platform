@@ -140,7 +140,8 @@ reserved `ANTNEST_` prefix:
   [Security and operations](docs/security-and-operations.md): `/dev/net/tun`,
   a writable `/workspace` volume, a read-only `/skills` mount, and bounded `/tmp`.
 - Runtime Egress: the packet path must answer a readiness probe before
-  `/status` is served. Loss of the tunnel is fatal.
+  `/status` is served. An established Runtime survives UDP `ConnectionRefused`
+  during Egress restart; other socket errors and TUN failures remain fatal.
 - Configured managed MCP servers: every server must initialize before
   readiness; losing a required server makes Runtime unavailable and exits.
 - Optional OTLP Collector. Export failure never changes readiness or results.
@@ -313,7 +314,17 @@ encryption, replay checks, handshake/session rekey and keepalive timers. Only
 verified decrypted IPv4/TCP destined to this Runtime reaches TUN; raw UDP payloads
 have no compatibility path. Readiness drives the same engine and its 250 ms
 clock, with three bounded 3-second probe attempts (covering the 5-second handshake
-retry). Packet/session errors are local loss; TUN/socket failure remains fatal.
+retry). Packet/session errors are local loss; TUN failures and socket errors other
+than an established session's `ConnectionRefused` remain fatal.
+
+Once established, a refused UDP send or receive is counted as dropped traffic.
+Receive polling resumes on the next 250 ms engine tick; sends are never retried
+by Runtime. WireGuard keepalive and rehandshake recover after Egress returns.
+Other socket errors, the existing 10-second write timeout, and incomplete writes
+remain `network_transport_failed`. Readiness retains strict socket-error handling:
+`ConnectionRefused` fails preparation immediately, and only a correlated probe
+reply permits startup within the existing three-attempt budget.
+The aggregate refusal counter is described in [Observability](docs/observability.md).
 
 Runtime/Egress restarts create fresh ephemeral sessions with the retained
 generation's static material. Egress registration, Controller key-aware open and
