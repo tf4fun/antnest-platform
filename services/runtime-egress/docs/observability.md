@@ -6,6 +6,12 @@ control HTTP adapter and its own PostgreSQL adapter: span boundaries, SQL span
 naming, diagnostic data, error mapping, and known limits. Packet, flow, and DNS
 paths are outside this model and never produce spans.
 
+The aggregate `antnest.egress.dns.answers.filtered` monotonic counter counts
+answer records removed by resolver policy, including unusable CNAMEs and AAAA
+records. Queries answered locally without reaching the upstream (AAAA and
+non-public reverse lookups) remove no records and are not counted. Repeated snapshots do not double-count. It has no attributes, query
+names, addresses or Agent identifiers; DNS filtering adds no per-query logs.
+
 ## Transaction Envelopes
 
 `postgresql transaction` is an INTERNAL span beneath the owning request or

@@ -109,16 +109,7 @@ pub fn nft_rules(
     resolver_ipv4: Ipv4Addr,
     connected: &[Ipv4Net],
 ) -> String {
-    let mut networks = crate::policy::PROTECTED_IPV4_NETWORKS.to_vec();
-    networks.push(tunnel_cidr);
-    networks.extend_from_slice(connected);
-    networks.sort_by_key(|network| (network.prefix_len(), network.network()));
-    let mut protected: Vec<Ipv4Net> = Vec::new();
-    for network in networks {
-        if !protected.iter().any(|existing| existing.contains(&network)) {
-            protected.push(network);
-        }
-    }
+    let protected = protected_ipv4_networks(tunnel_cidr, connected);
     let destinations = protected
         .iter()
         .map(ToString::to_string)
@@ -144,6 +135,20 @@ pub fn nft_rules(
 }}
 "#
     )
+}
+
+fn protected_ipv4_networks(tunnel_cidr: Ipv4Net, connected: &[Ipv4Net]) -> Vec<Ipv4Net> {
+    let mut networks = crate::policy::PROTECTED_IPV4_NETWORKS.to_vec();
+    networks.push(tunnel_cidr);
+    networks.extend_from_slice(connected);
+    networks.sort_by_key(|network| (network.prefix_len(), network.network()));
+    let mut protected: Vec<Ipv4Net> = Vec::new();
+    for network in networks {
+        if !protected.iter().any(|existing| existing.contains(&network)) {
+            protected.push(network);
+        }
+    }
+    protected
 }
 
 pub fn connected_ipv4_subnets(routes: &str) -> Result<Vec<Ipv4Net>, KernelError> {
@@ -213,6 +218,7 @@ mod tests {
 pub struct LinuxKernel {
     tunnel_cidr: Ipv4Net,
     command_timeout: Duration,
+    protected_networks: Vec<Ipv4Net>,
 }
 
 impl LinuxKernel {
@@ -221,11 +227,12 @@ impl LinuxKernel {
         command_timeout: Duration,
     ) -> Result<(Self, TunDevice), KernelError> {
         let device = platform::create_tun(plan.tun_name()).await?;
-        platform::configure(plan, command_timeout).await?;
+        let protected_networks = platform::configure(plan, command_timeout).await?;
         Ok((
             Self {
                 tunnel_cidr: plan.tunnel_cidr(),
                 command_timeout,
+                protected_networks,
             },
             device,
         ))
@@ -233,6 +240,10 @@ impl LinuxKernel {
 
     pub async fn clear_all(&self) -> Result<(), KernelError> {
         platform::clear_conntrack(&self.tunnel_cidr.to_string(), self.command_timeout).await
+    }
+
+    pub fn protected_ipv4_networks(&self) -> &[Ipv4Net] {
+        &self.protected_networks
     }
 }
 
@@ -262,8 +273,9 @@ mod platform {
         time::timeout,
     };
 
-    use super::{KernelError, KernelPlan, nft_rules};
+    use super::{KernelError, KernelPlan, nft_rules, protected_ipv4_networks};
     use crate::network::PacketDevice;
+    use ipnet::Ipv4Net;
 
     const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
     const IFF_TUN: i16 = 0x0001;
@@ -358,7 +370,7 @@ mod platform {
     pub(super) async fn configure(
         plan: &KernelPlan,
         command_timeout: Duration,
-    ) -> Result<(), KernelError> {
+    ) -> Result<Vec<Ipv4Net>, KernelError> {
         let forwarding = timeout(
             command_timeout,
             tokio::fs::read_to_string("/proc/sys/net/ipv4/ip_forward"),
@@ -399,7 +411,8 @@ mod platform {
             false,
         )
         .await?;
-        clear_conntrack(&plan.tunnel_cidr().to_string(), command_timeout).await
+        clear_conntrack(&plan.tunnel_cidr().to_string(), command_timeout).await?;
+        Ok(protected_ipv4_networks(plan.tunnel_cidr(), &connected))
     }
 
     pub(super) async fn clear_conntrack(
@@ -553,7 +566,10 @@ mod platform {
         Err(KernelError::UnsupportedPlatform)
     }
 
-    pub(super) async fn configure(_: &KernelPlan, _: Duration) -> Result<(), KernelError> {
+    pub(super) async fn configure(
+        _: &KernelPlan,
+        _: Duration,
+    ) -> Result<Vec<ipnet::Ipv4Net>, KernelError> {
         Err(KernelError::UnsupportedPlatform)
     }
 

@@ -65,11 +65,29 @@ a non-zero port and must remain reachable across an Egress process restart. It
 is also the bind address; there is deliberately no separate wildcard-listen
 setting or NAT-style advertised endpoint.
 
-Egress never selects a public resolver implicitly. Docker Compose points
-`ANTNEST_EGRESS_DNS_UPSTREAM` at Docker's embedded resolver (`127.0.0.11:53`); a
-Kubernetes or production deployment supplies its cluster or enterprise
-resolver. That resolver must accept DNS over TCP because Runtime executors use
+Egress never selects a public resolver implicitly. Docker Compose keeps
+`ANTNEST_EGRESS_DNS_UPSTREAM` at Docker's embedded resolver (`127.0.0.11:53`) so
+development works without a separately reachable resolver. Production
+deployments should explicitly point this setting at a recursive resolver with
+no view of internal service names, rather than cluster or service-discovery DNS.
+The upstream must accept DNS over TCP because Runtime executors use
 `options use-vc`, keeping DNS on the governed TCP-only packet path.
+
+The virtual resolver removes protected A answers using the same IPv4 baseline,
+tunnel pool and connected-subnet snapshot as the nft backstop. It removes all
+AAAA answers because Runtime drops IPv6. CNAME chains with no retained terminal
+answer are removed as well; filtering away every answer returns NXDOMAIN
+with the original question and ID. AAAA queries get a local NOERROR/NODATA
+reply, and reverse (`in-addr.arpa.`/`ip6.arpa.`) queries get a local NXDOMAIN
+unless they name one external, unprotected IPv4 address; neither reaches the
+upstream. Authority/additional records, DNSSEC records
+and upstream EDNS options are omitted, and AD is cleared. The resolver does not
+provide DNSSEC validation. It closes the connection on malformed, incomplete,
+TC-marked, mismatched or oversize upstream replies; the message limit is 16 KiB.
+Ordinary single-question IN queries can share a TCP connection, subject to the
+existing connection deadlines and per-source limits. Zone transfers and
+TSIG-signed messages are rejected. Restart Egress after changing connected networks so both
+DNS filtering and the nft backstop use the updated snapshot.
 
 Policy schema version 1 `allow_all` is external-only: special-use and private
 IPv4 destinations remain denied, except TCP port 53 on the virtual resolver. An
@@ -268,7 +286,7 @@ snapshot record:
 - bound-peer mismatch drops, before policy and flow effects;
 - Agent-attributed Runtime-peer UDP output failures;
 - unattributed destination-level UDP receive errors from asynchronous ICMP;
-- DNS proxy accepted, rejected, completed, failed, and byte counts;
+- DNS proxy accepted, rejected, completed, failed, byte and filtered-answer counts;
 - service, data-plane, and control-plane readiness;
 - the number of currently fenced Agents and health transitions;
 - quarantine allocations removed and Agent-local cleanup failures.
