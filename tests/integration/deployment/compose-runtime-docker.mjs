@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
+import { prepareEgressOwnership } from "../../../scripts/dev-egress-auth-owner.mjs";
 import { provisionTokens } from "../../../scripts/dev-service-tokens.mjs";
 import {
   dockerClient,
@@ -145,6 +146,7 @@ try {
     });
     assert.equal(generated.exit_code, 0, "environment generation failed");
     provisionTokens({ output: credentials, withSkillLearning: true });
+    await prepareEgressOwnership(docker, credentials);
     const octet = await networkOctet(docker, 1 + (process.pid % 200));
     const gatewayPort = await freePort();
     Object.assign(
