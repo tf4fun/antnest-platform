@@ -309,7 +309,8 @@ export class ServiceAuthentication {
       return (await undiciFetch(url.toString(), {
         method: request.method,
         headers: Object.fromEntries(request.headers),
-        signal: request.signal,
+        // A temporary Request's derived signal stops following the caller once the Request is collected.
+        signal: init?.signal ?? (input instanceof Request ? input.signal : null),
         ...(request.body === null
           ? {}
           : {
