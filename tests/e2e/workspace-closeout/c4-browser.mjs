@@ -246,7 +246,8 @@ export async function runBrowser(
       .getByRole("button", { name: "Show process", exact: true })
       .first()
       .click();
-    assert((await page.locator(".tool-activity").count()) > 0);
+    // Showing the process fetches its items, so the activity renders later.
+    await page.locator(".tool-activity").first().waitFor();
     await page.locator(".tool-activity summary").first().click();
     await page
       .getByText("workspace-written", { exact: false })
