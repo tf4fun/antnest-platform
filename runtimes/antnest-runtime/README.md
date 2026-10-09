@@ -11,6 +11,10 @@ The long-lived root Supervisor (`antnest-runtime serve`, container PID 1) never
 executes Agent-selected work itself. Every tool call runs in a one-shot Executor
 subprocess that drops irreversibly to UID/GID 1000 with no capabilities, and all
 UID 1000 network traffic is forced through a TUN device to Runtime Egress.
+UID 1000 and managed tool UIDs 2000..2007 cannot contact Docker's `127.0.0.11`
+resolver over TCP or UDP. Other loopback addresses remain available under the
+existing kill switch. Agent DNS uses the virtual TCP resolver and Egress filters
+protected IPv4 answers, all IPv6 answers and unusable CNAME chains.
 
 ## Responsibilities
 

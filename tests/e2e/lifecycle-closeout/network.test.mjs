@@ -16,7 +16,7 @@ const response = {
     elapsed_ms: 10,
     body: { phase: "allowed", nonce: "abc123" },
   },
-  dns: { addresses: ["172.25.0.3"], elapsed_ms: 10 },
+  dns: { addresses: ["1.1.1.1"], elapsed_ms: 10 },
 };
 test("probe uses a bounded direct TCP client under the ordinary Runtime user", () => {
   const script = probeCommand(input);
@@ -27,7 +27,7 @@ test("probe uses a bounded direct TCP client under the ordinary Runtime user", (
   assert(!script.includes("curl") && !script.includes("HTTP_PROXY"));
   assert.throws(() => probeCommand({ ...input, nonce: "'; injected" }));
 });
-test("allowed probe must echo the unique request and resolve the real fixture", () =>
+test("allowed probe must echo the unique request and resolve the public fixture answer", () =>
   inspectProbe(response, input, "172.25.0.3"));
 test("deny requires an explicit reset/rejection and bounded resolver failure", () => {
   const r = {
@@ -83,6 +83,12 @@ for (const [name, mutate] of [
     },
   ],
   [
+    "private DNS",
+    (r) => {
+      r.dns.addresses = ["172.25.0.3"];
+    },
+  ],
+  [
     "unavailable endpoint",
     (r) => {
       r.tcp.ok = false;
@@ -117,7 +123,7 @@ for (const phase of ["held-a", "held-b"])
     const r = structuredClone(response);
     r.tcp.body.phase = phase;
     r.same_socket = true;
-    r.dns_after = ["172.25.0.3"];
+    r.dns_after = ["1.1.1.1"];
     r.push =
       phase === "held-a"
         ? { ok: false, timed_out: true }
@@ -156,7 +162,7 @@ test("barrier diagnostic reports model stages and the TCP outcome only", () => {
         stage: "reply",
         report: {
           tcp: { ok: false, errno: 111, timed_out: false, elapsed_ms: 3 },
-          dns: { addresses: ["172.25.0.3"] },
+          dns: { addresses: ["1.1.1.1"] },
         },
       },
     ],

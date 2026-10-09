@@ -3,8 +3,10 @@ import { createServer as createHTTP } from "node:http";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import { createNetworkDns } from "./network-dns.mjs";
 
 export function createNetworkTarget() {
+  const dns = createNetworkDns();
   const requests = [],
     errors = [],
     pushed = [];
@@ -75,8 +77,10 @@ export function createNetworkTarget() {
   return {
     tcp,
     http,
+    dns: dns.server,
     close: async () => {
       for (const socket of sockets) socket.destroy();
+      await dns.close();
       await new Promise((resolve) => tcp.close(resolve));
       await new Promise((resolve) => http.close(resolve));
     },
@@ -84,6 +88,7 @@ export function createNetworkTarget() {
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const target = createNetworkTarget();
-  target.tcp.listen(8080, "0.0.0.0");
+  target.tcp.listen(18080, "0.0.0.0");
   target.http.listen(8081, "0.0.0.0");
+  target.dns.listen(15353, "0.0.0.0");
 }

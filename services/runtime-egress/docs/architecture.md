@@ -399,13 +399,48 @@ include a deadline, terminate and reap the child on timeout, continuously drain
 but retain only bounded stderr, discard stdout, and use deterministic
 Antnest-owned table and chain names.
 
-The virtual resolver is a bounded DNS-over-TCP proxy to one deployment-provided
-upstream. Egress does not hard-code a public DNS service or persist DNS cache;
-resolver selection remains a deployment concern while Agent DNS still follows
-the governed TCP data path. Admission has both a process-wide connection limit
-and a per-source tunnel-address limit. A single Runtime therefore cannot consume
-all DNS proxy slots, while metrics remain aggregate and never use an Agent or
-tunnel address as a label.
+The virtual resolver forwards length-prefixed DNS queries over TCP to one
+deployment-provided upstream, parsing each response before returning it. It
+removes A records denied by `policy::is_external_ipv4`, plus the tunnel pool and
+connected IPv4 subnets discovered at kernel bootstrap. DNS and the nft backstop
+share that protected-network snapshot; deployment network changes require an
+Egress restart. There is no separate DNS range list.
+
+All AAAA records are removed because the dataplane is IPv4-only and Runtime
+rejects IPv6. CNAMEs survive only when their chain reaches a retained terminal
+answer; cycles and dangling chains are removed, including internal targets
+whose final A records were removed. Other records at a terminal whose entire
+address set was removed are discarded as well, so extra TXT records cannot keep
+that target visible. When filtering removes every answer,
+Egress returns NXDOMAIN with the original query ID and question, the same reply
+an Agent gets for a name that does not exist. Upstream negative response codes
+otherwise remain unchanged.
+
+Some queries are answered locally and never reach the upstream, because
+Docker's embedded resolver would otherwise reveal which internal names exist.
+AAAA queries always get NOERROR/NODATA; the embedded resolver answers internal
+names with NODATA and unknown names with NXDOMAIN. Queries under `in-addr.arpa.`
+and `ip6.arpa.` get NXDOMAIN unless the name is the canonical reverse name of a
+single external IPv4 address outside the protected networks, because the
+embedded resolver answers PTR queries for every container on the networks
+Egress joins. Authority and additional
+records, DNSSEC records and upstream EDNS options are omitted, and the AD bit is
+cleared: the filtered response cannot claim DNSSEC validation or expose internal
+ancillary names.
+
+Queries and responses are capped at 16 KiB before allocation. Malformed,
+incomplete, oversize, TC-marked or mismatched upstream responses close the
+connection without forwarding any response bytes. Only ordinary single-question
+IN queries are supported; zone transfers and TSIG-signed messages are rejected. A
+connection can carry multiple queries, handled one response at a time, within
+the existing connect and connection deadlines. Admission retains the
+process-wide and per-source tunnel-address connection limits.
+
+Egress does not hard-code a public DNS service or persist a DNS cache. Compose
+retains Docker's embedded resolver for offline development; production must
+select a recursive resolver with no view of internal service names. Aggregate
+metrics count removed answer records without query names, addresses or Agent
+labels, and the DNS path emits no per-query logs or spans.
 
 Runtime readiness uses no Egress control RPC. Once Agent Controller has created
 the network allocation, Runtime sends the canonical TCP SYN defined by the

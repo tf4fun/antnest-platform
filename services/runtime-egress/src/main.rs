@@ -9,7 +9,7 @@ use antnest_runtime_egress::{
     application::{ControlConfig, ControlService},
     config::{Config, health_listen_from_env},
     control::{health_router, router},
-    dns::{DnsMetrics, run_dns_proxy},
+    dns::{DnsMetrics, DnsProxyConfig, run_dns_proxy},
     kernel::{KernelPlan, LinuxKernel},
     network::run_packet_loop,
     packet::INNER_MTU,
@@ -83,6 +83,7 @@ async fn run(
         INNER_MTU,
     )?;
     let (kernel, tun) = LinuxKernel::bootstrap(&plan, config.command_timeout).await?;
+    let dns_protected_networks = kernel.protected_ipv4_networks().to_vec();
     kernel.clear_all().await?;
     let service = Arc::new(ControlService::new(
         repository,
@@ -143,10 +144,13 @@ async fn run(
             "DNS",
             run_dns_proxy(
                 dns_listener,
-                config.dns_upstream,
-                DNS_MAX_CONNECTIONS,
-                DNS_MAX_CONNECTIONS_PER_SOURCE,
-                Duration::from_secs(10),
+                DnsProxyConfig {
+                    upstream: config.dns_upstream,
+                    protected_networks: dns_protected_networks,
+                    max_connections: DNS_MAX_CONNECTIONS,
+                    max_connections_per_source: DNS_MAX_CONNECTIONS_PER_SOURCE,
+                    connection_timeout: Duration::from_secs(10),
+                },
                 dns_task_metrics,
                 dns_cancellation,
             )
@@ -306,6 +310,7 @@ where
                     dns.proxy.failures = dns.proxy_failures,
                     dns.client_to_upstream.bytes = dns.client_to_upstream_bytes,
                     dns.upstream_to_client.bytes = dns.upstream_to_client_bytes,
+                    dns.answers.filtered = dns.filtered_answers,
                     health.ready = health.service_ready,
                     health.data_plane_ready = health.data_plane_ready,
                     health.control_plane_ready = health.control_plane_ready,

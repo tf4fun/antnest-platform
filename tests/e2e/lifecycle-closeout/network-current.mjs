@@ -20,6 +20,14 @@ export function inspectNetworkTarget(rows, config) {
   );
   assert.equal(targets.length, 1, "missing or duplicate network target");
   const target = targets[0];
+  assert.equal(target.Image, config.resolvedImage);
+  assert.deepEqual(target.HostConfig.CapDrop, ["ALL"]);
+  assert.deepEqual(
+    target.HostConfig.CapAdd?.map((capability) =>
+      capability.replace(/^CAP_/u, ""),
+    ),
+    ["NET_ADMIN"],
+  );
   assert.equal(
     target.Config.Labels["com.docker.compose.project"],
     config.project,

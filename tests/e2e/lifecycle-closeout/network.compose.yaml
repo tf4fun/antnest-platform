@@ -1,9 +1,16 @@
 services:
+  runtime-egress:
+    environment:
+      ANTNEST_EGRESS_DNS_UPSTREAM: 1.1.1.1:15353
   stage3-model:
     command: ["node", "/lifecycle/network-model.mjs"]
   network-target:
-    image: node:24.21.0-bookworm-slim
-    command: ["node", "/lifecycle/network-target.mjs"]
+    image: ${ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:?required immutable Runtime fixture image}
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    entrypoint: ["sh", "-c"]
+    command:
+      - ip address replace 1.1.1.1/32 dev lo && exec node /lifecycle/network-target.mjs
     volumes:
       - ./tests/e2e/lifecycle-closeout:/lifecycle:ro
     networks: [egress]

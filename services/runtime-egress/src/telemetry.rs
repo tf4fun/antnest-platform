@@ -61,6 +61,7 @@ pub struct EgressMetrics {
     quarantine_cleanup_failures: Counter<u64>,
     data_plane: DataPlaneInstruments,
     observed_peer_mismatches: Arc<AtomicU64>,
+    observed_dns_filtered_answers: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +93,7 @@ struct DataPlaneInstruments {
     dns_proxy_failures: Gauge<u64>,
     dns_client_bytes: Gauge<u64>,
     dns_upstream_bytes: Gauge<u64>,
+    dns_filtered_answers: Counter<u64>,
 }
 
 impl Telemetry {
@@ -242,6 +244,7 @@ impl EgressMetrics {
                 .build(),
             data_plane: DataPlaneInstruments::new(&meter),
             observed_peer_mismatches: Arc::new(AtomicU64::new(0)),
+            observed_dns_filtered_answers: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -343,6 +346,13 @@ impl EgressMetrics {
         instruments
             .dns_upstream_bytes
             .record(dns.upstream_to_client_bytes, &[]);
+        let previous = self
+            .observed_dns_filtered_answers
+            .fetch_max(dns.filtered_answers, Ordering::Relaxed);
+        let delta = dns.filtered_answers.saturating_sub(previous);
+        if delta != 0 {
+            instruments.dns_filtered_answers.add(delta, &[]);
+        }
     }
 
     pub fn health(
@@ -421,6 +431,10 @@ impl DataPlaneInstruments {
             dns_proxy_failures: gauge(meter, "antnest.egress.dns.proxy.failures"),
             dns_client_bytes: gauge(meter, "antnest.egress.dns.client_to_upstream.bytes"),
             dns_upstream_bytes: gauge(meter, "antnest.egress.dns.upstream_to_client.bytes"),
+            dns_filtered_answers: meter
+                .u64_counter("antnest.egress.dns.answers.filtered")
+                .with_description("DNS answer records removed by the external-only resolver policy")
+                .build(),
         }
     }
 }
@@ -593,6 +607,7 @@ mod tests {
                 proxy_failures: 1,
                 client_to_upstream_bytes: 20,
                 upstream_to_client_bytes: 40,
+                filtered_answers: 0,
             },
         );
         metrics.health(
@@ -642,6 +657,42 @@ mod tests {
     }
 
     #[test]
+    fn dns_filtered_answers_are_a_content_free_counter_without_double_counting() {
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = EgressMetrics::new(provider.meter(SERVICE_NAME));
+        for value in [2, 2, 4, 3] {
+            metrics.clone().data_plane(
+                DataPlaneMetrics::default(),
+                DnsMetricsSnapshot {
+                    filtered_answers: value,
+                    ..Default::default()
+                },
+            );
+        }
+        provider.force_flush().unwrap();
+        let exported = exporter.get_finished_metrics().unwrap();
+        let metric = exported
+            .iter()
+            .flat_map(|resource| resource.scope_metrics())
+            .flat_map(|scope| scope.metrics())
+            .find(|metric| metric.name() == "antnest.egress.dns.answers.filtered")
+            .expect("DNS filtered answer counter missing");
+        let AggregatedMetrics::U64(MetricData::Sum(sum)) = metric.data() else {
+            panic!("DNS filtered answers are not a counter");
+        };
+        assert!(sum.is_monotonic());
+        let points: Vec<_> = sum.data_points().collect();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].value(), 4);
+        assert_eq!(points[0].attributes().count(), 0);
+        provider.shutdown().unwrap();
+    }
+
+    #[test]
     fn peer_mismatch_is_a_monotonic_content_free_counter_without_double_counting() {
         use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
         let exporter = InMemoryMetricExporter::default();
@@ -662,6 +713,7 @@ mod tests {
                     proxy_failures: 0,
                     client_to_upstream_bytes: 0,
                     upstream_to_client_bytes: 0,
+                    filtered_answers: 0,
                 },
             );
         }

@@ -97,7 +97,7 @@ mcp_request() {
 mkdir "$workspace"
 chmod 0777 "$workspace"
 
-docker compose up -d --wait postgres runtime-egress
+docker compose up -d --wait postgres runtime-egress runtime-controller
 
 docker compose exec -T runtime-egress curl --fail-with-body -sS http://127.0.0.1:8082/status | grep -q '"status":"ready"'
 network=$(control_request -X PUT \
@@ -231,6 +231,17 @@ opened=$(control_request -X PUT \
 printf '%s' "$opened" | grep -q '"attachment_state":"open"'
 attachment_resource_version=$(network_version "$opened" attachment_resource_version)
 test "$(network_version "$opened" network_resource_version)" = "$network_resource_version"
+
+echo "Checking internal DNS filtering and embedded resolver isolation"
+postgres_address=$(docker compose exec -T runtime-egress getent hosts postgres | awk 'NR == 1 { print $1 }')
+test -n "$postgres_address"
+docker compose exec -T runtime-egress getent hosts "$postgres_address" >/dev/null
+docker exec -i "$runtime_name" python3 - control \
+  < "$repository_root/tests/e2e/runtime-egress/dns-isolation.py"
+for dns_uid in 1000 2000 2007; do
+  docker exec --user "$dns_uid:1000" -i "$runtime_name" python3 - agent "$postgres_address" \
+    < "$repository_root/tests/e2e/runtime-egress/dns-isolation.py"
+done
 
 echo "Checking open attachment allow_all data path"
 docker exec --user 1000 "$runtime_name" \

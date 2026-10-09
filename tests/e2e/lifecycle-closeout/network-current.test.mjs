@@ -30,9 +30,13 @@ test("network Run uses one completed public audit for the exact Agent, Session a
   ])
     assert.throws(() => assertNetworkRun(changed, agent, "session-a"));
 });
-const config = { project: "antnest-lifecycle-01234567" };
+const config = {
+  project: "antnest-lifecycle-01234567",
+  resolvedImage: "sha256:" + "a".repeat(64),
+};
 function target() {
   return {
+    Image: config.resolvedImage,
     Config: {
       Labels: {
         "com.docker.compose.project": config.project,
@@ -40,7 +44,7 @@ function target() {
       },
     },
     State: { Running: true, Health: { Status: "healthy" } },
-    HostConfig: { PortBindings: {} },
+    HostConfig: { PortBindings: {}, CapDrop: ["ALL"], CapAdd: ["NET_ADMIN"] },
     NetworkSettings: {
       Networks: { [config.project + "_egress"]: { IPAddress: "172.20.0.2" } },
       Ports: { "8080/tcp": null },
@@ -49,11 +53,21 @@ function target() {
 }
 test("network target is a healthy unexposed fixture on only its own Egress network", () => {
   inspectNetworkTarget([target()], config);
+  // Newer Docker engines report added capabilities with their kernel prefix.
+  const prefixed = target();
+  prefixed.HostConfig.CapAdd = ["CAP_NET_ADMIN"];
+  inspectNetworkTarget([prefixed], config);
   for (const mutate of [
     (rows) => rows.splice(0),
     (rows) => rows.push(target()),
     (rows) => (rows[0].State.Running = false),
     (rows) => (rows[0].State.Health.Status = "unhealthy"),
+    (rows) => (rows[0].Image = "other"),
+    (rows) => (rows[0].HostConfig.CapDrop = []),
+    (rows) => (rows[0].HostConfig.CapAdd = ["NET_ADMIN", "SYS_ADMIN"]),
+    (rows) => (rows[0].HostConfig.CapAdd = ["CAP_NET_ADMIN", "CAP_SYS_ADMIN"]),
+    (rows) => (rows[0].HostConfig.CapAdd = ["CAP_NET_RAW"]),
+    (rows) => (rows[0].HostConfig.CapAdd = null),
     (rows) => (rows[0].Config.Labels["com.docker.compose.project"] = "foreign"),
     (rows) =>
       (rows[0].HostConfig.PortBindings = {
