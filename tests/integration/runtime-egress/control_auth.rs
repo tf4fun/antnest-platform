@@ -78,11 +78,15 @@ impl Server {
     }
 
     async fn health() -> Self {
+        Self::health_with_readiness(false).await
+    }
+
+    async fn health_with_readiness(ready: bool) -> Self {
         let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = tcp.local_addr().unwrap();
         let service = support::service().await;
         // The contract preserves HTTP 200 for degraded status as well as ready.
-        service.observe_repository_health(false);
+        service.observe_repository_health(ready);
         let app = health_router(service, EgressMetrics::default());
         let cancellation = CancellationToken::new();
         let stop = cancellation.clone();
@@ -782,7 +786,7 @@ async fn health_cli_needs_no_workload_database_or_signing_configuration_and_is_l
         SocketAddr::V4(endpoint) => endpoint,
         _ => unreachable!(),
     };
-    healthcheck(endpoint).await.unwrap();
+    assert!(healthcheck(endpoint).await.is_err());
     let status = plain(&server, "GET", "/status", &[], b"").await;
     let document: serde_json::Value = serde_json::from_slice(&status.body).unwrap();
     assert_eq!(document["status"], "degraded");
@@ -806,9 +810,10 @@ async fn health_cli_needs_no_workload_database_or_signing_configuration_and_is_l
         .await
         .unwrap();
     assert!(
-        output.status.success(),
-        "local healthcheck tried business bootstrap"
+        !output.status.success(),
+        "degraded status must fail the local readiness probe"
     );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Egress healthcheck failed"));
     assert!(
         healthcheck("10.20.0.8:8082".parse().unwrap())
             .await
@@ -816,4 +821,22 @@ async fn health_cli_needs_no_workload_database_or_signing_configuration_and_is_l
     );
     server.stop().await;
     assert!(healthcheck(endpoint).await.is_err());
+}
+
+#[tokio::test]
+async fn health_cli_returns_success_only_for_ready_status() {
+    for ready in [true, false] {
+        let server = Server::health_with_readiness(ready).await;
+        let output = Command::new(env!("CARGO_BIN_EXE_antnest-runtime-egress"))
+            .arg("--healthcheck")
+            .env_clear()
+            .env("ANTNEST_EGRESS_HEALTH_LISTEN", server.endpoint.to_string())
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.success(), ready, "ready={ready}: {output:?}");
+        server.stop().await;
+    }
 }

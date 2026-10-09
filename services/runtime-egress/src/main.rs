@@ -13,6 +13,7 @@ use antnest_runtime_egress::{
     kernel::{KernelPlan, LinuxKernel},
     network::run_packet_loop,
     packet::INNER_MTU,
+    privilege::check_startup,
     repository::{PostgresRepository, RepositoryConfig},
     telemetry::{EgressMetrics, Telemetry},
     transport::{SecurityConfig, VerifiedPeer, healthcheck},
@@ -60,6 +61,7 @@ async fn run(
     metrics: EgressMetrics,
     key_box: KeyBox,
 ) -> Result<(), Box<dyn Error>> {
+    check_startup()?;
     let repository = Arc::new(
         PostgresRepository::connect_with_retry(
             &config.database_url,

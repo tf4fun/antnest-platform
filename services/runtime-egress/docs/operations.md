@@ -6,9 +6,34 @@ telemetry, recovery, verification, and release.
 
 ## 1. Process And Privileges
 
-Runtime Egress is one Rust process. The container requires `NET_ADMIN` and
-`/dev/net/tun`. The Linux adapter also requires the `ip`, `nft`, and
-`conntrack` binaries. It must not receive the Docker socket or Kubernetes
+Runtime Egress is one Rust process running as `0:0`. Drop all capabilities and
+add back only `NET_ADMIN` for TUN, routes, nftables and conntrack. Startup logs
+effective UID, GID and the hexadecimal effective capability set, and fails
+closed if `CAP_NET_ADMIN` is absent or process status cannot be read. The
+expected effective set is `0000000000001000`.
+
+Root with only `NET_ADMIN` is the current privilege floor: `KeyBox::load`
+requires the tunnel master key to be a regular `root:root` file with mode
+`0600`, and non-root cannot read the provisioned file. Preserve that ownership
+check. A non-root executable with file capabilities would also conflict with
+`no-new-privileges`, which prevents gaining privileges from file capabilities
+on exec; helper commands still need `NET_ADMIN`. The image explicitly sets
+`USER 0:0` and Compose enables `no-new-privileges`.
+
+Use a read-only root filesystem and `/tmp:size=16m,noexec,nosuid,nodev` tmpfs
+for bounded scratch space. Kernel state belongs to the network namespace;
+the adapter supplies nft rules through stdin and uses `ip` and `conntrack`
+without persistent state files. No writable `/run` is required by these
+invocations. Mount credentials read-only, provide `/dev/net/tun`, and set
+`net.ipv4.ip_forward=1`. The Linux adapter requires the `ip`, `nft`, and
+`conntrack` binaries. `curl` remains in the image for authenticated control
+and status assertions in the stage1, Runtime Controller and Egress
+authentication Docker suites and the image smoke probe; replacing all those
+probes is separate work.
+The built-in healthcheck needs no `curl`. There are no container-local
+`ps`/`pgrep` users, so the image omits `procps`.
+
+It must not receive the Docker socket or Kubernetes
 credentials. The deployment declaration must set
 `net.ipv4.ip_forward=1` in the Egress network namespace; startup verifies this
 value and fails closed instead of attempting to mutate a platform-owned
@@ -132,8 +157,12 @@ A minimal Docker deployment must provide the equivalent of:
 ```bash
 docker run --rm \
   --name antnest-runtime-egress \
+  --user 0:0 \
   --cap-drop ALL \
   --cap-add NET_ADMIN \
+  --security-opt no-new-privileges=true \
+  --read-only \
+  --tmpfs /tmp:size=16m,noexec,nosuid,nodev \
   --device /dev/net/tun \
   --sysctl net.ipv4.ip_forward=1 \
   --pids-limit 256 \
@@ -163,9 +192,11 @@ with:
 - control mutation availability;
 - applied snapshot revision.
 
-Use `/usr/local/bin/runtime-egress --healthcheck` for local process liveness;
+Use `/usr/local/bin/runtime-egress --healthcheck` for local readiness;
 it reads the custom health endpoint without auth or database configuration.
-Both ready and degraded documents retain HTTP 200. To inspect mutation
+It exits zero only for HTTP 200 with a JSON `status` of `ready`; degraded,
+malformed, oversized and unreachable responses fail. Both ready and degraded
+documents retain HTTP 200 for status inspection. To inspect mutation
 availability, read `control_plane_ready` in that document. The authenticated
 control listener has no status route: anonymous requests receive 401, while a
 verified Controller receives 404. The health listener rejects business routes,

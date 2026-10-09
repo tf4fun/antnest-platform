@@ -17,6 +17,7 @@ pub mod kernel;
 pub mod network;
 pub mod packet;
 pub mod policy;
+pub mod privilege;
 pub mod repository;
 pub mod service_auth;
 pub mod telemetry;

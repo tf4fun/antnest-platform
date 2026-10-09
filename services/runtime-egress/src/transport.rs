@@ -288,11 +288,7 @@ pub async fn healthcheck(endpoint: std::net::SocketAddrV4) -> io::Result<()> {
         if response.len() > 4096 {
             return Err(failed());
         }
-        let first_line = response
-            .split(|byte| *byte == b'\n')
-            .next()
-            .ok_or_else(failed)?;
-        if first_line.starts_with(b"HTTP/1.1 200 ") || first_line.starts_with(b"HTTP/1.0 200 ") {
+        if health_response_ready(&response) {
             Ok(())
         } else {
             Err(failed())
@@ -303,6 +299,21 @@ pub async fn healthcheck(endpoint: std::net::SocketAddrV4) -> io::Result<()> {
         Ok(Ok(())) => Ok(()),
         _ => Err(failed()),
     }
+}
+
+fn health_response_ready(response: &[u8]) -> bool {
+    let first_line = response
+        .split(|byte| *byte == b'\n')
+        .next()
+        .unwrap_or_default();
+    if !first_line.starts_with(b"HTTP/1.1 200 ") && !first_line.starts_with(b"HTTP/1.0 200 ") {
+        return false;
+    }
+    let Some(headers_end) = response.windows(4).position(|bytes| bytes == b"\r\n\r\n") else {
+        return false;
+    };
+    serde_json::from_slice::<serde_json::Value>(&response[headers_end + 4..])
+        .is_ok_and(|document| document["status"] == "ready")
 }
 
 impl Listener for SecureListener {
@@ -344,5 +355,40 @@ impl Listener for SecureListener {
         self.listener
             .local_addr()
             .map(|_| VerifiedPeer { caller: None })
+    }
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::health_response_ready;
+
+    #[test]
+    fn healthcheck_requires_ready_status_document() {
+        for (code, body, ready) in [
+            ("200 OK", r#"{"status":"ready"}"#, true),
+            (
+                "200 OK",
+                r#"{ "status": "ready", "control_plane_ready": true }"#,
+                true,
+            ),
+            ("200 OK", r#"{"status":"degraded"}"#, false),
+            ("200 OK", r#"{"status":"starting"}"#, false),
+            ("200 OK", r#"{"control_plane_ready":true}"#, false),
+            ("200 OK", r#"{"status":true}"#, false),
+            ("200 OK", "not-json", false),
+            ("200 OK", "", false),
+            ("503 Unavailable", r#"{"status":"ready"}"#, false),
+        ] {
+            let response = format!(
+                "HTTP/1.1 {code}\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            assert_eq!(
+                health_response_ready(response.as_bytes()),
+                ready,
+                "{code} {body}"
+            );
+        }
+        assert!(!health_response_ready(b"HTTP/1.1 200 OK\r\n"));
     }
 }
