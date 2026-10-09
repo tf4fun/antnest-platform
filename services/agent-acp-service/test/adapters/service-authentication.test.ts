@@ -1,12 +1,18 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
+  ServiceAuthentication,
   parseReceiver,
   validateToken,
   validateMode,
   authenticateFields,
 } from "../../src/adapters/service-authentication.js";
 import { parseKeys, verifyCallerContext } from "../../src/adapters/caller-context.js";
+import { testSecurityEnvironment } from "../support/auth-fixture.js";
 
 const tokens = JSON.parse(
   readFileSync(
@@ -96,5 +102,43 @@ describe("shared signed CCT conformance", () => {
     });
     if (v.valid) await expect(promise).resolves.toHaveProperty("sub");
     else await expect(promise).rejects.toThrow();
+  });
+});
+describe("authenticated dependency fetch", () => {
+  it("closes a streaming dependency response when the caller aborts after garbage collection", async () => {
+    setFlagsFromString("--expose-gc");
+    const collect = runInNewContext("gc") as () => void;
+    let closed!: () => void;
+    const disconnected = new Promise<void>((resolve) => (closed = resolve));
+    const server = createServer((_request, response) => {
+      response.on("close", closed);
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write("data: open\n\n");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const workload = new ServiceAuthentication(testSecurityEnvironment());
+    try {
+      const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+      const caller = new AbortController();
+      const response = await workload.fetchFor("identity-service", origin)(origin, {
+        signal: caller.signal,
+      });
+      expect(response.status).toBe(200);
+      for (let round = 0; round < 3; round++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        collect();
+      }
+      caller.abort(new Error("cancelled"));
+      await expect(
+        Promise.race([
+          disconnected.then(() => "closed"),
+          new Promise((resolve) => setTimeout(() => resolve("still open"), 2_000)),
+        ]),
+      ).resolves.toBe("closed");
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      await workload.close();
+    }
   });
 });

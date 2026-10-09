@@ -10,6 +10,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RuntimeConnections } from "../../src/adapters/runtime-connections.js";
 import {
@@ -370,6 +372,26 @@ describe("volatile Runtime connections", () => {
     expect(options).toMatchObject({ redirect: "error", credentials: "omit" });
     expect(options.dispatcher).toBeDefined();
     expect(headers.Authorization).toBe("Bearer user-key");
+  });
+  it("keeps a caller abort reaching the Runtime request after garbage collection", async () => {
+    // A signal derived from a discarded Request stops following its source
+    // once the Request is collected; a long MCP stream would never close.
+    setFlagsFromString("--expose-gc");
+    const collect = runInNewContext("gc") as () => void;
+    const reference = install();
+    const caller = new AbortController();
+    await connections.fetchFor(reference)(reference.mcpEndpoint, {
+      method: "POST",
+      body: "{}",
+      signal: caller.signal,
+    });
+    const sent = transport.send.mock.calls[0]![1].signal!;
+    for (let round = 0; round < 3; round++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      collect();
+    }
+    caller.abort(new Error("cancelled"));
+    expect(sent.aborted).toBe(true);
   });
   it.each(["install", "digest"])(
     "preserves a separate signed maintenance ticket on the private Skill %s route",

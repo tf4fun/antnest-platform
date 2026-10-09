@@ -314,7 +314,9 @@ export class ServiceAuthentication {
       return (await undiciFetch(url.toString(), {
         method: request.method,
         headers: Object.fromEntries(request.headers),
-        signal: request.signal,
+        // request.signal follows the caller only while the temporary Request
+        // is reachable, so a later abort could never close the stream.
+        signal: init?.signal ?? (input instanceof Request ? input.signal : null),
         ...(request.body === null
           ? {}
           : {
