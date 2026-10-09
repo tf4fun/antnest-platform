@@ -120,6 +120,20 @@ test("managed MCP and deployment wiring runners select their suites", () => {
   );
 });
 
+test("dependency secret Docker admission is required by the Tier B deployment suite", () => {
+  const runner =
+    "tests/e2e/service-authentication/deployment-credentials/dependency-secrets.mjs";
+  const selected = selectSuites([runner]);
+  const suite = selected.find(({ id }) => id === "deployment-docker");
+  assert(suite);
+  assert.equal(suite.tier, "b");
+  assert(suite.run.includes(`node ${runner}`));
+  assert(suite.images.includes("temporal"));
+  assert(suite.pull.includes("temporalio/server:1.32.0"));
+  const shard = shards.find(({ id }) => id === "b-deployment");
+  assert(shard.suites.includes(suite.id));
+});
+
 test("an explicit full run selects every enabled suite without any changes", () => {
   assert.deepEqual(selectSuites([], { all: true }), enabled);
 });

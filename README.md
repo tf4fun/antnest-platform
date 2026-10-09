@@ -183,6 +183,10 @@ for mounts, key retention and rotation.
 
 `.env.example` leaves all passwords and encryption keys empty. Compose requires
 them, and services reject published credentials and uniform keys at startup.
+PostgreSQL and Temporal dependency entrypoints reject published admin/Temporal
+passwords on every start, including retained PostgreSQL data, before opening
+connections or writing role credentials. Disposable fixed fixtures explicitly
+opt in through their test-only override; standard Compose never passes the gate.
 The generator refuses an existing `.env`; `--force` is only for a disposable
 environment and does not rotate credentials of retained data. See [SECURITY.md](SECURITY.md).
 

@@ -144,6 +144,16 @@ Identity rejects the published administrator password only when creating a new
 bootstrap account; existing accounts are not rejected or reset by an unused value.
 Errors and opt-in warnings name variables without including credentials.
 
+Platform-owned dependency entrypoints also check the PostgreSQL admin and Temporal
+database passwords before starting servers or database/schema clients (#80).
+PostgreSQL's wrapper checks every start, including retained volumes, before
+execing the official entrypoint. The derived Temporal image checks before its
+upstream server entrypoint; database/schema setup and Skill Registry database
+initialization use the same POSIX shell policy. Checks consume the dependency's
+actual password setting and report the corresponding `ANTNEST_*` variable.
+Unset/empty values are left to Compose's required fields and dependency validation;
+the shared admission gate always rejects invalid opt-in spellings.
+
 Only exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` permits these fixed values for
 explicit disposable tests, with one startup WARN per affected variable. Other
 spellings/whitespace are rejected. The standard Compose files never pass this
