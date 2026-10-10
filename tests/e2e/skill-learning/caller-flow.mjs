@@ -101,12 +101,14 @@ export async function callerAcpFlow({
   );
   assert.equal(learned.status, "skill_created");
   assert.equal(learned.agent_id, peerId);
-  const active = (agentId, sequence) =>
+  const active = (agentId, sequence, waitForAck = false) =>
     assertSourceActive({
       sql,
       agentId,
       sequence,
       agentIds: [fixture.agentID, peerId],
+      waitForAck,
+      signal,
     });
   await until(
     async () =>
@@ -119,7 +121,7 @@ export async function callerAcpFlow({
     signal,
     90000,
   );
-  await active(fixture.agentID, 2);
+  await active(fixture.agentID, 2, true);
   await active(peerId, 1);
   console.log(
     `Caller acceptance ${config.project}: real active-Run find and both loads`,
