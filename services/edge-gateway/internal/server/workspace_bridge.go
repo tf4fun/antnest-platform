@@ -29,12 +29,6 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 	if err != nil {
 		return err
 	}
-	setWorkspacePrincipalHeaders(request.Header, principal)
-	if agentID != "" {
-		request.Header.Set(HeaderAgentID, agentID)
-	} else {
-		request.Header.Del(HeaderAgentID)
-	}
 	if strings.HasSuffix(path, "/events") {
 		if request.Method != http.MethodGet || path != "agents/"+agentID+"/events" {
 			writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
@@ -116,20 +110,30 @@ func (h *handler) newWorkspaceBridgeProxy(target *url.URL) *httputil.ReverseProx
 		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
 			proxyRequest.SetURL(target)
 			proxyRequest.Out.Host = target.Host
-			headers := make(http.Header)
-			for _, name := range []string{
-				"Accept", "Content-Type", "If-Match", "Idempotency-Key", "Last-Event-ID",
-				HeaderOrganizationID, HeaderPrincipalID, HeaderUserID,
-				HeaderMembershipID, HeaderAgentID, HeaderAdministrator,
-				HeaderOrganizationSlug, HeaderOrganizationName,
-			} {
-				for _, value := range proxyRequest.In.Header.Values(name) {
-					headers.Add(name, value)
+			profile := documentRequestHeaders
+			asset := strings.HasPrefix(proxyRequest.In.URL.Path, "/workspace/assets/")
+			api := strings.HasPrefix(proxyRequest.In.URL.Path, "/api/app/workspace/v1/")
+			if asset {
+				profile = assetRequestHeaders
+			} else if api {
+				profile = jsonRequestHeaders
+				if strings.HasSuffix(proxyRequest.In.PathValue("path"), "/events") {
+					profile = eventRequestHeaders
 				}
 			}
-			proxyRequest.Out.Header = headers
-			identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
-			h.forwardingHeaders(proxyRequest.Out.Header, proxyRequest.In)
+			headers := forwardHeaders(proxyRequest, profile)
+			if !asset {
+				if principal, ok := identity.FromContext(proxyRequest.In.Context()); ok {
+					setWorkspacePrincipalHeaders(headers, principal)
+					identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
+				}
+				if api {
+					if agent, valid := workspaceBridgeAgentID(proxyRequest.In.PathValue("path")); valid && agent != "" {
+						headers.Set(HeaderAgentID, agent)
+					}
+				}
+			}
+			h.forwardingHeaders(headers, proxyRequest.In)
 		},
 		ModifyResponse: func(upstream *http.Response) error {
 			_ = stripCredentialResponse(upstream)
