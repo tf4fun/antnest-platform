@@ -1,5 +1,9 @@
 # Antnest Platform Agent Policy
 
+The repository-wide delivery queue and current handoff are in `TODO.md`.
+Read the active batch and relevant dependencies before selecting issue work,
+and update its status and evidence when a batch is reviewed or merged.
+
 The coordinating agent owns Git state, verification, Docker, browsers, network
 services, credentials, and shared processes. Verification commands run
 serially and must leave no child processes behind after interruption.
