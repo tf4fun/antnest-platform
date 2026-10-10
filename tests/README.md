@@ -182,6 +182,15 @@ U+FFFD. These clients therefore print every JSON line through
 characters; `support/ascii-json.test.mjs` finds the clients from the runners
 and rejects raw `JSON.stringify` output.
 
+`make e2e-skill-discovery-caller` waits up to 90 seconds for the source Agent's
+projection acknowledgement before starting its caller Run. Registry recovery,
+live discovery results and the peer Agent's acknowledgement do not establish
+that this source's persisted delivery backoff has finished. Only an active
+projection at the expected sequence with matching managed candidate and digest
+may wait; a missing, withdrawn or changed source fails immediately. The checks
+after the caller Run remain immediate invariants. Fixture tests cover delayed
+acknowledgement, its deadline, cancellation and invalid source states.
+
 All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need
