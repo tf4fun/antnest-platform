@@ -9,6 +9,7 @@ import {
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
+import { gatewayBrowserSessionCookies } from "../../support/gateway-session-cookies.mjs";
 import { audioData, imageData } from "../acp-multimodal/fixtures.mjs";
 import {
   configuration,
@@ -218,11 +219,7 @@ test(
       browser = await chromium.launch({ headless: true });
       const context = await browser.newContext();
       await context.addCookies(
-        [...client.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(client.cookies, config.gateway),
       );
       await context.addInitScript(() => {
         window.securityViolations = [];

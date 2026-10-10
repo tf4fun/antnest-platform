@@ -31,3 +31,27 @@ export function gatewaySessionCookies(cookies) {
     csrf: read(csrfName),
   };
 }
+
+// CDP requires an HTTPS URL when injecting __Host- cookies, even though
+// Chromium sends Secure cookies to literal loopback HTTP. This changes only
+// the cookie injection URL, never the browser's actual request destination.
+export function gatewayBrowserSessionCookies(cookies, gateway) {
+  const { sessionName, csrfName, accessToken, csrf } =
+    gatewaySessionCookies(cookies);
+  if (!accessToken || !csrf)
+    throw new Error("Browser fixture requires a complete Gateway session");
+  const secure = sessionName.startsWith("__Host-");
+  const url = new URL("/", gateway);
+  if (secure && url.protocol === "http:") url.protocol = "https:";
+  return [
+    [sessionName, accessToken],
+    [csrfName, csrf],
+  ].map(([name, value]) => ({
+    name,
+    value,
+    url: url.href,
+    secure,
+    httpOnly: name === sessionName,
+    sameSite: "Lax",
+  }));
+}

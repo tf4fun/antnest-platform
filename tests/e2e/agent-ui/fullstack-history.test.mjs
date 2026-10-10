@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { gatewayBrowserSessionCookies } from "../../support/gateway-session-cookies.mjs";
 import {
   configuration,
   dockerClient,
@@ -132,11 +133,7 @@ test(
       });
       const context = await browser.newContext();
       await context.addCookies(
-        [...memberClient.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(memberClient.cookies, config.gateway),
       );
       const page = await context.newPage();
       const errors = [];

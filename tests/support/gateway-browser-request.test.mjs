@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { test } from "node:test";
 import { chromium } from "../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { gatewayBrowserRequest } from "./gateway-browser-request.mjs";
+import { gatewayBrowserSessionCookies } from "./gateway-session-cookies.mjs";
 
 test("browser request uses actual cookie names on the same loopback URL", async () => {
   for (const prefix of ["", "__Host-"]) {
@@ -91,8 +92,29 @@ for (const secure of [true, false])
       const issuedCookies = await context.cookies();
       assert.equal(issuedCookies.length, 2);
       assert(issuedCookies.every((cookie) => cookie.secure === secure));
+      // Also exercise API-login sessions injected by Docker browser fixtures.
+      await context.clearCookies();
+      await context.addCookies(
+        gatewayBrowserSessionCookies(issuedCookies, origin),
+      );
+      const injectedCookies = await context.cookies();
+      assert.equal(injectedCookies.length, 2);
+      for (const cookie of injectedCookies) {
+        assert.equal(cookie.secure, secure);
+        assert.equal(cookie.path, "/");
+        assert.equal(cookie.domain, "127.0.0.1");
+        assert.equal(cookie.sameSite, "Lax");
+        assert.equal(
+          cookie.httpOnly,
+          cookie.name === `${prefix}antnest_session`,
+        );
+      }
       const page = await context.newPage();
       await page.goto(origin);
+      assert.equal(
+        await page.evaluate(() => document.cookie),
+        `${prefix}antnest_csrf=test-csrf`,
+      );
       assert.equal(
         await page.evaluate(async () => (await fetch("/probe")).status),
         200,

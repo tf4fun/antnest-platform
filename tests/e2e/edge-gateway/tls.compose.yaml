@@ -1,5 +1,7 @@
 # Disposable TLS acceptance limits. The product topology comes from compose.tls.yaml.
 services:
+  admin-console:
+    image: ${ANTNEST_TLS_E2E_CONSOLE_IMAGE:?required candidate image}
   edge-gateway:
     environment:
       ANTNEST_EDGE_LOGIN_SOURCE_MAX: "6"

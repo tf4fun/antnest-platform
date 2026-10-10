@@ -44,7 +44,8 @@ checks. No profile or Agent scope comes from a browser header, query or body.
 
 Incoming `Antnest-Service-Authorization`, `Antnest-Caller-Context` and the entire
 case-insensitive `X-Antnest-*` namespace are removed. The one Gateway-owned CSRF
-value is retained privately for local cookie comparison and never forwarded.
+value is retained privately for comparison with the session-bound HMAC and never
+forwarded; the delivery cookie itself is not proof of CSRF admission.
 `X-Antnest-Expected-Principal` is also retained privately as an account-switch
 CAS precondition. Only `PUT /api/admin/agents/{agent}/network-policy` compares
 its single URI-encoded organization/user pair with authenticated Identity facts.

@@ -14,6 +14,7 @@ import {
 } from "../../support/verification/environment.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { gatewayBrowserSessionCookies } from "../../support/gateway-session-cookies.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { audioData } from "../acp-multimodal/fixtures.mjs";
 import {
@@ -147,11 +148,7 @@ test(
       browser = await chromium.launch({ headless: true });
       const context = await browser.newContext();
       await context.addCookies(
-        [...client.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(client.cookies, config.gateway),
       );
       const page = await context.newPage();
       page.on("pageerror", () => problems.push("pageerror"));

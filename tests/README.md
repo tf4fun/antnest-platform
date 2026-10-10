@@ -204,6 +204,10 @@ Scripted clients share `tests/support/gateway-session-cookies.mjs` to select
 session and CSRF values from actual Cookie names. `__Host-` names take
 precedence as one mode; helpers never add legacy aliases or infer mode from
 the URL. HTTPS admission assertions still require the prefixed names explicitly.
+Its `gatewayBrowserSessionCookies` helper injects API-login sessions with their
+mode's Secure, HttpOnly, host-only, root-path and Lax attributes. Chromium's CDP
+requires an HTTPS injection URL for `__Host-` cookies, including on loopback;
+the browser and API requests retain the deployment's actual URL.
 `e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
 Playwright Chromium and the standard local stack images. Its captured receipt
 evidence defaults to `artifacts/verification/`; override its directory with
@@ -218,8 +222,13 @@ retained containers, volumes, networks and image references are unchanged.
 `e2e-gateway-tls` adds OpenSSL and the pinned `caddy:2.11.7-alpine` image to those
 prerequisites. It runs the reference proxy overlay with a disposable private CA,
 verifies Node's CA/hostname checks, and pins the temporary leaf key in Chromium
-without changing system trust. Real browser login checks Secure cookies, Console
-admin requests and Workspace prompt/SSE; an authenticated ACP client uses WSS.
+without changing system trust. Fresh Gateway, Console and Agent UI candidates
+exercise `__Host-` Secure cookies, Console writes and Workspace prompt/SSE while
+legacy CSRF cookies are planted; an authenticated ACP client uses WSS. Raw
+requests reject planted cookie/header pairs, cross-session replay, duplicate
+session cookies and legacy production names. A valid bound header still works
+without the CSRF delivery cookie. Browser logout covers both confirmed `204`
+and already-invalid `401` sessions and removes their private pages.
 Two separate container addresses verify independent login source limits despite
 forged forwarding headers. `ANTNEST_GATEWAY_TLS_E2E_OUTPUT` selects the private
 evidence directory. Cleanup removes the fixture keys, candidates and deployment.

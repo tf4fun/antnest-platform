@@ -97,5 +97,5 @@ before introducing `ANTNEST_EDGE_ADMIN_ORIGIN` or claiming that isolation.
 6. HTTPS integration: login, Console writes, Workspace writes and logout;
    reject tossed cookies, cross-session replay and legacy production cookies.
 
-Consumer and integration batches remain pending until separately admitted;
+Each consumer and the integration batch require their own admission evidence;
 the Gateway producer alone does not complete the browser workflow.

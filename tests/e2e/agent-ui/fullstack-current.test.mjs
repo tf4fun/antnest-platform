@@ -15,6 +15,7 @@ import {
 } from "../../integration/agent-ui/visual-assertions.mjs";
 import { assertWcagPage } from "../../support/agent-ui/accessibility.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { gatewayBrowserSessionCookies } from "../../support/gateway-session-cookies.mjs";
 import { audioData } from "../acp-multimodal/fixtures.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import {
@@ -350,11 +351,7 @@ test(
         return bytes;
       };
       await context.addCookies(
-        [...memberClient.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(memberClient.cookies, config.gateway),
       );
       const errors = [];
       const sockets = [];
@@ -2033,11 +2030,7 @@ test(
       await logoutClient.request("/api/session/login", { body: member });
       const logoutContext = await browser.newContext();
       await logoutContext.addCookies(
-        [...logoutClient.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(logoutClient.cookies, config.gateway),
       );
       const logoutPage = await logoutContext.newPage();
       await logoutPage.goto(
@@ -2088,11 +2081,7 @@ test(
       );
       const peerContext = await browser.newContext();
       await peerContext.addCookies(
-        [...peerClient.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(peerClient.cookies, config.gateway),
       );
       const peerPage = await peerContext.newPage();
       await peerPage.goto(
@@ -2233,11 +2222,7 @@ test(
       );
       const expiryContext = await browser.newContext();
       await expiryContext.addCookies(
-        [...expiryClient.cookies].map(([name, value]) => ({
-          name,
-          value,
-          url: config.gateway,
-        })),
+        gatewayBrowserSessionCookies(expiryClient.cookies, config.gateway),
       );
       const expiryPage = await expiryContext.newPage();
       await expiryPage.goto(
