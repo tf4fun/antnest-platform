@@ -662,7 +662,8 @@ export const outsideCI = {
 
 export const setups = ["go", "rust", "admin-web", "agent-ui-web", "chromium"];
 
-export const images = {
+// Only service and Runtime images are eligible for registry publication.
+const serviceImages = {
   "antnest-runtime": "runtimes/antnest-runtime/Dockerfile",
   "runtime-egress": "services/runtime-egress/Dockerfile",
   "runtime-controller": "services/runtime-controller/Dockerfile",
@@ -673,6 +674,12 @@ export const images = {
   "admin-console": "services/admin-console/Dockerfile",
   "agent-ui": "services/agent-ui/Dockerfile",
   "edge-gateway": "services/edge-gateway/Dockerfile",
+};
+
+// Dependencies and Runtime test variants travel through the current CI run's
+// image artifacts instead of published registry packages.
+export const images = {
+  ...serviceImages,
   temporal: "scripts/temporal/Dockerfile",
   // Runtime test variants. Runners derive their candidates from these
   // (tests/support/candidate-images.mjs) instead of rebuilding the Runtime.
@@ -711,6 +718,7 @@ export function imageSpec(name) {
 }
 
 const isVariant = (name) => typeof images[name] !== "string";
+const isPublishable = (name) => Object.hasOwn(serviceImages, name);
 
 const registry = "ghcr.io/tf4fun";
 const packageName = (name) =>
@@ -731,7 +739,7 @@ function sharedImages(name) {
 }
 
 // Unchanged layers come from the cache the image workflows publish on main.
-// Variants have no image workflow, so they also write their own scope.
+// Dependencies and variants have no image workflow, so they write their scope.
 export function bakeDefinition(names, context = ".") {
   const target = {};
   const base = (image, stage) => {
@@ -766,7 +774,7 @@ export function bakeDefinition(names, context = ".") {
       "cache-from": [...new Set([name, ...sharedImages(name)])].map(
         (image) => `type=gha,${scope(image)}`,
       ),
-      ...(isVariant(name) && {
+      ...(!isPublishable(name) && {
         "cache-to": [`type=gha,mode=max,${scope(name)}`],
       }),
     };
@@ -849,7 +857,10 @@ export function imageDigest(name, tree, readBlob) {
 }
 
 export function imageReference(name, digest) {
-  return `${registry}/${packageName(name)}:inputs-${digest}`;
+  imageSpec(name);
+  return isPublishable(name)
+    ? `${registry}/${packageName(name)}:inputs-${digest}`
+    : `antnest/${name}:local`;
 }
 
 export function imageExists(ref, run = execFileSync) {
@@ -867,17 +878,24 @@ export function imageExists(ref, run = execFileSync) {
 export function resolveImages(names, { tree, readBlob, exists }) {
   return names.map((name) => {
     const ref = imageReference(name, imageDigest(name, tree, readBlob));
+    const publish = isPublishable(name);
     return {
       name,
       dockerfile: imageSpec(name).dockerfile,
       ref,
-      build: !exists(ref),
+      build: !publish || !exists(ref),
+      publish,
     };
   });
 }
 
-export function suiteImages(selected) {
-  return [...new Set(selected.flatMap((suite) => suite.images ?? []))].sort();
+export function suiteImages(selected, { allImages = false } = {}) {
+  return [
+    ...new Set([
+      ...selected.flatMap((suite) => suite.images ?? []),
+      ...(allImages ? Object.keys(serviceImages) : []),
+    ]),
+  ].sort();
 }
 
 function relevant(file) {
@@ -1199,13 +1217,13 @@ function main() {
     const readBlob = (object) =>
       execFileSync("git", ["cat-file", "blob", object], { encoding: "utf8" });
     resolved = resolveImages(
-      values["all-images"] ? Object.keys(images).sort() : suiteImages(selected),
+      suiteImages(selected, { allImages: values["all-images"] }),
       { tree, readBlob, exists: imageExists },
     );
     const builds = resolved.filter((image) => image.build);
     lines.push(
       `images=${JSON.stringify(Object.fromEntries(resolved.map(({ name, ref, build }) => [name, { ref, build }])))}`,
-      `builds=${JSON.stringify({ include: builds.map(({ name, ref }) => ({ name, ref })) })}`,
+      `builds=${JSON.stringify({ include: builds.map(({ name, ref, publish }) => ({ name, ref, publish })) })}`,
       `building=${builds.length}`,
     );
   }

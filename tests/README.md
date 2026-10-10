@@ -277,14 +277,28 @@ pulled images and host setup but no platform state.
   progress first build the test-only `antnest/antnest-runtime:managed-integration`
   image with `make docker-build-managed-runtime`.
 
-Each local image is named `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
+Only the ten implemented service and Runtime images listed in
+[`docs/service-layout.md`](../docs/service-layout.md#current-state) are published
+as `ghcr.io/tf4fun/antnest-<image>:inputs-<hash>`,
 where the hash covers the image's Dockerfile, `.dockerignore` and every path
 the Dockerfile copies. Suites pull images that GHCR already has. The image job
 builds each missing image once per run and hands it to the shards as an
 artifact; shards that need no image start without waiting for it. Runs on
-`main` build and publish every missing image, so a pull request that does not
-change an image's inputs never rebuilds it. Every shard job runs the steps in
+`main` build and publish every missing service/Runtime release image, so a pull
+request that does not change a release image's inputs never rebuilds it.
+Every shard job runs the steps in
 `.github/workflows/_suite.yml`.
+
+The local Temporal dependency image and three Runtime test variants
+(`antnest-runtime-fixture`, `antnest-runtime-managed`,
+`antnest-runtime-skill-gate`) are not release packages. Selected suites build
+them once per run with GitHub Actions build caches and load them from that
+run's image artifacts. They never query, pull or publish a GHCR package, even
+if an old package still exists. Unselected dependencies and variants are not
+built merely because a run is on `main`. Temporal remains a local build in
+the base Compose deployment; its entrypoint and readiness checks are unchanged.
+Image artifacts expire after one day; rerun the whole workflow if a shard's
+required artifact has expired.
 
 Runners never rebuild a provided image. The shard lists its images in
 `ANTNEST_CI_PROVIDED_IMAGES`, and

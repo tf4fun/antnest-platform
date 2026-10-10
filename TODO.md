@@ -17,6 +17,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 
 ## 当前批次
 
+- 插入处理：收回四个非服务 package 的 CI 发布范围（Temporal 依赖及三个 Runtime 测试变体）；保留本地构建和测试消费，以同次 CI artifact 传递。53 个相关测试及独立 review 通过，完整仓库准入与 CI 尚待完成。用户已授权整改完成后删除四个现存 package；`gh` 缺少 Packages scope，已确认可通过当前 GitHub 浏览器会话管理，删除仍待整改合并。
 - 下一执行项：[#197](https://github.com/tf4fun/antnest-platform/issues/197)，Skill source preview 偶发返回 503；尚未开始实现。之后为 #112。
 - #197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #198 后的诊断，先固定复现和失败测试，再确定服务归属，不据此直接增加重试。
 - 跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。开始前重新核对 issue 讨论、当前代码和最近 CI artifact。
