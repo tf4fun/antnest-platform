@@ -86,7 +86,7 @@ session. A retry must revalidate with Identity; unavailable never means admitted
 ```text
 HTTP limits/security header defaults wrapper
   -> W3C trace extraction/root span
-  -> remove browser service/context credentials and all X-Antnest-* headers
+  -> privately capture CSRF/CAS; remove all X-Antnest-* and Antnest-* headers
   -> shared Origin admission for every /api/ request
   -> route match
   -> cookie token resolution (protected routes)
@@ -95,9 +95,41 @@ HTTP limits/security header defaults wrapper
        -> signed caller context + workload identity -> ACP local authorization
        -> authenticated bootstrap -> Controller ID/name metadata
        -> scoped state observation -> Agent ACP snapshot/watch
-  -> Admin Console or Agent UI application proxy
+  -> route allowlist after hop-by-hop filtering; inject verified identity
+  -> Admin Console or Agent UI application proxy (no request trailers)
   -> final response commit: supply only missing security headers
 ```
+
+## Request Header Boundary
+
+The [request header contract](../../../contracts/edge-gateway/request-headers.md)
+and its [registry](../../../contracts/edge-gateway/request-headers.json) define
+the reserved namespaces and every outbound profile. Incoming `X-Antnest-*`
+and `Antnest-*` fields are removed case-insensitively before routing, including
+unknown names and duplicate values. CSRF and the network-policy account-switch
+guard are captured privately for local validation; neither is an identity fact.
+
+Every HTTP proxy creates a fresh header map from the post-hop-filter request.
+It cannot restore a browser field nominated by `Connection`. Console and
+Workspace assets forward the asset profile (Accept/encoding, cache validators
+and Range); JSON APIs forward Accept, Content-Type, If-Match and Idempotency-Key;
+event streams forward Accept and Last-Event-ID. Workspace HTML forwards Accept.
+ACP HTTP adds its connection/session IDs to Accept and Content-Type. SCIM
+forwards Accept, Content-Type, Authorization, If-Match and If-None-Match.
+No browser Cookie reaches an upstream; only SCIM receives browser Authorization.
+All HTTP proxies discard request trailers, including values populated at EOF,
+while preserving the body. Only the declared ACP WebSocket routes forward
+subprotocol negotiation; generic application proxies do not forward upgrades.
+
+After the allowlist, authenticated routes reconstruct their presentation hints
+and caller context from the private Identity result. A validated network-policy
+CAS value has its own private context slot and is injected only on its owning
+PUT route. Anonymous assets and SCIM never inherit session presentation hints
+or caller context. Typed local handlers construct their own downstream requests.
+Tracing, workload credentials and public forwarding metadata are added by their
+existing server-owned layers. The repository vocabulary gate rejects new
+reserved header literals until registered; generated attack tests verify every
+registered name against each proxy family.
 
 ## API Origin Admission
 
@@ -174,9 +206,9 @@ batch does not alter the old `/api/app/bootstrap` projection tracked by #64.
 The Workspace API accepts only `GET` and `POST`. Each request resolves the
 browser session and replaces incoming identity headers with the verified
 Organization, Principal, User, Membership, administrator flag and path Agent ID.
-Only `Accept`, `Content-Type`, `If-Match`, `Idempotency-Key`, `Last-Event-ID`
-and the trusted identity headers are forwarded. Origin and CSRF rules are
-exact:
+JSON routes forward `Accept`, `Content-Type`, `If-Match` and `Idempotency-Key`;
+the event route forwards `Accept` and `Last-Event-ID`. Both receive the verified
+identity fields after that allowlist. Origin and CSRF rules are exact:
 
 - The shared API Origin admission above applies before Workspace routing.
   GET may omit Origin; POST requires matching Origin or same-origin Fetch
@@ -229,8 +261,9 @@ authorization code or access token. Those values never belong in logs or span
 attributes, and the access token is never returned to browser JavaScript.
 
 `/scim/v2` is a protocol-preserving proxy to Identity. It forwards method,
-path, query, body, content headers, and SCIM Bearer authorization while removing
-browser cookies and untrusted principal headers. Identity continues to own
+path, query, body and its declared request header profile, including SCIM Bearer
+authorization. Browser cookies, reserved namespaces and trailers are removed.
+Identity continues to own
 token verification, scopes, SCIM semantics, and canonical error envelopes.
 
 `GET /api/app/bootstrap` returns principal display facts and accessible Agent
@@ -350,7 +383,7 @@ and [Gateway forwarding contract](../../../contracts/edge-gateway/service-authen
 define the implemented internal connection boundary. Each dependency origin
 has a distinct token file or verified mTLS service identity. Tokens are re-read
 for HTTP requests and WebSocket handshakes. Browser-supplied service/CCT headers
-and the complete X-Antnest namespace are removed; CSRF is kept privately for
+and both complete reserved namespaces are removed; CSRF is kept privately for
 local comparison. Identity revision 14 resolves the session with a fixed
 server-selected audience profile and target Agent; Gateway forwards its CCT
 unchanged from private request context. Internal credential response headers

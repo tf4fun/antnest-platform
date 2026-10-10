@@ -191,6 +191,17 @@ may wait; a missing, withdrawn or changed source fails immediately. The checks
 after the caller Run remain immediate invariants. Fixture tests cover delayed
 acknowledgement, its deadline, cancellation and invalid source states.
 
+The discovery-tools client also reads the target Agent's public execution state
+with the same member session before opening ACP. Controller readiness alone
+does not establish that ACP has applied the binding (tracked in #44). Only an
+authorized target reporting `offline/agent_unavailable` may wait, for at most
+90 seconds; each read is limited to 15 seconds and the remaining deadline.
+Denied, busy, protected, malformed and HTTP-error states fail immediately. The
+first Prompt must succeed without retry, and a later `agent_unavailable` from
+session creation still fails. Failure diagnostics retain the request stage and
+last public state. This fixture precondition does not close #44's product
+readiness contract.
+
 All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need

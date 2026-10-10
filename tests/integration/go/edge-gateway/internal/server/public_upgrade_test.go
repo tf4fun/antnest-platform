@@ -27,13 +27,13 @@ func TestPublicProxyUpgradeKeepsGatewayHSTSPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			h, err := NewHandler(Config{PublicOrigin: origin, AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, AgentACPURL: upstream.URL, IdentityURL: upstream.URL}, Dependencies{Identity: &identityServiceStub{}, Agents: &agentServiceStub{}, Execution: &executionServiceStub{}, Sessions: sessions, HTTPClient: upstream.Client()})
+			h, err := NewHandler(Config{PublicOrigin: origin, AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, AgentACPURL: upstream.URL, IdentityURL: upstream.URL}, Dependencies{Identity: &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, Agents: &agentServiceStub{}, Execution: &executionServiceStub{}, Sessions: sessions, HTTPClient: upstream.Client()})
 			if err != nil {
 				t.Fatal(err)
 			}
 			gateway := httptest.NewServer(h)
 			t.Cleanup(gateway.Close)
-			connection, response, err := websocket.DefaultDialer.Dial(strings.Replace(gateway.URL, "http:", "ws:", 1)+"/proxy-socket", nil)
+			connection, response, err := websocket.DefaultDialer.Dial(strings.Replace(gateway.URL, "http:", "ws:", 1)+"/api/app/agents/agent-1/v1/acp", http.Header{"Origin": []string{origin}, "Cookie": []string{"__Host-antnest_session=token-1"}})
 			if response != nil && response.Body != nil {
 				_ = response.Body.Close()
 			}

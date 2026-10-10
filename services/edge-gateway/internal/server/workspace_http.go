@@ -30,15 +30,9 @@ func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http
 			proxyRequest.Out.URL.Path = "/v1/acp"
 			proxyRequest.Out.URL.RawPath, proxyRequest.Out.URL.RawQuery = "", ""
 			proxyRequest.Out.Host = h.agentACPURL.Host
-			headers := make(http.Header)
-			for _, name := range []string{"Content-Type", "Accept", "Acp-Connection-Id", "Acp-Session-Id"} {
-				for _, value := range proxyRequest.In.Header.Values(name) {
-					headers.Add(name, value)
-				}
-			}
+			headers := forwardHeaders(proxyRequest, acpRequestHeaders)
 			setACPIdentity(headers, principal, request.PathValue("agent_id"))
 			identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
-			proxyRequest.Out.Header = headers
 			h.forwardingHeaders(headers, proxyRequest.In)
 		},
 		ModifyResponse: func(upstream *http.Response) error {

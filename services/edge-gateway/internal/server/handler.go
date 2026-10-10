@@ -186,8 +186,8 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		bridgeStreams:    make(chan struct{}, 64),
 		mux:              http.NewServeMux(),
 	}
-	h.adminProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
-	h.appProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
+	h.adminProxy = h.newConsoleProxy(consoleURL, true)
+	h.appProxy = h.newConsoleProxy(consoleURL, false)
 	h.workspaceBridgeProxy = h.newWorkspaceBridgeProxy(agentUIURL)
 	h.scimProxy = h.newSCIMProxy(identityURL)
 	h.routes()
@@ -565,26 +565,11 @@ func (h *handler) workspaceApplication(response http.ResponseWriter, request *ht
 		return
 	}
 	asset := strings.HasPrefix(request.URL.Path, "/workspace/assets/")
-	var principal identity.Principal
 	if !asset {
 		response.Header().Set("Cache-Control", "private, no-store")
-		var ok bool
-		principal, ok = h.authenticateWorkspaceDocument(response, request)
-		if !ok {
+		if _, ok := h.authenticateWorkspaceDocument(response, request); !ok {
 			return
 		}
-	}
-	request.Header.Del("Cookie")
-	request.Header.Del("Authorization")
-	for _, header := range []string{
-		HeaderOrganizationID, HeaderPrincipalID, HeaderUserID,
-		HeaderMembershipID, HeaderAgentID, HeaderAdministrator,
-		HeaderOrganizationSlug, HeaderOrganizationName,
-	} {
-		request.Header.Del(header)
-	}
-	if !asset {
-		setWorkspacePrincipalHeaders(request.Header, principal)
 	}
 	h.workspaceBridgeProxy.ServeHTTP(response, request)
 }
@@ -695,13 +680,10 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
-	if !restoreNetworkPrincipalPrecondition(request, principal) {
+	if !validateNetworkPrincipalPrecondition(request, principal) {
 		writeError(response, http.StatusConflict, "principal_changed", "Account changed. Reload this page before updating network policy.")
 		return nil
 	}
-	setPrincipalHeaders(request.Header, principal)
-	request.Header.Del("Cookie")
-	request.Header.Del("Authorization")
 	timeout := h.requestTimeout
 	if isAgentEventWatch(request) {
 		timeout = h.streamLease
@@ -718,8 +700,6 @@ func (h *handler) application(response http.ResponseWriter, request *http.Reques
 		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
 		return
 	}
-	request.Header.Del("Cookie")
-	request.Header.Del("Authorization")
 	h.appProxy.ServeHTTP(response, request)
 }
 
@@ -757,22 +737,13 @@ func (h *handler) authenticate(
 	return values, principal, nil
 }
 
-func (h *handler) newProxy(
-	target *url.URL, errorCode string, errorMessage string,
-	rewritePath func(*http.Request) string,
-) *httputil.ReverseProxy {
+func (h *handler) newConsoleProxy(target *url.URL, authenticated bool) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{}
 	proxy.Rewrite = func(request *httputil.ProxyRequest) {
 		request.SetURL(target)
-		if rewritePath != nil {
-			request.Out.URL.Path = rewritePath(request.In)
-			request.Out.URL.RawPath = ""
-		}
-		h.forwardingHeaders(request.Out.Header, request.In)
+		headers := consoleHeaders(request, authenticated)
+		h.forwardingHeaders(headers, request.In)
 		request.Out.Host = target.Host
-		request.Out.Header.Del("Cookie")
-		request.Out.Header.Del("Authorization")
-		identity.ForwardCallerContext(request.In.Context(), request.Out.Header)
 	}
 	proxy.ModifyResponse = stripCredentialResponse
 	proxy.Transport = h.httpClient.Transport
@@ -781,7 +752,7 @@ func (h *handler) newProxy(
 	}
 	proxy.ErrorHandler = func(response http.ResponseWriter, request *http.Request, err error) {
 		h.logger.ErrorContext(request.Context(), "Gateway proxy failed", "error_class", "upstream_unavailable")
-		writeError(response, http.StatusServiceUnavailable, errorCode, errorMessage)
+		writeError(response, http.StatusServiceUnavailable, "console_unavailable", "Admin Console is unavailable")
 	}
 	return proxy
 }
@@ -790,9 +761,9 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{}
 	proxy.Rewrite = func(request *httputil.ProxyRequest) {
 		request.SetURL(target)
-		h.forwardingHeaders(request.Out.Header, request.In)
+		headers := forwardHeaders(request, scimRequestHeaders)
+		h.forwardingHeaders(headers, request.In)
 		request.Out.Host = target.Host
-		request.Out.Header.Del("Cookie")
 	}
 	proxy.ModifyResponse = stripCredentialResponse
 	proxy.Transport = h.httpClient.Transport

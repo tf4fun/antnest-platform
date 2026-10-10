@@ -12,6 +12,11 @@ Browser-supplied authentication/identity headers and cookies are removed;
 presentation hints are regenerated from the verified principal. User access
 tokens reach only Identity's authenticated credential RPCs.
 
+Every HTTP proxy applies the route-specific
+[request header allowlist](../../contracts/edge-gateway/request-headers.md),
+discards browser trailers and injects verified identity after hop-by-hop filtering.
+The reserved-prefix rule covers both `X-Antnest-*` and `Antnest-*`, including
+unknown future fields.
 
 Internal token/mTLS verification and outbound transport use the
 [shared Go module](../../modules/service-authentication/README.md), with the
@@ -97,29 +102,29 @@ Authenticated dependency requests and ACP WebSocket handshakes disable
 environment/default-transport proxies. Service tokens and signed caller
 context are sent directly to the configured service origin.
 
-| Variable                         | Required | Default | Description                                                                                                                                                                 |
-| -------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP or native HTTPS address; local health follows the configured host and port. |
-| `ANTNEST_EDGE_PUBLIC_ORIGIN` | except direct loopback HTTP | - | canonical browser origin; HTTPS outside literal loopback addresses |
-| `ANTNEST_EDGE_TLS_CERT_FILE` / `ANTNEST_EDGE_TLS_KEY_FILE` | together | - | public native TLS pair; rotate with SIGHUP without closing existing connections |
-| `ANTNEST_EDGE_TLS_CA_FILE` | no | system trust | extra private CA trust for the native-TLS health probe |
-| `ANTNEST_EDGE_TRUSTED_PROXIES` | for HTTPS proxy mode | empty | trusted source CIDRs for client-address derivation |
-| `ANTNEST_IDENTITY_SERVICE_URL`   | yes      | -       | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
-| `ANTNEST_ADMIN_CONSOLE_URL`      | yes      | -       | Admin Console base URL                                                                                                                                                      |
-| `ANTNEST_AGENT_UI_URL`           | yes      | -       | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API                                                                         |
-| `ANTNEST_AGENT_CONTROLLER_URL`   | yes      | -       | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
-| `ANTNEST_AGENT_ACP_URL`          | yes      | -       | Agent ACP Service base URL                                                                                                                                                  |
-| `ANTNEST_EDGE_COOKIE_SECURE`     | no       | `true`  | Secure cookies; false is accepted only on a literal loopback HTTP listener |
-| `ANTNEST_EDGE_CSRF_KEY_FILE` | yes | - | exactly 32 raw private bytes in a readable regular file; shared across Gateway replicas |
-| `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no | `false` | compatibility for API mutations with both Origin and Fetch Metadata absent; emits a startup warning; CSRF still required |
-| `ANTNEST_EDGE_REQUEST_TIMEOUT`   | no       | `10s`   | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
-| `ANTNEST_EDGE_STREAM_LEASE`      | no       | `5m`    | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
-| `ANTNEST_EDGE_LOGIN_WINDOW`      | no       | `5m`    | In-memory login admission window                                                                                                                                            |
-| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`  | no       | `30`    | Login attempts per source per window                                                                                                                                        |
-| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no       | `10`    | Login attempts per normalized account per window                                                                                                                            |
-| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`  | no       | `15s`   | Graceful drain budget for ordinary HTTP requests                                                                                                                            |
-| `ANTNEST_ENVIRONMENT`            | no       | empty   | Deployment environment resource attribute for telemetry                                                                                                                     |
-| `OTEL_*`                         | no       | -       | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
+| Variable                                                   | Required                    | Default      | Description                                                                                                                                                                 |
+| ---------------------------------------------------------- | --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_EDGE_LISTEN`                                      | no                          | `:8080`      | HTTP or native HTTPS address; local health follows the configured host and port.                                                                                            |
+| `ANTNEST_EDGE_PUBLIC_ORIGIN`                               | except direct loopback HTTP | -            | canonical browser origin; HTTPS outside literal loopback addresses                                                                                                          |
+| `ANTNEST_EDGE_TLS_CERT_FILE` / `ANTNEST_EDGE_TLS_KEY_FILE` | together                    | -            | public native TLS pair; rotate with SIGHUP without closing existing connections                                                                                             |
+| `ANTNEST_EDGE_TLS_CA_FILE`                                 | no                          | system trust | extra private CA trust for the native-TLS health probe                                                                                                                      |
+| `ANTNEST_EDGE_TRUSTED_PROXIES`                             | for HTTPS proxy mode        | empty        | trusted source CIDRs for client-address derivation                                                                                                                          |
+| `ANTNEST_IDENTITY_SERVICE_URL`                             | yes                         | -            | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
+| `ANTNEST_ADMIN_CONSOLE_URL`                                | yes                         | -            | Admin Console base URL                                                                                                                                                      |
+| `ANTNEST_AGENT_UI_URL`                                     | yes                         | -            | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API                                                                         |
+| `ANTNEST_AGENT_CONTROLLER_URL`                             | yes                         | -            | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
+| `ANTNEST_AGENT_ACP_URL`                                    | yes                         | -            | Agent ACP Service base URL                                                                                                                                                  |
+| `ANTNEST_EDGE_COOKIE_SECURE`                               | no                          | `true`       | Secure cookies; false is accepted only on a literal loopback HTTP listener                                                                                                  |
+| `ANTNEST_EDGE_CSRF_KEY_FILE`                               | yes                         | -            | exactly 32 raw private bytes in a readable regular file; shared across Gateway replicas                                                                                     |
+| `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS`                  | no                          | `false`      | compatibility for API mutations with both Origin and Fetch Metadata absent; emits a startup warning; CSRF still required                                                    |
+| `ANTNEST_EDGE_REQUEST_TIMEOUT`                             | no                          | `10s`        | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
+| `ANTNEST_EDGE_STREAM_LEASE`                                | no                          | `5m`         | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
+| `ANTNEST_EDGE_LOGIN_WINDOW`                                | no                          | `5m`         | In-memory login admission window                                                                                                                                            |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`                            | no                          | `30`         | Login attempts per source per window                                                                                                                                        |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX`                           | no                          | `10`         | Login attempts per normalized account per window                                                                                                                            |
+| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`                            | no                          | `15s`        | Graceful drain budget for ordinary HTTP requests                                                                                                                            |
+| `ANTNEST_ENVIRONMENT`                                      | no                          | empty        | Deployment environment resource attribute for telemetry                                                                                                                     |
+| `OTEL_*`                                                   | no                          | -            | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
 
 `--healthcheck` probes local `/status`, including configured IPv6 addresses,
 using verified HTTPS for native TLS and HTTP for a proxy's internal listener.

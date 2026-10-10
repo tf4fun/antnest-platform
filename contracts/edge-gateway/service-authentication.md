@@ -42,8 +42,8 @@ each consuming service verifies the CCT signature, audience and target scope.
 Identity principal fields remain the authority for Gateway's session/CSRF/admin
 checks. No profile or Agent scope comes from a browser header, query or body.
 
-Incoming `Antnest-Service-Authorization`, `Antnest-Caller-Context` and the entire
-case-insensitive `X-Antnest-*` namespace are removed. The one Gateway-owned CSRF
+The entire case-insensitive `X-Antnest-*` and `Antnest-*` namespaces are removed,
+including both internal credentials and unknown future names. The Gateway-owned CSRF
 value is retained privately for comparison with the session-bound HMAC and never
 forwarded; the delivery cookie itself is not proof of CSRF admission.
 `X-Antnest-Expected-Principal` is also retained privately as an account-switch
@@ -53,6 +53,11 @@ Missing, duplicate, malformed or mismatched values return `409 principal_changed
 before proxying; a match regenerates one canonical header for Console's own
 comparison against signed claims. It cannot select authority and is removed from
 all other routes.
+Every HTTP proxy uses the [route header allowlists](request-headers.md) after
+hop-by-hop filtering and discards request trailers. Verified principal hints,
+CCT and the validated canonical CAS value are injected independently from
+private context; browser `Connection` fields cannot remove that authority or
+restore an already filtered browser header.
 Only verified principal presentation hints are regenerated where the existing
 UI contract requires them; receivers must not use these hints as authentication.
 Public assets and SCIM requests receive workload authentication but no CCT;

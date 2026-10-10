@@ -9,9 +9,15 @@ OpenAPI.
 [Public entry](public-entry.md) defines native TLS, HTTPS proxy trust, public
 Origin, client addresses, forwarding headers, HSTS and certificate rotation.
 
+[Request header boundary](request-headers.md) and its [registry](request-headers.json)
+define both reserved namespaces, per-route outbound allowlists, browser-local
+inputs and server-injected fields. Revision 18 removes retired hints from the
+trusted list and explicitly inventories internal credentials and response-only
+metadata without making them browser exceptions.
+
 ## Workspace routes
 
-Version 17 of `session-contract.json` includes the Node Workspace HTML, HTTP
+Version 18 of `session-contract.json` includes the Node Workspace HTML, HTTP
 API and SSE routes. Gateway authenticates HTML and business API requests, while
 hashed static assets are served without a browser session. The browser uses
 this route set instead of a direct ACP connection.

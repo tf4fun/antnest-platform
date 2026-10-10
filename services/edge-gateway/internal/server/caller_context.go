@@ -15,6 +15,7 @@ import (
 
 type csrfKey struct{}
 type principalPreconditionKey struct{}
+type validatedPrincipalPreconditionKey struct{}
 
 const principalPreconditionHeader = "X-Antnest-Expected-Principal"
 
@@ -28,7 +29,7 @@ func stripBrowserCredentials(request *http.Request) {
 			principalPrecondition = append(principalPrecondition, values...)
 		}
 		if strings.HasPrefix(strings.ToLower(name), "x-antnest-") ||
-			strings.EqualFold(name, serviceauth.Header) || strings.EqualFold(name, identity.CallerContextHeader) {
+			strings.HasPrefix(strings.ToLower(name), "antnest-") {
 			delete(request.Header, name)
 		}
 	}
@@ -37,11 +38,16 @@ func stripBrowserCredentials(request *http.Request) {
 	*request = *request.WithContext(ctx)
 }
 
-// The browser's account-switch guard is compared with authenticated Identity
-// facts. Only this operation receives a regenerated, canonical precondition.
-func restoreNetworkPrincipalPrecondition(request *http.Request, principal identity.Principal) bool {
+func isNetworkPolicyUpdate(request *http.Request) bool {
 	parts := strings.Split(request.URL.EscapedPath(), "/")
-	if request.Method != http.MethodPut || len(parts) != 6 || parts[1] != "api" || parts[2] != "admin" || parts[3] != "agents" || parts[5] != "network-policy" {
+	return request.Method == http.MethodPut && len(parts) == 6 && parts[1] == "api" && parts[2] == "admin" && parts[3] == "agents" && parts[5] == "network-policy"
+}
+
+// The browser's account-switch guard is compared with authenticated Identity
+// facts. Store the validated canonical result separately from the raw input;
+// only the owning proxy operation may inject it after hop-by-hop filtering.
+func validateNetworkPrincipalPrecondition(request *http.Request, principal identity.Principal) bool {
+	if !isNetworkPolicyUpdate(request) {
 		return true
 	}
 	values, _ := request.Context().Value(principalPreconditionKey{}).([]string)
@@ -60,7 +66,8 @@ func restoreNetworkPrincipalPrecondition(request *http.Request, principal identi
 	if err != nil {
 		return false
 	}
-	request.Header.Set(principalPreconditionHeader, url.PathEscape(string(canonical)))
+	ctx := context.WithValue(request.Context(), validatedPrincipalPreconditionKey{}, url.PathEscape(string(canonical)))
+	*request = *request.WithContext(ctx)
 	return true
 }
 
