@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 18,
+  "version": 19,
   "session_security": {
     "contract": "session-security.md",
     "secure_cookie_names": ["__Host-antnest_session", "__Host-antnest_csrf"],
@@ -9,7 +9,9 @@
     "csrf": "base64url(HMAC-SHA256(key, UTF8(token_id))) without padding; header verified against the authenticated session; cookie is delivery only",
     "key_file": "ANTNEST_EDGE_CSRF_KEY_FILE; exactly 32 raw secret bytes; same key on all replicas",
     "private_session_identifier": "login/OIDC token_id; subsequent trusted Identity CCT sid; never browser JSON",
-    "admin_origin": "phase 2 plan in session-security.md; not implemented in this revision"
+    "admin_origin": "phase 2 plan in session-security.md; not implemented in this revision",
+    "cookie_writers": ["login", "oidc_callback", "change_password", "logout"],
+    "cookie_expiry": "absolute-session-deadline"
   },
   "origin_admission": {
     "scope": "/api/* before routing, authentication and upstream calls",
@@ -29,7 +31,8 @@
     "websocket": "ACP WebSocket upgrades always require matching Origin"
   },
   "session_validation": {
-    "invalid_or_expired": "401 unauthenticated; clear browser cookies",
+    "scope": "ordinary authenticated requests; explicit logout follows routes.logout.cookie_outcomes",
+    "invalid_or_expired": "401 unauthenticated; preserve browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
     "cache": "no-store"
   },
@@ -47,7 +50,12 @@
       "authentication": "none",
       "success_status": 200,
       "request_required": ["organization_slug", "email", "password"],
-      "response_required": ["principal", "expires_at"],
+      "response_required": [
+        "principal",
+        "expires_at",
+        "idle_expires_at",
+        "activity_interval_ms"
+      ],
       "response_schema": "session-response.schema.json#/$defs/login"
     },
     "login_methods": {
@@ -74,21 +82,39 @@
       "path": "/api/session",
       "authentication": "browser_session",
       "success_status": 200,
-      "response_required": ["principal"],
+      "response_required": [
+        "principal",
+        "expires_at",
+        "idle_expires_at",
+        "activity_interval_ms"
+      ],
       "response_schema": "session-response.schema.json#/$defs/session"
     },
     "logout": {
       "method": "DELETE",
       "path": "/api/session",
       "authentication": "browser_session",
-      "success_status": 204
+      "success_status": 204,
+      "cookie_outcomes": {
+        "no_session": {
+          "status": 204,
+          "cookies": "clear",
+          "identity_call": false
+        },
+        "revoked": { "status": 204, "cookies": "clear" },
+        "malformed_invalid_or_inactive": { "status": 401, "cookies": "clear" },
+        "identity_unavailable": { "status": 503, "cookies": "preserve" },
+        "csrf_rejected": { "status": 403, "cookies": "preserve" },
+        "origin_rejected": { "status": 403, "cookies": "preserve" }
+      }
     },
     "admin": {
       "method": "*",
       "path": "/api/admin/{path...}",
       "authentication": "administrator_session",
       "success_status": "upstream",
-      "event_watch_authentication_lease": "bounded"
+      "event_watch_authentication_lease": "bounded by live session revalidation and required roles",
+      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
     },
     "workspace_bootstrap": {
       "method": "GET",
@@ -136,7 +162,7 @@
     "workspace_state_watch": {
       "method": "GET",
       "path": "/api/app/agents/{agent_id}/state/watch",
-      "authentication": "browser_session_at_entry_and_before_each_subsequent_snapshot",
+      "authentication": "browser_session_at_entry_and_live_revalidation_including_silent_periods_and_before_each_subsequent_snapshot",
       "success_status": 200,
       "transport": "SSE",
       "event": "workspace_state",
@@ -156,7 +182,8 @@
         "path": "/rpc/agent-acp/watch-agent-execution-state",
         "body": {}
       },
-      "source_failure": "503 before first snapshot; after streaming close without inventing state"
+      "source_failure": "503 before first snapshot; after streaming close without inventing state",
+      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
     },
     "workspace_acp_http": {
       "method": "POST|GET|DELETE",
@@ -175,7 +202,8 @@
       "message_payload": "opaque; no ACP translation or login credential forwarding",
       "streaming": "unbuffered SSE; client disconnect cancels upstream receive request only",
       "connection_authority": "ACP Service; connection ID is not an authentication credential",
-      "already_forwarded_work": "same policy as WebSocket; no idle authorization polling"
+      "already_forwarded_work": "ACP owns Run and cancellation semantics; Gateway live-session guard stops the authenticated response output within the documented bound",
+      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
     },
     "workspace_acp": {
       "method": "GET",
@@ -188,13 +216,14 @@
         "/api/app/agents/{agent_id}/v2/acp"
       ],
       "same_origin_required": true,
-      "message_admission": "resolve original cookie token before each complete client message; require original User/Organization/Membership and an unexpired handshake CCT; reconnect after expiry (#58 owns renewal)",
+      "message_admission": "non-touch original-cookie resolution before each complete client message; retain original User/Organization/Membership and handshake CCT hard expiry; reconnect after expiry",
       "message_payload": "opaque; no ACP translation or login credential forwarding",
       "invalid_session_close": 1008,
       "identity_unavailable_close": 1013,
       "maximum_message_bytes": 67108864,
       "already_forwarded_work": "ACP owns authorization, Run, cancellation and disconnect semantics",
-      "idle_connection": "no Gateway background polling; ACP owns local access updates and output subscriptions"
+      "idle_connection": "background live Identity checks and private session revocation feed stop stale output within the documented bound",
+      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
     },
     "oidc_callback": {
       "method": "GET",
@@ -252,7 +281,8 @@
       ],
       "lease_max_seconds": 300,
       "buffering": "disabled",
-      "upstream_disconnect": "observation only; never cancel ACP Run"
+      "upstream_disconnect": "observation only; never cancel ACP Run",
+      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
     },
     "workspace_application": {
       "method": "GET|HEAD",
@@ -265,6 +295,58 @@
       "html_identity": "signed organization-scoped workspace CCT plus verified presentation hints; SSR discovery only",
       "upstream": "internal agent-ui Node via ANTNEST_AGENT_UI_URL",
       "return_to": "validated same-origin /workspace/ path preserving agent and session query"
+    },
+    "get_account": {
+      "method": "GET",
+      "path": "/api/session/account",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "response_schema": "session-response.schema.json#/$defs/account"
+    },
+    "change_password": {
+      "method": "POST",
+      "path": "/api/session/password",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "response_schema": "session-response.schema.json#/$defs/password_rotation",
+      "request_schema": "session-response.schema.json#/$defs/password_request",
+      "csrf": "required",
+      "origin": "shared origin_admission"
+    },
+    "session_activity": {
+      "method": "POST",
+      "path": "/api/session/activity",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "response_schema": "session-response.schema.json#/$defs/activity",
+      "request_schema": "session-response.schema.json#/$defs/activity_request",
+      "csrf": "required",
+      "origin": "shared origin_admission"
+    },
+    "list_sessions": {
+      "method": "GET",
+      "path": "/api/session/sessions",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "response_schema": "session-response.schema.json#/$defs/session_list",
+      "query_schema": "session-response.schema.json#/$defs/list_sessions_query",
+      "scope": "self only; Gateway derives actor and target from signed principal"
+    },
+    "revoke_sessions": {
+      "method": "POST",
+      "path": "/api/session/sessions/revoke",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "response_schema": "session-response.schema.json#/$defs/session_revocation",
+      "request_schema": "session-response.schema.json#/$defs/revoke_sessions_request",
+      "csrf": "required",
+      "origin": "shared origin_admission",
+      "scope": "self only; current SID and exceptions never supplied by browser"
     }
   },
   "trusted_headers": [
@@ -314,13 +396,14 @@
       "login_rate_limited",
       "console_unavailable",
       "workspace_unavailable",
-      "agent_unavailable"
+      "agent_unavailable",
+      "invalid_current_password"
     ]
   },
   "service_authentication": {
     "contract": "service-authentication.md",
     "workload": "Every internal dependency uses the exact platform token/mTLS mode; raw service credentials are re-read per new request or connection and never follow redirects.",
-    "caller_context": "Identity revision 14 issues a route-selected profile and Agent scope; forward the unchanged CCT in one Antnest-Caller-Context field, keep it outside browser JSON.",
+    "caller_context": "Identity revision 15 issues a route-selected profile and Agent scope; session profile is Identity-only and forbids Agent scope. Forward the unchanged CCT in one Antnest-Caller-Context field, keep it outside browser JSON.",
     "browser_sanitization": "Remove every case-insensitive X-Antnest-* and Antnest-* field, including unknown names. Capture CSRF and account-switch preconditions privately for local validation; per-route allowlists and server-owned context determine outbound headers.",
     "pending_consumers": [
       "admin-console",
@@ -331,5 +414,33 @@
     "integration": "pending final coordinated service-authentication batch"
   },
   "header_boundary_contract": "request-headers.json",
-  "browser_headers": ["X-Antnest-CSRF-Token", "X-Antnest-Expected-Principal"]
+  "browser_headers": ["X-Antnest-CSRF-Token", "X-Antnest-Expected-Principal"],
+  "browser_session_contract": "../identity/browser-sessions.md",
+  "session_lifecycle": {
+    "activity_route": "/api/session/activity",
+    "background_resolution": "non-touch",
+    "idle_timeout_default_seconds": 1800,
+    "absolute_timeout_default_seconds": 43200,
+    "activity_interval_ms": "max(1, min(30000, floor(configured idle TTL milliseconds / 3)))",
+    "password_rotation": "atomic credential update, all prior browser sessions revoked, replacement inherits caller absolute deadline",
+    "role_change": "affected sessions revoked; fresh login required",
+    "stream_revalidation": {
+      "maximum_stale_seconds": 30,
+      "polling_interval": "min(maximum stale bound / 3, activity_interval_ms)",
+      "rpc_timeout": "at most polling interval",
+      "close_grace": "at most min(1 second, maximum stale bound / 3)",
+      "initial_resolution": {
+        "timeout": "at most maximum stale bound / 3 before the activity hint is known",
+        "reply_budget": "elapsed at most min(maximum stale bound / 3, returned activity_interval_ms)",
+        "stale_deadline_anchor": "initial RPC start",
+        "late_reply": "reject before starting upstream"
+      },
+      "deadline_anchor": "check start; slow successful replies do not reset stale deadline",
+      "feed_dependency": false,
+      "absolute_deadline": "fixed hard cap",
+      "idle_deadline": "mutable observation schedules fresh live check",
+      "direct_acp_websocket_cct": "original handshake expiry is a fixed hard cap; reconnect required"
+    },
+    "session_revocation_feed": "one process-owned Gateway poller; private SID registry; live checks remain authoritative"
+  }
 }

@@ -55,7 +55,8 @@
       "agent-acp-service"
     ],
     "workspace": ["agent-ui", "agent-acp-service", "agent-controller"],
-    "acp": ["agent-acp-service"]
+    "acp": ["agent-acp-service"],
+    "session": ["identity-service"]
   },
   "batches": [
     {

@@ -17,7 +17,7 @@ metadata without making them browser exceptions.
 
 ## Workspace routes
 
-Version 18 of `session-contract.json` includes the Node Workspace HTML, HTTP
+Version 19 of `session-contract.json` includes the Node Workspace HTML, HTTP
 API and SSE routes. Gateway authenticates HTML and business API requests, while
 hashed static assets are served without a browser session. The browser uses
 this route set instead of a direct ACP connection.
@@ -44,6 +44,13 @@ Identity token ID with an independent Gateway secret. See
 trusted issuer boundary, logout behavior, key provisioning and the separate
 Admin-origin phase. Producer, browser consumers and integration have individual
 admission gates; the shared contract alone does not activate this behavior.
+
+Revision 19 defines [browser session lifecycles](../identity/browser-sessions.md),
+including idle and absolute deadlines, account/session-management routes,
+explicit activity, atomic password rotation and bounded live stream checks.
+Cookies change only on login, OIDC completion, successful password rotation or
+logout. Shared schemas precede Identity, Gateway, browser and integration
+batches; revision-19 behavior remains pending those owning implementations.
 
 For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
 `X-Antnest-*` identity header and injects verified `X-Antnest-Organization-ID`,
@@ -92,7 +99,10 @@ sanitized offline view; source failure is never reported as an idle state.
 The routes reject supplied scope and replay cursors. Identity determines the
 User and Organization; ACP determines Agent access and Session disclosure.
 Subscriptions have a bounded authentication lease and never renew inside
-Gateway. See [Workspace state](../../services/edge-gateway/docs/workspace-state.md)
+Gateway. Revision 19 also requires non-touch live session checks during silent
+periods and output, with an independent maximum stale-output bound. See
+[browser lifecycle](../identity/browser-sessions.md) for the pending shared
+requirements and [Workspace state](../../services/edge-gateway/docs/workspace-state.md)
 for response validation, revocation, shutdown and client recovery requirements.
 
 ## OIDC and SCIM
@@ -135,12 +145,15 @@ message, with one in-flight message per direction and bounded socket writes.
 ACP may impose a lower configured input limit. No prompt, payload or credential
 is recorded by the relay; admission checks retain the Gateway trace context.
 
-The check is the admission point, not a distributed revocation transaction:
-messages already admitted can finish, and an idle connection is not polled.
-Server output for admitted work may continue until another client message or
-disconnection. Closing a socket does not cancel a durable Run. ACP continues to
-own Agent and Session authorization. No Identity or ACP RPC contract or
-database exists for browser session revalidation.
+The check is the admission point, not a distributed revocation transaction.
+Revision 19 adds live checks for silent connections and an independent bound
+on stale output, including blocked browser writes. Idle deadlines schedule a
+fresh check because real user activity may extend them; absolute session and
+original handshake-CCT expiry remain hard caps. A process-owned session feed
+accelerates cancellation without replacing the live-check bound. These changes
+remain pending the Identity and Gateway batches described by the
+[browser lifecycle contract](../identity/browser-sessions.md). Closing a socket
+does not cancel a durable Run. ACP continues to own Agent and Session authorization.
 
 Per Gateway process, 64 upgraded or admitting connections and four buffered
 data messages bound relay concurrency (including Identity calls). Permits are
