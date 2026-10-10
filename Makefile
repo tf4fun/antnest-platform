@@ -130,6 +130,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/key-removal-probe.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/discovery-tools-client.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/response-diagnostic.test.mjs
 	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/deployment.test.mjs tests/integration/deployment/development-secrets.test.mjs tests/integration/deployment/encryption-rotation.test.mjs
