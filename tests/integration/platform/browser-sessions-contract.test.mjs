@@ -542,6 +542,19 @@ test("Gateway owns session mutations and records cookie concurrency and stream b
     assert.equal(gateway.routes[name]?.method, method, name);
     assert.equal(gateway.routes[name]?.path, path, name);
     assert.equal(gateway.routes[name]?.authentication, "browser_session", name);
+    const policy = read("edge-gateway/callers.json").routes[
+      `${method} ${path}`
+    ];
+    assert.deepEqual(
+      policy,
+      {
+        callers: ["browser"],
+        authentication: "public",
+        caller_context: { browser: "session" },
+        request_body: method === "POST" ? "json" : "none",
+      },
+      `${name} must have an exact browser-session caller policy`,
+    );
   }
   assert.deepEqual(gateway.session_security.cookie_writers, [
     "login",
