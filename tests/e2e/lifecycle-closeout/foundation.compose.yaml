@@ -6,8 +6,6 @@ services:
     image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
     environment:
       ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
-  temporal:
-    ports: !reset []
 networks:
   control:
     ipam:

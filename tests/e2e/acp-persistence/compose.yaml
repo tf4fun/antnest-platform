@@ -1,6 +1,4 @@
 services:
-  temporal:
-    ports: !reset []
   persistence-proxy:
     image: antnest/agent-acp-service:local
     command: ["node", "/fixtures/proxy.mjs"]
