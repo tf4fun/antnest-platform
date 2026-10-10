@@ -59,7 +59,8 @@ for (const mode of ["native", "proxy"]) {
     );
     assert.equal(certificates.source, "/never-mounted-tls");
     assert.equal(certificates.read_only, true);
-    assert.equal(certificates.bind.create_host_path, false);
+    // Some Compose versions omit false-valued bind fields in rendered JSON.
+    assert.equal(certificates.bind.create_host_path ?? false, false);
     if (mode === "native") {
       assert.equal(
         gateway.environment.ANTNEST_EDGE_TLS_CERT_FILE,
