@@ -75,7 +75,9 @@ jobs:
       # manual run both select every suite, unless the manual run names
       # suites. Images are named by a hash of
       # their build inputs; any that GHCR lacks are built by the image job.
-      # Runs on main resolve every image so the image job publishes it.
+      # Runs on main also resolve every service/Runtime release image.
+      # Dependencies and test variants are built only for selected suites
+      # and shared as artifacts within this run; they are never published.
       - name: Select suites
         id: select
         if: steps.mode.outputs.mode == 'full'
@@ -142,17 +144,18 @@ jobs:
           compression-level: 0
           retention-days: 1
 
-      # Only main publishes, so a pull request cannot place an image under a
-      # reference that later runs trust.
+      # Only main publishes service/Runtime release images. Dependency and
+      # test images stay in this run's artifacts; a pull request cannot place
+      # an image under a reference that later runs trust.
       - uses: docker/login-action@v4
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: matrix.publish && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: matrix.publish && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           NAME: ${{ matrix.name }}
           REF: ${{ matrix.ref }}

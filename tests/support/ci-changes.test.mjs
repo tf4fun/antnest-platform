@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -25,6 +32,7 @@ import {
   suiteImages,
   suites,
 } from "./ci-changes.mjs";
+import { temporaryStorageRoot } from "./storage.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
@@ -761,15 +769,80 @@ test("every image digest resolves against the repository tree", () => {
   }
 });
 
-test("image references name the GHCR package of each image", () => {
+const localOnlyImages = [
+  "temporal",
+  "antnest-runtime-fixture",
+  "antnest-runtime-managed",
+  "antnest-runtime-skill-gate",
+];
+
+test("only service and Runtime release images receive GHCR references", () => {
+  const components = [
+    "antnest-runtime",
+    ...readdirSync(resolve(root, "services")),
+  ].sort();
+  const published = Object.keys(images).filter((name) =>
+    imageReference(name, "abc").startsWith("ghcr.io/"),
+  );
+  assert.deepEqual(published.sort(), components);
   assert.equal(
     imageReference("antnest-runtime", "abc"),
     "ghcr.io/tf4fun/antnest-runtime:inputs-abc",
   );
   assert.equal(
-    imageReference("temporal", "abc"),
-    "ghcr.io/tf4fun/antnest-temporal:inputs-abc",
+    imageReference("runtime-egress", "abc"),
+    "ghcr.io/tf4fun/antnest-runtime-egress:inputs-abc",
   );
+  for (const name of localOnlyImages)
+    assert.equal(imageReference(name, "abc"), `antnest/${name}:local`);
+  assert.throws(() => imageReference("unknown", "abc"), /unknown image/u);
+});
+
+test("dependency and fixture images always use the current run's artifact, even if an old package exists", () => {
+  const head = listTree("HEAD");
+  const checked = [];
+  const resolved = resolveImages(localOnlyImages, {
+    tree: head,
+    readBlob: (object) =>
+      execFileSync("git", ["cat-file", "blob", object], { encoding: "utf8" }),
+    exists: (ref) => {
+      checked.push(ref);
+      return true;
+    },
+  });
+  assert.deepEqual(checked, [], "local-only images must never query GHCR");
+  for (const image of resolved) {
+    assert.equal(image.ref, `antnest/${image.name}:local`);
+    assert.equal(image.build, true, image.name);
+    assert.equal(image.publish, false, image.name);
+  }
+});
+
+test("Temporal retains a build cache without publishing a package", () => {
+  const temporal = bakeDefinition(["temporal"]).target.temporal;
+  assert.deepEqual(temporal.tags, ["antnest/temporal:local"]);
+  assert.deepEqual(temporal["cache-to"], [
+    "type=gha,mode=max,scope=antnest-temporal",
+  ]);
+});
+
+test("integration registry login and push require both main and a publishable image", () => {
+  const workflow = readFileSync(
+    resolve(root, ".github/workflows/integration.yml"),
+    "utf8",
+  );
+  const imageJob = workflow.split("\n  images:\n")[1].split("\n  suite:\n")[0];
+  for (const marker of [
+    "- uses: docker/login-action@v4",
+    "- name: Publish image",
+  ]) {
+    const condition = imageJob.split(marker)[1]?.match(/\n\s+if: (.*)/u)?.[1];
+    assert.equal(
+      condition,
+      "matrix.publish && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'",
+      marker,
+    );
+  }
 });
 
 test("missing image references are built and existing ones are pulled", () => {
@@ -794,6 +867,7 @@ test("missing image references are built and existing ones are pulled", () => {
       dockerfile: "services/runtime-egress/Dockerfile",
       ref,
       build: true,
+      publish: true,
     },
   ]);
   assert.equal(
@@ -835,6 +909,118 @@ test("suite images are the sorted union of the selected suites' images", () => {
     ]),
     ["antnest-runtime", "temporal"],
   );
+});
+
+test("main prebuilds release images and only the dependencies selected suites need", () => {
+  const releaseImages = Object.keys(images)
+    .filter((name) => !localOnlyImages.includes(name))
+    .sort();
+  assert.deepEqual(suiteImages([], { allImages: true }), releaseImages);
+  assert.deepEqual(
+    suiteImages([{ images: ["temporal", "antnest-runtime-managed"] }], {
+      allImages: true,
+    }),
+    [...releaseImages, "temporal", "antnest-runtime-managed"].sort(),
+  );
+});
+
+test("CLI outputs retain publication eligibility and artifact routing across registry hits and misses", (t) => {
+  const directory = mkdtempSync(
+    resolve(temporaryStorageRoot(), "antnest-ci-image-plan-"),
+  );
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeFileSync(
+    resolve(directory, "docker"),
+    [
+      "#!/bin/sh",
+      '[ "$1" = manifest ] && [ "$2" = inspect ] || exit 9',
+      'printf "%s\\n" "$3" >> "$CI_TEST_MANIFEST_LOG"',
+      'exit "$CI_TEST_MANIFEST_STATUS"',
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  for (const [id, only, status, allImages] of [
+    ["present", "auth-runtime,managed-mcp-secrets-v1", "0", false],
+    ["missing", "auth-runtime,managed-mcp-secrets-v1", "1", true],
+    ["no-dependencies", "deployment-contracts", "0", true],
+  ]) {
+    const output = resolve(directory, `${id}.output`);
+    const manifests = resolve(directory, `${id}.manifests`);
+    execFileSync(
+      process.execPath,
+      [
+        "tests/support/ci-changes.mjs",
+        "--all",
+        "--resolve-images",
+        "--only",
+        only,
+        ...(allImages ? ["--all-images"] : []),
+      ],
+      {
+        cwd: root,
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          CI_TEST_MANIFEST_LOG: manifests,
+          CI_TEST_MANIFEST_STATUS: status,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: resolve(directory, `${id}.summary`),
+        },
+      },
+    );
+    const lines = Object.fromEntries(
+      readFileSync(output, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => [
+          line.slice(0, line.indexOf("=")),
+          line.slice(line.indexOf("=") + 1),
+        ]),
+    );
+    const resolved = JSON.parse(lines.images);
+    const builds = JSON.parse(lines.builds).include;
+    const releaseNames = Object.keys(images).filter(
+      (name) => !localOnlyImages.includes(name),
+    );
+    const queried = readFileSync(manifests, "utf8").trim().split("\n");
+    assert.equal(queried.length, releaseNames.length, id);
+    for (const ref of queried) {
+      assert.match(ref, /^ghcr\.io\/tf4fun\//u);
+      assert(!localOnlyImages.some((name) => ref.includes(`${name}:`)), ref);
+    }
+    assert.equal(Number(lines.building), builds.length);
+    if (id === "no-dependencies") {
+      assert.deepEqual(Object.keys(resolved).sort(), releaseNames.sort());
+      assert.deepEqual(builds, []);
+      continue;
+    }
+    assert.equal(builds.length, status === "0" ? 4 : 14, id);
+    for (const name of localOnlyImages) {
+      assert.deepEqual(resolved[name], {
+        ref: `antnest/${name}:local`,
+        build: true,
+      });
+      assert.deepEqual(
+        builds.find((image) => image.name === name),
+        {
+          name,
+          ref: `antnest/${name}:local`,
+          publish: false,
+        },
+      );
+    }
+    for (const name of releaseNames) {
+      assert.equal(resolved[name].build, status === "1", name);
+      if (status === "1")
+        assert.equal(
+          builds.find((image) => image.name === name).publish,
+          true,
+          name,
+        );
+    }
+  }
 });
 
 test("changed files come from a rename-free merge-base diff", () => {
