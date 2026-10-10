@@ -291,9 +291,10 @@ unreadable protected-API `401` responses end the current page session. Pending
 requests cannot emit expiry notifications into a later in-page session. This
 does not replace Edge's cookie and revocation authority.
 
-Sign-out waits for Edge to confirm revocation and cookie removal before showing
-the login page. While pending, the action is disabled; a rejection stays visible
-beside the account controls. Confirmed logout and authoritative session
+Sign-out waits for Edge to confirm revocation (`204`) or an already invalid
+browser session (`401`, with cookie removal) before showing the login page.
+While pending, the action is disabled; `403`, transient and network failures
+stay visible beside the account controls. Confirmed logout and authoritative session
 expiration close the drawer and account dialog. A late response to an earlier
 logout cannot affect a subsequent login. Startup preserves HTTP failure
 semantics: only a missing or expired session opens login. Terminal access or
