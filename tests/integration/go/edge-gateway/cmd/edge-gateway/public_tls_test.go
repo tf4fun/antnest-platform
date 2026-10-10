@@ -33,11 +33,15 @@ func TestRunServesNativeTLSOnTheConfiguredListener(t *testing.T) {
 	previousPropagation := otel.GetTextMapPropagator()
 	t.Cleanup(func() { otel.SetTextMapPropagator(previousPropagation) })
 	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "csrf.key"), []byte("0123456789abcdef0123456789abcdef"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	writePublicTestCertificate(t, directory, 1)
 	if err := os.WriteFile(filepath.Join(directory, "callers.json"), []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	values := map[string]string{
+		"ANTNEST_EDGE_CSRF_KEY_FILE":                    filepath.Join(directory, "csrf.key"),
 		"ANTNEST_EDGE_PUBLIC_ORIGIN":                    "https://antnest.example",
 		"ANTNEST_EDGE_TLS_CERT_FILE":                    filepath.Join(directory, "cert.pem"),
 		"ANTNEST_EDGE_TLS_KEY_FILE":                     filepath.Join(directory, "key.pem"),

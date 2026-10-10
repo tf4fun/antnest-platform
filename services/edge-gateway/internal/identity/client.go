@@ -27,6 +27,7 @@ type Principal struct {
 	Active           bool      `json:"active"`
 	CallerContext    string    `json:"-"`
 	ContextExpiresAt time.Time `json:"-"`
+	SessionID        string    `json:"-"`
 }
 
 func (principal Principal) Administrator() bool {
@@ -195,11 +196,12 @@ func (client *Client) Resolve(ctx context.Context, accessToken string) (Principa
 	if err != nil {
 		return Principal{}, err
 	}
-	expires, err := issuerContextExpiration(result.CallerContext)
+	issuer, err := parseIssuerContext(result.CallerContext)
 	if err != nil {
 		return Principal{}, err
 	}
-	principal.CallerContext, principal.ContextExpiresAt = result.CallerContext, expires
+	principal.CallerContext, principal.ContextExpiresAt = result.CallerContext, issuer.expiresAt
+	principal.SessionID = issuer.sessionID
 	return principal, nil
 }
 

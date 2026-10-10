@@ -3,6 +3,7 @@ package session
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,7 +13,7 @@ func TestManagerEstablishesReadsAndClearsSession(t *testing.T) {
 	manager, err := NewManager(Config{
 		Secure:  true,
 		Now:     func() time.Time { return now },
-		NewCSRF: func() (string, error) { return "csrf-secret", nil },
+		CSRFKey: []byte(testCSRFKey),
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -20,9 +21,9 @@ func TestManagerEstablishesReadsAndClearsSession(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	csrf, err := manager.Establish(
-		recorder, "ant_api_secret", now.Add(time.Hour),
+		recorder, "ant_api_secret", "token-1", now.Add(time.Hour),
 	)
-	if err != nil || csrf != "csrf-secret" {
+	if err != nil || csrf != testCSRFToken {
 		t.Fatalf("Establish csrf=%q err=%v", csrf, err)
 	}
 	cookies := recorder.Result().Cookies()
@@ -30,10 +31,13 @@ func TestManagerEstablishesReadsAndClearsSession(t *testing.T) {
 		t.Fatalf("cookie count=%d want=2", len(cookies))
 	}
 	for _, cookie := range cookies {
+		if cookie.Name != "__Host-antnest_session" && cookie.Name != "__Host-antnest_csrf" {
+			t.Errorf("Secure session emitted unprefixed cookie %q", cookie.Name)
+		}
 		if !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" {
 			t.Errorf("cookie policy = %#v", cookie)
 		}
-		if cookie.Name != CSRFCookieName && !cookie.HttpOnly {
+		if cookie.Name != "__Host-antnest_csrf" && !cookie.HttpOnly {
 			t.Errorf("secret cookie %s is readable by script", cookie.Name)
 		}
 	}
@@ -42,16 +46,16 @@ func TestManagerEstablishesReadsAndClearsSession(t *testing.T) {
 	for _, cookie := range cookies {
 		request.AddCookie(cookie)
 	}
-	values, ok := manager.Read(request)
-	if !ok || values.AccessToken != "ant_api_secret" || values.CSRFToken != "csrf-secret" {
-		t.Fatalf("Read = %#v, %v", values, ok)
+	values, status := manager.Read(request)
+	if status != Valid || values.AccessToken != "ant_api_secret" {
+		t.Fatalf("Read = %#v, %v", values, status)
 	}
-	request.Header.Set(CSRFHeaderName, "csrf-secret")
-	if !manager.ValidCSRF(request, values) {
+	request.Header.Set(CSRFHeaderName, testCSRFToken)
+	if !manager.ValidCSRF(request, "token-1") {
 		t.Fatal("matching CSRF token was rejected")
 	}
 	request.Header.Set(CSRFHeaderName, "other")
-	if manager.ValidCSRF(request, values) {
+	if manager.ValidCSRF(request, "token-1") {
 		t.Fatal("mismatched CSRF token was accepted")
 	}
 
@@ -64,18 +68,24 @@ func TestManagerEstablishesReadsAndClearsSession(t *testing.T) {
 	}
 }
 
-func TestManagerRejectsIncompleteOrOversizedCookies(t *testing.T) {
-	manager, err := NewManager(Config{NewCSRF: func() (string, error) { return "csrf", nil }})
+func TestManagerRequiresAnExplicitCSRFKey(t *testing.T) {
+	if _, err := NewManager(Config{}); err == nil {
+		t.Fatal("session manager accepted a missing CSRF key")
+	}
+}
+
+func TestManagerAcceptsMissingDeliveryCookieAndRejectsOversizedCookies(t *testing.T) {
+	manager, err := NewManager(Config{CSRFKey: []byte(testCSRFKey)})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.AddCookie(&http.Cookie{Name: AccessTokenCookieName, Value: "token"})
-	if _, ok := manager.Read(request); ok {
-		t.Fatal("incomplete session was accepted")
+	if _, status := manager.Read(request); status != Valid {
+		t.Fatal("delivery cookie became an authentication requirement")
 	}
-	request.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: string(make([]byte, 5000))})
-	if _, ok := manager.Read(request); ok {
+	request.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: strings.Repeat("a", 5000)})
+	if _, status := manager.Read(request); status != Invalid {
 		t.Fatal("oversized session was accepted")
 	}
 }

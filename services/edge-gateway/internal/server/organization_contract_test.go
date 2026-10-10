@@ -39,6 +39,7 @@ func displayPrincipal(t *testing.T, name string, administrator bool) identity.Pr
 		t.Fatal(err)
 	}
 	principal.CallerContext = "trusted-issuer-context"
+	principal.SessionID = "private-token-id"
 	return principal
 }
 

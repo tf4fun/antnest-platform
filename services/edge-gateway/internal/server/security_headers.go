@@ -10,6 +10,8 @@ var defaultSecurityHeaders = [...]struct{ name, value string }{
 	{"X-Content-Type-Options", "nosniff"},
 	{"Referrer-Policy", "same-origin"},
 	{"X-Frame-Options", "DENY"},
+	{"Cross-Origin-Opener-Policy", "same-origin"},
+	{"Cross-Origin-Resource-Policy", "same-origin"},
 	{"Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'"},
 }
 

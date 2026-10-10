@@ -12,6 +12,7 @@ func TestLoadAppliesSecureDefaults(t *testing.T) {
 		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
 		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
 		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
+		"ANTNEST_EDGE_CSRF_KEY_FILE":   "/run/antnest/csrf.key",
 		"ANTNEST_EDGE_PUBLIC_ORIGIN":   "https://antnest.example",
 		"ANTNEST_EDGE_TRUSTED_PROXIES": "10.1.0.0/24",
 	}
@@ -34,6 +35,7 @@ func TestLoadRejectsMissingOrInvalidDependencies(t *testing.T) {
 		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
 		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
 		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
+		"ANTNEST_EDGE_CSRF_KEY_FILE":   "/run/antnest/csrf.key",
 		"ANTNEST_EDGE_PUBLIC_ORIGIN":   "https://antnest.example",
 		"ANTNEST_EDGE_TRUSTED_PROXIES": "10.1.0.0/24",
 	}
@@ -50,6 +52,8 @@ func TestLoadRejectsMissingOrInvalidDependencies(t *testing.T) {
 		{name: "invalid Agent ACP", key: "ANTNEST_AGENT_ACP_URL", value: "ws://agent-acp-service"},
 		{name: "invalid secure flag", key: "ANTNEST_EDGE_COOKIE_SECURE", value: "perhaps"},
 		{name: "invalid originless flag", key: "ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS", value: "perhaps"},
+		{name: "missing CSRF key file", key: "ANTNEST_EDGE_CSRF_KEY_FILE", remove: true},
+		{name: "empty CSRF key file", key: "ANTNEST_EDGE_CSRF_KEY_FILE", value: " \t "},
 		{name: "invalid timeout", key: "ANTNEST_EDGE_REQUEST_TIMEOUT", value: "0s"},
 		{name: "invalid stream lease", key: "ANTNEST_EDGE_STREAM_LEASE", value: "0s"},
 		{name: "invalid login limit", key: "ANTNEST_EDGE_LOGIN_ACCOUNT_MAX", value: "zero"},

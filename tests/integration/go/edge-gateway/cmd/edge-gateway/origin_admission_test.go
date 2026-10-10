@@ -23,7 +23,11 @@ func TestRunEnforcesOriginAdmissionConfiguration(t *testing.T) {
 	for _, setting := range []string{"", "false", "true"} {
 		t.Run("originless="+setting, func(t *testing.T) {
 			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "csrf.key"), []byte("0123456789abcdef0123456789abcdef"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			values := map[string]string{
+				"ANTNEST_EDGE_CSRF_KEY_FILE":                    filepath.Join(directory, "csrf.key"),
 				"ANTNEST_EDGE_PUBLIC_ORIGIN":                    "https://antnest.example",
 				"ANTNEST_EDGE_TRUSTED_PROXIES":                  "127.0.0.1/32",
 				"ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS":       setting,

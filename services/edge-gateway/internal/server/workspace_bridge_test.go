@@ -36,7 +36,7 @@ func TestBridgeWorkspaceDocumentForwardsVerifiedIdentityAndKeepsAssetPublic(t *t
 			response.WriteHeader(http.StatusOK)
 		}), time.Now(), Config{})
 	document := httptest.NewRequest(http.MethodGet, "/workspace/agent-1/", nil)
-	addSessionCookies(document, "token-1", "csrf-1")
+	addSessionCookies(document, "token-1", testCSRFToken)
 	document.Header.Set(HeaderPrincipalID, "forged-user")
 	document.Header.Set("Authorization", "Bearer forged")
 	response := httptest.NewRecorder()
@@ -85,7 +85,7 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 	defer upstream.Close()
 	identityStub := &bridgeLeaseIdentity{IdentityService: &identityServiceStub{}}
 	identityStub.active.Store(true)
-	sessions, err := session.NewManager(session.Config{})
+	sessions, err := session.NewManager(session.Config{CSRFKey: []byte(testCSRFKey)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	request.Header.Set("Last-Event-ID", "resume-1")
 	response, err := edge.Client().Do(request)
 	if err != nil {
@@ -161,7 +161,7 @@ func TestWorkspaceBridgeAPIAuthenticatesAndReplacesBrowserIdentity(t *testing.T)
 	)
 	path := "/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1"
 	request := httptest.NewRequest(http.MethodGet, path, nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	request.Header.Set("Authorization", "Bearer forged")
 	request.Header.Set(HeaderPrincipalID, "forged")
 	request.Header.Set(HeaderAgentID, "agent-2")
@@ -196,7 +196,7 @@ func TestWorkspaceBridgeAPIAuthenticatesAndReplacesBrowserIdentity(t *testing.T)
 	}
 	badCursor := httptest.NewRequest(http.MethodGet,
 		"/api/app/workspace/v1/agents/agent-1/events", nil)
-	addSessionCookies(badCursor, "token-1", "csrf-1")
+	addSessionCookies(badCursor, "token-1", testCSRFToken)
 	badCursor.Header.Add("Last-Event-ID", "first")
 	badCursor.Header.Add("Last-Event-ID", "second")
 	badCursorResponse := httptest.NewRecorder()
@@ -206,14 +206,14 @@ func TestWorkspaceBridgeAPIAuthenticatesAndReplacesBrowserIdentity(t *testing.T)
 	}
 
 	for _, bad := range []struct{ name, origin, csrf string }{
-		{"foreign origin", "https://evil.example.test", "csrf-1"},
+		{"foreign origin", "https://evil.example.test", testCSRFToken},
 		{"missing CSRF", "http://example.com", ""},
 	} {
 		t.Run(bad.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts", strings.NewReader(`{}`))
 			request.Header.Set("Origin", bad.origin)
 			request.Header.Set(session.CSRFHeaderName, bad.csrf)
-			addSessionCookies(request, "token-1", "csrf-1")
+			addSessionCookies(request, "token-1", testCSRFToken)
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusForbidden || len(upstream) != 1 {
@@ -223,9 +223,9 @@ func TestWorkspaceBridgeAPIAuthenticatesAndReplacesBrowserIdentity(t *testing.T)
 	}
 	valid := httptest.NewRequest(http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts", strings.NewReader(`{"intentId":"intent-1"}`))
 	valid.Header.Set("Origin", "http://example.com")
-	valid.Header.Set(session.CSRFHeaderName, "csrf-1")
+	valid.Header.Set(session.CSRFHeaderName, testCSRFToken)
 	valid.Header.Set("Content-Type", "application/json")
-	addSessionCookies(valid, "token-1", "csrf-1")
+	addSessionCookies(valid, "token-1", testCSRFToken)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, valid)
 	if response.Code != http.StatusOK || len(upstream) != 2 {
@@ -247,7 +247,7 @@ func TestWorkspaceBridgeBootstrapInjectsVerifiedAdministratorWithoutAgentScope(t
 		}), time.Now(), Config{},
 	)
 	request := httptest.NewRequest(http.MethodGet, "/api/app/workspace/v1/bootstrap", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	request.Header.Set("X-Antnest-Administrator", "false")
 	request.Header.Set(HeaderAgentID, "forged-agent")
 	response := httptest.NewRecorder()
@@ -271,7 +271,7 @@ func TestWorkspaceBridgeBootstrapRejectsForgedAdministratorForOrdinaryPrincipal(
 		}), time.Now(), Config{},
 	)
 	request := httptest.NewRequest(http.MethodGet, "/api/app/workspace/v1/bootstrap", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	request.Header.Set(HeaderAdministrator, "true")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -298,7 +298,7 @@ func TestWorkspaceDocumentRequiresSessionAndPreservesSafeDeepLink(t *testing.T) 
 		t.Fatalf("visitor status=%d location=%q forwarded=%v", visitor.Code, visitor.Header().Get("Location"), forwarded)
 	}
 	request := httptest.NewRequest(http.MethodGet, path, nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	member := httptest.NewRecorder()
 	handler.ServeHTTP(member, request)
 	if member.Code != http.StatusOK || member.Header().Get("Cache-Control") != "private, no-store" ||
@@ -339,7 +339,7 @@ func TestWorkspaceDocumentPreservesEscapedPathThroughLoginAndProxy(t *testing.T)
 		t.Fatalf("visitor status=%d location=%q", visitor.Code, visitor.Header().Get("Location"))
 	}
 	request := httptest.NewRequest(http.MethodGet, path, nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	member := httptest.NewRecorder()
 	handler.ServeHTTP(member, request)
 	if member.Code != http.StatusOK || forwarded != path {

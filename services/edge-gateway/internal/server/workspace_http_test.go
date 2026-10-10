@@ -183,8 +183,8 @@ func newWorkspaceHTTPHandler(t *testing.T, upstream http.Handler) http.Handler {
 
 func workspaceHTTPRequest(method, path string) *http.Request {
 	r := newBrowserRequest(method, path, strings.NewReader(`{"opaque":"payload"}`))
-	addSessionCookies(r, "token-1", "csrf-1")
-	r.Header.Set(session.CSRFHeaderName, "csrf-1")
+	addSessionCookies(r, "token-1", testCSRFToken)
+	r.Header.Set(session.CSRFHeaderName, testCSRFToken)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "text/event-stream")
 	r.Header.Set("Acp-Connection-Id", "connection-1")

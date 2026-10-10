@@ -10,7 +10,7 @@ import (
 func TestOIDCBrowserBindingPolicy(t *testing.T) {
 	for _, secure := range []bool{false, true} {
 		now := time.Now()
-		manager, err := NewManager(Config{Secure: secure, Now: func() time.Time { return now }})
+		manager, err := NewManager(Config{CSRFKey: []byte(testCSRFKey), Secure: secure, Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func TestOIDCBrowserBindingPolicy(t *testing.T) {
 
 func TestOIDCBrowserBindingRejectsInvalidStart(t *testing.T) {
 	now := time.Now()
-	manager, err := NewManager(Config{Now: func() time.Time { return now }})
+	manager, err := NewManager(Config{CSRFKey: []byte(testCSRFKey), Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}

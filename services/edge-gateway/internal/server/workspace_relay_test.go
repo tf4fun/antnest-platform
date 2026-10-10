@@ -103,7 +103,7 @@ func newRelayFixtureWithExchange(t *testing.T, version string, exchange func(*we
 			}
 		}
 	}))
-	sessions, err := session.NewManager(session.Config{})
+	sessions, err := session.NewManager(session.Config{CSRFKey: []byte(testCSRFKey)})
 	if err != nil {
 		t.Fatal(err)
 	}

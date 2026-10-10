@@ -27,8 +27,8 @@ func TestAdminProxyBoundsForwardingWithoutRetryingWrites(t *testing.T) {
 				return nil, request.Context().Err()
 			})
 			request := newBrowserRequest(method, "/api/admin/agents", nil)
-			addSessionCookies(request, "token-1", "csrf-1")
-			request.Header.Set(session.CSRFHeaderName, "csrf-1")
+			addSessionCookies(request, "token-1", testCSRFToken)
+			request.Header.Set(session.CSRFHeaderName, testCSRFToken)
 			response := httptest.NewRecorder()
 			gateway.ServeHTTP(response, request)
 			if calls != 1 || response.Code != http.StatusServiceUnavailable {
@@ -50,6 +50,6 @@ func TestAdminEventWatchUsesStreamLeaseNotOrdinaryTimeout(t *testing.T) {
 		return httptest.NewRecorder().Result(), nil
 	})
 	request := newBrowserRequest(http.MethodGet, "/api/admin/agents/agent-1/events/watch", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	gateway.ServeHTTP(httptest.NewRecorder(), request)
 }

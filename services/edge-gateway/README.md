@@ -110,6 +110,7 @@ context are sent directly to the configured service origin.
 | `ANTNEST_AGENT_CONTROLLER_URL`   | yes      | -       | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
 | `ANTNEST_AGENT_ACP_URL`          | yes      | -       | Agent ACP Service base URL                                                                                                                                                  |
 | `ANTNEST_EDGE_COOKIE_SECURE`     | no       | `true`  | Secure cookies; false is accepted only on a literal loopback HTTP listener |
+| `ANTNEST_EDGE_CSRF_KEY_FILE` | yes | - | exactly 32 raw private bytes in a readable regular file; shared across Gateway replicas |
 | `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no | `false` | compatibility for API mutations with both Origin and Fetch Metadata absent; emits a startup warning; CSRF still required |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT`   | no       | `10s`   | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
 | `ANTNEST_EDGE_STREAM_LEASE`      | no       | `5m`    | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
@@ -194,6 +195,7 @@ recovery, and durable Run completion after logout or disconnect.
 - [Workspace state](docs/workspace-state.md) - bootstrap and execution-state observation contract.
 - [Execution boundary](docs/execution-boundary.md) - Controller and ACP ownership split.
 - [Session contract](../../contracts/edge-gateway/session-contract.json) - public browser session interface.
+- [Session security](../../contracts/edge-gateway/session-security.md) - exclusive `__Host-` cookie names in Secure mode, session-bound CSRF, key upgrade and the separate Admin-origin plan.
 - [Service admission](../../contracts/edge-gateway/service-authentication.md) - exact internal credentials, CCT scope, and pending consumers.
 - [Platform observability contract](../../docs/observability-contract.md).
 - [Stage 3 admin control plane](../../docs/stage-3-admin-control-plane.md) - cross-service behavior.

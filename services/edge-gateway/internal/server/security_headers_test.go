@@ -19,10 +19,12 @@ const gatewayDefaultCSP = "default-src 'self'; connect-src 'self'; img-src 'self
 func assertDefaultSecurityHeaders(t *testing.T, header http.Header) {
 	t.Helper()
 	for name, expected := range map[string]string{
-		"Content-Security-Policy": gatewayDefaultCSP,
-		"X-Content-Type-Options":  "nosniff",
-		"Referrer-Policy":         "same-origin",
-		"X-Frame-Options":         "DENY",
+		"Content-Security-Policy":      gatewayDefaultCSP,
+		"X-Content-Type-Options":       "nosniff",
+		"Referrer-Policy":              "same-origin",
+		"X-Frame-Options":              "DENY",
+		"Cross-Origin-Opener-Policy":   "same-origin",
+		"Cross-Origin-Resource-Policy": "same-origin",
 	} {
 		if values := header.Values(name); !reflect.DeepEqual(values, []string{expected}) {
 			t.Errorf("%s=%q; want exactly one %q", name, values, expected)
@@ -55,7 +57,7 @@ func TestSecurityHeadersPreserveUpstreamPolicy(t *testing.T) {
 					}
 				}), time.Now())
 			request := httptest.NewRequest(method, "/workspace/agent-1/sessions/session-1", nil)
-			addSessionCookies(request, "token-1", "csrf-1")
+			addSessionCookies(request, "token-1", testCSRFToken)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, request)
 			if response.Code != http.StatusOK {
