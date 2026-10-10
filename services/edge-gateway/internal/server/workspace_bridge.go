@@ -19,7 +19,7 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
 		return nil
 	}
-	if request.Header.Get("Origin") != "" && !sameOrigin(request) {
+	if len(request.Header.Values("Origin")) > 0 && !h.sameOrigin(request) {
 		writeError(response, http.StatusForbidden, "forbidden", "Workspace origin is not allowed")
 		return nil
 	}
@@ -133,7 +133,7 @@ func (h *handler) newWorkspaceBridgeProxy(target *url.URL) *httputil.ReverseProx
 			}
 			proxyRequest.Out.Header = headers
 			identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
-			proxyRequest.SetXForwarded()
+			h.forwardingHeaders(proxyRequest.Out.Header, proxyRequest.In)
 		},
 		ModifyResponse: func(upstream *http.Response) error {
 			_ = stripCredentialResponse(upstream)

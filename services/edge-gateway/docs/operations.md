@@ -16,7 +16,8 @@ dependency-unavailable projection, without clearing browser cookies.
 Rotate by first installing current/next hashes at the receiver, then atomically
 replacing the caller file, and finally removing the previous receiver hash.
 Do not restart into an intermediate configuration or change receiver origins
-through browser inputs. Gateway's own public listener/health check remains HTTP.
+through browser inputs. Public listener TLS uses a separate certificate and key;
+it does not reuse internal workload credentials.
 
 Deploy Identity revision 14 before this Gateway batch. Console, UI, ACP and
 Controller workload/CCT consumers and deployment mounts are separate pending
@@ -24,13 +25,18 @@ batches; use the coordinated branch only after the final integration acceptance.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP listen address |
+| `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP or native HTTPS listen address |
+| `ANTNEST_EDGE_PUBLIC_ORIGIN` | except direct loopback HTTP | - | canonical browser origin, including any non-default port |
+| `ANTNEST_EDGE_TLS_CERT_FILE` | with key | - | native public TLS certificate chain PEM |
+| `ANTNEST_EDGE_TLS_KEY_FILE` | with certificate | - | native public TLS private key PEM |
+| `ANTNEST_EDGE_TLS_CA_FILE` | no | system trust | extra stable private CA bundle for native-TLS local health |
+| `ANTNEST_EDGE_TRUSTED_PROXIES` | for HTTPS termination upstream | empty | comma-separated trusted proxy CIDRs; empty trusts none |
 | `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | trusted Identity Service base URL |
 | `ANTNEST_ADMIN_CONSOLE_URL` | yes | - | trusted Admin Console base URL |
 | `ANTNEST_AGENT_UI_URL` | yes | - | internal Node Agent UI base URL for authenticated HTML, static assets, the Workspace HTTP API and SSE |
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL for ID/name discovery only |
 | `ANTNEST_AGENT_ACP_URL` | yes | - | trusted Agent ACP Service base URL |
-| `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | require HTTPS cookies |
+| `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | Secure cookies; false requires a literal loopback HTTP listener |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | non-streaming dependency and forwarded admin request timeout |
 | `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | ordinary HTTP graceful-drain budget |
 | `ANTNEST_EDGE_STREAM_LEASE` | no | `5m` | maximum authenticated SSE lifetime |
@@ -47,19 +53,122 @@ Gateway with `503`, even though Console itself would still be waiting. Keep the
 Gateway timeout at least as long as the Console timeout if Console's own error
 responses should reach the browser.
 
-The supported deployment is the direct, loopback HTTP Docker entry with the
-explicit development cookie policy (`ANTNEST_EDGE_COOKIE_SECURE=false`).
-Production TLS termination needs a separate proxy and trust design: same-origin
-checks derive the scheme from the actual request TLS state, not from forwarded
-headers. An HTTPS-facing proxy forwarding plain HTTP is not supported merely by
-preserving the Host or adding `X-Forwarded-Proto`. Secure cookies alone do not
-resolve that mismatch.
+Gateway supports native TLS and HTTPS termination at an explicitly trusted
+proxy. Both set `ANTNEST_EDGE_PUBLIC_ORIGIN=https://<public-host>[:port]` and keep
+Secure cookies. Existing Origin checks use that configured origin, independently
+of Host, `X-Forwarded-Host` and `X-Forwarded-Proto`. HTTPS public origins receive
+HSTS with `max-age=31536000`, including errors and WebSocket upgrades; Gateway
+overrides conflicting upstream HSTS. It does not opt subdomains into HSTS.
+
+For native TLS, mount a directory containing the certificate chain and private
+key, set both public TLS file variables, and permit TLS 1.2 or newer. Replace
+both files atomically, then send `SIGHUP` to the process. New handshakes use the
+new pair; existing connections remain open. Invalid, expired, hostname-mismatched
+or incomplete replacements retain the last valid pair and log a reload failure.
+Mount the directory rather than individual files so replacements remain visible
+inside the container. The initial pair must be valid for the public hostname
+and TLS server authentication.
+
+For proxy termination, leave the native TLS files unset and allow only the
+proxy's source CIDR in `ANTNEST_EDGE_TRUSTED_PROXIES`. Keep the internal listener
+isolated from public clients. The proxy must append or replace the actual
+client's address correctly. Gateway scans `X-Forwarded-For` from the trusted
+right-hand end to the first untrusted IP, ignoring any attacker-supplied prefix.
+Malformed, absent and all-trusted chains fall back to the immediate peer.
+`Forwarded` and `X-Real-IP` never determine the client address. Gateway rebuilds
+all downstream forwarding headers from its resolved client and public origin.
+
+The development Compose entry stays on host `127.0.0.1` HTTP with an explicit
+loopback public origin and Secure cookies. Chromium supports this loopback
+exception; use HTTPS for other browser/deployment combinations. The container
+listener remains private and uses isolated ingress networking. A false Secure
+cookie setting on that non-loopback listener is rejected at startup. Direct
+process-only HTTP development may bind a literal loopback address, omit the
+public origin and explicitly disable Secure cookies with a startup warning.
+Existing development `.env` files with `ANTNEST_EDGE_COOKIE_SECURE=false` must
+change that value to `true` before starting the upgraded Compose stack.
+
+The [public-entry contract](../../../contracts/edge-gateway/public-entry.md)
+defines configuration, trust and staged integration acceptance. Mandatory Origin
+on additional routes, cookie prefixes and session-bound CSRF remain separate
+work in #10 and #62; this deployment change does not claim their completion.
 
 `GET /status` reports Gateway's own initialized listener. It never probes
 Identity, Controller, Console, UI or ACP. Check each container's health and real
-business requests separately to establish deployment readiness. Shutdown
+business requests separately to establish deployment readiness. Native-TLS
+`--healthcheck` connects to that listener with certificate and public-hostname
+verification; it never disables certificate validation. The native-TLS probe
+uses system roots plus `ANTNEST_EDGE_TLS_CA_FILE` when supplied, independently
+of replaceable leaf files, so failed rotation retains healthy existing service.
+Proxy-mode local health uses HTTP, so external HTTPS must also be checked through
+the proxy. Shutdown
 stops admission, drains HTTP requests, and flushes OTLP within a bounded
 timeout.
+
+## HTTPS Compose Deployment
+
+Prepare the normal deployment credentials and images as in the root README.
+Place your public certificate chain in `cert.pem` and private key in `key.pem`
+inside a private directory outside the Docker build context. The certificate
+must cover the hostname or IP in the public origin. The native Gateway runs as
+the generated service-auth UID/GID, which must be able to read that directory
+and pair. A private-CA native deployment also places its stable CA bundle in
+`ca.pem`; the health probe does not trust a rotating leaf certificate.
+
+Set these values in the deployment `.env` (example paths and hostname):
+
+```dotenv
+ANTNEST_EDGE_PUBLIC_BASE_URL=https://antnest.example.com
+ANTNEST_EDGE_TLS_DIRECTORY=/absolute/private/path/public-tls
+ANTNEST_EDGE_TLS_HOST_PORT=443
+ANTNEST_EDGE_TLS_BIND_ADDRESS=0.0.0.0
+ANTNEST_EDGE_COOKIE_SECURE=true
+# Native TLS only, when the certificate uses a private CA:
+# ANTNEST_EDGE_TLS_CA_FILE=/etc/antnest/public-tls/ca.pem
+```
+
+`ANTNEST_EDGE_PUBLIC_BASE_URL` is the Compose input shared by Identity's public
+URLs and Gateway's `ANTNEST_EDGE_PUBLIC_ORIGIN`; include a non-default public
+port when applicable. Choose exactly one HTTPS overlay and use the same file
+set for later Compose commands. These commands do not load diagnostic ports:
+
+```sh
+# Native TLS: the only published application port serves TLS directly.
+docker compose -f compose.yaml -f compose.stage3.yaml -f compose.native-tls.yaml \
+  --profile stage3 --profile observability up -d --wait
+
+# Or Caddy termination: only Caddy is published; Gateway stays on a private bridge.
+docker compose -f compose.yaml -f compose.stage3.yaml -f compose.tls.yaml \
+  --profile stage3 --profile observability up -d --wait
+```
+
+When switching an existing stack to the proxy topology, first stop that stack
+with its previous file set (`down`, without `-v`) so Compose can recreate the
+ingress network as internal. Preserve database/runtime volumes. The reference
+[Caddyfile](../../../deploy/tls/Caddyfile) uses manually supplied certificates,
+disables its admin API and automatic certificate management, and overwrites
+client forwarding headers using Caddy's direct peer. Gateway trusts only
+`${ANTNEST_SERVICE_NETWORK_PREFIX}.131/32`, which is Caddy's address on their
+private network. Additional proxies require their own reviewed trust and
+network configuration; do not trust arbitrary client networks.
+
+After installing both replacement files, native TLS reloads without dropping
+existing WebSockets:
+
+```sh
+docker compose -f compose.yaml -f compose.stage3.yaml -f compose.native-tls.yaml \
+  kill --signal SIGHUP edge-gateway
+```
+
+Check the successful reload log and a fresh TLS handshake. Rejected pairs keep
+the old certificate and connections; repair the files and signal again. For the
+reference Caddy deployment, replace its pair and `restart tls-proxy` using the
+proxy file set; that restart reconnects clients. The reference does not enable
+ACME or a network-accessible reload endpoint.
+
+Finally, check the public HTTPS `/status`, sign in, make a Console admin request,
+send a Workspace message and initialize an ACP client over WSS. An internal
+Gateway health check alone cannot validate the TLS proxy or public certificate.
 
 ## Request Diagnostics
 

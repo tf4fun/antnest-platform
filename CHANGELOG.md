@@ -4,6 +4,14 @@
 
 ### Upgrade requirement
 
+**#57 requires an explicit public Origin outside a direct loopback HTTP
+listener.** Existing development Compose `.env` files must set
+`ANTNEST_EDGE_COOKIE_SECURE=true`. For non-loopback browser access, configure
+native TLS or the trusted Caddy proxy with your certificate. Switching an
+existing stack to the proxy overlay requires `down` without `-v` before `up`,
+so Compose can recreate its isolated ingress network while preserving volumes.
+See [Gateway HTTPS deployment](services/edge-gateway/docs/operations.md#https-compose-deployment).
+
 **#111 requires a coordinated RC → Runtime → Egress → Controller cutover with
 Agent admission stopped.** Packet revision 2 replaces raw UDP packets with the
 embedded BoringTun 0.7.1 WireGuard profile; there is no revision 1 decoder or
@@ -46,6 +54,13 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Edge Gateway supports native TLS 1.2+ with SIGHUP certificate rotation and
+explicitly trusted HTTPS proxies (#57). Origin checks and downstream forwarding
+headers use the configured public Origin; login admission and diagnostics use
+the client address resolved through the trusted CIDR boundary. HTTPS emits HSTS,
+and non-loopback listeners reject insecure cookies. Native and Caddy Compose
+overlays include deployment instructions and HTTPS browser/SSE/WSS acceptance.
 
 Controller reads the current RC Runtime address before opening create/rebuild/
 enable traffic or restoring a source. The observation worker rebinds changed

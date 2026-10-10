@@ -90,7 +90,8 @@ Token mode requires Gateway's read-only callers file (normally `{}`) and five
 separate outgoing credential files. No mode is selected by default, and an
 invalid or missing credential prevents startup. HTTPS pins each dependency's
 DNS name and service URI; HTTP requires the explicit disposable-development
-opt-in. Public Gateway readiness remains a local HTTP check.
+opt-in. Public Gateway readiness probes the local listener with HTTP or verified
+HTTPS according to its configured transport.
 
 Authenticated dependency requests and ACP WebSocket handshakes disable
 environment/default-transport proxies. Service tokens and signed caller
@@ -98,13 +99,17 @@ context are sent directly to the configured service origin.
 
 | Variable                         | Required | Default | Description                                                                                                                                                                 |
 | -------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP listen address; `--healthcheck` follows the configured host and port. Missing/wildcard hosts use `127.0.0.1`. |
+| `ANTNEST_EDGE_LISTEN`            | no       | `:8080` | HTTP or native HTTPS address; local health follows the configured host and port. |
+| `ANTNEST_EDGE_PUBLIC_ORIGIN` | except direct loopback HTTP | - | canonical browser origin; HTTPS outside literal loopback addresses |
+| `ANTNEST_EDGE_TLS_CERT_FILE` / `ANTNEST_EDGE_TLS_KEY_FILE` | together | - | public native TLS pair; rotate with SIGHUP without closing existing connections |
+| `ANTNEST_EDGE_TLS_CA_FILE` | no | system trust | extra private CA trust for the native-TLS health probe |
+| `ANTNEST_EDGE_TRUSTED_PROXIES` | for HTTPS proxy mode | empty | trusted source CIDRs for client-address derivation |
 | `ANTNEST_IDENTITY_SERVICE_URL`   | yes      | -       | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
 | `ANTNEST_ADMIN_CONSOLE_URL`      | yes      | -       | Admin Console base URL                                                                                                                                                      |
 | `ANTNEST_AGENT_UI_URL`           | yes      | -       | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API                                                                         |
 | `ANTNEST_AGENT_CONTROLLER_URL`   | yes      | -       | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
 | `ANTNEST_AGENT_ACP_URL`          | yes      | -       | Agent ACP Service base URL                                                                                                                                                  |
-| `ANTNEST_EDGE_COOKIE_SECURE`     | no       | `true`  | Issue `Secure` cookies; set `false` only for plain-HTTP development                                                                                                         |
+| `ANTNEST_EDGE_COOKIE_SECURE`     | no       | `true`  | Secure cookies; false is accepted only on a literal loopback HTTP listener |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT`   | no       | `10s`   | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
 | `ANTNEST_EDGE_STREAM_LEASE`      | no       | `5m`    | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
 | `ANTNEST_EDGE_LOGIN_WINDOW`      | no       | `5m`    | In-memory login admission window                                                                                                                                            |
@@ -114,8 +119,9 @@ context are sent directly to the configured service origin.
 | `ANTNEST_ENVIRONMENT`            | no       | empty   | Deployment environment resource attribute for telemetry                                                                                                                     |
 | `OTEL_*`                         | no       | -       | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |
 
-`--healthcheck` probes the local HTTP `/status` directly, including configured
-IPv6 addresses. It disables environment proxies and refuses redirects, so
+`--healthcheck` probes local `/status`, including configured IPv6 addresses,
+using verified HTTPS for native TLS and HTTP for a proxy's internal listener.
+It disables environment proxies and refuses redirects, so
 another endpoint cannot report Gateway healthy. This follows the
 [purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
 
@@ -125,6 +131,10 @@ timeout bounds forwarded admin requests and is shorter than Admin Console's
 Console dependency surfaces as a Gateway `503` first. Raise both together if
 needed. See [Operations](docs/operations.md) for TLS, shutdown and capacity
 notes.
+
+See the [public-entry contract](../../contracts/edge-gateway/public-entry.md)
+for exact Origin matching, proxy trust, forwarding headers and certificate
+rotation. Public TLS configuration is independent of internal service TLS.
 
 ## Dependencies
 

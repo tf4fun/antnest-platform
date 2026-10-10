@@ -28,7 +28,7 @@ func (h *handler) relayWorkspaceACP(
 		return
 	}
 	defer func() { _ = upstream.Close() }()
-	upgrader := websocket.Upgrader{HandshakeTimeout: h.requestTimeout, CheckOrigin: sameOrigin}
+	upgrader := websocket.Upgrader{HandshakeTimeout: h.requestTimeout, CheckOrigin: h.sameOrigin}
 	if protocol := upstream.Subprotocol(); protocol != "" {
 		upgrader.Subprotocols = []string{protocol}
 	}
@@ -51,6 +51,7 @@ func (h *handler) relayWorkspaceACP(
 func (h *handler) dialWorkspaceACP(request *http.Request, principal identity.Principal) (*websocket.Conn, int, error) {
 	transport := telemetry.BaseHTTPTransport(h.httpClient.Transport)
 	headers := make(http.Header)
+	h.forwardingHeaders(headers, request)
 	setACPIdentity(headers, principal, request.PathValue("agent_id"))
 	identity.ForwardCallerContext(request.Context(), headers)
 	if authenticated, ok := transport.(*serviceauth.Clients); ok {

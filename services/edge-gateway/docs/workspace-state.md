@@ -15,8 +15,9 @@ remain listed. No credentials, endpoints or Session data are included.
 
 `GET /api/app/agents/{agent_id}/state` and `/state/watch` authenticate the
 browser session. They accept no query fields, replay cursor or supplied
-principal. Origin must match both scheme and host when present. This direct
-Docker listener does not trust forwarded scheme headers.
+principal. A supplied Origin must exactly match the configured public origin.
+Forwarded host and scheme headers cannot change that boundary; see the
+[public-entry contract](../../../contracts/edge-gateway/public-entry.md).
 
 Gateway sends an empty JSON object by POST to ACP's
 `/rpc/agent-acp/get-agent-execution-state` or

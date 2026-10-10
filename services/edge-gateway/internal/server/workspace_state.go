@@ -18,7 +18,7 @@ var (
 	errWorkspaceIdentityUnavailable = errors.New("workspace identity unavailable")
 )
 
-func validStateRequest(response http.ResponseWriter, request *http.Request) bool {
+func (h *handler) validStateRequest(response http.ResponseWriter, request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		writeError(response, 405, "method_not_allowed", "Method is not allowed")
 		return false
@@ -27,7 +27,7 @@ func validStateRequest(response http.ResponseWriter, request *http.Request) bool
 		writeError(response, 400, "invalid_request", "Workspace state does not accept query fields or replay cursors")
 		return false
 	}
-	if request.Header.Get("Origin") != "" && !sameOrigin(request) {
+	if len(request.Header.Values("Origin")) > 0 && !h.sameOrigin(request) {
 		writeError(response, 403, "forbidden", "Workspace origin is not allowed")
 		return false
 	}
@@ -39,7 +39,7 @@ func workspaceStateInput(request *http.Request, principal identity.Principal) ag
 }
 
 func (h *handler) getWorkspaceState(response http.ResponseWriter, request *http.Request) error {
-	if !validStateRequest(response, request) {
+	if !h.validStateRequest(response, request) {
 		return nil
 	}
 	_, principal, err := h.authenticate(response, request)
@@ -58,7 +58,7 @@ func (h *handler) getWorkspaceState(response http.ResponseWriter, request *http.
 }
 
 func (h *handler) watchWorkspaceState(response http.ResponseWriter, request *http.Request) error {
-	if !validStateRequest(response, request) {
+	if !h.validStateRequest(response, request) {
 		return nil
 	}
 	select {

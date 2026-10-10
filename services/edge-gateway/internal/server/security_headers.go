@@ -18,9 +18,19 @@ var defaultSecurityHeaders = [...]struct{ name, value string }{
 type securityHeaderWriter struct {
 	http.ResponseWriter
 	wroteHeader bool
+	https       bool
+}
+
+func (writer *securityHeaderWriter) applyTransportPolicy() {
+	if writer.https {
+		writer.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	} else {
+		writer.Header().Del("Strict-Transport-Security")
+	}
 }
 
 func (writer *securityHeaderWriter) applyDefaults() {
+	writer.applyTransportPolicy()
 	header := writer.Header()
 	for _, entry := range defaultSecurityHeaders {
 		if len(header.Values(entry.name)) == 0 {

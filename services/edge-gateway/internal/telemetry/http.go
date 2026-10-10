@@ -18,6 +18,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type clientAddressKey struct{}
+
+// WithClientAddress records only the address resolved by Gateway's trust boundary.
+func WithClientAddress(ctx context.Context, address string) context.Context {
+	return context.WithValue(ctx, clientAddressKey{}, address)
+}
+
 func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -67,6 +74,10 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 
 func finishHTTPRequest(request *http.Request, observed *statusWriter, span trace.Span, logger *slog.Logger, started time.Time, completed bool, err error) {
 	defer span.End()
+	if address, _ := request.Context().Value(clientAddressKey{}).(string); address != "" && address != "unknown" {
+		span.SetAttributes(attribute.String("client.address", address))
+		logger = logger.With("client_address", address)
+	}
 	route := strings.TrimPrefix(request.Pattern, request.Method+" ")
 	if route == "" {
 		route = "unmatched"
