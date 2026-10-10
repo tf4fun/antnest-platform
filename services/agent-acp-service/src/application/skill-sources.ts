@@ -29,10 +29,10 @@ type Dependencies = {
     ): Promise<"current" | "changed" | "unknown">;
   };
   gate: {
-    begin(
+    beginSourceRead(
       scope: { organizationId: string; agentId: string },
       signal: AbortSignal,
-    ): { signal: AbortSignal; finish(): void };
+    ): Promise<{ signal: AbortSignal; finish(): void }>;
   };
 };
 
@@ -82,7 +82,7 @@ export class SkillSources {
     const identity = { organizationId, principalId: actorId, agentId: key.agent_id };
     try {
       const before = this.dependencies.directory.inspect(identity).agent;
-      const record = await this.dependencies.repository.read(organizationId, key);
+      let record = await this.dependencies.repository.read(organizationId, key);
       if (record === null || !record.projection.active || record.projection.owner_id !== actorId)
         throw new SkillSourceError("not_found");
       if (
@@ -97,9 +97,37 @@ export class SkillSources {
         before.runtime.connection_id === undefined
       )
         throw new SkillSourceError("source_unavailable");
-      const slot = this.dependencies.gate.begin({ organizationId, agentId: key.agent_id }, signal);
+      const slot = await this.dependencies.gate.beginSourceRead(
+        { organizationId, agentId: key.agent_id },
+        signal,
+      );
       try {
         slot.signal.throwIfAborted();
+        // Admission may have waited for another read. Never dispatch against an
+        // authorization, source selection or Runtime binding captured before it.
+        const admitted = await this.dependencies.repository.read(organizationId, key);
+        slot.signal.throwIfAborted();
+        if (
+          admitted === null ||
+          !admitted.projection.active ||
+          admitted.projection.owner_id !== actorId
+        )
+          throw new SkillSourceError("not_found");
+        if (
+          admitted.projection.sequence !== record.projection.sequence ||
+          admitted.projection.content_digest !== record.projection.content_digest
+        )
+          throw new SkillSourceError("content_changed");
+        const current = this.dependencies.directory.inspect(identity).agent;
+        if (
+          !current.accepting_runs ||
+          current.runtime?.runtime_revision !== before.runtime.runtime_revision ||
+          current.runtime.connection_id !== before.runtime.connection_id ||
+          current.runtime.runtime_execution_id !== before.runtime.runtime_execution_id ||
+          current.runtime.mcp_endpoint !== before.runtime.mcp_endpoint
+        )
+          throw new SkillSourceError("source_unavailable");
+        record = admitted;
         // Once dispatched, finish this bounded read before yielding to a new Run.
         // A foreground preemption cancels delivery, not the observation acknowledgement.
         const outcome = await this.dependencies.runtime.verify(
@@ -119,6 +147,7 @@ export class SkillSources {
           throw new SkillSourceError("content_changed");
         }
         const latest = await this.dependencies.repository.read(organizationId, key);
+        slot.signal.throwIfAborted();
         if (latest === null || !latest.projection.active || latest.projection.owner_id !== actorId)
           throw new SkillSourceError("not_found");
         if (

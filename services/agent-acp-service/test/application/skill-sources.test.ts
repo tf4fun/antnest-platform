@@ -3,6 +3,8 @@ import { DomainError } from "../../src/domain/errors.js";
 import { learningSkillTextPackage } from "../../src/domain/learning-candidate-package.js";
 import { SkillSources } from "../../src/application/skill-sources.js";
 import { LearningForegroundGate } from "../../src/application/learning-foreground-gate.js";
+import { RuntimeSkillCommands } from "../../src/application/runtime-skill-commands.js";
+import { runtimeInformation } from "../fixtures/runtime-information.js";
 
 const organization_id = `org_${"a".repeat(32)}`;
 const agent_id = `agent_${"b".repeat(32)}`;
@@ -43,12 +45,14 @@ function setup() {
   const remove = vi.fn(() => Promise.resolve());
   const verify = vi.fn(() => Promise.resolve("current" as "current" | "changed" | "unknown"));
   const finish = vi.fn();
-  const begin = vi.fn((_scope: unknown, signal: AbortSignal) => ({ signal, finish }));
+  const begin = vi.fn((_scope: unknown, signal: AbortSignal) =>
+    Promise.resolve({ signal, finish }),
+  );
   const service = new SkillSources({
     directory: { inspect },
     repository: { read, remove },
     runtime: { verify },
-    gate: { begin },
+    gate: { beginSourceRead: begin },
   });
   const input = { organization_id, actor_id: owner_id, sources: [key] };
   const artifact = {
@@ -73,6 +77,172 @@ function setup() {
 }
 
 describe("current Agent-owned Skill sources", () => {
+  it("waits for a catalog read before verifying and delivering the selected source once", async () => {
+    const s = setup();
+    const gate = new LearningForegroundGate(() => false);
+    const catalogResult = Promise.withResolvers<ReturnType<typeof runtimeInformation>>();
+    const readBinding = vi.fn(() => catalogResult.promise);
+    const commands = new RuntimeSkillCommands({
+      directory: { inspect: s.inspect },
+      busy: () => false,
+      runtime: { readBinding },
+      gate,
+    });
+    const signal = new AbortController().signal;
+    const catalog = commands.read(
+      {
+        organizationId: organization_id,
+        agentId: agent_id,
+        principalId: owner_id,
+        connectionId: "browser-1",
+      },
+      signal,
+    );
+    expect(readBinding).toHaveBeenCalledTimes(1);
+    const source = new SkillSources({
+      directory: { inspect: s.inspect },
+      repository: { read: s.read, remove: s.remove },
+      runtime: { verify: s.verify },
+      gate,
+    });
+    const result = source.artifact(s.artifact, signal).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(s.verify).not.toHaveBeenCalled();
+    catalogResult.resolve(runtimeInformation());
+    await catalog;
+    expect(await result).toEqual({ value: s.record });
+    expect(s.verify).toHaveBeenCalledTimes(1);
+    expect(s.remove).not.toHaveBeenCalled();
+  });
+
+  it("serializes simultaneous inspect and artifact reads without overlapping Runtime observations", async () => {
+    const s = setup();
+    const gate = new LearningForegroundGate(() => false);
+    const observed = Promise.withResolvers<"current">();
+    const entered = Promise.withResolvers<void>();
+    s.verify.mockImplementationOnce(() => {
+      entered.resolve();
+      return observed.promise;
+    });
+    const source = new SkillSources({
+      directory: { inspect: s.inspect },
+      repository: { read: s.read, remove: s.remove },
+      runtime: { verify: s.verify },
+      gate,
+    });
+    const signal = new AbortController().signal;
+    const inspect = source.inspect(s.input, signal);
+    await entered.promise;
+    const artifact = source.artifact(s.artifact, signal).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(s.verify).toHaveBeenCalledTimes(1);
+    observed.resolve("current");
+    expect(await inspect).toEqual({ items: [s.projection] });
+    expect(await artifact).toEqual({ value: s.record });
+    expect(s.verify).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["owner", "not_found"],
+    ["access", "not_found"],
+    ["inactive", "not_found"],
+    ["sequence", "content_changed"],
+    ["digest", "content_changed"],
+    ["runtime_revision", "source_unavailable"],
+    ["runtime_execution_id", "source_unavailable"],
+    ["connection_id", "source_unavailable"],
+    ["mcp_endpoint", "source_unavailable"],
+  ] as const)(
+    "rechecks %s after waiting and never dispatches a stale observation",
+    async (change, code) => {
+      const s = setup();
+      const gate = new LearningForegroundGate(() => false);
+      const signal = new AbortController().signal;
+      const catalog = gate.begin({ organizationId: organization_id, agentId: agent_id }, signal);
+      const source = new SkillSources({
+        directory: { inspect: s.inspect },
+        repository: { read: s.read, remove: s.remove },
+        runtime: { verify: s.verify },
+        gate,
+      });
+      const rejected = expect(source.artifact(s.artifact, signal)).rejects.toMatchObject({ code });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        if (change === "owner")
+          s.read.mockResolvedValue({
+            ...s.record,
+            projection: { ...s.projection, owner_id: "another-owner" },
+          });
+        else if (change === "inactive")
+          s.read.mockResolvedValue({ ...s.record, projection: { ...s.projection, active: false } });
+        else if (change === "sequence")
+          s.read.mockResolvedValue({ ...s.record, projection: { ...s.projection, sequence: 2 } });
+        else if (change === "digest")
+          s.read.mockResolvedValue({
+            ...s.record,
+            projection: { ...s.projection, content_digest: `sha256:${"f".repeat(64)}` },
+          });
+        else if (change === "access")
+          s.inspect.mockImplementation(() => {
+            throw new DomainError("access_denied", "revoked");
+          });
+        else
+          s.inspect.mockReturnValue({
+            agent: { accepting_runs: true, runtime: { ...runtime, [change]: "changed" } },
+          });
+        catalog.finish();
+        await rejected;
+        expect(s.verify).not.toHaveBeenCalled();
+        expect(s.remove).not.toHaveBeenCalled();
+        gate.begin({ organizationId: organization_id, agentId: agent_id }, signal).finish();
+      } finally {
+        catalog.finish();
+      }
+    },
+  );
+
+  it.each(["before", "after"] as const)(
+    "discards a source preempted during the database check %s observation",
+    async (phase) => {
+      const s = setup();
+      const gate = new LearningForegroundGate(() => false);
+      const entered = Promise.withResolvers<void>();
+      const pending = Promise.withResolvers<typeof s.record>();
+      s.read.mockResolvedValueOnce(s.record);
+      if (phase === "after") s.read.mockResolvedValueOnce(s.record);
+      s.read.mockImplementationOnce(() => {
+        entered.resolve();
+        return pending.promise;
+      });
+      const source = new SkillSources({
+        directory: { inspect: s.inspect },
+        repository: { read: s.read, remove: s.remove },
+        runtime: { verify: s.verify },
+        gate,
+      });
+      const signal = new AbortController().signal;
+      const rejected = expect(source.artifact(s.artifact, signal)).rejects.toMatchObject({
+        code: "source_unavailable",
+      });
+      await entered.promise;
+      const foreground = gate.preempt(
+        { organizationId: organization_id, agentId: agent_id },
+        signal,
+      );
+      pending.resolve(s.record);
+      await rejected;
+      await foreground;
+      expect(s.verify).toHaveBeenCalledTimes(phase === "before" ? 0 : 1);
+      gate.begin({ organizationId: organization_id, agentId: agent_id }, signal).finish();
+    },
+  );
+
   it("finishes an in-flight bounded read before admitting foreground and discards preempted delivery", async () => {
     const s = setup();
     const gate = new LearningForegroundGate(() => false);
