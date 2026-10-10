@@ -1,0 +1,278 @@
+[
+  {
+    "value": "antnest-",
+    "purpose": "Reserved header namespace prefix matcher",
+    "source": "services/agent-acp-service/src/adapters/model/provider-transport.ts"
+  },
+  {
+    "value": "antnest-acp-runtime-",
+    "purpose": "Private Runtime sender directory prefix",
+    "source": "services/agent-acp-service/src/adapters/runtime-connections.ts"
+  },
+  {
+    "value": "antnest-admin-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-agent-acp-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-agent-acp-service",
+    "purpose": "ACP agent and MCP client identity",
+    "source": "services/agent-acp-service/src/transport/acp/v2/agent.ts"
+  },
+  {
+    "value": "antnest-agent-acp-service-v1",
+    "purpose": "ACP v1 agent identity",
+    "source": "services/agent-acp-service/src/transport/acp/v1/agent.ts"
+  },
+  {
+    "value": "antnest-agent-controller-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-agent-ui-bridge",
+    "purpose": "Workspace ACP client identity",
+    "source": "services/agent-ui/web/server/src/adapters/acp-http.ts"
+  },
+  {
+    "value": "antnest-auth",
+    "purpose": "Runtime credential archive directory",
+    "source": "services/runtime-controller/internal/platform/docker/instance_volume.go"
+  },
+  {
+    "value": "antnest-auth-preparer-",
+    "purpose": "Runtime credential preparation container prefix",
+    "source": "services/runtime-controller/internal/platform/docker/instance_volume.go"
+  },
+  {
+    "value": "antnest-auth/callers.json",
+    "purpose": "Runtime receiver credential archive member",
+    "source": "services/runtime-controller/internal/platform/docker/instance_volume.go"
+  },
+  {
+    "value": "antnest-auth/tunnel.json",
+    "purpose": "Runtime tunnel credential archive member",
+    "source": "services/runtime-controller/internal/platform/docker/instance_volume.go"
+  },
+  {
+    "value": "antnest-cct+jwt",
+    "purpose": "Caller context JWS type",
+    "source": "modules/service-authentication/callercontext/verification.go"
+  },
+  {
+    "value": "antnest-egress-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-egress-tunnel-v1",
+    "purpose": "Egress tunnel credential AAD domain",
+    "source": "services/runtime-egress/src/tunnel.rs"
+  },
+  {
+    "value": "antnest-egress0",
+    "purpose": "Default Egress TUN interface name",
+    "source": "services/runtime-egress/src/config.rs"
+  },
+  {
+    "value": "antnest-envelope-mac-key-v1",
+    "purpose": "Envelope MAC subkey derivation domain",
+    "source": "modules/secret-encryption/secretbox.go"
+  },
+  {
+    "value": "antnest-envelope-v1",
+    "purpose": "Secret envelope AAD domain",
+    "source": "modules/secret-encryption/secretbox.go"
+  },
+  {
+    "value": "antnest-identity-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-invalid-account-password",
+    "purpose": "Dummy password for login timing defense",
+    "source": "services/identity-service/internal/localauth/service.go"
+  },
+  {
+    "value": "antnest-labs",
+    "purpose": "Preview organization slug",
+    "source": "services/agent-ui/web/src/lib/preview.ts"
+  },
+  {
+    "value": "antnest-mcp",
+    "purpose": "Runtime MCP secret archive directory",
+    "source": "services/runtime-controller/internal/platform/docker/mcp_secret_volume.go"
+  },
+  {
+    "value": "antnest-mcp-preparer-",
+    "purpose": "Runtime MCP secret preparation container prefix",
+    "source": "services/runtime-controller/internal/platform/docker/mcp_secret_volume.go"
+  },
+  {
+    "value": "antnest-mcp/secrets.json",
+    "purpose": "Runtime MCP secret archive member",
+    "source": "services/runtime-controller/internal/platform/docker/mcp_secret_volume.go"
+  },
+  {
+    "value": "antnest-postgres-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-prepared-skill-set",
+    "purpose": "Prepared Skill set container mount name",
+    "source": "services/runtime-controller/internal/platform/docker/driver.go"
+  },
+  {
+    "value": "antnest-runtime",
+    "purpose": "Runtime workload and telemetry service identity",
+    "source": "modules/service-authentication/serviceauth/receiver.go"
+  },
+  {
+    "value": "antnest-runtime network bootstrap requires Linux",
+    "purpose": "Unsupported platform error message",
+    "source": "runtimes/antnest-runtime/src/network.rs"
+  },
+  {
+    "value": "antnest-runtime requires Linux",
+    "purpose": "Unsupported platform error message",
+    "source": "runtimes/antnest-runtime/src/main.rs"
+  },
+  {
+    "value": "antnest-runtime-",
+    "purpose": "Runtime container name prefix",
+    "source": "services/runtime-controller/internal/platform/docker/driver.go"
+  },
+  {
+    "value": "antnest-runtime-{}",
+    "purpose": "Runtime admission hostname format string",
+    "source": "runtimes/antnest-runtime/src/mcp.rs"
+  },
+  {
+    "value": "antnest-runtime-auth-",
+    "purpose": "Runtime credential volume name prefix",
+    "source": "services/runtime-controller/internal/platform/docker/instance_volume.go"
+  },
+  {
+    "value": "antnest-runtime-authority-v1",
+    "purpose": "Runtime authority record AAD domain",
+    "source": "services/runtime-controller/internal/instanceauth/credentials.go"
+  },
+  {
+    "value": "antnest-runtime-controller-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-runtime-egress",
+    "purpose": "Egress telemetry service identity",
+    "source": "services/runtime-egress/src/telemetry.rs"
+  },
+  {
+    "value": "antnest-runtime-mcp-",
+    "purpose": "Runtime MCP secret volume name prefix",
+    "source": "services/runtime-controller/internal/platform/docker/mcp_secret_volume.go"
+  },
+  {
+    "value": "antnest-runtime-senders-",
+    "purpose": "Private Runtime sender directory prefix",
+    "source": "services/runtime-controller/internal/instanceauth/sender.go"
+  },
+  {
+    "value": "antnest-skill-package-*.tar",
+    "purpose": "Temporary Skill package archive filename pattern",
+    "source": "services/runtime-controller/internal/platform/docker/skill_volume.go"
+  },
+  {
+    "value": "antnest-skill-preparer-",
+    "purpose": "Skill preparation container name prefix",
+    "source": "services/runtime-controller/internal/platform/docker/skill_volume.go"
+  },
+  {
+    "value": "antnest-skill-registry-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-skill-registry-local-development-token",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-skills-",
+    "purpose": "Skill set volume name prefix",
+    "source": "services/runtime-controller/internal/skillset/job.go"
+  },
+  {
+    "value": "antnest-system-skills",
+    "purpose": "Default system Skill volume name",
+    "source": "services/runtime-controller/internal/config/config.go"
+  },
+  {
+    "value": "antnest-temporal-dev",
+    "purpose": "Published development credential",
+    "source": "modules/service-authentication/devsecrets/policy.go"
+  },
+  {
+    "value": "antnest-workspace-",
+    "purpose": "Workspace volume name prefix",
+    "source": "services/runtime-controller/internal/platform/docker/driver.go"
+  },
+  {
+    "value": "antnest-learning-change-cursor-v1\n",
+    "purpose": "Learning change cursor key derivation domain with LF",
+    "source": "services/agent-acp-service/src/domain/learning-change-cursor.ts"
+  },
+  {
+    "value": "antnest-runtime-revision-v1\u0000",
+    "purpose": "Runtime revision hash domain with NUL",
+    "source": "services/runtime-controller/internal/deployment/model.go"
+  },
+  {
+    "value": "antnest-skill-maintenance-v1\n",
+    "purpose": "Skill maintenance signing domain with LF",
+    "source": "services/agent-acp-service/src/adapters/runtime-skill-maintenance-signer.ts"
+  },
+  {
+    "value": "antnest-skill-manifest-v1\u0000",
+    "purpose": "Skill manifest hash domain with NUL",
+    "source": "services/skill-registry/internal/registry/package.go"
+  },
+  {
+    "value": "antnest-skill-prepare-v1\u0000",
+    "purpose": "Skill preparation identity hash domain with NUL",
+    "source": "services/runtime-controller/internal/skillset/preparation.go"
+  },
+  {
+    "value": "antnest-skill-promotion-v1\u0000",
+    "purpose": "Skill promotion identity hash domain with NUL",
+    "source": "services/skill-registry/internal/registry/discovery.go"
+  },
+  {
+    "value": "antnest-skill-set-v1\u0000",
+    "purpose": "Skill set identity hash domain with NUL",
+    "source": "services/runtime-controller/internal/skillset/identity.go"
+  },
+  {
+    "value": "antnest-skill-temporary-run-v1\u0000",
+    "purpose": "Temporary Skill Run hash domain with NUL",
+    "source": "runtimes/antnest-runtime/src/skill_temporary.rs"
+  },
+  {
+    "value": "antnest-skill-volume-v1\u0000",
+    "purpose": "Skill volume identity hash domain with NUL",
+    "source": "services/runtime-controller/internal/skillset/job.go"
+  },
+  {
+    "value": "antnest-skill-${seed}",
+    "purpose": "Multipart boundary template; exact expression in the maintenance client only",
+    "source": "services/agent-acp-service/src/adapters/runtime-skill-maintenance-client.ts",
+    "template": true
+  }
+]

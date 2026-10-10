@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "reserved_prefixes": ["X-Antnest-", "Antnest-"],
+  "request_trailers": "discard",
+  "browser_headers": ["X-Antnest-CSRF-Token", "X-Antnest-Expected-Principal"],
+  "headers": [
+    {
+      "name": "X-Antnest-CSRF-Token",
+      "role": "browser-local",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Expected-Principal",
+      "role": "validated-precondition",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-User-ID",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Organization-ID",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Membership-ID",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-System-Role",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Organization-Role",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Principal-ID",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Agent-ID",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Administrator",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Organization-Slug",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Organization-Name",
+      "role": "presentation-hint",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "Antnest-Caller-Context",
+      "role": "internal-credential",
+      "owner": "identity-service"
+    },
+    {
+      "name": "Antnest-Service-Authorization",
+      "role": "internal-credential",
+      "owner": "platform"
+    },
+    {
+      "name": "X-Antnest-Expected-Execution-ID",
+      "role": "internal-fence",
+      "owner": "agent-acp-service"
+    },
+    {
+      "name": "X-Antnest-Trace-ID",
+      "role": "response-only",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Artifact-Digest",
+      "role": "response-only",
+      "owner": "skill-registry"
+    },
+    {
+      "name": "X-Antnest-Content-Digest",
+      "role": "response-only",
+      "owner": "skill-registry"
+    },
+    {
+      "name": "X-Antnest-Source-Sequence",
+      "role": "response-only",
+      "owner": "agent-acp-service"
+    },
+    {
+      "name": "X-Antnest-Agent-Access-Subject",
+      "role": "retired",
+      "owner": "edge-gateway"
+    },
+    {
+      "name": "X-Antnest-Subject-ID",
+      "role": "retired",
+      "owner": "admin-console"
+    },
+    {
+      "name": "X-Antnest-Role",
+      "role": "retired",
+      "owner": "admin-console"
+    }
+  ],
+  "profiles": {
+    "asset": [
+      "Accept",
+      "Accept-Encoding",
+      "Cache-Control",
+      "If-Match",
+      "If-None-Match",
+      "If-Modified-Since",
+      "If-Unmodified-Since",
+      "If-Range",
+      "Range"
+    ],
+    "json": ["Accept", "Content-Type", "If-Match", "Idempotency-Key"],
+    "events": ["Accept", "Last-Event-ID"],
+    "workspace-document": ["Accept"],
+    "acp-http": [
+      "Accept",
+      "Content-Type",
+      "Acp-Connection-Id",
+      "Acp-Session-Id"
+    ],
+    "scim": [
+      "Accept",
+      "Content-Type",
+      "Authorization",
+      "If-Match",
+      "If-None-Match"
+    ]
+  },
+  "routes": {
+    "console-application": {
+      "profile": "asset",
+      "hints": [],
+      "caller_context": "none"
+    },
+    "admin-api": {
+      "profile": "json",
+      "hints": [
+        "X-Antnest-User-ID",
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-System-Role",
+        "X-Antnest-Organization-Role"
+      ],
+      "caller_context": "required"
+    },
+    "admin-watch": {
+      "profile": "events",
+      "hints": [
+        "X-Antnest-User-ID",
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-System-Role",
+        "X-Antnest-Organization-Role"
+      ],
+      "caller_context": "required"
+    },
+    "admin-network-policy": {
+      "profile": "json",
+      "hints": [
+        "X-Antnest-User-ID",
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-System-Role",
+        "X-Antnest-Organization-Role"
+      ],
+      "validated_precondition": "X-Antnest-Expected-Principal",
+      "caller_context": "required"
+    },
+    "workspace-document": {
+      "profile": "workspace-document",
+      "hints": [
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Principal-ID",
+        "X-Antnest-User-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-Administrator",
+        "X-Antnest-Organization-Slug",
+        "X-Antnest-Organization-Name"
+      ],
+      "caller_context": "required"
+    },
+    "workspace-assets": {
+      "profile": "asset",
+      "hints": [],
+      "caller_context": "none"
+    },
+    "workspace-api": {
+      "profile": "json",
+      "hints": [
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Principal-ID",
+        "X-Antnest-User-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-Administrator",
+        "X-Antnest-Organization-Slug",
+        "X-Antnest-Organization-Name"
+      ],
+      "agent_id": "route",
+      "caller_context": "required"
+    },
+    "workspace-events": {
+      "profile": "events",
+      "hints": [
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Principal-ID",
+        "X-Antnest-User-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-Administrator",
+        "X-Antnest-Organization-Slug",
+        "X-Antnest-Organization-Name"
+      ],
+      "agent_id": "route",
+      "caller_context": "required"
+    },
+    "acp-http": {
+      "profile": "acp-http",
+      "hints": [
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Principal-ID",
+        "X-Antnest-Agent-ID"
+      ],
+      "caller_context": "required"
+    },
+    "scim": {
+      "profile": "scim",
+      "hints": [],
+      "caller_context": "none"
+    }
+  },
+  "websocket": {
+    "routes": [
+      "/api/app/agents/{agent_id}/acp",
+      "/api/app/agents/{agent_id}/v1/acp",
+      "/api/app/agents/{agent_id}/v2/acp"
+    ],
+    "browser_fields": ["Sec-WebSocket-Protocol"],
+    "hints": [
+      "X-Antnest-Organization-ID",
+      "X-Antnest-Principal-ID",
+      "X-Antnest-Agent-ID"
+    ],
+    "handshake": "library-generated; no generic proxy upgrade",
+    "caller_context": "required"
+  },
+  "local_handlers": "Typed clients construct downstream requests; raw browser headers and trailers are never passed to them.",
+  "credentials": "Identity caller context comes from private authenticated context; workload transport adds service authentication. Only SCIM copies browser Authorization.",
+  "tracing": "Extracted and reinjected by telemetry transport; never copied as raw browser headers. Baggage is discarded."
+}

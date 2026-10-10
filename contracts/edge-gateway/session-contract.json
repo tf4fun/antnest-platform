@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 17,
+  "version": 18,
   "session_security": {
     "contract": "session-security.md",
     "secure_cookie_names": ["__Host-antnest_session", "__Host-antnest_csrf"],
@@ -275,18 +275,19 @@
     "X-Antnest-Organization-Role",
     "X-Antnest-Principal-ID",
     "X-Antnest-Agent-ID",
-    "X-Antnest-Agent-Access-Subject",
     "X-Antnest-Administrator",
     "X-Antnest-Organization-Slug",
     "X-Antnest-Organization-Name"
   ],
   "response_headers": ["X-Antnest-Trace-ID"],
   "upstream_injected_headers": [
+    "X-Antnest-User-ID",
     "X-Antnest-Organization-ID",
+    "X-Antnest-Membership-ID",
+    "X-Antnest-System-Role",
+    "X-Antnest-Organization-Role",
     "X-Antnest-Principal-ID",
     "X-Antnest-Agent-ID",
-    "X-Antnest-User-ID",
-    "X-Antnest-Membership-ID",
     "X-Antnest-Administrator",
     "X-Antnest-Organization-Slug",
     "X-Antnest-Organization-Name"
@@ -320,7 +321,7 @@
     "contract": "service-authentication.md",
     "workload": "Every internal dependency uses the exact platform token/mTLS mode; raw service credentials are re-read per new request or connection and never follow redirects.",
     "caller_context": "Identity revision 14 issues a route-selected profile and Agent scope; forward the unchanged CCT in one Antnest-Caller-Context field, keep it outside browser JSON.",
-    "browser_sanitization": "Remove both Antnest authentication headers and the case-insensitive X-Antnest-* namespace; retain CSRF privately for Gateway validation only.",
+    "browser_sanitization": "Remove every case-insensitive X-Antnest-* and Antnest-* field, including unknown names. Capture CSRF and account-switch preconditions privately for local validation; per-route allowlists and server-owned context determine outbound headers.",
     "pending_consumers": [
       "admin-console",
       "agent-ui",
@@ -328,5 +329,7 @@
       "agent-controller"
     ],
     "integration": "pending final coordinated service-authentication batch"
-  }
+  },
+  "header_boundary_contract": "request-headers.json",
+  "browser_headers": ["X-Antnest-CSRF-Token", "X-Antnest-Expected-Principal"]
 }
