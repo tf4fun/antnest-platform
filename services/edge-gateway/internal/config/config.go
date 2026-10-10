@@ -18,6 +18,7 @@ type Config struct {
 	AgentControllerURL       string
 	AgentACPURL              string
 	CookieSecure             bool
+	CSRFKeyFile              string
 	PublicOrigin             string
 	TrustedProxies           []netip.Prefix
 	TLSCertFile              string
@@ -75,6 +76,7 @@ func Load(lookup func(string) string) (Config, error) {
 		AgentControllerURL:       strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
 		AgentACPURL:              strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_URL")),
 		CookieSecure:             cookieSecure,
+		CSRFKeyFile:              strings.TrimSpace(lookup("ANTNEST_EDGE_CSRF_KEY_FILE")),
 		PublicOrigin:             strings.TrimSpace(lookup("ANTNEST_EDGE_PUBLIC_ORIGIN")),
 		TLSCertFile:              strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CERT_FILE")),
 		TLSKeyFile:               strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_KEY_FILE")),
@@ -102,6 +104,9 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if err := config.loadPublicEntry(lookup); err != nil {
 		return Config{}, err
+	}
+	if config.CSRFKeyFile == "" {
+		return Config{}, fmt.Errorf("ANTNEST_EDGE_CSRF_KEY_FILE is required")
 	}
 	return config, nil
 }

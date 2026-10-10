@@ -1,6 +1,16 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 16,
+  "version": 17,
+  "session_security": {
+    "contract": "session-security.md",
+    "secure_cookie_names": ["__Host-antnest_session", "__Host-antnest_csrf"],
+    "loopback_insecure_cookie_names": ["antnest_session", "antnest_csrf"],
+    "production_cookie_fallback": false,
+    "csrf": "base64url(HMAC-SHA256(key, UTF8(token_id))) without padding; header verified against the authenticated session; cookie is delivery only",
+    "key_file": "ANTNEST_EDGE_CSRF_KEY_FILE; exactly 32 raw secret bytes; same key on all replicas",
+    "private_session_identifier": "login/OIDC token_id; subsequent trusted Identity CCT sid; never browser JSON",
+    "admin_origin": "phase 2 plan in session-security.md; not implemented in this revision"
+  },
   "origin_admission": {
     "scope": "/api/* before routing, authentication and upstream calls",
     "contract": "public-entry.md",
@@ -154,7 +164,7 @@
       "alias": "/api/app/agents/{agent_id}/acp",
       "transport": "official experimental ACP Streamable HTTP",
       "authentication": "browser_session; direct ACP routing without Controller lookup; ACP owns Agent/Session authorization",
-      "csrf": "POST and DELETE require X-Antnest-CSRF-Token matching the cookie",
+      "csrf": "POST and DELETE require exactly one X-Antnest-CSRF-Token matching the authenticated session derivation",
       "origin": "shared origin_admission; POST and DELETE require matching public Origin or same-origin Fetch Metadata, unless explicit originless compatibility applies",
       "forwarded_headers": [
         "Content-Type",

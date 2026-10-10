@@ -54,6 +54,8 @@ test("HTTP helper retains and clears cookies and forwards CSRF", async (t) => {
   });
   const client = new GatewayClient(base);
   await client.request("/api/session/login", { body: {} });
+  assert.equal(client.accessToken, "secret");
+  assert.equal(client.csrf, "csrf");
   const result = await client.request("/api/session", {
     method: "DELETE",
     status: 204,
@@ -61,6 +63,39 @@ test("HTTP helper retains and clears cookies and forwards CSRF", async (t) => {
   assert.equal(result.body, null);
   assert.equal(client.cookie, "");
   assert.equal(client.requests, 2);
+});
+
+test("HTTP helper preserves prefixed names and forwards bound CSRF despite planted legacy delivery", async (t) => {
+  let received;
+  const base = await fixture(t, (request, response) => {
+    if (request.url === "/api/session/login") {
+      response.setHeader("Set-Cookie", [
+        "__Host-antnest_session=secret; Path=/; Secure; HttpOnly; SameSite=Lax",
+        "__Host-antnest_csrf=bound; Path=/; Secure; SameSite=Lax",
+        "antnest_csrf=planted; Path=/",
+      ]);
+      response.end("{}");
+      return;
+    }
+    received = request.headers;
+    response.setHeader("Set-Cookie", [
+      "__Host-antnest_session=; Path=/; Secure; Max-Age=0",
+      "__Host-antnest_csrf=; Path=/; Secure; Max-Age=0",
+    ]);
+    response.writeHead(204).end();
+  });
+  const client = new GatewayClient(base);
+  await client.request("/api/session/login", { body: {} });
+  assert.equal(client.accessToken, "secret");
+  assert.equal(client.csrf, "bound");
+  await client.request("/api/session", { method: "DELETE", status: 204 });
+  assert.equal(received["x-antnest-csrf-token"], "bound");
+  assert.equal(
+    received.cookie,
+    "__Host-antnest_session=secret; __Host-antnest_csrf=bound; antnest_csrf=planted",
+  );
+  assert.equal(client.cookies.has("__Host-antnest_session"), false);
+  assert.equal(client.cookies.has("antnest_session"), false);
 });
 
 test("HTTP status failures never echo sensitive response bodies", async (t) => {
@@ -330,10 +365,11 @@ for (const phase of ["fetch", "response-body"])
       code: "ECONNRESET",
     });
     t.mock.method(globalThis, "fetch", async () => {
-      if (phase === "fetch") throw new TypeError("private", { cause });
+      if (phase === "fetch")
+        throw new TypeError("private-upstream-response", { cause });
       return {
         text: async () => {
-          throw new TypeError("private", { cause });
+          throw new TypeError("private-upstream-response", { cause });
         },
       };
     });
@@ -341,7 +377,8 @@ for (const phase of ["fetch", "response-body"])
       new GatewayClient("http://fixture").request("/api/session"),
       (error) => {
         assert.equal(error.cause, undefined);
-        assert(!inspect(error).includes("private"));
+        assert(!inspect(error).includes("private-upstream-response"));
+        assert(!inspect(error).includes("private-transport-credential"));
         assert.deepEqual(summarizeFailure(error), {
           error_type: "Error",
           request_phase: phase,
@@ -374,7 +411,7 @@ for (const phase of ["fetch", "response-body"])
           ...(phase === "response-body" ? { http_status: 200 } : {}),
         });
         assert.equal(error.cause, undefined);
-        assert(!inspect(error).includes("private"));
+        assert(!inspect(error).includes("private-timeout"));
         return true;
       },
     );

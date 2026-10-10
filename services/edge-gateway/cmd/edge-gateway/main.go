@@ -51,6 +51,10 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	csrfKey, err := session.LoadCSRFKey(cfg.CSRFKeyFile)
+	if err != nil {
+		return fmt.Errorf("load browser session key: %w", err)
+	}
 	internal, err := serviceauth.LoadOutbound("edge-gateway", serviceauth.GatewayHeaders, lookup, map[string]string{
 		"identity-service": cfg.IdentityURL, "admin-console": cfg.AdminConsoleURL,
 		"agent-ui": cfg.AgentUIURL, "agent-controller": cfg.AgentControllerURL, "agent-acp-service": cfg.AgentACPURL,
@@ -99,7 +103,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("create Agent ACP client: %w", err)
 	}
-	sessions, err := session.NewManager(session.Config{Secure: cfg.CookieSecure})
+	sessions, err := session.NewManager(session.Config{Secure: cfg.CookieSecure, CSRFKey: csrfKey})
 	if err != nil {
 		return fmt.Errorf("create session manager: %w", err)
 	}

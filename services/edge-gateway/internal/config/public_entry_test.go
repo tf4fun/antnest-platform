@@ -9,6 +9,7 @@ func publicEntryEnvironment() map[string]string {
 		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
 		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
 		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
+		"ANTNEST_EDGE_CSRF_KEY_FILE":   "/run/antnest/csrf.key",
 		"ANTNEST_EDGE_PUBLIC_ORIGIN":   "https://antnest.example",
 		"ANTNEST_EDGE_TRUSTED_PROXIES": "10.1.0.0/24",
 	}

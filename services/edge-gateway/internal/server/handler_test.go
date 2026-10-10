@@ -35,7 +35,7 @@ func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
 		http.NotFoundHandler(), time.Now(), Config{},
 	)
 	request := newBrowserRequest(http.MethodGet, "/api/app/bootstrap", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -100,7 +100,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 		response.WriteHeader(http.StatusOK)
 	}))
 	defer static.Close()
-	sessions, err := session.NewManager(session.Config{})
+	sessions, err := session.NewManager(session.Config{CSRFKey: []byte(testCSRFKey)})
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
@@ -121,7 +121,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 	websocketURL := strings.Replace(edge.URL, "http://", "ws://", 1) + publicPath
 	headers := http.Header{}
 	headers.Set("Origin", edge.URL)
-	headers.Set("Cookie", session.AccessTokenCookieName+"=token-1; "+session.CSRFCookieName+"=csrf-1")
+	headers.Set("Cookie", session.AccessTokenCookieName+"=token-1; "+session.CSRFCookieName+"="+testCSRFToken)
 	headers.Set(HeaderAgentAccessSubject, "forged-subject")
 	for _, name := range []string{"X-Antnest-Agent-Id", "X-Antnest-Principal-Id", HeaderOrganizationID} {
 		headers.Add(name, "forged")
@@ -157,7 +157,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 	wrongOrigin.Header.Set("Connection", "Upgrade")
 	wrongOrigin.Header.Set("Upgrade", "websocket")
 	wrongOrigin.Header.Set("Origin", "https://evil.example.test")
-	addSessionCookies(wrongOrigin, "token-1", "csrf-1")
+	addSessionCookies(wrongOrigin, "token-1", testCSRFToken)
 	rejected := httptest.NewRecorder()
 	handler.ServeHTTP(rejected, wrongOrigin)
 	if rejected.Code != http.StatusForbidden {
@@ -321,7 +321,7 @@ func TestAdminProxyResolvesPrincipalAndReplacesSpoofedHeaders(t *testing.T) {
 	defer span.End()
 
 	request := newBrowserRequest(http.MethodGet, "/api/admin/agents?limit=20", nil).WithContext(ctx)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	request.Header.Set(HeaderUserID, "forged-user")
 	request.Header.Set(HeaderSystemRole, "admin")
 	response := httptest.NewRecorder()
@@ -363,7 +363,7 @@ func TestAdminProxyRejectsNonAdministratorAndMissingCSRF(t *testing.T) {
 			identityStub := &identityServiceStub{resolvePrincipal: test.principal}
 			handler := newTestHandler(t, identityStub, console, time.Now())
 			request := newBrowserRequest(test.method, "/api/admin/agents", strings.NewReader(`{}`))
-			addSessionCookies(request, "token-1", "csrf-1")
+			addSessionCookies(request, "token-1", testCSRFToken)
 			if test.csrf != "" {
 				request.Header.Set(session.CSRFHeaderName, test.csrf)
 			}
@@ -393,7 +393,7 @@ func TestAgentEventWatchHasABoundedAuthenticationLease(t *testing.T) {
 		t, identityStub, console, time.Now(), Config{StreamLease: 20 * time.Millisecond},
 	)
 	request := newBrowserRequest(http.MethodGet, "/api/admin/agents/agent-1/events/watch", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
 	response := httptest.NewRecorder()
 	started := time.Now()
 	handler.ServeHTTP(response, request)
@@ -568,11 +568,11 @@ func TestUnknownOIDCProtocolPathNeverFallsThroughToSPA(t *testing.T) {
 }
 
 func TestLogoutRevokesTokenAndExpiresAllCookies(t *testing.T) {
-	identityStub := &identityServiceStub{revokeStatus: identity.RevokeStatusRevoked}
+	identityStub := &identityServiceStub{resolvePrincipal: administratorPrincipal(), revokeStatus: identity.RevokeStatusRevoked}
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), time.Now())
 	request := newBrowserRequest(http.MethodDelete, "/api/session", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
-	request.Header.Set(session.CSRFHeaderName, "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
+	request.Header.Set(session.CSRFHeaderName, testCSRFToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
@@ -592,11 +592,11 @@ func TestLogoutRevokesTokenAndExpiresAllCookies(t *testing.T) {
 }
 
 func TestLogoutPreservesCookiesWhenRevocationIsRetryable(t *testing.T) {
-	identityStub := &identityServiceStub{revokeErr: context.DeadlineExceeded}
+	identityStub := &identityServiceStub{resolvePrincipal: administratorPrincipal(), revokeErr: context.DeadlineExceeded}
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), time.Now())
 	request := newBrowserRequest(http.MethodDelete, "/api/session", nil)
-	addSessionCookies(request, "token-1", "csrf-1")
-	request.Header.Set(session.CSRFHeaderName, "csrf-1")
+	addSessionCookies(request, "token-1", testCSRFToken)
+	request.Header.Set(session.CSRFHeaderName, testCSRFToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -676,7 +676,7 @@ func newTestHandlerWithServices(
 	})}
 	sessions, err := session.NewManager(session.Config{
 		Now:     func() time.Time { return now },
-		NewCSRF: func() (string, error) { return "csrf-1", nil },
+		CSRFKey: []byte(testCSRFKey),
 	})
 	if err != nil {
 		t.Fatalf("session.NewManager: %v", err)
@@ -767,7 +767,7 @@ func administratorPrincipal() identity.Principal {
 		UserID: "user-admin", OrganizationID: "org-1", MembershipID: "membership-1",
 		OrganizationSlug: "engineering", OrganizationName: "Engineering",
 		SystemRole: "admin", OrganizationRole: "admin", Active: true,
-		CallerContext: "trusted-issuer-context",
+		CallerContext: "trusted-issuer-context", SessionID: "token-1",
 	}
 }
 

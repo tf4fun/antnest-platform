@@ -64,14 +64,14 @@ func restoreNetworkPrincipalPrecondition(request *http.Request, principal identi
 	return true
 }
 
-func (h *handler) validCSRF(request *http.Request, values session.Values) bool {
+func (h *handler) validCSRF(request *http.Request, sessionID string) bool {
 	csrf, _ := request.Context().Value(csrfKey{}).([]string)
 	if len(csrf) != 1 {
 		return false
 	}
 	local := request.Clone(request.Context())
 	local.Header.Set(session.CSRFHeaderName, csrf[0])
-	return h.sessions.ValidCSRF(local, values)
+	return h.sessions.ValidCSRF(local, sessionID)
 }
 
 func callerSelection(request *http.Request) (string, string) {

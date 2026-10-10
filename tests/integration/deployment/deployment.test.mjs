@@ -6,6 +6,33 @@ import { composeConfig } from "../../support/compose-config.mjs";
 
 const root = new URL("../../../", import.meta.url);
 
+for (const overlay of [null, "compose.native-tls.yaml", "compose.tls.yaml"]) {
+  test(`${overlay ?? "loopback"} mounts the configured independent CSRF key read-only`, () => {
+    const { services } = composeConfig(
+      ["compose.yaml", ...(overlay ? [overlay] : [])],
+      {
+        ANTNEST_EDGE_PUBLIC_BASE_URL: overlay
+          ? "https://antnest.example:8443"
+          : "http://127.0.0.1:8090",
+        ANTNEST_EDGE_TLS_DIRECTORY: "/never-mounted-tls",
+      },
+    );
+    const gateway = services["edge-gateway"];
+    const key = gateway.volumes.find(
+      (volume) =>
+        volume.target === gateway.environment.ANTNEST_EDGE_CSRF_KEY_FILE,
+    );
+    assert(key, "configured CSRF key must be mounted");
+    assert.equal(key.type, "bind");
+    assert.equal(
+      key.source,
+      "/never-mounted-deployment-credentials/edge-gateway/csrf.key",
+    );
+    assert.equal(key.read_only, true);
+    assert.equal(key.bind.create_host_path ?? false, false);
+  });
+}
+
 test("loopback Compose keeps Secure cookies and one explicit public origin", () => {
   const config = composeConfig(["compose.yaml"], {
     ANTNEST_EDGE_PUBLIC_BASE_URL: "http://127.0.0.1:43110",

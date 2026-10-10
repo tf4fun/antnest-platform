@@ -3,115 +3,181 @@ import { createServer } from "node:http";
 import { test } from "node:test";
 import { chromium } from "../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { gatewayBrowserRequest } from "./gateway-browser-request.mjs";
+import { gatewayBrowserSessionCookies } from "./gateway-session-cookies.mjs";
 
-test(
-  "API probes retain Chromium's loopback Secure cookie session and CSRF boundary",
-  { timeout: 30000 },
-  async (t) => {
-    const requests = [];
-    const server = createServer((request, response) => {
-      if (request.url === "/login") {
-        response.setHeader("Set-Cookie", [
-          "antnest_session=test-session; Path=/; Secure; HttpOnly; SameSite=Lax",
-          "antnest_csrf=test-csrf; Path=/; Secure; SameSite=Lax",
-        ]);
-      } else if (request.url === "/probe") {
-        requests.push({
-          cookie: request.headers.cookie,
-          csrf: request.headers["x-antnest-csrf-token"],
-        });
-        if (!request.headers.cookie?.includes("antnest_session=test-session"))
-          response.statusCode = 401;
-        else if (
-          request.method === "POST" &&
-          request.headers["x-antnest-csrf-token"] !== "test-csrf"
-        )
-          response.statusCode = 403;
-      } else if (request.url === "/redirect") {
-        response.statusCode = 302;
-        response.setHeader("Location", "/must-not-follow");
-      } else if (request.url === "/must-not-follow") {
-        requests.push({ redirected: true });
-      }
-      response.end("{}");
-    });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    t.after(async () => {
-      server.closeAllConnections();
-      await new Promise((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
+test("browser request uses actual cookie names on the same loopback URL", async () => {
+  for (const prefix of ["", "__Host-"]) {
+    const cookies = [
+      { name: `${prefix}antnest_session`, value: "session" },
+      { name: `${prefix}antnest_csrf`, value: "bound" },
+      ...(prefix ? [{ name: "antnest_csrf", value: "planted" }] : []),
+    ];
+    const context = {
+      async cookies(url) {
+        assert.equal(url, "https://127.0.0.1:8123/api/write");
+        return cookies;
+      },
+      request: {
+        async fetch(_url, options) {
+          assert.equal(options.headers["x-antnest-csrf-token"], "bound");
+          assert.equal(
+            options.headers.cookie,
+            cookies.map(({ name, value }) => `${name}=${value}`).join("; "),
+          );
+          assert.equal(options.maxRedirects, 0);
+          return "response";
+        },
+      },
+    };
+    assert.equal(
+      await gatewayBrowserRequest(context, "http://127.0.0.1:8123/api/write", {
+        method: "POST",
+      }),
+      "response",
+    );
+  }
+});
+
+for (const secure of [true, false])
+  test(
+    `API probes retain Chromium's loopback ${secure ? "Secure" : "insecure"} cookie session and CSRF boundary`,
+    { timeout: 30000 },
+    async (t) => {
+      const prefix = secure ? "__Host-" : "";
+      const attributes = `Path=/; ${secure ? "Secure; " : ""}SameSite=Lax`;
+      const requests = [];
+      const server = createServer((request, response) => {
+        if (request.url === "/login") {
+          response.setHeader("Set-Cookie", [
+            `${prefix}antnest_session=test-session; ${attributes}; HttpOnly`,
+            `${prefix}antnest_csrf=test-csrf; ${attributes}`,
+          ]);
+        } else if (request.url === "/probe") {
+          requests.push({
+            cookie: request.headers.cookie,
+            csrf: request.headers["x-antnest-csrf-token"],
+          });
+          if (
+            !request.headers.cookie?.includes(
+              `${prefix}antnest_session=test-session`,
+            )
+          )
+            response.statusCode = 401;
+          else if (
+            request.method === "POST" &&
+            request.headers["x-antnest-csrf-token"] !== "test-csrf"
+          )
+            response.statusCode = 403;
+        } else if (request.url === "/redirect") {
+          response.statusCode = 302;
+          response.setHeader("Location", "/must-not-follow");
+        } else if (request.url === "/must-not-follow") {
+          requests.push({ redirected: true });
+        }
+        response.end("{}");
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      t.after(async () => {
+        server.closeAllConnections();
+        await new Promise((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      });
+      const origin = `http://127.0.0.1:${server.address().port}`;
+      const browser = await chromium.launch({ headless: true });
+      t.after(() => browser.close());
+      const context = await browser.newContext();
+      const login = await context.request.post(`${origin}/login`);
+      assert.equal(login.status(), 200);
+      const issuedCookies = await context.cookies();
+      assert.equal(issuedCookies.length, 2);
+      assert(issuedCookies.every((cookie) => cookie.secure === secure));
+      // Also exercise API-login sessions injected by Docker browser fixtures.
+      await context.clearCookies();
+      await context.addCookies(
+        gatewayBrowserSessionCookies(issuedCookies, origin),
       );
-    });
-    const origin = `http://127.0.0.1:${server.address().port}`;
-    const browser = await chromium.launch({ headless: true });
-    t.after(() => browser.close());
-    const context = await browser.newContext();
-    const login = await context.request.post(`${origin}/login`);
-    assert.equal(login.status(), 200);
-    assert((await context.cookies()).every((cookie) => cookie.secure));
-    const page = await context.newPage();
-    await page.goto(origin);
-    assert.equal(
-      await page.evaluate(async () => (await fetch("/probe")).status),
-      200,
-    );
-    assert.equal(
-      (await context.request.get(`${origin}/probe`)).status(),
-      401,
-      "the unadapted API probe reproduces the lost session",
-    );
-    await context.addCookies([
-      {
-        name: "other_host",
-        value: "excluded",
-        url: "https://unrelated.example",
-      },
-      {
-        name: "other_path",
-        value: "excluded",
-        domain: "127.0.0.1",
-        path: "/private",
-        secure: true,
-      },
-    ]);
-    const response = await gatewayBrowserRequest(context, `${origin}/probe`, {
-      method: "POST",
-    });
-    assert.equal(response.status(), 200);
-    assert.equal(requests.at(-1).csrf, "test-csrf");
-    assert.doesNotMatch(requests.at(-1).cookie, /other_host|other_path/);
-    assert(
-      (await context.cookies())
-        .filter((cookie) => cookie.name.startsWith("antnest_"))
-        .every((cookie) => cookie.secure),
-    );
-    assert.equal(
-      (
-        await gatewayBrowserRequest(context, `${origin}/probe`, {
-          headers: { Cookie: "" },
-        })
-      ).status(),
-      401,
-    );
-    assert.equal(
-      (
-        await gatewayBrowserRequest(context, `${origin}/probe`, {
-          method: "POST",
-          headers: { "X-Antnest-CSRF-Token": "wrong" },
-        })
-      ).status(),
-      403,
-    );
-    assert.equal(
-      (await gatewayBrowserRequest(context, `${origin}/redirect`)).status(),
-      302,
-    );
-    assert.equal(
-      requests.some((request) => request.redirected),
-      false,
-    );
-  },
-);
+      const injectedCookies = await context.cookies();
+      assert.equal(injectedCookies.length, 2);
+      for (const cookie of injectedCookies) {
+        assert.equal(cookie.secure, secure);
+        assert.equal(cookie.path, "/");
+        assert.equal(cookie.domain, "127.0.0.1");
+        assert.equal(cookie.sameSite, "Lax");
+        assert.equal(
+          cookie.httpOnly,
+          cookie.name === `${prefix}antnest_session`,
+        );
+      }
+      const page = await context.newPage();
+      await page.goto(origin);
+      assert.equal(
+        await page.evaluate(() => document.cookie),
+        `${prefix}antnest_csrf=test-csrf`,
+      );
+      assert.equal(
+        await page.evaluate(async () => (await fetch("/probe")).status),
+        200,
+      );
+      assert.equal(
+        (await context.request.get(`${origin}/probe`)).status(),
+        secure ? 401 : 200,
+        "only Secure loopback cookies need the browser-to-API bridge",
+      );
+      await context.addCookies([
+        {
+          name: "other_host",
+          value: "excluded",
+          url: "https://unrelated.example",
+        },
+        {
+          name: "other_path",
+          value: "excluded",
+          domain: "127.0.0.1",
+          path: "/private",
+          secure: true,
+        },
+      ]);
+      const response = await gatewayBrowserRequest(context, `${origin}/probe`, {
+        method: "POST",
+      });
+      assert.equal(response.status(), 200);
+      assert.equal(requests.at(-1).csrf, "test-csrf");
+      assert.doesNotMatch(requests.at(-1).cookie, /other_host|other_path/);
+      const sessionCookies = (await context.cookies()).filter((cookie) =>
+        [`${prefix}antnest_session`, `${prefix}antnest_csrf`].includes(
+          cookie.name,
+        ),
+      );
+      assert.equal(sessionCookies.length, 2);
+      assert(sessionCookies.every((cookie) => cookie.secure === secure));
+      assert.equal(
+        (
+          await gatewayBrowserRequest(context, `${origin}/probe`, {
+            headers: { Cookie: "" },
+          })
+        ).status(),
+        401,
+      );
+      assert.equal(
+        (
+          await gatewayBrowserRequest(context, `${origin}/probe`, {
+            method: "POST",
+            headers: { "X-Antnest-CSRF-Token": "wrong" },
+          })
+        ).status(),
+        403,
+      );
+      assert.equal(
+        (await gatewayBrowserRequest(context, `${origin}/redirect`)).status(),
+        302,
+      );
+      assert.equal(
+        requests.some((request) => request.redirected),
+        false,
+      );
+    },
+  );
 
 test("cookie selection promotes only literal loopback HTTP and never follows redirects", async () => {
   for (const [target, cookieURL] of [

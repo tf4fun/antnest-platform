@@ -143,7 +143,7 @@ it.each(["start", "end"])("invalidates pending request notifications on session 
   }
 });
 
-it("waits for remote logout and prevents duplicate sign-out", async () => {
+it.each([204, 401])("ends a confirmed or already invalid session after logout %s and prevents duplicate sign-out", async (status) => {
   const command = deferred<Response>();
   const logout = vi.fn(() => command.promise);
   const request = application(logout);
@@ -158,7 +158,7 @@ it("waits for remote logout and prevents duplicate sign-out", async () => {
   const call = request.mock.calls.find(([, init]) => init.method === "DELETE");
   expect(call?.[0]).toBe("/api/session");
   expect(call?.[1].credentials).toBe("same-origin");
-  await act(async () => command.resolve(new Response(null, { status: 204 })));
+  await act(async () => command.resolve(new Response(null, { status })));
   expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
   expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
 });
@@ -202,7 +202,7 @@ it.each(["logout", "expiration"] as const)("does not carry an open drawer or acc
   expect(logout).toHaveBeenCalledTimes(ending === "logout" ? 1 : 0);
 });
 
-it.each([204, 503])("ignores an old logout's late HTTP %s after expiration and a new login", async (status) => {
+it.each([204, 401, 503])("ignores an old logout's late HTTP %s after expiration and a new login", async (status) => {
   const command = deferred<Response>();
   const logout = vi.fn(() => command.promise);
   application(logout);

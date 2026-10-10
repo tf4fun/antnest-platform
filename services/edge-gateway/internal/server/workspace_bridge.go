@@ -42,7 +42,7 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 		}
 		return h.workspaceBridgeEvents(response, request, values.AccessToken, principal)
 	}
-	if request.Method == http.MethodPost && !h.validCSRF(request, values) {
+	if request.Method == http.MethodPost && !h.validCSRF(request, principal.SessionID) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}

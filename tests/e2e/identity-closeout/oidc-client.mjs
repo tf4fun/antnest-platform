@@ -125,16 +125,18 @@ async function complete(browser, callback, expected = true) {
   if (expected) {
     const cookie = response.headers
       .getSetCookie()
-      .find((value) => value.startsWith("antnest_session="));
+      .find((value) => value.startsWith("__Host-antnest_session="));
     assert(
-      cookie?.includes("HttpOnly") && cookie.includes("SameSite=Lax"),
+      cookie?.includes("HttpOnly") &&
+        cookie.includes("SameSite=Lax") &&
+        cookie.includes("Secure"),
       "unsafe OIDC session cookie",
     );
   } else {
     assert(
       !response.headers
         .getSetCookie()
-        .some((value) => value.startsWith("antnest_session=")),
+        .some((value) => /^(?:__Host-)?antnest_session=/u.test(value)),
       "failed callback changed application session",
     );
   }

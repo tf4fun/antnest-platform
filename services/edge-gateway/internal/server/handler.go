@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	gatewayconfig "github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
@@ -299,7 +301,7 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is inactive")
 		return nil
 	}
-	if _, err := h.sessions.Establish(response, result.AccessToken, result.ExpiresAt); err != nil {
+	if _, err := h.sessions.Establish(response, result.AccessToken, result.TokenID, result.ExpiresAt); err != nil {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be established")
 		return err
 	}
@@ -405,7 +407,7 @@ func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 		h.redirectOIDCFailure(response, request)
 		return err
 	}
-	if _, err := h.sessions.Establish(response, result.AccessToken, result.ExpiresAt); err != nil {
+	if _, err := h.sessions.Establish(response, result.AccessToken, result.TokenID, result.ExpiresAt); err != nil {
 		h.redirectOIDCFailure(response, request)
 		return err
 	}
@@ -429,13 +431,17 @@ func (h *handler) getSession(response http.ResponseWriter, request *http.Request
 }
 
 func (h *handler) logout(response http.ResponseWriter, request *http.Request) error {
-	values, ok := h.sessions.Read(request)
-	if !ok {
+	_, status := h.sessions.Read(request)
+	if status == session.Absent {
 		h.sessions.Clear(response)
 		response.WriteHeader(http.StatusNoContent)
 		return nil
 	}
-	if !h.validCSRF(request, values) {
+	values, principal, err := h.authenticate(response, request)
+	if err != nil {
+		return err
+	}
+	if !h.validCSRF(request, principal.SessionID) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -522,7 +528,7 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 	if err != nil {
 		return err
 	}
-	if !upgrade && stateChanging(request.Method) && !h.validCSRF(request, values) {
+	if !upgrade && stateChanging(request.Method) && !h.validCSRF(request, principal.SessionID) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -584,8 +590,11 @@ func (h *handler) workspaceApplication(response http.ResponseWriter, request *ht
 }
 
 func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, request *http.Request) (identity.Principal, bool) {
-	values, ok := h.sessions.Read(request)
-	if !ok {
+	values, status := h.sessions.Read(request)
+	if status != session.Valid {
+		if status == session.Invalid {
+			h.sessions.Clear(response)
+		}
 		redirectWorkspaceLogin(response, request)
 		return identity.Principal{}, false
 	}
@@ -602,7 +611,7 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 		redirectWorkspaceLogin(response, request)
 		return identity.Principal{}, false
 	}
-	if principal.CallerContext == "" {
+	if principal.CallerContext == "" || !callercontext.ValidID(principal.SessionID) {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return identity.Principal{}, false
 	}
@@ -674,7 +683,7 @@ func headerContainsToken(values []string, wanted string) bool {
 }
 
 func (h *handler) admin(response http.ResponseWriter, request *http.Request) error {
-	values, principal, err := h.authenticate(response, request)
+	_, principal, err := h.authenticate(response, request)
 	if err != nil {
 		return err
 	}
@@ -682,7 +691,7 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
 		return nil
 	}
-	if stateChanging(request.Method) && !h.validCSRF(request, values) {
+	if stateChanging(request.Method) && !h.validCSRF(request, principal.SessionID) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
@@ -719,8 +728,11 @@ func (h *handler) authenticate(
 	request *http.Request,
 ) (session.Values, identity.Principal, error) {
 	response.Header().Set("Cache-Control", "no-store")
-	values, ok := h.sessions.Read(request)
-	if !ok {
+	values, status := h.sessions.Read(request)
+	if status != session.Valid {
+		if status == session.Invalid {
+			h.sessions.Clear(response)
+		}
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Login is required")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
@@ -737,7 +749,7 @@ func (h *handler) authenticate(
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
-	if principal.CallerContext == "" {
+	if principal.CallerContext == "" || !callercontext.ValidID(principal.SessionID) {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return session.Values{}, identity.Principal{}, errors.New("identity omitted caller context")
 	}

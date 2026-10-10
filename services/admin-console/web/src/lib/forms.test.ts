@@ -22,6 +22,25 @@ test("csrf token is read without exposing other cookies", () => {
   assert.equal(csrfFromCookie("theme=light; antnest_csrf=csrf%2Dtoken; ignored=x"), "csrf-token");
 });
 
+test("Secure CSRF delivery takes precedence over a planted legacy cookie", () => {
+  for (const cookie of [
+    "__Host-antnest_csrf=bound-token",
+    "antnest_csrf=planted; __Host-antnest_csrf=bound-token",
+    "__Host-antnest_csrf=bound-token; antnest_csrf=planted",
+  ]) assert.equal(csrfFromCookie(cookie), "bound-token");
+});
+
+test("ambiguous or malformed delivery never falls back to a legacy value", () => {
+  for (const cookie of [
+    "__Host-antnest_csrf=; antnest_csrf=legacy",
+    "__Host-antnest_csrf=%zz; antnest_csrf=legacy",
+    "__Host-antnest_csrf=first; __Host-antnest_csrf=second; antnest_csrf=legacy",
+    "__Host-antnest_csrf =first; __Host-antnest_csrf=second",
+    "antnest_csrf=first; antnest_csrf=second",
+    "antnest_csrf=%zz",
+  ]) assert.equal(csrfFromCookie(cookie), "");
+});
+
 test("password change validates credentials using the Identity byte limits", () => {
   assert.equal(passwordChangeError("", "replacement correct password", "replacement correct password"), "Enter your current password.");
   assert.equal(passwordChangeError("current password", "short", "short"), "Use at least 12 bytes for the new password.");

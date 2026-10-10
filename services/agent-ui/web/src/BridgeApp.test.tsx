@@ -4,7 +4,7 @@ import BridgeApp from "./BridgeApp";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-test("Bridge page opens existing Session through HTTP and SSE without a browser ACP socket", async () => {
+test.each(["antnest_csrf", "__Host-antnest_csrf"])("Bridge page uses HTTP/SSE and %s for authenticated mutations", async (cookieName) => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const socket = vi.fn();
   vi.stubGlobal("WebSocket", socket);
@@ -21,8 +21,11 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
   });
   const requests: string[] = [];
   const prompts: { body: unknown; headers: Headers }[] = [];
+  const logouts: RequestInit[] = [];
   let initialView: Record<string, unknown>;
-  document.cookie = "antnest_csrf=csrf-test";
+  vi.spyOn(document, "cookie", "get").mockReturnValue(cookieName.startsWith("__Host-")
+    ? "antnest_csrf=planted; __Host-antnest_csrf=csrf-test"
+    : "antnest_csrf=csrf-test");
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     requests.push(url);
@@ -55,6 +58,10 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
       prompts.push({ body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
       return Response.json({ operationId: (prompts.at(-1)?.body as { intentId: string }).intentId,
         acceptance: "bridge", phase: "dispatching" }, { status: 202 });
+    }
+    if (url === "/api/session" && init?.method === "DELETE") {
+      logouts.push(init);
+      return new Response(null, { status: 503 });
     }
     throw new Error(`Unexpected Bridge request ${url}`);
   }));
@@ -90,6 +97,12 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
     cursor: "cursor-2", view: completedView });
   expect(await screen.findByText("Answer finished")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Stop operation" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByText("Your session could not be closed.")).toBeTruthy();
+  expect(logouts).toHaveLength(1);
+  expect(new Headers(logouts[0]?.headers).get("X-Antnest-CSRF-Token")).toBe("csrf-test");
+  expect(logouts[0]?.credentials).toBe("same-origin");
+  expect(screen.getByText("Answer finished")).toBeTruthy();
   source.emit("access_revoked", { type: "access_revoked", agentId: "agent-1",
     bridgeEpoch: "epoch-1", projectionId: "projection-1",
     fromStreamRevision: 1, toStreamRevision: 2, cursor: "cursor-3" });

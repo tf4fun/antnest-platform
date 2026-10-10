@@ -319,7 +319,8 @@ export default function App() {
       if (logoutRequest.current === request) endSession();
     } catch (cause) {
       if (logoutRequest.current === request) {
-        setLogoutError(`Sign out could not be confirmed. ${errorMessage(cause)}`);
+        if (cause instanceof APIError && cause.status === 401) endSession();
+        else setLogoutError(`Sign out could not be confirmed. ${errorMessage(cause)}`);
       }
     } finally {
       if (logoutRequest.current === request) {

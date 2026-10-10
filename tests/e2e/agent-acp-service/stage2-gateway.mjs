@@ -1,4 +1,5 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
+import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import assert from "node:assert/strict";
 import { registerFixturePrincipal } from "./stage2-transport.mjs";
 
@@ -22,16 +23,8 @@ export async function gatewayLogin(origin, organizationSlug, email, password) {
   const pairs = response.headers
     .getSetCookie()
     .map((value) => value.split(";")[0]);
-  assert(
-    pairs.some(
-      (pair) =>
-        pair.startsWith("antnest_session=") &&
-        pair.length > "antnest_session=".length,
-    ),
-  );
-  const csrf = pairs
-    .find((pair) => pair.startsWith("antnest_csrf="))
-    ?.slice("antnest_csrf=".length);
+  const { accessToken, csrf } = gatewaySessionCookies(pairs);
+  assert(accessToken, "Gateway session cookie missing");
   assert(csrf, "Gateway CSRF cookie missing");
   return { cookie: pairs.join("; "), csrf, principal: payload.principal };
 }

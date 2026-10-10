@@ -73,7 +73,7 @@ func TestPublicEntryRebuildsForwardingHeaders(t *testing.T) {
 			r.Header.Set("X-Forwarded-Secret", "forged")
 			r.Header.Set("Forwarded", "for=evil;proto=http")
 			r.Header.Set("X-Real-IP", "198.51.100.99")
-			addSessionCookies(r, "token-1", "csrf-1")
+			addSessionCookies(r, "token-1", testCSRFToken)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			if w.Code != http.StatusOK || headers == nil {

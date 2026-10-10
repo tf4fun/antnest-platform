@@ -32,9 +32,9 @@ function upstream() {
         `{"typ":"antnest-cct+jwt","alg":"EdDSA","kid":"test"}`,
       ).toString("base64url") +
       "." +
-      Buffer.from(JSON.stringify({ iat: now, exp: now + 60 })).toString(
-        "base64url",
-      ) +
+      Buffer.from(
+        JSON.stringify({ iat: now, exp: now + 60, sid: "fixture-token-id" }),
+      ).toString("base64url") +
       "." +
       Buffer.alloc(64).toString("base64url")
     );
@@ -254,6 +254,7 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
       ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true",
       ANTNEST_SERVICE_AUTH_CALLERS_FILE: "/run/auth/callers.json",
       ANTNEST_SERVICE_AUTH_TOKEN_DIR: "/run/auth/outgoing",
+      ANTNEST_EDGE_CSRF_KEY_FILE: "/run/auth/csrf.key",
     }).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
     "-e",
     "ANTNEST_EDGE_COOKIE_SECURE=true",
@@ -285,7 +286,7 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
       const response = await fetch(`${gatewayURL}${path}`, {
         signal,
         headers: {
-          Cookie: "antnest_session=fixture-token; antnest_csrf=fixture-csrf",
+          Cookie: "__Host-antnest_session=fixture-token",
           Accept: "text/event-stream",
           "Acp-Connection-Id": "fixture-connection",
         },
@@ -376,6 +377,9 @@ async function run() {
     mode: 0o600,
   });
   writeFileSync(resolve(credentials, "callers.json"), "{}", { mode: 0o600 });
+  writeFileSync(resolve(credentials, "csrf.key"), randomBytes(32), {
+    mode: 0o600,
+  });
   const abort = new AbortController();
   const interrupt = () =>
     abort.abort(new Error("Gateway shutdown regression interrupted"));

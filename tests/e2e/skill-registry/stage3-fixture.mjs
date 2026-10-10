@@ -36,7 +36,7 @@ export async function publishSkill(admin, version, skillId) {
     headers: {
       Cookie: admin.cookie,
       Origin: gatewayOrigin(admin.base),
-      "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
+      "X-Antnest-CSRF-Token": admin.csrf ?? "",
       "Idempotency-Key": randomUUID(),
     },
     body: form,

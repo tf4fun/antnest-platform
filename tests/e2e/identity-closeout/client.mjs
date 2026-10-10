@@ -42,9 +42,10 @@ async function login(client, email, loginPassword, status = 200) {
     assert(!("access_token" in response.body));
     const cookie = response.headers
       .getSetCookie()
-      .find((value) => value.startsWith("antnest_session="));
+      .find((value) => value.startsWith("__Host-antnest_session="));
     assert(
       cookie?.includes("HttpOnly") &&
+        cookie.includes("Secure") &&
         cookie.includes("SameSite=Lax") &&
         cookie.includes("Path=/"),
     );
@@ -212,7 +213,7 @@ async function tokenBoundary() {
   });
   await scim("Users", {
     headers: {
-      Authorization: `Bearer ${admin.cookies.get("antnest_session")}`,
+      Authorization: `Bearer ${admin.accessToken}`,
     },
     status: 401,
   });

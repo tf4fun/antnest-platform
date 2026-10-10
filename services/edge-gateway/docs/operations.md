@@ -37,6 +37,7 @@ batches; use the coordinated branch only after the final integration acceptance.
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL for ID/name discovery only |
 | `ANTNEST_AGENT_ACP_URL` | yes | - | trusted Agent ACP Service base URL |
 | `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | Secure cookies; false requires a literal loopback HTTP listener |
+| `ANTNEST_EDGE_CSRF_KEY_FILE` | yes | - | readable regular file containing exactly 32 raw CSRF key bytes; identical on all replicas for one origin |
 | `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no | `false` | explicit compatibility for API mutations with both Origin and Fetch Metadata absent; logs a startup warning |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | non-streaming dependency and forwarded admin request timeout |
 | `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | ordinary HTTP graceful-drain budget |
@@ -106,7 +107,21 @@ exception is necessary, set `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=true` in
 that Gateway process/container; startup emits a warning. This admits only
 requests with both Origin and `Sec-Fetch-Site` absent and never waives CSRF or
 ACP WebSocket Origin checks. Remove the exception after migrating clients.
-Cookie prefixes and session-bound CSRF remain work in #62.
+Secure mode uses only `__Host-antnest_session` and `__Host-antnest_csrf`.
+CSRF is derived from Identity's stable token ID; a planted cookie/header pair
+cannot authorize a request. The delivery cookie may be absent when a client
+already holds the correct derived header. See [session security](../../../contracts/edge-gateway/session-security.md).
+
+The development credential generator creates `edge-gateway/csrf.key` with mode
+0600; Compose mounts this file read-only at `/etc/antnest/service-auth/csrf.key`
+and refuses to create a directory if the source is absent.
+To upgrade existing credentials, add a new independent 32-byte raw random file
+there without regenerating workload credentials or database keys. Configure
+every Gateway replica with that file and restart them together. Missing,
+unreadable, non-regular or incorrectly sized keys prevent startup. Keep the key
+out of environment values, logs and source control. Prefix migration requires
+fresh login; key rotation also requires fresh login to receive the new derived
+CSRF value. This revision has no dual-key rolling acceptance.
 
 `GET /status` reports Gateway's own initialized listener. It never probes
 Identity, Controller, Console, UI or ACP. Check each container's health and real

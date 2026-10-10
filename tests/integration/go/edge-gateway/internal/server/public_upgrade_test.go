@@ -23,7 +23,7 @@ func TestPublicProxyUpgradeKeepsGatewayHSTSPolicy(t *testing.T) {
 				_ = connection.WriteMessage(websocket.TextMessage, []byte("proxied"))
 			}))
 			t.Cleanup(upstream.Close)
-			sessions, err := session.NewManager(session.Config{Secure: true})
+			sessions, err := session.NewManager(session.Config{Secure: true, CSRFKey: []byte(testCSRFKey)})
 			if err != nil {
 				t.Fatal(err)
 			}

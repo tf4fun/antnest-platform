@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { randomUUID } from "node:crypto";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,6 +26,7 @@ import {
 import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { member, setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { certificates } from "./tls-certificates.mjs";
+import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 
 const ownerLabel = "io.antnest.verification.project";
 const admin = {
@@ -55,12 +57,28 @@ async function browserLogin(context, gateway, credentials, path) {
     "max-age=31536000",
   );
   const cookies = await context.cookies();
-  for (const name of ["antnest_session", "antnest_csrf"]) {
+  for (const name of ["__Host-antnest_session", "__Host-antnest_csrf"]) {
     const cookie = cookies.find((cookie) => cookie.name === name);
     assert(cookie?.secure, `${name} must retain Secure in the browser`);
-    assert.equal(cookie.httpOnly, name === "antnest_session");
+    assert.equal(cookie.httpOnly, name === "__Host-antnest_session");
     assert.equal(cookie.sameSite, "Lax");
+    assert.equal(cookie.path, "/");
   }
+  assert(
+    !cookies.some(
+      ({ name }) => name === "antnest_session" || name === "antnest_csrf",
+    ),
+  );
+  assert(
+    !/;\s*Domain=/iu.test(
+      (await response.headerValues("set-cookie")).join("\n"),
+    ),
+  );
+  for (const header of [
+    "cross-origin-opener-policy",
+    "cross-origin-resource-policy",
+  ])
+    assert.equal(await response.headerValue(header), "same-origin");
   return page;
 }
 
@@ -69,8 +87,7 @@ async function assertAPIOriginAdmission(gateway, cookies, agentID, signal) {
   const headers = {
     "Content-Type": "application/json",
     Cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; "),
-    "X-Antnest-CSRF-Token": cookies.find(({ name }) => name === "antnest_csrf")
-      .value,
+    "X-Antnest-CSRF-Token": gatewaySessionCookies(cookies).csrf,
   };
   let checks = 0;
   const request = async (
@@ -149,6 +166,98 @@ async function assertAPIOriginAdmission(gateway, cookies, agentID, signal) {
   return checks;
 }
 
+async function assertSessionSecurityAdmission(
+  gateway,
+  adminCookies,
+  memberCookies,
+  agentID,
+  signal,
+) {
+  const administrator = gatewaySessionCookies(adminCookies);
+  const memberSession = gatewaySessionCookies(memberCookies);
+  const peer = new GatewayClient(gateway);
+  await peer.request("/api/session/login", { body: admin });
+  assert(
+    peer.csrf && peer.csrf !== administrator.csrf,
+    "independent sessions require distinct CSRF values",
+  );
+  let checks = 0;
+  const probe = async (method, path, cookie, csrf, status, code, body = {}) => {
+    const response = await fetch(`${gateway}${path}`, {
+      method,
+      headers: {
+        Cookie: cookie,
+        Origin: new URL(gateway).origin,
+        "Content-Type": "application/json",
+        "X-Antnest-CSRF-Token": csrf,
+        "Idempotency-Key": randomUUID(),
+      },
+      ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
+      redirect: "manual",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+    });
+    const result = await response.json();
+    assert.equal(
+      response.status,
+      status,
+      `${method} ${path} session admission`,
+    );
+    if (code) assert.equal(result.code, code);
+    checks++;
+  };
+  try {
+    for (const [session, path] of [
+      [administrator, "/api/admin/directory/users"],
+      [memberSession, `/api/app/workspace/v1/agents/${agentID}/sessions`],
+    ]) {
+      for (const forged of ["p".repeat(43), peer.csrf])
+        await probe(
+          "POST",
+          path,
+          `${session.sessionName}=${session.accessToken}; ${session.csrfName}=${forged}`,
+          forged,
+          403,
+          "csrf_failed",
+        );
+    }
+    await probe(
+      "GET",
+      "/api/session",
+      `antnest_session=${administrator.accessToken}; antnest_csrf=${administrator.csrf}`,
+      administrator.csrf,
+      401,
+      "unauthenticated",
+    );
+    const sessionOnly = `${administrator.sessionName}=${administrator.accessToken}`;
+    await probe(
+      "GET",
+      "/api/session",
+      `${sessionOnly}; ${sessionOnly}`,
+      administrator.csrf,
+      401,
+      "unauthenticated",
+    );
+    await probe("GET", "/api/session", sessionOnly, "", 200);
+    await probe(
+      "POST",
+      "/api/admin/directory/users",
+      sessionOnly,
+      administrator.csrf,
+      200,
+      undefined,
+      {
+        email: "csrf-header-only@example.com",
+        display_name: "CSRF header admission",
+        password: admin.password,
+        role: "member",
+      },
+    );
+  } finally {
+    await peer.request("/api/session", { method: "DELETE", status: 204 });
+  }
+  return checks;
+}
+
 test(
   "reference HTTPS proxy serves login, Console, Workspace and WSS with independent client admission",
   {
@@ -211,6 +320,7 @@ test(
           ...args,
         ]);
       for (const [service, variable] of [
+        ["admin-console", "ANTNEST_TLS_E2E_CONSOLE_IMAGE"],
         ["agent-acp-service", "ANTNEST_C4_AGENT_ACP_IMAGE"],
         ["agent-ui", "ANTNEST_C4_AGENT_UI_IMAGE"],
         ["edge-gateway", "ANTNEST_C4_EDGE_GATEWAY_IMAGE"],
@@ -329,6 +439,53 @@ test(
         fixture.agentID,
         signal,
       );
+      await consoleContext.addCookies([
+        {
+          name: "antnest_csrf",
+          value: "fixture-cookie-not-a-session-token",
+          url: config.gateway,
+          secure: true,
+        },
+      ]);
+      await consolePage.goto(`${config.gateway}/#directory`);
+      await consolePage
+        .getByRole("button", { name: "Add local user", exact: true })
+        .click();
+      const dialog = consolePage.getByRole("dialog", {
+        name: "Add local user",
+      });
+      await dialog
+        .getByLabel("Display name", { exact: true })
+        .fill("TLS Console write");
+      await dialog
+        .getByLabel("Email", { exact: true })
+        .fill("tls-console-write@example.com");
+      await dialog
+        .getByLabel("Initial password", { exact: true })
+        .fill(admin.password);
+      const [consoleWrite] = await Promise.all([
+        consolePage.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            new URL(response.url()).pathname === "/api/admin/directory/users",
+        ),
+        dialog
+          .getByRole("button", { name: "Create user", exact: true })
+          .click(),
+      ]);
+      assert.equal(
+        consoleWrite.status(),
+        200,
+        "Console write must use bound prefixed CSRF",
+      );
+      assert(
+        (await consoleWrite.request().headerValue("x-antnest-csrf-token")) ===
+          gatewaySessionCookies(await consoleContext.cookies()).csrf,
+        "Console forwarded a legacy or unrelated CSRF value",
+      );
+      await consolePage
+        .getByText("TLS Console write added to the directory.", { exact: true })
+        .waitFor();
       const workspaceContext = await browser.newContext();
       workspacePage = await browserLogin(
         workspaceContext,
@@ -336,6 +493,21 @@ test(
         member,
         "/workspace/",
       );
+      const sessionChecks = await assertSessionSecurityAdmission(
+        config.gateway,
+        await consoleContext.cookies(),
+        await workspaceContext.cookies(),
+        fixture.agentID,
+        signal,
+      );
+      await workspaceContext.addCookies([
+        {
+          name: "antnest_csrf",
+          value: "fixture-cookie-not-a-session-token",
+          url: config.gateway,
+          secure: true,
+        },
+      ]);
       workspacePage.on("response", (response) =>
         browserRequests.push({
           path: new URL(response.url()).pathname,
@@ -423,6 +595,11 @@ test(
         202,
         "HTTPS Prompt admission failed",
       );
+      assert(
+        (await promptResponse.request().headerValue("x-antnest-csrf-token")) ===
+          gatewaySessionCookies(await workspaceContext.cookies()).csrf,
+        "Workspace forwarded a legacy or unrelated CSRF value",
+      );
       await workspacePage
         .getByText("c4-browser-window-00 completed", { exact: true })
         .waitFor({ timeout: 120000 });
@@ -474,6 +651,43 @@ test(
         status: 403,
         headers: { Origin: "https://forged.example" },
       });
+      const consoleRevoker = new GatewayClient(config.gateway);
+      consoleRevoker.cookies = new Map(
+        (await consoleContext.cookies()).map(({ name, value }) => [
+          name,
+          value,
+        ]),
+      );
+      await consoleRevoker.request("/api/session", {
+        method: "DELETE",
+        status: 204,
+      });
+      for (const [page, context, expectedStatus] of [
+        [consolePage, consoleContext, 401],
+        [workspacePage, workspaceContext, 204],
+      ]) {
+        const [logout] = await Promise.all([
+          page.waitForResponse(
+            (response) =>
+              response.request().method() === "DELETE" &&
+              new URL(response.url()).pathname === "/api/session",
+          ),
+          page.getByRole("button", { name: "Sign out", exact: true }).click(),
+        ]);
+        assert.equal(logout.status(), expectedStatus);
+        await page
+          .getByRole("heading", { name: "Welcome back", exact: true })
+          .waitFor();
+        assert(
+          !(await context.cookies()).some(
+            ({ name }) =>
+              name === "__Host-antnest_session" ||
+              name === "__Host-antnest_csrf",
+          ),
+          "logout must clear both configured cookies",
+        );
+      }
+      await client.request("/api/session", { status: 401 });
       const clientResults = [];
       const [clientNetwork] = JSON.parse(
         await docker(["network", "inspect", `${config.project}_tls-ingress`]),
@@ -500,7 +714,7 @@ test(
           "--mount",
           `type=bind,src=${resolve("tests")},dst=/tests,readonly`,
           "--mount",
-          `type=bind,src=${certificateDirectory},dst=/tls,readonly`,
+          `type=bind,src=${resolve(certificateDirectory, "ca.pem")},dst=/tls/ca.pem,readonly`,
           "--env",
           "NODE_EXTRA_CA_CERTS=/tls/ca.pem",
           "--env",
@@ -529,8 +743,16 @@ test(
           "private-ca-and-hostname-verified",
           "gateway-cleartext-port-unpublished",
           "browser-login-secure-cookies",
+          "host-prefixed-host-only-cookies",
+          "session-bound-csrf-rejects-planted-and-replayed-pairs",
+          "legacy-production-session-rejected",
+          "missing-delivery-cookie-retains-bound-header-admission",
           "console-admin-call",
+          "console-browser-write-with-planted-legacy-cookie",
           "workspace-prompt-and-sse",
+          "console-invalid-session-logout-clears-private-page",
+          "workspace-confirmed-logout-clears-private-page",
+          "coop-and-corp",
           "authenticated-wss-initialize-and-session",
           "wrong-origin-rejected",
           "api-origin-admission-before-routing",
@@ -543,6 +765,7 @@ test(
         ],
         clients: clientResults,
         originChecks,
+        sessionChecks,
         sseFrames: frames.length,
       };
       assertSecretFree(JSON.stringify(evidence), [

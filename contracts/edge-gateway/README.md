@@ -11,7 +11,7 @@ Origin, client addresses, forwarding headers, HSTS and certificate rotation.
 
 ## Workspace routes
 
-Version 16 of `session-contract.json` includes the Node Workspace HTML, HTTP
+Version 17 of `session-contract.json` includes the Node Workspace HTML, HTTP
 API and SSE routes. Gateway authenticates HTML and business API requests, while
 hashed static assets are served without a browser session. The browser uses
 this route set instead of a direct ACP connection.
@@ -31,6 +31,13 @@ malformed metadata reject mutations even with matching Origin. The explicit
 originless compatibility setting is off by default and never waives CSRF or
 ACP WebSocket Origin checks. See [public entry](public-entry.md) for the complete
 safe-method, header validation and compatibility rules.
+
+Revision 17 defines Secure-mode `__Host-` cookies and CSRF bound to the stable
+Identity token ID with an independent Gateway secret. See
+[browser session security](session-security.md) for strict cookie reads, the
+trusted issuer boundary, logout behavior, key provisioning and the separate
+Admin-origin phase. Producer, browser consumers and integration have individual
+admission gates; the shared contract alone does not activate this behavior.
 
 For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
 `X-Antnest-*` identity header and injects verified `X-Antnest-Organization-ID`,

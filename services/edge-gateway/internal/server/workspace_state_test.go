@@ -23,7 +23,7 @@ func readyState() agentacp.WorkspaceState {
 }
 func stateRequest(suffix string) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, "/api/app/agents/agent-1/state"+suffix, nil)
-	addSessionCookies(r, "token-1", "csrf-1")
+	addSessionCookies(r, "token-1", testCSRFToken)
 	return r
 }
 func newStateHandler(t *testing.T, identity *identityServiceStub, agents *executionServiceStub, config Config) http.Handler {
@@ -256,7 +256,7 @@ func TestWorkspaceStateMachineContractMatchesPublicResponses(t *testing.T) {
 	if err := json.Unmarshal(payload, &contract); err != nil {
 		t.Fatal(err)
 	}
-	if contract.Version != 16 {
+	if contract.Version != 17 {
 		t.Fatalf("version=%d", contract.Version)
 	}
 	for _, name := range []string{"workspace_state", "workspace_state_watch"} {
@@ -265,7 +265,7 @@ func TestWorkspaceStateMachineContractMatchesPublicResponses(t *testing.T) {
 			t.Fatalf("missing state contract: %+v", route)
 		}
 		r := httptest.NewRequest(route.Method, strings.ReplaceAll(route.Path, "{agent_id}", "agent-1"), nil)
-		addSessionCookies(r, "token-1", "csrf-1")
+		addSessionCookies(r, "token-1", testCSRFToken)
 		w := httptest.NewRecorder()
 		newStateHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, &executionServiceStub{state: readyState()}, Config{}).ServeHTTP(w, r)
 		if w.Code != 200 {

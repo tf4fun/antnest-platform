@@ -104,6 +104,18 @@ entry with the selected route preserved. If an authorized bootstrap replaces
 the principal without a redirect, the browser also clears in-memory drafts and
 unsent attachments before the new identity can select the same Agent ID.
 
+Workspace writes and logout copy the opaque CSRF delivery value from
+`__Host-antnest_csrf`. The explicit insecure loopback deployment can supply
+`antnest_csrf` when the prefixed cookie is absent. A malformed or duplicate
+prefixed value never falls back to a legacy value. The browser does not infer
+cookie mode from the URL or derive the token; Gateway verifies the header
+against the authenticated Identity session under the
+[session security contract](../../../contracts/edge-gateway/session-security.md).
+Logout `204` and the Gateway's already-invalid-session `401` close the observer,
+clear private Workspace state and drafts, and return to login. Late discovery
+refreshes cannot restore that cleared state. `403`, transient and network
+failures preserve the Workspace and show a retryable sign-out failure.
+
 A Session load must complete before its composer or configuration controls
 become available. Failed replay keeps the previous readable history and offers
 retry. Switching Sessions does not cancel a Run; Stop targets the selected

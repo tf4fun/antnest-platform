@@ -5,6 +5,64 @@ import { WorkspaceApiError } from "./workspace-api-client";
 
 afterEach(cleanup);
 
+test.each([204, 401, 403, 503, "network"])("logout %s clears an ended session and preserves retryable failures", async (status) => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+  const bootstrap = {
+    principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
+    agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-25T00:00:00Z", bridgeEpoch: "epoch-1",
+  };
+  let finishRefresh!: (value: typeof bootstrap) => void;
+  const lateBootstrap = new Promise<typeof bootstrap>((resolve) => { finishRefresh = resolve; });
+  const api = { bootstrap: vi.fn().mockResolvedValueOnce(bootstrap).mockReturnValue(lateBootstrap),
+    sessions: async () => ({ items: [], nextCursor: null }) };
+  const close = vi.fn();
+  const snapshot = { connection: "ready", view: { agentId: "agent-1", bridgeEpoch: "epoch-1",
+    availability: "ready", activeSessionId: null, selectedSessionId: "session-1",
+    selectedView: { historyState: "ready" } }, operations: [], permissions: [],
+    conversation: { id: "session-1", agentId: "agent-1", title: "Private conversation", updatedAt: "now",
+      messages: [{ id: "answer", role: "assistant", content: "Private answer" }] } };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never,
+    makeController: ({ changed }) => ({ snapshot, close,
+      select: async () => { changed(snapshot as never); } }) as never,
+  }));
+  await waitFor(() => expect(result.current.activeConversation?.messages).toHaveLength(1));
+  act(() => result.current.setDraft("Private unsent draft"));
+  const ended = status === 204 || status === 401;
+  let refresh: Promise<void> | undefined;
+  if (ended) act(() => { refresh = result.current.refreshWorkspace(); });
+  const redirect = vi.fn();
+  const browserWindow = window;
+  vi.stubGlobal("window", new Proxy(browserWindow, {
+    get(target, key) {
+      if (key === "location") return { ...target.location, assign: redirect };
+      return Reflect.get(target, key, target);
+    },
+  }));
+  vi.stubGlobal("fetch", vi.fn(async () => {
+    if (status === "network") throw new TypeError("Failed to fetch");
+    return new Response(null, { status: Number(status) });
+  }));
+  await act(async () => { await result.current.logout(); });
+  if (ended) {
+    expect(result.current.workspace).toBeUndefined();
+    expect(result.current.activeConversation).toBeUndefined();
+    expect(result.current.draft).toBe("");
+    expect(result.current.connected).toBe(false);
+    expect(close).toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith("/");
+    await act(async () => { finishRefresh(bootstrap); await refresh; });
+    expect(result.current.workspace).toBeUndefined();
+  } else {
+    expect(result.current.activeConversation?.messages[0]?.content).toBe("Private answer");
+    expect(result.current.draft).toBe("Private unsent draft");
+    expect(result.current.connectionError).toBeTruthy();
+    expect(result.current.loggingOut).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  }
+});
+
 test("leaving a Session releases completed process from published workspace history", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let changed!: (snapshot: unknown) => void;

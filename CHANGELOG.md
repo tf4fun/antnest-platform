@@ -4,6 +4,15 @@
 
 ### Upgrade requirement
 
+**#62 requires an independent 32-byte Gateway CSRF secret file and a fresh
+browser login.** Configure `ANTNEST_EDGE_CSRF_KEY_FILE`; all Gateway replicas
+must share that key. Existing deployments add only `edge-gateway/csrf.key` to
+their private credential directory, retaining workload keys and databases.
+Upgrade Console and Agent UI before or together with Gateway so they consume
+the new `__Host-` cookies. Production no longer accepts the old cookie names;
+rotating the CSRF key also requires a coordinated Gateway rollout and fresh
+login. See [browser session security](contracts/edge-gateway/session-security.md).
+
 **#10 requires Origin admission on every `/api/*` mutation, including login,
 OIDC start and logout.** Scripted clients must send the configured public
 `Origin`, or supply `Sec-Fetch-Site: same-origin` when Origin is absent.
@@ -63,6 +72,12 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Secure browser sessions use host-prefixed cookies and a CSRF HMAC bound to the
+authenticated Identity session (#62). Matching a planted cookie and header or
+replaying another session's CSRF value cannot authorize a mutation. Console and
+Workspace clear private state when logout confirms an already-invalid session.
+Admin origin separation remains a documented second phase.
 
 Edge Gateway supports native TLS 1.2+ with SIGHUP certificate rotation and
 explicitly trusted HTTPS proxies (#57). Origin checks and downstream forwarding

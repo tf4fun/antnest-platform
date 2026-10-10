@@ -62,6 +62,11 @@ test("the bootstrap contract retains independent issuer and instance master form
   assert.equal(keys.identity_cct.private_format, "PKCS8-PEM");
   assert.equal(keys.runtime_instance_master.encoding, "raw");
   assert.equal(keys.runtime_instance_master.random_bytes, 32);
+  assert.deepEqual(keys.gateway_csrf, {
+    file: "edge-gateway/csrf.key",
+    random_bytes: 32,
+    encoding: "raw",
+  });
   assert.equal(keys.skill_maintenance.enabled_by_default, false);
   assert.equal(contract.development_pki.ca_private_key_service_mount, false);
   assert.equal(contract.development_pki.native_runtime_tls_supported, false);

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { gatewaySessionCookies } from "./gateway-session-cookies.mjs";
 
 // Chromium accepts Secure cookies on literal loopback HTTP. Playwright's
 // APIRequestContext and cookies(httpURL) do not, so API probes must explicitly
@@ -17,10 +18,7 @@ export async function gatewayBrowserRequest(context, url, options = {}) {
       cookies.map(({ name, value }) => `${name}=${value}`).join("; "),
     );
   if (!headers.has("X-Antnest-CSRF-Token"))
-    headers.set(
-      "X-Antnest-CSRF-Token",
-      cookies.find(({ name }) => name === "antnest_csrf")?.value ?? "",
-    );
+    headers.set("X-Antnest-CSRF-Token", gatewaySessionCookies(cookies).csrf);
   return context.request.fetch(url, {
     ...options,
     headers: Object.fromEntries(headers),

@@ -9,6 +9,7 @@ import { mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
+import { gatewaySessionCookies } from "../../../support/gateway-session-cookies.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-gateway-auth-${randomUUID()}`;
@@ -58,6 +59,9 @@ writeFileSync(resolve(credentials, "fixture.json"), JSON.stringify(fixture), {
   mode: 0o600,
 });
 writeFileSync(resolve(credentials, "callers.json"), "{}", { mode: 0o600 });
+writeFileSync(resolve(credentials, "csrf.key"), randomBytes(32), {
+  mode: 0o600,
+});
 for (const [name, token] of Object.entries(tokens))
   writeFileSync(resolve(outgoing, name), token, { mode: 0o600 });
 assert(process.getuid() > 0, "use a nonroot user for this disposable fixture");
@@ -124,11 +128,11 @@ try {
     .getSetCookie()
     .map((cookie) => cookie.split(";")[0])
     .join("; ");
-  const csrf = login.headers
-    .getSetCookie()
-    .find((cookie) => cookie.startsWith("antnest_csrf="))
-    .split(";")[0]
-    .slice("antnest_csrf=".length);
+  const { csrf, sessionName } = gatewaySessionCookies(
+    login.headers.getSetCookie(),
+  );
+  assert.equal(sessionName, "__Host-antnest_session");
+  assert(csrf, "bound CSRF delivery missing");
   const loginBody = await login.json();
   assert(!JSON.stringify(loginBody).includes(fixture.access));
   assert(!JSON.stringify(loginBody).includes("caller_context"));

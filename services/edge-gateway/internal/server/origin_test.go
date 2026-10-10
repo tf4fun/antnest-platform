@@ -37,7 +37,7 @@ func newOriginTestHandler(t *testing.T, cfg Config) (http.Handler, *originIdenti
 	identities := &originIdentity{identityServiceStub: identityServiceStub{
 		resolvePrincipal: administratorPrincipal(),
 		loginResult: identity.LoginResult{
-			Principal: administratorPrincipal(), AccessToken: "token-1", ExpiresAt: now.Add(time.Hour),
+			Principal: administratorPrincipal(), TokenID: "token-1", AccessToken: "token-1", ExpiresAt: now.Add(time.Hour),
 		},
 		startOIDCResult: identity.StartOIDCLoginResult{
 			AuthorizationURL: "https://login.example/authorize?state=state-1", ExpiresAt: now.Add(time.Minute),
@@ -130,8 +130,8 @@ func TestOriginAdmissionOnEveryMutationRoute(t *testing.T) {
 							request.Header["Sec-Fetch-Site"] = evidence.metadata
 						}
 						request.Header.Set("Content-Type", "application/json")
-						request.Header.Set(session.CSRFHeaderName, "csrf-1")
-						addSessionCookies(request, "token-1", "csrf-1")
+						request.Header.Set(session.CSRFHeaderName, testCSRFToken)
+						addSessionCookies(request, "token-1", testCSRFToken)
 						response := httptest.NewRecorder()
 						h.ServeHTTP(response, request)
 						admitted := evidence.admit || (allow && evidence.origin == nil && evidence.metadata == nil)
@@ -172,7 +172,7 @@ func TestOriginAdmissionSafeMethods(t *testing.T) {
 					request.Header.Set("Origin", origin)
 				}
 				request.Header.Set("Sec-Fetch-Site", "cross-site")
-				addSessionCookies(request, "token-1", "csrf-1")
+				addSessionCookies(request, "token-1", testCSRFToken)
 				response := httptest.NewRecorder()
 				h.ServeHTTP(response, request)
 				if origin == "https://foreign.example" {
@@ -226,7 +226,7 @@ func TestOriginAdmissionKeepsCSRFIndependent(t *testing.T) {
 						request.Header.Set("Origin", origin)
 					}
 					request.Header.Set(session.CSRFHeaderName, csrf)
-					addSessionCookies(request, "token-1", "csrf-1")
+					addSessionCookies(request, "token-1", testCSRFToken)
 					response := httptest.NewRecorder()
 					h.ServeHTTP(response, request)
 					if response.Code != 403 || !strings.Contains(response.Body.String(), `"code":"csrf_failed"`) || *calls != 0 || identities.revokedAccessToken != "" {
@@ -250,7 +250,7 @@ func TestOriginAdmissionKeepsWebSocketOriginMandatory(t *testing.T) {
 					if metadata != "" {
 						request.Header.Set("Sec-Fetch-Site", metadata)
 					}
-					addSessionCookies(request, "token-1", "csrf-1")
+					addSessionCookies(request, "token-1", testCSRFToken)
 					response := httptest.NewRecorder()
 					h.ServeHTTP(response, request)
 					if response.Code != 403 || identities.called() || *calls != 0 {

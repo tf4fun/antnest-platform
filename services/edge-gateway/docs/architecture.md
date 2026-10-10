@@ -3,6 +3,38 @@
 This document describes how Edge Gateway admits browser requests, binds OIDC
 transactions, routes Admin Console, Agent UI and ACP traffic, and how it fails.
 
+## Browser session boundary
+
+Secure mode accepts and emits only `__Host-antnest_session` and
+`__Host-antnest_csrf`: Secure, host-only, Path `/`, SameSite Lax, with only the
+session cookie marked HttpOnly. Explicit insecure loopback development uses the
+unprefixed names. There is no production fallback. Duplicate or malformed
+configured cookies invalidate the request; a missing CSRF delivery cookie does
+not invalidate the session itself.
+
+Gateway derives CSRF as unpadded `base64url(HMAC-SHA256(key, UTF8(token_id)))`.
+The private 32-byte key is loaded from `ANTNEST_EDGE_CSRF_KEY_FILE` at startup;
+all replicas for an origin share it. Login and OIDC supply Identity's `token_id`;
+later requests use the stable `sid` from the authenticated Identity response's
+CCT. Gateway validates that identifier and keeps it outside browser JSON.
+Neither CCT `iat`/`jti` nor a browser-supplied identifier determines the binding.
+Every authenticated mutation compares exactly one CSRF header with this server
+derivation. The delivery cookie's value is never the authorization reference.
+
+Logout resolves the session before checking CSRF and revoking the access token.
+No-session logout clears local cookies with 204. Invalid cookies or an inactive,
+expired or revoked session clear local cookies with 401; without a trusted sid,
+this path does not promise durable token revocation. Identity transport/issuer
+failures and revocation outages return 503 while preserving browser credentials.
+Bad CSRF returns 403 without revocation or cookie changes. Session lifecycle and
+sign-out-everywhere remain tracked by #58.
+
+Gateway defaults COOP and CORP to `same-origin`. Console and Workspace currently
+share one origin; these controls do not provide an XSS privilege boundary
+between them. The [session security contract](../../../contracts/edge-gateway/session-security.md)
+defines a separate Admin-origin phase with independent host-only sessions,
+fresh authentication and explicit routing, callback and deployment admission.
+
 ## OIDC Browser Transaction
 
 Identity owns the authorization transaction, PKCE, nonce, expiry and identity
@@ -254,7 +286,7 @@ an opaque reverse proxy to ACP `/v1/acp`, relaying the official SDK transport.
 The draft v2 endpoint is WebSocket-only. Gateway does not interpret ACP methods.
 Each request repeats browser authentication with the existing login cookies;
 ACP owns resource authorization. POST and DELETE also require
-`X-Antnest-CSRF-Token` matching the CSRF cookie, independently of the shared
+`X-Antnest-CSRF-Token` matching the authenticated session derivation, independently of the shared
 API Origin admission. Non-browser HTTP clients send the configured public
 Origin; the originless compatibility setting does not waive authentication
 or CSRF. WebSocket upgrades always require a

@@ -26,11 +26,11 @@ func TestResolveUsesExplicitProfileAndAgentAndKeepsContextPrivate(t *testing.T) 
 				t.Fatal(err)
 			}
 			principal, err := client.Resolve(WithResolution(context.Background(), profile, "agent-route"), "private-user-token")
-			if err != nil || principal.CallerContext != issued || principal.ContextExpiresAt.IsZero() {
+			if err != nil || principal.CallerContext != issued || principal.ContextExpiresAt.IsZero() || principal.SessionID != "session-1" {
 				t.Fatalf("issuer context was lost: %v", err)
 			}
 			browser, _ := json.Marshal(principal)
-			if strings.Contains(string(browser), issued) || strings.Contains(string(browser), "caller_context") {
+			if strings.Contains(string(browser), issued) || strings.Contains(string(browser), "caller_context") || strings.Contains(string(browser), "session-1") || strings.Contains(string(browser), "session_id") {
 				t.Fatal("caller context leaked to browser projection")
 			}
 		})
@@ -39,12 +39,12 @@ func TestResolveUsesExplicitProfileAndAgentAndKeepsContextPrivate(t *testing.T) 
 
 func TestIssuerFramingRejectsNonNumericAndDuplicateDates(t *testing.T) {
 	for _, claims := range []string{
-		`{"iat":1,"exp":"61"}`,
-		`{"iat":"1","exp":61}`,
-		`{"iat":1,"exp":60,"exp":61}`,
+		`{"sid":"token-1","iat":1,"exp":"61"}`,
+		`{"sid":"token-1","iat":"1","exp":61}`,
+		`{"sid":"token-1","iat":1,"exp":60,"exp":61}`,
 	} {
 		token := base64.RawURLEncoding.EncodeToString([]byte(`{"typ":"antnest-cct+jwt","alg":"EdDSA","kid":"test"}`)) + "." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 64))
-		if _, err := issuerContextExpiration(token); err == nil {
+		if _, err := parseIssuerContext(token); err == nil {
 			t.Error("ambiguous issuer dates were accepted")
 		}
 	}
@@ -59,6 +59,25 @@ func TestResolveRejectsMalformedCallerContext(t *testing.T) {
 		}
 		if _, err := client.Resolve(context.Background(), "private-user-token"); err == nil {
 			t.Fatal("malformed caller context was admitted")
+		}
+	}
+}
+
+func TestIssuerFramingRequiresAnUnambiguousSessionID(t *testing.T) {
+	for _, claims := range []string{
+		`{"iat":1,"exp":61}`,
+		`{"iat":1,"exp":61,"sid":null}`,
+		`{"iat":1,"exp":61,"sid":123}`,
+		`{"iat":1,"exp":61,"sid":""}`,
+		`{"iat":1,"exp":61,"sid":" token-1"}`,
+		`{"iat":1,"exp":61,"sid":"token 1"}`,
+		`{"iat":1,"exp":61,"sid":"token\u00001"}`,
+		`{"iat":1,"exp":61,"sid":"token-1","sid":"token-2"}`,
+		`{"iat":1,"exp":61,"sid":"` + strings.Repeat("a", 201) + `"}`,
+	} {
+		token := base64.RawURLEncoding.EncodeToString([]byte(`{"typ":"antnest-cct+jwt","alg":"EdDSA","kid":"test"}`)) + "." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 64))
+		if _, err := parseIssuerContext(token); err == nil {
+			t.Error("invalid issuer session ID was accepted")
 		}
 	}
 }
