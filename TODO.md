@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 个开放；开放项包含 5 个 Epic 和 62 个执行项。下列队列保留 65 个执行项，其中 3 个已交付。
+Issue 状态最后核对于 2026-10-10：131 个 issue，65 个已关闭，66 个开放；开放项包含 5 个 Epic 和 61 个执行项。下列队列保留 65 个执行项，其中 4 个已交付。
 
 ## 执行约定
 
@@ -20,10 +20,12 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 - 最近插入批次：镜像发布范围已随 [PR #229](https://github.com/tf4fun/antnest-platform/pull/229) 合并，commit `47a80f1c`。仅发布十个已实现的服务/Runtime 镜像；Temporal 依赖和三个 Runtime 测试变体保留本地构建，以同次 CI artifact 传递。
 - 镜像批次验收：53 个相关测试、完整 `make test-repo`、格式/语法/链接检查、独立 review、最终提交的必需 CI 和全部 Tier A/B Docker 分片通过。main [run 38026470361](https://github.com/tf4fun/antnest-platform/actions/runs/38026470361) 的四个镜像均构建成功，registry 登录与发布步骤均跳过。
 - 已按用户授权删除 `antnest-temporal`、`antnest-runtime-skill-gate`、`antnest-runtime-fixture`、`antnest-runtime-managed` 四个 GHCR package；浏览器确认 [Packages 列表](https://github.com/tf4fun/antnest-platform/packages) 从 14 项降为 10 项，仅保留计划内镜像。验证记录和截图在 `artifacts/verification/ci-package-scope/`。本批不关闭更广泛的 #112。
-- 当前执行项：[#197](https://github.com/tf4fun/antnest-platform/issues/197)。已用真实 gate 固定 catalog→artifact、inspect→artifact 两个健康读取竞争反例；ACP 改为只在 source/catalog 读取间限时等待 2 秒，派发前重新校验，前台/lifecycle 取消等待者。1,706 个 ACP 单元测试、202 个协议/HTTP 集成测试、完整 `make test-repo`、格式/lint/类型/链接检查、独立 review、修复镜像的完整 Docker lifecycle 流程及清理均通过，等待 PR CI 和合并；之后为 #112。
+- 下一执行项：[#112](https://github.com/tf4fun/antnest-platform/issues/112)。先核对当前 CI 分层、剩余覆盖和 Tier C 的近期稳定性，再确定交付批次。
+- 最近完成：#197 已随 [PR #231](https://github.com/tf4fun/antnest-platform/pull/231) 合并并关闭，commit `e8cf8f15`。已用真实 gate 固定 catalog→artifact、inspect→artifact 两个健康读取竞争反例；ACP 改为只在 source/catalog 读取间限时等待 2 秒，派发前重新校验，前台/lifecycle 取消等待者。
+- #197 验收：1,706 个 ACP 单元测试、202 个协议/HTTP 集成测试、完整 `make test-repo`、格式/lint/类型/链接检查、独立 review、修复镜像的完整 Docker lifecycle 流程及清理均通过。最终提交的必需 CI 和 Skill discovery/deployment、Skill learning、Skill learning install/lifecycle 分片在 [run 38031415735](https://github.com/tf4fun/antnest-platform/actions/runs/38031415735) 通过后合并。
 - #197 的原始失败缺少同次 trace，不能回溯确认原因。#198 后 67 次 CI 的 50 个实际 discovery 分片中未见 preview 503；当前原版 Docker lifecycle 也通过。本批修复确定性读取竞争，保留 HTTP 200 断言、写入/cleanup/前台忙时的拒绝，不重试 HTTP 或 digest。证据在 `artifacts/verification/issue-197/findings.json`。
 - 跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。开始前重新核对 issue 讨论、当前代码和最近 CI artifact。
-- 最近完成：#193 已随 [PR #227](https://github.com/tf4fun/antnest-platform/pull/227) 合并并关闭，commit `45752015`。后续失败 run `37731909405` / `37719450273` 证明源投影仍 active、sequence=2、sent_sequence=1，managed candidate/digest 一致，而 peer 已为 1/1；peer ACK 和 live discovery 都不能代表源投影已经确认。
+- 已完成：#193 已随 [PR #227](https://github.com/tf4fun/antnest-platform/pull/227) 合并并关闭，commit `45752015`。后续失败 run `37731909405` / `37719450273` 证明源投影仍 active、sequence=2、sent_sequence=1，managed candidate/digest 一致，而 peer 已为 1/1；peer ACK 和 live discovery 都不能代表源投影已经确认。
 - #193 修复：caller Run 前仅对有效源投影等待 ACK，期限 90 秒；撤销、身份或序号变化、查询失败、取消及超时仍失败，Run 后检查仍立即断言。未修改服务实现。
 - #193 验收：37 个相关 fixture/契约测试、完整 `make test-repo`、格式/语法/链接检查、完整 Docker caller 流程和资源清理通过；独立 review、最终提交的必需 CI 和 Skill discovery/deployment CI 分片通过后合并。原始失败、red/green、Docker 与 CI 证据在 `artifacts/verification/issue-193/`。
 - #193 合并时尚在运行的非必需 Tier C 分片，后续已在 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38023201384) 全部通过。
@@ -37,7 +39,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 - [x] [#109](https://github.com/tf4fun/antnest-platform/issues/109) test(e2e): consolidate ACP/managed-MCP Compose overlays and stop fixed diagnostic port binds
 - [x] [#215](https://github.com/tf4fun/antnest-platform/issues/215) rpc-response-loss: delete lifecycle trace intermittently misses the Admin Console parent span
 - [x] [#193](https://github.com/tf4fun/antnest-platform/issues/193) skill-discovery-caller: source Agent projection is intermittently not active and acknowledged after propagation
-- [ ] [#197](https://github.com/tf4fun/antnest-platform/issues/197) skill-source-lifecycle: Skill source preview intermittently returns 503 during promote
+- [x] [#197](https://github.com/tf4fun/antnest-platform/issues/197) skill-source-lifecycle: Skill source preview intermittently returns 503 during promote
 - [ ] [#112](https://github.com/tf4fun/antnest-platform/issues/112) ci: run component, browser and Docker E2E suites in GitHub Actions
 
 ### 2 共享契约与依赖清单
@@ -179,3 +181,4 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 | 2026-10-10 | #109 | [PR #223](https://github.com/tf4fun/antnest-platform/pull/223)、`70140fc1` | 22 个 Compose 场景等价；端口反向回归、仓库/部署检查、45 个 managed fixture 通过；保留开发栈时 ACP v1/v2 WebSocket、v1 HTTP 通过，Stage3a managed MCP 业务/拓扑/删除/清理通过；独立 review 与必需 CI 通过后合并 |
 | 2026-10-10 | #215 | [PR #225](https://github.com/tf4fun/antnest-platform/pull/225)、`88453a80` | 同步父 span 闭合后再判定稳定；迟到、永久缺失和中止回归通过；69 个相关 fixture、完整仓库准入、RPC 默认/延迟导出及 managed MCP ACP v1/v2 Docker 验收、独立 review、必需 CI 和 RPC CI 分片通过后合并 |
 | 2026-10-10 | #193 | [PR #227](https://github.com/tf4fun/antnest-platform/pull/227)、`45752015` | 确认 active source 2/1 与 peer 1/1 的 ACK 时序缺口；37 个相关测试、完整仓库检查、Docker caller 及清理、独立 review、必需 CI 和 Skill discovery CI 分片通过后合并 |
+| 2026-10-10 | #197 | [PR #231](https://github.com/tf4fun/antnest-platform/pull/231)、`e8cf8f15` | 确定性读取竞争先 red 后 green；1,706 个 ACP 单元测试、202 个集成测试、完整仓库检查、Docker source lifecycle 及清理、独立 review、必需 CI 和 discovery/learning/install-lifecycle 分片通过后合并；历史单次 503 缺少 trace，未回溯归因 |
