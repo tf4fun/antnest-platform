@@ -7,6 +7,8 @@ import { AgentAcpHttpServer } from "../../../../services/agent-acp-service/src/t
 import { SkillSourceError } from "../../../../services/agent-acp-service/src/domain/skill-source.js";
 import { learningSkillTextPackage } from "../../../../services/agent-acp-service/src/domain/learning-candidate-package.js";
 import type { AcpApplicationPort } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
+import { SkillSources } from "../../../../services/agent-acp-service/src/application/skill-sources.js";
+import { LearningForegroundGate } from "../../../../services/agent-acp-service/src/application/learning-foreground-gate.js";
 
 let server: AgentAcpHttpServer | undefined;
 afterEach(async () => {
@@ -38,6 +40,88 @@ const record = {
   effectRequestId: "commit-1",
   package: pkg,
 };
+
+it("serves overlapping authorized inspect and artifact requests once each after local read admission", async () => {
+  const gate = new LearningForegroundGate(() => false);
+  const entered = Promise.withResolvers<void>();
+  const observed = Promise.withResolvers<"current">();
+  const verify = vi.fn(() => Promise.resolve("current" as const));
+  verify.mockImplementationOnce(() => {
+    entered.resolve();
+    return observed.promise;
+  });
+  const readAgain = Promise.withResolvers<void>();
+  const read = vi.fn(() => Promise.resolve(record));
+  // The queued HTTP request must have reached the source repository before
+  // releasing the first observation, independently of network scheduling.
+  const service = new SkillSources({
+    directory: {
+      inspect: () => ({
+        agent: {
+          accepting_runs: true,
+          runtime: {
+            runtime_revision: `rtv_${"d".repeat(32)}`,
+            runtime_execution_id: "execution-1",
+            mcp_endpoint: "http://runtime:8080/mcp",
+            connection_id: `rci_${"e".repeat(32)}`,
+          },
+        },
+      }),
+    },
+    repository: { read, remove: () => Promise.resolve() },
+    runtime: { verify },
+    gate,
+  });
+  server = new AgentAcpHttpServer({
+    authentication: testAuthentication(),
+    skillSources: { service },
+    ready: () => Promise.resolve(true),
+    application: {} as AcpApplicationPort,
+    maxWebSocketPayloadBytes: 1024,
+  });
+  await server.listen("127.0.0.1", 0);
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("No server address");
+  const call = (route: string, input: unknown) =>
+    fetch(`http://127.0.0.1:${address.port}/internal/skill-sources/${route}`, {
+      method: "POST",
+      headers: {
+        ...workloadHeaders("skill-registry"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(3000),
+    });
+  const selection = { organization_id: org, actor_id: owner };
+  const inspection = call("inspect", {
+    ...selection,
+    sources: [{ agent_id: agent, name: pkg.name }],
+  });
+  await entered.promise;
+  read.mockImplementationOnce(() => {
+    readAgain.resolve();
+    return Promise.resolve(record);
+  });
+  const artifact = call("artifact", {
+    ...selection,
+    skill_ref: { kind: "agent", agent_id: agent, name: pkg.name, sequence: 3 },
+    expected_digest: pkg.targetDigest,
+  });
+  try {
+    await readAgain.promise;
+    expect(verify).toHaveBeenCalledTimes(1);
+  } finally {
+    observed.resolve("current");
+  }
+  const [inspected, loaded] = await Promise.all([inspection, artifact]);
+  expect(inspected.status).toBe(200);
+  expect(await inspected.json()).toEqual({ items: [projection] });
+  expect(loaded.status).toBe(200);
+  expect(loaded.headers.get("x-antnest-source-sequence")).toBe("3");
+  expect(Buffer.from(await loaded.arrayBuffer())).toEqual(pkg.artifact);
+  expect(verify).toHaveBeenCalledTimes(2);
+});
 
 it("enforces the source-only bearer, exact contract, body bounds and sanitized failures over real HTTP", async () => {
   const inspect = vi.fn(() => Promise.resolve({ items: [projection] }));

@@ -20,8 +20,8 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 - 最近插入批次：镜像发布范围已随 [PR #229](https://github.com/tf4fun/antnest-platform/pull/229) 合并，commit `47a80f1c`。仅发布十个已实现的服务/Runtime 镜像；Temporal 依赖和三个 Runtime 测试变体保留本地构建，以同次 CI artifact 传递。
 - 镜像批次验收：53 个相关测试、完整 `make test-repo`、格式/语法/链接检查、独立 review、最终提交的必需 CI 和全部 Tier A/B Docker 分片通过。main [run 38026470361](https://github.com/tf4fun/antnest-platform/actions/runs/38026470361) 的四个镜像均构建成功，registry 登录与发布步骤均跳过。
 - 已按用户授权删除 `antnest-temporal`、`antnest-runtime-skill-gate`、`antnest-runtime-fixture`、`antnest-runtime-managed` 四个 GHCR package；浏览器确认 [Packages 列表](https://github.com/tf4fun/antnest-platform/packages) 从 14 项降为 10 项，仅保留计划内镜像。验证记录和截图在 `artifacts/verification/ci-package-scope/`。本批不关闭更广泛的 #112。
-- 下一执行项：[#197](https://github.com/tf4fun/antnest-platform/issues/197)，Skill source preview 偶发返回 503；尚未开始实现。之后为 #112。
-- #197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #198 后的诊断，先固定复现和失败测试，再确定服务归属，不据此直接增加重试。
+- 当前执行项：[#197](https://github.com/tf4fun/antnest-platform/issues/197)。已用真实 gate 固定 catalog→artifact、inspect→artifact 两个健康读取竞争反例；ACP 改为只在 source/catalog 读取间限时等待 2 秒，派发前重新校验，前台/lifecycle 取消等待者。1,706 个 ACP 单元测试、202 个协议/HTTP 集成测试、完整 `make test-repo`、格式/lint/类型/链接检查、独立 review、修复镜像的完整 Docker lifecycle 流程及清理均通过，等待 PR CI 和合并；之后为 #112。
+- #197 的原始失败缺少同次 trace，不能回溯确认原因。#198 后 67 次 CI 的 50 个实际 discovery 分片中未见 preview 503；当前原版 Docker lifecycle 也通过。本批修复确定性读取竞争，保留 HTTP 200 断言、写入/cleanup/前台忙时的拒绝，不重试 HTTP 或 digest。证据在 `artifacts/verification/issue-197/findings.json`。
 - 跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。开始前重新核对 issue 讨论、当前代码和最近 CI artifact。
 - 最近完成：#193 已随 [PR #227](https://github.com/tf4fun/antnest-platform/pull/227) 合并并关闭，commit `45752015`。后续失败 run `37731909405` / `37719450273` 证明源投影仍 active、sequence=2、sent_sequence=1，managed candidate/digest 一致，而 peer 已为 1/1；peer ACK 和 live discovery 都不能代表源投影已经确认。
 - #193 修复：caller Run 前仅对有效源投影等待 ACK，期限 90 秒；撤销、身份或序号变化、查询失败、取消及超时仍失败，Run 后检查仍立即断言。未修改服务实现。
@@ -153,7 +153,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 
 - #80 已关闭；#219 等已关闭问题保留回归覆盖，不重新实现。
 - #81/#83 的 #10、#38、#47、#48、#53 已勾选，但 issue 仍开放且存在未交付内容。逐项按 admission 校正 Epic 状态。
-- #193 利用 PR #194 的后续失败诊断确认 ACK 延迟，并由 PR #227 修复；#197 的 PR #198 仍只增加诊断，下一步利用已有证据固定复现并修根因。
+- #193 利用 PR #194 的后续失败诊断确认 ACK 延迟，并由 PR #227 修复。#197 在 PR #198 诊断后未再出现同类 CI 失败；本批以真实 gate 固定健康读取竞争并修复，历史单次 503 的归因限制保留在验收记录中。
 - #112 已有必需的 Tier A/B 和非必需的 Tier C。稳定后将 Tier C 纳入 `Integration checks`；#165–#168 随服务补齐替代测试，#169 随 UI 收口。移出 CI 本身不是完成。
 - #18 的旧八动作设计已过时，当前 signer 为 `install`、`digest`、`temporary_install`、`temporary_release`，契约应与当前行为一致。
 - #167 以 2026-10-08 的更新为准：前台 Run 不取消 review；Runtime install 等待空闲窗口并可被前台抢占。旧 cleanup release 场景已删除，不恢复它。

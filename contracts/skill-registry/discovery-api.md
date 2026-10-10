@@ -138,6 +138,15 @@ identity are rechecked after observation. Reads and catalog refreshes share idle
 admission with learning; foreground preemption discards delivery and awaits an
 already dispatched bounded read.
 
+Before dispatch, a source read may wait at most two seconds for an existing
+source or catalog read of the same Agent to finish. This is local admission,
+not a retry of the Registry request or Runtime digest. Learning, cleanup,
+foreground work and a closed lifecycle remain unavailable. Foreground or
+lifecycle admission cancels pending readers, including readers whose preceding
+lease has just finished. After waiting, ACP rechecks access, binding and the
+selected source identity before dispatch; the existing checks after observation
+still apply. Expiry or cancellation never dispatches a digest or serves bytes.
+
 Normal Disable preserves owner access and the managed content identity, but
 removes the available Runtime binding: current source search/load return
 source_unavailable (503), never retained candidate bytes. Enable restores reads

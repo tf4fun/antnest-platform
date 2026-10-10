@@ -42,6 +42,180 @@ function supervised(waitMs: number) {
 }
 
 describe("Learning foreground gate", () => {
+  it("queues source readers behind a read and admits one at a time", async () => {
+    const gate = new LearningForegroundGate(() => false);
+    const signal = new AbortController().signal;
+    const catalog = gate.begin(scope, signal);
+    const first = gate.beginSourceRead(scope, signal);
+    let secondAdmitted = false;
+    const second = gate.beginSourceRead(scope, signal).then((lease) => {
+      secondAdmitted = true;
+      return lease;
+    });
+    // A different organization with the same Agent id is independent.
+    (await gate.beginSourceRead({ ...scope, organizationId: "other" }, signal)).finish();
+    catalog.finish();
+    const firstLease = await first;
+    expect(secondAdmitted).toBe(false);
+    firstLease.finish();
+    (await second).finish();
+    expect(secondAdmitted).toBe(true);
+    gate.begin(scope, signal).finish();
+  });
+
+  it.each(["learning", "cleanup", "foreground", "closed"] as const)(
+    "does not queue source reads behind %s work",
+    async (kind) => {
+      const gate = new LearningForegroundGate(() => kind === "foreground");
+      const signal = new AbortController().signal;
+      const active =
+        kind === "learning"
+          ? gate.beginLearning(scope, signal)
+          : kind === "cleanup"
+            ? gate.beginTemporaryCleanup(scope, signal)
+            : undefined;
+      if (kind === "closed") gate.syncOrganization(scope.organizationId, []);
+      try {
+        await expect(gate.beginSourceRead(scope, signal)).rejects.toThrow();
+      } finally {
+        active?.finish();
+      }
+    },
+  );
+
+  it("bounds the whole queue wait to two seconds and removes its timer", async () => {
+    vi.useFakeTimers();
+    const gate = new LearningForegroundGate(() => false);
+    const signal = new AbortController().signal;
+    const catalog = gate.begin(scope, signal);
+    let firstLease: Awaited<ReturnType<typeof gate.beginSourceRead>> | undefined;
+    try {
+      const first = gate.beginSourceRead(scope, signal);
+      const second = gate.beginSourceRead(scope, signal);
+      const rejected = expect(second).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(1500);
+      catalog.finish();
+      firstLease = await first;
+      await vi.advanceTimersByTimeAsync(500);
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      catalog.finish();
+      firstLease?.finish();
+      vi.useRealTimers();
+    }
+    gate.begin(scope, signal).finish();
+  });
+
+  it("rejects an overdue release even before the timeout callback runs", async () => {
+    vi.useFakeTimers();
+    const gate = new LearningForegroundGate(() => false);
+    const signal = new AbortController().signal;
+    const catalog = gate.begin(scope, signal);
+    try {
+      const rejected = expect(gate.beginSourceRead(scope, signal)).rejects.toThrow();
+      vi.setSystemTime(Date.now() + 2000);
+      catalog.finish();
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      catalog.finish();
+      vi.useRealTimers();
+    }
+    gate.begin(scope, signal).finish();
+  });
+
+  it("cancels a queued source read without cancelling the catalog lease", async () => {
+    const gate = new LearningForegroundGate(() => false);
+    const signal = new AbortController().signal;
+    const catalog = gate.begin(scope, signal);
+    const cancelled = new AbortController();
+    const reason = new Error("preview disconnected");
+    const rejected = expect(gate.beginSourceRead(scope, cancelled.signal)).rejects.toBe(reason);
+    cancelled.abort(reason);
+    await rejected;
+    expect(catalog.signal.aborted).toBe(false);
+    catalog.finish();
+    gate.begin(scope, signal).finish();
+    await expect(gate.beginSourceRead(scope, cancelled.signal)).rejects.toBe(reason);
+  });
+
+  it("refuses admission when the preceding read was cancelled before draining", async () => {
+    const gate = new LearningForegroundGate(() => false);
+    const parent = new AbortController();
+    const catalog = gate.begin(scope, parent.signal);
+    const reason = new Error("catalog disconnected");
+    const rejected = expect(gate.beginSourceRead(scope, new AbortController().signal)).rejects.toBe(
+      reason,
+    );
+    parent.abort(reason);
+    await rejected;
+    catalog.finish();
+    (await gate.beginSourceRead(scope, new AbortController().signal)).finish();
+  });
+
+  it.each(["learning", "cleanup"] as const)(
+    "does not cross %s work that takes the slot before a waiting reader wakes",
+    async (kind) => {
+      const gate = new LearningForegroundGate(() => false);
+      const signal = new AbortController().signal;
+      const catalog = gate.begin(scope, signal);
+      const rejected = expect(gate.beginSourceRead(scope, signal)).rejects.toThrow();
+      catalog.finish();
+      const writer =
+        kind === "learning"
+          ? gate.beginLearning(scope, signal)
+          : gate.beginTemporaryCleanup(scope, signal);
+      try {
+        await rejected;
+        expect(writer.signal.aborted).toBe(false);
+      } finally {
+        writer.finish();
+      }
+    },
+  );
+
+  it("preempts queued readers immediately while foreground only waits for the active read", async () => {
+    const { gate, submit } = supervised(1000);
+    const signal = new AbortController().signal;
+    const catalog = gate.begin(scope, signal);
+    const rejected = expect(gate.beginSourceRead(scope, signal)).rejects.toBeInstanceOf(
+      ForegroundLearningPreempted,
+    );
+    const accept = vi.fn(() => Promise.resolve(accepted));
+    const foreground = submit(accept);
+    await rejected;
+    expect(accept).not.toHaveBeenCalled();
+    catalog.finish();
+    await (
+      await foreground
+    ).completion;
+    expect(accept).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["foreground", "lifecycle", "snapshot"] as const)(
+    "cancels old queued readers on %s admission even after the preceding read finishes",
+    async (kind) => {
+      const gate = new LearningForegroundGate(() => false);
+      const signal = new AbortController().signal;
+      const catalog = gate.begin(scope, signal);
+      const waiting = gate.beginSourceRead(scope, signal);
+      const rejected = expect(waiting).rejects.toBeInstanceOf(
+        kind === "foreground" ? ForegroundLearningPreempted : LifecycleLearningStopped,
+      );
+      // Reproduce the finish-to-wakeup gap without an active lease to abort.
+      catalog.finish();
+      if (kind === "foreground") await gate.preempt(scope, signal);
+      else if (kind === "lifecycle") await gate.closeForLifecycle(scope, signal);
+      else gate.syncOrganization(scope.organizationId, []);
+      gate.syncOrganization(scope.organizationId, [
+        { agent_id: scope.agentId, accepting_runs: true },
+      ]);
+      await rejected;
+      gate.begin(scope, signal).finish();
+    },
+  );
+
   it("admits a foreground Run without waiting for an in-flight learning install", async () => {
     const { gate, supervisor, submit } = supervised(60_000);
     const learning = gate.beginLearning(scope, new AbortController().signal);

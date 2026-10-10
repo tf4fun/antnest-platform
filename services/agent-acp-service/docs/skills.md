@@ -224,6 +224,13 @@ Runtime outbound credentials await the private RC instance connection contract.
   to five seconds, and never writes a candidate, creates a Run or calls a model.
   Foreground preemption discards the delivery. Access, binding and identity are
   checked again afterwards.
+- Source reads wait at most two seconds for an existing source or catalog read
+  of the same Agent. This wait only coordinates local admission: it never retries
+  an HTTP request or a digest. Learning, temporary cleanup, foreground work and
+  closed lifecycle still refuse admission. Foreground/lifecycle admission cancels
+  waiting readers; reopening the Agent cannot revive them. Access, source
+  sequence/digest and the full Runtime binding are checked again after admission,
+  before the single digest is dispatched. Timeout and cancellation serve no bytes.
 - Disabling an Agent makes its sources return 503 without changing the managed
   content identity. Enabling verifies the preserved workspace on the new Runtime.
   Deleting rejects old references with 404 and delivers the tombstone.
