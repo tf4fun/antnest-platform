@@ -53,6 +53,7 @@ export function useBridgeWorkspace(options: {
   const [historyError, setHistoryError] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const sessionEnded = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [configuring, setConfiguring] = useState(false);
@@ -181,7 +182,7 @@ export function useBridgeWorkspace(options: {
   useEffect(() => {
     const request = new AbortController();
     void api.bootstrap(request.signal).then((raw) => {
-      if (request.signal.aborted) return;
+      if (request.signal.aborted || sessionEnded.current) return;
       const latest = workspaceFromBridgeBootstrap(raw);
       if (workspaceRef.current && !sameIdentity(workspaceRef.current, latest)) {
         presentation.clear();
@@ -192,6 +193,7 @@ export function useBridgeWorkspace(options: {
         ? applyDiscovery(current, latest)
         : selectWorkspaceRoute(latest, readWorkspaceRoute(window.location.pathname + window.location.search)));
     }).catch((cause: unknown) => {
+      if (sessionEnded.current) return;
       if (!request.signal.aborted && cause instanceof WorkspaceApiError &&
         (cause.status === 401 || cause.recovery === "login")) {
         presentation.clear();
@@ -228,7 +230,7 @@ export function useBridgeWorkspace(options: {
     const controller = factoryRef.current({
       agentId, api,
       changed: (snapshot) => {
-        if (disposed) return;
+        if (disposed || sessionEnded.current) return;
         inspectViewWaiter(controller, snapshot);
         setBridge(snapshot);
         if (snapshot.unauthenticated) {
@@ -522,11 +524,12 @@ export function useBridgeWorkspace(options: {
   }, []);
 
   async function refreshWorkspace() {
-    if (refreshing) return;
+    if (refreshing || sessionEnded.current) return;
     setRefreshing(true);
     setConnectionError("");
     try {
       const latest = workspaceFromBridgeBootstrap(await api.bootstrap());
+      if (sessionEnded.current) return;
       const identityChanged = Boolean(workspaceRef.current &&
         !sameIdentity(workspaceRef.current, latest));
       if (identityChanged)
@@ -549,7 +552,8 @@ export function useBridgeWorkspace(options: {
       if (!identityChanged && controller)
         await controller.select(workspaceRef.current?.activeConversationId ?? null);
     } catch (cause) {
-      setConnectionError(message(cause, "Workspace status could not be refreshed."));
+      if (!sessionEnded.current)
+        setConnectionError(message(cause, "Workspace status could not be refreshed."));
     } finally { setRefreshing(false); }
   }
 
@@ -560,8 +564,20 @@ export function useBridgeWorkspace(options: {
       const csrf = csrfFromCookie(document.cookie);
       const response = await fetch("/api/session", { method: "DELETE", credentials: "same-origin",
         headers: csrf ? { "X-Antnest-CSRF-Token": csrf } : {} });
-      if (!response.ok) throw new Error("Your session could not be closed.");
+      if (!response.ok && response.status !== 401)
+        throw new Error("Your session could not be closed.");
+      sessionEnded.current = true;
       controllerRef.current?.close();
+      presentation.clear();
+      workspaceRef.current = undefined;
+      navigationEpoch.current++;
+      setWorkspace(undefined);
+      setBridge({ connection: "offline", view: null, operations: [], permissions: [] });
+      setCommandResponse(null);
+      setUncertainCreationAgentId(null);
+      setMenuOpen(false);
+      setConnectionError("");
+      setHistoryError(undefined);
       window.location.assign("/");
     } catch (cause) {
       setConnectionError(message(cause, "Your session could not be closed."));
