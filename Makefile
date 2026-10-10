@@ -97,7 +97,7 @@ check-links:
 # Compose rendering requires the CLI, but does not contact a Docker daemon.
 .PHONY: test-deployment-ports e2e-deployment-ports
 test-deployment-ports:
-	node --test --test-concurrency=1 tests/integration/deployment/host-ports.test.mjs tests/support/dependencies.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/host-ports.test.mjs tests/integration/deployment/e2e-overlays.test.mjs tests/support/dependencies.test.mjs
 
 e2e-deployment-ports:
 	node tests/e2e/service-authentication/deployment-ports/run.mjs
@@ -122,6 +122,7 @@ test-node: test-repo
 test-repo:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
