@@ -33,7 +33,7 @@ func TestBrowserCannotForwardServiceCredentialsOrFutureIdentityHeaders(t *testin
 				w.WriteHeader(http.StatusOK)
 			})
 			h := newTestHandler(t, &identityServiceStub{resolvePrincipal: administratorPrincipal()}, upstream, time.Now())
-			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r := newBrowserRequest(http.MethodGet, path, nil)
 			addSessionCookies(r, "token-1", "csrf-1")
 			r.Header.Set("Antnest-Service-Authorization", "Bearer attacker-service-token")
 			r.Header.Set("Antnest-Caller-Context", "attacker-cct")
@@ -74,7 +74,7 @@ func TestGatewaySelectsCallerScopeFromActualRoute(t *testing.T) {
 		t.Run(route.path, func(t *testing.T) {
 			issuer := &selectedIdentity{identityServiceStub: identityServiceStub{resolvePrincipal: administratorPrincipal()}}
 			h := newTestHandler(t, issuer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }), time.Now())
-			r := httptest.NewRequest("GET", route.path+"?profile=console&agent_id=forged", nil)
+			r := newBrowserRequest("GET", route.path+"?profile=console&agent_id=forged", nil)
 			// State explicitly rejects query fields before authentication.
 			if route.path == "/api/app/agents/agent-1/state" {
 				r.URL.RawQuery = ""
@@ -100,7 +100,7 @@ func TestGatewayCSRFIsLocalAndRejectsDuplicateFields(t *testing.T) {
 			}
 			w.WriteHeader(200)
 		}), time.Now())
-		r := httptest.NewRequest("POST", "/api/admin/agents", nil)
+		r := newBrowserRequest("POST", "/api/admin/agents", nil)
 		addSessionCookies(r, "token", "csrf-1")
 		r.Header.Add("X-Antnest-CSRF-Token", "csrf-1")
 		if duplicate {

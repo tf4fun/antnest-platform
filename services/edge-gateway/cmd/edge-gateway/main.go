@@ -69,6 +69,9 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		resultErr = errors.Join(resultErr, telemetryRuntime.Shutdown(context.Background()))
 	}()
 	logger := telemetryRuntime.Logger()
+	if cfg.AllowOriginlessMutations {
+		logger.Warn("ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS permits API mutations without Origin or Fetch Metadata")
+	}
 	if !cfg.CookieSecure {
 		logger.Warn("Insecure browser cookies enabled on a loopback development listener")
 	}
@@ -101,7 +104,8 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		return fmt.Errorf("create session manager: %w", err)
 	}
 	handler, err := server.NewHandler(server.Config{
-		PublicOrigin: cfg.PublicOrigin, TrustedProxies: cfg.TrustedProxies,
+		AllowOriginlessMutations: cfg.AllowOriginlessMutations,
+		PublicOrigin:             cfg.PublicOrigin, TrustedProxies: cfg.TrustedProxies,
 		AdminConsoleURL: cfg.AdminConsoleURL, AgentUIURL: cfg.AgentUIURL,
 		AgentACPURL: cfg.AgentACPURL, IdentityURL: cfg.IdentityURL, RequestTimeout: cfg.RequestTimeout,
 		StreamLease: cfg.StreamLease, LoginWindow: cfg.LoginWindow,

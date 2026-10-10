@@ -110,6 +110,7 @@ context are sent directly to the configured service origin.
 | `ANTNEST_AGENT_CONTROLLER_URL`   | yes      | -       | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
 | `ANTNEST_AGENT_ACP_URL`          | yes      | -       | Agent ACP Service base URL                                                                                                                                                  |
 | `ANTNEST_EDGE_COOKIE_SECURE`     | no       | `true`  | Secure cookies; false is accepted only on a literal loopback HTTP listener |
+| `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no | `false` | compatibility for API mutations with both Origin and Fetch Metadata absent; emits a startup warning; CSRF still required |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT`   | no       | `10s`   | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
 | `ANTNEST_EDGE_STREAM_LEASE`      | no       | `5m`    | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
 | `ANTNEST_EDGE_LOGIN_WINDOW`      | no       | `5m`    | In-memory login admission window                                                                                                                                            |

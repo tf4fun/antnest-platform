@@ -19,7 +19,7 @@ func TestLoadAppliesSecureDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if config.ListenAddress != ":8080" || !config.CookieSecure ||
+	if config.ListenAddress != ":8080" || !config.CookieSecure || config.AllowOriginlessMutations ||
 		config.RequestTimeout != 10*time.Second || config.StreamLease != 5*time.Minute ||
 		config.LoginWindow != 5*time.Minute || config.LoginSourceMax != 30 ||
 		config.LoginAccountMax != 10 || config.ShutdownTimeout != 15*time.Second {
@@ -49,6 +49,7 @@ func TestLoadRejectsMissingOrInvalidDependencies(t *testing.T) {
 		{name: "invalid Agent Controller", key: "ANTNEST_AGENT_CONTROLLER_URL", value: "controller-only"},
 		{name: "invalid Agent ACP", key: "ANTNEST_AGENT_ACP_URL", value: "ws://agent-acp-service"},
 		{name: "invalid secure flag", key: "ANTNEST_EDGE_COOKIE_SECURE", value: "perhaps"},
+		{name: "invalid originless flag", key: "ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS", value: "perhaps"},
 		{name: "invalid timeout", key: "ANTNEST_EDGE_REQUEST_TIMEOUT", value: "0s"},
 		{name: "invalid stream lease", key: "ANTNEST_EDGE_STREAM_LEASE", value: "0s"},
 		{name: "invalid login limit", key: "ANTNEST_EDGE_LOGIN_ACCOUNT_MAX", value: "zero"},

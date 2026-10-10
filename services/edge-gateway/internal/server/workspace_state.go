@@ -27,10 +27,6 @@ func (h *handler) validStateRequest(response http.ResponseWriter, request *http.
 		writeError(response, 400, "invalid_request", "Workspace state does not accept query fields or replay cursors")
 		return false
 	}
-	if len(request.Header.Values("Origin")) > 0 && !h.sameOrigin(request) {
-		writeError(response, 403, "forbidden", "Workspace origin is not allowed")
-		return false
-	}
 	return true
 }
 

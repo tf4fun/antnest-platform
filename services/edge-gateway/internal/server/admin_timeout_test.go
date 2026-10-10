@@ -26,7 +26,7 @@ func TestAdminProxyBoundsForwardingWithoutRetryingWrites(t *testing.T) {
 				<-request.Context().Done()
 				return nil, request.Context().Err()
 			})
-			request := httptest.NewRequest(method, "/api/admin/agents", nil)
+			request := newBrowserRequest(method, "/api/admin/agents", nil)
 			addSessionCookies(request, "token-1", "csrf-1")
 			request.Header.Set(session.CSRFHeaderName, "csrf-1")
 			response := httptest.NewRecorder()
@@ -49,7 +49,7 @@ func TestAdminEventWatchUsesStreamLeaseNotOrdinaryTimeout(t *testing.T) {
 		}
 		return httptest.NewRecorder().Result(), nil
 	})
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/agents/agent-1/events/watch", nil)
+	request := newBrowserRequest(http.MethodGet, "/api/admin/agents/agent-1/events/watch", nil)
 	addSessionCookies(request, "token-1", "csrf-1")
 	gateway.ServeHTTP(httptest.NewRecorder(), request)
 }

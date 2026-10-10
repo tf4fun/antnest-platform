@@ -10,23 +10,24 @@ import (
 )
 
 type Config struct {
-	ListenAddress      string
-	IdentityURL        string
-	AdminConsoleURL    string
-	AgentUIURL         string
-	AgentControllerURL string
-	AgentACPURL        string
-	CookieSecure       bool
-	PublicOrigin       string
-	TrustedProxies     []netip.Prefix
-	TLSCertFile        string
-	TLSKeyFile         string
-	RequestTimeout     time.Duration
-	StreamLease        time.Duration
-	LoginWindow        time.Duration
-	LoginSourceMax     int
-	LoginAccountMax    int
-	ShutdownTimeout    time.Duration
+	AllowOriginlessMutations bool
+	ListenAddress            string
+	IdentityURL              string
+	AdminConsoleURL          string
+	AgentUIURL               string
+	AgentControllerURL       string
+	AgentACPURL              string
+	CookieSecure             bool
+	PublicOrigin             string
+	TrustedProxies           []netip.Prefix
+	TLSCertFile              string
+	TLSKeyFile               string
+	RequestTimeout           time.Duration
+	StreamLease              time.Duration
+	LoginWindow              time.Duration
+	LoginSourceMax           int
+	LoginAccountMax          int
+	ShutdownTimeout          time.Duration
 }
 
 func Load(lookup func(string) string) (Config, error) {
@@ -61,23 +62,28 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	allowOriginlessMutations, err := boolean(lookup, "ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS", false)
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
-		ListenAddress:      valueOr(lookup, "ANTNEST_EDGE_LISTEN", ":8080"),
-		IdentityURL:        strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
-		AdminConsoleURL:    strings.TrimSpace(lookup("ANTNEST_ADMIN_CONSOLE_URL")),
-		AgentUIURL:         strings.TrimSpace(lookup("ANTNEST_AGENT_UI_URL")),
-		AgentControllerURL: strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
-		AgentACPURL:        strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_URL")),
-		CookieSecure:       cookieSecure,
-		PublicOrigin:       strings.TrimSpace(lookup("ANTNEST_EDGE_PUBLIC_ORIGIN")),
-		TLSCertFile:        strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CERT_FILE")),
-		TLSKeyFile:         strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_KEY_FILE")),
-		RequestTimeout:     requestTimeout,
-		StreamLease:        streamLease,
-		LoginWindow:        loginWindow,
-		LoginSourceMax:     loginSourceMax,
-		LoginAccountMax:    loginAccountMax,
-		ShutdownTimeout:    shutdownTimeout,
+		AllowOriginlessMutations: allowOriginlessMutations,
+		ListenAddress:            valueOr(lookup, "ANTNEST_EDGE_LISTEN", ":8080"),
+		IdentityURL:              strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
+		AdminConsoleURL:          strings.TrimSpace(lookup("ANTNEST_ADMIN_CONSOLE_URL")),
+		AgentUIURL:               strings.TrimSpace(lookup("ANTNEST_AGENT_UI_URL")),
+		AgentControllerURL:       strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
+		AgentACPURL:              strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_URL")),
+		CookieSecure:             cookieSecure,
+		PublicOrigin:             strings.TrimSpace(lookup("ANTNEST_EDGE_PUBLIC_ORIGIN")),
+		TLSCertFile:              strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CERT_FILE")),
+		TLSKeyFile:               strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_KEY_FILE")),
+		RequestTimeout:           requestTimeout,
+		StreamLease:              streamLease,
+		LoginWindow:              loginWindow,
+		LoginSourceMax:           loginSourceMax,
+		LoginAccountMax:          loginAccountMax,
+		ShutdownTimeout:          shutdownTimeout,
 	}
 	if err := serviceURL("ANTNEST_IDENTITY_SERVICE_URL", config.IdentityURL); err != nil {
 		return Config{}, err

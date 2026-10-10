@@ -81,6 +81,9 @@ func TestWorkspaceHTTPRejectsRequestsBeforeForwarding(t *testing.T) {
 			if w.Code != tc.status {
 				t.Fatalf("status=%d want=%d body=%s", w.Code, tc.status, w.Body.String())
 			}
+			if strings.Contains(tc.name, "csrf") && !strings.Contains(w.Body.String(), `"code":"csrf_failed"`) {
+				t.Fatalf("CSRF assertion was masked by another rejection: %s", w.Body.String())
+			}
 		})
 	}
 }
@@ -179,7 +182,7 @@ func newWorkspaceHTTPHandler(t *testing.T, upstream http.Handler) http.Handler {
 }
 
 func workspaceHTTPRequest(method, path string) *http.Request {
-	r := httptest.NewRequest(method, path, strings.NewReader(`{"opaque":"payload"}`))
+	r := newBrowserRequest(method, path, strings.NewReader(`{"opaque":"payload"}`))
 	addSessionCookies(r, "token-1", "csrf-1")
 	r.Header.Set(session.CSRFHeaderName, "csrf-1")
 	r.Header.Set("Content-Type", "application/json")

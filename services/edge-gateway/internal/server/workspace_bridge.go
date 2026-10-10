@@ -19,10 +19,6 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
 		return nil
 	}
-	if len(request.Header.Values("Origin")) > 0 && !h.sameOrigin(request) {
-		writeError(response, http.StatusForbidden, "forbidden", "Workspace origin is not allowed")
-		return nil
-	}
 	path := request.PathValue("path")
 	agentID, valid := workspaceBridgeAgentID(path)
 	if !valid {

@@ -18,7 +18,7 @@ func TestOIDCCallbackRejectsTransferredBrowserTransaction(t *testing.T) {
 				Principal: ordinaryPrincipal(), AccessToken: "must-not-be-issued", ExpiresAt: now.Add(time.Hour),
 			}}
 			handler := newTestHandler(t, upstream, http.NotFoundHandler(), now)
-			request := httptest.NewRequest(http.MethodGet, "/protocol/oidc/callback?state=valid-state&code=valid-code", nil)
+			request := newBrowserRequest(http.MethodGet, "/protocol/oidc/callback?state=valid-state&code=valid-code", nil)
 			request.Header.Set("Cookie", cookies)
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -34,7 +34,7 @@ func TestOIDCCallbackRejectsTransferredBrowserTransaction(t *testing.T) {
 
 func beginTestOIDC(t *testing.T, handler http.Handler) []*http.Cookie {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/api/session/oidc/start",
+	request := newBrowserRequest(http.MethodPost, "/api/session/oidc/start",
 		strings.NewReader(`{"organization_slug":"engineering","provider_name":"workforce"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestOIDCCallbackRejectsDuplicateParametersWithoutConsumingBinding(t *testin
 	handler := newTestHandler(t, upstream, http.NotFoundHandler(), now)
 	cookies := beginTestOIDC(t, handler)
 	for _, query := range []string{"state=valid-state&state=other&code=a", "state=valid-state&code=a&code=b", "state=valid-state&error=a&error=b"} {
-		request := httptest.NewRequest(http.MethodGet, "/protocol/oidc/callback?"+query, nil)
+		request := newBrowserRequest(http.MethodGet, "/protocol/oidc/callback?"+query, nil)
 		for _, cookie := range cookies {
 			request.AddCookie(cookie)
 		}

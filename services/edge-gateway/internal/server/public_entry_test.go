@@ -119,6 +119,7 @@ func TestProxyClientAddressControlsLoginSourceAdmission(t *testing.T) {
 			})
 			for index, chain := range []string{fixture.first, fixture.second} {
 				r := httptest.NewRequest(http.MethodPost, "/api/session/login", strings.NewReader(fmt.Sprintf(`{"organization_slug":"demo","email":"user%d@example.com","password":"wrong"}`, index)))
+				r.Header.Set("Origin", "https://antnest.example")
 				r.RemoteAddr = fixture.peer
 				r.Header.Set("Content-Type", "application/json")
 				r.Header.Set("X-Forwarded-For", chain)
