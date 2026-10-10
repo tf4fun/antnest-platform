@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import {
   assertAgentDeleted,
@@ -81,13 +82,10 @@ export async function openPropagationFlow({
   };
   const request = async (path, body, key = randomUUID(), timeout = 15000) => {
     signal.throwIfAborted();
-    const cookies = await context.cookies(config.gateway);
-    return context.request.fetch(config.gateway + path, {
+    return gatewayBrowserRequest(context, config.gateway + path, {
       method: body === undefined ? "GET" : "POST",
       headers: {
         Origin: config.gateway,
-        "X-Antnest-CSRF-Token":
-          cookies.find((cookie) => cookie.name === "antnest_csrf")?.value ?? "",
         "Idempotency-Key": key,
       },
       ...(body === undefined ? {} : { data: body }),

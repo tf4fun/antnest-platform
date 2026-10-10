@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 
@@ -74,7 +75,7 @@ export async function openLearningBrowser({
     const view = async () => {
       const selected = workspaceLocation(page.url()).sessionId;
       const url = `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view${selected ? `?sessionId=${encodeURIComponent(selected)}` : ""}`;
-      const response = await context.request.get(url);
+      const response = await gatewayBrowserRequest(context, url);
       assert.equal(response.status(), 200);
       return response.json();
     };

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import { GatewayClient, assertNoStore } from "./support.mjs";
 import { assertSecretFree } from "./evidence.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
@@ -191,7 +192,7 @@ async function bootstrap(client, principal, row, ids, headers = {}) {
   return response.body;
 }
 async function browserJSON(context, path, status = 200) {
-  const response = await context.request.get(gateway + path, {
+  const response = await gatewayBrowserRequest(context, gateway + path, {
     timeout: 15000,
   });
   assert.equal(

@@ -4,13 +4,9 @@ import {
 } from "../../support/development-configuration.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
 import { parseArgs } from "node:util";
+import { GatewayClient } from "../identity-closeout/support.mjs";
 
-const require = createRequire(
-  new URL("../../../services/agent-ui/web/package.json", import.meta.url),
-);
-const { request } = require("playwright");
 const { values } = parseArgs({ options: { config: { type: "string" } } });
 if (!values.config) throw new Error("--config is required");
 const { config, settings } = readDevelopmentConfiguration(
@@ -19,26 +15,18 @@ const { config, settings } = readDevelopmentConfiguration(
 );
 process.umask(0o077);
 mkdirSync(config.output, { recursive: true, mode: 0o700 });
-const api = await request.newContext({
-  baseURL: config.gateway,
-  timeout: 15000,
-});
+const api = new GatewayClient(config.gateway);
 const id = config.agentId;
 try {
-  const login = await api.post("/api/session/login", {
-    data: {
+  await api.request("/api/session/login", {
+    body: {
       organization_slug: settings.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
       email: settings.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
       password: settings.ANTNEST_BOOTSTRAP_ADMIN_PASSWORD,
     },
   });
-  assert.equal(login.status(), 200);
-  const managed = await api.get(`/api/admin/agents/${id}`);
-  assert.equal(managed.status(), 200);
-  const agent = await managed.json();
-  const stateResponse = await api.get(`/api/app/agents/${id}/state`);
-  assert.equal(stateResponse.status(), 200);
-  const state = await stateResponse.json();
+  const { body: agent } = await api.request(`/api/admin/agents/${id}`);
+  const { body: state } = await api.request(`/api/app/agents/${id}/state`);
   assert.equal(agent.agent_id, id, "managed Agent identity mismatch");
   assert.equal(state.agent_id, id, "execution Agent identity mismatch");
   assert.equal(state.availability, "ready");
@@ -69,6 +57,4 @@ try {
     }),
   );
   process.exitCode = 1;
-} finally {
-  await api.dispose();
 }

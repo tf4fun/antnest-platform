@@ -17,6 +17,7 @@ services:
     command: [node, /fixtures/discovery-source.mjs]
     volumes:
       - .:/fixtures:ro
+      - ../../support/gateway-origin.mjs:/support/gateway-origin.mjs:ro
       - ${ANTNEST_DISCOVERY_AUTH_DIRECTORY:?}:/run/auth:ro
     ports: ["127.0.0.1::8080"]
     healthcheck:

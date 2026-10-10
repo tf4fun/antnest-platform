@@ -1,4 +1,5 @@
 import { durablePath } from "../../support/storage.mjs";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -37,7 +38,7 @@ const page = await context.newPage();
 page.setDefaultTimeout(25000);
 const report = { status: "running", checks: [] };
 async function read(path) {
-  const response = await context.request.get(origin + path);
+  const response = await gatewayBrowserRequest(context, origin + path);
   assert.equal(response.status(), 200, path);
   return response.json();
 }

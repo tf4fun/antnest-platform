@@ -195,6 +195,11 @@ All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need
 installed Playwright Chromium and close their browsers before Docker cleanup.
+Browser-backed API probes use `tests/support/gateway-browser-request.mjs` to
+retain Chromium's Secure-cookie session on literal loopback HTTP, which
+Playwright's API client otherwise omits. The bridge preserves cookie attributes
+and domain/path filtering, honors explicit negative-test headers, and never
+follows redirects. Real page requests continue to use Chromium's cookie handling.
 `e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
 Playwright Chromium and the standard local stack images. Its captured receipt
 evidence defaults to `artifacts/verification/`; override its directory with
