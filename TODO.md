@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-10：133 个 issue，69 个已关闭，64 个开放；开放项包含 5 个 Epic 和 59 个执行项。下列队列保留 67 个执行项，其中 8 个已交付。
+Issue 状态最后核对于 2026-10-10：133 个 issue，70 个已关闭，63 个开放；开放项包含 5 个 Epic 和 58 个执行项。下列队列保留 67 个执行项，其中 9 个已交付。
 
 ## 执行约定
 
@@ -18,8 +18,11 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，69 个已关闭，64 �
 ## 当前批次
 
 - 当前按用户指定顺序推进 Epic [#81](https://github.com/tf4fun/antnest-platform/issues/81)：**#10 → #62 → #63 → #58 → #61 → #59 → #60 → #2 → #66 → #64**。本顺序优先于下方按主题组织的队列；#67 保留为后续共享契约工作。
-- 当前执行 [#10](https://github.com/tf4fun/antnest-platform/issues/10)：先定义统一 Origin 契约，再完成 Gateway 的失败测试、入口实现与文档，随后适配测试客户端，最后串行进行组件、Docker 与 CI 集成验收。Epic 中已有的勾选不代表交付完成，issue 保持开放至全部 admission 通过。
-- #10 本地阶段：统一 Origin 与 Fetch Metadata 规则、默认关闭的兼容开关、独立 CSRF 和强制 WebSocket Origin 已通过 Gateway race 门禁（153 个测试、913 个子测试，无跳过）；Workspace 契约 20 个测试、仓库 2,319 个 Node 与 61 个 Python 测试通过，保留 5 个条件跳过。客户端补头和独立 review 已完成；Docker、最终 CI、合并及关闭记录待完成，证据在 `artifacts/verification/issue-10/`。
+- 当前执行 [#62](https://github.com/tf4fun/antnest-platform/issues/62)：共享契约 → Gateway → Admin Console → Agent UI → 脚本客户端与独立 Docker fixture → 显式 HTTPS 集成。契约 revision 17 使用 Secure 模式的 `__Host-` Cookie、独立 32-byte 文件密钥和绑定稳定 Identity token ID 的 HMAC CSRF；Admin 独立 Origin 是单独的第二阶段计划。
+- #62 本地进度：共享密钥生成的 25 项测试先失败后通过；Gateway race 门禁通过 164 个测试及 999 个子测试，无跳过，真实 HTTP/HTTPS 组件覆盖登录、跨会话重放拒绝、旧 Cookie 名拒绝和注销。契约 20 项测试、lint、224 份 Markdown 链接及独立 review 通过。review 发现的 Cookie 名空格重复检测漏洞已有 red/green 证据；前端消费者、脚本 fixture、Docker 与最终 CI 尚未交付，issue 保持开放。证据在独立工作区的 `artifacts/verification/issue-62/`，收尾时保留到主工作区。
+- 已完成：[#10](https://github.com/tf4fun/antnest-platform/issues/10) 随 [PR #241](https://github.com/tf4fun/antnest-platform/pull/241) 合并并关闭，commit `9f96d753`。统一所有 `/api/*` 的 Origin/Fetch Metadata admission，默认拒绝缺少两种证据的写入，显式兼容开关保留独立 CSRF 和 WebSocket Origin 检查；六项 admission 和 Epic #81 复选框已完成。
+- #10 验收：Gateway race 153 个测试、913 个子测试无跳过，契约 20 项测试及仓库 2,319 Node/61 Python 测试通过（5 个条件跳过）。HTTPS 浏览器及 21 项 Origin/CSRF 检查、HTTP 浏览器 10 项、Gateway 认证 61 项和默认部署 54 项全部通过并清理资源。独立 review、lint、格式、链接与存储检查通过。
+- #10 [完整集成 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38061166812) 用时 30 分 28 秒，28 个 job、21 个分片和全部 82 个选中套件已核对归档：72 个正常通过、10 个保留已审查的严格 Trace 告警，无漏跑、超时或中断；53 项当前 PR 检查通过。旧 draft run 的两个跳过矩阵占位项不计作准入。GitHub AI 安全审查因月度额度耗尽（402）在分析前失败，非必需门禁，保留原始记录。证据在 `artifacts/verification/issue-10/ci-evidence-admission.json`。
 - #165–#169 仅在当前服务批次确有相关改动时安排相应测试迁移，不能以兼容性回归代替交付。#10 涉及 Gateway 与测试客户端，不包含 Runtime、Controller、ACP learning 或学习 UI 的这些独立迁移。
 - 最近完成：按用户指定优先处理的 [#57](https://github.com/tf4fun/antnest-platform/issues/57) 已随 [PR #239](https://github.com/tf4fun/antnest-platform/pull/239) 合并并关闭，commit `fdcded30`。交付 Gateway 原生 TLS 1.2+、SIGHUP 证书轮换、明确的公共 Origin 与可信代理边界、独立客户端登录限流、HSTS，以及原生和 Caddy 两种 Compose 部署。六项 admission 已完成，Epic #81 的 #57 已勾选；#10、#62、#2 及 Epic #81 保持开放。
 - #57 本地验收：Gateway race 门禁通过 147 个测试及 285 个子测试，无失败或跳过；覆盖真实入口、证书/主机名校验、轮换时保持 WebSocket、无效替换保留旧证书与 HTTP 101 HSTS。HTTPS Docker/浏览器的 11 项检查、原有 HTTP 安全头的 10 项检查、完整 Skill caller、独立 Registry/Console discovery 及资源清理均通过。最终 `make test-repo` 为 2,319 Node 通过、5 个条件跳过、61 Python 通过；格式、lint、语法、链接、存储策略与独立 review 通过。
@@ -72,7 +75,7 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，69 个已关闭，64 �
 
 - [x] [#57](https://github.com/tf4fun/antnest-platform/issues/57) Edge Gateway has no supported HTTPS deployment: no TLS listener and no trusted-proxy model for Origin, cookies and login rate limits
 - [ ] [#63](https://github.com/tf4fun/antnest-platform/issues/63) Edge Gateway strips a fixed list of identity headers instead of all X-Antnest-*; the list already misses headers that services read
-- [ ] [#10](https://github.com/tf4fun/antnest-platform/issues/10) Edge Gateway accepts state-changing requests without Origin, and admin and session routes have no Origin check
+- [x] [#10](https://github.com/tf4fun/antnest-platform/issues/10) Edge Gateway accepts state-changing requests without Origin, and admin and session routes have no Origin check
 - [ ] [#62](https://github.com/tf4fun/antnest-platform/issues/62) Browser session hardening: cookies lack the __Host- prefix, CSRF token is not bound to the session, Admin and Agent workspace share one origin
 - [ ] [#2](https://github.com/tf4fun/antnest-platform/issues/2) Login admission allows unauthenticated lockout: OIDC start shares one per-organization counter, and full key tables refuse all new logins
 - [ ] [#64](https://github.com/tf4fun/antnest-platform/issues/64) Edge Gateway keeps a second browser workspace stack that no shipped UI uses; its ACP relay shares 4 message slots across all users
