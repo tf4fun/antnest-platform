@@ -75,6 +75,8 @@ export function dockerClient(env, signal, budget = 900000) {
     const invocation = dockerInvocation(
       long ? ["--lifecycle", ...args] : args,
       deadline,
+      Date.now(),
+      callEnv,
     );
     assert(invocation, "Docker integration deadline exceeded");
     const commandFailure = new Error(`Docker ${args[0]} failed`);

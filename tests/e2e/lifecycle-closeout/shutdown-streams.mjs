@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { until } from "../workspace-closeout/state.mjs";
@@ -32,7 +33,7 @@ export function openShutdownWatch(client, path, event, validate, signal) {
         headers: {
           ...init.headers,
           Cookie: client.cookie,
-          Origin: client.base,
+          Origin: gatewayOrigin(client.base),
         },
       });
       const actual = response.headers.get("x-antnest-trace-id");

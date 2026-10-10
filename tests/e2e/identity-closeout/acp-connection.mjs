@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import { randomBytes } from "node:crypto";
 import * as v1 from "@agentclientprotocol/sdk";
 import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
@@ -41,7 +42,7 @@ export function connectACP(version, agent, cookie, options = {}) {
             headers: {
               ...options.headers,
               Cookie: cookie,
-              Origin: gateway,
+              Origin: gatewayOrigin(gateway),
               ...(options.injectTraceParent === false
                 ? {}
                 : { traceparent: `00-${traceID}-${parent}-01` }),

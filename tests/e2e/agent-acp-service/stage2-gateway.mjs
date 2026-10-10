@@ -1,10 +1,14 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { registerFixturePrincipal } from "./stage2-transport.mjs";
 
 export async function gatewayLogin(origin, organizationSlug, email, password) {
   const response = await fetch(`${origin}/api/session/login`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin },
+    headers: {
+      "content-type": "application/json",
+      origin: gatewayOrigin(origin),
+    },
     body: JSON.stringify({
       organization_slug: organizationSlug,
       email,
@@ -37,7 +41,7 @@ export async function gatewayCommand(origin, login, path, body, requestId) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      origin,
+      origin: gatewayOrigin(origin),
       cookie: login.cookie,
       "x-antnest-csrf-token": login.csrf,
       "idempotency-key": requestId,

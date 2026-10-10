@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
@@ -65,7 +66,7 @@ export class GatewayClient {
         headers: {
           "content-type": "application/json",
           Cookie: this.cookie,
-          Origin: this.base,
+          Origin: gatewayOrigin(this.base),
           "X-Antnest-CSRF-Token": this.cookies.get("antnest_csrf") ?? "",
           "Idempotency-Key": randomUUID(),
           ...headers,

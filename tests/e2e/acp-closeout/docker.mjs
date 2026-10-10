@@ -1,13 +1,30 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 
 // Docker commands may stall even when their surrounding polling loop is bounded.
-export function dockerInvocation(args, deadline, now = Date.now()) {
+export function dockerInvocation(args, deadline, now = Date.now(), env = {}) {
   const remaining = Number(deadline) - now;
   if (!Number.isFinite(remaining) || remaining <= 0) return;
   const lifecycle = args[0] === "--lifecycle";
+  let command = lifecycle ? args.slice(1) : args;
+  const explicitOrigin = command.some((value) =>
+    /^(?:(?:--env=|-e))?TEST_GATEWAY_PUBLIC_URL(?:=|$)/u.test(value),
+  );
+  if (
+    ["run", "create"].includes(command[0]) &&
+    !explicitOrigin &&
+    (env.TEST_GATEWAY_PUBLIC_URL || env.ANTNEST_EDGE_PUBLIC_BASE_URL)
+  ) {
+    command = [
+      command[0],
+      "--env",
+      `TEST_GATEWAY_PUBLIC_URL=${gatewayOrigin("http://edge-gateway:8080", env)}`,
+      ...command.slice(1),
+    ];
+  }
   return {
-    args: lifecycle ? args.slice(1) : args,
+    args: command,
     timeoutMs: lifecycle ? remaining : Math.min(30000, remaining),
   };
 }
@@ -16,6 +33,8 @@ function main() {
   const invocation = dockerInvocation(
     process.argv.slice(2),
     process.env.ANTNEST_E2E_DEADLINE_MS,
+    Date.now(),
+    process.env,
   );
   if (!invocation) process.exit(124);
   const child = spawn("docker", invocation.args, {

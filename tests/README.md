@@ -206,6 +206,15 @@ model provider. Set `ANTNEST_GATEWAY_SECURITY_E2E_OUTPUT` to override its privat
 evidence directory. It also removes its owned candidates and verifies that
 retained containers, volumes, networks and image references are unchanged.
 
+`e2e-gateway-tls` adds OpenSSL and the pinned `caddy:2.11.7-alpine` image to those
+prerequisites. It runs the reference proxy overlay with a disposable private CA,
+verifies Node's CA/hostname checks, and pins the temporary leaf key in Chromium
+without changing system trust. Real browser login checks Secure cookies, Console
+admin requests and Workspace prompt/SSE; an authenticated ACP client uses WSS.
+Two separate container addresses verify independent login source limits despite
+forged forwarding headers. `ANTNEST_GATEWAY_TLS_E2E_OUTPUT` selects the private
+evidence directory. Cleanup removes the fixture keys, candidates and deployment.
+
 Some contract checks can be run directly:
 
 ```sh

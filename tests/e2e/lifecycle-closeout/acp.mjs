@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
@@ -22,12 +23,12 @@ export function ownerStream(
   traceID = randomBytes(16).toString("hex"),
 ) {
   return open(
-    `${gateway.replace("http:", "ws:")}/api/app/agents/${agentID}/v1/acp`,
+    `${gateway.replace(/^http/u, "ws")}/api/app/agents/${agentID}/v1/acp`,
     {
       WebSocket: Socket,
       headers: {
         Cookie: cookie,
-        Origin: gateway,
+        Origin: gatewayOrigin(gateway),
         traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
       },
     },

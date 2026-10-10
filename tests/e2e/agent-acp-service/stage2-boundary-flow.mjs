@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -267,7 +268,7 @@ try {
       `${gateway.replace("http:", "ws:")}/api/app/agents/${agentId}/v2/acp`,
       {
         cookie: ownerLogin.cookie,
-        origin: gateway,
+        origin: gatewayOrigin(gateway),
         "x-antnest-user-id": "forged-user",
         "x-antnest-principal-id": "forged-principal",
         "x-antnest-agent-id": "forged-agent",

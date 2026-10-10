@@ -19,7 +19,8 @@ export function fixtureEnvironment(inherited, { project: name, octet }) {
   return {
     ...Object.fromEntries(
       Object.entries(inherited).filter(
-        ([key]) => !/^(?:ANTNEST_|COMPOSE_|OTEL_)/u.test(key),
+        ([key]) =>
+          !/^(?:ANTNEST_|COMPOSE_|OTEL_|TEST_GATEWAY_PUBLIC_URL$)/u.test(key),
       ),
     ),
     ...publicDevelopmentSecrets(),

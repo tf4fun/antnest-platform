@@ -229,6 +229,10 @@ e2e-agent-ui-receipt-contract:
 e2e-gateway-security-headers:
 	ANTNEST_GATEWAY_SECURITY_E2E=1 node --test tests/e2e/edge-gateway/security-headers-docker.test.mjs
 
+.PHONY: e2e-gateway-tls
+e2e-gateway-tls:
+	ANTNEST_GATEWAY_TLS_E2E=1 node --test tests/e2e/edge-gateway/tls-docker.test.mjs
+
 .PHONY: e2e-lifecycle-interrupted
 e2e-lifecycle-interrupted:
 	node tests/e2e/lifecycle-closeout/interrupted-run.mjs

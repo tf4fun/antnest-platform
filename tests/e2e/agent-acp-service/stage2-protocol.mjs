@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import * as acp from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/acp.js";
 import { createHttpStream } from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/http-stream.js";
@@ -7,7 +8,7 @@ export async function firstGatewayState(origin, login, agentId) {
   const response = await fetch(
     `${origin}/api/app/agents/${agentId}/state/watch`,
     {
-      headers: { cookie: login.cookie, origin },
+      headers: { cookie: login.cookie, origin: gatewayOrigin(origin) },
       signal: AbortSignal.timeout(15000),
     },
   );
@@ -76,7 +77,7 @@ export async function openGatewayHttpClient(origin, login, agentId) {
     createHttpStream(`${origin}/api/app/agents/${agentId}/v1/acp`, {
       headers: {
         cookie: login.cookie,
-        origin,
+        origin: gatewayOrigin(origin),
         "x-antnest-csrf-token": login.csrf,
       },
     }),

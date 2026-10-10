@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import * as v1 from "@agentclientprotocol/sdk";
@@ -47,7 +48,7 @@ export async function connect(profile, agent, member, evidence = []) {
     closed = new AbortController();
   const headers = {
     Cookie: member.cookie,
-    Origin: gateway,
+    Origin: gatewayOrigin(gateway),
     "X-Antnest-CSRF-Token": member.cookies.get("antnest_csrf"),
   };
   const stream = profile.http

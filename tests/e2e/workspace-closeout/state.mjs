@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
@@ -34,7 +35,7 @@ export function observeState(client, agentID, signal) {
           headers: {
             ...init.headers,
             Cookie: client.cookie,
-            Origin: client.base,
+            Origin: gatewayOrigin(client.base),
           },
         });
         const actual = response.headers.get("x-antnest-trace-id");

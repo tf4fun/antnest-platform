@@ -25,7 +25,7 @@ function fakeClient({ mutateSession, keepToken = false } = {}) {
           );
           headers.append(
             "set-cookie",
-            `${name}=${this.cookies.get(name)}; Path=/; SameSite=Lax${name === "antnest_session" ? "; HttpOnly" : ""}`,
+            `${name}=${this.cookies.get(name)}; Path=/; Secure; SameSite=Lax${name === "antnest_session" ? "; HttpOnly" : ""}`,
           );
         }
         return {

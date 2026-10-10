@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import * as v1 from "@agentclientprotocol/sdk";
@@ -17,7 +18,7 @@ export function commandConnection(profile, agentId, browser) {
     observed = [];
   const closed = new AbortController();
   const url = `${gateway}/api/app/agents/${agentId}/v${profile.version}/acp`;
-  const headers = { Cookie: browser.cookie, Origin: gateway };
+  const headers = { Cookie: browser.cookie, Origin: gatewayOrigin(gateway) };
   const stream = profile.http
     ? createHttpStream(url, {
         headers: {
