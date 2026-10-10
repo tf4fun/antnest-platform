@@ -11,8 +11,16 @@ is described in the [Agent UI architecture](../../services/agent-ui/docs/archite
 
 The public prefix is `/api/app/workspace/v1`. Gateway authenticates each request,
 enforces the CSRF token on POST, and overwrites all internal identity headers.
-Gateway checks `Origin` only when the request supplies it: a present `Origin`
-must match the Gateway origin, and an absent one is not rejected. Node verifies
+Gateway applies the shared [public-entry Origin rule](../edge-gateway/public-entry.md)
+before routing. Safe methods (GET, HEAD, OPTIONS) may omit Origin; a supplied
+Origin must exactly match the configured public origin. Mutations require a
+matching Origin or, only when Origin is absent, `Sec-Fetch-Site: same-origin`.
+`same-site` and `cross-site` metadata always reject mutations; malformed or
+duplicate metadata, and empty, `null`, foreign or duplicate Origin values also
+reject them. `Sec-Fetch-Site: none` requires a matching Origin. If both headers
+are absent, only the explicit, default-off
+`ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` compatibility setting admits the
+request. Origin admission never replaces the independent CSRF check. Node verifies
 Gateway workload identity and Identity-signed CCT before business handling.
 Signed subject, Organization and roles determine authority; raw identity and
 administrator headers grant nothing. Agent API paths (`/agents/{agentId}/...`)

@@ -17,7 +17,10 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，69 个已关闭，64 �
 
 ## 当前批次
 
-- 下一待办：[#67](https://github.com/tf4fun/antnest-platform/issues/67)，尚未启动。先交付共享错误契约、代码登记表与验证工具，服务迁移随后分批完成，最后跨服务集成验收。
+- 当前按用户指定顺序推进 Epic [#81](https://github.com/tf4fun/antnest-platform/issues/81)：**#10 → #62 → #63 → #58 → #61 → #59 → #60 → #2 → #66 → #64**。本顺序优先于下方按主题组织的队列；#67 保留为后续共享契约工作。
+- 当前执行 [#10](https://github.com/tf4fun/antnest-platform/issues/10)：先定义统一 Origin 契约，再完成 Gateway 的失败测试、入口实现与文档，随后适配测试客户端，最后串行进行组件、Docker 与 CI 集成验收。Epic 中已有的勾选不代表交付完成，issue 保持开放至全部 admission 通过。
+- #10 本地阶段：统一 Origin 与 Fetch Metadata 规则、默认关闭的兼容开关、独立 CSRF 和强制 WebSocket Origin 已通过 Gateway race 门禁（153 个测试、913 个子测试，无跳过）；Workspace 契约 20 个测试、仓库 2,319 个 Node 与 61 个 Python 测试通过，保留 5 个条件跳过。客户端补头和独立 review 已完成；Docker、最终 CI、合并及关闭记录待完成，证据在 `artifacts/verification/issue-10/`。
+- #165–#169 仅在当前服务批次确有相关改动时安排相应测试迁移，不能以兼容性回归代替交付。#10 涉及 Gateway 与测试客户端，不包含 Runtime、Controller、ACP learning 或学习 UI 的这些独立迁移。
 - 最近完成：按用户指定优先处理的 [#57](https://github.com/tf4fun/antnest-platform/issues/57) 已随 [PR #239](https://github.com/tf4fun/antnest-platform/pull/239) 合并并关闭，commit `fdcded30`。交付 Gateway 原生 TLS 1.2+、SIGHUP 证书轮换、明确的公共 Origin 与可信代理边界、独立客户端登录限流、HSTS，以及原生和 Caddy 两种 Compose 部署。六项 admission 已完成，Epic #81 的 #57 已勾选；#10、#62、#2 及 Epic #81 保持开放。
 - #57 本地验收：Gateway race 门禁通过 147 个测试及 285 个子测试，无失败或跳过；覆盖真实入口、证书/主机名校验、轮换时保持 WebSocket、无效替换保留旧证书与 HTTP 101 HSTS。HTTPS Docker/浏览器的 11 项检查、原有 HTTP 安全头的 10 项检查、完整 Skill caller、独立 Registry/Console discovery 及资源清理均通过。最终 `make test-repo` 为 2,319 Node 通过、5 个条件跳过、61 Python 通过；格式、lint、语法、链接、存储策略与独立 review 通过。
 - #57 集成适配：容器测试客户端传递部署的公共 Origin；Playwright API 请求在 literal loopback HTTP 上桥接 Chromium 的 Secure-cookie 会话，保留 Cookie 属性、域/路径过滤、显式负例 Header 和禁止重定向；独立 Registry fixture 补齐只读模块挂载。失败/通过证据保存在 `artifacts/verification/issue-57/`。
