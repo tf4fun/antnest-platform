@@ -596,7 +596,7 @@ async function restoreScenario(
             "content-type": "application/json",
             Cookie: admin.cookie,
             Origin: config.gateway,
-            "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
+            "X-Antnest-CSRF-Token": admin.csrf ?? "",
             "Idempotency-Key": enableKey,
           },
           body: "{}",

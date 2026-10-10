@@ -8,6 +8,7 @@ import io
 import os
 import secrets
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -41,7 +42,12 @@ def request(base, path, method="GET", headers=None, payload=None, data=None):
 
 def main():
     started = []
+    EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
+    credential_directory = tempfile.TemporaryDirectory(prefix="gateway-session-", dir=EVIDENCE.parent)
     try:
+        csrf_key = Path(credential_directory.name) / "csrf.key"
+        with os.fdopen(os.open(csrf_key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as output:
+            output.write(secrets.token_bytes(32))
         docker("run", "-d", "--name", CONSOLE, "--network", f"{PROJECT}_development",
                "--network-alias", "admin-console",
                "-e", "ANTNEST_IDENTITY_SERVICE_URL=http://identity-service:8080",
@@ -51,6 +57,8 @@ def main():
                "-e", f"ANTNEST_SKILL_REGISTRY_API_TOKEN={TOKEN}", "antnest/admin-console:local")
         started.append(CONSOLE)
         docker("run", "-d", "--name", GATEWAY, "--network", f"{PROJECT}_development",
+               "--user", f"{os.getuid()}:{os.getgid()}",
+               "--mount", f"type=bind,source={csrf_key},target=/run/csrf.key,readonly",
                "-p", "127.0.0.1::8080",
                "-e", "ANTNEST_IDENTITY_SERVICE_URL=http://identity-service:8080",
                "-e", "ANTNEST_ADMIN_CONSOLE_URL=http://admin-console:8080",
@@ -58,6 +66,7 @@ def main():
                "-e", "ANTNEST_AGENT_CONTROLLER_URL=http://agent-controller:8080",
                "-e", "ANTNEST_AGENT_ACP_URL=http://agent-acp-service:8080",
                "-e", "ANTNEST_EDGE_PUBLIC_ORIGIN=http://127.0.0.1",
+               "-e", "ANTNEST_EDGE_CSRF_KEY_FILE=/run/csrf.key",
                "-e", "ANTNEST_EDGE_COOKIE_SECURE=true", "antnest/edge-gateway:local")
         started.append(GATEWAY)
         base = "http://" + docker("port", GATEWAY, "8080/tcp").splitlines()[0]
@@ -83,9 +92,9 @@ def main():
                                      {"Content-Type": "application/json", "Origin": "http://127.0.0.1"}, credentials)
         assert status == 200, f"login failed: {status}"
         cookies = dict(header.split(";", 1)[0].split("=", 1) for header in headers.get_all("Set-Cookie", []))
-        assert cookies.get("antnest_session") and cookies.get("antnest_csrf")
+        assert cookies.get("__Host-antnest_session") and cookies.get("__Host-antnest_csrf")
         auth = {"Cookie": "; ".join(f"{key}={value}" for key, value in cookies.items()),
-                "Origin": "http://127.0.0.1", "X-Antnest-CSRF-Token": cookies["antnest_csrf"]}
+                "Origin": "http://127.0.0.1", "X-Antnest-CSRF-Token": cookies["__Host-antnest_csrf"]}
         status, _, page = request(base, "/api/admin/skills", headers=auth)
         assert status == 200 and isinstance(page["items"], list), f"authenticated list failed: {status}"
 
@@ -110,8 +119,11 @@ def main():
         EVIDENCE.write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result))
     finally:
-        for name in reversed(started):
-            docker("rm", "-f", name)
+        try:
+            for name in reversed(started):
+                docker("rm", "-f", name)
+        finally:
+            credential_directory.cleanup()
 
 
 if __name__ == "__main__":

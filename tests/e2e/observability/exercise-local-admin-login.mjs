@@ -9,6 +9,7 @@ import {
 import { collectTrace } from "./collect.mjs";
 import { inspectLocalAdminLogin } from "./local-admin-login.mjs";
 import { durablePath } from "../../support/storage.mjs";
+import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 
 export async function exerciseLocalAdminLogin({
   client,
@@ -42,16 +43,19 @@ export async function exerciseLocalAdminLogin({
     assertNoStore(login.headers);
     const cookies = login.headers.getSetCookie();
     assert.equal(cookies.length, 2);
-    for (const name of ["antnest_session", "antnest_csrf"]) {
+    const prefix = secureCookies ? "__Host-" : "";
+    for (const name of [`${prefix}antnest_session`, `${prefix}antnest_csrf`]) {
       const cookie = cookies.find((value) => value.startsWith(`${name}=`));
       assert(cookie && client.cookies.get(name), "missing session cookie");
       assert(
-        /; Path=\/;/iu.test(cookie) && /; SameSite=Lax(?:;|$)/iu.test(cookie),
+        /; Path=\/;/iu.test(cookie) &&
+          /; SameSite=Lax(?:;|$)/iu.test(cookie) &&
+          !/;\s*Domain=/iu.test(cookie),
         "cookie scope mismatch",
       );
       assert.equal(
         /; HttpOnly(?:;|$)/iu.test(cookie),
-        name === "antnest_session",
+        name === `${prefix}antnest_session`,
       );
       assert.equal(/; Secure(?:;|$)/iu.test(cookie), secureCookies);
     }
@@ -82,7 +86,7 @@ export async function exerciseLocalAdminLogin({
       );
     }
   } finally {
-    if (originalCookies?.has("antnest_session")) {
+    if (originalCookies && gatewaySessionCookies(originalCookies).accessToken) {
       client.cookies = new Map(originalCookies);
       const originalCookie = client.cookie;
       await client.request("/api/session", { method: "DELETE", status: 204 });

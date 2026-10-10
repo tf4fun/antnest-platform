@@ -49,7 +49,7 @@ export async function connect(profile, agent, member, evidence = []) {
   const headers = {
     Cookie: member.cookie,
     Origin: gatewayOrigin(gateway),
-    "X-Antnest-CSRF-Token": member.cookies.get("antnest_csrf"),
+    "X-Antnest-CSRF-Token": member.csrf,
   };
   const stream = profile.http
     ? createHttpStream(`${gateway}/api/app/agents/${agent}/v1/acp`, {

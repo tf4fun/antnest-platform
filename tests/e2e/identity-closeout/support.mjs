@@ -1,4 +1,5 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
+import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
@@ -44,6 +45,14 @@ export class GatewayClient {
       .join("; ");
   }
 
+  get csrf() {
+    return gatewaySessionCookies(this.cookies).csrf;
+  }
+
+  get accessToken() {
+    return gatewaySessionCookies(this.cookies).accessToken;
+  }
+
   async request(path, options = {}) {
     const {
       body,
@@ -67,7 +76,7 @@ export class GatewayClient {
           "content-type": "application/json",
           Cookie: this.cookie,
           Origin: gatewayOrigin(this.base),
-          "X-Antnest-CSRF-Token": this.cookies.get("antnest_csrf") ?? "",
+          "X-Antnest-CSRF-Token": this.csrf,
           "Idempotency-Key": randomUUID(),
           ...headers,
         },

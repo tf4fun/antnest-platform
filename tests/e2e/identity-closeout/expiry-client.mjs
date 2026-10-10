@@ -58,7 +58,7 @@ if (phase === "prepare") {
   assert.equal(recovered.body.principal.user_id, saved.principal.user_id);
   const issued = await login();
   const cookie = browser.cookie;
-  const csrf = browser.cookies.get("antnest_csrf");
+  const csrf = browser.csrf;
   await browser.request("/api/admin/account");
   await waitForExpiry(issued.body.expires_at);
   let denied;

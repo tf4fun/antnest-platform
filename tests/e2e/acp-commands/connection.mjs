@@ -23,7 +23,7 @@ export function commandConnection(profile, agentId, browser) {
     ? createHttpStream(url, {
         headers: {
           ...headers,
-          "X-Antnest-CSRF-Token": browser.cookies.get("antnest_csrf"),
+          "X-Antnest-CSRF-Token": browser.csrf,
         },
         // Let Gateway create a fresh root; do not invent an unexported HTTP parent.
         fetch: observeFetch(fetch, observed),

@@ -202,7 +202,7 @@ test(
         config.project,
       );
       assert.equal(row.Config.Labels["com.docker.compose.service"], "agent-ui");
-      const accessToken = client.cookies.get("antnest_session");
+      const accessToken = client.accessToken;
       assert(accessToken, "Gateway login did not set a session cookie");
       // Secrets reach the exec only through the Docker client environment,
       // never through command-line arguments.

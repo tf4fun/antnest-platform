@@ -7,10 +7,9 @@ import { fixtureSecret, providerAccessToken } from "./oidc-provider.mjs";
 
 export async function addPeerMembership(admin, actor, organization, user) {
   const identity = identityFixture();
-  const session = await identity.browserSession(
-    admin.cookies.get("antnest_session"),
-    { user_id: actor },
-  );
+  const session = await identity.browserSession(admin.accessToken, {
+    user_id: actor,
+  });
   await identity.admin(session, "add-organization-membership", {
     organization_id: organization,
     user_id: user,

@@ -17,47 +17,50 @@ async function fixture(t, handler) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
-test("Gateway client uses login cookies and CSRF, never trusted identity or fabricated trace parents", async (t) => {
-  const calls = [];
-  const url = await fixture(t, (request, response) => {
-    calls.push(request);
-    response.setHeader("content-type", "application/json");
-    if (request.url === "/api/session/login") {
-      response.setHeader("set-cookie", [
-        "antnest_session=test-session; HttpOnly",
-        "antnest_csrf=test-csrf; SameSite=Lax",
-      ]);
-      response.end(JSON.stringify({ principal: { user_id: "user" } }));
-    } else {
-      response.writeHead(202, { "x-antnest-trace-id": "a".repeat(32) });
-      response.end(JSON.stringify({ operation: { request_id: "operation" } }));
-    }
+for (const prefix of ["", "__Host-"])
+  test(`Gateway client preserves ${prefix || "insecure "}cookies and CSRF without fabricated identity or trace parents`, async (t) => {
+    const calls = [];
+    const url = await fixture(t, (request, response) => {
+      calls.push(request);
+      response.setHeader("content-type", "application/json");
+      if (request.url === "/api/session/login") {
+        response.setHeader("set-cookie", [
+          `${prefix}antnest_session=test-session; Path=/; HttpOnly${prefix ? "; Secure" : ""}`,
+          `${prefix}antnest_csrf=test-csrf; Path=/; SameSite=Lax${prefix ? "; Secure" : ""}`,
+        ]);
+        response.end(JSON.stringify({ principal: { user_id: "user" } }));
+      } else {
+        response.writeHead(202, { "x-antnest-trace-id": "a".repeat(32) });
+        response.end(
+          JSON.stringify({ operation: { request_id: "operation" } }),
+        );
+      }
+    });
+    const login = await gatewayLogin(
+      url,
+      "org",
+      "owner@example.com",
+      "test-password",
+    );
+    const result = await gatewayCommand(
+      url,
+      login,
+      "/api/admin/agents",
+      { name: "test" },
+      "create",
+    );
+    assert.equal(result.traceId, "a".repeat(32));
+    assert.equal(result.payload.operation.request_id, "operation");
+    assert.equal(
+      calls[1].headers.cookie,
+      `${prefix}antnest_session=test-session; ${prefix}antnest_csrf=test-csrf`,
+    );
+    assert.equal(calls[1].headers["x-antnest-csrf-token"], "test-csrf");
+    assert.equal(calls[1].headers["idempotency-key"], "create");
+    assert.equal(calls[1].headers.origin, url);
+    assert.equal(calls[1].headers.traceparent, undefined);
+    assert.equal(calls[1].headers["x-antnest-user-id"], undefined);
   });
-  const login = await gatewayLogin(
-    url,
-    "org",
-    "owner@example.com",
-    "test-password",
-  );
-  const result = await gatewayCommand(
-    url,
-    login,
-    "/api/admin/agents",
-    { name: "test" },
-    "create",
-  );
-  assert.equal(result.traceId, "a".repeat(32));
-  assert.equal(result.payload.operation.request_id, "operation");
-  assert.equal(
-    calls[1].headers.cookie,
-    "antnest_session=test-session; antnest_csrf=test-csrf",
-  );
-  assert.equal(calls[1].headers["x-antnest-csrf-token"], "test-csrf");
-  assert.equal(calls[1].headers["idempotency-key"], "create");
-  assert.equal(calls[1].headers.origin, url);
-  assert.equal(calls[1].headers.traceparent, undefined);
-  assert.equal(calls[1].headers["x-antnest-user-id"], undefined);
-});
 
 test("Gateway login rejects a successful response without a real session cookie", async (t) => {
   const url = await fixture(t, (_request, response) =>

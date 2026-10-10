@@ -788,8 +788,7 @@ test(
                 "content-type": "application/json",
                 Cookie: memberClient.cookie,
                 Origin: config.gateway,
-                "X-Antnest-CSRF-Token":
-                  memberClient.cookies.get("antnest_csrf") ?? "",
+                "X-Antnest-CSRF-Token": memberClient.csrf ?? "",
                 ...headers,
               },
               body: JSON.stringify(body),
@@ -1479,8 +1478,7 @@ test(
           {
             Cookie: memberClient.cookie,
             Origin: config.gateway,
-            "X-Antnest-CSRF-Token":
-              memberClient.cookies.get("antnest_csrf") ?? "",
+            "X-Antnest-CSRF-Token": memberClient.csrf ?? "",
           },
           "auto",
           primaryBefore.configurationToken,
@@ -2084,8 +2082,8 @@ test(
       const peerClient = new GatewayClient(config.gateway);
       await peerClient.request("/api/session/login", { body: member });
       assert.notEqual(
-        peerClient.cookies.get("antnest_session"),
-        logoutClient.cookies.get("antnest_session"),
+        peerClient.accessToken,
+        logoutClient.accessToken,
         "Peer observer must use an independent browser session",
       );
       const peerContext = await browser.newContext();

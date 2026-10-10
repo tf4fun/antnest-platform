@@ -162,7 +162,7 @@ export async function waitOffboarding(item, before, response, reason, secrets) {
   assert.equal(revoked.length, 1, "missing or duplicate owner revocation");
   // Console intentionally omits arbitrary event data; check cause through its owning RPC.
   const { context } = await services.sessionContext(
-    item.admin.cookies.get("antnest_session"),
+    item.admin.accessToken,
     item.agent,
   );
   const raw = await services.json(

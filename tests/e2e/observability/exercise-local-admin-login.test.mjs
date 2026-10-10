@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { exerciseLocalAdminLogin } from "./exercise-local-admin-login.mjs";
 
-function fakeClient({ mutateSession, keepToken = false } = {}) {
+function fakeClient({
+  mutateSession,
+  keepToken = false,
+  secureCookies = true,
+  cookiePrefix = secureCookies ? "__Host-" : "",
+} = {}) {
   const principal = { active: true, system_role: "admin", user_id: "user" };
+  const sessionName = `${cookiePrefix}antnest_session`;
+  const csrfName = `${cookiePrefix}antnest_csrf`;
   return {
     cookies: new Map(),
     calls: [],
@@ -18,14 +25,14 @@ function fakeClient({ mutateSession, keepToken = false } = {}) {
       this.calls.push({ path, method });
       const headers = new Headers({ "cache-control": "no-store" });
       if (path === "/api/session/login") {
-        for (const name of ["antnest_session", "antnest_csrf"]) {
+        for (const name of [sessionName, csrfName]) {
           this.cookies.set(
             name,
-            name === "antnest_session" ? "original-token" : "original-csrf",
+            name === sessionName ? "original-token" : "original-csrf",
           );
           headers.append(
             "set-cookie",
-            `${name}=${this.cookies.get(name)}; Path=/; Secure; SameSite=Lax${name === "antnest_session" ? "; HttpOnly" : ""}`,
+            `${name}=${this.cookies.get(name)}; Path=/; ${secureCookies ? "Secure; " : ""}SameSite=Lax${name === sessionName ? "; HttpOnly" : ""}`,
           );
         }
         return {
@@ -39,48 +46,64 @@ function fakeClient({ mutateSession, keepToken = false } = {}) {
       }
       if (method === "DELETE") {
         assert.equal(
-          this.cookies.get("antnest_session"),
+          this.cookies.get(sessionName),
           "original-token",
           "must revoke the original login",
         );
-        assert.equal(this.cookies.get("antnest_csrf"), "original-csrf");
+        assert.equal(this.cookies.get(csrfName), "original-csrf");
         this.revoked = !keepToken;
         this.cookies.clear();
         return { body: null, headers };
       }
       if (options.status === 401) {
         assert(
-          options.headers.Cookie.includes("antnest_session=original-token"),
+          options.headers.Cookie.includes(`${sessionName}=original-token`),
         );
         assert(this.revoked, "old token still resolves");
         return { body: { error: "unauthenticated" }, headers };
       }
       if (mutateSession) {
         this.cookies.set(
-          "antnest_session",
+          sessionName,
           mutateSession === "clear" ? "" : "replacement-token",
         );
         if (mutateSession === "clear") this.cookies.clear();
-        headers.append("set-cookie", "antnest_session=changed; Path=/");
+        headers.append("set-cookie", `${sessionName}=changed; Path=/`);
       }
       return { body: { principal }, headers, traceID: "b".repeat(32) };
     },
   };
 }
 
-test("login exercise revokes and replays the original independent session", async () => {
-  const client = fakeClient();
-  const result = await exerciseLocalAdminLogin({
-    client,
-    settings: {},
-    jaeger: "http://jaeger",
-    collect: async () => ({}),
+for (const secureCookies of [true, false])
+  test(`login exercise revokes and replays the original ${secureCookies ? "Secure" : "insecure"} session`, async () => {
+    const client = fakeClient({ secureCookies });
+    const result = await exerciseLocalAdminLogin({
+      client,
+      secureCookies,
+      settings: {},
+      jaeger: "http://jaeger",
+      collect: async () => ({}),
+    });
+    assert(result.cleanup_revoked);
+    assert.equal(client.calls.filter((c) => c.method === "POST").length, 1);
+    assert.equal(client.calls.filter((c) => c.method === "DELETE").length, 1);
+    assert.equal(client.calls.filter((c) => c.method === "GET").length, 2);
+    assert.equal(client.cookie, "");
   });
-  assert(result.cleanup_revoked);
-  assert.equal(client.calls.filter((c) => c.method === "POST").length, 1);
-  assert.equal(client.calls.filter((c) => c.method === "DELETE").length, 1);
-  assert.equal(client.calls.filter((c) => c.method === "GET").length, 2);
-  assert.equal(client.cookie, "");
+
+test("Secure admission rejects legacy names and still cleans the original token", async () => {
+  const client = fakeClient({ cookiePrefix: "" });
+  await assert.rejects(
+    exerciseLocalAdminLogin({
+      client,
+      settings: {},
+      jaeger: "http://jaeger",
+      collect: async () => ({}),
+    }),
+    /missing session cookie/u,
+  );
+  assert(client.revoked);
 });
 
 for (const mutateSession of ["clear", "replace"])

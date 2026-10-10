@@ -200,6 +200,10 @@ retain Chromium's Secure-cookie session on literal loopback HTTP, which
 Playwright's API client otherwise omits. The bridge preserves cookie attributes
 and domain/path filtering, honors explicit negative-test headers, and never
 follows redirects. Real page requests continue to use Chromium's cookie handling.
+Scripted clients share `tests/support/gateway-session-cookies.mjs` to select
+session and CSRF values from actual Cookie names. `__Host-` names take
+precedence as one mode; helpers never add legacy aliases or infer mode from
+the URL. HTTPS admission assertions still require the prefixed names explicitly.
 `e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
 Playwright Chromium and the standard local stack images. Its captured receipt
 evidence defaults to `artifacts/verification/`; override its directory with

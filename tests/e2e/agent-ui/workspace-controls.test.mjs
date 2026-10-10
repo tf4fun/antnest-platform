@@ -323,7 +323,7 @@ test(
             "content-type": "application/json",
             Cookie: client.cookie,
             Origin: config.gateway,
-            "X-Antnest-CSRF-Token": client.cookies.get("antnest_csrf"),
+            "X-Antnest-CSRF-Token": client.csrf,
           },
           body: JSON.stringify({
             text: `/mode ${value}`,

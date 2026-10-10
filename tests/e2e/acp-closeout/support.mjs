@@ -1,4 +1,5 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
+import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { until } from "./wait.mjs";
@@ -46,7 +47,7 @@ export class BrowserSession {
         .getSetCookie()
         .map((value) => value.split(";")[0])
         .join("; ");
-      this.csrf = this.cookie.match(/(?:^|; )antnest_csrf=([^;]+)/)?.[1] ?? "";
+      this.csrf = gatewaySessionCookies(this.cookie).csrf;
     }
     return response.json();
   }

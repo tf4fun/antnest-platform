@@ -30,6 +30,7 @@ services:
       ANTNEST_AGENT_CONTROLLER_URL: http://dependencies:8104
       ANTNEST_AGENT_ACP_URL: http://dependencies:8105
       ANTNEST_EDGE_COOKIE_SECURE: "true"
+      ANTNEST_EDGE_CSRF_KEY_FILE: /run/auth/csrf.key
       ANTNEST_EDGE_PUBLIC_ORIGIN: http://127.0.0.1
       ANTNEST_EDGE_STREAM_LEASE: 2s
       ANTNEST_SERVICE_AUTH_MODE: token
