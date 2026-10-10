@@ -19,6 +19,7 @@ fn telemetry() -> (InMemorySpanExporter, SdkTracerProvider, tracing::Dispatch) {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("db-test")));
     (exporter, provider, tracing::Dispatch::new(subscriber))

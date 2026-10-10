@@ -71,6 +71,7 @@ async fn rpc_capture_is_scoped_complete_and_does_not_serialize_when_disabled() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("rpc-capture")));
     let calls = Arc::new(AtomicUsize::new(0));
@@ -121,6 +122,7 @@ async fn degraded_readiness_is_visible_without_changing_http_success() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("readiness-test")));
     async {
@@ -156,6 +158,7 @@ async fn response_lifetime_preserves_frames_errors_trailers_and_drop() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("body-test")));
     async {

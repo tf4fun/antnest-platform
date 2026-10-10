@@ -1,5 +1,7 @@
 // Keep process-global tracing state separate from uninstrumented HTTP tests.
 mod support;
+#[path = "../src/test_tracing.rs"]
+mod test_tracing;
 
 use axum::{
     body::Body,
@@ -23,6 +25,7 @@ async fn policy_read_trace_preserves_the_incoming_parent_and_error_outcome() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("egress-test")));
     async {

@@ -181,6 +181,15 @@ node tests/e2e/service-authentication/egress/run.mjs
   receiver rotation, local health, database loss and normal shutdown/restart.
   Actual Controller-to-Egress compatibility remains the final integration batch.
 
+Scoped tracing tests call the service-owned, test-only
+`src/test_tracing.rs` stabilizer before creating a dispatcher. It keeps an
+uninstalled dispatcher alive and warms the OpenTelemetry provider-drop callsite
+so parallel tests cannot disable each other's captures or deadlock during
+provider cleanup. `tests/tracing_registry.rs` runs in its own test binary and
+fixes the first-registration order with a joined thread, checking both events
+and spans and preserving subscriber filters. The default `cargo test` runner
+remains parallel; privilege tests still require exact UID, GID and capabilities.
+
 Unit and isolated component tests live in this service under `tests/`. Real
 TCP, UDP, PostgreSQL, and Linux command-process integration sources live in
 [`tests/integration/runtime-egress`](../../tests/integration/runtime-egress)
