@@ -5,8 +5,6 @@ services:
     image: ${ANTNEST_C4_AGENT_ACP_IMAGE:-antnest/agent-acp-service:local}
   edge-gateway:
     image: ${ANTNEST_C4_EDGE_GATEWAY_IMAGE:-antnest/edge-gateway:local}
-  temporal:
-    ports: !reset []
   stage3-model:
     command: ["node", "/tests/e2e/workspace-closeout/c4-model.mjs"]
     volumes:

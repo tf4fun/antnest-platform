@@ -4,8 +4,6 @@ services:
     image: ${ANTNEST_E2E_GATEWAY_IMAGE:-antnest/edge-gateway:local}
   agent-ui:
     image: ${ANTNEST_E2E_AGENT_UI_IMAGE:-antnest/agent-ui:local}
-  temporal:
-    ports: !reset []
   runtime-controller:
     image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
     environment:

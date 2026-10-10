@@ -1,8 +1,6 @@
 services:
   runtime-controller:
     image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
-  temporal:
-    ports: !reset []
   agent-acp-service:
     labels:
       io.antnest.e2e-run-id: ${ANTNEST_E2E_RUN_ID}

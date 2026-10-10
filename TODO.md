@@ -19,9 +19,10 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，61 个已关闭，70 �
 
 - 活跃项：[#109](https://github.com/tf4fun/antnest-platform/issues/109)，E2E Compose overlay 去重与诊断端口隔离。
 - 分支：`fix/issue-109-e2e-overlays`。
-- 状态：22 个实际 Compose 场景基线通过，端口回归反向验证通过；三个互斥写集合正在完成机械清理。
+- 状态：三个互斥写集合已完成并通过协调者与独立 review；22 个实际 Compose 场景前后完全等价，端口回归反向验证通过。仓库检查串行运行中。
 - 批次边界：现有 `stage3a.compose.yaml` 已修复固定诊断端口；本次保留此行为，合并重复 overlay 并删除无效 Temporal reset，要求前后渲染配置等价。
 - 待验收：`make test-repo`、部署 wiring/ports 检查、一个 ACP 场景及 managed MCP Docker E2E、资源清理、CI。
+- 本地证据：`artifacts/verification/issue-109/`。Docker 已就绪；使用与当前构建输入哈希一致的发布镜像准备 E2E。
 - 下一项：#215。只读预研确认当前使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时；根因尚未验证。修改与验证在当前批次收口后进行。
 
 ## 推进队列

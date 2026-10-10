@@ -120,7 +120,13 @@ so application diagnostic ports remain suppressed.
 
 `make test-deployment-ports` renders all Compose profiles and both overlay orders,
 verifying the Gateway-only base and exact loopback diagnostic mappings. It needs
-the Compose CLI, but no running Engine. `make e2e-deployment-ports` uses a fresh
+the Compose CLI, but no running Engine. It also exercises the Stage 3a runner's
+Compose dispatch for every profile and checks the lifecycle foundation and C4
+overlays. Disposable suites keep only their assigned loopback publications and
+allocate dynamic endpoints above the fixed service addresses. The eight ACP and
+managed-MCP profiles share `tests/e2e/support/compose.isolated-networks.yaml`;
+their PostgreSQL and Jaeger publications come from `tests/e2e/stage3a.compose.yaml`.
+`make e2e-deployment-ports` uses a fresh
 PostgreSQL/Temporal project to verify a real database query and Temporal's gRPC
 system-info/namespace calls through Docker-assigned host ports, then verifies
 owned resource cleanup. This is deployment-tooling evidence; full platform

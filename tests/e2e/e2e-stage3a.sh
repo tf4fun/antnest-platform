@@ -143,6 +143,8 @@ trap 'rm -rf -- "${credentials_root:?}"' EXIT
 fixture_environment=$(node tests/support/authenticated-e2e.mjs "$COMPOSE_PROJECT_NAME" "$network_octet")
 eval "$fixture_environment"
 unset fixture_environment
+export ANTNEST_E2E_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+export ANTNEST_E2E_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
 export ANTNEST_E2E_RUN_ID=$(node -e 'process.stdout.write(crypto.randomUUID())')
 export ANTNEST_POSTGRES_HOST_PORT=$port_base
 export ANTNEST_EDGE_HOST_PORT=$((port_base + 1))
@@ -165,38 +167,26 @@ acp_session=${ANTNEST_E2E_ACP_SESSION:-false}
 agent_access=${ANTNEST_E2E_AGENT_ACCESS:-false}
 tool_progress=${ANTNEST_E2E_TOOL_PROGRESS:-false}
 if [ "$tool_progress" = true ]; then
-  export ANTNEST_PROGRESS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_PROGRESS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 file_observations=${ANTNEST_E2E_FILE_OBSERVATIONS:-false}
 if [ "$file_observations" = true ]; then
-  export ANTNEST_FILES_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_FILES_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 structured_plan=${ANTNEST_E2E_STRUCTURED_PLAN:-false}
 if [ "$structured_plan" = true ]; then
-  export ANTNEST_PLAN_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_PLAN_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 slash_commands=${ANTNEST_E2E_SLASH_COMMANDS:-false}
 if [ "$slash_commands" = true ]; then
-  export ANTNEST_COMMANDS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_COMMANDS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 multimodal=${ANTNEST_E2E_MULTIMODAL:-false}
 if [ "$multimodal" = true ]; then
-  export ANTNEST_MULTIMODAL_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_MULTIMODAL_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 session_cost=${ANTNEST_E2E_SESSION_COST:-false}
 if [ "$session_cost" = true ]; then
-  export ANTNEST_COST_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_COST_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 rpc_response_loss=${ANTNEST_E2E_RPC_RESPONSE_LOSS:-false}
@@ -261,8 +251,6 @@ if [ "$tool_permissions" = true ]; then
   for incompatible in "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
     [ "$incompatible" = false ] || { echo 'Tool permissions require a separate disposable profile' >&2; exit 1; }
   done
-  export ANTNEST_PERMISSIONS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_PERMISSIONS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 acp_persistence=${ANTNEST_E2E_ACP_PERSISTENCE:-false}
@@ -311,8 +299,6 @@ if [ "$managed_mcp" = true ]; then
     *) echo 'Managed MCP version must be 1 or 2' >&2; exit 1 ;;
   esac
   tool_profile=managed-mcp
-  export ANTNEST_MANAGED_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_MANAGED_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 case "$tool_progress" in
@@ -414,9 +400,9 @@ compose() {
   fi
   if [ "$managed_mcp" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/managed-mcp/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/managed-mcp/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
@@ -438,57 +424,57 @@ compose() {
   fi
   if [ "$session_cost" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-cost/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-cost/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
   if [ "$multimodal" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-multimodal/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-multimodal/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
   if [ "$tool_permissions" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-permissions/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-permissions/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
   if [ "$slash_commands" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-commands/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-commands/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
   if [ "$structured_plan" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-plan/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-plan/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
   if [ "$file_observations" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-files/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-files/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
   if [ "$tool_progress" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-progress/compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-progress/compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
