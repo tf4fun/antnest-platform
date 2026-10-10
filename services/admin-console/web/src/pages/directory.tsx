@@ -1,5 +1,6 @@
 import {
   LoaderCircle,
+  Monitor,
   Pencil,
   Power,
   RefreshCw,
@@ -19,6 +20,7 @@ import {
   SearchField,
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
+import { SessionManagement } from "../components/session-management";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, Loading, SuccessNotice } from "../components/ui/feedback";
@@ -48,6 +50,7 @@ export function DirectoryPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState("");
   const [editing, setEditing] = useState<DirectoryMember>();
+  const [sessionTarget, setSessionTarget] = useState<DirectoryMember>();
   const [editError, setEditError] = useState("");
   const [activationTarget, setActivationTarget] = useState<DirectoryMember>();
   const [activationError, setActivationError] = useState("");
@@ -232,6 +235,7 @@ export function DirectoryPage({
             systemAdministrator={systemAdministrator}
             onEdit={(member) => { setEditError(""); setSuccessMessage(""); setEditing(member); }}
             onSetActive={(member) => { setActivationError(""); setSuccessMessage(""); setActivationTarget(member); }}
+            onSessions={setSessionTarget}
           />
         )
       ) : groups.length === 0 ? (
@@ -298,6 +302,9 @@ export function DirectoryPage({
         onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateError(""); }}
         onSubmit={createUser}
       />
+      <SessionManagement open={Boolean(sessionTarget)} onOpenChange={open => { if (!open) setSessionTarget(undefined); }}
+        user={sessionTarget ? { id: sessionTarget.user.id, name: sessionTarget.membership.display_name, current: sessionTarget.user.id === currentUserID } : undefined}
+        organizationName={organizationName} />
       <EditMembershipDialog
         member={editing}
         error={editError}
@@ -323,6 +330,7 @@ function MemberTable({
   systemAdministrator,
   onEdit,
   onSetActive,
+  onSessions,
 }: {
   currentUserID: string;
   members: DirectoryMember[];
@@ -330,6 +338,7 @@ function MemberTable({
   systemAdministrator: boolean;
   onEdit: (member: DirectoryMember) => void;
   onSetActive: (member: DirectoryMember) => void;
+  onSessions: (member: DirectoryMember) => void;
 }) {
   return (
     <>
@@ -361,8 +370,10 @@ function MemberTable({
                 <dd className="mt-1 text-xs text-muted-foreground">{dateTime(membership.created_at)}</dd>
               </div>
             </dl>
-            {membership.source === "local" || systemAdministrator ? (
               <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-3">
+                <Button aria-label={`Manage ${membership.display_name} browser sessions`} disabled={actionsDisabled} size="sm" variant="secondary" onClick={() => onSessions(member)}>
+                  <Monitor className="h-4 w-4" />Sessions
+                </Button>
                 {membership.source === "local" ? (
                   <Button disabled={actionsDisabled} size="sm" variant="secondary" onClick={() => onEdit(member)}>
                     <Pencil className="h-4 w-4" />
@@ -382,7 +393,6 @@ function MemberTable({
                   )
                 ) : null}
               </div>
-            ) : null}
           </MobileResourceItem>
         );
       })}
@@ -421,6 +431,9 @@ function MemberTable({
                 <td className="px-3 py-3 text-muted-foreground">{dateTime(membership.created_at)}</td>
                 <td className="px-3 py-3">
                   <div className="flex justify-end gap-1">
+                    <Button aria-label={`Manage ${membership.display_name} browser sessions`} title="Manage browser sessions" disabled={actionsDisabled} size="icon" variant="ghost" onClick={() => onSessions(member)}>
+                      <Monitor className="h-4 w-4" />
+                    </Button>
                     {membership.source === "local" ? (
                       <Button
                         aria-label={`Edit ${membership.display_name}`}

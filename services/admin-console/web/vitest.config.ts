@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.tsx"],
+    setupFiles: ["./src/test/session-fixture.ts"],
     maxWorkers: 1,
     restoreMocks: true,
     clearMocks: true,

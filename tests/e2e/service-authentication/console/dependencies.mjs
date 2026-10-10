@@ -12,7 +12,27 @@ const stats = {
   closed: 0,
   active: 0,
   discovery: [],
+  browserSessions: [],
 };
+const issuedAt = Date.now();
+let sessions = [
+  ["public-session-01", "org-1"],
+  ["public-session-02", "org-1"],
+  ["public-session-03", "org-2"],
+].map(([id, organization_id]) => ({
+  id,
+  organization_id,
+  organization_slug: organization_id,
+  organization_name: organization_id,
+  created_at: new Date(issuedAt).toISOString(),
+  last_active_at: new Date(issuedAt).toISOString(),
+  idle_expires_at: new Date(issuedAt + 1800000).toISOString(),
+  expires_at: new Date(issuedAt + 43200000).toISOString(),
+  user_agent_hint: "<img src=x onerror=alert(1)> Synthetic browser",
+  current: false,
+  sid: "private-session-canary",
+  token_hash: "private-token-hash-canary",
+}));
 const servers = [];
 const watches = new Set();
 function json(w, body, status = 200) {
@@ -74,8 +94,102 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               display_name: "Administrator",
             },
           });
-        if (path.endsWith("change-local-password"))
-          return json(w, { status: "changed" });
+        if (path === "/rpc/identity/create-local-user")
+          return json(w, {
+            user: { id: "created-user", system_role: "user", active: true },
+            membership: {
+              id: "created-member",
+              user_id: "created-user",
+              email: body.email,
+              display_name: body.display_name,
+              role: body.role,
+              source: "local",
+              active: true,
+            },
+          });
+        if (
+          [
+            "/rpc/identity/list-user-sessions",
+            "/rpc/identity/revoke-user-sessions",
+          ].includes(path)
+        ) {
+          const revoke = path.endsWith("revoke-user-sessions");
+          const allowed = revoke
+            ? ["actor_principal_id", "user_id", "scope", "mode", "request_id"]
+            : ["actor_principal_id", "user_id", "scope", "limit", "after_id"];
+          if (
+            r.method !== "POST" ||
+            body.scope !== "organization" ||
+            body.actor_principal_id !== claims.sub ||
+            Object.keys(body).some((key) => !allowed.includes(key)) ||
+            (revoke
+              ? body.mode !== "all" || !body.request_id
+              : !Number.isInteger(body.limit) ||
+                body.limit < 1 ||
+                body.limit > 100)
+          )
+            throw Error("session_scope_invalid");
+          stats.browserSessions.push({
+            path,
+            ...body,
+            organization: claims.org,
+            contextDigest: createHash("sha256").update(token).digest("hex"),
+          });
+          if (body.user_id === "unavailable")
+            return json(
+              w,
+              {
+                code: "unavailable",
+                message: "Identity unavailable",
+                retryable: true,
+              },
+              503,
+            );
+          if (body.user_id === "expired")
+            return json(
+              w,
+              {
+                code: "unauthenticated",
+                message: "Caller session expired",
+                retryable: false,
+              },
+              401,
+            );
+          if (body.user_id !== "target-user")
+            return json(
+              w,
+              {
+                code: "not_found",
+                message: "Target membership missing",
+                retryable: false,
+              },
+              404,
+            );
+          const visible = sessions.filter(
+            (row) => row.organization_id === claims.org,
+          );
+          if (revoke) {
+            sessions = sessions.filter(
+              (row) => row.organization_id !== claims.org,
+            );
+            return json(w, {
+              revoked_count: visible.length,
+              current_revoked: false,
+              sid: "private-session-canary",
+            });
+          }
+          const scanned = visible.filter(
+            (row) => row.id > (body.after_id ?? ""),
+          );
+          const page = scanned.slice(0, body.limit);
+          return json(w, {
+            sessions: page,
+            ...(scanned.length > body.limit
+              ? { next_after_id: page.at(-1).id }
+              : {}),
+            token: "private-token-canary",
+          });
+        }
       }
       if (service === "agent-controller") {
         if (

@@ -38,8 +38,6 @@ const (
 	defaultBrowserPageSize     = 100
 	maximumBrowserPageSize     = 100
 	maximumListCursorBytes     = 2048
-	minimumPasswordBytes       = 12
-	maximumPasswordBytes       = 1024
 )
 
 type Backend interface {
@@ -117,7 +115,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/execution-synchronization", h.withPrincipal(h.getExecutionSynchronization))
 	h.mux.HandleFunc("GET /api/admin/template-defaults", h.withPrincipal(h.templateDefaults))
 	h.mux.HandleFunc("GET /api/admin/account", h.withPrincipal(h.currentAccount))
-	h.mux.HandleFunc("POST /api/admin/account/password", h.withPrincipal(h.changeOwnPassword))
+	h.registerBrowserSessionRoutes()
 	h.mux.HandleFunc("GET /api/admin/directory", h.withPrincipal(h.directory))
 	h.mux.HandleFunc("POST /api/admin/directory/users", h.withPrincipal(h.createLocalUser))
 	h.mux.HandleFunc("POST /api/admin/directory/memberships/{membership_id}", h.withPrincipal(h.updateMembership))
@@ -258,54 +256,6 @@ func (h *handler) currentAccount(
 	}
 	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
 		"/rpc/identity/get-current-account", "", payload, projectCurrentAccount)
-}
-
-type changeOwnPasswordInput struct {
-	CurrentPassword string `json:"current_password"`
-	NewPassword     string `json:"new_password"`
-}
-
-func (h *handler) changeOwnPassword(
-	response http.ResponseWriter,
-	request *http.Request,
-	actor principal.Principal,
-) {
-	var input changeOwnPasswordInput
-	if !decodeJSON(response, request, &input) {
-		return
-	}
-	if input.CurrentPassword == "" ||
-		len(input.NewPassword) < minimumPasswordBytes || len(input.NewPassword) > maximumPasswordBytes {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Password fields are invalid")
-		return
-	}
-	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "account")
-	if !ok {
-		return
-	}
-	payload := map[string]string{
-		"request_id": requestID, "actor_principal_id": actor.UserID, "user_id": actor.UserID,
-		"current_password": input.CurrentPassword, "new_password": input.NewPassword,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		writeError(response, http.StatusInternalServerError, "encoding_failed", "Request could not be encoded")
-		return
-	}
-	result, ok := h.read(response, request, upstream.Identity, http.MethodPost,
-		"/rpc/identity/change-local-password", "", body)
-	if !ok {
-		return
-	}
-	var failure struct {
-		Code string `json:"code"`
-	}
-	if result.status == http.StatusUnauthorized && json.Unmarshal(result.body, &failure) == nil &&
-		failure.Code == "unauthenticated" {
-		writeError(response, http.StatusUnauthorized, "invalid_current_password", "The current password is incorrect.")
-		return
-	}
-	h.writeProjected(response, request, upstream.Identity, result, projectStatus)
 }
 
 type createLocalUserInput struct {
@@ -1098,7 +1048,8 @@ func (h *handler) writeProjected(
 		result.body = projected
 		result.header.Set("Content-Type", "application/json")
 	}
-	result.header.Set("Cache-Control", "no-store")
+	response.Header().Set("Cache-Control", "no-store")
+	result.header.Del("Cache-Control")
 	writeRaw(response, result.status, result.header, result.body)
 }
 

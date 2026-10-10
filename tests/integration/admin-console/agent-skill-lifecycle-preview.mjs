@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { durablePath } from "../../support/storage.mjs";
 import {
   assertNoOverflow,
+  consoleSessionMetadata,
+  prepareConsoleSession,
+  fulfillConsoleActivity,
   withConsoleBrowser,
 } from "./console-browser-harness.mjs";
 
@@ -67,6 +70,7 @@ async function exercise(browser, origin, viewport, label) {
   const results = [];
   for (const action of ["rebuild", "enable"]) {
     const context = await browser.newContext({ viewport });
+    await prepareConsoleSession(context, origin);
     const errors = [];
     const unexpected = [];
     const writes = [];
@@ -75,6 +79,7 @@ async function exercise(browser, origin, viewport, label) {
         const request = route.request();
         const url = new URL(request.url());
         if (url.origin !== origin) return route.abort();
+        if (await fulfillConsoleActivity(route)) return;
         if (!url.pathname.startsWith("/api/")) return route.continue();
         if (url.pathname.endsWith("/events/watch"))
           return route.fulfill({
@@ -117,7 +122,10 @@ async function exercise(browser, origin, viewport, label) {
         };
         const fixtures = {
           "/api/session": {
+            ...consoleSessionMetadata,
             principal: {
+              organization_slug: "test",
+              organization_name: "Test organization",
               user_id: "user-admin",
               organization_id: "org-test",
               membership_id: "member-test",
@@ -126,13 +134,14 @@ async function exercise(browser, origin, viewport, label) {
               active: true,
             },
           },
-          "/api/admin/account": {
+          "/api/session/account": {
             account: {
+              user_id: "user-admin",
+              organization_id: "org-test",
+              membership_id: "member-test",
               email: "admin@example.test",
               display_name: "Administrator",
               source: "local",
-              organization_slug: "test",
-              organization_name: "Test organization",
               local_password_available: true,
             },
           },

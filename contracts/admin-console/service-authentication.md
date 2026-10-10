@@ -14,6 +14,13 @@ organization-scoped. The signed subject, organization, membership and roles
 construct the principal; X-Antnest headers never authenticate or select it.
 Existing system/organization administrator checks remain mandatory.
 
+Browser session list/revoke operations use Identity revision 15 and always fix
+scope to the signed organization, even for system administrators. Target User
+membership and live `sid` admission are validated by Identity. Public session
+references are unrelated to private `sid` claims; neither may be selected in a
+browser body. The Console password mutation is retired: only Gateway revision
+19 owns browser password rotation and the resulting Cookie transition.
+
 Console obtains bounded public JWKS only from the configured, authenticated
 Identity origin. Cache trust expires after 30 seconds. A refresh uses the
 dependency timeout, serializes concurrent requests and allows at most one

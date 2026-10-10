@@ -62,13 +62,25 @@ browser and route `/protocol/oidc/callback` and `/scim/v2` to Edge Gateway.
 
 Local password rotation has no service-side configuration. Credential fields
 are request-only and must not be added to access logs, traces, environment
-variables, or retry storage. Existing browser sessions remain governed by
-Identity access-token lifetime and explicit logout.
-An incorrect current password returns `401 invalid_current_password` from the
-BFF and stays in the password dialog. A Gateway `401 unauthenticated` means the
+variables, or retry storage. Gateway revision 19 owns `/api/session/password`;
+the old Console password route is denied. Identity atomically changes the
+password, revokes all browser sessions across organizations, and issues a
+replacement bounded by the original absolute deadline. The browser validates
+the replacement Cookies before rebuilding private pages.
+An incorrect current password returns `400 invalid_current_password` from
+Gateway and stays in the password dialog. A Gateway `401 unauthenticated` means the
 browser must sign in again, including when changing its password. Unknown or
 malformed `401` responses are not exempted. Dependency `503` failures keep the
 session and allow an explicit retry; no password command is retried automatically.
+
+The [browser session policy](../../../contracts/identity/browser-sessions.md)
+defines the default 30-minute idle and 12-hour absolute limits. Only genuine
+input triggers `/api/session/activity`; background reads, event recovery,
+focus, visibility changes and programmatic scrolling never renew the session.
+The response hint bounds both report spacing and the in-flight timeout. Dirty
+input waits for completion or cancellation; failures do not retry without input.
+Self session controls cover all organizations. Directory session controls use
+only the current signed organization, including for system administrators.
 
 An overview with unavailable Agent inventory is never emitted: that failure
 fails the request. Optional section envelopes should be surfaced as partial-data

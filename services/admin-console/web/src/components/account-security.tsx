@@ -1,15 +1,17 @@
 import { KeyRound, LoaderCircle } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../lib/api";
 import { passwordChangeError } from "../lib/forms";
+import type { Session } from "../lib/types";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { ErrorNotice, SuccessNotice } from "./ui/feedback";
 import { Field, Input } from "./ui/input";
 
-export function AccountSecurity({ open, onOpenChange }: {
+export function AccountSecurity({ open, onOpenChange, onSession }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSession: (session: Session) => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -17,6 +19,12 @@ export function AccountSecurity({ open, onOpenChange }: {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [changed, setChanged] = useState(false);
+  const mounted = useRef(false);
+  const submitting = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   function close() {
     setCurrentPassword("");
@@ -30,23 +38,28 @@ export function AccountSecurity({ open, onOpenChange }: {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting.current) return;
     const validationError = passwordChangeError(currentPassword, newPassword, confirmation);
     if (validationError) {
       setError(validationError);
       return;
     }
     setPending(true);
+    submitting.current = true;
     setError("");
     try {
-      await api.changeOwnPassword(currentPassword, newPassword);
+      const session = await api.changeOwnPassword(currentPassword, newPassword);
+      if (!mounted.current) return;
       setCurrentPassword("");
       setNewPassword("");
       setConfirmation("");
       setChanged(true);
+      onSession(session);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (mounted.current) setError(errorMessage(cause));
     } finally {
-      setPending(false);
+      submitting.current = false;
+      if (mounted.current) setPending(false);
     }
   }
 
@@ -79,7 +92,7 @@ export function AccountSecurity({ open, onOpenChange }: {
               onChange={(event) => setCurrentPassword(event.target.value)}
             />
           </Field>
-          <Field label="New password" hint="At least 12 bytes.">
+          <Field label="New password" hint="At least 12 characters. Changing it signs out your other browser sessions.">
             <Input
               autoComplete="new-password"
               disabled={pending}

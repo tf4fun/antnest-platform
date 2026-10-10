@@ -38,6 +38,9 @@ import type {
   OIDCProviderResult,
   RemoteErrorBody,
   Session,
+  SessionMetadata,
+  BrowserSessionPage,
+  SessionRevocation,
   SCIMTokenIssue,
   SCIMTokenList,
   TemplateList,
@@ -58,14 +61,81 @@ export class APIError extends Error {
 
 let browserSession = Symbol();
 let commandPrincipal = "uninitialized";
+let validatedHint: string | undefined;
+let validationPending = false;
+const sessionRequests = new Set<AbortController>();
+
+export type SessionRequest = { generation: symbol; hint: string };
+const validatedSessions = new WeakMap<Session, SessionRequest>();
+
+export function sessionResponseCurrent(session: Session): boolean {
+  const request = validatedSessions.get(session);
+  return request !== undefined && sessionRequestCurrent(request);
+}
+
+function cancelSessionRequests(): void {
+  browserSession = Symbol();
+  for (const controller of sessionRequests) controller.abort();
+  sessionRequests.clear();
+}
 
 export function resetSessionRequests(principal?: Pick<Session["principal"], "organization_id" | "user_id" | "membership_id">): void {
-  browserSession = Symbol();
+  cancelSessionRequests();
+  validatedHint = principal ? csrfFromCookie(document.cookie) : undefined;
+  validationPending = false;
   commandPrincipal = principal ? JSON.stringify([principal.organization_id, principal.user_id, principal.membership_id]) : crypto.randomUUID();
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const requestSession = browserSession;
+function requireSessionValidation(): void {
+  if (validationPending) return;
+  validationPending = true;
+  validatedHint = undefined;
+  cancelSessionRequests();
+  window.dispatchEvent(new Event("antnest:session-validation-required"));
+}
+
+function staleSession(): DOMException {
+  return new DOMException("The browser session changed. Validate the current session before trying again.", "AbortError");
+}
+
+export function captureSessionRequest(unvalidated = false): SessionRequest {
+  const hint = csrfFromCookie(document.cookie);
+  if (!unvalidated && (!hint || hint !== validatedHint)) {
+    requireSessionValidation();
+    throw staleSession();
+  }
+  return { generation: browserSession, hint };
+}
+
+export function sessionRequestCurrent(request: SessionRequest): boolean {
+  if (request.generation !== browserSession) return false;
+  if (request.hint !== csrfFromCookie(document.cookie)) {
+    requireSessionValidation();
+    return false;
+  }
+  return true;
+}
+
+function assertSessionRequest(request: SessionRequest): void {
+  if (!sessionRequestCurrent(request)) throw staleSession();
+}
+
+export function onSessionRequestCancelled(request: SessionRequest, cancel: () => void): () => void {
+  const controller = new AbortController();
+  controller.signal.addEventListener("abort", cancel, { once: true });
+  if (sessionRequestCurrent(request)) sessionRequests.add(controller);
+  else controller.abort();
+  return () => {
+    sessionRequests.delete(controller);
+    controller.signal.removeEventListener("abort", cancel);
+  };
+}
+
+async function request<T>(path: string, init: RequestInit = {}, options: { unvalidated?: boolean; writer?: "login" | "password" | "logout" } = {}): Promise<T> {
+  const requestSession = captureSessionRequest(options.unvalidated);
+  const controller = new AbortController();
+  sessionRequests.add(controller);
+  const signal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -73,38 +143,95 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const token = csrfFromCookie(document.cookie);
+    const token = requestSession.hint;
     if (token) headers.set("X-Antnest-CSRF-Token", token);
   }
-  const response = await fetch(path, { ...init, method, headers, credentials: "same-origin" });
-  if (response.status === 204) return undefined as T;
-  let body: unknown;
   try {
-    const text = await response.text();
-    body = text ? JSON.parse(text) : {};
-  } catch {
-    notifySessionFailure(requestSession, path, response.status);
-    throw new APIError(response.status, "invalid_response", "The server returned an invalid response.");
+    assertSessionRequest(requestSession);
+    let response: Response;
+    try {
+      response = await fetch(path, { ...init, method, headers, signal, credentials: "same-origin" });
+    } catch (cause) {
+      assertSessionRequest(requestSession);
+      throw cause;
+    }
+    const cookieTransition = options.writer && (response.ok || options.writer === "logout" && response.status === 401);
+    const assertResponse = () => {
+      if (requestSession.generation !== browserSession) throw staleSession();
+      if (signal.aborted) throw new DOMException("Request cancelled", "AbortError");
+      if (!cookieTransition) assertSessionRequest(requestSession);
+      // Logout may clear delivery, but cannot apply to another tab's replacement.
+      if (options.writer === "logout" && csrfFromCookie(document.cookie) && csrfFromCookie(document.cookie) !== requestSession.hint) {
+        requireSessionValidation();
+        throw staleSession();
+      }
+    };
+    assertResponse();
+    if (response.status === 204) {
+      if (options.writer === "login" || options.writer === "password") {
+        requireSessionValidation();
+        throw new APIError(502, "invalid_response", "The session transition returned no session details.");
+      }
+      return undefined as T;
+    }
+    let body: unknown;
+    try {
+      const text = await response.text();
+      body = text ? JSON.parse(text) : {};
+    } catch {
+      assertResponse();
+      if (cookieTransition && options.writer !== "logout") requireSessionValidation();
+      notifySessionFailure(requestSession, path, response.status);
+      throw new APIError(response.status, "invalid_response", "The server returned an invalid response.");
+    }
+    assertResponse();
+    if (!response.ok) {
+      const remote = (body !== null && typeof body === "object" ? body : {}) as RemoteErrorBody;
+      const code = typeof remote.code === "string" ? remote.code : "request_failed";
+      const message = typeof remote.message === "string" ? remote.message : "Request failed.";
+      if (options.writer !== "logout") notifySessionFailure(requestSession, path, response.status, code);
+      throw new APIError(response.status, code, message, remote);
+    }
+    if (cookieTransition && options.writer !== "logout") {
+      // The server response legitimately wrote Cookies. Cancel the old generation
+      // and validate the browser's current Cookies, which another tab may also have changed.
+      resetSessionRequests();
+      return await readSession() as T;
+    }
+    if (!["GET", "HEAD", "OPTIONS"].includes(method) &&
+        (/^\/api\/admin\/(provider-connections|model-profiles|templates)(\/|$)/.test(path) ||
+          /^\/api\/admin\/agents($|\/[^/]+\/(rebuild|disable|enable|delete)$)/.test(path))) {
+      window.dispatchEvent(new Event("antnest:configuration-changed"));
+    }
+    return body as T;
+  } finally {
+    sessionRequests.delete(controller);
   }
-  if (!response.ok) {
-    const remote = (body !== null && typeof body === "object" ? body : {}) as RemoteErrorBody;
-    const code = typeof remote.code === "string" ? remote.code : "request_failed";
-    const message = typeof remote.message === "string" ? remote.message : "Request failed.";
-    notifySessionFailure(requestSession, path, response.status, code);
-    throw new APIError(response.status, code, message, remote);
-  }
-  if (requestSession === browserSession && !["GET", "HEAD", "OPTIONS"].includes(method) &&
-      (/^\/api\/admin\/(provider-connections|model-profiles|templates)(\/|$)/.test(path) ||
-        /^\/api\/admin\/agents($|\/[^/]+\/(rebuild|disable|enable|delete)$)/.test(path))) {
-    window.dispatchEvent(new Event("antnest:configuration-changed"));
-  }
-  return body as T;
 }
 
-function notifySessionFailure(requestSession: symbol, path: string, status: number, code?: string): void {
-  if (requestSession === browserSession && invalidatesBrowserSession(path, status, code)) {
+function notifySessionFailure(requestSession: SessionRequest, path: string, status: number, code?: string): void {
+  if (sessionRequestCurrent(requestSession) && invalidatesBrowserSession(path, status, code)) {
     window.dispatchEvent(new Event("antnest:session-expired"));
   }
+}
+
+async function readSession(signal?: AbortSignal): Promise<Session> {
+  const requestSession = captureSessionRequest(true);
+  const result = await request<Session>("/api/session", { signal }, { unvalidated: true });
+  assertSessionRequest(requestSession);
+  if (signal?.aborted) throw new DOMException("Session validation cancelled", "AbortError");
+  const principal = result?.principal;
+  if (!principal || !principal.active ||
+      ![principal.user_id, principal.organization_id, principal.membership_id, principal.organization_slug, principal.organization_name].every(value => typeof value === "string" && value.trim() !== "") ||
+      !["admin", "user"].includes(principal.system_role) || !["admin", "member"].includes(principal.organization_role) ||
+      !Number.isInteger(result.activity_interval_ms) || result.activity_interval_ms < 1 || result.activity_interval_ms > 30000 ||
+      !Number.isFinite(Date.parse(result.expires_at)) || !Number.isFinite(Date.parse(result.idle_expires_at)) || Date.parse(result.idle_expires_at) > Date.parse(result.expires_at)) {
+    throw new APIError(502, "invalid_response", "The server returned invalid session details.");
+  }
+  if (!requestSession.hint) throw new APIError(401, "session_delivery_missing", "Sign in again to restore browser session verification.");
+  resetSessionRequests(result.principal);
+  validatedSessions.set(result, captureSessionRequest());
+  return result;
 }
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -156,9 +283,12 @@ function pendingLifecycleKey(scope: string, input: unknown): string | null {
 }
 
 async function skillUpload(skillID: string | undefined, file: File, expectedVersion?: number): Promise<SkillVersion> {
+  const preparingSession = captureSessionRequest();
   if (file.size === 0 || file.size > 8 * 1024 * 1024) throw new Error("Choose a ZIP file of at most 8 MiB.");
   const bytes = await file.arrayBuffer();
+  assertSessionRequest(preparingSession);
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (value) => value.toString(16).padStart(2, "0")).join("");
+  assertSessionRequest(preparingSession);
   const scope = `${commandPrincipal}:skill:${skillID ?? "new"}:${expectedVersion ?? 0}`;
   const storageKey = `antnest:skill:${scope}:${digest}`;
   let key = sessionStorage.getItem(storageKey);
@@ -182,16 +312,35 @@ async function skillUpload(skillID: string | undefined, file: File, expectedVers
 
 async function skillArtifact(skillID: string, version: number): Promise<Blob> {
   const path = `/api/admin/skills/${encodeURIComponent(skillID)}/versions/${version}/artifact`;
-  const session = browserSession;
-  const response = await fetch(path, { credentials: "same-origin", headers: { Accept: "application/zip" } });
-  if (!response.ok) {
-    let failure: RemoteErrorBody = {};
-    try { failure = await response.json() as RemoteErrorBody; } catch { /* bounded BFF failure fallback */ }
-    const code = typeof failure.code === "string" ? failure.code : "request_failed";
-    notifySessionFailure(session, path, response.status, code);
-    throw new APIError(response.status, code, typeof failure.message === "string" ? failure.message : "Download failed.", failure);
+  const session = captureSessionRequest();
+  const controller = new AbortController();
+  sessionRequests.add(controller);
+  try {
+    assertSessionRequest(session);
+    let response: Response;
+    try {
+      response = await fetch(path, { signal: controller.signal, credentials: "same-origin", headers: { Accept: "application/zip" } });
+    } catch (cause) {
+      assertSessionRequest(session);
+      throw cause;
+    }
+    assertSessionRequest(session);
+    if (!response.ok) {
+      let failure: RemoteErrorBody = {};
+      try { failure = await response.json() as RemoteErrorBody; } catch { /* bounded BFF failure fallback */ }
+      assertSessionRequest(session);
+      const code = typeof failure.code === "string" ? failure.code : "request_failed";
+      notifySessionFailure(session, path, response.status, code);
+      throw new APIError(response.status, code, typeof failure.message === "string" ? failure.message : "Download failed.", failure);
+    }
+    let blob: Blob;
+    try { blob = await response.blob(); }
+    catch (cause) { assertSessionRequest(session); throw cause; }
+    assertSessionRequest(session);
+    return blob;
+  } finally {
+    sessionRequests.delete(controller);
   }
-  return response.blob();
 }
 
 function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
@@ -200,6 +349,14 @@ function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
     headers: { "Idempotency-Key": crypto.randomUUID() },
     body: json(input),
   });
+}
+
+async function revokeBrowserSessions(path: string, input: unknown): Promise<SessionRevocation> {
+  const session = captureSessionRequest();
+  const result = await oneShotCommand<SessionRevocation>(path, input);
+  assertSessionRequest(session);
+  if (result.current_revoked) window.dispatchEvent(new Event("antnest:session-expired"));
+  return result;
 }
 
 export const api = {
@@ -228,28 +385,32 @@ export const api = {
     method: "PUT", headers: { "Idempotency-Key": intent.idempotency_key, "X-Antnest-Expected-Principal": encodeURIComponent(scope) },
     body: json({ action: intent.action, expected_resource_version: intent.expected_resource_version }),
   }), agentID, intent),
-  session: () => request<Session>("/api/session"),
-  loginMethods: (organization_slug: string) => request<LoginMethodList>("/api/session/login-methods", {
+  session: readSession,
+  loginMethods: (organization_slug: string, signal?: AbortSignal) => request<LoginMethodList>("/api/session/login-methods", {
     method: "POST",
+    signal,
     body: json({ organization_slug }),
-  }),
-  startOIDCLogin: (organization_slug: string, provider_name: string) =>
+  }, { unvalidated: true }),
+  startOIDCLogin: (organization_slug: string, provider_name: string, signal?: AbortSignal) =>
     request<OIDCLoginStart>("/api/session/oidc/start", {
       method: "POST",
+      signal,
       body: json({ organization_slug, provider_name }),
-    }),
+    }, { unvalidated: true }),
   login: (organization_slug: string, email: string, password: string) =>
     request<Session>("/api/session/login", {
       method: "POST",
       body: json({ organization_slug, email, password }),
-    }),
-  logout: () => request<void>("/api/session", { method: "DELETE" }),
-  currentAccount: () => request<CurrentAccountResult>("/api/admin/account"),
+    }, { unvalidated: true, writer: "login" }),
+  logout: () => request<void>("/api/session", { method: "DELETE" }, { writer: "logout" }),
+  currentAccount: () => request<CurrentAccountResult>("/api/session/account"),
   changeOwnPassword: (current_password: string, new_password: string) =>
-    oneShotCommand<{ status: "changed" }>("/api/admin/account/password", {
-      current_password,
-      new_password,
-    }),
+    request<Session>("/api/session/password", { method: "POST", body: json({ current_password, new_password }) }, { writer: "password" }),
+  activity: (signal: AbortSignal) => request<SessionMetadata>("/api/session/activity", { method: "POST", body: "{}", signal }),
+  sessions: (afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/session/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+  revokeSessions: (mode: "others" | "all") => revokeBrowserSessions("/api/session/sessions/revoke", { mode }),
+  organizationSessions: (userID: string, afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+  revokeOrganizationSessions: (userID: string) => revokeBrowserSessions(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions/revoke`, {}),
   overview: (signal?: AbortSignal) => request<Overview>("/api/admin/overview", { signal }),
   directory: () => request<Directory>("/api/admin/directory"),
   createLocalUser: (input: {

@@ -10,6 +10,30 @@ const member: DirectoryMember = {
   user: { ...dates, id: "user-alex", system_role: "member", active: true },
   membership: { ...dates, id: "membership-alex", user_id: "user-alex", email: "alex@example.com", display_name: "Alex", role: "member", source: "local", active: true },
 };
+
+it.each(["desktop", "mobile"])("offers organization session controls for SCIM members on %s", async layout => {
+  const external = { ...member, membership: { ...member.membership, source: "scim" } };
+  const request = vi.fn(async (path: string, init: RequestInit) => {
+    if (path === "/api/admin/directory") return Response.json({ users: [external], groups: [] });
+    if (path === "/api/admin/directory/users/user-alex/sessions?limit=50") return Response.json({ sessions: [] });
+    if (path === "/api/admin/directory/users/user-alex/sessions/revoke") {
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(String(init.body))).toEqual({});
+      return Response.json({ revoked_count: 2, current_revoked: false });
+    }
+    throw new Error(`Unexpected request ${path}`);
+  });
+  vi.stubGlobal("fetch", request);
+  render(<DirectoryPage currentUserID="administrator" organizationName="Example" systemAdministrator={false} />);
+  const root = layout === "mobile" ? await screen.findByRole("list", { name: "Directory people" }) : await screen.findByRole("table");
+  fireEvent.click(within(root).getByRole("button", { name: "Manage Alex browser sessions" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Alex browser sessions" }));
+  expect(dialog.getByText(/Only sessions in Example/)).toBeTruthy();
+  fireEvent.click(await dialog.findByRole("button", { name: "Revoke organization sessions" }));
+  fireEvent.click(dialog.getByRole("button", { name: "Confirm revocation" }));
+  await dialog.findByText("2 sessions revoked.");
+  expect(request.mock.calls.filter(([path]) => path.endsWith("/revoke"))).toHaveLength(1);
+});
 const workflows = [
   { name: "creation", open: "Add local user", dialog: "Add local user", submit: "Create user", path: "/api/admin/directory/users", success: "Alex Updated added to the directory." },
   { name: "membership", open: "Edit Alex", dialog: "Edit local membership", submit: "Save membership", path: "/api/admin/directory/memberships/membership-alex", success: "Alex Updated updated." },

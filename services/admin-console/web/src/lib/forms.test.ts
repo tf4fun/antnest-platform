@@ -41,11 +41,12 @@ test("ambiguous or malformed delivery never falls back to a legacy value", () =>
   ]) assert.equal(csrfFromCookie(cookie), "");
 });
 
-test("password change validates credentials using the Identity byte limits", () => {
+test("password change validates Identity's Unicode minimum and byte maximum", () => {
   assert.equal(passwordChangeError("", "replacement correct password", "replacement correct password"), "Enter your current password.");
-  assert.equal(passwordChangeError("current password", "short", "short"), "Use at least 12 bytes for the new password.");
+  assert.equal(passwordChangeError("current password", "short", "short"), "Use at least 12 characters for the new password.");
   assert.equal(passwordChangeError("current password", "replacement correct password", "different password"), "New passwords do not match.");
   assert.equal(passwordChangeError("current password", "replacement correct password", "replacement correct password"), "");
-  assert.equal(passwordChangeError("current password", "密码密码", "密码密码"), "");
+  assert.equal(passwordChangeError("current password", "密码密码", "密码密码"), "Use at least 12 characters for the new password.");
+  assert.equal(passwordChangeError("current password", "🔐".repeat(12), "🔐".repeat(12)), "");
   assert.equal(passwordChangeError("current password", "x".repeat(1025), "x".repeat(1025)), "Use no more than 1024 bytes for the new password.");
 });

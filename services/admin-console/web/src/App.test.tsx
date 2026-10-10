@@ -1,21 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import App from "./App";
-import { api, APIError } from "./lib/api";
-import type { Session } from "./lib/types";
+import { api } from "./lib/api";
+import { testSession as session } from "./test/session-fixture";
 
 afterEach(() => {
   cleanup();
   window.location.hash = "";
   sessionStorage.clear();
 });
-
-const session: Session = {
-  principal: {
-    user_id: "admin-1", organization_id: "org-1", membership_id: "membership-1",
-    system_role: "admin", organization_role: "admin", active: true,
-  },
-};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -27,7 +20,8 @@ function application(
   logout: () => Promise<Response>,
   compact = false,
   readSession = async () => Response.json(session),
-  changePassword = async () => Response.json({ status: "changed" }),
+  changePassword = async () => Response.json(session),
+  localPasswordAvailable = true,
 ) {
   vi.stubGlobal("matchMedia", vi.fn(() => ({
     matches: compact, addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -38,10 +32,13 @@ function application(
       return init.method === "DELETE" ? logout() : readSession();
     }
     switch (input) {
-      case "/api/admin/account/password": return changePassword();
-      case "/api/admin/account": return Response.json({ account: {
+      case "/api/session/password": return changePassword();
+      case "/api/session/sessions?limit=50": return Response.json({ sessions: [] });
+      case "/api/session/activity": return Response.json(session);
+      case "/api/session/account": return Response.json({ account: {
+        user_id: "admin-1", organization_id: "org-1", membership_id: "membership-1",
         email: "admin@example.com", display_name: "Test administrator", source: "local",
-        organization_slug: "test", organization_name: "Test organization", local_password_available: true,
+        local_password_available: localPasswordAvailable,
       } });
       case "/api/admin/directory": return Response.json({ users: [], groups: [] });
       case "/api/session/login-methods": return Response.json({ methods: [] });
@@ -69,9 +66,60 @@ it("keeps the execution audit navigation reachable without an Agent lookup", asy
   expect(screen.getByRole("link", { name: "Execution history" }).getAttribute("href")).toBe("#audits");
 });
 
+it.each([false, true])("keeps session management reachable for an OIDC-only account with compact navigation %s", async compact => {
+  application(async () => new Response(null, { status: 204 }), compact, async () => Response.json(session), undefined, false);
+  await screen.findByRole("heading", { name: "Directory" });
+  if (compact) fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Manage browser sessions" }));
+  expect(await screen.findByRole("dialog", { name: "Your browser sessions" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Change local password" })).toBeNull();
+});
+
+it("rebuilds the same-user private page after password replacement", async () => {
+  const request = application(async () => new Response(null, { status: 204 }));
+  await screen.findByRole("heading", { name: "Directory" });
+  const reads = () => request.mock.calls.filter(([path]) => path === "/api/admin/directory").length;
+  expect(reads()).toBe(1);
+  fireEvent.click(await screen.findByRole("button", { name: "Change local password" }));
+  for (const name of ["Current password", "New password", "Confirm new password"]) {
+    fireEvent.change(screen.getByLabelText(name), { target: { value: "synthetic password" } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Update password" }));
+  await waitFor(() => expect(reads()).toBe(2));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(request.mock.calls.filter(([path]) => path === "/api/session/password")).toHaveLength(1);
+  expect(request.mock.calls.filter(([path, init]) => path === "/api/session" && init.method === "GET")).toHaveLength(2);
+});
+
+it("validates a changed session before rebuilding private pages without replaying a mutation", async () => {
+  const read = vi.fn(async () => Response.json(session));
+  const request = application(async () => new Response(null, { status: 204 }), false, read);
+  await screen.findByRole("heading", { name: "Directory" });
+  vi.spyOn(document, "cookie", "get").mockReturnValue("__Host-antnest_csrf=next-tab-session");
+  await act(async () => {
+    await expect(api.changeOwnPassword("synthetic old password", "synthetic new password")).rejects.toMatchObject({ name: "AbortError" });
+  });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  await screen.findByRole("heading", { name: "Directory" });
+  expect(request.mock.calls.filter(([path]) => path === "/api/session/password")).toHaveLength(0);
+});
+
+it("does not reinstall a validated response after the session owner has already ended that generation", async () => {
+  const read = api.session;
+  vi.spyOn(api, "session").mockImplementation(async signal => {
+    const result = await read(signal);
+    window.dispatchEvent(new Event("antnest:session-expired"));
+    return result;
+  });
+  const request = application(async () => new Response(null, { status: 204 }));
+  await screen.findByRole("heading", { name: "Welcome back" });
+  expect(screen.queryByRole("heading", { name: "Directory" })).toBeNull();
+  expect(request.mock.calls.filter(([path]) => path === "/api/admin/directory")).toHaveLength(0);
+});
+
 it.each(["invalid_current_password", "unauthenticated"])("handles password command %s through the real API and session owner", async (code) => {
   const logout = vi.fn(async () => new Response(null, { status: 204 }));
-  const change = vi.fn(async () => Response.json({ code, message: "Password command rejected" }, { status: 401 }));
+  const change = vi.fn(async () => Response.json({ code, message: "Password command rejected" }, { status: code === "invalid_current_password" ? 400 : 401 }));
   application(logout, false, async () => Response.json(session), change);
   fireEvent.click(await screen.findByRole("button", { name: "Change local password" }));
   fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "synthetic old password" } });
@@ -135,7 +183,7 @@ it.each(["start", "end"])("invalidates pending request notifications on session 
   try {
     await act(async () => {
       command.resolve(Response.json({ code: "unauthenticated" }, { status: 401 }));
-      expect(await pending).toBeInstanceOf(APIError);
+      expect(await pending).toMatchObject({ name: "AbortError" });
     });
     expect(expired).not.toHaveBeenCalled();
   } finally {

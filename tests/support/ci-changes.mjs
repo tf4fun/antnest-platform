@@ -143,6 +143,7 @@ export const suites = [
       "npm --prefix services/admin-console/web run test:browser:skills",
       "npm --prefix services/admin-console/web run test:browser:template-skills",
       "npm --prefix services/admin-console/web run test:browser:managed-mcp-secrets",
+      "npm --prefix services/admin-console/web run test:browser:sessions",
     ],
   },
   {

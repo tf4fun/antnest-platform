@@ -10,6 +10,7 @@ import {
   LogOut,
   Menu,
   MessageSquareText,
+  Monitor,
   RefreshCw,
   ShieldCheck,
   ScrollText,
@@ -21,17 +22,19 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Brand } from "./components/brand";
 import { AccountSecurity } from "./components/account-security";
+import { SessionManagement } from "./components/session-management";
 import { ConfigurationSynchronization } from "./components/configuration-synchronization";
 import { ResourceFailurePage } from "./components/page";
 import { Button } from "./components/ui/button";
 import { ErrorNotice, Loading } from "./components/ui/feedback";
-import { APIError, api, errorMessage, resetSessionRequests } from "./lib/api";
+import { APIError, api, captureSessionRequest, errorMessage, onSessionRequestCancelled, resetSessionRequests, sessionResponseCurrent } from "./lib/api";
 import { accountPresentation } from "./lib/account";
 import { captureResource, type ResourceState } from "./lib/resource-state";
 import { resourceFailure, type ResourceFailure } from "./lib/resource-failure";
 import { parseConsoleRoute } from "./lib/routes";
 import type { ConsolePage as Page, ConsoleRoute as Route } from "./lib/routes";
 import { sessionDestination } from "./lib/session-destination";
+import { listenForSessionActivity } from "./lib/session-activity";
 import type { CurrentAccount, Session } from "./lib/types";
 import { cn } from "./lib/utils";
 import { AgentsPage } from "./pages/agents";
@@ -139,12 +142,14 @@ function Navigation({ route, onNavigate }: { route: Route; onNavigate: () => voi
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>();
+  const [generation, setGeneration] = useState(0);
   const [startupFailure, setStartupFailure] = useState<ResourceFailure>();
   const [startupPending, setStartupPending] = useState(true);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [route, setRoute] = useState<Route>(() => parseConsoleRoute(window.location.hash));
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountSecurityOpen, setAccountSecurityOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const logoutRequest = useRef<symbol | undefined>(undefined);
@@ -163,18 +168,31 @@ export default function App() {
     setLogoutError("");
     setMenuOpen(false);
     setAccountSecurityOpen(false);
+    setSessionsOpen(false);
+    setAccountState({ status: "loading" });
     setSession(null);
+    setGeneration(value => value + 1);
   }, []);
 
   const startSession = useCallback((result: Session) => {
+    if (!sessionResponseCurrent(result)) return;
     resetSessionRequests(result.principal);
+    setAccountState({ status: "loading" });
+    setAccountSecurityOpen(false);
+    setSessionsOpen(false);
+    setMenuOpen(false);
+    logoutRequest.current = undefined;
+    setLogoutPending(false);
+    setLogoutError("");
     setSession(result);
+    setGeneration(value => value + 1);
   }, []);
 
   useEffect(() => {
     let active = true;
-    void api.session().then((result) => {
-      if (!active) return;
+    const controller = new AbortController();
+    void api.session(controller.signal).then((result) => {
+      if (!active || !sessionResponseCurrent(result)) return;
       setStartupFailure(undefined);
       startSession(result);
     }).catch((cause: unknown) => {
@@ -188,7 +206,7 @@ export default function App() {
     }).finally(() => {
       if (active) setStartupPending(false);
     });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [endSession, startSession, startupAttempt]);
 
   useEffect(() => {
@@ -226,6 +244,28 @@ export default function App() {
     window.addEventListener("antnest:session-expired", endSession);
     return () => window.removeEventListener("antnest:session-expired", endSession);
   }, [endSession]);
+
+  useEffect(() => {
+    const validate = () => {
+      setAccountSecurityOpen(false);
+      setSessionsOpen(false);
+      setSession(undefined);
+      setStartupFailure(undefined);
+      setStartupPending(true);
+      setStartupAttempt(value => value + 1);
+    };
+    window.addEventListener("antnest:session-validation-required", validate);
+    return () => window.removeEventListener("antnest:session-validation-required", validate);
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    let request;
+    try { request = captureSessionRequest(); } catch { return; }
+    const dispose = listenForSessionActivity(session.activity_interval_ms, api.activity);
+    const unbind = onSessionRequestCancelled(request, dispose);
+    return () => { unbind(); dispose(); };
+  }, [session, generation]);
 
   useEffect(() => {
     if (!session || !(
@@ -331,7 +371,7 @@ export default function App() {
   }
 
   const role = session.principal.system_role === "admin" ? "System administrator" : "Organization administrator";
-  const account = accountPresentation(accountState);
+  const account = accountPresentation(accountState, session.principal);
   const pageLabel = route.resourceID
     ? route.page === "agents" ? "Agent detail" : route.page === "models" ? "Model detail" : route.page === "audits" ? "Execution detail" : route.page === "skills" ? "Skill detail" : "Template detail"
     : pageLabels[route.page];
@@ -376,6 +416,9 @@ export default function App() {
             </div>
             <div className="mt-2 pl-11 text-[11px] text-muted-foreground">{role}</div>
             <div className="mt-1 flex min-h-8 items-center justify-end gap-0.5 pl-11">
+              <Button aria-label="Manage browser sessions" title="Manage browser sessions" className="h-8 w-8" size="icon" variant="ghost" onClick={() => setSessionsOpen(true)}>
+                <Monitor className="h-4 w-4" />
+              </Button>
               {account.retryable ? (
                 <Button
                   aria-label="Retry account profile"
@@ -419,9 +462,12 @@ export default function App() {
       </aside>
 
       <AccountSecurity
+        key={generation}
         open={account.localPasswordAvailable && accountSecurityOpen}
         onOpenChange={setAccountSecurityOpen}
+        onSession={startSession}
       />
+      <SessionManagement key={`sessions:${generation}`} open={sessionsOpen} onOpenChange={setSessionsOpen} />
 
       {menuOpen ? (
         <button
@@ -479,6 +525,7 @@ export default function App() {
           </div>
         </header>
         <main
+          key={generation}
           aria-label={`${pageLabel} page`}
           className="mx-auto w-full max-w-[1500px] px-4 py-6 outline-hidden sm:px-6 lg:px-8 lg:py-8"
           ref={mainContentRef}

@@ -13,6 +13,36 @@ const assets = fileURLToPath(
   new URL("../../../services/admin-console/web/dist/", import.meta.url),
 );
 
+export const consoleSessionMetadata = {
+  expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+  idle_expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  activity_interval_ms: 30000,
+};
+
+export async function prepareConsoleSession(context, origin) {
+  await context.addCookies([
+    {
+      name: "antnest_csrf",
+      value: "synthetic-console-session",
+      url: origin,
+      sameSite: "Strict",
+    },
+  ]);
+}
+
+export async function fulfillConsoleActivity(route) {
+  const request = route.request();
+  if (new URL(request.url()).pathname !== "/api/session/activity") return false;
+  assert.equal(request.method(), "POST");
+  assert.deepEqual(request.postDataJSON(), {});
+  assert.equal(
+    request.headers()["x-antnest-csrf-token"],
+    "synthetic-console-session",
+  );
+  await route.fulfill({ status: 200, json: consoleSessionMetadata });
+  return true;
+}
+
 async function serve(request, response) {
   try {
     const path = new URL(request.url, "http://localhost").pathname;

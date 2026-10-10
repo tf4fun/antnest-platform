@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, AgentEvent, LifecycleOperation } from "../lib/types";
 import { AgentsPage } from "./agents";
 import { savePendingNetwork, readPendingNetwork } from "../lib/network-policy";
+import { resetSessionRequests } from "../lib/api";
+import { testSession } from "../test/session-fixture";
 
 declare const jsdom: { window: Window };
 const networkScope = JSON.stringify(["org-1", "admin-1"]);
@@ -92,6 +94,27 @@ const eventsPath = "/api/admin/agents/agent-1/events";
 const agentPath = "/api/admin/agents/agent-1";
 
 describe("Agent event recovery", () => {
+  it.each(["generation", "cookie", "unmount"])("ignores events and reconnect callbacks after %s invalidates the stream", async boundary => {
+    const { streams, page, calls } = await workflow();
+    const before = [calls(eventsPath).length, calls(agentPath).length];
+    const validate = vi.fn();
+    window.addEventListener("antnest:session-validation-required", validate);
+    try {
+      if (boundary === "generation") resetSessionRequests(testSession.principal);
+      else if (boundary === "cookie") vi.spyOn(document, "cookie", "get").mockReturnValue("__Host-antnest_csrf=other-tab");
+      else page.unmount();
+      await act(async () => {
+        streams[0]!.dispatchEvent(new MessageEvent("agent_event", { data: JSON.stringify(event(999, 99, "agent_ready")) }));
+        streams[0]!.onerror?.();
+        streams[0]!.onopen?.();
+      });
+      expect(streams[0]!.close).toHaveBeenCalled();
+      expect([calls(eventsPath).length, calls(agentPath).length]).toEqual(before);
+      expect(screen.queryByText("Event 99")).toBeNull();
+      expect(validate).toHaveBeenCalledTimes(boundary === "cookie" ? 1 : 0);
+    } finally { window.removeEventListener("antnest:session-validation-required", validate); }
+  });
+
   it("refreshes Runtime conditions independently of a completed creation", async () => {
     const { state, streams } = await workflow();
     state.operation = { ...operation, state: "completed", phase: "completed" };

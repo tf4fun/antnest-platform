@@ -80,21 +80,21 @@ func TestConsoleJSONBoundaryRejectsAmbiguousInputsBeforeEffects(t *testing.T) {
 		duplicateMedia    bool
 		status            int
 	}{
-		{"valid UTF-8", "application/json; charset=utf-8", `{"current_password":"old-password","new_password":"abcdefghijkl"}`, false, 200},
+		{"valid UTF-8", "application/json; charset=utf-8", `{"email":"user@example.test","display_name":"User","password":"abcdefghijkl","role":"member"}`, false, 200},
 		{"foreign charset", "application/json; charset=iso-8859-1", `{}`, false, 415},
 		{"extra parameter", "application/json; profile=other", `{}`, false, 415},
 		{"multiple headers", "application/json", `{}`, true, 415},
-		{"duplicate member", "application/json", `{"current_password":"old-password","new_password":"abcdefghijkl","new_password":"bad-password-value"}`, false, 400},
-		{"case alias", "application/json", `{"current_password":"old-password","New_Password":"abcdefghijkl"}`, false, 400},
+		{"duplicate member", "application/json", `{"email":"user@example.test","display_name":"User","display_name":"Other","password":"abcdefghijkl","role":"member"}`, false, 400},
+		{"case alias", "application/json", `{"email":"user@example.test","Display_Name":"User","password":"abcdefghijkl","role":"member"}`, false, 400},
 		{"two documents", "application/json", `{} {}`, false, 400},
 		{"null object", "application/json", `null`, false, 400},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			backend := newBackendStub()
-			backend.enqueue(200, `{"status":"changed"}`)
+			backend.enqueue(200, `{"user":{"id":"new-user","email":"user@example.test","display_name":"User","source":"local","active":true},"membership":{"id":"new-membership","role":"member","active":true}}`)
 			h := newTestHandler(t, backend)
-			r := httptest.NewRequest("POST", "/api/admin/account/password", strings.NewReader(scenario.body))
-			r.Header.Set("Idempotency-Key", "password-update-key-0001")
+			r := httptest.NewRequest("POST", "/api/admin/directory/users", strings.NewReader(scenario.body))
+			r.Header.Set("Idempotency-Key", "directory-create-key-0001")
 			r.Header.Set("Content-Type", scenario.media)
 			if scenario.duplicateMedia {
 				r.Header.Add("Content-Type", scenario.media)
