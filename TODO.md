@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-10：133 个 issue，67 个已关闭，66 个开放；开放项包含 5 个 Epic 和 61 个执行项。下列队列保留 67 个执行项，其中 6 个已交付。
+Issue 状态最后核对于 2026-10-10：133 个 issue，68 个已关闭，65 个开放；开放项包含 5 个 Epic 和 60 个执行项。下列队列保留 67 个执行项，其中 7 个已交付。
 
 ## 执行约定
 
@@ -17,15 +17,17 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，67 个已关闭，66 �
 
 ## 当前批次
 
-- 当前执行项：[#233](https://github.com/tf4fun/antnest-platform/issues/233)，按 Runtime Egress 所有权推进权限日志单元测试的确定性反例与稳定器修复。先验证无 subscriber 的线程注册 callsite 后仍能准确捕获事件与 span，再接入所有 Egress scoped tracing 测试；保留默认并行测试和严格权限断言。
-- #233 本地进展：独立进程的确定性反例先捕获 0 条事件而失败，加入稳定器后 event/span 各精确捕获 1 条，过滤器仍捕获 0 条；14 个构造入口覆盖 16 处现有 scoped 使用。格式、Clippy、195 个 Rust 测试、12 个 PostgreSQL 组件及清理通过，独立 review 无阻塞项。真实镜像/认证 Docker 和必需 CI 通过后才合并；证据在 `artifacts/verification/issue-233/`。
-- 最近完成：#112 与前置 #235 已随 [PR #234](https://github.com/tf4fun/antnest-platform/pull/234) 合并并关闭，commit `dec230dc`。所有选中的 A/B/C 分片纳入必需门禁，部分手动运行使用独立检查名称；严格退出需要真实业务终态，套件日志、结果与耗时均归档。
+- 下一执行项：[#67](https://github.com/tf4fun/antnest-platform/issues/67)，先交付共享错误契约、代码登记表与验证工具，记录各消费方迁移；随后按服务分批交付，最后执行跨服务集成验收。共享定义完成不能代表整项迁移完成。
+- 最近完成：#233 已随 [PR #237](https://github.com/tf4fun/antnest-platform/pull/237) 合并并关闭，commit `de419be1`。独立测试先固定无 subscriber 线程注册 callsite 导致事件捕获为 0 的反例；复用测试专用持久 dispatcher 和 provider-drop 预热后，event/span 各精确捕获 1 条，过滤器仍捕获 0 条。14 个构造入口覆盖 16 处 scoped 使用，保留默认并行测试和严格权限断言。
+- #233 验收：格式、Clippy、195 个本地 Rust 测试、12 个 PostgreSQL 组件、Linux 镜像内 196 个测试均通过；本地与 CI 的 `auth-egress` 均完成 189 项检查及资源清理。独立 review、仓库门禁、五种 CodeQL 及 [最终集成 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38043501755) 通过；后者用时 31 分 12 秒，覆盖 26 个 job、19 个分片和全部 58 个选中套件（48 个正常退出，10 个保留已审查的严格 trace 告警）。证据在 `artifacts/verification/issue-233/`。
+- #233 外部限制：[GitHub AI 安全审查](https://github.com/tf4fun/antnest-platform/actions/runs/38043504349) 因月度额度耗尽（402）在分析前失败。该项不是分支必需检查，失败记录保留；两项分支必需检查 Repository checks、Integration checks 均通过，五种常规 CodeQL 也通过后合并。
+- 已完成：#112 与前置 #235 已随 [PR #234](https://github.com/tf4fun/antnest-platform/pull/234) 合并并关闭，commit `dec230dc`。所有选中的 A/B/C 分片纳入必需门禁，部分手动运行使用独立检查名称；严格退出需要真实业务终态，套件日志、结果与耗时均归档。
 - 最近插入批次：镜像发布范围已随 [PR #229](https://github.com/tf4fun/antnest-platform/pull/229) 合并，commit `47a80f1c`。仅发布十个已实现的服务/Runtime 镜像；Temporal 依赖和三个 Runtime 测试变体保留本地构建，以同次 CI artifact 传递。
 - 镜像批次验收：53 个相关测试、完整 `make test-repo`、格式/语法/链接检查、独立 review、最终提交的必需 CI 和全部 Tier A/B Docker 分片通过。main [run 38026470361](https://github.com/tf4fun/antnest-platform/actions/runs/38026470361) 的四个镜像均构建成功，registry 登录与发布步骤均跳过。
 - 已按用户授权删除 `antnest-temporal`、`antnest-runtime-skill-gate`、`antnest-runtime-fixture`、`antnest-runtime-managed` 四个 GHCR package；浏览器确认 [Packages 列表](https://github.com/tf4fun/antnest-platform/packages) 从 14 项降为 10 项，仅保留计划内镜像。验证记录和截图在 `artifacts/verification/ci-package-scope/`；更广泛的 #112 随后由 PR #234 完成。
 - #112 准入前稳定性审计覆盖 41 次已完成 CI、319 个实际 Tier C job；最后 12 轮的 132 个 Tier C 分片均成功（其中一轮 Tier B 认证失败），最后 7 次全流程全部通过，约 24–32 分钟。首次必需门禁真实阻止了 #235 的 lifecycle 失败；修复后 [最终 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38040208584) 在 30 分 35 秒内通过全部 27 个 job、21 个分片和 81 个套件，全部 47 项 PR 检查通过后合并。71 个套件正常退出，10 个按已审查的严格 trace 告警规则通过；原始严格结论保留。
 - #112 覆盖已有平台加密密钥轮换、Gateway shutdown、Runtime Controller archive Docker 入口。最终 `make test-repo` 通过（2,307 Node 通过、5 个条件跳过，61 Python 通过），69 个 archive 包测试通过 race 检查且无跳过；适用 Docker、清理、静态检查和独立 review 均通过。[部分手动运行](https://github.com/tf4fun/antnest-platform/actions/runs/38036575652) 只产生 `Integration checks (partial)`。证据在 `artifacts/verification/issue-112/`；#165–#169 的 23 项服务测试迁移仍保持开放。
-- #112 审计发现的独立回归已登记 [#233](https://github.com/tf4fun/antnest-platform/issues/233)：Egress 镜像构建的权限日志单元测试曾捕获空输出，Docker 业务场景尚未启动。现有代码暴露于已知 tracing callsite 竞争，但历史日志不能确认当次根因。下一批按 Runtime Egress 所有权先建立确定性反例，再复用 Runtime 的测试稳定器；不以重试或串行测试掩盖失败。
+- #112 审计发现的独立回归 [#233](https://github.com/tf4fun/antnest-platform/issues/233) 已按 Runtime Egress 所有权修复。原始权限日志空输出发生在镜像构建阶段，Docker 业务场景尚未启动；确定性反例验证了 tracing callsite 竞争路径，但历史日志仍不能确认当次线程顺序。修复没有引入重试或串行化普通测试。
 - #235 已修复失败 Runtime 的独立观察事件与整页重放断言竞争，限定共享 lifecycle 测试工具：保留旧历史前缀，核对持久事件目标、独立观察 trace，以及重放的只读事务。测试先 red 后 green；本地 Docker 验证 9 次操作、3 条观察事件及清理，最终 CI 也验证 9 次操作、2 条观察事件与只读重放。原始失败缺少当次观察 trace，不推断具体观察分支；服务实现未变。
 - 已完成：#197 已随 [PR #231](https://github.com/tf4fun/antnest-platform/pull/231) 合并并关闭，commit `e8cf8f15`。已用真实 gate 固定 catalog→artifact、inspect→artifact 两个健康读取竞争反例；ACP 改为只在 source/catalog 读取间限时等待 2 秒，派发前重新校验，前台/lifecycle 取消等待者。
 - #197 验收：1,706 个 ACP 单元测试、202 个协议/HTTP 集成测试、完整 `make test-repo`、格式/lint/类型/链接检查、独立 review、修复镜像的完整 Docker lifecycle 流程及清理均通过。最终提交的必需 CI 和 Skill discovery/deployment、Skill learning、Skill learning install/lifecycle 分片在 [run 38031415735](https://github.com/tf4fun/antnest-platform/actions/runs/38031415735) 通过后合并。
@@ -48,7 +50,7 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，67 个已关闭，66 �
 - [x] [#197](https://github.com/tf4fun/antnest-platform/issues/197) skill-source-lifecycle: Skill source preview intermittently returns 503 during promote
 - [x] [#112](https://github.com/tf4fun/antnest-platform/issues/112) ci: run component, browser and Docker E2E suites in GitHub Actions
 - [x] [#235](https://github.com/tf4fun/antnest-platform/issues/235) test(lifecycle): replay history assertion races independent Runtime observations（#112 前置批次）
-- [ ] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
+- [x] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
 
 ### 2 共享契约与依赖清单
 
