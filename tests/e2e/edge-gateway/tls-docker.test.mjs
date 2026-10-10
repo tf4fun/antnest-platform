@@ -62,6 +62,11 @@ async function browserLogin(context, gateway, credentials, path) {
   assert.equal(response.status(), 200, "real browser login failed");
   await response.finished();
   await page.locator('[name="password"]').waitFor({ state: "hidden" });
+  // The login form disappears before React's Workspace redirect commits.
+  // Wait for its destination document before evaluating authenticated requests.
+  await page.waitForURL(new URL(path, gateway).href, {
+    waitUntil: "domcontentloaded",
+  });
   assert.equal(
     await response.headerValue("strict-transport-security"),
     "max-age=31536000",
