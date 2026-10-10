@@ -369,6 +369,42 @@ export const suites = [
     run: [run],
   })),
   {
+    id: "gateway-shutdown",
+    name: "Edge Gateway shutdown and restart",
+    tier: "b",
+    setup: [],
+    images: ["edge-gateway"],
+    pull: ["node:24.21.0-bookworm-slim"],
+    paths: [
+      ...service("edge-gateway"),
+      "tests/e2e/edge-gateway/shutdown-docker.mjs",
+      ...go,
+      ...compose,
+    ],
+    run: [
+      "ANTNEST_GATEWAY_TEST_IMAGE=antnest/edge-gateway:local node tests/e2e/edge-gateway/shutdown-docker.mjs",
+    ],
+  },
+  {
+    id: "runtime-controller-skill-archives",
+    name: "Runtime Controller Skill archives",
+    tier: "b",
+    setup: ["go"],
+    images: ["antnest-runtime"],
+    pull: base,
+    paths: [
+      ...service("runtime-controller"),
+      ...runtime,
+      "tests/e2e/go/runtime-controller/internal/platform/docker/**",
+      "tests/integration/go/run.mjs",
+      ...go,
+      ...compose,
+    ],
+    run: [
+      "ANTNEST_TEST_DOCKER_SOCKET=/var/run/docker.sock node tests/integration/go/run.mjs runtime-controller --profile e2e --package internal/platform/docker -- -race -timeout=5m",
+    ],
+  },
+  {
     id: "skill-registry-discovery",
     name: "Skill Registry discovery",
     tier: "b",
@@ -491,7 +527,7 @@ export const suites = [
 
 // Tier C: whole-platform scenarios whose rule spans services. Every target
 // boots its own stack (many are deliberately destructive), so each is one
-// suite. They report outside `Integration checks` until they are stable.
+// suite. Their separate matrix participates in `Integration checks`.
 // Foundation runners exit 2 when business and topology pass but strict trace
 // findings remain. They run without make, which reports every failed recipe
 // as 2.
@@ -591,6 +627,7 @@ function tierC() {
         "skill-discovery-caller",
         "skill-learning-browser",
         "skill-source-lifecycle",
+        "encryption-key-rotation",
       ].map((name) => [`e2e-${name}`, name, { browser: true }]),
       ...[
         "skill-learning-cleanup",
@@ -1000,7 +1037,11 @@ export const shards = [
   {
     id: "b-gateway",
     name: "Edge Gateway and Agent UI",
-    suites: ["gateway-security-headers", "agent-ui-receipt"],
+    suites: [
+      "gateway-security-headers",
+      "agent-ui-receipt",
+      "gateway-shutdown",
+    ],
   },
   {
     id: "b-skills",
@@ -1011,6 +1052,7 @@ export const shards = [
       "skill-registry-console",
       "skill-temporary-runtime",
       "skill-learning-runtime",
+      "runtime-controller-skill-archives",
     ],
   },
   {
@@ -1069,6 +1111,7 @@ export const shards = [
       "c-service-authentication-integration",
       "c-skill-source-lifecycle",
       "c-skill-discovery-caller",
+      "c-encryption-key-rotation",
     ],
   },
   {

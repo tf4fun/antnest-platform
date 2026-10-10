@@ -243,7 +243,11 @@ Each shard is one CI job, `Tier <tier> / <shard>`: it installs the setup and
 images its selected suites need and runs them in order on one runner through
 [`support/ci-shard.mjs`](support/ci-shard.mjs). Every selected suite runs even
 after an earlier one fails, each in its own process group with a timeout, and
-the job summary lists each suite's result. Destructive suites come last in
+the job summary lists each suite's result and elapsed seconds. Each shard
+also preserves a separate log for every started suite and incrementally writes
+`artifacts/verification/ci-shards/shard-*/results.json`, with start/end times,
+duration, exit status, timeout and interruption. Suites skipped after an
+interruption have no execution timestamps. Destructive suites come last in
 their shard. Every suite starts and removes its own stack, so a shard reuses
 pulled images and host setup but no platform state.
 
@@ -259,18 +263,30 @@ pulled images and host setup but no platform state.
   network, followed by real issuer/context/grant and native Runtime checks.
   Both shards block `Integration checks` when selected. The full authentication
   and Skill workflow remains Tier C `c-service-authentication-integration`.
+  `b-gateway` also checks Gateway SIGTERM/SIGINT, upstream cancellation and
+  restart through `gateway-shutdown`. `b-skills` runs the Runtime Controller
+  archive package with the `e2e` Go overlay and a real Runtime image; this does
+  not include the separate control-process crash diagnostics.
 - **Tier C:** whole-platform scenarios whose rule spans services (stage 3a,
   authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
   skill learning). Platform targets that test one service's rule, or behavior
   that is not settled, stay out of CI; `outsideCI` in `ci-changes.mjs` names
   the issue that moves each one to its service or re-admits it. At most six
-  tier C shards run at a time. Tier C reports per shard but is not part of
-  `Integration checks` yet. Lifecycle and
+  tier C shards run at a time, and every selected Tier C shard blocks
+  `Integration checks`. The authenticated encryption-key rotation journey runs
+  last in `c-skill-discovery`, independently of its ordinary authentication
+  journey. The 23 `outsideCI` targets remain unfinished work in #165–#169;
+  making the current catalog required does not deliver those replacements.
+  Lifecycle and
   workspace foundation runners and the Stage 3a identity, tool permission and
   tool progress profiles exit 2 when business and topology checks pass but
   strict trace findings remain. The shard passes such a suite with a warning
-  only when [`support/strict-findings.mjs`](support/strict-findings.mjs) finds
-  no Jaeger warning other than clock skew adjustments in its output; error spans on denial and cancellation paths
+  only when a final business/topology completion report is present and
+  [`support/strict-findings.mjs`](support/strict-findings.mjs) finds
+  no Jaeger warning other than clock skew adjustments in its output. Empty
+  output, a failed prerequisite and incomplete business reports fail even if
+  they exit 2; a later explicit failure invalidates a prior completion.
+  Error spans on denial and cancellation paths
   are recorded by contract and checked by each runner's topology. The findings
   stay in the evidence artifact. The Stage 3a profiles run their make
   recipe directly because make reports every failed recipe as 2. Tool permission and tool
@@ -313,12 +329,20 @@ gates when the image job built their inputs.
 
 A manual run (`gh workflow run integration.yml --ref <branch> -f suites='<id> <id>'`)
 runs only the named catalog suites, in their shards; without `suites` it runs
-every suite.
+every suite. A targeted manual run reports `Integration checks (partial)` and
+cannot satisfy the merge requirement. Drafts report `Integration checks (not
+run)`. Other events retain the required name even if selection fails before
+producing its outputs.
 
-Each shard uploads `artifacts/verification/` (without fixture credentials) as
+Each shard uploads `artifacts/verification/` (excluding fixture credentials,
+private key files, environment files and the deployment credential-generation
+log) as
 the `evidence-<shard>` artifact. The `Integration checks` job is the single
-required status; it fails if suite selection or any selected tier A or B suite
-fails. Add a suite by extending the catalog and naming it in one shard of its
+required integration status; it fails if selection or any selected Tier A, B
+or C shard fails, is cancelled, or unexpectedly skips. A matrix may skip only
+when its validated selection count is zero, so a docs-only run still passes.
+Workflow cancellation and invalid or missing selection counts fail the gate.
+Add a suite by extending the catalog and naming it in one shard of its
 tier; the catalog's unit tests check that every `make` target and runner it
 names exists and that every suite belongs to exactly one shard. A suite with a `disabled` reason stays in the
 catalog but is never selected until its known breakage is fixed.

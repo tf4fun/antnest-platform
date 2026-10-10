@@ -62,9 +62,9 @@ test("the CLI reads the GitHub event from the environment", () => {
   assert.notEqual(run({}).status, 0, "a missing event must not default");
 });
 
-// GitHub reports a skipped required job as passing, so a run that selects no
-// suites must not report a check named `Integration checks` at all.
-test("integration.yml reports the required check only from a full run", () => {
+// Draft and targeted manual runs cannot replace a full run's required check.
+// The real aggregator and its name expression are exercised in ci-admission.test.mjs.
+test("integration.yml keeps event selection and execution wired to full mode", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/integration.yml", import.meta.url),
     "utf8",
@@ -78,10 +78,6 @@ test("integration.yml reports the required check only from a full run", () => {
     /node tests\/support\/ci-mode\.mjs >> "\$GITHUB_OUTPUT"/u,
   );
   assert.match(workflow, /mode: \$\{\{ steps\.mode\.outputs\.mode \}\}/u);
-  assert.match(
-    workflow,
-    /name: \$\{\{ needs\.changes\.outputs\.mode == 'full' && 'Integration checks' \|\| 'Integration checks \(not run\)' \}\}/u,
-  );
   assert.doesNotMatch(workflow, /^\s+name: Integration checks$/mu);
   // GitHub evaluates a required check against the newest run of this
   // workflow for the head commit, so no event may start a run that would
@@ -96,9 +92,9 @@ test("integration.yml reports the required check only from a full run", () => {
     const body = workflow.split(new RegExp(`\\n  ${job}:\\n`, "u"))[1];
     assert(body, `${job} job missing`);
     const condition = body
-      .split(/\n  [a-z-]+:\n/u)[0]
+      .split(/\n {2}[a-z-]+:\n/u)[0]
       .split("\n    if:")[1]
-      ?.split(/\n    [a-z-]+:/u)[0];
+      ?.split(/\n {4}[a-z-]+:/u)[0];
     assert.match(
       condition ?? "",
       /needs\.changes\.outputs\.mode == 'full'/u,

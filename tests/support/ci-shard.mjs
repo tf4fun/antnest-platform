@@ -1,17 +1,21 @@
 // Runs one CI shard: its selected suites in order on one runner. Every suite
 // runs even when an earlier one fails, so a shard reports all its outcomes.
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { unreviewedWarnings } from "./strict-findings.mjs";
+import { hasStrictCompletion, unreviewedWarnings } from "./strict-findings.mjs";
 
 // Strict runners exit 2 when business and topology checks pass but strict
 // trace findings remain; only reviewed findings pass, with a warning.
 export function verdict(code, output, strict) {
   if (code === 0) return "passed";
-  if (code === 2 && strict && unreviewedWarnings(output).length === 0)
+  if (
+    code === 2 &&
+    strict &&
+    hasStrictCompletion(output) &&
+    unreviewedWarnings(output).length === 0
+  )
     return "warning";
   return "failed";
 }
@@ -25,7 +29,7 @@ export function runBash(
   { log, stream, timeoutMs = 60 * 60_000, graceMs = 30_000 },
 ) {
   return new Promise((resolve, reject) => {
-    writeFileSync(log, "");
+    writeFileSync(log, "", { flag: "wx", mode: 0o600 });
     const chunks = [];
     const child = spawn("bash", ["-euo", "pipefail", "-c", command], {
       detached: true,
@@ -80,44 +84,71 @@ export function runBash(
   });
 }
 
-export async function runShard(suites, { run, write, stopped = () => false }) {
+export async function runShard(
+  suites,
+  { run, write, stopped = () => false, now = Date.now, onResult = () => {} },
+) {
   const results = [];
+  const record = (result) => {
+    results.push(result);
+    onResult(result);
+  };
   for (const suite of suites) {
     if (stopped()) {
-      results.push({
+      record({
         id: suite.id,
         name: suite.name,
         status: "failed",
         code: "interrupted",
+        startedAt: null,
+        finishedAt: null,
+        durationMs: 0,
+        timedOut: false,
+        interrupted: true,
       });
       continue;
     }
     write(`::group::${suite.name}`);
+    const start = now();
     const { code, output, timedOut } = await run(suite.run, suite.id);
+    const end = now();
+    const interrupted = stopped();
     write("::endgroup::");
-    const status = timedOut ? "failed" : verdict(code, output, suite.strict);
+    const status =
+      timedOut || interrupted ? "failed" : verdict(code, output, suite.strict);
     if (status === "failed" && code === 2 && suite.strict)
       for (const warning of unreviewedWarnings(output))
         write(`unreviewed strict trace warning: ${warning}`);
     if (status === "failed")
       write(
-        `::error title=${suite.name}::${timedOut ? "timed out" : `exited ${code}`}`,
+        `::error title=${suite.name}::${interrupted ? "interrupted" : timedOut ? "timed out" : `exited ${code}`}`,
       );
     else if (status === "warning")
       write(
         `::warning title=${suite.name}::Business and topology checks passed; only reviewed strict trace findings remain, recorded in the evidence artifact.`,
       );
-    results.push({ id: suite.id, name: suite.name, status, code });
+    record({
+      id: suite.id,
+      name: suite.name,
+      status,
+      code,
+      startedAt: new Date(start).toISOString(),
+      finishedAt: new Date(end).toISOString(),
+      durationMs: Math.max(0, end - start),
+      timedOut: Boolean(timedOut),
+      interrupted,
+    });
   }
   return results;
 }
 
 export function summary(results) {
   return [
-    "| Suite | Result | Exit |",
-    "| --- | --- | --- |",
+    "| Suite | Result | Exit | Duration (s) |",
+    "| --- | --- | --- | --- |",
     ...results.map(
-      ({ name, status, code }) => `| ${name} | ${status} | ${code} |`,
+      ({ name, status, code, durationMs }) =>
+        `| ${name} | ${status} | ${code} | ${(durationMs / 1000).toFixed(3)} |`,
     ),
   ].join("\n");
 }
@@ -126,7 +157,10 @@ async function main() {
   const suites = JSON.parse(process.env.SUITES ?? "[]");
   if (!Array.isArray(suites) || suites.length === 0)
     throw new Error("SUITES must name at least one suite");
-  const logs = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "shard-"));
+  const evidence = resolve("artifacts/verification/ci-shards");
+  mkdirSync(evidence, { recursive: true, mode: 0o700 });
+  const logs = mkdtempSync(join(evidence, "shard-"));
+  const recorded = [];
   let interrupted = false;
   for (const signal of signals)
     process.on(signal, () => {
@@ -134,6 +168,15 @@ async function main() {
     });
   const results = await runShard(suites, {
     stopped: () => interrupted,
+    onResult: (result) => {
+      recorded.push(result);
+      // Flush after every suite so completed outcomes survive interruption.
+      writeFileSync(
+        join(logs, "results.json"),
+        `${JSON.stringify(recorded, null, 2)}\n`,
+        { mode: 0o600 },
+      );
+    },
     run: (command, id) =>
       runBash(command, {
         log: join(logs, `${id}.log`),

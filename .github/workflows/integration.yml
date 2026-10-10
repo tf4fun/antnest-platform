@@ -199,8 +199,8 @@ jobs:
       suite: ${{ toJSON(matrix) }}
       images: ${{ needs.changes.outputs.images }}
 
-  # Tier C reports each shard but is not part of `Integration checks` until
-  # it is stable. The parallel cap leaves runners for the required shards.
+  # Tier C also blocks `Integration checks` when selected. The parallel cap
+  # leaves runners available for the other required shards.
   optional-suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
     needs: [changes, images]
@@ -223,11 +223,11 @@ jobs:
       images: ${{ needs.changes.outputs.images }}
 
   integration:
-    # GitHub counts a skipped required job as passing, so a run that selects
-    # nothing reports under another name and `Integration checks` stays
-    # pending until a full run covers this head.
-    name: ${{ needs.changes.outputs.mode == 'full' && 'Integration checks' || 'Integration checks (not run)' }}
-    needs: [changes, images, suite, image-suite]
+    # Drafts and partial manual runs report under other names. Event-based
+    # naming keeps selection failures on the required check even before the
+    # mode output exists.
+    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Integration checks (not run)' || github.event_name == 'workflow_dispatch' && inputs.suites != '' && 'Integration checks (partial)' || 'Integration checks' }}
+    needs: [changes, images, suite, image-suite, optional-suite]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -240,17 +240,34 @@ jobs:
           IMAGES: ${{ needs.images.result }}
           SUITE: ${{ needs.suite.result }}
           IMAGE_SUITE: ${{ needs.image-suite.result }}
+          OPTIONAL_SUITE: ${{ needs.optional-suite.result }}
           BUILDING: ${{ needs.changes.outputs.building }}
           PLAIN: ${{ needs.changes.outputs.plain }}
           IMAGED: ${{ needs.changes.outputs.imaged }}
+          OPTIONAL: ${{ needs.changes.outputs.optional }}
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
         run: |
-          echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED"
           [ "$CHANGES" = success ] || exit 1
-          if [ "$MODE" != full ]; then
-            echo "::notice::Integration suites did not run ($MODE). Mark the pull request ready for review to run them."
-            exit 0
-          fi
-          expect() { if [ "$2" = 0 ]; then [ "$1" = skipped ]; else [ "$1" = success ]; fi; }
+          echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED optional-suite=$OPTIONAL_SUITE/$OPTIONAL"
+          case "$MODE" in
+            full) ;;
+            light)
+              [ "$EVENT" = pull_request ] && [ "$DRAFT" = true ] || exit 1
+              echo "::notice::Integration suites did not run ($MODE). Mark the pull request ready for review to run them."
+              exit 0
+              ;;
+            *) exit 1 ;;
+          esac
+          expect() {
+            [[ "$2" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+            if [ "$2" = 0 ]; then [ "$1" = skipped ]; else [ "$1" = success ]; fi
+          }
           expect "$IMAGES" "$BUILDING"
           expect "$SUITE" "$PLAIN"
           expect "$IMAGE_SUITE" "$IMAGED"
+          expect "$OPTIONAL_SUITE" "$OPTIONAL"
+
+      - name: Reject workflow cancellation
+        if: cancelled()
+        run: exit 1
