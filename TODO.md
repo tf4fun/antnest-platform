@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-10：131 个 issue，61 个已关闭，70 个开放；开放项包含 5 个 Epic 和下列 65 个执行项。
+Issue 状态最后核对于 2026-10-10：131 个 issue，62 个已关闭，69 个开放；开放项包含 5 个 Epic 和 64 个执行项。下列队列保留 65 个执行项，其中 1 个已交付。
 
 ## 执行约定
 
@@ -17,16 +17,15 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，61 个已关闭，70 �
 
 ## 当前批次
 
-- 活跃项：[#109](https://github.com/tf4fun/antnest-platform/issues/109)，E2E Compose overlay 去重与诊断端口隔离。
-- 分支：`fix/issue-109-e2e-overlays`。
-- PR：[#223](https://github.com/tf4fun/antnest-platform/pull/223)，本地验收完成，等待最终 CI 与合并。
-- 状态：三个互斥写集合已完成并通过协调者与独立 review；22 个实际 Compose 场景前后完全等价，端口回归反向验证通过。
-- 批次边界：现有 `stage3a.compose.yaml` 已修复固定诊断端口；本次保留此行为，合并重复 overlay 并删除无效 Temporal reset，要求前后渲染配置等价。
-- 已通过：`make -j1 test-repo test-deployment-wiring test-deployment-ports check-links`、新增测试格式检查、Stage3a shell 语法检查。
-- Docker 结果：保留开发栈占用五个固定诊断端口时，ACP v1/v2 WebSocket 与 v1 HTTP 场景通过，保留资源未变化。Stage3a managed MCP 的业务、拓扑、删除资源和最终清理检查通过；仅有现有规则接受的时钟偏差告警。容器入口的宿主探针导入故障已按既有开关修复，45 个 fixture 通过并完成独立 review。
-- 待验收：最终 CI 与合并。
-- 本地证据：`artifacts/verification/issue-109/`。Docker 已就绪；使用与当前构建输入哈希一致的发布镜像准备 E2E。
-- 下一项：#215。只读预研确认当前使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时。先测试“三份稳定但缺父 span 的快照，随后父 span 到达”，参考 Stage2 既有缺父等待边界并保留稳定采样；实际根因仍需连续 Jaeger 快照证明。修改与验证在当前批次收口后进行。
+- 活跃项：[#215](https://github.com/tf4fun/antnest-platform/issues/215)，delete 生命周期 trace 偶发缺少 Admin Console 父 span；目前处于调查阶段，尚未修改采集器或服务实现。
+- 已确认：原始失败有 251 个 span、0 个 Admin span；Controller SERVER 引用的父 span 缺失。原始 artifact 和 job 日志均没有查询时间或连续快照，不能区分迟到、丢弃、未结束。
+- 当前代码使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时。三份稳定但缺父 span 的快照可能提前返回；此静态反例尚不等于历史故障根因。
+- 基线：当前代码的 `e2e-rpc-response-loss` 通过，28 条 trace 完成拓扑检查；delete 有 253 个 span、2 个 Admin span、无缺父及告警。其他 trace 仅有既有规则接受的时钟偏差告警。容器、卷和网络清理已核对。此次未复现，因此 issue 保持开放。
+- 代码审查：Admin delete 同步读取并关闭响应体；CLIENT 的 EOF/Close 和 SERVER 的 defer 均结束 span，未发现成功 202 后同时漏掉两个 End 的确定路径。
+- 下一步：采集同一 delete trace 带时间戳的连续 Jaeger 快照及 Admin 导出证据，区分采集与服务故障；以失败测试确定修复归属。若修采集器，保留稳定采样及严格拓扑断言，并覆盖迟到父 span、永久缺失和中止边界。
+- 后续顺序：#193 → #197 → #112。#193 的旧证据只有匹配数量 0，缺少失败时的投影/ACK 状态；#197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #194/#198 后的诊断，不据此直接增加重试。
+- 本地证据：`artifacts/verification/issue-215/`；跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。
+- 最近完成：#109 已随 [PR #223](https://github.com/tf4fun/antnest-platform/pull/223) 合并并关闭，commit `70140fc1`。本地验收、独立 review、最终提交的 `Repository checks` 与 `Integration checks` 均通过；合并时剩余的非必需 Tier C 仍在 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38011711226) 中执行。证据保存在 `artifacts/verification/issue-109/`。
 
 ## 推进队列
 
@@ -34,7 +33,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，61 个已关闭，70 �
 
 ### 1 回归基线与CI准入
 
-- [ ] [#109](https://github.com/tf4fun/antnest-platform/issues/109) test(e2e): consolidate ACP/managed-MCP Compose overlays and stop fixed diagnostic port binds
+- [x] [#109](https://github.com/tf4fun/antnest-platform/issues/109) test(e2e): consolidate ACP/managed-MCP Compose overlays and stop fixed diagnostic port binds
 - [ ] [#215](https://github.com/tf4fun/antnest-platform/issues/215) rpc-response-loss: delete lifecycle trace intermittently misses the Admin Console parent span
 - [ ] [#193](https://github.com/tf4fun/antnest-platform/issues/193) skill-discovery-caller: source Agent projection is intermittently not active and acknowledged after propagation
 - [ ] [#197](https://github.com/tf4fun/antnest-platform/issues/197) skill-source-lifecycle: Skill source preview intermittently returns 503 during promote
@@ -176,3 +175,4 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，61 个已关闭，70 �
 | 日期 | Issue | PR 或 commit | 验证与结果 |
 | --- | --- | --- | --- |
 | 2026-10-10 | 全局队列 | 基线 `814d5041` | 65 个开放执行项已分配，未遗漏、未重复；#109 开始调查 |
+| 2026-10-10 | #109 | [PR #223](https://github.com/tf4fun/antnest-platform/pull/223)、`70140fc1` | 22 个 Compose 场景等价；端口反向回归、仓库/部署检查、45 个 managed fixture 通过；保留开发栈时 ACP v1/v2 WebSocket、v1 HTTP 通过，Stage3a managed MCP 业务/拓扑/删除/清理通过；独立 review 与必需 CI 通过后合并 |
