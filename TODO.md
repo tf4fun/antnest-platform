@@ -17,14 +17,16 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 �
 
 ## 当前批次
 
-- 插入处理：收回四个非服务 package 的 CI 发布范围（Temporal 依赖及三个 Runtime 测试变体）；保留本地构建和测试消费，以同次 CI artifact 传递。53 个相关测试及独立 review 通过，完整仓库准入与 CI 尚待完成。用户已授权整改完成后删除四个现存 package；`gh` 缺少 Packages scope，已确认可通过当前 GitHub 浏览器会话管理，删除仍待整改合并。
+- 最近插入批次：镜像发布范围已随 [PR #229](https://github.com/tf4fun/antnest-platform/pull/229) 合并，commit `47a80f1c`。仅发布十个已实现的服务/Runtime 镜像；Temporal 依赖和三个 Runtime 测试变体保留本地构建，以同次 CI artifact 传递。
+- 镜像批次验收：53 个相关测试、完整 `make test-repo`、格式/语法/链接检查、独立 review、最终提交的必需 CI 和全部 Tier A/B Docker 分片通过。main [run 38026470361](https://github.com/tf4fun/antnest-platform/actions/runs/38026470361) 的四个镜像均构建成功，registry 登录与发布步骤均跳过。
+- 已按用户授权删除 `antnest-temporal`、`antnest-runtime-skill-gate`、`antnest-runtime-fixture`、`antnest-runtime-managed` 四个 GHCR package；浏览器确认 [Packages 列表](https://github.com/tf4fun/antnest-platform/packages) 从 14 项降为 10 项，仅保留计划内镜像。验证记录和截图在 `artifacts/verification/ci-package-scope/`。本批不关闭更广泛的 #112。
 - 下一执行项：[#197](https://github.com/tf4fun/antnest-platform/issues/197)，Skill source preview 偶发返回 503；尚未开始实现。之后为 #112。
 - #197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #198 后的诊断，先固定复现和失败测试，再确定服务归属，不据此直接增加重试。
 - 跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。开始前重新核对 issue 讨论、当前代码和最近 CI artifact。
 - 最近完成：#193 已随 [PR #227](https://github.com/tf4fun/antnest-platform/pull/227) 合并并关闭，commit `45752015`。后续失败 run `37731909405` / `37719450273` 证明源投影仍 active、sequence=2、sent_sequence=1，managed candidate/digest 一致，而 peer 已为 1/1；peer ACK 和 live discovery 都不能代表源投影已经确认。
 - #193 修复：caller Run 前仅对有效源投影等待 ACK，期限 90 秒；撤销、身份或序号变化、查询失败、取消及超时仍失败，Run 后检查仍立即断言。未修改服务实现。
 - #193 验收：37 个相关 fixture/契约测试、完整 `make test-repo`、格式/语法/链接检查、完整 Docker caller 流程和资源清理通过；独立 review、最终提交的必需 CI 和 Skill discovery/deployment CI 分片通过后合并。原始失败、red/green、Docker 与 CI 证据在 `artifacts/verification/issue-193/`。
-- #193 合并时其他非必需 Tier C 分片尚有任务运行；其余结果见 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38023201384)。
+- #193 合并时尚在运行的非必需 Tier C 分片，后续已在 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38023201384) 全部通过。
 
 ## 推进队列
 
