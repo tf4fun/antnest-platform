@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-10：131 个 issue，63 个已关闭，68 个开放；开放项包含 5 个 Epic 和 63 个执行项。下列队列保留 65 个执行项，其中 2 个已交付。
+Issue 状态最后核对于 2026-10-10：131 个 issue，64 个已关闭，67 个开放；开放项包含 5 个 Epic 和 62 个执行项。下列队列保留 65 个执行项，其中 3 个已交付。
 
 ## 执行约定
 
@@ -17,13 +17,13 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，63 个已关闭，68 �
 
 ## 当前批次
 
-- 下一执行项：[#193](https://github.com/tf4fun/antnest-platform/issues/193)，source Agent projection 偶发未 active/acknowledged；尚未开始实现。之后依次为 #197 → #112。
-- #193 的旧证据只有匹配数量 0，缺少失败时的投影/ACK 状态；#197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #194/#198 后的诊断，先固定复现和失败测试，再确定服务归属，不据此直接增加重试。
+- 下一执行项：[#197](https://github.com/tf4fun/antnest-platform/issues/197)，Skill source preview 偶发返回 503；尚未开始实现。之后为 #112。
+- #197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #198 后的诊断，先固定复现和失败测试，再确定服务归属，不据此直接增加重试。
 - 跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。开始前重新核对 issue 讨论、当前代码和最近 CI artifact。
-- 最近完成：#215 已随 [PR #225](https://github.com/tf4fun/antnest-platform/pull/225) 合并并关闭，commit `88453a80`。共享 E2E 采集器现在要求同 trace 同步父 span 闭合后，再取得三次稳定样本；仍保留 40 次上限、严格拓扑和既有告警规则。
-- #215 证据：30 秒 Admin 导出延迟复现三份稳定但缺父的 251-span 快照；修复后第 27 次父链闭合，第 27–29 次稳定才返回。默认 CI 又实际出现 2→2→2→253→253→253 个 span，前三份缺 Gateway 父，后续完整。原历史 artifact 缺少时间序列，仍不能追溯断言其具体导出原因。
-- #215 验收：69 个相关 fixture、完整 `make test-repo`、格式/链接/shell 语法通过；RPC 默认与延迟导出、managed MCP ACP v1/v2 四次 Docker 验收及资源清理通过；独立 review、最终提交的 `Repository checks`、`Integration checks` 和 ACP restart/response-loss CI 分片均通过。
-- #215 合并时其余非必需 Tier C 尚有任务运行；状态见 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38016527233)。私有证据及精确提交的 CI 原始 trace/job 日志保存在 `artifacts/verification/issue-215/`。
+- 最近完成：#193 已随 [PR #227](https://github.com/tf4fun/antnest-platform/pull/227) 合并并关闭，commit `45752015`。后续失败 run `37731909405` / `37719450273` 证明源投影仍 active、sequence=2、sent_sequence=1，managed candidate/digest 一致，而 peer 已为 1/1；peer ACK 和 live discovery 都不能代表源投影已经确认。
+- #193 修复：caller Run 前仅对有效源投影等待 ACK，期限 90 秒；撤销、身份或序号变化、查询失败、取消及超时仍失败，Run 后检查仍立即断言。未修改服务实现。
+- #193 验收：37 个相关 fixture/契约测试、完整 `make test-repo`、格式/语法/链接检查、完整 Docker caller 流程和资源清理通过；独立 review、最终提交的必需 CI 和 Skill discovery/deployment CI 分片通过后合并。原始失败、red/green、Docker 与 CI 证据在 `artifacts/verification/issue-193/`。
+- #193 合并时其他非必需 Tier C 分片尚有任务运行；其余结果见 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38023201384)。
 
 ## 推进队列
 
@@ -33,7 +33,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，63 个已关闭，68 �
 
 - [x] [#109](https://github.com/tf4fun/antnest-platform/issues/109) test(e2e): consolidate ACP/managed-MCP Compose overlays and stop fixed diagnostic port binds
 - [x] [#215](https://github.com/tf4fun/antnest-platform/issues/215) rpc-response-loss: delete lifecycle trace intermittently misses the Admin Console parent span
-- [ ] [#193](https://github.com/tf4fun/antnest-platform/issues/193) skill-discovery-caller: source Agent projection is intermittently not active and acknowledged after propagation
+- [x] [#193](https://github.com/tf4fun/antnest-platform/issues/193) skill-discovery-caller: source Agent projection is intermittently not active and acknowledged after propagation
 - [ ] [#197](https://github.com/tf4fun/antnest-platform/issues/197) skill-source-lifecycle: Skill source preview intermittently returns 503 during promote
 - [ ] [#112](https://github.com/tf4fun/antnest-platform/issues/112) ci: run component, browser and Docker E2E suites in GitHub Actions
 
@@ -150,7 +150,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，63 个已关闭，68 �
 
 - #80 已关闭；#219 等已关闭问题保留回归覆盖，不重新实现。
 - #81/#83 的 #10、#38、#47、#48、#53 已勾选，但 issue 仍开放且存在未交付内容。逐项按 admission 校正 Epic 状态。
-- #193 的 PR #194、#197 的 PR #198 只增加诊断；下一步利用已有证据固定复现并修根因。
+- #193 利用 PR #194 的后续失败诊断确认 ACK 延迟，并由 PR #227 修复；#197 的 PR #198 仍只增加诊断，下一步利用已有证据固定复现并修根因。
 - #112 已有必需的 Tier A/B 和非必需的 Tier C。稳定后将 Tier C 纳入 `Integration checks`；#165–#168 随服务补齐替代测试，#169 随 UI 收口。移出 CI 本身不是完成。
 - #18 的旧八动作设计已过时，当前 signer 为 `install`、`digest`、`temporary_install`、`temporary_release`，契约应与当前行为一致。
 - #167 以 2026-10-08 的更新为准：前台 Run 不取消 review；Runtime install 等待空闲窗口并可被前台抢占。旧 cleanup release 场景已删除，不恢复它。
@@ -175,3 +175,4 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，63 个已关闭，68 �
 | 2026-10-10 | 全局队列 | 基线 `814d5041` | 65 个开放执行项已分配，未遗漏、未重复；#109 开始调查 |
 | 2026-10-10 | #109 | [PR #223](https://github.com/tf4fun/antnest-platform/pull/223)、`70140fc1` | 22 个 Compose 场景等价；端口反向回归、仓库/部署检查、45 个 managed fixture 通过；保留开发栈时 ACP v1/v2 WebSocket、v1 HTTP 通过，Stage3a managed MCP 业务/拓扑/删除/清理通过；独立 review 与必需 CI 通过后合并 |
 | 2026-10-10 | #215 | [PR #225](https://github.com/tf4fun/antnest-platform/pull/225)、`88453a80` | 同步父 span 闭合后再判定稳定；迟到、永久缺失和中止回归通过；69 个相关 fixture、完整仓库准入、RPC 默认/延迟导出及 managed MCP ACP v1/v2 Docker 验收、独立 review、必需 CI 和 RPC CI 分片通过后合并 |
+| 2026-10-10 | #193 | [PR #227](https://github.com/tf4fun/antnest-platform/pull/227)、`45752015` | 确认 active source 2/1 与 peer 1/1 的 ACK 时序缺口；37 个相关测试、完整仓库检查、Docker caller 及清理、独立 review、必需 CI 和 Skill discovery CI 分片通过后合并 |
