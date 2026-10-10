@@ -24,13 +24,20 @@ export async function verifyTraces(
   return evidence;
 }
 
-export async function collectTrace(base, id, inspect, signal) {
+export async function collectTrace(
+  base,
+  id,
+  inspect,
+  signal,
+  { wait = delay } = {},
+) {
   let lastError;
   let previous;
   let stableSamples = 0;
   for (let attempt = 0; attempt < 40; attempt++) {
     signal?.throwIfAborted();
     try {
+      const query_started_at = Date.now();
       const response = await fetch(`${base}/api/traces/${id}`, {
         signal: signal
           ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
@@ -38,7 +45,27 @@ export async function collectTrace(base, id, inspect, signal) {
       });
       assert.equal(response.status, 200, "Jaeger trace request failed");
       const trace = (await response.json()).data?.[0];
-      const result = inspect(trace);
+      const sample_received_at = Date.now();
+      const result = inspect(trace, {
+        attempt: attempt + 1,
+        query_started_at,
+        sample_received_at,
+      });
+      assert(trace?.spans?.length, "trace not exported");
+      const exportedSpanIDs = new Set(trace.spans.map((span) => span.spanID));
+      for (const span of trace.spans) {
+        for (const ref of span.references ?? []) {
+          if (
+            ref.refType === "CHILD_OF" &&
+            (!ref.traceID || ref.traceID === trace.traceID)
+          ) {
+            assert(
+              exportedSpanIDs.has(ref.spanID),
+              `missing synchronous parent: ${ref.spanID}`,
+            );
+          }
+        }
+      }
       const spanIDs = JSON.stringify(
         trace.spans.map((span) => span.spanID).sort(),
       );
@@ -54,7 +81,7 @@ export async function collectTrace(base, id, inspect, signal) {
       stableSamples = 0;
       previous = undefined;
     }
-    await delay(1000, undefined, { signal });
+    await wait(1000, undefined, { signal });
   }
   throw lastError;
 }

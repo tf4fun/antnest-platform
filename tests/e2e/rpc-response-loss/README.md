@@ -21,6 +21,11 @@ and a deterministic model Provider. No production fault-injection switch is
 used. Set `ANTNEST_E2E_CONTROLLER_IMAGE` to test a Controller image other than
 `antnest/agent-controller:local`.
 
+To exercise delayed Admin Console span export, run
+`ANTNEST_E2E_ADMIN_SPAN_DELAY_MS=30000 make e2e-rpc-response-loss`.
+This fixture setting changes only the Admin SDK batch interval in this disposable
+stack; the default remains 5000 ms. The same business and strict trace gates apply.
+
 ## Scenario
 
 The Controller's `apply-execution-snapshot` and `settle-agent` calls pass
@@ -66,6 +71,19 @@ delta of ...`) is reported without failing the exit.
 Full Traces stay in the private directory
 `artifacts/verification/rpc-response-loss/<project>/rpc-traces`; console output
 is compact metrics.
+
+The collector waits for every same-trace `CHILD_OF` parent to be present before
+requiring three identical span-ID samples. It retains the existing 40-query
+limit, 5-second query timeout and 1-second sampling interval. A permanently
+missing parent still fails. Stability alone cannot establish that an incomplete
+trace is ready; the final topology and warning checks remain unchanged.
+
+Lifecycle `*.samples.jsonl` files retain each parsed sample's query start and
+receipt times along with the raw trace. On failure, one bounded diagnostic query per known
+lifecycle writes a separate `*-after-failure.json`; it never replaces the failed
+sample or changes admission. Cleanup also saves Admin Console logs beside the
+trace directory before removing the client. These private artifacts may contain
+sensitive diagnostic data and are excluded from Git and Docker build contexts.
 
 ## Cleanup
 

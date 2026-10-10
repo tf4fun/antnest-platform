@@ -17,15 +17,17 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，62 个已关闭，69 �
 
 ## 当前批次
 
-- 活跃项：[#215](https://github.com/tf4fun/antnest-platform/issues/215)，delete 生命周期 trace 偶发缺少 Admin Console 父 span；目前处于调查阶段，尚未修改采集器或服务实现。
+- 活跃项：[#215](https://github.com/tf4fun/antnest-platform/issues/215)，delete 生命周期 trace 偶发缺少 Admin Console 父 span；采集器修复已通过失败测试到通过测试、独立 review 和 Docker 集成验收，尚未合并。
 - 已确认：原始失败有 251 个 span、0 个 Admin span；Controller SERVER 引用的父 span 缺失。原始 artifact 和 job 日志均没有查询时间或连续快照，不能区分迟到、丢弃、未结束。
-- 当前代码使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时。三份稳定但缺父 span 的快照可能提前返回；此静态反例尚不等于历史故障根因。
+- 当前代码使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时。真实 Docker 实验将 Admin SDK batch 间隔设为 30 秒，复现三份稳定但缺父的 251-span 快照被提前返回；失败后出现相同父 ID，完整快照有 253 个 span、2 个 Admin span。这确证采集器缺口，不能追溯断言历史故障的导出原因。
 - 基线：当前代码的 `e2e-rpc-response-loss` 通过，28 条 trace 完成拓扑检查；delete 有 253 个 span、2 个 Admin span、无缺父及告警。其他 trace 仅有既有规则接受的时钟偏差告警。容器、卷和网络清理已核对。此次未复现，因此 issue 保持开放。
 - 代码审查：Admin delete 同步读取并关闭响应体；CLIENT 的 EOF/Close 和 SERVER 的 defer 均结束 span，未发现成功 202 后同时漏掉两个 End 的确定路径。
-- 下一步：采集同一 delete trace 带时间戳的连续 Jaeger 快照及 Admin 导出证据，区分采集与服务故障；以失败测试确定修复归属。若修采集器，保留稳定采样及严格拓扑断言，并覆盖迟到父 span、永久缺失和中止边界。
+- 本批修改归属共享 E2E 采集器：同 trace 同步父 span 闭合后才累计三次稳定采样，保留 40 次查询上限和严格拓扑/告警断言；连续快照及失败后独立诊断保留原始证据，Admin 日志落入私有目录。已覆盖迟到、永久缺失和中止边界。生产服务实现不变。
+- 验收：69 个相关 fixture、完整 `make test-repo`、格式、链接和 shell 语法检查通过；RPC 默认配置与 30 秒 Admin 导出延迟、managed MCP 的 ACP v1/v2 均通过。延迟场景前 26 次缺 Admin，第 27 次父链闭合，第 27–29 次稳定才返回。四次 Docker 验收后均无残留容器/卷，网络仅默认三项。
+- 下一步：通过最终提交 CI 后 review 和合并。
 - 后续顺序：#193 → #197 → #112。#193 的旧证据只有匹配数量 0，缺少失败时的投影/ACK 状态；#197 的旧截图提示 source unavailable，缺少响应错误码和同次 preview trace。下一批使用 #194/#198 后的诊断，不据此直接增加重试。
 - 本地证据：`artifacts/verification/issue-215/`；跨批次精简交接：`artifacts/verification/issue-planning-20261010/next-investigations.json`。
-- 最近完成：#109 已随 [PR #223](https://github.com/tf4fun/antnest-platform/pull/223) 合并并关闭，commit `70140fc1`。本地验收、独立 review、最终提交的 `Repository checks` 与 `Integration checks` 均通过；合并时剩余的非必需 Tier C 仍在 [CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38011711226) 中执行。证据保存在 `artifacts/verification/issue-109/`。
+- 最近完成：#109 已随 [PR #223](https://github.com/tf4fun/antnest-platform/pull/223) 合并并关闭，commit `70140fc1`。本地验收、独立 review、最终提交的 `Repository checks`、`Integration checks` 和全部非必需 Tier C 均通过；[CI run](https://github.com/tf4fun/antnest-platform/actions/runs/38011711226) 已完成。证据保存在 `artifacts/verification/issue-109/`。
 
 ## 推进队列
 

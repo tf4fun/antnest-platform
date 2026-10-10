@@ -40,6 +40,12 @@ Trace evidence correlates propagated HTTP CLIENT span IDs with ACP SERVER spans,
 driver persistence spans and Temporal retry activities. Expected injected
 transport errors must match the recorded receipts; any other error fails.
 
+Trace collection must not accept repeated incomplete snapshots as converged.
+All same-trace synchronous parents must be present, followed by three stable
+span-ID samples within the existing 40-query limit. Missing parents at the limit
+fail admission. Diagnostic reads after a failure preserve the original snapshot
+and cannot turn that failure into a pass.
+
 Each publication attempt must own a recording
 `agent_controller.execution_publication` span and its source SELECT. A dropped
 reply must have no acknowledgement SQL and no success attribute; the delivered
