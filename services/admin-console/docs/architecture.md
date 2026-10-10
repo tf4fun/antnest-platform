@@ -276,6 +276,14 @@ action and is not rendered as user-facing credential identity.
 
 ### Account, sign-out and session expiry
 
+Console mutations and logout read `__Host-antnest_csrf` before the unprefixed
+delivery cookie used in explicit insecure loopback development. A duplicate,
+empty or malformed prefixed value never falls back to a legacy value. The
+browser forwards that opaque token in one `X-Antnest-CSRF-Token` header;
+Gateway independently derives the expected value from the authenticated
+Identity session and rejects a planted or cross-session value. Console never
+reads the HttpOnly session credential or computes the binding key.
+
 The account area shows the administrator's display name, email, and
 Organization name/slug instead of opaque internal IDs, and exposes local
 password rotation only when Identity confirms a local credential. Unknown or
