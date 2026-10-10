@@ -23,7 +23,7 @@ func TestClientCallsIdentityContractAndPropagatesTrace(t *testing.T) {
 			t.Fatalf("path=%s", request.URL.Path)
 		}
 		return jsonResponse(http.StatusOK, `{
-			"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z",
+			"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z","idle_expires_at":"2026-09-02T01:30:00Z","activity_interval_ms":30000,
 			"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","organization_role":"admin","active":true}
 		}`), nil
 	})}
@@ -99,7 +99,7 @@ func TestResolveRejectsIncompleteAuthorityResponse(t *testing.T) {
 func TestResolvePreservesExplicitInactivePrincipal(t *testing.T) {
 	contextJSON, _ := json.Marshal(testIssuerContext(t))
 	client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{"caller_context":`+string(contextJSON)+`,"principal":{"user_id":"u","organization_id":"o","organization_slug":"engineering","organization_name":"Engineering","membership_id":"m","active":false}}`), nil
+		return jsonResponse(http.StatusOK, `{"caller_context":`+string(contextJSON)+`,"expires_at":"2026-09-02T13:00:00Z","idle_expires_at":"2026-09-02T01:30:00Z","activity_interval_ms":30000,"principal":{"user_id":"u","organization_id":"o","organization_slug":"engineering","organization_name":"Engineering","membership_id":"m","active":false}}`), nil
 	})})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestClientSupportsBrowserOIDCFlow(t *testing.T) {
 			return jsonResponse(http.StatusOK, `{"authorization_url":"https://id.example.test/authorize?state=secret-state","expires_at":"2026-09-02T13:00:00Z"}`), nil
 		case "/protocol/oidc/callback":
 			return jsonResponse(http.StatusOK, `{
-				"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z",
+				"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z","idle_expires_at":"2026-09-02T01:30:00Z","activity_interval_ms":30000,
 				"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"user","organization_role":"member","active":true}
 			}`), nil
 		default:

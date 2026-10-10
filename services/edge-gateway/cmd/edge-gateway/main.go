@@ -18,6 +18,7 @@ import (
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/server"
@@ -107,6 +108,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("create session manager: %w", err)
 	}
+	browserStreams := browserstream.NewRegistry()
 	handler, err := server.NewHandler(server.Config{
 		AllowOriginlessMutations: cfg.AllowOriginlessMutations,
 		PublicOrigin:             cfg.PublicOrigin, TrustedProxies: cfg.TrustedProxies,
@@ -116,7 +118,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		LoginSourceMax: cfg.LoginSourceMax, LoginAccountMax: cfg.LoginAccountMax,
 	}, server.Dependencies{
 		Identity: identityClient, Agents: agentClient, Execution: executionClient, Sessions: sessions,
-		HTTPClient: httpClient, Logger: logger,
+		HTTPClient: httpClient, Logger: logger, BrowserStreams: browserStreams,
 	})
 	if err != nil {
 		return fmt.Errorf("compose Gateway: %w", err)
@@ -137,6 +139,8 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		listener = tls.NewListener(listener, httpServer.TLSConfig)
 	}
 	logger.Info("Edge Gateway is ready", "listen_address", cfg.ListenAddress)
+	stopSessionFeed := startSessionRevocationFeed(ctx, browserStreams, identityClient)
+	defer stopSessionFeed()
 	return serveHTTP(ctx, httpServer, listener, lifecycle, cfg.ShutdownTimeout)
 }
 

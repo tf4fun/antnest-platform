@@ -207,7 +207,7 @@ func TestWorkspaceApplicationPreservesPublicPrefix(t *testing.T) {
 func TestLoginCreatesCookieSessionWithoutLeakingIdentityToken(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	identityStub := &identityServiceStub{loginResult: identity.LoginResult{
-		TokenID: "token-1", AccessToken: "ant_api_top_secret", ExpiresAt: now.Add(time.Hour),
+		TokenID: "token-1", AccessToken: "ant_api_top_secret", ExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(30 * time.Minute), ActivityIntervalMS: 30000,
 		Principal: administratorPrincipal(),
 	}}
 	handler := newTestHandler(t, identityStub, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -456,7 +456,7 @@ func TestOIDCCallbackEstablishesBrowserSessionWithoutDisclosingToken(t *testing.
 		AuthorizationURL: "https://id.example.test/authorize?state=opaque-state", ExpiresAt: now.Add(time.Minute),
 	}, completeOIDCResult: identity.OIDCCallbackResult{
 		Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "ant_api_secret",
-		ExpiresAt: now.Add(time.Hour),
+		ExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(30 * time.Minute), ActivityIntervalMS: 30000,
 	}}
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), now)
 	response := httptest.NewRecorder()
@@ -768,6 +768,8 @@ func administratorPrincipal() identity.Principal {
 		OrganizationSlug: "engineering", OrganizationName: "Engineering",
 		SystemRole: "admin", OrganizationRole: "admin", Active: true,
 		CallerContext: "trusted-issuer-context", SessionID: "token-1",
+		ContextExpiresAt: time.Now().Add(time.Minute),
+		ExpiresAt:        time.Now().Add(12 * time.Hour), IdleExpiresAt: time.Now().Add(30 * time.Minute), ActivityIntervalMS: 30000,
 	}
 }
 
@@ -846,4 +848,20 @@ func (stub *identityServiceStub) CompleteOIDCLogin(
 func (stub *identityServiceStub) Ready(context.Context) error {
 	stub.readyCalls++
 	return stub.readyErr
+}
+
+func (*identityServiceStub) CurrentAccount(context.Context) (identity.CurrentAccount, error) {
+	panic("unexpected account operation in legacy fixture")
+}
+func (*identityServiceStub) TouchSession(context.Context) (identity.SessionMetadata, error) {
+	panic("unexpected activity operation in legacy fixture")
+}
+func (*identityServiceStub) ChangePassword(context.Context, identity.PasswordInput) (identity.LoginResult, error) {
+	panic("unexpected password operation in legacy fixture")
+}
+func (*identityServiceStub) ListSessions(context.Context, identity.SessionListInput) (identity.SessionPage, error) {
+	panic("unexpected session inventory in legacy fixture")
+}
+func (*identityServiceStub) RevokeSessions(context.Context, identity.SessionRevokeInput) (identity.SessionRevokeResult, error) {
+	panic("unexpected session revocation in legacy fixture")
 }

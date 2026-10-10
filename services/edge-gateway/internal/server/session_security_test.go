@@ -118,7 +118,7 @@ func TestLogoutResolvesBoundSessionAndPreservesRetryableCredentials(t *testing.T
 		{name: "planted pair", cookie: cookie, header: "delivery", status: 403, code: "csrf_failed", resolves: 1},
 		{name: "revoke timeout", cookie: cookie, header: testCSRFToken, revokeErr: context.DeadlineExceeded, status: 503, code: "identity_unavailable", resolves: 1, revokes: 1},
 		{name: "revoked", cookie: cookie, header: testCSRFToken, revokeStatus: identity.RevokeStatusRevoked, status: 204, resolves: 1, revokes: 1, clears: 2},
-		{name: "already invalid", cookie: cookie, header: testCSRFToken, revokeStatus: identity.RevokeStatusAlreadyInvalid, status: 204, resolves: 1, revokes: 1, clears: 2},
+		{name: "already invalid", cookie: cookie, header: testCSRFToken, revokeStatus: identity.RevokeStatusAlreadyInvalid, status: 401, code: "unauthenticated", resolves: 1, revokes: 1, clears: 2},
 		{name: "no delivery cookie", cookie: "antnest_session=token-1", header: testCSRFToken, revokeStatus: identity.RevokeStatusRevoked, status: 204, resolves: 1, revokes: 1, clears: 2},
 		{name: "foreign origin first", cookie: cookie, header: testCSRFToken, origin: "https://foreign.example", status: 403, code: "forbidden"},
 	} {
@@ -142,6 +142,9 @@ func TestLogoutResolvesBoundSessionAndPreservesRetryableCredentials(t *testing.T
 			h.ServeHTTP(w, r)
 			if w.Code != row.status || (row.code != "" && !strings.Contains(w.Body.String(), `"code":"`+row.code+`"`)) {
 				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("logout response is cacheable: %q", w.Header().Get("Cache-Control"))
 			}
 			revokes := 0
 			if issuer.revokedAccessToken != "" {

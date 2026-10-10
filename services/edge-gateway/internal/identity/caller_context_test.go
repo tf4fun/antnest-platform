@@ -19,7 +19,7 @@ func TestResolveUsesExplicitProfileAndAgentAndKeepsContextPrivate(t *testing.T) 
 				if json.NewDecoder(r.Body).Decode(&input) != nil || input["profile"] != profile || input["agent_id"] != "agent-route" || input["access_token"] != "private-user-token" {
 					t.Error("issuer scope did not match server selection")
 				}
-				body, _ := json.Marshal(map[string]any{"caller_context": issued, "principal": map[string]any{"user_id": "u", "organization_id": "o", "organization_slug": "org", "organization_name": "Org", "membership_id": "m", "active": true}})
+				body, _ := json.Marshal(map[string]any{"caller_context": issued, "expires_at": "2026-10-03T13:00:00Z", "idle_expires_at": "2026-10-03T01:30:00Z", "activity_interval_ms": 30000, "principal": map[string]any{"user_id": "u", "organization_id": "o", "organization_slug": "org", "organization_name": "Org", "membership_id": "m", "active": true}})
 				return jsonResponse(200, string(body)), nil
 			})})
 			if err != nil {

@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { gatewaySessionCookies } from "../../../support/gateway-session-cookies.mjs";
+import { browserSessionChecks } from "./browser-sessions.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-gateway-auth-${randomUUID()}`;
@@ -100,6 +101,7 @@ try {
   assert.equal(binding.HostIp, "127.0.0.1");
   const url = `http://127.0.0.1:${binding.HostPort}`;
   const publicOrigin = "http://127.0.0.1";
+  const userAgentHint = "Gateway Docker <plain-text> session A";
   const forged = {
     "Antnest-Service-Authorization": "Bearer browser-forgery",
     "Antnest-Caller-Context": "browser-forgery",
@@ -114,6 +116,7 @@ try {
       ...forged,
       "content-type": "application/json",
       Origin: publicOrigin,
+      "User-Agent": userAgentHint,
     },
     body: JSON.stringify({
       organization_slug: "auth-test",
@@ -163,6 +166,7 @@ try {
     checks++;
     assert.equal(response.headers.get("Antnest-Service-Authorization"), null);
     assert.equal(response.headers.get("Antnest-Caller-Context"), null);
+    assert.equal(response.headers.getSetCookie().length, 0);
     checks++;
     const value = await response.json();
     assert(!JSON.stringify(value).includes(fixture.access));
@@ -258,6 +262,18 @@ try {
   await request("/api/admin/agents", { status: 503 });
   writeFileSync(consoleFile, next, { mode: 0o600 });
   await request("/api/admin/agents");
+  checks += await browserSessionChecks({
+    url,
+    origin: publicOrigin,
+    fixture,
+    signal: controller.signal,
+    initial: {
+      cookie: cookies,
+      csrf,
+      metadata: loginBody,
+      hint: userAgentHint,
+    },
+  });
   await docker([
     "exec",
     "--env",

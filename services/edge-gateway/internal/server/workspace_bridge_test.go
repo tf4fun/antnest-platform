@@ -20,8 +20,9 @@ import (
 
 type bridgeLeaseIdentity struct {
 	IdentityService
-	active   atomic.Bool
-	resolves atomic.Int32
+	active    atomic.Bool
+	resolves  atomic.Int32
+	principal identity.Principal
 }
 
 func TestBridgeWorkspaceDocumentForwardsVerifiedIdentityAndKeepsAssetPublic(t *testing.T) {
@@ -67,7 +68,7 @@ func TestBridgeWorkspaceDocumentForwardsVerifiedIdentityAndKeepsAssetPublic(t *t
 
 func (value *bridgeLeaseIdentity) Resolve(context.Context, string) (identity.Principal, error) {
 	value.resolves.Add(1)
-	principal := ordinaryPrincipal()
+	principal := value.principal
 	principal.Active = value.active.Load()
 	return principal, nil
 }
@@ -83,7 +84,9 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 		<-request.Context().Done()
 	}))
 	defer upstream.Close()
-	identityStub := &bridgeLeaseIdentity{IdentityService: &identityServiceStub{}}
+	principal := ordinaryPrincipal()
+	principal.ActivityIntervalMS = 250
+	identityStub := &bridgeLeaseIdentity{IdentityService: &identityServiceStub{}, principal: principal}
 	identityStub.active.Store(true)
 	sessions, err := session.NewManager(session.Config{CSRFKey: []byte(testCSRFKey)})
 	if err != nil {
@@ -130,7 +133,8 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 	}
 	identityStub.active.Store(false)
 	closed := make(chan error, 1)
-	go func() { _, err := io.Copy(io.Discard, reader); closed <- err }()
+	go func() { defer close(closed); _, err := io.Copy(io.Discard, reader); closed <- err }()
+	defer func() { _ = response.Body.Close(); <-closed }()
 	select {
 	case <-closed:
 		if identityStub.resolves.Load() < 2 {

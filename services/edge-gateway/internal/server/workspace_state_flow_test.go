@@ -114,7 +114,8 @@ func TestWorkspaceStateHTTPChainPreservesTraceAndStripsBrowserCredentials(t *tes
 				}
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/rpc/identity/resolve-access-token" {
-					if err := json.NewEncoder(w).Encode(map[string]any{"principal": ordinaryPrincipal(), "caller_context": testIssuerContext(t)}); err != nil {
+					principal := ordinaryPrincipal()
+					if err := json.NewEncoder(w).Encode(map[string]any{"principal": principal, "caller_context": testIssuerContext(t), "expires_at": principal.ExpiresAt, "idle_expires_at": principal.IdleExpiresAt, "activity_interval_ms": principal.ActivityIntervalMS}); err != nil {
 						t.Error(err)
 					}
 					return

@@ -31,6 +31,8 @@ func TestSessionSecurityFlowThroughTrustedIssuer(t *testing.T) {
 			var resolves, writes, revokes atomic.Int32
 			var malformed atomic.Bool
 			now := time.Now()
+			expiresAt := now.Add(time.Hour)
+			idleExpiresAt := now.Add(30 * time.Minute)
 			issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				var input map[string]string
@@ -45,14 +47,14 @@ func TestSessionSecurityFlowThroughTrustedIssuer(t *testing.T) {
 					if input["email"] == "second@example.test" {
 						suffix = "2"
 					}
-					_ = json.NewEncoder(w).Encode(identity.LoginResult{Principal: administratorPrincipal(), TokenID: "token-" + suffix, AccessToken: "private-token-" + suffix, ExpiresAt: now.Add(time.Hour)})
+					_ = json.NewEncoder(w).Encode(identity.LoginResult{Principal: administratorPrincipal(), TokenID: "token-" + suffix, AccessToken: "private-token-" + suffix, ExpiresAt: expiresAt, IdleExpiresAt: idleExpiresAt, ActivityIntervalMS: 30000})
 				case "/rpc/identity/resolve-access-token":
 					sequence := resolves.Add(1)
 					sid := strings.TrimPrefix(input["access_token"], "private-")
 					if malformed.Load() {
 						sid = ""
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"principal": administratorPrincipal(), "caller_context": sessionFlowContext(sid, now.Unix()+int64(sequence), sequence)})
+					_ = json.NewEncoder(w).Encode(map[string]any{"principal": administratorPrincipal(), "caller_context": sessionFlowContext(sid, now.Unix()+int64(sequence), sequence), "expires_at": expiresAt, "idle_expires_at": idleExpiresAt, "activity_interval_ms": 30000})
 				case "/rpc/identity/revoke-access-token":
 					revokes.Add(1)
 					_ = json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})

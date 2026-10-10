@@ -61,7 +61,7 @@ func (s *selectedIdentity) Resolve(ctx context.Context, _ string) (identity.Prin
 
 func TestGatewaySelectsCallerScopeFromActualRoute(t *testing.T) {
 	for _, route := range []struct{ path, profile, agent string }{
-		{"/api/session", "workspace", ""},
+		{"/api/session", "session", ""},
 		{"/api/app/bootstrap", "workspace", ""},
 		{"/api/admin/agents", "console", ""},
 		{"/api/admin/agents/agent-1/events/watch", "console", "agent-1"},

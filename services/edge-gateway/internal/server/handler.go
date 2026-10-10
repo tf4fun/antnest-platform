@@ -22,6 +22,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	gatewayconfig "github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
@@ -58,6 +59,11 @@ type IdentityService interface {
 	CompleteOIDCLogin(context.Context, identity.OIDCCallbackInput) (identity.OIDCCallbackResult, error)
 	Resolve(context.Context, string) (identity.Principal, error)
 	RevokeByAccessToken(context.Context, string) (identity.RevokeStatus, error)
+	CurrentAccount(context.Context) (identity.CurrentAccount, error)
+	TouchSession(context.Context) (identity.SessionMetadata, error)
+	ChangePassword(context.Context, identity.PasswordInput) (identity.LoginResult, error)
+	ListSessions(context.Context, identity.SessionListInput) (identity.SessionPage, error)
+	RevokeSessions(context.Context, identity.SessionRevokeInput) (identity.SessionRevokeResult, error)
 }
 
 type Config struct {
@@ -78,12 +84,13 @@ type Config struct {
 }
 
 type Dependencies struct {
-	Identity   IdentityService
-	Agents     agentcontroller.Service
-	Execution  agentacp.Service
-	Sessions   *session.Manager
-	HTTPClient *http.Client
-	Logger     *slog.Logger
+	Identity       IdentityService
+	Agents         agentcontroller.Service
+	Execution      agentacp.Service
+	Sessions       *session.Manager
+	HTTPClient     *http.Client
+	Logger         *slog.Logger
+	BrowserStreams *browserstream.Registry
 }
 
 type handler struct {
@@ -96,9 +103,12 @@ type handler struct {
 	sessions                 *session.Manager
 	requestTimeout           time.Duration
 	streamLease              time.Duration
+	maximumSessionStale      time.Duration
+	browserStreams           *browserstream.Registry
 	loginWindow              time.Duration
 	loginAdmission           *loginAdmission
 	newRequestID             func() string
+	now                      func() time.Time
 	httpClient               *http.Client
 	logger                   *slog.Logger
 	consoleURL               *url.URL
@@ -147,6 +157,9 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	if dependencies.Logger == nil {
 		dependencies.Logger = slog.Default()
 	}
+	if dependencies.BrowserStreams == nil {
+		dependencies.BrowserStreams = browserstream.NewRegistry()
+	}
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = 10 * time.Second
 	}
@@ -173,12 +186,14 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		publicOrigin:             publicOrigin, trustedProxies: append([]netip.Prefix(nil), config.TrustedProxies...),
 		identity: dependencies.Identity, agents: dependencies.Agents, execution: dependencies.Execution, sessions: dependencies.Sessions,
 		requestTimeout: config.RequestTimeout, streamLease: config.StreamLease,
+		maximumSessionStale: browserstream.DefaultMaximumStale, browserStreams: dependencies.BrowserStreams,
 		loginWindow: config.LoginWindow,
 		loginAdmission: newLoginAdmission(loginAdmissionConfig{
 			Window: config.LoginWindow, SourceLimit: config.LoginSourceMax,
 			AccountLimit: config.LoginAccountMax, MaxKeys: defaultLoginMaxKeys, Now: config.Now,
 		}),
 		newRequestID: config.NewRequestID,
+		now:          config.Now,
 		httpClient:   dependencies.HTTPClient, logger: dependencies.Logger,
 		consoleURL: consoleURL, agentUIURL: agentUIURL, agentACPURL: agentACPURL,
 		acpConnections: make(chan struct{}, 64), acpMessages: make(chan struct{}, 4),
@@ -201,6 +216,11 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("POST /api/session/oidc/start", telemetry.Handler(h.startOIDCLogin))
 	h.mux.HandleFunc("GET /api/session", telemetry.Handler(h.getSession))
 	h.mux.HandleFunc("DELETE /api/session", telemetry.Handler(h.logout))
+	h.mux.HandleFunc("GET /api/session/account", telemetry.Handler(h.getBrowserAccount))
+	h.mux.HandleFunc("POST /api/session/activity", telemetry.Handler(h.touchBrowserSession))
+	h.mux.HandleFunc("POST /api/session/password", telemetry.Handler(h.changeBrowserPassword))
+	h.mux.HandleFunc("GET /api/session/sessions", telemetry.Handler(h.listBrowserSessions))
+	h.mux.HandleFunc("POST /api/session/sessions/revoke", telemetry.Handler(h.revokeBrowserSessions))
 	h.mux.HandleFunc("GET /api/app/bootstrap", telemetry.Handler(h.workspaceBootstrap))
 	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state", telemetry.Handler(h.getWorkspaceState))
 	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state/watch", telemetry.Handler(h.watchWorkspaceState))
@@ -292,6 +312,7 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) err
 	result, err := h.identity.Login(ctx, identity.LoginInput{
 		RequestID: h.newRequestID(), OrganizationSlug: strings.TrimSpace(payload.OrganizationSlug),
 		Email: strings.TrimSpace(payload.Email), Password: payload.Password,
+		UserAgentHint: browserUserAgent(request),
 	})
 	if err != nil {
 		h.writeIdentityError(response, err)
@@ -301,14 +322,15 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is inactive")
 		return nil
 	}
+	if ctx.Err() != nil || !h.liveBrowserMetadata(result.SessionMetadata()) {
+		return h.writeBrowserIdentityError(response, fmt.Errorf("login returned invalid session metadata"), false)
+	}
 	if _, err := h.sessions.Establish(response, result.AccessToken, result.TokenID, result.ExpiresAt); err != nil {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be established")
 		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusOK, map[string]any{
-		"principal": result.Principal, "expires_at": result.ExpiresAt,
-	})
+	writeJSON(response, http.StatusOK, browserSessionJSON(result.Principal, result.SessionMetadata()))
 	return nil
 }
 
@@ -360,6 +382,7 @@ func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 	defer cancel()
 	result, err := h.identity.StartOIDCLogin(ctx, identity.StartOIDCLoginInput{
 		RequestID: h.newRequestID(), OrganizationSlug: organizationSlug, ProviderName: providerName,
+		UserAgentHint: browserUserAgent(request),
 	})
 	if err != nil {
 		h.writePublicOIDCError(response, err)
@@ -403,7 +426,7 @@ func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	result, err := h.identity.CompleteOIDCLogin(ctx, input)
-	if err != nil || result.AccessToken == "" || !result.Principal.Active {
+	if err != nil || ctx.Err() != nil || result.AccessToken == "" || !result.Principal.Active || !h.liveBrowserMetadata(result.SessionMetadata()) {
 		h.redirectOIDCFailure(response, request)
 		return err
 	}
@@ -426,18 +449,19 @@ func (h *handler) getSession(response http.ResponseWriter, request *http.Request
 		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusOK, map[string]any{"principal": principal})
+	writeJSON(response, http.StatusOK, browserSessionJSON(principal, principal.SessionMetadata()))
 	return nil
 }
 
 func (h *handler) logout(response http.ResponseWriter, request *http.Request) error {
+	response.Header().Set("Cache-Control", "no-store")
 	_, status := h.sessions.Read(request)
 	if status == session.Absent {
 		h.sessions.Clear(response)
 		response.WriteHeader(http.StatusNoContent)
 		return nil
 	}
-	values, principal, err := h.authenticate(response, request)
+	values, principal, err := h.authenticateSession(response, request, true)
 	if err != nil {
 		return err
 	}
@@ -447,11 +471,16 @@ func (h *handler) logout(response http.ResponseWriter, request *http.Request) er
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	if _, err := h.identity.RevokeByAccessToken(ctx, values.AccessToken); err != nil {
+	revoked, err := h.identity.RevokeByAccessToken(ctx, values.AccessToken)
+	if err != nil {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be revoked")
 		return err
 	}
 	h.sessions.Clear(response)
+	if revoked == identity.RevokeStatusAlreadyInvalid {
+		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
+		return nil
+	}
 	response.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -532,6 +561,14 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
+	if request.Method == http.MethodGet {
+		var finish func()
+		response, request, finish, err = h.guardBrowserStream(response, request, values.AccessToken, principal)
+		if err != nil {
+			return err
+		}
+		defer finish()
+	}
 	if upgrade {
 		h.relayWorkspaceACP(response, request, values.AccessToken, principal)
 	} else {
@@ -577,9 +614,6 @@ func (h *handler) workspaceApplication(response http.ResponseWriter, request *ht
 func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, request *http.Request) (identity.Principal, bool) {
 	values, status := h.sessions.Read(request)
 	if status != session.Valid {
-		if status == session.Invalid {
-			h.sessions.Clear(response)
-		}
 		redirectWorkspaceLogin(response, request)
 		return identity.Principal{}, false
 	}
@@ -587,12 +621,12 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 	defer cancel()
 	profile, agent := callerSelection(request)
 	principal, err := h.identity.Resolve(identity.WithResolution(ctx, profile, agent), values.AccessToken)
+	err = h.browserAdmissionError(ctx, principal, err)
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return identity.Principal{}, false
 	}
 	if err != nil || !principal.Active {
-		h.sessions.Clear(response)
 		redirectWorkspaceLogin(response, request)
 		return identity.Principal{}, false
 	}
@@ -668,7 +702,7 @@ func headerContainsToken(values []string, wanted string) bool {
 }
 
 func (h *handler) admin(response http.ResponseWriter, request *http.Request) error {
-	_, principal, err := h.authenticate(response, request)
+	values, principal, err := h.authenticate(response, request)
 	if err != nil {
 		return err
 	}
@@ -684,11 +718,16 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusConflict, "principal_changed", "Account changed. Reload this page before updating network policy.")
 		return nil
 	}
-	timeout := h.requestTimeout
 	if isAgentEventWatch(request) {
-		timeout = h.streamLease
+		response, request, finish, err := h.guardBrowserStream(response, request, values.AccessToken, principal)
+		if err != nil {
+			return err
+		}
+		defer finish()
+		h.adminProxy.ServeHTTP(response, request)
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), timeout)
+	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	request = request.WithContext(ctx)
 	h.adminProxy.ServeHTTP(response, request)
@@ -707,25 +746,41 @@ func (h *handler) authenticate(
 	response http.ResponseWriter,
 	request *http.Request,
 ) (session.Values, identity.Principal, error) {
+	return h.authenticateSession(response, request, false)
+}
+
+func (h *handler) authenticateSession(response http.ResponseWriter, request *http.Request, clearInvalid bool) (session.Values, identity.Principal, error) {
 	response.Header().Set("Cache-Control", "no-store")
 	values, status := h.sessions.Read(request)
 	if status != session.Valid {
-		if status == session.Invalid {
+		if clearInvalid && status == session.Invalid {
 			h.sessions.Clear(response)
 		}
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Login is required")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	stream := browserStreamRequest(request)
+	budget := h.requestTimeout
+	if stream {
+		budget = min(budget, h.maximumSessionStale/3)
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(request.Context(), budget)
 	defer cancel()
 	profile, agent := callerSelection(request)
 	principal, err := h.identity.Resolve(identity.WithResolution(ctx, profile, agent), values.AccessToken)
+	err = h.browserAdmissionError(ctx, principal, err)
+	if err == nil && stream && time.Since(started) > browserstream.Interval(h.maximumSessionStale, principal.ActivityIntervalMS) {
+		err = browserstream.ErrUnavailable
+	}
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return session.Values{}, identity.Principal{}, err
 	}
 	if err != nil || !principal.Active {
-		h.sessions.Clear(response)
+		if clearInvalid {
+			h.sessions.Clear(response)
+		}
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
@@ -733,7 +788,11 @@ func (h *handler) authenticate(
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
 		return session.Values{}, identity.Principal{}, errors.New("identity omitted caller context")
 	}
-	*request = *request.WithContext(identity.WithPrincipal(request.Context(), principal))
+	requestCtx := identity.WithPrincipal(request.Context(), principal)
+	if stream {
+		requestCtx = context.WithValue(requestCtx, browserStreamStartKey{}, started)
+	}
+	*request = *request.WithContext(requestCtx)
 	return values, principal, nil
 }
 

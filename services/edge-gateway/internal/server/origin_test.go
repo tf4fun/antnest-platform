@@ -37,7 +37,7 @@ func newOriginTestHandler(t *testing.T, cfg Config) (http.Handler, *originIdenti
 	identities := &originIdentity{identityServiceStub: identityServiceStub{
 		resolvePrincipal: administratorPrincipal(),
 		loginResult: identity.LoginResult{
-			Principal: administratorPrincipal(), TokenID: "token-1", AccessToken: "token-1", ExpiresAt: now.Add(time.Hour),
+			Principal: administratorPrincipal(), TokenID: "token-1", AccessToken: "token-1", ExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(30 * time.Minute), ActivityIntervalMS: 30000,
 		},
 		startOIDCResult: identity.StartOIDCLoginResult{
 			AuthorizationURL: "https://login.example/authorize?state=state-1", ExpiresAt: now.Add(time.Minute),

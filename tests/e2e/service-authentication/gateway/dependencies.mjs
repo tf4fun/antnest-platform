@@ -24,6 +24,7 @@ const principal = {
   active: true,
 };
 const profiles = {
+  session: ["identity-service"],
   console: [
     "admin-console",
     "identity-service",
@@ -34,7 +35,67 @@ const profiles = {
   workspace: ["agent-ui", "agent-acp-service", "agent-controller"],
   acp: ["agent-acp-service"],
 };
-function cct(profile, agent) {
+const sessions = new Map();
+const revocations = [];
+let password = fixture.password;
+function metadata(session) {
+  return {
+    expires_at: session.expires_at,
+    idle_expires_at: session.idle_expires_at,
+    activity_interval_ms: 30000,
+  };
+}
+function issue(hint, previous) {
+  const now = Date.now();
+  const session = {
+    token_id: `session-${sessions.size + 1}`,
+    id: `public-${randomUUID()}`,
+    access_token: sessions.size === 0 ? fixture.access : randomUUID(),
+    created_at: new Date(now).toISOString(),
+    last_active_at: new Date(now).toISOString(),
+    expires_at: previous?.expires_at ?? new Date(now + 3600000).toISOString(),
+    idle_expires_at: new Date(
+      Math.min(
+        now + 300000,
+        previous ? Date.parse(previous.expires_at) : Infinity,
+      ),
+    ).toISOString(),
+    user_agent_hint: hint ?? "",
+    revoked: false,
+  };
+  sessions.set(session.access_token, session);
+  return session;
+}
+function live(session) {
+  return (
+    session &&
+    !session.revoked &&
+    Date.parse(session.expires_at) > Date.now() &&
+    Date.parse(session.idle_expires_at) > Date.now()
+  );
+}
+function credential(session) {
+  return {
+    principal,
+    token_id: session.token_id,
+    access_token: session.access_token,
+    ...metadata(session),
+  };
+}
+function revoke(session, reason = "session_revoked") {
+  if (!live(session)) return false;
+  session.revoked = true;
+  revocations.push({
+    sequence: revocations.length + 1,
+    token_id: session.token_id,
+    user_id: principal.user_id,
+    organization_id: principal.organization_id,
+    reason,
+    occurred_at: new Date().toISOString(),
+  });
+  return true;
+}
+function cct(profile, agent, session) {
   const now = Math.floor(Date.now() / 1000);
   const claims = {
     iss: "antnest://service/identity-service",
@@ -43,10 +104,14 @@ function cct(profile, agent) {
     mbr: principal.membership_id,
     sys_role: "admin",
     org_role: "admin",
-    sid: "session-1",
+    sid: session.token_id,
     aud: profiles[profile],
     iat: now,
-    exp: now + 60,
+    exp: Math.min(
+      now + 60,
+      Math.floor(Date.parse(session.idle_expires_at) / 1000),
+      Math.floor(Date.parse(session.expires_at) / 1000),
+    ),
     jti: randomUUID(),
     ...(agent ? { agt: agent } : {}),
   };
@@ -97,7 +162,28 @@ function context(request, service, agent) {
     (agent !== undefined && claims.agt !== agent)
   )
     throw Error("caller_context_invalid");
+  if (
+    !live(
+      [...sessions.values()].find((session) => session.token_id === claims.sid),
+    )
+  )
+    throw Error("caller_context_invalid");
   return claims;
+}
+
+function browserControl(request, input) {
+  const claims = context(request, "identity-service");
+  if (
+    claims.aud.length !== 1 ||
+    claims.agt !== undefined ||
+    input.actor_principal_id !== claims.sub ||
+    (input.user_id !== undefined && input.user_id !== claims.sub) ||
+    (input.scope !== undefined && input.scope !== "self")
+  )
+    throw Error("browser_control_scope_invalid");
+  return [...sessions.values()].find(
+    (session) => session.token_id === claims.sid,
+  );
 }
 function json(response, value, status = 200) {
   response.writeHead(status, { "content-type": "application/json" });
@@ -136,26 +222,144 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           return json(response, { scim: true });
         }
         const input = JSON.parse(body);
+        if (
+          [
+            "local-login",
+            "resolve-access-token",
+            "revoke-access-token",
+            "list-session-revocations",
+          ].some((method) => path.endsWith(method)) &&
+          headerValues(request, "Antnest-Caller-Context").length
+        )
+          throw Error("workload_operation_received_browser_context");
         if (path.endsWith("local-login")) {
-          if (input.password !== fixture.password)
+          if (input.password !== password)
             return json(response, { code: "unauthenticated" }, 401);
-          return json(response, {
-            principal,
-            token_id: "session-1",
-            access_token: fixture.access,
-            expires_at: new Date(Date.now() + 3600000).toISOString(),
-          });
+          return json(response, credential(issue(input.user_agent_hint)));
         }
         if (path.endsWith("resolve-access-token")) {
-          if (input.access_token !== fixture.access || !profiles[input.profile])
+          const session = sessions.get(input.access_token);
+          if (
+            !live(session) ||
+            !profiles[input.profile] ||
+            (input.profile === "session" && input.agent_id)
+          )
             return json(response, { code: "unauthenticated" }, 401);
           return json(response, {
             principal,
-            caller_context: cct(input.profile, input.agent_id),
+            caller_context: cct(input.profile, input.agent_id, session),
+            ...metadata(session),
           });
         }
-        if (path.endsWith("revoke-access-token"))
-          return json(response, { status: "revoked" });
+        if (path.endsWith("revoke-access-token")) {
+          return json(response, {
+            status: revoke(sessions.get(input.access_token))
+              ? "revoked"
+              : "already_invalid",
+          });
+        }
+        if (path.endsWith("list-session-revocations")) {
+          if (
+            !Number.isSafeInteger(input.after_sequence) ||
+            input.after_sequence < 0 ||
+            input.limit < 1 ||
+            input.limit > 500
+          )
+            throw Error("invalid_feed_request");
+          const events = revocations
+            .filter((event) => event.sequence > input.after_sequence)
+            .slice(0, input.limit);
+          return json(response, {
+            events,
+            next_sequence: events.at(-1)?.sequence ?? input.after_sequence,
+          });
+        }
+        const current = browserControl(request, input);
+        if (path.endsWith("get-current-account")) {
+          if (input.organization_id !== principal.organization_id)
+            throw Error("invalid_account_scope");
+          return json(response, {
+            account: {
+              ...principal,
+              email: "admin@example.test",
+              display_name: "Test Admin",
+              source: "local",
+              local_password_available: true,
+            },
+          });
+        }
+        if (path.endsWith("touch-browser-session")) {
+          current.last_active_at = new Date().toISOString();
+          current.idle_expires_at = new Date(
+            Math.min(Date.now() + 300000, Date.parse(current.expires_at)),
+          ).toISOString();
+          return json(response, metadata(current));
+        }
+        if (path.endsWith("list-user-sessions")) {
+          if (
+            input.scope !== "self" ||
+            input.user_id !== principal.user_id ||
+            input.limit < 1 ||
+            input.limit > 100
+          )
+            throw Error("invalid_session_scope");
+          const rows = [...sessions.values()]
+            .filter(live)
+            .filter((session) => session.id > (input.after_id ?? ""))
+            .sort((a, b) => a.id.localeCompare(b.id));
+          const page = rows.slice(0, input.limit).map((session) => ({
+            id: session.id,
+            organization_id: principal.organization_id,
+            organization_slug: principal.organization_slug,
+            organization_name: principal.organization_name,
+            created_at: session.created_at,
+            last_active_at: session.last_active_at,
+            expires_at: session.expires_at,
+            idle_expires_at: session.idle_expires_at,
+            user_agent_hint: session.user_agent_hint,
+            current: session === current,
+          }));
+          return json(response, {
+            sessions: page,
+            ...(rows.length > input.limit
+              ? { next_after_id: page.at(-1).id }
+              : {}),
+          });
+        }
+        if (path.endsWith("revoke-user-sessions")) {
+          if (
+            input.scope !== "self" ||
+            input.user_id !== principal.user_id ||
+            !["all", "others"].includes(input.mode)
+          )
+            throw Error("invalid_session_scope");
+          let revoked = 0;
+          for (const session of sessions.values())
+            if (
+              (input.mode === "all" || session !== current) &&
+              revoke(session)
+            )
+              revoked++;
+          return json(response, {
+            revoked_count: revoked,
+            current_revoked: current.revoked,
+          });
+        }
+        if (path.endsWith("change-local-password")) {
+          if (input.current_password !== password)
+            return json(
+              response,
+              { code: "invalid_current_password", retryable: false },
+              400,
+            );
+          password = input.new_password;
+          for (const session of sessions.values())
+            revoke(session, "password_changed");
+          return json(response, {
+            status: "changed",
+            ...credential(issue(current.user_agent_hint, current)),
+          });
+        }
         throw Error("unexpected_identity_route");
       }
       if (request.headers.authorization)
@@ -163,6 +367,10 @@ for (const [service, port] of Object.entries(fixture.ports)) {
       const publicAsset =
         (service === "admin-console" && path === "/") ||
         (service === "agent-ui" && path.startsWith("/workspace/assets/"));
+      response.setHeader(
+        "Set-Cookie",
+        "antnest_session=upstream-forgery; Path=/",
+      );
       if (publicAsset) {
         if (headerValues(request, "Antnest-Caller-Context").length)
           throw Error("anonymous_context_leaked");
@@ -191,6 +399,11 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         throw Error("CAS_guard_escaped_its_operation");
       response.setHeader("Antnest-Service-Authorization", "upstream-secret");
       response.setHeader("Antnest-Caller-Context", "upstream-context");
+      if (service === "admin-console" && path.endsWith("/events/watch")) {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("event: ready\ndata: {}\n\n");
+        return;
+      }
       if (service === "agent-controller")
         return json(response, { agents: [], next_cursor: null });
       if (service === "agent-acp-service" && path.includes("execution-state")) {

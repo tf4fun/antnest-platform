@@ -54,11 +54,17 @@ by `ANTNEST_EDGE_STREAM_LEASE` (default five minutes), without in-process
 renewal. Frame writes have deadlines. There are 64 state slots separate from
 ACP receive/message slots, so observation does not consume cancel capacity.
 
-Identity is resolved at entry and before subsequent snapshots. It must remain
-the same active User/Organization/Membership. Identity revocation, expiry or
-outage stops delivery. A valid ACP access-loss snapshot is delivered to the
-still-valid original identity and closes the stream. A quiet stream expires
-at its lease boundary; there is no idle authorization polling.
+Identity is resolved at entry, before subsequent snapshots and independently
+while quiet. It must retain the original active SID, User/Organization/Membership
+and roles. Non-touch checks run at `min(30s/3, activity_interval_ms)`, with a
+hard stale-output deadline anchored to the start of each check and including
+RPC latency and socket closure. Initial checks must fit that budget before
+opening ACP. Mutable idle expiry schedules a fresh read; absolute expiry is a
+hard cap. The private session-revocation feed accelerates closure without
+replacing live checks. Revocation, expiry or outage interrupts delivery and
+blocked browser writes. A valid ACP access-loss snapshot is delivered to the
+still-valid original identity and closes the stream. The stream lease remains
+an additional cap. See [session lifecycle](../../../contracts/identity/browser-sessions.md).
 
 Before streaming, invalid browser sessions return 401; Identity or ACP outages,
 malformed responses and missing internal routes return 503. No dependency

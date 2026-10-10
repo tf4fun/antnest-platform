@@ -219,6 +219,8 @@ func TestHeaderBoundaryGenericHTTPRoutesDoNotForwardUpgrade(t *testing.T) {
 func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.T) {
 	contract := readHeaderBoundaryContract(t)
 	now := time.Now()
+	expiresAt := now.Add(time.Hour)
+	idleExpiresAt := now.Add(30 * time.Minute)
 	issued := sessionFlowContext("token-1", now.Unix(), 1)
 	observed := make(chan string, 32)
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +247,7 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/rpc/identity/local-login":
-			_ = json.NewEncoder(w).Encode(identity.LoginResult{Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "private-token", ExpiresAt: now.Add(time.Hour)})
+			_ = json.NewEncoder(w).Encode(identity.LoginResult{Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "private-token", ExpiresAt: expiresAt, IdleExpiresAt: idleExpiresAt, ActivityIntervalMS: 30000})
 		case "/rpc/identity/list-login-methods":
 			_ = json.NewEncoder(w).Encode(map[string]any{"methods": []identity.LoginMethod{{Name: "fixture", DisplayName: "Fixture"}}})
 		case "/rpc/identity/start-oidc-login":
@@ -254,9 +256,9 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 			if r.Method != http.MethodGet || r.URL.Query().Get("state") != "bound-state" || r.URL.Query().Get("code") != "fixture-code" {
 				t.Error("typed OIDC callback lost protocol parameters")
 			}
-			_ = json.NewEncoder(w).Encode(identity.OIDCCallbackResult{Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "private-token", ExpiresAt: now.Add(time.Hour)})
+			_ = json.NewEncoder(w).Encode(identity.OIDCCallbackResult{Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "private-token", ExpiresAt: expiresAt, IdleExpiresAt: idleExpiresAt, ActivityIntervalMS: 30000})
 		case "/rpc/identity/resolve-access-token":
-			_ = json.NewEncoder(w).Encode(map[string]any{"principal": ordinaryPrincipal(), "caller_context": issued})
+			_ = json.NewEncoder(w).Encode(map[string]any{"principal": ordinaryPrincipal(), "caller_context": issued, "expires_at": expiresAt, "idle_expires_at": idleExpiresAt, "activity_interval_ms": 30000})
 		case "/rpc/identity/revoke-access-token":
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
 		case "/rpc/agent-controller/list-workspace-agents":
