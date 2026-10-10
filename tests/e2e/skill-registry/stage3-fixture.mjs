@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
@@ -34,7 +35,7 @@ export async function publishSkill(admin, version, skillId) {
     method: "POST",
     headers: {
       Cookie: admin.cookie,
-      Origin: admin.base,
+      Origin: gatewayOrigin(admin.base),
       "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
       "Idempotency-Key": randomUUID(),
     },

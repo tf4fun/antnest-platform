@@ -14,7 +14,7 @@ export async function exerciseLocalAdminLogin({
   client,
   settings,
   jaeger,
-  secureCookies = false,
+  secureCookies = true,
   collect = collectTrace,
 }) {
   const startedAt = new Date().toISOString();
@@ -113,7 +113,7 @@ async function main() {
       gateway: { type: "string", default: "http://127.0.0.1:8090" },
       jaeger: { type: "string", default: "http://127.0.0.1:16686" },
       "env-file": { type: "string", default: ".env" },
-      "secure-cookies": { type: "boolean", default: false },
+      "secure-cookies": { type: "boolean", default: true },
       "confirm-development": { type: "boolean", default: false },
     },
   });

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -67,6 +69,18 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		resultErr = errors.Join(resultErr, telemetryRuntime.Shutdown(context.Background()))
 	}()
 	logger := telemetryRuntime.Logger()
+	if !cfg.CookieSecure {
+		logger.Warn("Insecure browser cookies enabled on a loopback development listener")
+	}
+	var certificates *publicTLS
+	if cfg.TLSCertFile != "" {
+		certificates, err = loadPublicTLS(cfg)
+		if err != nil {
+			return fmt.Errorf("load public TLS: %w", err)
+		}
+		stopReload := certificates.watch(ctx, logger)
+		defer stopReload()
+	}
 
 	httpClient := internal.HTTPClient()
 	httpClient.Transport = telemetry.NewHTTPTransport(httpClient.Transport)
@@ -87,6 +101,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		return fmt.Errorf("create session manager: %w", err)
 	}
 	handler, err := server.NewHandler(server.Config{
+		PublicOrigin: cfg.PublicOrigin, TrustedProxies: cfg.TrustedProxies,
 		AdminConsoleURL: cfg.AdminConsoleURL, AgentUIURL: cfg.AgentUIURL,
 		AgentACPURL: cfg.AgentACPURL, IdentityURL: cfg.IdentityURL, RequestTimeout: cfg.RequestTimeout,
 		StreamLease: cfg.StreamLease, LoginWindow: cfg.LoginWindow,
@@ -108,6 +123,10 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
+	}
+	if certificates != nil {
+		httpServer.TLSConfig = certificates.config()
+		listener = tls.NewListener(listener, httpServer.TLSConfig)
 	}
 	logger.Info("Edge Gateway is ready", "listen_address", cfg.ListenAddress)
 	return serveHTTP(ctx, httpServer, listener, lifecycle, cfg.ShutdownTimeout)
@@ -151,10 +170,32 @@ func checkHealth(lookup func(string) string) error {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	defer transport.CloseIdleConnections()
+	scheme := "http"
+	if certFile := strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CERT_FILE")); certFile != "" {
+		origin, err := config.ParsePublicOrigin(strings.TrimSpace(lookup("ANTNEST_EDGE_PUBLIC_ORIGIN")))
+		if err != nil {
+			return err
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return fmt.Errorf("load public health trust roots: %w", err)
+		}
+		if caFile := strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CA_FILE")); caFile != "" {
+			certificate, err := os.ReadFile(caFile)
+			if err != nil {
+				return fmt.Errorf("read public health CA: %w", err)
+			}
+			if !roots.AppendCertsFromPEM(certificate) {
+				return fmt.Errorf("invalid public health CA")
+			}
+		}
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: origin.Hostname()}
+		scheme = "https"
+	}
 	client := &http.Client{Timeout: 2 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	response, err := client.Get("http://" + address + "/status")
+	response, err := client.Get(scheme + "://" + address + "/status")
 	if err != nil {
 		return err
 	}

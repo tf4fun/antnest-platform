@@ -2,8 +2,87 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { parseEnv } from "node:util";
+import { composeConfig } from "../../support/compose-config.mjs";
 
 const root = new URL("../../../", import.meta.url);
+
+test("loopback Compose keeps Secure cookies and one explicit public origin", () => {
+  const config = composeConfig(["compose.yaml"], {
+    ANTNEST_EDGE_PUBLIC_BASE_URL: "http://127.0.0.1:43110",
+  });
+  const gateway = config.services["edge-gateway"].environment;
+  assert.equal(gateway.ANTNEST_EDGE_COOKIE_SECURE, "true");
+  assert.equal(gateway.ANTNEST_EDGE_PUBLIC_ORIGIN, "http://127.0.0.1:43110");
+  assert.equal(
+    config.services["identity-service"].environment
+      .ANTNEST_IDENTITY_PUBLIC_BASE_URL,
+    gateway.ANTNEST_EDGE_PUBLIC_ORIGIN,
+  );
+});
+
+for (const mode of ["native", "proxy"]) {
+  test(`${mode} HTTPS reference has one public TLS port and an explicit trust boundary`, () => {
+    const config = composeConfig(
+      [
+        "compose.yaml",
+        mode === "native" ? "compose.native-tls.yaml" : "compose.tls.yaml",
+      ],
+      {
+        ANTNEST_EDGE_PUBLIC_BASE_URL: "https://antnest.example:8443",
+        ANTNEST_EDGE_TLS_DIRECTORY: "/never-mounted-tls",
+        ANTNEST_EDGE_TLS_HOST_PORT: "8443",
+      },
+    );
+    const gateway = config.services["edge-gateway"];
+    assert.equal(
+      gateway.environment.ANTNEST_EDGE_PUBLIC_ORIGIN,
+      "https://antnest.example:8443",
+    );
+    assert.equal(gateway.environment.ANTNEST_EDGE_COOKIE_SECURE, "true");
+    assert.equal(
+      config.services["identity-service"].environment
+        .ANTNEST_IDENTITY_PUBLIC_BASE_URL,
+      gateway.environment.ANTNEST_EDGE_PUBLIC_ORIGIN,
+    );
+    const publicService =
+      mode === "native" ? gateway : config.services["tls-proxy"];
+    assert.deepEqual(
+      publicService.ports.map(({ host_ip, published, target }) => [
+        host_ip,
+        published,
+        target,
+      ]),
+      [["0.0.0.0", "8443", mode === "native" ? 8080 : 8443]],
+    );
+    const certificates = publicService.volumes.find(
+      (volume) => volume.target === "/etc/antnest/public-tls",
+    );
+    assert.equal(certificates.source, "/never-mounted-tls");
+    assert.equal(certificates.read_only, true);
+    // Some Compose versions omit false-valued bind fields in rendered JSON.
+    assert.equal(certificates.bind.create_host_path ?? false, false);
+    if (mode === "native") {
+      assert.equal(
+        gateway.environment.ANTNEST_EDGE_TLS_CERT_FILE,
+        "/etc/antnest/public-tls/cert.pem",
+      );
+      assert.equal(
+        gateway.environment.ANTNEST_EDGE_TLS_KEY_FILE,
+        "/etc/antnest/public-tls/key.pem",
+      );
+      assert.equal(gateway.environment.ANTNEST_EDGE_TRUSTED_PROXIES, "");
+    } else {
+      assert.deepEqual(gateway.ports ?? [], []);
+      assert.equal(config.networks["gateway-ingress"].internal, true);
+      const proxyIP = publicService.networks["gateway-ingress"].ipv4_address;
+      assert.equal(
+        gateway.environment.ANTNEST_EDGE_TRUSTED_PROXIES,
+        `${proxyIP}/32`,
+      );
+      assert.equal(gateway.environment.ANTNEST_EDGE_TLS_CERT_FILE, undefined);
+    }
+  });
+}
 
 test("deployment example uses generated authentication and separated purpose addresses", async () => {
   const env = parseEnv(await readFile(new URL(".env.example", root), "utf8"));

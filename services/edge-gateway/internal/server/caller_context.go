@@ -105,7 +105,8 @@ func pathAgent(target *url.URL, index int) string {
 
 func stripCredentialResponse(response *http.Response) error {
 	for name := range response.Header {
-		if strings.EqualFold(name, serviceauth.Header) || strings.EqualFold(name, identity.CallerContextHeader) {
+		// HSTS belongs to the public Gateway, including ReverseProxy's raw 101 path.
+		if strings.EqualFold(name, serviceauth.Header) || strings.EqualFold(name, identity.CallerContextHeader) || strings.EqualFold(name, "Strict-Transport-Security") {
 			delete(response.Header, name)
 		}
 	}

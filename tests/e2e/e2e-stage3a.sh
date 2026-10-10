@@ -151,6 +151,7 @@ export ANTNEST_EDGE_HOST_PORT=$((port_base + 1))
 export ANTNEST_JAEGER_UI_HOST_PORT=$((port_base + 2))
 export ANTNEST_OIDC_TEST_PORT=$((port_base + 3))
 export ANTNEST_EDGE_PUBLIC_BASE_URL="http://127.0.0.1:${ANTNEST_EDGE_HOST_PORT}"
+unset TEST_GATEWAY_PUBLIC_URL
 export OTEL_SDK_DISABLED=false
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf

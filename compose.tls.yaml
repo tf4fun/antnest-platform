@@ -1,0 +1,44 @@
+# Use with compose.yaml; Gateway's cleartext listener stays on the private bridge.
+services:
+  edge-gateway:
+    environment:
+      ANTNEST_EDGE_PUBLIC_ORIGIN: ${ANTNEST_EDGE_PUBLIC_BASE_URL:?set the public HTTPS origin}
+      ANTNEST_EDGE_COOKIE_SECURE: "true"
+      ANTNEST_EDGE_TRUSTED_PROXIES: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.131/32
+    ports: !reset []
+  tls-proxy:
+    profiles: [stage3]
+    image: caddy:2.11.7-alpine
+    depends_on:
+      edge-gateway:
+        condition: service_healthy
+    ports:
+      - ${ANTNEST_EDGE_TLS_BIND_ADDRESS:-0.0.0.0}:${ANTNEST_EDGE_TLS_HOST_PORT:-443}:8443
+    volumes:
+      - type: bind
+        source: ./deploy/tls/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ANTNEST_EDGE_TLS_DIRECTORY:?set the absolute TLS directory}
+        target: /etc/antnest/public-tls
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      gateway-ingress:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.131
+      tls-ingress:
+        gw_priority: 1
+    extra_hosts:
+      edge-gateway: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.130
+
+networks:
+  gateway-ingress:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  tls-ingress:
+    internal: false

@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	gatewayconfig "github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
@@ -58,6 +59,8 @@ type IdentityService interface {
 }
 
 type Config struct {
+	PublicOrigin    string
+	TrustedProxies  []netip.Prefix
 	AdminConsoleURL string
 	AgentUIURL      string
 	AgentACPURL     string
@@ -81,6 +84,8 @@ type Dependencies struct {
 }
 
 type handler struct {
+	publicOrigin         *url.URL
+	trustedProxies       []netip.Prefix
 	identity             IdentityService
 	agents               agentcontroller.Service
 	execution            agentacp.Service
@@ -107,6 +112,14 @@ type handler struct {
 }
 
 func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) {
+	var publicOrigin *url.URL
+	if config.PublicOrigin != "" {
+		var err error
+		publicOrigin, err = gatewayconfig.ParsePublicOrigin(config.PublicOrigin)
+		if err != nil {
+			return nil, err
+		}
+	}
 	consoleURL, err := parseServiceURL(config.AdminConsoleURL)
 	if err != nil {
 		return nil, fmt.Errorf("admin console URL is invalid")
@@ -152,6 +165,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		config.NewRequestID = randomRequestID
 	}
 	h := &handler{
+		publicOrigin: publicOrigin, trustedProxies: append([]netip.Prefix(nil), config.TrustedProxies...),
 		identity: dependencies.Identity, agents: dependencies.Agents, execution: dependencies.Execution, sessions: dependencies.Sessions,
 		requestTimeout: config.RequestTimeout, streamLease: config.StreamLease,
 		loginWindow: config.LoginWindow,
@@ -229,8 +243,13 @@ func (*handler) unknownIdentityProtocol(response http.ResponseWriter, _ *http.Re
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	address := h.clientAddress(request)
+	ctx := context.WithValue(request.Context(), clientAddressKey{}, address)
+	*request = *request.WithContext(telemetry.WithClientAddress(ctx, address))
+	stripForwardingHeaders(request.Header)
 	stripBrowserCredentials(request)
-	writer := &securityHeaderWriter{ResponseWriter: response}
+	writer := &securityHeaderWriter{ResponseWriter: response, https: h.externalOrigin(request).Scheme == "https"}
+	writer.applyTransportPolicy()
 	h.mux.ServeHTTP(writer, request)
 	if !writer.wroteHeader {
 		// Handlers may return an empty response without explicitly committing it.
@@ -477,7 +496,7 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		writeError(response, http.StatusBadRequest, "invalid_request", "WebSocket upgrade is required")
 		return nil
 	}
-	if (upgrade || request.Header.Get("Origin") != "") && !sameOrigin(request) {
+	if (upgrade || len(request.Header.Values("Origin")) > 0) && !h.sameOrigin(request) {
 		writeError(response, http.StatusForbidden, "forbidden", "ACP origin is not allowed")
 		return nil
 	}
@@ -647,16 +666,6 @@ func headerContainsToken(values []string, wanted string) bool {
 	return false
 }
 
-func sameOrigin(request *http.Request) bool {
-	origin, err := url.Parse(strings.TrimSpace(request.Header.Get("Origin")))
-	scheme := "http"
-	if request.TLS != nil {
-		scheme = "https"
-	}
-	return err == nil && origin.Scheme == scheme && strings.EqualFold(origin.Host, request.Host) &&
-		origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == ""
-}
-
 func (h *handler) admin(response http.ResponseWriter, request *http.Request) error {
 	values, principal, err := h.authenticate(response, request)
 	if err != nil {
@@ -740,7 +749,7 @@ func (h *handler) newProxy(
 			request.Out.URL.Path = rewritePath(request.In)
 			request.Out.URL.RawPath = ""
 		}
-		request.SetXForwarded()
+		h.forwardingHeaders(request.Out.Header, request.In)
 		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
 		request.Out.Header.Del("Authorization")
@@ -762,7 +771,7 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{}
 	proxy.Rewrite = func(request *httputil.ProxyRequest) {
 		request.SetURL(target)
-		request.SetXForwarded()
+		h.forwardingHeaders(request.Out.Header, request.In)
 		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
 	}
@@ -808,7 +817,7 @@ func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {
 func (h *handler) admitLogin(
 	response http.ResponseWriter, request *http.Request, organization, account string,
 ) bool {
-	if h.loginAdmission.Allow(requestSource(request), organization, account) {
+	if h.loginAdmission.Allow(clientAddress(request), organization, account) {
 		return true
 	}
 	response.Header().Set("Retry-After", fmt.Sprintf("%.0f", h.loginWindow.Seconds()))
@@ -851,17 +860,6 @@ func setWorkspacePrincipalHeaders(header http.Header, principal identity.Princip
 
 func stateChanging(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
-}
-
-func requestSource(request *http.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(request.RemoteAddr))
-	if err == nil && host != "" {
-		return host
-	}
-	if source := strings.TrimSpace(request.RemoteAddr); source != "" {
-		return source
-	}
-	return "unknown"
 }
 
 func isAgentEventWatch(request *http.Request) bool {

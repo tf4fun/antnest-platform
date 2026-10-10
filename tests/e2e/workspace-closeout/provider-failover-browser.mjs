@@ -1,4 +1,5 @@
 import { durablePath } from "../../support/storage.mjs";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -41,20 +42,16 @@ page.setDefaultTimeout(20000);
 const restore = new Map();
 let stage = "login";
 async function read(path) {
-  const response = await context.request.get(origin + path);
+  const response = await gatewayBrowserRequest(context, origin + path);
   assert.equal(response.status(), 200, path);
   return response.json();
 }
 async function command(path, data, method = "POST") {
-  const csrf = (await context.cookies(origin)).find(
-    (cookie) => cookie.name === "antnest_csrf",
-  )?.value;
-  const response = await context.request.fetch(origin + path, {
+  const response = await gatewayBrowserRequest(context, origin + path, {
     method,
     data,
     headers: {
       "Idempotency-Key": randomUUID(),
-      "X-Antnest-CSRF-Token": decodeURIComponent(csrf ?? ""),
       Origin: origin,
     },
   });

@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync, writeFileSync } from "node:fs";
@@ -223,7 +224,7 @@ async function admitEnableAfterReadyFault(kind, body) {
           headers: {
             "content-type": "application/json",
             Cookie: admin.cookie,
-            Origin: gateway,
+            Origin: gatewayOrigin(gateway),
             "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
             "Idempotency-Key": key,
           },
@@ -290,7 +291,7 @@ async function verifyFencedSkillInvalidation(body, sourceRevision) {
           headers: {
             "content-type": "application/json",
             Cookie: admin.cookie,
-            Origin: gateway,
+            Origin: gatewayOrigin(gateway),
             "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
             "Idempotency-Key": key,
           },
@@ -411,7 +412,7 @@ async function admitRebuildAfterControllerRestart(kind, body) {
           headers: {
             "content-type": "application/json",
             Cookie: admin.cookie,
-            Origin: gateway,
+            Origin: gatewayOrigin(gateway),
             "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
             "Idempotency-Key": key,
           },
@@ -516,7 +517,7 @@ async function verifyPostCreateSkillMountRace(body, targetDigest) {
           headers: {
             "content-type": "application/json",
             Cookie: admin.cookie,
-            Origin: gateway,
+            Origin: gatewayOrigin(gateway),
             "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
             "Idempotency-Key": key,
           },
@@ -636,7 +637,7 @@ async function admitRebuildAfterTargetDrift(
         headers: {
           "content-type": "application/json",
           Cookie: admin.cookie,
-          Origin: gateway,
+          Origin: gatewayOrigin(gateway),
           "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
           "Idempotency-Key": key,
         },
@@ -771,7 +772,7 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
         headers: {
           "content-type": "application/json",
           Cookie: admin.cookie,
-          Origin: gateway,
+          Origin: gatewayOrigin(gateway),
           "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
           "Idempotency-Key": key,
         },
@@ -798,7 +799,7 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
         signal: AbortSignal.timeout(15000),
         headers: {
           Cookie: admin.cookie,
-          Origin: gateway,
+          Origin: gatewayOrigin(gateway),
           "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
           "Idempotency-Key": key,
         },
@@ -914,7 +915,7 @@ async function admitRebuildAfterFencedFault(kind, body) {
             headers: {
               "content-type": "application/json",
               Cookie: admin.cookie,
-              Origin: gateway,
+              Origin: gatewayOrigin(gateway),
               "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
               "Idempotency-Key": key,
             },

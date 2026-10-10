@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { connectACP } from "../identity-closeout/acp-connection.mjs";
@@ -35,7 +36,7 @@ if (mode === "use") {
     method: "POST",
     headers: {
       Cookie: admin.cookie,
-      Origin: admin.base,
+      Origin: gatewayOrigin(admin.base),
       "X-Antnest-CSRF-Token": admin.cookies.get("antnest_csrf") ?? "",
       "Idempotency-Key": randomUUID(),
     },

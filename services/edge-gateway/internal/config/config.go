@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -16,6 +17,10 @@ type Config struct {
 	AgentControllerURL string
 	AgentACPURL        string
 	CookieSecure       bool
+	PublicOrigin       string
+	TrustedProxies     []netip.Prefix
+	TLSCertFile        string
+	TLSKeyFile         string
 	RequestTimeout     time.Duration
 	StreamLease        time.Duration
 	LoginWindow        time.Duration
@@ -64,6 +69,9 @@ func Load(lookup func(string) string) (Config, error) {
 		AgentControllerURL: strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
 		AgentACPURL:        strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_URL")),
 		CookieSecure:       cookieSecure,
+		PublicOrigin:       strings.TrimSpace(lookup("ANTNEST_EDGE_PUBLIC_ORIGIN")),
+		TLSCertFile:        strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CERT_FILE")),
+		TLSKeyFile:         strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_KEY_FILE")),
 		RequestTimeout:     requestTimeout,
 		StreamLease:        streamLease,
 		LoginWindow:        loginWindow,
@@ -84,6 +92,9 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if err := serviceURL("ANTNEST_AGENT_ACP_URL", config.AgentACPURL); err != nil {
+		return Config{}, err
+	}
+	if err := config.loadPublicEntry(lookup); err != nil {
 		return Config{}, err
 	}
 	return config, nil

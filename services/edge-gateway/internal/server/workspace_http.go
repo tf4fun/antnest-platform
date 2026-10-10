@@ -39,6 +39,7 @@ func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http
 			setACPIdentity(headers, principal, request.PathValue("agent_id"))
 			identity.ForwardCallerContext(proxyRequest.In.Context(), headers)
 			proxyRequest.Out.Header = headers
+			h.forwardingHeaders(headers, proxyRequest.In)
 		},
 		ModifyResponse: func(upstream *http.Response) error {
 			_ = stripCredentialResponse(upstream)

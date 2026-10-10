@@ -12,6 +12,8 @@ func TestLoadAppliesSecureDefaults(t *testing.T) {
 		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
 		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
 		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
+		"ANTNEST_EDGE_PUBLIC_ORIGIN":   "https://antnest.example",
+		"ANTNEST_EDGE_TRUSTED_PROXIES": "10.1.0.0/24",
 	}
 	config, err := Load(func(key string) string { return values[key] })
 	if err != nil {
@@ -32,6 +34,8 @@ func TestLoadRejectsMissingOrInvalidDependencies(t *testing.T) {
 		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
 		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
 		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
+		"ANTNEST_EDGE_PUBLIC_ORIGIN":   "https://antnest.example",
+		"ANTNEST_EDGE_TRUSTED_PROXIES": "10.1.0.0/24",
 	}
 	for _, test := range []struct {
 		name   string

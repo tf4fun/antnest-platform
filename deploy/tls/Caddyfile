@@ -1,0 +1,20 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8443 {
+	tls /etc/antnest/public-tls/cert.pem /etc/antnest/public-tls/key.pem {
+		protocols tls1.2 tls1.3
+	}
+	# Strip before reverse_proxy: header_up applies deletions after sets.
+	request_header -X-Forwarded-*
+	reverse_proxy http://edge-gateway:8080 {
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Host {hostport}
+		header_up X-Forwarded-Proto https
+	}
+}

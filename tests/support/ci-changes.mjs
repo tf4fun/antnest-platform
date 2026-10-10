@@ -163,6 +163,7 @@ export const suites = [
       "runtimes/**",
       "tests/integration/**",
       "tests/e2e/**",
+      "deploy/tls/**",
       ...go,
       ...compose,
     ],
@@ -336,6 +337,12 @@ export const suites = [
   })),
   ...[
     [
+      "gateway-tls",
+      "Edge Gateway HTTPS deployment",
+      ["agent-ui-web", "chromium"],
+      "make e2e-gateway-tls",
+    ],
+    [
       "gateway-security-headers",
       "Edge Gateway security headers",
       ["agent-ui-web", "chromium"],
@@ -354,9 +361,11 @@ export const suites = [
     setup,
     disabled,
     images: platformImages,
-    pull: temporal,
+    pull:
+      id === "gateway-tls" ? [...temporal, "caddy:2.11.7-alpine"] : temporal,
     paths: [
       "services/**",
+      "deploy/tls/**",
       ...runtime,
       "tests/e2e/edge-gateway/**",
       "tests/e2e/agent-ui/**",
@@ -1038,6 +1047,7 @@ export const shards = [
     id: "b-gateway",
     name: "Edge Gateway and Agent UI",
     suites: [
+      "gateway-tls",
       "gateway-security-headers",
       "agent-ui-receipt",
       "gateway-shutdown",

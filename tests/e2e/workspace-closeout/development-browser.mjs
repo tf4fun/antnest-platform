@@ -1,4 +1,5 @@
 import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -59,7 +60,7 @@ async function mutation(page, path, status, action, name) {
   return response.json();
 }
 async function json(page, path) {
-  const response = await page.request.get(origin + path);
+  const response = await gatewayBrowserRequest(page.context(), origin + path);
   assert.equal(response.status(), 200, `${path}: HTTP status`);
   return response.json();
 }

@@ -87,6 +87,13 @@ existing defaults. An upstream HTML response without CSP receives that same
 fallback. The wrapper preserves streaming Flush errors, response deadlines and
 WebSocket hijacking; it does not buffer response bodies.
 
+Gateway owns HSTS independently of document policies: an HTTPS public origin
+receives exactly `max-age=31536000`, including proxy responses and WebSocket
+handshakes. The configured public origin also defines existing Origin checks.
+Trusted proxy CIDRs determine the client address used for login admission and
+diagnostics; incoming forwarding headers never pass through unchanged. See the
+[public-entry contract](../../../contracts/edge-gateway/public-entry.md).
+
 ## Agent UI and Workspace API
 
 One reverse proxy target, `ANTNEST_AGENT_UI_URL`, serves both the `/workspace/`

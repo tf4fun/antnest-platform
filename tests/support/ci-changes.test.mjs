@@ -38,6 +38,15 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
 const enabled = suites.filter((suite) => !suite.disabled);
 
+test("reference TLS proxy changes select the HTTPS browser and deployment contracts", () => {
+  const selected = selectSuites(["deploy/tls/Caddyfile"]);
+  assert(ids(selected).includes("gateway-tls"));
+  assert(ids(selected).includes("deployment-contracts"));
+  const tls = selected.find(({ id }) => id === "gateway-tls");
+  assert(tls.pull.includes("caddy:2.11.7-alpine"));
+  assert(tls.run.includes("make e2e-gateway-tls"));
+});
+
 test("documentation-only changes select no suites", () => {
   assert.deepEqual(
     selectSuites([

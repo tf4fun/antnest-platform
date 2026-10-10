@@ -174,3 +174,18 @@ test("host ACP client uses Node ws so authenticated headers are not dropped", ()
     stream,
   );
 });
+
+test("HTTPS owner clients upgrade over WSS while preserving the public Origin", () => {
+  ownerStream(
+    "https://127.0.0.1:4567",
+    "agent-fixture",
+    "synthetic-cookie",
+    (url, options) => {
+      assert.equal(
+        url,
+        "wss://127.0.0.1:4567/api/app/agents/agent-fixture/v1/acp",
+      );
+      assert.equal(options.headers.Origin, "https://127.0.0.1:4567");
+    },
+  );
+});

@@ -1,4 +1,5 @@
 import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
+import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import assert from "node:assert/strict";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { member, until } from "./c4-setup.mjs";
@@ -81,7 +82,8 @@ export async function runBrowser(
     await enabled(target);
   };
   const state = async () => {
-    const response = await context.request.get(
+    const response = await gatewayBrowserRequest(
+      context,
       `${config.gateway}/api/app/agents/${fixture.agentID}/state`,
     );
     assert.equal(response.status(), 200);
@@ -141,7 +143,8 @@ export async function runBrowser(
     await checkpoint();
   }
   const sessionInfo = async (sessionId) => {
-    const response = await context.request.get(
+    const response = await gatewayBrowserRequest(
+      context,
       `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
     );
     assert.equal(response.status(), 200);
@@ -277,7 +280,8 @@ export async function runBrowser(
     await visibleInfo(observer, metadata);
     await observer.reload();
     await enabled(observer);
-    const listedResponse = await context.request.get(
+    const listedResponse = await gatewayBrowserRequest(
+      context,
       `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/sessions`,
     );
     assert.equal(listedResponse.status(), 200);

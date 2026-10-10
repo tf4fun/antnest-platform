@@ -195,6 +195,11 @@ All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,
 `e2e-skill-learning-diagnostics-browser`, `e2e-skill-discovery-console`) need
 installed Playwright Chromium and close their browsers before Docker cleanup.
+Browser-backed API probes use `tests/support/gateway-browser-request.mjs` to
+retain Chromium's Secure-cookie session on literal loopback HTTP, which
+Playwright's API client otherwise omits. The bridge preserves cookie attributes
+and domain/path filtering, honors explicit negative-test headers, and never
+follows redirects. Real page requests continue to use Chromium's cookie handling.
 `e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
 Playwright Chromium and the standard local stack images. Its captured receipt
 evidence defaults to `artifacts/verification/`; override its directory with
@@ -205,6 +210,15 @@ images and compares the retained Docker environment after cleanup.
 model provider. Set `ANTNEST_GATEWAY_SECURITY_E2E_OUTPUT` to override its private
 evidence directory. It also removes its owned candidates and verifies that
 retained containers, volumes, networks and image references are unchanged.
+
+`e2e-gateway-tls` adds OpenSSL and the pinned `caddy:2.11.7-alpine` image to those
+prerequisites. It runs the reference proxy overlay with a disposable private CA,
+verifies Node's CA/hostname checks, and pins the temporary leaf key in Chromium
+without changing system trust. Real browser login checks Secure cookies, Console
+admin requests and Workspace prompt/SSE; an authenticated ACP client uses WSS.
+Two separate container addresses verify independent login source limits despite
+forged forwarding headers. `ANTNEST_GATEWAY_TLS_E2E_OUTPUT` selects the private
+evidence directory. Cleanup removes the fixture keys, candidates and deployment.
 
 Some contract checks can be run directly:
 

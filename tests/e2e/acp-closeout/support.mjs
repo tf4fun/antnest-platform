@@ -1,3 +1,4 @@
+import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { until } from "./wait.mjs";
@@ -28,7 +29,7 @@ export class BrowserSession {
       headers: {
         "content-type": "application/json",
         Cookie: this.cookie,
-        Origin: gateway,
+        Origin: gatewayOrigin(gateway),
         "X-Antnest-CSRF-Token": this.csrf,
         "Idempotency-Key": randomUUID(),
       },
@@ -83,7 +84,7 @@ export async function connect(version, agent, browser) {
         `ws://edge-gateway:8080/api/app/agents/${agent}/v${version}/acp`,
         {
           WebSocket: ObservedSocket,
-          headers: { Cookie: browser.cookie, Origin: gateway },
+          headers: { Cookie: browser.cookie, Origin: gatewayOrigin(gateway) },
         },
       ),
     );
@@ -177,7 +178,7 @@ export async function rejectedUpgrade(version, agent, browser) {
   const socket = new WebSocket(
     `ws://edge-gateway:8080/api/app/agents/${agent}/v${version}/acp`,
     {
-      headers: { Cookie: browser.cookie, Origin: gateway },
+      headers: { Cookie: browser.cookie, Origin: gatewayOrigin(gateway) },
       handshakeTimeout: 10000,
     },
   );

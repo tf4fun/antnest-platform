@@ -57,7 +57,8 @@ def main():
                "-e", "ANTNEST_AGENT_UI_URL=http://agent-ui:8080",
                "-e", "ANTNEST_AGENT_CONTROLLER_URL=http://agent-controller:8080",
                "-e", "ANTNEST_AGENT_ACP_URL=http://agent-acp-service:8080",
-               "-e", "ANTNEST_EDGE_COOKIE_SECURE=false", "antnest/edge-gateway:local")
+               "-e", "ANTNEST_EDGE_PUBLIC_ORIGIN=http://127.0.0.1",
+               "-e", "ANTNEST_EDGE_COOKIE_SECURE=true", "antnest/edge-gateway:local")
         started.append(GATEWAY)
         base = "http://" + docker("port", GATEWAY, "8080/tcp").splitlines()[0]
         for _ in range(40):
@@ -79,12 +80,12 @@ def main():
             "password": values["ANTNEST_BOOTSTRAP_ADMIN_PASSWORD"],
         }
         status, headers, _ = request(base, "/api/session/login", "POST",
-                                     {"Content-Type": "application/json", "Origin": base}, credentials)
+                                     {"Content-Type": "application/json", "Origin": "http://127.0.0.1"}, credentials)
         assert status == 200, f"login failed: {status}"
         cookies = dict(header.split(";", 1)[0].split("=", 1) for header in headers.get_all("Set-Cookie", []))
         assert cookies.get("antnest_session") and cookies.get("antnest_csrf")
         auth = {"Cookie": "; ".join(f"{key}={value}" for key, value in cookies.items()),
-                "Origin": base, "X-Antnest-CSRF-Token": cookies["antnest_csrf"]}
+                "Origin": "http://127.0.0.1", "X-Antnest-CSRF-Token": cookies["antnest_csrf"]}
         status, _, page = request(base, "/api/admin/skills", headers=auth)
         assert status == 200 and isinstance(page["items"], list), f"authenticated list failed: {status}"
 

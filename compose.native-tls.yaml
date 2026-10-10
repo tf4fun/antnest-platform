@@ -1,0 +1,19 @@
+# Use with compose.yaml; see services/edge-gateway/docs/operations.md.
+services:
+  edge-gateway:
+    environment:
+      ANTNEST_EDGE_PUBLIC_ORIGIN: ${ANTNEST_EDGE_PUBLIC_BASE_URL:?set the public HTTPS origin}
+      ANTNEST_EDGE_COOKIE_SECURE: "true"
+      ANTNEST_EDGE_TRUSTED_PROXIES: ""
+      ANTNEST_EDGE_TLS_CERT_FILE: /etc/antnest/public-tls/cert.pem
+      ANTNEST_EDGE_TLS_KEY_FILE: /etc/antnest/public-tls/key.pem
+      ANTNEST_EDGE_TLS_CA_FILE: ${ANTNEST_EDGE_TLS_CA_FILE:-}
+    ports: !override
+      - ${ANTNEST_EDGE_TLS_BIND_ADDRESS:-0.0.0.0}:${ANTNEST_EDGE_TLS_HOST_PORT:-443}:8080
+    volumes:
+      - type: bind
+        source: ${ANTNEST_EDGE_TLS_DIRECTORY:?set the absolute TLS directory}
+        target: /etc/antnest/public-tls
+        read_only: true
+        bind:
+          create_host_path: false

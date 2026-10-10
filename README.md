@@ -164,6 +164,11 @@ Then open:
 - Admin Console: <http://127.0.0.1:8090>
 - Agent UI: <http://127.0.0.1:8090/workspace/>
 
+This quick start uses loopback HTTP with an explicit public Origin and Secure
+cookies (Chromium's loopback exception). For an HTTPS hostname or another browser
+deployment, choose the [native TLS or Caddy proxy overlay](services/edge-gateway/docs/operations.md#https-compose-deployment).
+Both require your certificate and keep Secure cookies enabled.
+
 Sign in to organization `engineering` as `admin@example.com` with the administrator
 password printed by the generator (also stored in the private `.env`). Connect a
 model provider, create a Template, then create an Agent. The base Compose file

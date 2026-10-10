@@ -2,9 +2,10 @@
 
 This runbook covers deploying, operating and removing one development or
 evaluation deployment of Antnest Platform on a trusted Docker Engine. It is not
-an Internet-facing production installation: TLS termination, production secret
-delivery, external backup storage and high availability are outside this
-profile. A healthy container alone does not prove a usable Agent; follow
+an Internet-facing production installation: production secret delivery, external
+backup storage and high availability are outside this profile. Public HTTPS is
+available through the [native TLS and trusted-proxy overlays](../services/edge-gateway/docs/operations.md#https-compose-deployment).
+A healthy container alone does not prove a usable Agent; follow
 section 4 to verify the full path.
 
 ## 1. Prerequisites And Ownership

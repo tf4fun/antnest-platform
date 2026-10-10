@@ -115,8 +115,11 @@ cluster network. Before exposing a deployment, understand these boundaries:
   arbitrary destination. Actual Compose deployment and authorization probes on
   all 24 created networks have passed. See the
   [deployment network contract](contracts/platform/development-networks.md#runtime-telemetry-exception).
-- **TLS is not terminated by the platform.** Put a TLS-terminating reverse proxy
-  in front of Edge Gateway and keep `ANTNEST_EDGE_COOKIE_SECURE=true`.
+- **Public HTTPS has two supported topologies.** Edge Gateway can terminate TLS
+  1.2+ itself or use the explicitly trusted Caddy proxy. Configure the public
+  Origin and retain Secure cookies. The proxy overlay removes Gateway's direct
+  host port and trusts only the proxy's fixed address; see the
+  [HTTPS deployment instructions](services/edge-gateway/docs/operations.md#https-compose-deployment).
 - **RPC content capture can record secrets.** Keep
   `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` outside local debugging.
 - **Host diagnostics require an explicit overlay.** Base Compose publishes
