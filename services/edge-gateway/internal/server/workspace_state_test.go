@@ -61,19 +61,23 @@ func TestWorkspaceStateRejectsBrowserScopeAndCrossOrigin(t *testing.T) {
 	for _, kind := range []string{"query", "origin", "cursor", "method"} {
 		agents := &executionServiceStub{}
 		r := stateRequest("/watch")
+		status := http.StatusBadRequest
 		switch kind {
 		case "query":
 			r.URL.RawQuery = "principal_id=other"
 		case "origin":
 			r.Header.Set("Origin", "https://evil.example")
+			status = http.StatusForbidden
 		case "cursor":
 			r.Header.Set("Last-Event-ID", "3")
 		case "method":
 			r.Method = http.MethodPost
+			r.Header.Set("Origin", "http://example.com")
+			status = http.StatusNotFound
 		}
 		w := httptest.NewRecorder()
 		newStateHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, agents, Config{}).ServeHTTP(w, r)
-		if w.Code < 400 || agents.stateInput.AgentID != "" {
+		if w.Code != status || agents.stateInput.AgentID != "" {
 			t.Fatalf("%s status=%d scope=%+v", kind, w.Code, agents.stateInput)
 		}
 	}
@@ -252,7 +256,7 @@ func TestWorkspaceStateMachineContractMatchesPublicResponses(t *testing.T) {
 	if err := json.Unmarshal(payload, &contract); err != nil {
 		t.Fatal(err)
 	}
-	if contract.Version != 15 {
+	if contract.Version != 16 {
 		t.Fatalf("version=%d", contract.Version)
 	}
 	for _, name := range []string{"workspace_state", "workspace_state_watch"} {

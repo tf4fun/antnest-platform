@@ -254,7 +254,10 @@ try {
     const gateway = env.ANTNEST_EDGE_PUBLIC_BASE_URL;
     const login = await http(gateway + "/api/session/login", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        Origin: new URL(gateway).origin,
+      },
       body: JSON.stringify({
         organization_slug: env.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
         email: env.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
@@ -278,7 +281,10 @@ try {
     report.checks++;
     const publicLogin = await http(gateway + "/api/session/login", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        Origin: new URL(gateway).origin,
+      },
       body: JSON.stringify({
         organization_slug: env.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
         email: env.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,

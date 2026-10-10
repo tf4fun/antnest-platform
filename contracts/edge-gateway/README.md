@@ -11,7 +11,7 @@ Origin, client addresses, forwarding headers, HSTS and certificate rotation.
 
 ## Workspace routes
 
-Version 15 of `session-contract.json` includes the Node Workspace HTML, HTTP
+Version 16 of `session-contract.json` includes the Node Workspace HTML, HTTP
 API and SSE routes. Gateway authenticates HTML and business API requests, while
 hashed static assets are served without a browser session. The browser uses
 this route set instead of a direct ACP connection.
@@ -24,6 +24,14 @@ is validated locally from private context. See
 credential rotation, stream expiry and pending consumer batches. The identity
 headers below remain presentation hints, not workload or user authentication.
 
+Revision 16 adds shared Origin admission before every `/api/` route, including
+admin and session endpoints. Mutations require matching public Origin or,
+when Origin is absent, same-origin Fetch Metadata. Cross-site, same-site and
+malformed metadata reject mutations even with matching Origin. The explicit
+originless compatibility setting is off by default and never waives CSRF or
+ACP WebSocket Origin checks. See [public entry](public-entry.md) for the complete
+safe-method, header validation and compatibility rules.
+
 For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
 `X-Antnest-*` identity header and injects verified `X-Antnest-Organization-ID`,
 `X-Antnest-Principal-ID`, `X-Antnest-User-ID`, `X-Antnest-Membership-ID` and
@@ -31,9 +39,8 @@ For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
 (`agents/{agent_id}/...`), Gateway also sets `X-Antnest-Agent-ID`; otherwise it
 removes that header. The Agent UI Node Bridge rejects Agent-scoped requests
 that lack the Organization, Principal or Agent header. POST requests require
-the CSRF token. The `Origin` header is optional: when a request supplies it,
-it must match the Gateway origin; when it is absent, the request is not
-rejected for that reason.
+the CSRF token independently of the shared Origin admission. GET requests
+may omit Origin; any supplied Origin must match the configured public origin.
 
 Identity access tokens are cookie-only secrets. Token IDs remain Identity audit
 identifiers and are not stored in the browser session. Neither may appear in

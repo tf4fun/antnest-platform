@@ -87,7 +87,7 @@ func TestOrganizationSessionHandlersMatchCentralSchemas(t *testing.T) {
 			{http.MethodPost, "/api/session/login", `{"organization_slug":"engineering","email":"member@example.com","password":"synthetic"}`, "login"},
 			{http.MethodGet, "/api/session", "", "session"},
 		} {
-			request := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+			request := newBrowserRequest(route.method, route.path, strings.NewReader(route.body))
 			request.Header.Set("Content-Type", "application/json")
 			addSessionCookies(request, "ant_api_private", "csrf")
 			response := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestOrganizationProjectionIsVerifiedFreshAndSchemaValid(t *testing.T) {
 		for _, name := range []string{"研发 · Équipe 🚀", "Renamed <workspace> & 团队"} {
 			stub.resolvePrincipal = displayPrincipal(t, name, administrator)
 			for _, path := range []string{"/api/app/workspace/v1/bootstrap", "/workspace/"} {
-				request := httptest.NewRequest(http.MethodGet, path, nil)
+				request := newBrowserRequest(http.MethodGet, path, nil)
 				addSessionCookies(request, "ant_api_private", "csrf")
 				request.Header.Add(organizationSlugHeader, "forged")
 				request.Header.Add(organizationSlugHeader, "other")
@@ -172,7 +172,7 @@ func TestOrganizationProjectionDoesNotReachAnonymousAssetsOrConsole(t *testing.T
 		w.WriteHeader(200)
 	}), time.Now())
 	for _, path := range []string{"/workspace/assets/app.js", "/", "/api/admin/directory"} {
-		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request := newBrowserRequest(http.MethodGet, path, nil)
 		addSessionCookies(request, "token", "csrf")
 		request.Header.Set(organizationSlugHeader, "forged")
 		request.Header.Set(organizationNameHeader, "forged")
@@ -220,7 +220,7 @@ func TestOrganizationMalformedIdentityNeverAdmitsWorkspace(t *testing.T) {
 					{http.MethodGet, "/api/app/workspace/v1/bootstrap", ""},
 					{http.MethodGet, "/workspace/", ""},
 				} {
-					request := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+					request := newBrowserRequest(route.method, route.path, strings.NewReader(route.body))
 					request.Header.Set("Content-Type", "application/json")
 					addSessionCookies(request, "ant_api_private", "csrf")
 					response := httptest.NewRecorder()

@@ -95,6 +95,7 @@ try {
   const binding = gateway.NetworkSettings.Ports["8080/tcp"][0];
   assert.equal(binding.HostIp, "127.0.0.1");
   const url = `http://127.0.0.1:${binding.HostPort}`;
+  const publicOrigin = "http://127.0.0.1";
   const forged = {
     "Antnest-Service-Authorization": "Bearer browser-forgery",
     "Antnest-Caller-Context": "browser-forgery",
@@ -105,7 +106,11 @@ try {
   };
   const login = await fetch(`${url}/api/session/login`, {
     method: "POST",
-    headers: { ...forged, "content-type": "application/json" },
+    headers: {
+      ...forged,
+      "content-type": "application/json",
+      Origin: publicOrigin,
+    },
     body: JSON.stringify({
       organization_slug: "auth-test",
       email: "admin@example.test",
@@ -143,6 +148,7 @@ try {
       headers: {
         ...forged,
         ...(anonymous ? {} : { cookie: cookies }),
+        Origin: publicOrigin,
         ...headers,
       },
       ...(body === undefined ? {} : { body }),

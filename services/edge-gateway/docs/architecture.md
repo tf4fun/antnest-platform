@@ -55,6 +55,7 @@ session. A retry must revalidate with Identity; unavailable never means admitted
 HTTP limits/security header defaults wrapper
   -> W3C trace extraction/root span
   -> remove browser service/context credentials and all X-Antnest-* headers
+  -> shared Origin admission for every /api/ request
   -> route match
   -> cookie token resolution (protected routes)
   -> route-specific admission
@@ -65,6 +66,29 @@ HTTP limits/security header defaults wrapper
   -> Admin Console or Agent UI application proxy
   -> final response commit: supply only missing security headers
 ```
+
+## API Origin Admission
+
+Every `/api/` request passes Origin admission before routing, session resolution
+or upstream calls, including login, login-method discovery, OIDC start, logout
+and admin routes. GET, HEAD and OPTIONS may omit Origin; any supplied Origin
+must be exactly the configured public Origin in one header value. Empty,
+`null`, foreign and duplicate Origin values are rejected.
+
+All other methods require that matching Origin or, when Origin is absent,
+`Sec-Fetch-Site: same-origin`. For these methods, `same-site` and `cross-site`
+always reject, even with matching Origin. Empty, unknown, duplicate or joined
+Fetch Metadata values also reject. `none` requires matching Origin. Failures
+return `403 forbidden` with `Request origin is not allowed` and the normal
+security headers. Session authentication, authorization and CSRF remain
+independent requirements after Origin admission.
+
+`ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` defaults to `false`. Enabling it logs
+a warning and admits requests only when both headers are absent; it cannot
+override foreign or malformed evidence. ACP WebSocket upgrades always require
+matching Origin, regardless of this setting or Fetch Metadata. OIDC callbacks,
+SCIM and document/assets routes retain their own protocol checks outside
+`/api/`. See the [public-entry contract](../../../contracts/edge-gateway/public-entry.md).
 
 ## Response Security Headers
 
@@ -89,7 +113,7 @@ WebSocket hijacking; it does not buffer response bodies.
 
 Gateway owns HSTS independently of document policies: an HTTPS public origin
 receives exactly `max-age=31536000`, including proxy responses and WebSocket
-handshakes. The configured public origin also defines existing Origin checks.
+handshakes. The configured public origin also defines the API Origin checks.
 Trusted proxy CIDRs determine the client address used for login admission and
 diagnostics; incoming forwarding headers never pass through unchanged. See the
 [public-entry contract](../../../contracts/edge-gateway/public-entry.md).
@@ -122,9 +146,9 @@ Only `Accept`, `Content-Type`, `If-Match`, `Idempotency-Key`, `Last-Event-ID`
 and the trusted identity headers are forwarded. Origin and CSRF rules are
 exact:
 
-- A request that carries an `Origin` header is rejected with `403` unless the
-  Origin matches the Gateway origin. A request without `Origin` is not rejected
-  for that reason.
+- The shared API Origin admission above applies before Workspace routing.
+  GET may omit Origin; POST requires matching Origin or same-origin Fetch
+  Metadata, unless the explicit originless compatibility setting applies.
 - Every `POST` (mutation) requires a valid CSRF token, independent of Origin.
   A missing or mismatched token returns `403 csrf_failed`.
 
@@ -230,9 +254,10 @@ an opaque reverse proxy to ACP `/v1/acp`, relaying the official SDK transport.
 The draft v2 endpoint is WebSocket-only. Gateway does not interpret ACP methods.
 Each request repeats browser authentication with the existing login cookies;
 ACP owns resource authorization. POST and DELETE also require
-`X-Antnest-CSRF-Token` matching the CSRF cookie. A supplied Origin must match
-the Gateway origin; HTTP clients without Origin are allowed only with the same
-authentication and CSRF requirements. WebSocket upgrades always require a
+`X-Antnest-CSRF-Token` matching the CSRF cookie, independently of the shared
+API Origin admission. Non-browser HTTP clients send the configured public
+Origin; the originless compatibility setting does not waive authentication
+or CSRF. WebSocket upgrades always require a
 matching Origin. Only `Content-Type`, `Accept`, `Acp-Connection-Id` and
 `Acp-Session-Id` are forwarded from the client, with trusted identity and trace
 context injected by Edge. Responses preserve ACP routing headers.

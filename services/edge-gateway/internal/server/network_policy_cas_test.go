@@ -38,7 +38,7 @@ func TestGatewayRetainsOnlyMatchingNetworkPolicyCASGuard(t *testing.T) {
 				}
 				w.WriteHeader(200)
 			}), time.Now())
-			r := httptest.NewRequest("PUT", "/api/admin/agents/agent-1/network-policy", strings.NewReader("{}"))
+			r := newBrowserRequest("PUT", "/api/admin/agents/agent-1/network-policy", strings.NewReader("{}"))
 			addSessionCookies(r, "token", "csrf-1")
 			r.Header.Set("X-Antnest-CSRF-Token", "csrf-1")
 			r.Header.Set("X-Antnest-Future-Privilege", "admin")
@@ -65,7 +65,7 @@ func TestNetworkPolicyCASGuardDoesNotReachUnrelatedRoutes(t *testing.T) {
 			}
 			w.WriteHeader(200)
 		}), time.Now())
-		r := httptest.NewRequest(route.method, route.path, nil)
+		r := newBrowserRequest(route.method, route.path, nil)
 		addSessionCookies(r, "token", "csrf-1")
 		r.Header.Set("X-Antnest-CSRF-Token", "csrf-1")
 		r.Header.Set("X-Antnest-Expected-Principal", url.PathEscape(`["org-1","user-admin"]`))

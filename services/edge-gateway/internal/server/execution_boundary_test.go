@@ -51,7 +51,7 @@ func TestACPHTTPRoutesWithoutControllerAndOverwritesIdentity(t *testing.T) {
 				_, _ = io.WriteString(w, expected)
 			})
 			h := newTestHandlerWithAgents(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, agents, upstream, time.Now(), Config{})
-			r := httptest.NewRequest(method, "/api/app/agents/agent-unavailable/v1/acp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session/prompt"}`))
+			r := newBrowserRequest(method, "/api/app/agents/agent-unavailable/v1/acp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session/prompt"}`))
 			addSessionCookies(r, "token-1", "csrf-1")
 			r.Header.Set("X-Antnest-CSRF-Token", "csrf-1")
 			r.Header.Set("Content-Type", "application/json")

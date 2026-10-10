@@ -1,6 +1,23 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 15,
+  "version": 16,
+  "origin_admission": {
+    "scope": "/api/* before routing, authentication and upstream calls",
+    "contract": "public-entry.md",
+    "safe_methods": ["GET", "HEAD", "OPTIONS"],
+    "safe_rule": "Origin optional; when present require one exact public Origin",
+    "mutation_rule": "all other methods require matching Origin or, with Origin absent, Sec-Fetch-Site: same-origin",
+    "metadata_rule": "one of same-origin, same-site, cross-site or none; same-site and cross-site reject mutations even with matching Origin; none requires matching Origin",
+    "invalid_headers": "empty, null, foreign or duplicate Origin rejects; empty, unknown or duplicate Fetch Metadata rejects mutations",
+    "originless_compatibility": "ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=true admits mutations only when both headers are absent; default false with startup warning when enabled",
+    "rejection": {
+      "status": 403,
+      "code": "forbidden",
+      "message": "Request origin is not allowed"
+    },
+    "csrf": "independent and still required on authenticated mutations",
+    "websocket": "ACP WebSocket upgrades always require matching Origin"
+  },
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -138,7 +155,7 @@
       "transport": "official experimental ACP Streamable HTTP",
       "authentication": "browser_session; direct ACP routing without Controller lookup; ACP owns Agent/Session authorization",
       "csrf": "POST and DELETE require X-Antnest-CSRF-Token matching the cookie",
-      "origin": "when supplied must match Gateway; not required for non-browser HTTP clients",
+      "origin": "shared origin_admission; POST and DELETE require matching public Origin or same-origin Fetch Metadata, unless explicit originless compatibility applies",
       "forwarded_headers": [
         "Content-Type",
         "Accept",

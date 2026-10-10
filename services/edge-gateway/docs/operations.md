@@ -37,6 +37,7 @@ batches; use the coordinated branch only after the final integration acceptance.
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL for ID/name discovery only |
 | `ANTNEST_AGENT_ACP_URL` | yes | - | trusted Agent ACP Service base URL |
 | `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | Secure cookies; false requires a literal loopback HTTP listener |
+| `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no | `false` | explicit compatibility for API mutations with both Origin and Fetch Metadata absent; logs a startup warning |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | non-streaming dependency and forwarded admin request timeout |
 | `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | ordinary HTTP graceful-drain budget |
 | `ANTNEST_EDGE_STREAM_LEASE` | no | `5m` | maximum authenticated SSE lifetime |
@@ -55,7 +56,7 @@ responses should reach the browser.
 
 Gateway supports native TLS and HTTPS termination at an explicitly trusted
 proxy. Both set `ANTNEST_EDGE_PUBLIC_ORIGIN=https://<public-host>[:port]` and keep
-Secure cookies. Existing Origin checks use that configured origin, independently
+Secure cookies. API Origin checks use that configured origin, independently
 of Host, `X-Forwarded-Host` and `X-Forwarded-Proto`. HTTPS public origins receive
 HSTS with `max-age=31536000`, including errors and WebSocket upgrades; Gateway
 overrides conflicting upstream HSTS. It does not opt subdomains into HSTS.
@@ -89,9 +90,23 @@ Existing development `.env` files with `ANTNEST_EDGE_COOKIE_SECURE=false` must
 change that value to `true` before starting the upgraded Compose stack.
 
 The [public-entry contract](../../../contracts/edge-gateway/public-entry.md)
-defines configuration, trust and staged integration acceptance. Mandatory Origin
-on additional routes, cookie prefixes and session-bound CSRF remain separate
-work in #10 and #62; this deployment change does not claim their completion.
+defines configuration, trust and staged integration acceptance. Every `/api/`
+request is checked before routing. GET, HEAD and OPTIONS may omit Origin, but
+any supplied Origin must exactly match the configured public origin. All other
+methods, including login and logout, require matching Origin or, when it is
+absent, `Sec-Fetch-Site: same-origin`. `same-site` and `cross-site` reject
+mutations even with matching Origin. Empty, malformed and duplicate evidence
+is rejected; `none` requires matching Origin. Rejections return `403 forbidden`
+with `Request origin is not allowed`. CSRF remains a separate check.
+
+Update scripted HTTP clients to send `Origin: <ANTNEST_EDGE_PUBLIC_ORIGIN>`,
+including when the transport connects to a private Gateway address. Standard
+Compose keeps originless mutations disabled. If an explicit legacy-client
+exception is necessary, set `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=true` in
+that Gateway process/container; startup emits a warning. This admits only
+requests with both Origin and `Sec-Fetch-Site` absent and never waives CSRF or
+ACP WebSocket Origin checks. Remove the exception after migrating clients.
+Cookie prefixes and session-bound CSRF remain work in #62.
 
 `GET /status` reports Gateway's own initialized listener. It never probes
 Identity, Controller, Console, UI or ACP. Check each container's health and real

@@ -34,7 +34,7 @@ func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
 		t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, agents,
 		http.NotFoundHandler(), time.Now(), Config{},
 	)
-	request := httptest.NewRequest(http.MethodGet, "/api/app/bootstrap", nil)
+	request := newBrowserRequest(http.MethodGet, "/api/app/bootstrap", nil)
 	addSessionCookies(request, "token-1", "csrf-1")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -152,7 +152,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 		t.Fatal("protocol routing queried Controller")
 	}
 
-	wrongOrigin := httptest.NewRequest(http.MethodGet, publicPath, nil)
+	wrongOrigin := newBrowserRequest(http.MethodGet, publicPath, nil)
 	wrongOrigin.Host = "edge.example.test"
 	wrongOrigin.Header.Set("Connection", "Upgrade")
 	wrongOrigin.Header.Set("Upgrade", "websocket")
@@ -172,7 +172,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 		{"unknown version", "/api/app/agents/agent-1/v3/acp", headers.Get("Cookie"), http.StatusNotFound},
 	} {
 		t.Run(denial.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, denial.path, nil)
+			request := newBrowserRequest(http.MethodGet, denial.path, nil)
 			request.Host = "edge.example.test"
 			request.Header.Set("Origin", "http://edge.example.test")
 			request.Header.Set("Connection", "Upgrade")
@@ -198,7 +198,7 @@ func TestWorkspaceApplicationPreservesPublicPrefix(t *testing.T) {
 		}), time.Now(),
 	)
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/workspace/assets/app.js", nil))
+	handler.ServeHTTP(response, newBrowserRequest(http.MethodGet, "/workspace/assets/app.js", nil))
 	if response.Code != http.StatusOK || received != "/workspace/assets/app.js" {
 		t.Fatalf("status=%d upstream path=%q", response.Code, received)
 	}
@@ -214,7 +214,7 @@ func TestLoginCreatesCookieSessionWithoutLeakingIdentityToken(t *testing.T) {
 		t.Fatal("login reached Admin Console")
 	}), now)
 
-	request := httptest.NewRequest(http.MethodPost, "/api/session/login", strings.NewReader(`{
+	request := newBrowserRequest(http.MethodPost, "/api/session/login", strings.NewReader(`{
 		"organization_slug":"engineering","email":"admin@example.com","password":"correct password"
 	}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -245,7 +245,7 @@ func TestLoginAdmissionRejectsBeforeAnotherIdentityPasswordCheck(t *testing.T) {
 		Config{LoginWindow: time.Minute, LoginSourceMax: 2, LoginAccountMax: 2},
 	)
 	for attempt := 1; attempt <= 3; attempt++ {
-		request := httptest.NewRequest(
+		request := newBrowserRequest(
 			http.MethodPost, "/api/session/login",
 			strings.NewReader(`{"organization_slug":"engineering","email":"admin@example.com","password":"wrong password"}`),
 		)
@@ -276,7 +276,7 @@ func TestOIDCStartUsesThePublicLoginAdmissionWindow(t *testing.T) {
 		Config{LoginWindow: time.Minute, LoginSourceMax: 1, LoginAccountMax: 1},
 	)
 	for attempt := 1; attempt <= 2; attempt++ {
-		request := httptest.NewRequest(http.MethodPost, "/api/session/oidc/start",
+		request := newBrowserRequest(http.MethodPost, "/api/session/oidc/start",
 			strings.NewReader(`{"organization_slug":"engineering","provider_name":"workforce"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.RemoteAddr = "192.0.2.20:1234"
@@ -320,7 +320,7 @@ func TestAdminProxyResolvesPrincipalAndReplacesSpoofedHeaders(t *testing.T) {
 	ctx, span := otel.Tracer("edge-test").Start(context.Background(), "request")
 	defer span.End()
 
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/agents?limit=20", nil).WithContext(ctx)
+	request := newBrowserRequest(http.MethodGet, "/api/admin/agents?limit=20", nil).WithContext(ctx)
 	addSessionCookies(request, "token-1", "csrf-1")
 	request.Header.Set(HeaderUserID, "forged-user")
 	request.Header.Set(HeaderSystemRole, "admin")
@@ -362,7 +362,7 @@ func TestAdminProxyRejectsNonAdministratorAndMissingCSRF(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			identityStub := &identityServiceStub{resolvePrincipal: test.principal}
 			handler := newTestHandler(t, identityStub, console, time.Now())
-			request := httptest.NewRequest(test.method, "/api/admin/agents", strings.NewReader(`{}`))
+			request := newBrowserRequest(test.method, "/api/admin/agents", strings.NewReader(`{}`))
 			addSessionCookies(request, "token-1", "csrf-1")
 			if test.csrf != "" {
 				request.Header.Set(session.CSRFHeaderName, test.csrf)
@@ -371,6 +371,9 @@ func TestAdminProxyRejectsNonAdministratorAndMissingCSRF(t *testing.T) {
 			handler.ServeHTTP(response, request)
 			if response.Code != test.code {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if test.method == http.MethodPost && !strings.Contains(response.Body.String(), `"code":"csrf_failed"`) {
+				t.Fatalf("CSRF assertion was masked by another rejection: %s", response.Body.String())
 			}
 		})
 	}
@@ -389,7 +392,7 @@ func TestAgentEventWatchHasABoundedAuthenticationLease(t *testing.T) {
 	handler := newTestHandlerWithConfig(
 		t, identityStub, console, time.Now(), Config{StreamLease: 20 * time.Millisecond},
 	)
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/agents/agent-1/events/watch", nil)
+	request := newBrowserRequest(http.MethodGet, "/api/admin/agents/agent-1/events/watch", nil)
 	addSessionCookies(request, "token-1", "csrf-1")
 	response := httptest.NewRecorder()
 	started := time.Now()
@@ -417,7 +420,7 @@ func TestPublicOIDCLoginDiscoveryAndStartUseIdentityService(t *testing.T) {
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), now)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/session/login-methods",
+	request := newBrowserRequest(http.MethodPost, "/api/session/login-methods",
 		strings.NewReader(`{"organization_slug":"engineering"}`))
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
@@ -431,7 +434,7 @@ func TestPublicOIDCLoginDiscoveryAndStartUseIdentityService(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodPost, "/api/session/oidc/start",
+	request = newBrowserRequest(http.MethodPost, "/api/session/oidc/start",
 		strings.NewReader(`{"organization_slug":"engineering","provider_name":"workforce"}`))
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
@@ -457,7 +460,7 @@ func TestOIDCCallbackEstablishesBrowserSessionWithoutDisclosingToken(t *testing.
 	}}
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), now)
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet,
+	request := newBrowserRequest(http.MethodGet,
 		"/protocol/oidc/callback?state=opaque-state&code=authorization-code", nil)
 	for _, cookie := range beginTestOIDC(t, handler) {
 		request.AddCookie(cookie)
@@ -488,7 +491,7 @@ func TestOIDCCallbackFailureRedirectsWithOnlyAStableErrorCode(t *testing.T) {
 	}}
 	handler := newTestHandler(t, upstream, http.NotFoundHandler(), now)
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet,
+	request := newBrowserRequest(http.MethodGet,
 		"/protocol/oidc/callback?state=secret-state&code=secret-code", nil)
 	for _, cookie := range beginTestOIDC(t, handler) {
 		request.AddCookie(cookie)
@@ -524,7 +527,7 @@ func TestSCIMProtocolProxyPreservesBearerAndStripsBrowserIdentity(t *testing.T) 
 		_, _ = response.Write([]byte(`{"id":"user-1"}`))
 	})
 	handler := newTestHandler(t, &identityServiceStub{}, upstream, time.Now())
-	request := httptest.NewRequest(http.MethodPost, "/scim/v2/Users?attributes=id",
+	request := newBrowserRequest(http.MethodPost, "/scim/v2/Users?attributes=id",
 		strings.NewReader(`{"userName":"person@example.com"}`))
 	request.Header.Set("Authorization", "Bearer scim-secret")
 	request.Header.Set("Cookie", "antnest_session=browser-secret")
@@ -552,7 +555,7 @@ func TestUnknownOIDCProtocolPathNeverFallsThroughToSPA(t *testing.T) {
 		consoleCalls++
 	}), time.Now())
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/protocol/oidc/unknown", nil))
+	handler.ServeHTTP(response, newBrowserRequest(http.MethodGet, "/protocol/oidc/unknown", nil))
 	if response.Code != http.StatusNotFound ||
 		!strings.Contains(response.Header().Get("Content-Type"), "application/json") ||
 		!strings.Contains(response.Body.String(), "not_found") {
@@ -567,7 +570,7 @@ func TestUnknownOIDCProtocolPathNeverFallsThroughToSPA(t *testing.T) {
 func TestLogoutRevokesTokenAndExpiresAllCookies(t *testing.T) {
 	identityStub := &identityServiceStub{revokeStatus: identity.RevokeStatusRevoked}
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), time.Now())
-	request := httptest.NewRequest(http.MethodDelete, "/api/session", nil)
+	request := newBrowserRequest(http.MethodDelete, "/api/session", nil)
 	addSessionCookies(request, "token-1", "csrf-1")
 	request.Header.Set(session.CSRFHeaderName, "csrf-1")
 	response := httptest.NewRecorder()
@@ -591,7 +594,7 @@ func TestLogoutRevokesTokenAndExpiresAllCookies(t *testing.T) {
 func TestLogoutPreservesCookiesWhenRevocationIsRetryable(t *testing.T) {
 	identityStub := &identityServiceStub{revokeErr: context.DeadlineExceeded}
 	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), time.Now())
-	request := httptest.NewRequest(http.MethodDelete, "/api/session", nil)
+	request := newBrowserRequest(http.MethodDelete, "/api/session", nil)
 	addSessionCookies(request, "token-1", "csrf-1")
 	request.Header.Set(session.CSRFHeaderName, "csrf-1")
 	response := httptest.NewRecorder()
@@ -619,7 +622,7 @@ func TestStatusDoesNotProbeDownstreamServices(t *testing.T) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}), time.Now(), Config{})
 		response := httptest.NewRecorder()
-		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/status", nil))
+		h.ServeHTTP(response, newBrowserRequest(http.MethodGet, "/status", nil))
 		if response.Code != http.StatusOK || response.Body.String() != "{\"status\":\"ready\"}\n" || calls != 0 || identities.readyCalls != 0 || agents.readyCalls != 0 {
 			t.Fatalf("local readiness: status=%d calls=%d/%d/%d", response.Code, calls, identities.readyCalls, agents.readyCalls)
 		}

@@ -59,19 +59,20 @@ type IdentityService interface {
 }
 
 type Config struct {
-	PublicOrigin    string
-	TrustedProxies  []netip.Prefix
-	AdminConsoleURL string
-	AgentUIURL      string
-	AgentACPURL     string
-	IdentityURL     string
-	RequestTimeout  time.Duration
-	StreamLease     time.Duration
-	LoginWindow     time.Duration
-	LoginSourceMax  int
-	LoginAccountMax int
-	Now             func() time.Time
-	NewRequestID    func() string
+	AllowOriginlessMutations bool
+	PublicOrigin             string
+	TrustedProxies           []netip.Prefix
+	AdminConsoleURL          string
+	AgentUIURL               string
+	AgentACPURL              string
+	IdentityURL              string
+	RequestTimeout           time.Duration
+	StreamLease              time.Duration
+	LoginWindow              time.Duration
+	LoginSourceMax           int
+	LoginAccountMax          int
+	Now                      func() time.Time
+	NewRequestID             func() string
 }
 
 type Dependencies struct {
@@ -84,31 +85,32 @@ type Dependencies struct {
 }
 
 type handler struct {
-	publicOrigin         *url.URL
-	trustedProxies       []netip.Prefix
-	identity             IdentityService
-	agents               agentcontroller.Service
-	execution            agentacp.Service
-	sessions             *session.Manager
-	requestTimeout       time.Duration
-	streamLease          time.Duration
-	loginWindow          time.Duration
-	loginAdmission       *loginAdmission
-	newRequestID         func() string
-	httpClient           *http.Client
-	logger               *slog.Logger
-	consoleURL           *url.URL
-	agentUIURL           *url.URL
-	agentACPURL          *url.URL
-	acpConnections       chan struct{}
-	acpMessages          chan struct{}
-	stateConnections     chan struct{}
-	bridgeStreams        chan struct{}
-	adminProxy           *httputil.ReverseProxy
-	appProxy             *httputil.ReverseProxy
-	workspaceBridgeProxy *httputil.ReverseProxy
-	scimProxy            *httputil.ReverseProxy
-	mux                  *http.ServeMux
+	allowOriginlessMutations bool
+	publicOrigin             *url.URL
+	trustedProxies           []netip.Prefix
+	identity                 IdentityService
+	agents                   agentcontroller.Service
+	execution                agentacp.Service
+	sessions                 *session.Manager
+	requestTimeout           time.Duration
+	streamLease              time.Duration
+	loginWindow              time.Duration
+	loginAdmission           *loginAdmission
+	newRequestID             func() string
+	httpClient               *http.Client
+	logger                   *slog.Logger
+	consoleURL               *url.URL
+	agentUIURL               *url.URL
+	agentACPURL              *url.URL
+	acpConnections           chan struct{}
+	acpMessages              chan struct{}
+	stateConnections         chan struct{}
+	bridgeStreams            chan struct{}
+	adminProxy               *httputil.ReverseProxy
+	appProxy                 *httputil.ReverseProxy
+	workspaceBridgeProxy     *httputil.ReverseProxy
+	scimProxy                *httputil.ReverseProxy
+	mux                      *http.ServeMux
 }
 
 func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) {
@@ -165,7 +167,8 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		config.NewRequestID = randomRequestID
 	}
 	h := &handler{
-		publicOrigin: publicOrigin, trustedProxies: append([]netip.Prefix(nil), config.TrustedProxies...),
+		allowOriginlessMutations: config.AllowOriginlessMutations,
+		publicOrigin:             publicOrigin, trustedProxies: append([]netip.Prefix(nil), config.TrustedProxies...),
 		identity: dependencies.Identity, agents: dependencies.Agents, execution: dependencies.Execution, sessions: dependencies.Sessions,
 		requestTimeout: config.RequestTimeout, streamLease: config.StreamLease,
 		loginWindow: config.LoginWindow,
@@ -250,6 +253,10 @@ func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	stripBrowserCredentials(request)
 	writer := &securityHeaderWriter{ResponseWriter: response, https: h.externalOrigin(request).Scheme == "https"}
 	writer.applyTransportPolicy()
+	if strings.HasPrefix(request.URL.Path, "/api/") && !h.admitOrigin(request) {
+		writeError(writer, http.StatusForbidden, "forbidden", "Request origin is not allowed")
+		return
+	}
 	h.mux.ServeHTTP(writer, request)
 	if !writer.wroteHeader {
 		// Handlers may return an empty response without explicitly committing it.
@@ -496,7 +503,7 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		writeError(response, http.StatusBadRequest, "invalid_request", "WebSocket upgrade is required")
 		return nil
 	}
-	if (upgrade || len(request.Header.Values("Origin")) > 0) && !h.sameOrigin(request) {
+	if upgrade && !h.sameOrigin(request) {
 		writeError(response, http.StatusForbidden, "forbidden", "ACP origin is not allowed")
 		return nil
 	}

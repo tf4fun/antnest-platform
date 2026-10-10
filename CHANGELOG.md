@@ -4,6 +4,15 @@
 
 ### Upgrade requirement
 
+**#10 requires Origin admission on every `/api/*` mutation, including login,
+OIDC start and logout.** Scripted clients must send the configured public
+`Origin`, or supply `Sec-Fetch-Site: same-origin` when Origin is absent.
+Cross-site or same-site Fetch Metadata rejects mutations even with matching
+Origin. The explicit `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=true` compatibility
+setting admits only requests where both headers are absent, logs a warning,
+and retains independent CSRF and ACP WebSocket checks. Standard Compose keeps
+the setting disabled. See [Gateway Origin admission](services/edge-gateway/docs/architecture.md#api-origin-admission).
+
 **#57 requires an explicit public Origin outside a direct loopback HTTP
 listener.** Existing development Compose `.env` files must set
 `ANTNEST_EDGE_COOKIE_SECURE=true`. For non-loopback browser access, configure

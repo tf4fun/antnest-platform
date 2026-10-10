@@ -31,12 +31,44 @@ certificate is never used as an internal workload credential.
 ## Request boundary
 
 Configuration normalizes host case, IP notation and default ports to a browser
-origin; internationalized domain names use ASCII punycode. Existing Origin
+origin; internationalized domain names use ASCII punycode. Origin
 checks compare one nonempty Origin header exactly with the configured
 public origin, independently of the inbound Host and forwarded scheme. Only
 direct loopback HTTP without a configured origin derives its expected origin
-from the request. This contract does not broaden which routes require Origin;
-mandatory Origin admission and session-bound CSRF are separate deliveries.
+from the request.
+
+Every `/api/` request passes one Origin admission step before routing,
+authentication or upstream calls, including session creation, login-method
+discovery, logout and admin routes. GET, HEAD and OPTIONS may omit Origin;
+any supplied Origin must match. All other methods, including POST, PUT, PATCH
+and DELETE, follow these rules:
+
+- A supplied Origin must be a single exact match. Empty, `null`, foreign,
+  duplicate or comma-joined values fail even with same-origin Fetch Metadata.
+- A supplied `Sec-Fetch-Site` must be one of `same-origin`, `same-site`,
+  `cross-site` or `none`, in a single header value. Empty, unknown, duplicate
+  and comma-joined values fail. `same-site` and `cross-site` always fail,
+  including when Origin matches.
+- A matching Origin admits `same-origin`, `none` or absent Fetch Metadata.
+  Without Origin, only `Sec-Fetch-Site: same-origin` admits the request;
+  `none` alone is not authorization.
+- When both headers are absent, reject by default. The explicit compatibility
+  setting `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=true` admits only this case
+  and emits a startup warning. It never overrides invalid or cross-origin
+  evidence. Standard Compose deployments retain the default `false`.
+
+Rejection is `403` with code `forbidden` and message
+`Request origin is not allowed`, retaining the Gateway security headers.
+Passing Origin admission never bypasses the independent session, authorization
+or CSRF checks. ACP WebSocket upgrades additionally require a matching Origin,
+even with same-origin Fetch Metadata or the compatibility setting enabled.
+OIDC callbacks under `/protocol/oidc/`, SCIM and document/assets routes remain
+outside this API admission rule and retain their protocol-specific checks.
+
+Non-browser clients should send the configured public Origin on mutations,
+even when connecting through a private transport address. Browsers supply their
+own Origin/Fetch Metadata; callers must not synthesize these from a forwarded
+host or from a URL rewritten solely to query Secure cookies.
 
 The immediate TCP peer is the client address unless it belongs to a trusted
 proxy CIDR. For trusted peers, parse `X-Forwarded-For` right to left, skipping
@@ -83,5 +115,6 @@ external HTTPS readiness is verified separately through the proxy.
 The consumer fixtures select this public origin even when their transport uses
 the private Gateway address. The `gateway-tls` CI suite executes step 3 with the
 reference proxy and verifies cleanup of its disposable environment. See
-[#57](https://github.com/tf4fun/antnest-platform/issues/57); broader Origin,
-cookie/CSRF and login-account policy changes remain in #10, #62 and #2.
+[#57](https://github.com/tf4fun/antnest-platform/issues/57) and the API Origin
+admission in [#10](https://github.com/tf4fun/antnest-platform/issues/10).
+Cookie/session-bound CSRF and login-account policy changes remain in #62 and #2.
