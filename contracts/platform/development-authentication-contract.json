@@ -12,9 +12,7 @@
     "skill-registry": "contracts/skill-registry/callers.json",
     "runtime-egress": "contracts/egress/callers.json"
   },
-  "dynamic_receivers": [
-    "antnest-runtime"
-  ],
+  "dynamic_receivers": ["antnest-runtime"],
   "host_ports": {
     "revision": 2,
     "debug_publisher": "diagnostic-relay",
@@ -88,6 +86,11 @@
     "receiver_max_bytes": 8192
   },
   "bootstrap_keys": {
+    "gateway_csrf": {
+      "file": "edge-gateway/csrf.key",
+      "random_bytes": 32,
+      "encoding": "raw"
+    },
     "identity_cct": {
       "algorithm": "Ed25519",
       "private_file": "identity-service/cct-signing.pem",
@@ -136,15 +139,9 @@
       "private_file": "<service>/key.pem",
       "valid_days": 30,
       "uri_template": "antnest://service/<service>",
-      "extended_key_usages": [
-        "serverAuth",
-        "clientAuth"
-      ],
+      "extended_key_usages": ["serverAuth", "clientAuth"],
       "dns_aliases": {
-        "agent-acp-service": [
-          "agent-acp-control",
-          "agent-acp-workspace"
-        ]
+        "agent-acp-service": ["agent-acp-control", "agent-acp-workspace"]
       }
     },
     "ca_private_key_service_mount": false,

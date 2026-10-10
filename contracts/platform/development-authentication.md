@@ -59,6 +59,8 @@ artifacts/service-authentication/
   identity-service/
     cct-signing.pem
     cct-jwks.json
+  edge-gateway/
+    csrf.key
   runtime-controller/
     instance-master.key
   runtime-egress/
@@ -87,6 +89,15 @@ unencrypted PKCS8 PEM private block and a public JWKS containing its exact
 generated key ID. The formats match the
 [Identity signing contract](../identity/service-authentication.md). CCT
 signing is not shared with workload tokens, TLS or Skill maintenance.
+
+Gateway gets its own exactly 32-byte raw CSPRNG CSRF key at
+`edge-gateway/csrf.key`, with mode 0600. All replicas for one browser origin
+must mount that same file through `ANTNEST_EDGE_CSRF_KEY_FILE`. It does not
+reuse another service's key or an outgoing workload token. Existing deployments
+add this file independently; never regenerate the credential tree to add it.
+See [browser session security](../edge-gateway/session-security.md) for rollout,
+cookie names and the re-login requirement when rotating this key. Gateway,
+browser consumers and HTTPS integration are separate delivery batches.
 
 RC gets a separate exactly 32-byte raw CSPRNG instance sealing master. Mount
 that file read-only through `ANTNEST_RUNTIME_INSTANCE_KEY_FILE`; retain it with

@@ -256,6 +256,32 @@ test("Identity keys sign valid Ed25519 CCTs and RC retains a separate raw master
   assert(!bytes(output, "manifest.json").includes(Buffer.from("PRIVATE KEY")));
 });
 
+test("Gateway receives a private independent raw CSRF key without exposing it in metadata", async (t) => {
+  const { provisionTokens, deriveStaticPairs } = await helper();
+  const output = join(fixture(t), "gateway-csrf");
+  provisionTokens({ output });
+  const keyFile = contract.bootstrap_keys.gateway_csrf.file;
+  const key = bytes(output, keyFile);
+  assert.equal(key.byteLength, 32);
+  assert(!key.equals(Buffer.alloc(32)));
+  assert.equal(statSync(join(output, keyFile)).mode & 0o777, 0o600);
+  for (const otherFile of [
+    contract.bootstrap_keys.runtime_instance_master.file,
+    contract.bootstrap_keys.egress_tunnel_master.file,
+    contract.bootstrap_keys.identity_cct.private_file,
+    "manifest.json",
+    "deployment.env",
+  ]) {
+    const other = bytes(output, otherFile);
+    assert(!other.includes(key), otherFile);
+    assert(!other.includes(Buffer.from(key.toString("base64url"))), otherFile);
+  }
+  for (const { caller, receiver } of deriveStaticPairs(catalogs())) {
+    const token = bytes(output, `${caller}/tokens/${receiver}`);
+    assert(!Buffer.from(token.toString("ascii"), "base64url").equals(key));
+  }
+});
+
 test("generated Identity public keys satisfy the actual issuer JWKS contract", async (t) => {
   const { provisionTokens } = await helper();
   const output = join(fixture(t), "issuer-format");
@@ -284,6 +310,7 @@ test("every new deployment gets independent tokens and bootstrap keys", async (t
   for (const path of [
     contract.bootstrap_keys.identity_cct.private_file,
     contract.bootstrap_keys.runtime_instance_master.file,
+    contract.bootstrap_keys.gateway_csrf.file,
   ])
     assert(!bytes(first, path).equals(bytes(second, path)));
   assert.notEqual(
