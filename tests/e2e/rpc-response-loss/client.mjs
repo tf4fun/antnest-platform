@@ -33,8 +33,13 @@ import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { seed } from "./setup.mjs";
 import { assertUnacknowledged, assertReceipts } from "./evidence.mjs";
 import { inspectRpcTrace, inspectClosedPrompt } from "./trace.mjs";
+import {
+  traceSampleRecorder,
+  captureTraceAfterFailure,
+} from "./trace-samples.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
+const recordTraceSample = traceSampleRecorder("/tmp/rpc-traces");
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
 const connections = [],
@@ -493,10 +498,7 @@ async function main() {
       trace: await collectTrace(
         "http://jaeger:16686",
         expected.traceID,
-        (t) => {
-          if (t) save(expected.kind)(t);
-          return t;
-        },
+        (t, sample) => recordTraceSample(expected.kind, t, sample),
       ),
     });
   }
@@ -586,6 +588,15 @@ try {
     }),
   );
   process.exitCode = 1;
+  try {
+    await captureTraceAfterFailure(
+      "http://jaeger:16686",
+      lifecycle,
+      recordTraceSample,
+    );
+  } catch {
+    /* Preserve the original scenario failure. */
+  }
 } finally {
   for (const c of connections) {
     try {

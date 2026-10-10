@@ -1,4 +1,8 @@
 services:
+  admin-console:
+    environment:
+      # Test-only delayed export reproduction; the default remains 5 seconds.
+      OTEL_BSP_SCHEDULE_DELAY: ${ANTNEST_E2E_ADMIN_SPAN_DELAY_MS:-5000}
   rpc-loss-proxy:
     image: antnest/agent-acp-service:local
     command: ["node", "/fixtures/proxy.mjs"]
