@@ -31,12 +31,12 @@ import {
   assertReplay,
 } from "./protocol.mjs";
 import { collectManagedTrace, inspectManagedTrace } from "./request-trace.mjs";
-import {
-  assertLivePeer,
-  restartWithNewPeer,
-  proveHealthDuringEgressOutage,
-} from "../runtime-egress/live-peer.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+
+const { assertLivePeer, restartWithNewPeer, proveHealthDuringEgressOutage } =
+  process.env.TEST_DOCKER_PROJECT
+    ? await import("../runtime-egress/live-peer.mjs")
+    : {};
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 const modelURL = process.env.TEST_MODEL_URL ?? "http://managed-model:8080";
