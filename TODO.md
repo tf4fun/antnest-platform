@@ -19,11 +19,14 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，61 个已关闭，70 �
 
 - 活跃项：[#109](https://github.com/tf4fun/antnest-platform/issues/109)，E2E Compose overlay 去重与诊断端口隔离。
 - 分支：`fix/issue-109-e2e-overlays`。
-- 状态：三个互斥写集合已完成并通过协调者与独立 review；22 个实际 Compose 场景前后完全等价，端口回归反向验证通过。仓库检查串行运行中。
+- PR：[#223](https://github.com/tf4fun/antnest-platform/pull/223)，本地验收完成，等待最终 CI 与合并。
+- 状态：三个互斥写集合已完成并通过协调者与独立 review；22 个实际 Compose 场景前后完全等价，端口回归反向验证通过。
 - 批次边界：现有 `stage3a.compose.yaml` 已修复固定诊断端口；本次保留此行为，合并重复 overlay 并删除无效 Temporal reset，要求前后渲染配置等价。
-- 待验收：`make test-repo`、部署 wiring/ports 检查、一个 ACP 场景及 managed MCP Docker E2E、资源清理、CI。
+- 已通过：`make -j1 test-repo test-deployment-wiring test-deployment-ports check-links`、新增测试格式检查、Stage3a shell 语法检查。
+- Docker 结果：保留开发栈占用五个固定诊断端口时，ACP v1/v2 WebSocket 与 v1 HTTP 场景通过，保留资源未变化。Stage3a managed MCP 的业务、拓扑、删除资源和最终清理检查通过；仅有现有规则接受的时钟偏差告警。容器入口的宿主探针导入故障已按既有开关修复，45 个 fixture 通过并完成独立 review。
+- 待验收：最终 CI 与合并。
 - 本地证据：`artifacts/verification/issue-109/`。Docker 已就绪；使用与当前构建输入哈希一致的发布镜像准备 E2E。
-- 下一项：#215。只读预研确认当前使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时；根因尚未验证。修改与验证在当前批次收口后进行。
+- 下一项：#215。只读预研确认当前使用 `tests/e2e/managed-mcp/trace.mjs` 的 span ID 稳定轮询，原 issue 的固定 6 秒路径已过时。先测试“三份稳定但缺父 span 的快照，随后父 span 到达”，参考 Stage2 既有缺父等待边界并保留稳定采样；实际根因仍需连续 Jaeger 快照证明。修改与验证在当前批次收口后进行。
 
 ## 推进队列
 
