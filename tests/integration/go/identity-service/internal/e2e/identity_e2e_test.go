@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
@@ -107,7 +108,8 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	authentication, authority, tokens := identityTestAuthentication(t, store)
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
-		Authentication: authentication, CallerContext: authority,
+		BrowserSessions: browsersessions.NewService(store.BrowserSessions()),
+		Authentication:  authentication, CallerContext: authority,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +247,11 @@ func newIsolatedPool(t *testing.T, databaseURL string) *pgxpool.Pool {
 	}
 	t.Cleanup(func() {
 		pool.Close()
-		_, _ = adminPool.Exec(context.Background(), `DROP SCHEMA `+quotedSchema+` CASCADE`)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := adminPool.Exec(cleanupCtx, `DROP SCHEMA `+quotedSchema+` CASCADE`); err != nil {
+			t.Errorf("remove isolated Identity schema: %v", err)
+		}
 		adminPool.Close()
 	})
 	return pool

@@ -42,8 +42,8 @@ func TestRPCAdmissionPoliciesMatchTheOwningCallerCatalog(t *testing.T) {
 			t.Errorf("%s policy drift", route)
 		}
 		for caller, context := range policy.Context {
-			if caller == "admin-console" && path != "/rpc/identity/jwks" && context != "required" {
-				t.Errorf("%s omitted CCT requirement", route)
+			if requiresCallerContext(path, caller) != (context == "required") {
+				t.Errorf("%s CCT policy drift for %s", route, caller)
 			}
 		}
 		checked[path] = true
@@ -64,7 +64,10 @@ func TestEveryAdministrativeRPCRejectsBodyActorWithoutCallerContext(t *testing.T
 	}
 	var contract struct {
 		Methods map[string]struct {
-			Path    string `json:"path"`
+			Path          string `json:"path"`
+			Authorization struct {
+				Context map[string]string `json:"caller_context"`
+			} `json:"authorization"`
 			Request struct {
 				Properties map[string]json.RawMessage `json:"properties"`
 			} `json:"request"`
@@ -73,35 +76,63 @@ func TestEveryAdministrativeRPCRejectsBodyActorWithoutCallerContext(t *testing.T
 	if err := json.Unmarshal(raw, &contract); err != nil {
 		t.Fatal(err)
 	}
+	var catalog struct {
+		Routes map[string]struct {
+			Context map[string]string `json:"caller_context"`
+		} `json:"routes"`
+	}
+	catalogRaw, err := os.ReadFile("../../../../contracts/identity/callers.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(catalogRaw, &catalog); err != nil {
+		t.Fatal(err)
+	}
 	checked := 0
 	for name, method := range contract.Methods {
 		if _, administrative := method.Request.Properties["actor_principal_id"]; !administrative {
 			continue
 		}
-		checked++
-		t.Run(name, func(t *testing.T) {
-			services := &rpcServicesStub{}
-			deps, _ := authenticationDependencies(t, Dependencies{
-				Directory: services, LocalAuth: services, OIDC: services, SCIM: services,
+		policies := method.Authorization.Context
+		if len(policies) == 0 {
+			policies = catalog.Routes["POST /rpc/identity"+method.Path].Context
+		}
+		if len(policies) == 0 {
+			t.Fatalf("actor route %s has no declared caller policy", name)
+		}
+		for workload, policy := range policies {
+			if policy != "required" {
+				t.Fatalf("actor route %s omits CCT for %s", name, workload)
+			}
+			checked++
+			t.Run(name+"/"+workload, func(t *testing.T) {
+				services := &rpcServicesStub{}
+				deps, _ := authenticationDependencies(t, Dependencies{
+					Directory: services, LocalAuth: services, OIDC: services, SCIM: services,
+				})
+				handler, err := NewHandler(deps)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := administrativeBody(method.Request.Properties)
+				encoded, err := json.Marshal(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := httptest.NewRequest(http.MethodPost, "/rpc/identity"+method.Path, strings.NewReader(string(encoded)))
+				request.Header.Set("Content-Type", "application/json")
+				token := map[string]string{"edge-gateway": gatewayTestToken, "admin-console": consoleTestToken}[workload]
+				if token == "" {
+					t.Fatalf("missing test workload credential for %s", workload)
+				}
+				request.Header.Set(serviceauth.Header, "Bearer "+token)
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "caller_context_required") {
+					t.Fatalf("body-selected administrator reached %s: status=%d body=%s", name, response.Code, response.Body.String())
+				}
 			})
-			handler, err := NewHandler(deps)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body := administrativeBody(method.Request.Properties)
-			encoded, err := json.Marshal(body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := httptest.NewRequest(http.MethodPost, "/rpc/identity"+method.Path, strings.NewReader(string(encoded)))
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("Antnest-Service-Authorization", "Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, request)
-			if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "caller_context_required") {
-				t.Fatalf("body-selected administrator reached %s: status=%d body=%s", name, response.Code, response.Body.String())
-			}
-		})
+		}
 	}
 	if checked == 0 {
 		t.Fatal("contract contains no administrative RPCs")

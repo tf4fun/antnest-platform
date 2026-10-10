@@ -15,8 +15,6 @@ import (
 
 type LocalAuthAdapter struct{ store *Store }
 
-const tokenLastUsedSampleWindow = 5 * time.Minute
-
 func (a *LocalAuthAdapter) FindLocalCredential(
 	ctx context.Context,
 	organizationSlug string,
@@ -50,19 +48,38 @@ func (a *LocalAuthAdapter) IssueToken(
 	ctx context.Context,
 	command localauth.IssueTokenCommand,
 ) (localauth.Token, error) {
+	idleTTL := a.store.browserIdlePolicy()
+	idle := command.IssuedAt.Add(idleTTL)
+	if command.ExpiresAt.Before(idle) {
+		idle = command.ExpiresAt
+	}
+	result := localauth.Token{ID: command.TokenID, ActivityIntervalMS: browserActivityInterval(idleTTL)}
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := lockVerifiedLocalCredential(ctx, tx, command); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
+		now := a.store.browserAdmissionTime(command.IssuedAt)
+		if !command.ExpiresAt.After(now) || !idle.After(now) {
+			return domain.ErrUnauthenticated
+		}
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO api_tokens (
-				id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at,
+				public_session_id, idle_expires_at, last_used_at, user_agent_hint
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10)
+			RETURNING expires_at, idle_expires_at`,
 			command.TokenID, command.TokenHash, command.Principal.UserID,
 			command.Principal.OrganizationID, command.Principal.MembershipID,
 			command.IssuedAt, command.ExpiresAt,
-		); err != nil {
+			a.store.newID("browsersession"), idle, command.UserAgentHint,
+		).Scan(&result.ExpiresAt, &result.IdleExpiresAt); err != nil {
 			return fmt.Errorf("insert API token: %w", err)
+		}
+		// PostgreSQL timestamps have microsecond precision. Admit the stored
+		// deadlines, including time spent inserting, before recording issuance.
+		now = a.store.browserAdmissionTime(now)
+		if !result.ExpiresAt.After(now) || !result.IdleExpiresAt.After(now) {
+			return domain.ErrUnauthenticated
 		}
 		return a.store.appendEvent(ctx, tx, event{
 			OrganizationID:   command.Principal.OrganizationID,
@@ -71,7 +88,12 @@ func (a *LocalAuthAdapter) IssueToken(
 			RequestID: command.RequestID, CreatedAt: command.IssuedAt,
 		})
 	})
-	return localauth.Token{ID: command.TokenID, ExpiresAt: command.ExpiresAt}, err
+	if err != nil {
+		return localauth.Token{}, err
+	}
+	result.ExpiresAt = result.ExpiresAt.UTC()
+	result.IdleExpiresAt = result.IdleExpiresAt.UTC()
+	return result, nil
 }
 
 func lockVerifiedLocalCredential(ctx context.Context, tx *databaseTransaction, command localauth.IssueTokenCommand) error {
@@ -136,21 +158,24 @@ func (a *LocalAuthAdapter) ResolveToken(
 }
 
 func (a *LocalAuthAdapter) ResolveTokenSession(ctx context.Context, digest string, now time.Time) (callercontext.Session, error) {
-	return a.resolveSession(ctx, "token_hash", digest, now, true)
+	return a.store.resolveBrowserSession(ctx, a.store.pool, "token_hash", digest, now)
 }
 
 func (a *LocalAuthAdapter) ResolveSession(ctx context.Context, id string, now time.Time) (callercontext.Session, error) {
-	return a.resolveSession(ctx, "id", id, now, false)
+	return a.store.resolveBrowserSession(ctx, a.store.pool, "id", id, now)
 }
 
-func (a *LocalAuthAdapter) resolveSession(ctx context.Context, column, value string, now time.Time, touch bool) (callercontext.Session, error) {
-	// column is selected only by the two private, fixed query profiles above.
+func (s *Store) resolveBrowserSession(ctx context.Context, queryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, column, value string, now time.Time) (callercontext.Session, error) {
+	// column is selected only by private, fixed SID and token-hash profiles.
+	idleTTL := s.browserIdlePolicy()
+	now = s.browserAdmissionTime(now)
 	var session callercontext.Session
 	principal := &session.Principal
 	var userActive, membershipActive, organizationActive bool
-	var lastUsedAt *time.Time
-	err := a.store.pool.QueryRow(ctx, `
-		SELECT t.id, t.last_used_at, t.expires_at,
+	err := queryer.QueryRow(ctx, `
+		SELECT t.id, t.expires_at, t.idle_expires_at,
 		       u.id, m.organization_id, m.id, u.system_role, m.role,
 		       u.active, m.active, o.active, o.slug, o.name
 		FROM api_tokens t
@@ -158,10 +183,11 @@ func (a *LocalAuthAdapter) resolveSession(ctx context.Context, column, value str
 		JOIN organization_memberships m
 		  ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id
 		JOIN organizations o ON o.id = t.organization_id
-		WHERE t.`+column+` = $1 AND t.revoked_at IS NULL AND t.expires_at > $2
+		WHERE t.`+column+` = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL
+		  AND t.expires_at > $2 AND t.idle_expires_at > $2
 		  AND m.scim_deleted_at IS NULL`, value, now,
 	).Scan(
-		&session.ID, &lastUsedAt, &session.ExpiresAt,
+		&session.ID, &session.ExpiresAt, &session.IdleExpiresAt,
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
 		&principal.SystemRole, &principal.OrganizationRole,
 		&userActive, &membershipActive, &organizationActive,
@@ -170,26 +196,15 @@ func (a *LocalAuthAdapter) resolveSession(ctx context.Context, column, value str
 	if err != nil {
 		return callercontext.Session{}, normalizeError(err)
 	}
-	if touch && shouldTouchTokenLastUsed(lastUsedAt, now) {
-		_ = a.touchTokenLastUsed(ctx, session.ID, now)
+	session.ActivityIntervalMS = browserActivityInterval(idleTTL)
+	now = s.browserAdmissionTime(now)
+	if !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) {
+		return callercontext.Session{}, domain.ErrNotFound
 	}
+	session.ExpiresAt = session.ExpiresAt.UTC()
+	session.IdleExpiresAt = session.IdleExpiresAt.UTC()
 	principal.Active = userActive && membershipActive && organizationActive
 	return session, nil
-}
-
-func shouldTouchTokenLastUsed(lastUsedAt *time.Time, now time.Time) bool {
-	return lastUsedAt == nil || lastUsedAt.Before(now.Add(-tokenLastUsedSampleWindow))
-}
-
-func (a *LocalAuthAdapter) touchTokenLastUsed(ctx context.Context, tokenID string, now time.Time) error {
-	_, err := a.store.pool.Exec(ctx, `
-		UPDATE api_tokens
-		SET last_used_at = $2
-		WHERE id = $1
-		  AND (last_used_at IS NULL OR last_used_at < $2::timestamptz - interval '5 minutes')`,
-		tokenID, now,
-	)
-	return err
 }
 
 func (a *LocalAuthAdapter) RevokeByTokenHash(
@@ -197,35 +212,48 @@ func (a *LocalAuthAdapter) RevokeByTokenHash(
 ) (status localauth.RevokeStatus, resultErr error) {
 	status = localauth.RevokeStatusAlreadyInvalid
 	resultErr = a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		var tokenID, ownerUserID, organizationID string
-		var expiresAt time.Time
-		var revokedAt *time.Time
+		var tokenID string
 		if err := tx.QueryRow(ctx, `
-			SELECT id, user_id, organization_id, expires_at, revoked_at
+			SELECT id
 			FROM api_tokens
-			WHERE token_hash = $1
+			WHERE token_hash = $1 AND kind = 'browser'
 			FOR UPDATE`, digest,
-		).Scan(&tokenID, &ownerUserID, &organizationID, &expiresAt, &revokedAt); err != nil {
+		).Scan(&tokenID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
 			return err
 		}
-		if revokedAt != nil || !expiresAt.After(now) {
+		session, err := a.store.resolveBrowserSession(ctx, tx, "id", tokenID, now)
+		if errors.Is(err, domain.ErrNotFound) {
 			return nil
 		}
-		if _, err := tx.Exec(ctx, `UPDATE api_tokens SET revoked_at = $2 WHERE id = $1`, tokenID, now); err != nil {
-			return fmt.Errorf("revoke API token: %w", err)
+		if err != nil {
+			return err
+		}
+		now = a.store.browserAdmissionTime(now)
+		if !session.Principal.Active || !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) {
+			return nil
+		}
+		events, err := revokeLockedBrowserSessions(ctx, tx, []string{tokenID}, "", "", "", "session_revoked", now)
+		if err != nil {
+			return err
 		}
 		if err := a.store.appendEvent(ctx, tx, event{
-			OrganizationID: organizationID, ActorPrincipalID: ownerUserID,
+			OrganizationID: session.Principal.OrganizationID, ActorPrincipalID: session.Principal.UserID,
 			Type: "access_token.revoked", SubjectType: "access_token", SubjectID: tokenID,
 			CreatedAt: now,
 		}); err != nil {
 			return err
 		}
+		if err := appendSessionRevocations(ctx, tx, events); err != nil {
+			return err
+		}
 		status = localauth.RevokeStatusRevoked
 		return nil
 	})
+	if resultErr != nil {
+		return "", resultErr
+	}
 	return status, resultErr
 }

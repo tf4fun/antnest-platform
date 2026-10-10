@@ -3,17 +3,23 @@ package repository
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
@@ -365,7 +371,23 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		secondaryOrganizationLogin.Principal.MembershipID != secondaryUser.Membership.ID {
 		t.Fatalf("login shared User through secondary organization = %#v, %v", secondaryOrganizationLogin, err)
 	}
-	if err := directoryService.ChangeLocalPassword(ctx, directory.ChangeLocalPasswordInput{
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwordAuthority, err := callercontext.NewAuthority(callercontext.Config{KID: "password", PrivateKey: privateKey, Keys: callercontext.Keys{"password": publicKey}, Repository: store.LocalAuth(), Now: func() time.Time { return now }, NewID: func() string { return "password-cct" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signedCaller, err := passwordAuthority.Issue(ctx, sharedUserLogin.AccessToken, "session", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwordCaller, err := passwordAuthority.AuthenticateSession(ctx, signedCaller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(callercontext.WithCaller(ctx, passwordCaller), browsersessions.PasswordInput{
 		RequestID: "rotate-secondary-password", ActorPrincipalID: secondaryUser.User.ID,
 		UserID: secondaryUser.User.ID, CurrentPassword: "secondary correct password",
 		NewPassword: "rotated secondary password",
@@ -641,11 +663,18 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO api_tokens (
-			id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at
-		) VALUES ('mismatched-token', 'mismatched-hash', $1, $2, $3, $4, $5)`,
+			id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at,
+			public_session_id, idle_expires_at, last_used_at
+		) VALUES ('mismatched-token', 'mismatched-hash', $1, $2, $3, $4, $5,
+		          'mismatched-public-session', $5, $4)`,
 		bootstrap.User.ID, bootstrap.Organization.ID, user.Membership.ID, now, now.Add(time.Hour),
 	); err == nil {
 		t.Fatal("database accepted an API token whose User and Membership belong to different people")
+	} else {
+		var postgresError *pgconn.PgError
+		if !errors.As(err, &postgresError) || postgresError.Code != "23503" || postgresError.ConstraintName != "api_tokens_membership_fk" {
+			t.Fatalf("mismatched session failed outside the intended foreign key: %v", err)
+		}
 	}
 
 	box, err := credentials.NewSecretBox(bytes.Repeat([]byte{9}, 32))
@@ -1073,8 +1102,11 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		t.Fatalf("lock OIDC-delete race Membership: %v", err)
 	}
 	raceLoginResult := make(chan error, 1)
-	go func() {
-		_, completionErr := store.OIDC().CompleteLogin(ctx, oidcflow.CompleteLoginCommand{
+	raceLoginCtx, cancelRaceLogin := context.WithTimeout(ctx, 15*time.Second)
+	var raceLoginWorkers sync.WaitGroup
+	defer func() { cancelRaceLogin(); raceLoginWorkers.Wait() }()
+	raceLoginWorkers.Go(func() {
+		_, completionErr := store.OIDC().CompleteLogin(raceLoginCtx, oidcflow.CompleteLoginCommand{
 			SessionID: "session-oidc-delete-race", ProviderID: provider.ID,
 			OrganizationID: authorization.OrganizationID, ClaimID: "oidc-delete-race-claim",
 			Identity: oidcflow.VerifiedIdentity{
@@ -1086,7 +1118,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 			IssuedAt:        now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
 		})
 		raceLoginResult <- completionErr
-	}()
+	})
 	raceWaitDeadline := time.Now().Add(2 * time.Second)
 	for {
 		var waitingForMembership bool
@@ -1095,8 +1127,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 				SELECT 1
 				FROM pg_stat_activity
 				WHERE application_name = $1 AND wait_event_type = 'Lock'
-				  AND query LIKE '%FOR UPDATE OF u, m, o%'
-			)`, applicationName,
+				  AND $2::integer = ANY(pg_blocking_pids(pid))
+			)`, applicationName, raceDeleteTx.Conn().PgConn().PID(),
 		).Scan(&waitingForMembership); err != nil {
 			t.Fatalf("inspect OIDC-delete race: %v", err)
 		}

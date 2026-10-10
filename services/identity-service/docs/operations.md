@@ -23,25 +23,27 @@ and do not affect process readiness.
 
 ## Configuration
 
-| Variable                              | Required    | Meaning                                    |
-| ------------------------------------- | ----------- | ------------------------------------------ |
-| `ANTNEST_IDENTITY_LISTEN`             | no          | Listen address, default `:8080`            |
-| `ANTNEST_IDENTITY_DATABASE_URL`       | yes         | Private PostgreSQL URL                     |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEY`     | single-key mode | Canonical padded Base64 32-byte key; identity `local-v1` |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEYS`    | ring mode   | Exact comma-separated `kid:base64key` entries |
-| `ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID` | ring mode | Exact active ID present in the ring       |
-| `ANTNEST_IDENTITY_PUBLIC_BASE_URL`    | yes         | OIDC callback and SCIM location base       |
-| `ANTNEST_IDENTITY_TOKEN_TTL`          | no          | Local/OIDC access token TTL, default `12h` |
-| `ANTNEST_IDENTITY_OIDC_SESSION_TTL`   | no          | OIDC state lifetime, default `10m`         |
-| `ANTNEST_IDENTITY_HTTP_TIMEOUT`       | no          | Outbound OIDC deadline, default `10s`      |
-| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT`   | no          | Graceful shutdown deadline, default `15s`  |
-| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG` | conditional | Initial organization slug                  |
-| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME` | conditional | Initial organization name                  |
-| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL`       | conditional | Initial local system administrator         |
-| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD`    | conditional | Initial administrator password             |
-| `OTEL_SDK_DISABLED`                   | no          | Disable OTLP export                        |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`         | no          | OTLP HTTP base endpoint                    |
-| `OTEL_SERVICE_NAME`                   | no          | Defaults to `identity-service`             |
+| Variable                                 | Required        | Meaning                                                                            |
+| ---------------------------------------- | --------------- | ---------------------------------------------------------------------------------- |
+| `ANTNEST_IDENTITY_LISTEN`                | no              | Listen address, default `:8080`                                                    |
+| `ANTNEST_IDENTITY_DATABASE_URL`          | yes             | Private PostgreSQL URL                                                             |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY`        | single-key mode | Canonical padded Base64 32-byte key; identity `local-v1`                           |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEYS`       | ring mode       | Exact comma-separated `kid:base64key` entries                                      |
+| `ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID` | ring mode       | Exact active ID present in the ring                                                |
+| `ANTNEST_IDENTITY_PUBLIC_BASE_URL`       | yes             | OIDC callback and SCIM location base                                               |
+| `ANTNEST_IDENTITY_SESSION_IDLE_TTL`      | no              | Browser inactivity deadline, default `30m`; positive duration                      |
+| `ANTNEST_IDENTITY_SESSION_ABSOLUTE_TTL`  | no              | Browser absolute lifetime, default `12h`; positive duration                        |
+| `ANTNEST_IDENTITY_TOKEN_TTL`             | no              | Absolute-TTL alias for one release; unequal explicit old/new values reject startup |
+| `ANTNEST_IDENTITY_OIDC_SESSION_TTL`      | no              | OIDC state lifetime, default `10m`                                                 |
+| `ANTNEST_IDENTITY_HTTP_TIMEOUT`          | no              | Outbound OIDC deadline, default `10s`                                              |
+| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT`      | no              | Graceful shutdown deadline, default `15s`                                          |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG`    | conditional     | Initial organization slug                                                          |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME`    | conditional     | Initial organization name                                                          |
+| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL`          | conditional     | Initial local system administrator                                                 |
+| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD`       | conditional     | Initial administrator password                                                     |
+| `OTEL_SDK_DISABLED`                      | no              | Disable OTLP export                                                                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`            | no              | OTLP HTTP base endpoint                                                            |
+| `OTEL_SERVICE_NAME`                      | no              | Defaults to `identity-service`                                                     |
 
 The full variable list, including OpenTelemetry exporter settings and
 `ANTNEST_ENVIRONMENT`, is in the [service README](../README.md#configuration).
@@ -103,6 +105,7 @@ under the existing explicit development opt-in.
    rotation jobs with a session advisory lock and locks at most 100 rows per
    transaction (accepted range 1–1000). Readers remain available; writers of
    locked rows wait for that bounded batch. Ctrl-C/SIGTERM cancels safely.
+
 4. Check successful JSON progress ends with `updated: 0, remaining: 0` for
    **both** `oidc_providers` and `oidc_auth_sessions`. Rerunning is idempotent
    and resumes committed batches. Unknown keys or authentication errors roll
@@ -167,7 +170,10 @@ There is no per-field filtering or bespoke payload size limit. See
   consumers should not treat those labels as authorization facts.
 - Browser logout revokes by the presented opaque access token. Identity returns
   `revoked` when it commits revocation and `already_invalid` for an unknown,
-  expired, or previously revoked credential; repeating the request is safe.
+  expired, inactive, or previously revoked credential; repeating the request is
+  safe. It checks both deadlines and live User/Organization/Membership facts
+  after the token lock wait. A successful logout publishes one private session
+  event and never publishes principal offboarding.
 - Provider issuer and Client ID are immutable for an existing Organization/name.
   Create a replacement registration under a new Provider name; in-place Client
   ID replacement returns `oidc_provider_client_id_immutable` (`409`). Secret
@@ -188,10 +194,22 @@ There is no per-field filtering or bespoke payload size limit. See
   Organization slug/name changes alone do not reject login. Its response uses
   metadata read during credential lookup; resolving the token reads the latest
   Organization row.
-  Password rotation itself does not revoke previously issued access tokens;
-  logout revokes the presented token and global User disable revokes all of
-  that User's tokens. Organization Membership deactivation blocks resolution
-  while inactive without revoking another Organization's access.
+  Password rotation changes the credential, revokes all of the User's previous
+  browser sessions across Organizations, and issues a replacement in one
+  transaction. The replacement retains the original absolute deadline. A lost
+  successful response requires login with the new password; retrying an old
+  SID or request ID never recovers a raw token. Wrong current password returns
+  `invalid_argument` (`400`) and preserves the session. Expiry during the feed
+  writer wait rolls back the entire password transaction. Expiry observed only
+  after successful commit suppresses the credential response; the new password
+  remains committed and the user must log in again.
+  Global User disable revokes that User's browser sessions across Organizations.
+  Membership role changes, deactivation and SCIM deletion persistently revoke
+  that Membership's browser sessions while preserving other Organizations.
+  Restoring the role or active state does not revive revoked credentials.
+  Reactivating an inactive Membership created before persistent browser
+  revocation also retires its remaining legacy credentials; the user logs in
+  again. This catch-up emits session events only, not new principal offboarding.
 - OIDC issuer and discovered endpoints must use HTTPS. The client rejects
   redirects, bounds discovery/token/UserInfo/JWKS responses to 1 MiB, preserves
   opaque subjects exactly, and exchanges each authorization code once using the
@@ -215,6 +233,17 @@ There is no per-field filtering or bespoke payload size limit. See
   Group member references instead of silently discarding them.
 
 ## Revocation Feed Recovery
+
+`list_session_revocations` is a separate Gateway-only workload RPC. Its private
+SID events are not browser inventory and must not be forwarded to the browser.
+The same transaction changes tokens and appends their events; User/Membership
+offboarding publishes principal events before session events. Password, role,
+logout and explicit session revocation do not create principal offboarding.
+Back up `session_revocations` with the database and preserve its sequence and
+writer-lock protocol. A consumer starts at zero, reads committed pages of at
+most 500 records, and advances only to the returned cursor. Empty pages preserve
+the cursor. Consumer implementation and stream integration remain separate
+Gateway delivery work under #58.
 
 `list_principal_revocations` is a workload-authenticated Controller-only RPC and must not be
 forwarded by Gateway. It uses the same route and automatic driver spans and

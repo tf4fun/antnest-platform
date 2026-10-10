@@ -19,9 +19,10 @@ with their owning implementation, never ahead of a route. The rollout is:
 5. Agent UI account controls, session generations and activity reporting.
 6. Scripted consumers and an explicit two-browser HTTPS integration batch.
 
-Only the shared contract is being prepared at this stage. All service and
-integration batches remain pending. Publishing a schema or completing the
-Identity producer alone does not complete the browser workflow.
+The shared contract and Identity producer have passed their local admission
+checks. Gateway, Console, Agent UI, scripted consumers and the final HTTPS
+integration remain pending. Completing the Identity producer alone does not
+complete the browser workflow.
 
 ## Deadlines and activity
 

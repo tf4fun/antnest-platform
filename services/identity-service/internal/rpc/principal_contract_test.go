@@ -51,6 +51,16 @@ func TestPrincipalResponsesValidateAgainstContract(t *testing.T) {
 		{"oidc_replay", http.MethodGet, "/protocol/oidc/callback?state=state&code=code", "", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			responsePath := map[string]string{
+				"local_login":          "methods/local_login/response",
+				"resolve_access_token": "methods/resolve_access_token/response",
+				"oidc_initial":         "protocols/oidc_callback/initial_response",
+				"oidc_replay":          "protocols/oidc_callback/replay_response",
+			}[test.name]
+			responseSchema, err := compiler.Compile(schemaID + "#/" + responsePath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			services := &principalContractServices{rpcServicesStub: &rpcServicesStub{}, principal: principal, replayed: test.replayed}
 			deps, sessions := authenticationDependencies(t, Dependencies{Directory: services, LocalAuth: services, OIDC: services, SCIM: services})
 			sessions.session.Principal = principal
@@ -73,6 +83,9 @@ func TestPrincipalResponsesValidateAgainstContract(t *testing.T) {
 			envelope, ok := value.(map[string]any)
 			if !ok {
 				t.Fatal("handler response is not an object")
+			}
+			if err := responseSchema.Validate(envelope); err != nil {
+				t.Fatalf("real handler response violates the complete session contract: %v", err)
 			}
 			actual, ok := envelope["principal"].(map[string]any)
 			if !ok {
@@ -111,7 +124,7 @@ type principalContractServices struct {
 }
 
 func (s *principalContractServices) Login(context.Context, localauth.LoginInput) (localauth.LoginResult, error) {
-	return localauth.LoginResult{Principal: s.principal, TokenID: "token-1", AccessToken: "ant_api_contract", ExpiresAt: time.Now().Add(time.Hour)}, nil
+	return localauth.LoginResult{Principal: s.principal, TokenID: "token-1", AccessToken: "ant_api_contract", ExpiresAt: time.Now().Add(time.Hour), IdleExpiresAt: time.Now().Add(30 * time.Minute), ActivityIntervalMS: 30000}, nil
 }
 
 func (s *principalContractServices) Resolve(context.Context, string) (domain.Principal, error) {
@@ -119,7 +132,7 @@ func (s *principalContractServices) Resolve(context.Context, string) (domain.Pri
 }
 
 func (s *principalContractServices) CompleteLogin(context.Context, oidcflow.CompleteLoginInput) (oidcflow.CompleteLoginResult, error) {
-	result := oidcflow.CompleteLoginResult{Principal: s.principal, TokenID: "token-1", ExpiresAt: time.Now().Add(time.Hour), AlreadyCompleted: s.replayed}
+	result := oidcflow.CompleteLoginResult{Principal: s.principal, TokenID: "token-1", ExpiresAt: time.Now().Add(time.Hour), IdleExpiresAt: time.Now().Add(30 * time.Minute), ActivityIntervalMS: 30000, AlreadyCompleted: s.replayed}
 	if !s.replayed {
 		result.AccessToken = "ant_api_contract"
 	}

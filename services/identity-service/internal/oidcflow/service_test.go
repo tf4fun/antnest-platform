@@ -590,6 +590,7 @@ func (r *oidcRepositoryStub) CompleteLogin(_ context.Context, command CompleteLo
 	r.completed = command
 	committed := CompletedLogin{
 		SessionID: command.SessionID, TokenID: command.AccessTokenID, ExpiresAt: command.ExpiresAt,
+		IdleExpiresAt: command.IssuedAt.Add(30 * time.Minute), ActivityIntervalMS: 30000,
 		Principal: domain.Principal{UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1", Active: true},
 	}
 	if r.completeCommits {
@@ -720,6 +721,7 @@ func testSession(t *testing.T) AuthSession {
 func testCompletedLogin() CompletedLogin {
 	return CompletedLogin{
 		SessionID: "session-1", TokenID: "token-1", ExpiresAt: fixedOIDCNow().Add(12 * time.Hour),
+		IdleExpiresAt: fixedOIDCNow().Add(30 * time.Minute), ActivityIntervalMS: 30000,
 		Principal: domain.Principal{UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1", Active: true},
 	}
 }

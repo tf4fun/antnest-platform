@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
@@ -239,39 +238,6 @@ func TestAddOrganizationMembershipUsesStableUserIdentity(t *testing.T) {
 	}
 }
 
-func TestChangeLocalPasswordRequiresTheCurrentCredential(t *testing.T) {
-	currentHash, err := credentials.HashPassword("current correct password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository := &directoryRepositoryStub{
-		principal:  domain.Principal{UserID: "user-1", Active: true},
-		credential: domain.LocalCredential{UserID: "user-1", PasswordHash: currentHash},
-	}
-	service := NewService(repository, sequentialIDs(), fixedNow)
-
-	err = service.ChangeLocalPassword(context.Background(), ChangeLocalPasswordInput{
-		RequestID: "password-change", ActorPrincipalID: "user-1", UserID: "user-1",
-		CurrentPassword: "current correct password", NewPassword: "replacement correct password",
-	})
-	if err != nil {
-		t.Fatalf("change local password: %v", err)
-	}
-	if repository.changedPassword.ExpectedPasswordHash != currentHash ||
-		repository.changedPassword.PasswordHash == currentHash ||
-		repository.changedPassword.PasswordHash == "replacement correct password" {
-		t.Fatalf("password command = %#v", repository.changedPassword)
-	}
-
-	err = service.ChangeLocalPassword(context.Background(), ChangeLocalPasswordInput{
-		ActorPrincipalID: "user-1", UserID: "user-1",
-		CurrentPassword: "wrong password", NewPassword: "another replacement password",
-	})
-	if !errors.Is(err, domain.ErrUnauthenticated) {
-		t.Fatalf("wrong current password error = %v", err)
-	}
-}
-
 func TestUpdateLocalMembershipAndGlobalUserActivationRespectOwnership(t *testing.T) {
 	repository := &directoryRepositoryStub{
 		principal: domain.Principal{
@@ -327,7 +293,6 @@ type directoryRepositoryStub struct {
 	credential              domain.LocalCredential
 	credentialErr           error
 	membership              domain.OrganizationMembership
-	changedPassword         ChangeLocalPasswordCommand
 	updatedMembership       UpdateMembershipCommand
 	userActivation          SetUserActiveCommand
 	directory               Directory
@@ -377,11 +342,6 @@ func (r *directoryRepositoryStub) ListDirectory(context.Context, string) (Direct
 
 func (r *directoryRepositoryStub) GetLocalCredential(context.Context, string) (domain.LocalCredential, error) {
 	return r.credential, r.credentialErr
-}
-
-func (r *directoryRepositoryStub) ChangeLocalPassword(_ context.Context, command ChangeLocalPasswordCommand) error {
-	r.changedPassword = command
-	return nil
 }
 
 func (r *directoryRepositoryStub) GetMembership(context.Context, string, string) (domain.OrganizationMembership, error) {

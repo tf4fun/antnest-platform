@@ -141,6 +141,11 @@ type oidcAdmissionFixture struct {
 
 func newOIDCAdmissionFixture(t *testing.T, databaseURL string) *oidcAdmissionFixture {
 	t.Helper()
+	return newOIDCAdmissionFixtureWithTokenTTL(t, databaseURL, time.Hour)
+}
+
+func newOIDCAdmissionFixtureWithTokenTTL(t *testing.T, databaseURL string, tokenTTL time.Duration) *oidcAdmissionFixture {
+	t.Helper()
 	f := &oidcAdmissionFixture{}
 	f.now.Store(time.Now().UnixNano())
 	f.localAdmissionFixture = newLocalAdmissionFixture(t, databaseURL, f.time)
@@ -160,7 +165,7 @@ func newOIDCAdmissionFixture(t *testing.T, databaseURL string) *oidcAdmissionFix
 	f.flow, err = oidcflow.NewService(oidcflow.Config{
 		Repository: f.repository, Federation: f.federation, SecretBox: box,
 		NewID: f.newID, NewOpaque: credentials.NewOpaqueToken, Now: f.time,
-		RedirectURI: "https://identity.test/protocol/oidc/callback", SessionTTL: time.Minute, TokenTTL: time.Hour,
+		RedirectURI: "https://identity.test/protocol/oidc/callback", SessionTTL: time.Minute, TokenTTL: tokenTTL,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,9 +181,14 @@ func newOIDCAdmissionFixture(t *testing.T, databaseURL string) *oidcAdmissionFix
 }
 
 func (f *oidcAdmissionFixture) start(t *testing.T) oidcflow.CompleteLoginInput {
+	return f.startWithHint(t, "")
+}
+
+func (f *oidcAdmissionFixture) startWithHint(t *testing.T, hint string) oidcflow.CompleteLoginInput {
 	t.Helper()
 	started, err := f.flow.StartLogin(t.Context(), oidcflow.StartLoginInput{
 		RequestID: f.newID("request"), OrganizationSlug: "admission", ProviderName: "workforce",
+		UserAgentHint: hint,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -929,19 +929,28 @@ test("Gateway account and session inventory responses exclude nested private fie
     "OIDC-only accounts keep public session controls",
   );
   const internalAccount = methodValidator("get_current_account", "response");
-  assert(internalAccount({ account }), JSON.stringify(internalAccount.errors));
+  const identityAccount = {
+    ...account,
+    organization_slug: "engineering",
+    organization_name: "Engineering",
+  };
+  const identityWithoutPassword = { ...identityAccount, ...withoutPassword };
   assert(
-    internalAccount({ account: withoutPassword }),
+    internalAccount({ account: identityAccount }),
+    JSON.stringify(internalAccount.errors),
+  );
+  assert(
+    internalAccount({ account: identityWithoutPassword }),
     "Identity supports accounts without a local password",
   );
-  rejectsInvalidRootsAndMissing(internalAccount, { account });
+  rejectsInvalidRootsAndMissing(internalAccount, { account: identityAccount });
   rejectsInvalidRootsAndMissing(
     (value) => internalAccount({ account: value }),
-    account,
+    identityAccount,
   );
   assert.equal(
     internalAccount({
-      account: { ...withoutPassword, access_token: "private" },
+      account: { ...identityWithoutPassword, access_token: "private" },
     }),
     false,
   );

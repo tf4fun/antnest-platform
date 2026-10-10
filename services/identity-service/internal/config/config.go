@@ -38,7 +38,8 @@ type Config struct {
 	DatabaseURL               string
 	Encryption                secretencryption.Config
 	PublicBaseURL             string
-	TokenTTL                  time.Duration
+	SessionIdleTTL            time.Duration
+	SessionAbsoluteTTL        time.Duration
 	OIDCSessionTTL            time.Duration
 	HTTPTimeout               time.Duration
 	ShutdownTimeout           time.Duration
@@ -54,9 +55,23 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	tokenTTL, err := duration(lookup, "ANTNEST_IDENTITY_TOKEN_TTL", 12*time.Hour)
+	idleTTL, err := duration(lookup, "ANTNEST_IDENTITY_SESSION_IDLE_TTL", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
+	}
+	absoluteTTL, err := duration(lookup, "ANTNEST_IDENTITY_SESSION_ABSOLUTE_TTL", 12*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	legacyTTL, err := duration(lookup, "ANTNEST_IDENTITY_TOKEN_TTL", absoluteTTL)
+	if err != nil {
+		return Config{}, err
+	}
+	if strings.TrimSpace(lookup("ANTNEST_IDENTITY_TOKEN_TTL")) != "" {
+		if strings.TrimSpace(lookup("ANTNEST_IDENTITY_SESSION_ABSOLUTE_TTL")) != "" && legacyTTL != absoluteTTL {
+			return Config{}, fmt.Errorf("ANTNEST_IDENTITY_TOKEN_TTL and ANTNEST_IDENTITY_SESSION_ABSOLUTE_TTL must specify equal durations")
+		}
+		absoluteTTL = legacyTTL
 	}
 	sessionTTL, err := duration(lookup, "ANTNEST_IDENTITY_OIDC_SESSION_TTL", 10*time.Minute)
 	if err != nil {
@@ -71,10 +86,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config := Config{
-		ListenAddress: valueOr(lookup, "ANTNEST_IDENTITY_LISTEN", ":8080"),
-		DatabaseURL:   strings.TrimSpace(lookup("ANTNEST_IDENTITY_DATABASE_URL")),
-		PublicBaseURL: strings.TrimRight(strings.TrimSpace(lookup("ANTNEST_IDENTITY_PUBLIC_BASE_URL")), "/"),
-		TokenTTL:      tokenTTL, OIDCSessionTTL: sessionTTL, HTTPTimeout: httpTimeout,
+		ListenAddress:  valueOr(lookup, "ANTNEST_IDENTITY_LISTEN", ":8080"),
+		DatabaseURL:    strings.TrimSpace(lookup("ANTNEST_IDENTITY_DATABASE_URL")),
+		PublicBaseURL:  strings.TrimRight(strings.TrimSpace(lookup("ANTNEST_IDENTITY_PUBLIC_BASE_URL")), "/"),
+		SessionIdleTTL: idleTTL, SessionAbsoluteTTL: absoluteTTL,
+		OIDCSessionTTL: sessionTTL, HTTPTimeout: httpTimeout,
 		ShutdownTimeout: shutdownTimeout,
 		Bootstrap: Bootstrap{
 			OrganizationSlug:      strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG")),

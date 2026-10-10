@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -214,11 +215,11 @@ func (a *OIDCAdapter) CreateSession(ctx context.Context, command oidcflow.Create
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO oidc_auth_sessions (
 				id, provider_id, organization_id, provider_revision, state_hash, request_id, status,
-				secret_ciphertext, secret_nonce, expires_at, created_at, updated_at, secret_key_id, secret_wrapped_data_key
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13)`,
+				secret_ciphertext, secret_nonce, expires_at, created_at, updated_at, secret_key_id, secret_wrapped_data_key, user_agent_hint
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13, $14)`,
 			session.ID, session.ProviderID, session.OrganizationID, session.ProviderRevision,
 			command.StateHash, command.RequestID, session.Status,
-			session.Secrets.Ciphertext, session.Secrets.Nonce, session.ExpiresAt, session.CreatedAt, session.Secrets.KeyID, session.Secrets.WrappedDataKey,
+			session.Secrets.Ciphertext, session.Secrets.Nonce, session.ExpiresAt, session.CreatedAt, session.Secrets.KeyID, session.Secrets.WrappedDataKey, session.UserAgentHint,
 		); err != nil {
 			return fmt.Errorf("insert OIDC session: %w", err)
 		}
@@ -242,6 +243,7 @@ func (a *OIDCAdapter) ClaimSession(
 		if err != nil {
 			return err
 		}
+		now = a.store.browserAdmissionTime(now)
 		switch session.Status {
 		case oidcflow.SessionStatusCompleted:
 			result = oidcflow.SessionClaim{Disposition: oidcflow.ClaimCompleted, Session: session, Completed: completed}
@@ -306,15 +308,21 @@ func (a *OIDCAdapter) CompleteLogin(
 	ctx context.Context,
 	command oidcflow.CompleteLoginCommand,
 ) (oidcflow.CompletedLogin, error) {
+	idleTTL := a.store.browserIdlePolicy()
+	idle := command.IssuedAt.Add(idleTTL)
+	if command.ExpiresAt.Before(idle) {
+		idle = command.ExpiresAt
+	}
 	var result oidcflow.CompletedLogin
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var status oidcflow.SessionStatus
 		var providerID, organizationID, claimID, requestID string
 		var sessionProviderRevision, currentProviderRevision int64
 		var sessionExpiresAt time.Time
+		var userAgentHint string
 		if err := tx.QueryRow(ctx, `
 			SELECT s.status, s.provider_id, s.organization_id, COALESCE(s.claim_id, ''), s.request_id,
-			       s.provider_revision, p.revision, s.expires_at
+			       s.provider_revision, p.revision, s.expires_at, s.user_agent_hint
 			FROM oidc_auth_sessions s
 			JOIN oidc_providers p
 			  ON p.id = s.provider_id AND p.organization_id = s.organization_id
@@ -322,7 +330,7 @@ func (a *OIDCAdapter) CompleteLogin(
 			FOR UPDATE OF s, p`, command.SessionID,
 		).Scan(
 			&status, &providerID, &organizationID, &claimID, &requestID,
-			&sessionProviderRevision, &currentProviderRevision, &sessionExpiresAt,
+			&sessionProviderRevision, &currentProviderRevision, &sessionExpiresAt, &userAgentHint,
 		); err != nil {
 			return err
 		}
@@ -340,17 +348,35 @@ func (a *OIDCAdapter) CompleteLogin(
 		}
 		// Both the Provider/session and identity rows can wait on other writers.
 		// Sample the clock after those waits, not the caller's admission timestamp.
-		if !sessionExpiresAt.After(a.store.now().UTC()) {
+		now := a.store.browserAdmissionTime(command.IssuedAt)
+		if !sessionExpiresAt.After(now) {
 			return domain.NewError("oidc_session_expired", "OIDC login session expired", false)
 		}
-		if _, err := tx.Exec(ctx, `
+		if !command.ExpiresAt.After(now) || !idle.After(now) {
+			return domain.ErrUnauthenticated
+		}
+		result = oidcflow.CompletedLogin{
+			SessionID: command.SessionID, TokenID: command.AccessTokenID,
+			Principal: principal, ActivityIntervalMS: browserActivityInterval(idleTTL),
+		}
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO api_tokens (
-				id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at,
+				public_session_id, idle_expires_at, last_used_at, user_agent_hint
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10)
+			RETURNING expires_at, idle_expires_at`,
 			command.AccessTokenID, command.AccessTokenHash, principal.UserID,
 			principal.OrganizationID, principal.MembershipID, command.IssuedAt, command.ExpiresAt,
-		); err != nil {
+			a.store.newID("browsersession"), idle, userAgentHint,
+		).Scan(&result.ExpiresAt, &result.IdleExpiresAt); err != nil {
 			return fmt.Errorf("insert OIDC access token: %w", err)
+		}
+		now = a.store.browserAdmissionTime(now)
+		if !sessionExpiresAt.After(now) {
+			return domain.NewError("oidc_session_expired", "OIDC login session expired", false)
+		}
+		if !result.ExpiresAt.After(now) || !result.IdleExpiresAt.After(now) {
+			return domain.ErrUnauthenticated
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE oidc_auth_sessions
@@ -369,13 +395,14 @@ func (a *OIDCAdapter) CompleteLogin(
 		}); err != nil {
 			return err
 		}
-		result = oidcflow.CompletedLogin{
-			SessionID: command.SessionID, TokenID: command.AccessTokenID,
-			Principal: principal, ExpiresAt: command.ExpiresAt,
-		}
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return oidcflow.CompletedLogin{}, err
+	}
+	result.ExpiresAt = result.ExpiresAt.UTC()
+	result.IdleExpiresAt = result.IdleExpiresAt.UTC()
+	return result, nil
 }
 
 func (a *OIDCAdapter) FailSession(ctx context.Context, command oidcflow.FailSessionCommand) error {
@@ -417,8 +444,7 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	err := tx.QueryRow(ctx, `
 		SELECT id, user_id, membership_id
 		FROM external_identities
-		WHERE provider_id = $1 AND subject = $2
-		FOR UPDATE`, command.ProviderID, command.Identity.Subject,
+		WHERE provider_id = $1 AND subject = $2`, command.ProviderID, command.Identity.Subject,
 	).Scan(&externalID, &userID, &membershipID)
 	if err == nil {
 		principal, principalErr := a.ensureOIDCMembership(
@@ -427,18 +453,35 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 			userID,
 			command.OrganizationID,
 			membershipID,
+			"",
 		)
-		return principal, externalID, principalErr
+		if principalErr != nil {
+			return domain.Principal{}, "", principalErr
+		}
+		// Reprovisioning locks parents before updating external identities. Do
+		// not hold a mapping lock while waiting for those same parent rows.
+		var currentExternalID, currentUserID, currentMembershipID string
+		err := tx.QueryRow(ctx, `
+			SELECT id, user_id, membership_id FROM external_identities
+			WHERE provider_id = $1 AND subject = $2 FOR UPDATE`, command.ProviderID, command.Identity.Subject).
+			Scan(&currentExternalID, &currentUserID, &currentMembershipID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return domain.Principal{}, "", err
+		}
+		if err != nil || currentExternalID != externalID || currentUserID != userID || currentMembershipID != membershipID {
+			return domain.Principal{}, "", oidcMembershipRequired()
+		}
+		return principal, externalID, nil
 	}
 	if err != pgx.ErrNoRows {
 		return domain.Principal{}, "", fmt.Errorf("find external identity: %w", err)
 	}
 
-	userID, err = a.findOIDCUser(ctx, tx, command)
+	userID, membershipID, err = a.findOIDCUser(ctx, tx, command)
 	if err != nil {
 		return domain.Principal{}, "", err
 	}
-	principal, err := a.ensureOIDCMembership(ctx, tx, userID, command.OrganizationID, "")
+	principal, err := a.ensureOIDCMembership(ctx, tx, userID, command.OrganizationID, membershipID, command.Identity.Email)
 	if err != nil {
 		return domain.Principal{}, "", err
 	}
@@ -459,31 +502,23 @@ func (a *OIDCAdapter) findOIDCUser(
 	ctx context.Context,
 	tx *databaseTransaction,
 	command oidcflow.CompleteLoginCommand,
-) (string, error) {
-	var userID string
-	var systemRole domain.SystemRole
-	var userActive, membershipActive bool
+) (string, string, error) {
+	var userID, membershipID string
+	// Discover identifiers without locking a Membership before its parents.
+	// The original email and both identifiers are revalidated under ordered locks.
 	err := tx.QueryRow(ctx, `
-		SELECT u.id, u.system_role, u.active, m.active
+		SELECT m.user_id, m.id
 		FROM organization_memberships m
-		JOIN users u ON u.id = m.user_id
-		WHERE m.organization_id = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL
-		FOR UPDATE OF u, m`, command.OrganizationID, command.Identity.Email,
-	).Scan(&userID, &systemRole, &userActive, &membershipActive)
+		WHERE m.organization_id = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL`,
+		command.OrganizationID, command.Identity.Email,
+	).Scan(&userID, &membershipID)
 	if err == nil {
-		if systemRole != domain.SystemRoleUser || !userActive || !membershipActive {
-			return "", domain.ErrForbidden
-		}
-		return userID, nil
+		return userID, membershipID, nil
 	}
 	if err != pgx.ErrNoRows {
-		return "", fmt.Errorf("find user for external identity: %w", err)
+		return "", "", fmt.Errorf("find user for external identity: %w", err)
 	}
-	return "", domain.NewError(
-		"oidc_membership_required",
-		"OIDC identity must match an existing active Organization Membership",
-		false,
-	)
+	return "", "", oidcMembershipRequired()
 }
 
 func (a *OIDCAdapter) ensureOIDCMembership(
@@ -492,41 +527,46 @@ func (a *OIDCAdapter) ensureOIDCMembership(
 	userID string,
 	organizationID string,
 	expectedMembershipID string,
+	expectedEmail string,
 ) (domain.Principal, error) {
 	var principal domain.Principal
 	var userActive, membershipActive, organizationActive bool
-	err := tx.QueryRow(ctx, `
-		SELECT u.id, o.id, m.id, u.system_role, m.role,
-		       u.active, m.active, o.active, o.slug, o.name
-		FROM users u
-		JOIN organization_memberships m
-		  ON m.user_id = u.id AND m.organization_id = $2 AND m.scim_deleted_at IS NULL
-		JOIN organizations o ON o.id = m.organization_id
-		WHERE u.id = $1 AND ($3 = '' OR m.id = $3)
-		FOR UPDATE OF u, m, o`, userID, organizationID, expectedMembershipID,
-	).Scan(
-		&principal.UserID,
-		&principal.OrganizationID,
-		&principal.MembershipID,
-		&principal.SystemRole,
-		&principal.OrganizationRole,
-		&userActive,
-		&membershipActive,
-		&organizationActive,
-		&principal.OrganizationSlug,
-		&principal.OrganizationName,
-	)
-	if err != nil && err != pgx.ErrNoRows {
+	// Explicit statements make User -> Organization -> Membership independent
+	// of PostgreSQL's join/row-mark order and protect issuance through commit.
+	if err := tx.QueryRow(ctx, `SELECT id, system_role, active FROM users WHERE id = $1 FOR UPDATE`, userID).
+		Scan(&principal.UserID, &principal.SystemRole, &userActive); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Principal{}, oidcMembershipRequired()
+		}
 		return domain.Principal{}, err
 	}
-	if err == nil {
-		principal.Active = userActive && membershipActive && organizationActive
-		if !principal.Active || principal.SystemRole == domain.SystemRoleAdmin {
-			return domain.Principal{}, domain.ErrForbidden
+	if err := tx.QueryRow(ctx, `SELECT id, active, slug, name FROM organizations WHERE id = $1 FOR UPDATE`, organizationID).
+		Scan(&principal.OrganizationID, &organizationActive, &principal.OrganizationSlug, &principal.OrganizationName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Principal{}, oidcMembershipRequired()
 		}
-		return principal, nil
+		return domain.Principal{}, err
 	}
-	return domain.Principal{}, domain.NewError(
+	if err := tx.QueryRow(ctx, `
+		SELECT id, role, active FROM organization_memberships
+		WHERE user_id = $1 AND organization_id = $2 AND id = $3 AND scim_deleted_at IS NULL
+		  AND ($4 = '' OR email = $4)
+		FOR UPDATE`, userID, organizationID, expectedMembershipID, expectedEmail).
+		Scan(&principal.MembershipID, &principal.OrganizationRole, &membershipActive); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Principal{}, oidcMembershipRequired()
+		}
+		return domain.Principal{}, err
+	}
+	principal.Active = userActive && membershipActive && organizationActive
+	if !principal.Active || principal.SystemRole != domain.SystemRoleUser {
+		return domain.Principal{}, domain.ErrForbidden
+	}
+	return principal, nil
+}
+
+func oidcMembershipRequired() error {
+	return domain.NewError(
 		"oidc_membership_required",
 		"OIDC identity must match an existing active Organization Membership",
 		false,
@@ -541,45 +581,36 @@ func (a *OIDCAdapter) sessionByState(
 ) (oidcflow.AuthSession, oidcflow.CompletedLogin, error) {
 	var session oidcflow.AuthSession
 	var completed oidcflow.CompletedLogin
-	var userID, membershipID string
-	var systemRole domain.SystemRole
-	var organizationRole domain.OrganizationRole
-	var organizationSlug, organizationName string
-	var userActive, membershipActive, organizationActive bool
-	var tokenID string
-	var tokenExpiresAt, tokenRevokedAt *time.Time
+	var userID, membershipID, tokenID string
 	err := tx.QueryRow(ctx, `
 		SELECT s.id, s.request_id, s.provider_id, s.organization_id, s.provider_revision, s.status,
 		       s.secret_ciphertext, s.secret_nonce, s.expires_at,
-		       COALESCE(u.id, ''), COALESCE(m.id, ''),
-		       COALESCE(u.system_role, 'user'), COALESCE(m.role, 'member'),
-		       COALESCE(u.active, FALSE), COALESCE(m.active, FALSE), COALESCE(o.active, FALSE),
-		       COALESCE(t.id, ''), t.expires_at, t.revoked_at,
-		       COALESCE(o.slug, ''), COALESCE(o.name, ''), s.secret_key_id, s.secret_wrapped_data_key
+		       COALESCE(s.completed_user_id, ''), COALESCE(s.completed_membership_id, ''),
+		       COALESCE(s.completed_access_token_id, ''),
+		       s.secret_key_id, s.secret_wrapped_data_key, s.user_agent_hint
 		FROM oidc_auth_sessions s
-		LEFT JOIN users u ON u.id = s.completed_user_id
-		LEFT JOIN organization_memberships m
-		  ON m.id = s.completed_membership_id
-		 AND m.organization_id = s.organization_id
-		 AND m.user_id = s.completed_user_id
-		LEFT JOIN organizations o ON o.id = s.organization_id
-		LEFT JOIN api_tokens t ON t.id = s.completed_access_token_id
 		WHERE s.state_hash = $1
 		FOR UPDATE OF s`, stateHash,
 	).Scan(
 		&session.ID, &session.RequestID, &session.ProviderID, &session.OrganizationID,
 		&session.ProviderRevision, &session.Status,
 		&session.Secrets.Ciphertext, &session.Secrets.Nonce, &session.ExpiresAt,
-		&userID, &membershipID, &systemRole, &organizationRole,
-		&userActive, &membershipActive, &organizationActive,
-		&tokenID, &tokenExpiresAt, &tokenRevokedAt,
-		&organizationSlug, &organizationName, &session.Secrets.KeyID, &session.Secrets.WrappedDataKey,
+		&userID, &membershipID, &tokenID,
+		&session.Secrets.KeyID, &session.Secrets.WrappedDataKey, &session.UserAgentHint,
 	)
 	if err != nil {
 		return oidcflow.AuthSession{}, oidcflow.CompletedLogin{}, err
 	}
 	if session.Status == oidcflow.SessionStatusCompleted {
-		if tokenExpiresAt == nil || tokenRevokedAt != nil || !tokenExpiresAt.After(now) {
+		// A joined query can retain pre-wait authority for rows it did not lock.
+		// Resolve the original SID in a new statement after acquiring the state
+		// row, without recording activity or taking parent locks in reverse order.
+		live, err := a.store.resolveBrowserSession(ctx, tx, "id", tokenID, now)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return oidcflow.AuthSession{}, oidcflow.CompletedLogin{}, err
+		}
+		if err != nil || !live.Principal.Active || live.Principal.UserID != userID ||
+			live.Principal.OrganizationID != session.OrganizationID || live.Principal.MembershipID != membershipID {
 			return oidcflow.AuthSession{}, oidcflow.CompletedLogin{}, domain.NewError(
 				"oidc_completed_token_unavailable",
 				"The completed OIDC login token is no longer available",
@@ -588,13 +619,8 @@ func (a *OIDCAdapter) sessionByState(
 		}
 		completed = oidcflow.CompletedLogin{
 			SessionID: session.ID, TokenID: tokenID,
-			Principal: domain.Principal{
-				UserID: userID, OrganizationID: session.OrganizationID, MembershipID: membershipID,
-				OrganizationSlug: organizationSlug, OrganizationName: organizationName,
-				SystemRole: systemRole, OrganizationRole: organizationRole,
-				Active: userActive && membershipActive && organizationActive,
-			},
-			ExpiresAt: *tokenExpiresAt,
+			Principal: live.Principal, ExpiresAt: live.ExpiresAt,
+			IdleExpiresAt: live.IdleExpiresAt, ActivityIntervalMS: live.ActivityIntervalMS,
 		}
 	}
 	return session, completed, nil

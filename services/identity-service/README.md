@@ -34,6 +34,12 @@ not rejected or reset by that unused value.
 - Narrow internal queries for other services: `resolve_principal`,
   `resolve_owner_authorization`, `get_current_account`, and
   `list_principal_revocations`.
+- Browser activity, public session inventory, scoped session revocation and
+  atomic password/session rotation, with a separate Gateway-only
+  `list_session_revocations` feed. These follow the
+  [browser session contract](../../contracts/identity/browser-sessions.md).
+  The #58 producer rollout is in progress; consumer and HTTPS integration
+  batches remain pending.
 - Its private PostgreSQL schema and migrations.
 
 ## Non-responsibilities
@@ -45,14 +51,14 @@ not rejected or reset by that unused value.
 
 ## Interfaces
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | `GET /status` | Liveness and readiness |
-| Inbound | `/rpc/identity/*` JSON RPC | Authenticated internal identity commands and queries, including current-account capability projection |
-| Inbound | `GET /protocol/oidc/callback` | Standard Authorization Code callback |
-| Inbound | `/scim/v2/*` | SCIM 2.0 discovery and directory provisioning |
-| Outbound | OIDC discovery, token, UserInfo, and JWKS endpoints | Federated login |
-| Owned | Private PostgreSQL | Identity facts, credentials, events, and migrations |
+| Direction | Interface                                           | Purpose                                                                                               |
+| --------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Inbound   | `GET /status`                                       | Liveness and readiness                                                                                |
+| Inbound   | `/rpc/identity/*` JSON RPC                          | Authenticated internal identity commands and queries, including current-account capability projection |
+| Inbound   | `GET /protocol/oidc/callback`                       | Standard Authorization Code callback                                                                  |
+| Inbound   | `/scim/v2/*`                                        | SCIM 2.0 discovery and directory provisioning                                                         |
+| Outbound  | OIDC discovery, token, UserInfo, and JWKS endpoints | Federated login                                                                                       |
+| Owned     | Private PostgreSQL                                  | Identity facts, credentials, events, and migrations                                                   |
 
 Internal requests require the configured workload identity and exact route
 caller policy. Administrator bodies carry an audit echo of the Identity-signed
@@ -101,35 +107,37 @@ for the failure behavior when components are upgraded out of order.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_SERVICE_AUTH_MODE` | Yes | None | Exact `token` or `mtls`; no fallback. |
-| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | Token mode | None | Receiver hash JSON, read once at startup. |
-| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | No | `false` | Exact `true` only permits disposable development HTTP in token mode. |
-| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | Secure transport | None | Complete platform TLS configuration; exact service URI identity and DNS verification. |
-| `ANTNEST_IDENTITY_CCT_SIGNING_KID`, `ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE`, `ANTNEST_IDENTITY_CCT_JWKS_FILE` | Yes | None | Exact signing ID, separate Ed25519 PKCS8 private key, bounded public JWKS. See the signing contract. |
-| `ANTNEST_IDENTITY_DATABASE_URL` | Yes | None | Private PostgreSQL URL. |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEY` | Single-key mode | None | Canonical padded Base64 for exactly 32 bytes; maps to `local-v1`. Cannot coexist with the ring. |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEYS` | Ring mode | None | Comma-separated exact `kid:base64key` entries. Retain old keys for decrypting OIDC client and login-session secrets. |
-| `ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID` | Ring mode | None | Exact member of the ring; only this key wraps new secrets. |
-| `ANTNEST_IDENTITY_PUBLIC_BASE_URL` | Yes | None | Absolute base URL for the OIDC callback and SCIM locations. No credentials, query, or fragment. HTTPS is required unless the host is `localhost`, `127.0.0.1`, or `::1`. A trailing `/` is removed. |
-| `ANTNEST_IDENTITY_LISTEN` | No | `:8080` | Listen address. `--healthcheck` follows its configured host and port; missing/wildcard hosts use `127.0.0.1`. |
-| `ANTNEST_IDENTITY_TOKEN_TTL` | No | `12h` | Local and OIDC access-token lifetime. Positive Go duration. |
-| `ANTNEST_IDENTITY_OIDC_SESSION_TTL` | No | `10m` | OIDC login state lifetime. Positive Go duration. |
-| `ANTNEST_IDENTITY_HTTP_TIMEOUT` | No | `10s` | Outbound OIDC request deadline. Positive Go duration. |
-| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT` | No | `15s` | Graceful shutdown deadline. Positive Go duration. |
-| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG` | Conditional | None | Initial Organization slug. The four bootstrap variables are all set or all empty. |
-| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME` | Conditional | None | Initial Organization name. |
-| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL` | Conditional | None | Initial local system administrator email. |
-| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD` | Conditional | None | Initial administrator password, 12 to 1024 bytes. Not trimmed. |
-| `ANTNEST_ENVIRONMENT` | No | None | Recorded as the `deployment.environment.name` telemetry resource attribute. |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | No | `false` | `true` records RPC parameters and results, including user credentials; issued CCTs are always omitted. Must be `true` or `false`. |
-| `OTEL_SDK_DISABLED` | No | None | `true` installs propagation only and exports nothing. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | None | OTLP HTTP base endpoint. A signal is exported only when this or its per-signal endpoint is set, or its exporter is `otlp`. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | No | None | Per-signal OTLP endpoints. |
-| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | No | None | `otlp` or `none` per signal. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` and per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL` | No | `http/protobuf` | Only `http/protobuf` is supported. |
-| `OTEL_SERVICE_NAME` | No | `identity-service` | Telemetry service name. Other resource attributes are read from the standard OpenTelemetry resource environment. |
+| Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_SERVICE_AUTH_MODE`                                                                                     | Yes              | None               | Exact `token` or `mtls`; no fallback.                                                                                                                                                               |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                                                                             | Token mode       | None               | Receiver hash JSON, read once at startup.                                                                                                                                                           |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                                 | No               | `false`            | Exact `true` only permits disposable development HTTP in token mode.                                                                                                                                |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME`               | Secure transport | None               | Complete platform TLS configuration; exact service URI identity and DNS verification.                                                                                                               |
+| `ANTNEST_IDENTITY_CCT_SIGNING_KID`, `ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE`, `ANTNEST_IDENTITY_CCT_JWKS_FILE`   | Yes              | None               | Exact signing ID, separate Ed25519 PKCS8 private key, bounded public JWKS. See the signing contract.                                                                                                |
+| `ANTNEST_IDENTITY_DATABASE_URL`                                                                                 | Yes              | None               | Private PostgreSQL URL.                                                                                                                                                                             |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY`                                                                               | Single-key mode  | None               | Canonical padded Base64 for exactly 32 bytes; maps to `local-v1`. Cannot coexist with the ring.                                                                                                     |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEYS`                                                                              | Ring mode        | None               | Comma-separated exact `kid:base64key` entries. Retain old keys for decrypting OIDC client and login-session secrets.                                                                                |
+| `ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID`                                                                        | Ring mode        | None               | Exact member of the ring; only this key wraps new secrets.                                                                                                                                          |
+| `ANTNEST_IDENTITY_PUBLIC_BASE_URL`                                                                              | Yes              | None               | Absolute base URL for the OIDC callback and SCIM locations. No credentials, query, or fragment. HTTPS is required unless the host is `localhost`, `127.0.0.1`, or `::1`. A trailing `/` is removed. |
+| `ANTNEST_IDENTITY_LISTEN`                                                                                       | No               | `:8080`            | Listen address. `--healthcheck` follows its configured host and port; missing/wildcard hosts use `127.0.0.1`.                                                                                       |
+| `ANTNEST_IDENTITY_SESSION_IDLE_TTL`                                                                             | No               | `30m`              | Positive browser inactivity duration; background reads never extend it.                                                                                                                             |
+| `ANTNEST_IDENTITY_SESSION_ABSOLUTE_TTL`                                                                         | No               | `12h`              | Positive maximum lifetime for local and OIDC browser credentials.                                                                                                                                   |
+| `ANTNEST_IDENTITY_TOKEN_TTL`                                                                                    | No               | Unset              | Absolute-TTL alias for one release. Unequal explicit alias/new durations fail startup.                                                                                                              |
+| `ANTNEST_IDENTITY_OIDC_SESSION_TTL`                                                                             | No               | `10m`              | OIDC login state lifetime. Positive Go duration.                                                                                                                                                    |
+| `ANTNEST_IDENTITY_HTTP_TIMEOUT`                                                                                 | No               | `10s`              | Outbound OIDC request deadline. Positive Go duration.                                                                                                                                               |
+| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT`                                                                             | No               | `15s`              | Graceful shutdown deadline. Positive Go duration.                                                                                                                                                   |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG`                                                                           | Conditional      | None               | Initial Organization slug. The four bootstrap variables are all set or all empty.                                                                                                                   |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME`                                                                           | Conditional      | None               | Initial Organization name.                                                                                                                                                                          |
+| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL`                                                                                 | Conditional      | None               | Initial local system administrator email.                                                                                                                                                           |
+| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD`                                                                              | Conditional      | None               | Initial administrator password, 12 to 1024 bytes. Not trimmed.                                                                                                                                      |
+| `ANTNEST_ENVIRONMENT`                                                                                           | No               | None               | Recorded as the `deployment.environment.name` telemetry resource attribute.                                                                                                                         |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`                                                                         | No               | `false`            | `true` records RPC parameters and results, including user credentials; issued CCTs are always omitted. Must be `true` or `false`.                                                                   |
+| `OTEL_SDK_DISABLED`                                                                                             | No               | None               | `true` installs propagation only and exports nothing.                                                                                                                                               |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                                   | No               | None               | OTLP HTTP base endpoint. A signal is exported only when this or its per-signal endpoint is set, or its exporter is `otlp`.                                                                          |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | No               | None               | Per-signal OTLP endpoints.                                                                                                                                                                          |
+| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`                                           | No               | None               | `otlp` or `none` per signal.                                                                                                                                                                        |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` and per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL`                             | No               | `http/protobuf`    | Only `http/protobuf` is supported.                                                                                                                                                                  |
+| `OTEL_SERVICE_NAME`                                                                                             | No               | `identity-service` | Telemetry service name. Other resource attributes are read from the standard OpenTelemetry resource environment.                                                                                    |
 
 `--healthcheck` uses the same configured IPv4/IPv6 address as the primary
 listener, with the existing token HTTP opt-in or pinned TLS service identity.
@@ -182,8 +190,9 @@ The root runner uses a Go overlay to compile them in their original service
 packages, so they can use internal helpers without duplicating test source.
 `make test-identity-postgres` starts an isolated PostgreSQL dependency and runs
 the PostgreSQL suite. The suite covers workload authentication, CCT issuance/live-session revocation,
-strict JSON/media types, real token-TLS/mTLS handshakes, and deterministic
-login-admission races and
+strict JSON/media types, real token-TLS/mTLS handshakes, browser session
+activity/inventory/rotation, atomic lifecycle feeds, legacy reactivation, and
+deterministic login/password/role/startup lock races. It includes
 a local HTTPS OIDC fixture (authorization redirect, PKCE, client
 authentication, signed ID token, and JWKS). It also checks completion
 deadlines, immutable client registration, and secret rotation.

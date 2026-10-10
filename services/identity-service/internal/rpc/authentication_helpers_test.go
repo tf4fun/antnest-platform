@@ -54,12 +54,15 @@ func authenticationDependencies(t *testing.T, deps Dependencies) (Dependencies, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions := &rpcSessionStub{session: callercontext.Session{ID: "session-1", ExpiresAt: time.Now().Add(time.Hour), Principal: domain.Principal{UserID: "admin", OrganizationID: "org-1", MembershipID: "membership-1", Active: true, SystemRole: domain.SystemRoleAdmin, OrganizationRole: domain.OrganizationRoleAdmin}}}
+	sessions := &rpcSessionStub{session: callercontext.Session{ID: "session-1", ExpiresAt: time.Now().Add(time.Hour), IdleExpiresAt: time.Now().Add(30 * time.Minute), ActivityIntervalMS: 30000, Principal: domain.Principal{UserID: "admin", OrganizationID: "org-1", MembershipID: "membership-1", Active: true, SystemRole: domain.SystemRoleAdmin, OrganizationRole: domain.OrganizationRoleAdmin}}}
 	authority, err := callercontext.NewAuthority(callercontext.Config{KID: "test", PrivateKey: private, Keys: callercontext.Keys{"test": pub}, Repository: sessions, Now: time.Now, NewID: func() string { return identityid.MustNew("authtoken") }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	deps.Authentication, deps.CallerContext = receiver, authority
+	if deps.BrowserSessions == nil {
+		deps.BrowserSessions = &browserRPCService{}
+	}
 	return deps, sessions
 }
 
@@ -89,15 +92,19 @@ func authenticatedBusinessHandler(t *testing.T, deps Dependencies) http.Handler 
 		}
 		caller := routeCallers[r.URL.Path]
 		token := gatewayTestToken
+		workload, profile := "edge-gateway", "session"
 		if len(caller) > 0 && caller[0] == "admin-console" {
 			token = consoleTestToken
-			_, cct, issueErr := deps.CallerContext.Issue(r.Context(), "test-user-access-token", "console", "")
+			workload, profile = "admin-console", "console"
+		} else if len(caller) > 0 && caller[0] == "agent-controller" {
+			token, workload = controllerTestToken, "agent-controller"
+		}
+		if requiresCallerContext(r.URL.Path, workload) {
+			_, cct, issueErr := deps.CallerContext.Issue(r.Context(), "test-user-access-token", profile, "")
 			if issueErr != nil {
 				t.Fatal(issueErr)
 			}
 			r.Header.Set(callercontext.Header, cct)
-		} else if len(caller) > 0 && caller[0] == "agent-controller" {
-			token = controllerTestToken
 		}
 		r.Header.Set(serviceauth.Header, "Bearer "+token)
 		r.Header.Set("Content-Type", "application/json")

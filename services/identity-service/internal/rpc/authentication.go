@@ -10,17 +10,21 @@ import (
 
 // Exact handlers and their policies are checked against the owning caller catalog.
 var routeCallers = map[string][]string{
+	"/rpc/identity/touch-browser-session":       {"edge-gateway"},
+	"/rpc/identity/list-user-sessions":          {"edge-gateway", "admin-console"},
+	"/rpc/identity/revoke-user-sessions":        {"edge-gateway", "admin-console"},
+	"/rpc/identity/list-session-revocations":    {"edge-gateway"},
 	"/rpc/identity/resolve-owner-authorization": {"agent-controller"},
 	"/rpc/identity/list-principal-revocations":  {"agent-controller"},
 	"/rpc/identity/resolve-principal":           {"agent-controller"},
 	"/rpc/identity/create-organization":         {"admin-console"},
 	"/rpc/identity/create-local-user":           {"admin-console"},
 	"/rpc/identity/add-organization-membership": {"admin-console"},
-	"/rpc/identity/change-local-password":       {"admin-console"},
+	"/rpc/identity/change-local-password":       {"edge-gateway"},
 	"/rpc/identity/update-membership":           {"admin-console"},
 	"/rpc/identity/set-user-active":             {"admin-console"},
 	"/rpc/identity/list-directory":              {"admin-console"},
-	"/rpc/identity/get-current-account":         {"admin-console"},
+	"/rpc/identity/get-current-account":         {"edge-gateway", "admin-console"},
 	"/rpc/identity/issue-scim-token":            {"admin-console"},
 	"/rpc/identity/revoke-scim-token":           {"admin-console"},
 	"/rpc/identity/list-scim-tokens":            {"admin-console"},
@@ -38,6 +42,21 @@ var routeCallers = map[string][]string{
 
 type claimsKey struct{}
 
+func requiresCallerContext(path, workload string) bool {
+	if path == "/rpc/identity/jwks" {
+		return false
+	}
+	if workload == "admin-console" {
+		return true
+	}
+	switch path {
+	case "/rpc/identity/touch-browser-session", "/rpc/identity/list-user-sessions", "/rpc/identity/revoke-user-sessions", "/rpc/identity/change-local-password", "/rpc/identity/get-current-account":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) authenticate(response http.ResponseWriter, request *http.Request) (*http.Request, bool) {
 	callers := routeCallers[request.URL.Path]
 	caller, failure := h.dependencies.Authentication.Authorize(request, callers)
@@ -46,7 +65,7 @@ func (h *Handler) authenticate(response http.ResponseWriter, request *http.Reque
 		return request, false
 	}
 	response.Header().Set("Cache-Control", "no-store")
-	if caller != "admin-console" || request.URL.Path == "/rpc/identity/jwks" {
+	if !requiresCallerContext(request.URL.Path, caller) {
 		return request, true
 	}
 	values := request.Header.Values(callercontext.Header)
@@ -58,12 +77,14 @@ func (h *Handler) authenticate(response http.ResponseWriter, request *http.Reque
 		writeError(response, callercontext.ErrInvalid)
 		return request, false
 	}
-	claims, err := h.dependencies.CallerContext.VerifySession(request.Context(), values[0])
+	authenticated, err := h.dependencies.CallerContext.AuthenticateSession(request.Context(), values[0])
 	if err != nil {
 		writeError(response, err)
 		return request, false
 	}
-	ctx := domain.WithCallerOrganization(request.Context(), claims.Organization)
+	claims := authenticated.Claims()
+	ctx := callercontext.WithCaller(request.Context(), authenticated)
+	ctx = domain.WithCallerOrganization(ctx, claims.Organization)
 	return request.WithContext(context.WithValue(ctx, claimsKey{}, claims)), true
 }
 

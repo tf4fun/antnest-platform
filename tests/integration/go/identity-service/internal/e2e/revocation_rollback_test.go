@@ -94,7 +94,7 @@ func seedRevocationGroup(t *testing.T, f localAdmissionFixture, membershipID str
 func revocationStateSnapshot(t *testing.T, f localAdmissionFixture) map[string]string {
 	t.Helper()
 	snapshot := make(map[string]string)
-	for _, table := range []string{"users", "organization_memberships", "groups", "group_memberships", "api_tokens", "identity_events", "principal_revocations"} {
+	for _, table := range []string{"users", "organization_memberships", "groups", "group_memberships", "api_tokens", "identity_events", "principal_revocations", "session_revocations"} {
 		var value string
 		query := fmt.Sprintf(`SELECT COALESCE(jsonb_agg(row ORDER BY row::text), '[]'::jsonb)::text FROM (SELECT to_jsonb(t) AS row FROM %s t) rows`, pgx.Identifier{table}.Sanitize())
 		if err := f.pool.QueryRow(t.Context(), query).Scan(&value); err != nil {
