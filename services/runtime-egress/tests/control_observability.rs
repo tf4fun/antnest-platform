@@ -1,4 +1,6 @@
 mod support;
+#[path = "../src/test_tracing.rs"]
+mod test_tracing;
 
 use axum::{body::Body, http::Request};
 use http_body_util::BodyExt as _;
@@ -47,6 +49,7 @@ async fn control_rpc_contents_preserve_values_without_changing_responses() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default().with(
         tracing_opentelemetry::layer().with_tracer(provider.tracer("egress-diagnostic-test")),
     );
@@ -232,6 +235,7 @@ async fn no_exporter_keeps_business_responses_and_context_available() {
     use opentelemetry::{propagation::TextMapPropagator as _, trace::TraceContextExt as _};
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
     let provider = SdkTracerProvider::builder().build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("disabled-export")));
     async {
@@ -281,6 +285,7 @@ fn forwarding_and_policy_decisions_are_unchanged_and_create_no_spans() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("packet-exclusion-test")));
     tracing::subscriber::with_default(subscriber, || {
@@ -329,6 +334,7 @@ async fn private_generation_registration_never_captures_rpc_content() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("private-tunnel-test")));
     let service = support::service().await;

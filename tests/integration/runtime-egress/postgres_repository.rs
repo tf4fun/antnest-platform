@@ -1,6 +1,8 @@
 use auth::{TestAttachment as _, TestRepositoryAttachment as _};
 #[path = "../../support/egress-auth.rs"]
 mod auth;
+#[path = "../../../services/runtime-egress/src/test_tracing.rs"]
+mod test_tracing;
 
 use std::{
     env,
@@ -829,6 +831,7 @@ async fn production_repository_automatically_observes_each_database_primitive_on
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("repository-test")));
     async {

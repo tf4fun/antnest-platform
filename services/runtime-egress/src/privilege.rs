@@ -60,6 +60,7 @@ mod tests {
     fn startup_logs_effective_identity_and_capability_set() {
         let output = Arc::new(Mutex::new(Vec::<u8>::new()));
         let writer = output.clone();
+        crate::test_tracing::stabilize_callsite_registry();
         let subscriber = tracing_subscriber::fmt()
             .json()
             .with_ansi(false)

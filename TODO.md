@@ -17,7 +17,8 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，67 个已关闭，66 �
 
 ## 当前批次
 
-- 下一执行项：[#233](https://github.com/tf4fun/antnest-platform/issues/233)，按 Runtime Egress 所有权推进权限日志单元测试的确定性反例与稳定器修复。
+- 当前执行项：[#233](https://github.com/tf4fun/antnest-platform/issues/233)，按 Runtime Egress 所有权推进权限日志单元测试的确定性反例与稳定器修复。先验证无 subscriber 的线程注册 callsite 后仍能准确捕获事件与 span，再接入所有 Egress scoped tracing 测试；保留默认并行测试和严格权限断言。
+- #233 本地进展：独立进程的确定性反例先捕获 0 条事件而失败，加入稳定器后 event/span 各精确捕获 1 条，过滤器仍捕获 0 条；14 个构造入口覆盖 16 处现有 scoped 使用。格式、Clippy、195 个 Rust 测试、12 个 PostgreSQL 组件及清理通过，独立 review 无阻塞项。真实镜像/认证 Docker 和必需 CI 通过后才合并；证据在 `artifacts/verification/issue-233/`。
 - 最近完成：#112 与前置 #235 已随 [PR #234](https://github.com/tf4fun/antnest-platform/pull/234) 合并并关闭，commit `dec230dc`。所有选中的 A/B/C 分片纳入必需门禁，部分手动运行使用独立检查名称；严格退出需要真实业务终态，套件日志、结果与耗时均归档。
 - 最近插入批次：镜像发布范围已随 [PR #229](https://github.com/tf4fun/antnest-platform/pull/229) 合并，commit `47a80f1c`。仅发布十个已实现的服务/Runtime 镜像；Temporal 依赖和三个 Runtime 测试变体保留本地构建，以同次 CI artifact 传递。
 - 镜像批次验收：53 个相关测试、完整 `make test-repo`、格式/语法/链接检查、独立 review、最终提交的必需 CI 和全部 Tier A/B Docker 分片通过。main [run 38026470361](https://github.com/tf4fun/antnest-platform/actions/runs/38026470361) 的四个镜像均构建成功，registry 登录与发布步骤均跳过。

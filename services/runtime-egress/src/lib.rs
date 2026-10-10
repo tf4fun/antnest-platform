@@ -23,3 +23,6 @@ pub mod service_auth;
 pub mod telemetry;
 pub mod transport;
 pub mod tunnel;
+
+#[cfg(test)]
+mod test_tracing;

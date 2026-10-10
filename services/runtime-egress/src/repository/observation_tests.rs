@@ -11,6 +11,7 @@ async fn database_primitives_keep_parent_sql_driver_errors_and_cancellation() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("db-test")));
     let parent_id = async {
@@ -113,6 +114,7 @@ fn database_unwind_does_not_finish_as_success() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("db-unwind-test")));
     tracing::subscriber::with_default(subscriber, || {
@@ -226,6 +228,7 @@ async fn driver_error_uses_native_message_and_source() {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
+    crate::test_tracing::stabilize_callsite_registry();
     let subscriber = tracing_subscriber::Registry::default()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("native-error")));
     let error = "port=not-a-number".parse::<Config>().unwrap_err();
