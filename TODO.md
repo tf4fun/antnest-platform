@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 个开放；开放项包含 5 个 Epic 和 57 个执行项。下列队列保留 67 个执行项，其中 10 个已交付。
+Issue 状态最后核对于 2026-10-11：135 个 issue，72 个已关闭，63 个开放；开放项包含 5 个 Epic 和 58 个执行项。下列队列保留 69 个执行项，其中 11 个已交付。
 
 ## 执行约定
 
@@ -18,9 +18,12 @@ Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 �
 ## 当前批次
 
 - 当前按用户指定顺序推进 Epic [#81](https://github.com/tf4fun/antnest-platform/issues/81)：**#10 → #62 → #63 → #58 → #61 → #59 → #60 → #2 → #66 → #64**。本顺序优先于下方按主题组织的队列；#67 保留为后续共享契约工作。
-- 当前执行 [#63](https://github.com/tf4fun/antnest-platform/issues/63)：共享契约 revision 18、保留请求头词汇检查和 Gateway 按路由白名单实现已完成本地及仓库准入，待完整 CI 后合并。所有 HTTP 代理只从 hop-by-hop 过滤后的 Header 复制允许字段，另行注入私有已验证身份与 CAS，并丢弃 Trailer；两个保留前缀的未知字段一律移除。
-- #63 本地证据：28 项共享词汇/契约测试、20 项 Workspace 契约测试、Gateway race 173 个测试和 1,064 个子测试均通过；lint、链接和独立 review 无阻塞。HTTPS Docker 的 23 项流程、21 项 Origin/CSRF 与 8 项会话检查通过，普通成员在两个入口实际发送的 48 个伪造 Header 值均已核对（22 个注册名加 2 个未知名）；Workspace 身份不变、Console 403。认证 Docker 61 项、HTTP 浏览器 10 项通过并清理资源。仓库 2,371 Node / 61 Python 测试通过（5 个条件跳过），格式、语法、225 份 Markdown 链接与存储策略通过；词汇检查覆盖 829 份生产源文件。证据位于当前 #63 工作树的 `artifacts/verification/issue-63/`。
-- #63 CI 补充：完整 CI 的 caller 套件暴露 Controller ready 不能代表 ACP 已应用绑定的前置条件缺口；历史日志不足以定位确切请求阶段。测试现以同一成员限时读取目标执行状态，仅等待 `offline/agent_unavailable`，会话创建和 Prompt 的后续失败仍直接失败；#44 产品问题保持开放。14 个反例先 red 后 green，最终 15 项定向测试通过；补充后的仓库门禁为 2,385 Node / 61 Python 通过（5 个条件跳过，最后新增的超时裁剪用例另行通过）。完整 Skill caller Docker 用时 295 秒，真实调用、Trace、浏览器与资源清理通过；等待修正后提交的完整 CI。
+- 当前执行 [#58](https://github.com/tf4fun/antnest-platform/issues/58)：先交付会话生命周期共享契约，再依次完成 Identity、Gateway、Console、Agent UI、脚本消费方及双浏览器 HTTPS 集成。当前已形成契约与失败测试草案，生产方和浏览器行为尚未交付；#58 保持开放。后台查询不延长会话，显式用户活动刷新 idle deadline；密码更新与旧会话撤销、新凭据签发必须同一事务完成。
+- 已完成：[#63](https://github.com/tf4fun/antnest-platform/issues/63) 随 [PR #245](https://github.com/tf4fun/antnest-platform/pull/245) 合并并关闭，commit `c40b6b47`；五项 admission、Epic #81 的 #63 及 HTTPS 集成条件已完成。共享契约 revision 18 与 Gateway 按路由白名单生效：从 hop-by-hop 过滤后的 Header 复制允许字段，另行注入已验证身份与 CAS，丢弃 Trailer，并移除两个保留前缀的未知字段。
+- #63 本地证据：28 项共享词汇/契约测试、20 项 Workspace 契约测试、Gateway race 173 个测试和 1,064 个子测试均通过；lint、链接和独立 review 无阻塞。HTTPS Docker 的 23 项流程、21 项 Origin/CSRF 与 8 项会话检查通过，普通成员在两个入口实际发送的 48 个伪造 Header 值均已核对（22 个注册名加 2 个未知名）；Workspace 身份不变、Console 403。认证 Docker 61 项、HTTP 浏览器 10 项通过并清理资源。仓库 2,371 Node / 61 Python 测试通过（5 个条件跳过），格式、语法、225 份 Markdown 链接与存储策略通过；词汇检查覆盖 829 份生产源文件。证据已保留在主工作区的 `artifacts/verification/issue-63/`。
+- #63 CI 补充：完整 CI 的 caller 套件暴露 Controller ready 不能代表 ACP 已应用绑定的前置条件缺口；历史日志不足以定位确切请求阶段。测试现以同一成员限时读取目标执行状态，仅等待 `offline/agent_unavailable`，会话创建和 Prompt 的后续失败仍直接失败；#44 产品问题保持开放。14 个反例先 red 后 green，最终 15 项定向测试通过；补充后的仓库门禁为 2,385 Node / 61 Python 通过（5 个条件跳过，最后新增的超时裁剪用例另行通过）。完整 Skill caller Docker 用时 295 秒，真实调用、Trace、浏览器与资源清理通过。
+- #63 [最终集成 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38077614323) 的 21 个分片、82 个套件全部完成并逐项复审：72 个正常通过、10 个保留已审查的严格告警，无漏跑、超时或中断；52 项 PR 检查和两个必需门禁成功。一次 GHCR 拉取超时发生在认证矩阵测试前，同一提交重跑后 568 项网络和 30 项真实认证检查通过。非必需 AI 安全工作流因 402 额度限制失败，原始记录保留。
+- #63 扩展复审发现两项独立缺口：[#246](https://github.com/tf4fun/antnest-platform/issues/246) 记录 RC helper/测试脚本的匿名卷清理风险及证据不足，随 #165 的服务批次处理；[#247](https://github.com/tf4fun/antnest-platform/issues/247) 记录 D3 collector 接受首次可见但父链不完整的 Trace。三份缺父原始记录保留，不能称为仅时钟告警；两项均保持开放，不改变用户指定的 #81 顺序。
 - 已完成：[#62](https://github.com/tf4fun/antnest-platform/issues/62) 随 [PR #243](https://github.com/tf4fun/antnest-platform/pull/243) 合并并关闭，commit `219a4758`；五项 admission 和 Epic #81 复选框已完成。契约 revision 17 使用 Secure 模式的 `__Host-` Cookie、独立 32-byte 文件密钥和绑定稳定 Identity token ID 的 HMAC CSRF。Console、Agent UI 和脚本客户端已迁移；Admin 独立 Origin 仍是文档化的第二阶段计划。
 - #62 验收：Gateway race 164 个测试和 999 个子测试无跳过；Console、Agent UI 的 unit/component/typecheck 通过；重复 Cookie、注销 401 私有页面保留及 CDP Secure Cookie 注入问题均先 red 后 green 并独立复审。HTTPS Docker 的 22 项流程、21 项 Origin/CSRF 和 8 项会话检查，HTTP 浏览器 10 项、Gateway 认证 61 项、默认部署 54 项及 SIGTERM/SIGINT 停机回归均通过并清理资源；仓库 2,343 Node/61 Python 测试通过（5 个条件跳过）。
 - #62 [完整集成 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38067368076) 用时 30 分 33 秒，31 个 job、21 个分片和全部 82 个选中套件已归档核对：72 个正常通过、10 个保留已审查的严格 Trace 告警，无漏跑、超时或中断；56 项当前 PR 检查通过。GitHub AI 安全审查因月度额度耗尽（402）在分析前失败，非必需门禁；常规 CodeQL 和必需门禁均通过。证据在 `artifacts/verification/issue-62/ci-evidence-admission.json`。
@@ -66,6 +69,7 @@ Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 �
 - [x] [#112](https://github.com/tf4fun/antnest-platform/issues/112) ci: run component, browser and Docker E2E suites in GitHub Actions
 - [x] [#235](https://github.com/tf4fun/antnest-platform/issues/235) test(lifecycle): replay history assertion races independent Runtime observations（#112 前置批次）
 - [x] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
+- [ ] [#247](https://github.com/tf4fun/antnest-platform/issues/247) Skill discovery trace collection admits traces with missing Gateway parent spans
 
 ### 2 共享契约与依赖清单
 
@@ -78,7 +82,7 @@ Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 �
 ### 3 Edge入口安全与旧入口收敛
 
 - [x] [#57](https://github.com/tf4fun/antnest-platform/issues/57) Edge Gateway has no supported HTTPS deployment: no TLS listener and no trusted-proxy model for Origin, cookies and login rate limits
-- [ ] [#63](https://github.com/tf4fun/antnest-platform/issues/63) Edge Gateway strips a fixed list of identity headers instead of all X-Antnest-*; the list already misses headers that services read
+- [x] [#63](https://github.com/tf4fun/antnest-platform/issues/63) Edge Gateway strips a fixed list of identity headers instead of all X-Antnest-*; the list already misses headers that services read
 - [x] [#10](https://github.com/tf4fun/antnest-platform/issues/10) Edge Gateway accepts state-changing requests without Origin, and admin and session routes have no Origin check
 - [x] [#62](https://github.com/tf4fun/antnest-platform/issues/62) Browser session hardening: cookies lack the __Host- prefix, CSRF token is not bound to the session, Admin and Agent workspace share one origin
 - [ ] [#2](https://github.com/tf4fun/antnest-platform/issues/2) Login admission allows unauthenticated lockout: OIDC start shares one per-organization counter, and full key tables refuse all new logins
@@ -97,6 +101,7 @@ Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 �
 
 - [ ] [#38](https://github.com/tf4fun/antnest-platform/issues/38) Runtime-plane contracts are incomplete: Egress lacks request/response schemas, Runtime omits maintenance routes, RC contract lives outside contracts/
 - [ ] [#165](https://github.com/tf4fun/antnest-platform/issues/165) test(runtime-controller): cover Skill volume ready, drift and mount faults as component tests
+- [ ] [#246](https://github.com/tf4fun/antnest-platform/issues/246) Runtime Controller helper removal and Skill test cleanup can leave anonymous Docker volumes
 - [ ] [#168](https://github.com/tf4fun/antnest-platform/issues/168) test(runtime): move packet-path egress and health probe checks out of the platform lifecycle suites
 - [ ] [#33](https://github.com/tf4fun/antnest-platform/issues/33) Runtime observation journal can permanently skip facts: BIGSERIAL order is not commit order
 - [ ] [#39](https://github.com/tf4fun/antnest-platform/issues/39) RC observation journal: prune runs inside every append transaction, retention docs disagree, and leader writes are not fenced
@@ -179,7 +184,7 @@ Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 �
 ## 基线校正与范围说明
 
 - #80 已关闭；#219 等已关闭问题保留回归覆盖，不重新实现。
-- #81/#83 的 #10、#38、#47、#48、#53 已勾选，但 issue 仍开放且存在未交付内容。逐项按 admission 校正 Epic 状态。
+- #83 的 #38、#47、#48、#53 存在 Epic 已勾选而 issue 仍开放的历史不一致；逐项按 admission 校正。#81 的 #57、#10、#62、#63 已实际交付，HTTPS 条件完成，会话撤销和缓存条件继续保持开放。
 - #193 利用 PR #194 的后续失败诊断确认 ACK 延迟，并由 PR #227 修复。#197 在 PR #198 诊断后未再出现同类 CI 失败；本批以真实 gate 固定健康读取竞争并修复，历史单次 503 的归因限制保留在验收记录中。
 - #112 已把当前 Tier C 纳入 `Integration checks` 并补齐现有入口和证据；#165–#168 仍随服务补齐替代测试，#169 随 UI 收口。移出 CI 或门禁完成均不代表这些替代测试已交付。
 - #18 的旧八动作设计已过时，当前 signer 为 `install`、`digest`、`temporary_install`、`temporary_release`，契约应与当前行为一致。
@@ -208,3 +213,4 @@ Issue 状态最后核对于 2026-10-11：133 个 issue，71 个已关闭，62 �
 | 2026-10-10 | #193       | [PR #227](https://github.com/tf4fun/antnest-platform/pull/227)、`45752015` | 确认 active source 2/1 与 peer 1/1 的 ACK 时序缺口；37 个相关测试、完整仓库检查、Docker caller 及清理、独立 review、必需 CI 和 Skill discovery CI 分片通过后合并                                                                            |
 | 2026-10-10 | #197       | [PR #231](https://github.com/tf4fun/antnest-platform/pull/231)、`e8cf8f15` | 确定性读取竞争先 red 后 green；1,706 个 ACP 单元测试、202 个集成测试、完整仓库检查、Docker source lifecycle 及清理、独立 review、必需 CI 和 discovery/learning/install-lifecycle 分片通过后合并；历史单次 503 缺少 trace，未回溯归因        |
 | 2026-10-10 | #112、#235 | [PR #234](https://github.com/tf4fun/antnest-platform/pull/234)、`dec230dc` | Tier C 成为必需门禁，新增三个已有 Docker 入口，完整终态与逐套件证据校验；独立修复 lifecycle 重放/观察竞争。2,307 Node、61 Python、适用 Docker 与清理、独立 review、全部 81 个 CI 套件与 47 项 PR 检查通过；部分手动运行不能提供完整必需检查 |
+| 2026-10-11 | #63        | [PR #245](https://github.com/tf4fun/antnest-platform/pull/245)、`c40b6b47` | 28 契约、20 消费方、Gateway race 173/1,064、真实 HTTPS 48 个伪造 Header、15 readiness 反例与完整 Docker caller 通过；52 PR 检查、82 套件/21 分片准入。扩展证据缺口独立登记 #246/#247，下一项 #58。                                          |
