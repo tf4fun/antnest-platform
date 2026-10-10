@@ -62,7 +62,7 @@ origin use the same key. The process reads it at startup; never log its bytes.
 
 The development credential helper creates `edge-gateway/csrf.key` in its fresh,
 private credential tree with mode 0600. Compose exposes it through the existing
-read-only Gateway credential mount. Existing deployments add this independent
+read-only Gateway credential file mounts. Existing deployments add this independent
 key without replacing workload credentials or application databases, then
 restart the Gateways with the configured file. An upgrade from unprefixed
 production cookies requires signing in again. Key rotation also requires a

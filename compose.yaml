@@ -1005,6 +1005,14 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source:
+          ${ANTNEST_SERVICE_AUTH_DIRECTORY:?prepare development authentication with
+          scripts/dev-service-tokens.mjs}/edge-gateway/csrf.key
+        target: /etc/antnest/service-auth/csrf.key
+        read_only: true
+        bind:
+          create_host_path: false
     extra_hosts:
       identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
       admin-console: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.3

@@ -113,7 +113,8 @@ cannot authorize a request. The delivery cookie may be absent when a client
 already holds the correct derived header. See [session security](../../../contracts/edge-gateway/session-security.md).
 
 The development credential generator creates `edge-gateway/csrf.key` with mode
-0600; Compose reads it through the existing read-only service-auth mount.
+0600; Compose mounts this file read-only at `/etc/antnest/service-auth/csrf.key`
+and refuses to create a directory if the source is absent.
 To upgrade existing credentials, add a new independent 32-byte raw random file
 there without regenerating workload credentials or database keys. Configure
 every Gateway replica with that file and restart them together. Missing,
