@@ -6,6 +6,9 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+[Public entry](public-entry.md) defines native TLS, HTTPS proxy trust, public
+Origin, client addresses, forwarding headers, HSTS and certificate rotation.
+
 ## Workspace routes
 
 Version 15 of `session-contract.json` includes the Node Workspace HTML, HTTP

@@ -17,7 +17,8 @@ Issue 状态最后核对于 2026-10-10：133 个 issue，68 个已关闭，65 �
 
 ## 当前批次
 
-- 下一执行项：[#67](https://github.com/tf4fun/antnest-platform/issues/67)，先交付共享错误契约、代码登记表与验证工具，记录各消费方迁移；随后按服务分批交付，最后执行跨服务集成验收。共享定义完成不能代表整项迁移完成。
+- 当前执行项：按用户指定优先完成 [#57](https://github.com/tf4fun/antnest-platform/issues/57)。先定义 HTTPS、公共 Origin、可信代理和开发部署契约，再交付 Gateway 单服务的测试、实现与文档，最后交付 Compose、消费方测试工具适配和真实 Docker 集成验收；验收前保持 issue 开放。
+- 后续队列保留 [#67](https://github.com/tf4fun/antnest-platform/issues/67)：先交付共享错误契约、代码登记表与验证工具，服务迁移随后分批完成，最后跨服务集成验收。#57 不代表 #10、#62、#2 或整个 #81 完成。
 - 最近完成：#233 已随 [PR #237](https://github.com/tf4fun/antnest-platform/pull/237) 合并并关闭，commit `de419be1`。独立测试先固定无 subscriber 线程注册 callsite 导致事件捕获为 0 的反例；复用测试专用持久 dispatcher 和 provider-drop 预热后，event/span 各精确捕获 1 条，过滤器仍捕获 0 条。14 个构造入口覆盖 16 处 scoped 使用，保留默认并行测试和严格权限断言。
 - #233 验收：格式、Clippy、195 个本地 Rust 测试、12 个 PostgreSQL 组件、Linux 镜像内 196 个测试均通过；本地与 CI 的 `auth-egress` 均完成 189 项检查及资源清理。独立 review、仓库门禁、五种 CodeQL 及 [最终集成 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38043501755) 通过；后者用时 31 分 12 秒，覆盖 26 个 job、19 个分片和全部 58 个选中套件（48 个正常退出，10 个保留已审查的严格 trace 告警）。证据在 `artifacts/verification/issue-233/`。
 - #233 外部限制：[GitHub AI 安全审查](https://github.com/tf4fun/antnest-platform/actions/runs/38043504349) 因月度额度耗尽（402）在分析前失败。该项不是分支必需检查，失败记录保留；两项分支必需检查 Repository checks、Integration checks 均通过，五种常规 CodeQL 也通过后合并。
