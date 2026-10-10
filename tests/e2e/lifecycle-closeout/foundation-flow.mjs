@@ -6,6 +6,8 @@ import { lines, scopeLabel } from "./docker.mjs";
 import { assertEventPage } from "./evidence.mjs";
 import {
   collectFoundationLifecycle,
+  collectReplayObservation,
+  collectReadonlyCreateReplay,
   saveFoundationFailure,
 } from "./foundation-trace.mjs";
 import {
@@ -19,6 +21,7 @@ import {
   waitForDeletedRuntimeResources,
 } from "./failure.mjs";
 import { withHeldRun } from "./foundation-drain.mjs";
+import { assertReplayHistory } from "./replay-history.mjs";
 import {
   waitForAgentReady,
   assertAgentDisabled,
@@ -81,6 +84,8 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
   };
   const json = async (path, options) => (await api(path, options)).body;
   const admitted = [];
+  const observationTraces = new Map();
+  const replayTraces = [];
   const login = await json("/api/session/login", {
     body: {
       organization_slug: "stage3",
@@ -164,13 +169,17 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     if (kind === "delete")
       await waitForDeletedRuntimeResources(() => resources(id), { signal });
     const beforeReplay = await physicalIdentity(id);
+    const runtimeRevision = expectation.runtimeStartupFailure
+      ? (await json(`/api/admin/agents/${id}`)).runtime?.runtime_revision
+      : undefined;
     const historyPath = `/api/admin/agents/${id}/events?limit=100`;
     const beforeEvents = await json(historyPath);
     assert(
       beforeEvents.events.length < 100,
       "replay baseline may be truncated",
     );
-    const replay = await json(path, options);
+    const replayResponse = await api(path, options);
+    const replay = replayResponse.body;
     assert.equal((replay.operation ?? replay).request_id, op.request_id);
     if (kind === "create") assert.equal(replay.agent.agent_id, id);
     assert.deepEqual(
@@ -182,10 +191,30 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       await waitOperation(op.request_id, expectation.outcome),
       terminal,
     );
-    assert.deepEqual(
-      await json(historyPath),
-      beforeEvents,
-      `${kind} replay changed event history`,
+    const replayContext = {
+      kind,
+      runtimeStartupFailure: expectation.runtimeStartupFailure,
+      runtimeRevision,
+      agentID: id,
+      admissionTraceID: response.traceID,
+      replayTraceID: replayResponse.traceID,
+    };
+    if (expectation.runtimeStartupFailure)
+      replayTraces.push(
+        await collectReadonlyCreateReplay(
+          config,
+          { traceID: replayResponse.traceID, agentID: id },
+          traceSecrets,
+          signal,
+        ),
+      );
+    await assertReplayHistory(
+      {
+        ...replayContext,
+        before: beforeEvents,
+        after: await json(historyPath),
+      },
+      (event) => observation(event, replayContext),
     );
     const result = {
       ...foundationLifecycleExpectation(kind, expectation),
@@ -196,12 +225,27 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       path,
       options,
       terminal,
+      replayTraceID: replayResponse.traceID,
     };
     admitted.push(result);
     console.error(
       `Lifecycle ${kind}: terminal and exact-request replay verified`,
     );
     return result;
+  }
+  async function observation(event, context) {
+    if (!observationTraces.has(event.event_id))
+      observationTraces.set(
+        event.event_id,
+        await collectReplayObservation(
+          config,
+          docker,
+          { ...context, event },
+          traceSecrets,
+          signal,
+        ),
+      );
+    return observationTraces.get(event.event_id);
   }
   async function resources(agentID) {
     const filter = [
@@ -442,6 +486,22 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     resolvedImage: config.resolvedImage,
     docker,
   });
+  // Always exercise the real provenance collector, even when observation and
+  // replay did not overlap in this particular run. Deleted history is stable.
+  const failedCreate = admitted.find(
+    (op) => op.kind === "create" && op.agentID === failed.agentID,
+  );
+  const conditions = failed.events.events.filter(
+    (event) => event.event_type === "agent_runtime_condition_changed",
+  );
+  assert(conditions.length > 0, "failed Runtime has no observation evidence");
+  for (const event of conditions)
+    await observation(event, {
+      agentID: failed.agentID,
+      runtimeRevision: failed.runtimeRevision,
+      admissionTraceID: failedCreate.traceID,
+      replayTraceID: failedCreate.replayTraceID,
+    });
   await docker(
     config.compose(["restart", "-t", "10", "agent-controller"]),
     true,
@@ -503,6 +563,7 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
     failed_runtime_deleted_before_teardown: true,
     failed_agent_events: failed.events.events.length,
     active_run_rebuild: drain.evidence,
-    traces,
+    replay_observation_events: observationTraces.size,
+    traces: [...traces, ...replayTraces, ...observationTraces.values()],
   };
 }

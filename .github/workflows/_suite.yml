@@ -151,6 +151,7 @@ jobs:
 
       # Runs the shard's selected suites in order, each in its own process
       # group with a timeout; every suite reports even after a failure.
+      # Per-suite logs, outcomes and timings stay under artifacts/verification.
       # Strict suites that exit 2 pass only with reviewed trace findings
       # (tests/support/strict-findings.mjs).
       # Runners derive candidate images from the provided images instead of
@@ -172,5 +173,7 @@ jobs:
             !artifacts/verification/**/credentials/**
             !artifacts/verification/**/*.key
             !artifacts/verification/**/*.pem
+            !artifacts/verification/**/*.env
+            !artifacts/verification/**/generate-deployment-env.log
           if-no-files-found: ignore
           retention-days: 14

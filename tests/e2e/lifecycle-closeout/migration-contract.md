@@ -14,6 +14,22 @@ deletion, and required-MCP startup diagnostics. Creation may complete while the
 observed Runtime is unhealthy; a failed Runtime startup must not be reported as a
 failed lifecycle operation or as an executable Agent.
 
+Exact replay retains the request, terminal operation and physical resource
+identities. Both event pages must be complete with valid global and aggregate
+ordering, and every old event must remain unchanged. Only the intentionally
+failed-startup Create may append independently observed Runtime condition
+events during this comparison. Each appended event must have no operation
+association, a persisted row for the same Agent and Runtime revision, and a
+separate Consumer trace containing its Runtime inspection and a committed event
+write. Other new events, missing provenance or changed history fail admission.
+The failed-start Create replay must also show exactly one read-only transaction
+under the actual Controller admission, with no writes or dispatched work. This
+rejects a replay that restarts the same container and indirectly triggers an
+otherwise independent observation.
+The startup-failure scenario always validates its condition traces, including
+when they arrive outside the replay comparison window. Raw traces and clock
+warnings remain in evidence and contribute to strict trace status.
+
 ## Active-Run drain
 
 During a Rebuild, a real Bash process is held after its first physical append.

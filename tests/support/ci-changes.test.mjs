@@ -142,6 +142,54 @@ test("dependency secret Docker admission is required by the Tier B deployment su
   assert(shard.suites.includes(suite.id));
 });
 
+test("documented Docker admissions include encryption rotation, Gateway shutdown and RC archives", async (t) => {
+  const cases = [
+    {
+      id: "c-encryption-key-rotation",
+      tier: "c",
+      path: "tests/e2e/skill-learning/automatic-flow.test.mjs",
+      command: "make e2e-encryption-key-rotation",
+      images: [
+        "agent-acp-service",
+        "agent-controller",
+        "admin-console",
+        "identity-service",
+      ],
+    },
+    {
+      id: "gateway-shutdown",
+      tier: "b",
+      path: "tests/e2e/edge-gateway/shutdown-docker.mjs",
+      command:
+        "ANTNEST_GATEWAY_TEST_IMAGE=antnest/edge-gateway:local node tests/e2e/edge-gateway/shutdown-docker.mjs",
+      images: ["edge-gateway"],
+    },
+    {
+      id: "runtime-controller-skill-archives",
+      tier: "b",
+      path: "tests/e2e/go/runtime-controller/internal/platform/docker/skill_archive_e2e_test.go",
+      command:
+        "ANTNEST_TEST_DOCKER_SOCKET=/var/run/docker.sock node tests/integration/go/run.mjs runtime-controller --profile e2e --package internal/platform/docker -- -race -timeout=5m",
+      images: ["antnest-runtime"],
+    },
+  ];
+  for (const entry of cases)
+    await t.test(entry.id, () => {
+      const suite = selectSuites([entry.path]).find(
+        ({ id }) => id === entry.id,
+      );
+      assert(suite, `${entry.id} must run when its test changes`);
+      assert.equal(suite.tier, entry.tier);
+      assert(suite.run.includes(entry.command), entry.command);
+      for (const image of entry.images)
+        assert(suite.images.includes(image), image);
+      assert.equal(
+        shards.filter((shard) => shard.suites.includes(entry.id)).length,
+        1,
+      );
+    });
+});
+
 test("an explicit full run selects every enabled suite without any changes", () => {
   assert.deepEqual(selectSuites([], { all: true }), enabled);
 });
@@ -389,7 +437,7 @@ test("ACP authentication runs in the required auth shard with its CI-built image
 
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
-  assert.equal(tierC.length, 45);
+  assert.equal(tierC.length, 46);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",

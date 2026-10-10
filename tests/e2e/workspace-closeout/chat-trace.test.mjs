@@ -137,10 +137,19 @@ test("strict-only trace findings exit 2 so the reviewed gate decides", () => {
     strictTraceOutcome([{ phase: "cancel", expected_cancellation: true }]),
     { strict_trace: "passed", exitCode: 0 },
   );
-  const line = JSON.stringify({ status: "browser_passed", traces });
-  assert.equal(verdict(2, line, true), "warning");
+  const report = {
+    status: "browser_passed",
+    cleanup: "verified",
+    strict_trace: strictTraceOutcome(traces).strict_trace,
+    traces,
+  };
+  assert.equal(verdict(2, JSON.stringify(report), true), "warning");
+  assert.equal(
+    verdict(2, JSON.stringify({ status: "browser_passed", traces }), true),
+    "failed",
+  );
   traces[1].diagnostics[0].warnings.push("unexpected Jaeger warning");
-  assert.equal(verdict(2, JSON.stringify({ traces }), true), "failed");
+  assert.equal(verdict(2, JSON.stringify(report), true), "failed");
 });
 for (const [name, mutate] of [
   [

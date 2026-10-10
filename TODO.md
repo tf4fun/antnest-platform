@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-10：131 个 issue，65 个已关闭，66 个开放；开放项包含 5 个 Epic 和 61 个执行项。下列队列保留 65 个执行项，其中 4 个已交付。
+Issue 状态最后核对于 2026-10-10：133 个 issue，65 个已关闭，68 个开放；开放项包含 5 个 Epic 和 63 个执行项。下列队列保留 67 个执行项，其中 4 个已交付。
 
 ## 执行约定
 
@@ -20,7 +20,10 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，65 个已关闭，66 �
 - 最近插入批次：镜像发布范围已随 [PR #229](https://github.com/tf4fun/antnest-platform/pull/229) 合并，commit `47a80f1c`。仅发布十个已实现的服务/Runtime 镜像；Temporal 依赖和三个 Runtime 测试变体保留本地构建，以同次 CI artifact 传递。
 - 镜像批次验收：53 个相关测试、完整 `make test-repo`、格式/语法/链接检查、独立 review、最终提交的必需 CI 和全部 Tier A/B Docker 分片通过。main [run 38026470361](https://github.com/tf4fun/antnest-platform/actions/runs/38026470361) 的四个镜像均构建成功，registry 登录与发布步骤均跳过。
 - 已按用户授权删除 `antnest-temporal`、`antnest-runtime-skill-gate`、`antnest-runtime-fixture`、`antnest-runtime-managed` 四个 GHCR package；浏览器确认 [Packages 列表](https://github.com/tf4fun/antnest-platform/packages) 从 14 项降为 10 项，仅保留计划内镜像。验证记录和截图在 `artifacts/verification/ci-package-scope/`。本批不关闭更广泛的 #112。
-- 下一执行项：[#112](https://github.com/tf4fun/antnest-platform/issues/112)。先核对当前 CI 分层、剩余覆盖和 Tier C 的近期稳定性，再确定交付批次。
+- 当前执行项：[#112](https://github.com/tf4fun/antnest-platform/issues/112)。近两天审计覆盖 41 次已完成 CI、319 个实际 Tier C job，最近 12 轮的 132 个 Tier C 分片均成功（其中一轮 Tier B 认证失败）；最近 7 次全流程全部通过，约 24–32 分钟。本批将 Tier C 纳入必需门禁，隔离部分手动运行的检查名称，拒绝取消/异常选择和缺少业务终态的严格检查，并持久归档每个 suite 的日志、结果和耗时。
+- #112 覆盖批次：将已有平台加密密钥轮换、Gateway shutdown、Runtime Controller archive Docker 测试加入 CI；不修改服务实现。相关契约先 red 后 green，完整 `make test-repo` 通过（2,247 个 Node 测试通过、5 个条件跳过，61 个 Python 测试通过）；69 个 Runtime Controller archive 包测试通过 race 检查且无跳过。三个新增 Docker 入口、资源清理、静态检查和独立 review 已通过，待 PR CI 与实际部分/文档运行边界验收。证据在 `artifacts/verification/issue-112/`；#165–#169 的 23 项服务测试迁移仍未交付，保持各自开放。
+- #112 审计发现的独立回归已登记 [#233](https://github.com/tf4fun/antnest-platform/issues/233)：Egress 镜像构建的权限日志单元测试曾捕获空输出，Docker 业务场景尚未启动。现有代码暴露于已知 tracing callsite 竞争，但历史日志不能确认当次根因。下一批按 Runtime Egress 所有权先建立确定性反例，再复用 Runtime 的测试稳定器；不以重试或串行测试掩盖失败。
+- #112 首轮 [完整 CI](https://github.com/tf4fun/antnest-platform/actions/runs/38036751425) 收齐 81 个套件，80 个通过业务验收（其中 10 个保留已审查的严格 trace 警告）；只有 lifecycle 失败，必需门禁正确阻止合并。前置问题 [#235](https://github.com/tf4fun/antnest-platform/issues/235) 是失败 Runtime 的独立观察事件与整页重放断言竞争；共享 lifecycle 测试工具批次已先 red 后 green，严格核对旧历史前缀、持久事件目标、独立观察 trace 和重放的只读事务。原始 CI 缺少当次观察 trace，不推断具体观察分支；服务实现不变。完整仓库测试已通过（2,307 Node 通过、5 个条件跳过，61 Python 通过）；真实 Docker 验证 9 次生命周期操作、3 条观察事件和只读重放并完成清理，静态检查与独立 review 通过，待最终提交 CI 与文档门禁验收。
 - 最近完成：#197 已随 [PR #231](https://github.com/tf4fun/antnest-platform/pull/231) 合并并关闭，commit `e8cf8f15`。已用真实 gate 固定 catalog→artifact、inspect→artifact 两个健康读取竞争反例；ACP 改为只在 source/catalog 读取间限时等待 2 秒，派发前重新校验，前台/lifecycle 取消等待者。
 - #197 验收：1,706 个 ACP 单元测试、202 个协议/HTTP 集成测试、完整 `make test-repo`、格式/lint/类型/链接检查、独立 review、修复镜像的完整 Docker lifecycle 流程及清理均通过。最终提交的必需 CI 和 Skill discovery/deployment、Skill learning、Skill learning install/lifecycle 分片在 [run 38031415735](https://github.com/tf4fun/antnest-platform/actions/runs/38031415735) 通过后合并。
 - #197 的原始失败缺少同次 trace，不能回溯确认原因。#198 后 67 次 CI 的 50 个实际 discovery 分片中未见 preview 503；当前原版 Docker lifecycle 也通过。本批修复确定性读取竞争，保留 HTTP 200 断言、写入/cleanup/前台忙时的拒绝，不重试 HTTP 或 digest。证据在 `artifacts/verification/issue-197/findings.json`。
@@ -41,6 +44,8 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，65 个已关闭，66 �
 - [x] [#193](https://github.com/tf4fun/antnest-platform/issues/193) skill-discovery-caller: source Agent projection is intermittently not active and acknowledged after propagation
 - [x] [#197](https://github.com/tf4fun/antnest-platform/issues/197) skill-source-lifecycle: Skill source preview intermittently returns 503 during promote
 - [ ] [#112](https://github.com/tf4fun/antnest-platform/issues/112) ci: run component, browser and Docker E2E suites in GitHub Actions
+- [ ] [#235](https://github.com/tf4fun/antnest-platform/issues/235) test(lifecycle): replay history assertion races independent Runtime observations（#112 前置批次）
+- [ ] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
 
 ### 2 共享契约与依赖清单
 
@@ -156,7 +161,7 @@ Issue 状态最后核对于 2026-10-10：131 个 issue，65 个已关闭，66 �
 - #80 已关闭；#219 等已关闭问题保留回归覆盖，不重新实现。
 - #81/#83 的 #10、#38、#47、#48、#53 已勾选，但 issue 仍开放且存在未交付内容。逐项按 admission 校正 Epic 状态。
 - #193 利用 PR #194 的后续失败诊断确认 ACK 延迟，并由 PR #227 修复。#197 在 PR #198 诊断后未再出现同类 CI 失败；本批以真实 gate 固定健康读取竞争并修复，历史单次 503 的归因限制保留在验收记录中。
-- #112 已有必需的 Tier A/B 和非必需的 Tier C。稳定后将 Tier C 纳入 `Integration checks`；#165–#168 随服务补齐替代测试，#169 随 UI 收口。移出 CI 本身不是完成。
+- #112 本批把稳定的 Tier C 纳入 `Integration checks` 并补齐现有入口和证据；#165–#168 仍随服务补齐替代测试，#169 随 UI 收口。移出 CI 或本批门禁完成均不代表这些替代测试已交付。
 - #18 的旧八动作设计已过时，当前 signer 为 `install`、`digest`、`temporary_install`、`temporary_release`，契约应与当前行为一致。
 - #167 以 2026-10-08 的更新为准：前台 Run 不取消 review；Runtime install 等待空闲窗口并可被前台抢占。旧 cleanup release 场景已删除，不恢复它。
 - #168 的旧网络失败假设需结合 PR #217 的后续证据重新核对；#70 的端口说明也需按当前 Compose 重定范围。

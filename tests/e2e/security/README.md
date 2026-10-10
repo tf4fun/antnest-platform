@@ -31,8 +31,10 @@ interruption. It also compares retained container, running-container, network
 and volume IDs before and after cleanup.
 
 `make e2e-service-authentication-integration` remains the full Tier C suite
-`c-service-authentication-integration` in `c-skill-discovery`; Tier C reports
-separately and does not block merges. Both Docker gates use all current
+`c-service-authentication-integration` in `c-skill-discovery`; selected Tier C
+shards also block the required `Integration checks`. The separate
+`c-encryption-key-rotation` suite runs the same journey with actual platform
+key rotation enabled. Both Docker gates use all current
 production service images, the purpose networks in
 [the deployment contract](../../../contracts/platform/development-networks.md),
 and separately generated disposable credentials. Neither calls an external

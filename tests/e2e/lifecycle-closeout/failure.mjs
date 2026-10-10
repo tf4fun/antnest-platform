@@ -211,5 +211,5 @@ export async function exerciseStartupFailure({
   const events = await json(`${path}/events?limit=100`);
   assertEventPage(events, 0, new Set(), agentID);
   assertFailureEvents(events.events, created.requestID, deleted.requestID);
-  return { agentID, events };
+  return { agentID, events, runtimeRevision: agent.runtime.runtime_revision };
 }
