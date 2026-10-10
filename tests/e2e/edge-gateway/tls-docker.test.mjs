@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
@@ -34,6 +34,16 @@ const admin = {
   email: "stage3-admin@example.com",
   password: "stage3-admin-password",
 };
+
+const headerRegistry = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../contracts/edge-gateway/request-headers.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
 
 async function browserLogin(context, gateway, credentials, path) {
   const page = await context.newPage();
@@ -80,6 +90,73 @@ async function browserLogin(context, gateway, credentials, path) {
   ])
     assert.equal(await response.headerValue(header), "same-origin");
   return page;
+}
+
+async function assertMemberHeaderBoundary(page, ownerID) {
+  const headers = Object.fromEntries(
+    headerRegistry.headers.map(({ name }) => [name, "forged-browser-value"]),
+  );
+  for (const prefix of headerRegistry.reserved_prefixes)
+    headers[`${prefix}Future-Authority`] = "forged-future-authority";
+  headers["X-Antnest-Administrator"] = "true";
+  for (const name of [
+    "X-Antnest-System-Role",
+    "X-Antnest-Organization-Role",
+    "X-Antnest-Role",
+  ])
+    headers[name] = "admin";
+  const baseline = await page.evaluate(async () => {
+    const response = await fetch("/api/app/workspace/v1/bootstrap", {
+      cache: "no-store",
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(baseline.status, 200);
+  assert.equal(baseline.body.principal.administrator, false);
+  assert.equal(baseline.body.principal.userId, ownerID);
+  let browserHeadersVerified = 0;
+  for (const [path, status] of [
+    ["/api/app/workspace/v1/bootstrap", 200],
+    ["/api/admin/agents", 403],
+  ]) {
+    const [wireResponse, result] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname === path &&
+          response.request().headers()["x-antnest-administrator"] === "true",
+      ),
+      page.evaluate(
+        async ({ path, headers }) => {
+          const response = await fetch(path, { headers, cache: "no-store" });
+          return { status: response.status, body: await response.json() };
+        },
+        { path, headers },
+      ),
+    ]);
+    const sent = await wireResponse.request().allHeaders();
+    for (const [name, value] of Object.entries(headers)) {
+      assert.equal(
+        sent[name.toLowerCase()],
+        value,
+        `browser did not send attack header ${name}`,
+      );
+      browserHeadersVerified++;
+    }
+    assert.equal(
+      result.status,
+      status,
+      `member header forgery changed ${path} admission`,
+    );
+    if (status === 200)
+      assert.deepEqual(result.body.principal, baseline.body.principal);
+    else assert.equal(result.body.code, "forbidden");
+  }
+  return {
+    routes: 2,
+    names: Object.keys(headers).length,
+    browserHeadersVerified,
+  };
 }
 
 async function assertAPIOriginAdmission(gateway, cookies, agentID, signal) {
@@ -493,6 +570,10 @@ test(
         member,
         "/workspace/",
       );
+      const headerBoundary = await assertMemberHeaderBoundary(
+        workspacePage,
+        fixture.ownerID,
+      );
       const sessionChecks = await assertSessionSecurityAdmission(
         config.gateway,
         await consoleContext.cookies(),
@@ -750,6 +831,7 @@ test(
           "console-admin-call",
           "console-browser-write-with-planted-legacy-cookie",
           "workspace-prompt-and-sse",
+          "member-header-forgery-preserves-workspace-and-console-admission",
           "console-invalid-session-logout-clears-private-page",
           "workspace-confirmed-logout-clears-private-page",
           "coop-and-corp",
@@ -766,6 +848,7 @@ test(
         clients: clientResults,
         originChecks,
         sessionChecks,
+        headerBoundary,
         sseFrames: frames.length,
       };
       assertSecretFree(JSON.stringify(evidence), [
