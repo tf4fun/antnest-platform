@@ -707,7 +707,7 @@ func writeError(response http.ResponseWriter, err error) {
 		status, code, message, retryable = 503, "identity_dependency_unavailable", "Identity authorization dependency is unavailable", true
 	}
 	switch {
-	case errors.Is(err, domain.ErrInvalidArgument):
+	case errors.Is(err, domain.ErrInvalidArgument), errors.Is(err, domain.ErrInvalidCurrentPassword):
 		status = http.StatusBadRequest
 	case errors.Is(err, domain.ErrUnauthenticated):
 		status = http.StatusUnauthorized

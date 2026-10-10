@@ -54,7 +54,7 @@ func (s *Service) ChangePassword(ctx context.Context, input PasswordInput) (Pass
 		return PasswordResult{}, fmt.Errorf("verify current browser password: %w", err)
 	}
 	if !valid {
-		return PasswordResult{}, domain.InvalidArgument("Current password is incorrect")
+		return PasswordResult{}, domain.ErrInvalidCurrentPassword
 	}
 	hash, err := credentials.HashPassword(input.NewPassword)
 	if err != nil {

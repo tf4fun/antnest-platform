@@ -96,6 +96,12 @@ period to the old SID. Request IDs are audit correlation, not credential
 recovery capabilities. Concurrent explicit cookie-writing transitions may
 require a fresh login; a revoked credential must never regain authority.
 
+Only a nonmatching current password returns HTTP 400 `invalid_current_password`
+with `retryable: false`; it does not revoke the caller or issue a credential.
+Missing local credentials and invalid new-password policy return
+`invalid_argument`. Gateway maps those generic input errors to `invalid_request`
+and preserves cookies for both error classes.
+
 ## Inventory and revocation
 
 The public session `id` is an independently generated opaque reference. It is

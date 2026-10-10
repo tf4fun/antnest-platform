@@ -501,7 +501,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 		t.Fatal("organization role contract must enumerate member and admin")
 	}
 	for _, code := range []string{
-		"invalid_argument", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
+		"invalid_argument", "invalid_current_password", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
 		"last_organization_admin",
 		"version_conflict",
 		"oidc_provider_client_id_immutable",
@@ -513,7 +513,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 		}
 	}
 	for code, status := range map[string]int{
-		"invalid_argument": 400, "invalid_reference": 400, "unauthenticated": 401,
+		"invalid_argument": 400, "invalid_current_password": 400, "invalid_reference": 400, "unauthenticated": 401,
 		"forbidden": 403, "not_found": 404, "conflict": 409, "last_organization_admin": 409,
 		"version_conflict":                  409,
 		"oidc_session_expired":              410,

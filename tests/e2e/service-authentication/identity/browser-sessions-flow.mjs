@@ -137,7 +137,8 @@ export async function exerciseBrowserSessions({ rpc, adminPassword }) {
     { ...password, current_password: "wrong current password" },
     { ...options, status: 400 },
   );
-  assert.equal(wrong.code, "invalid_argument");
+  assert.equal(wrong.code, "invalid_current_password");
+  assert.equal(wrong.retryable, false);
   await rpc("change-local-password", password, {
     ...options,
     caller: "admin-console",

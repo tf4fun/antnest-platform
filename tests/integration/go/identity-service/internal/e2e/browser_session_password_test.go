@@ -112,7 +112,7 @@ func TestBrowserWrongPasswordPreservesCurrentSession(t *testing.T) {
 	ctx := f.caller(t, login)
 	input := browserPasswordInput(f)
 	input.CurrentPassword = "wrong"
-	if result, err := f.service.ChangePassword(ctx, input); !errors.Is(err, domain.ErrInvalidArgument) || result.AccessToken != "" {
+	if result, err := f.service.ChangePassword(ctx, input); !errors.Is(err, domain.NewError("invalid_current_password", "", false)) || result.AccessToken != "" {
 		t.Fatalf("wrong password did not return a business error: %v", err)
 	}
 	if _, err := f.auth.Resolve(t.Context(), login.AccessToken); err != nil {

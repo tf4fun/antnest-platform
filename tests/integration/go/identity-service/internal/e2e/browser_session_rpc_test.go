@@ -112,7 +112,14 @@ func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) 
 		t.Fatal("real activity changed absolute deadline or failed to extend idle")
 	}
 	password := map[string]any{"request_id": "rpc-password", "actor_principal_id": f.user.User.ID, "user_id": f.user.User.ID, "current_password": "incorrect password value", "new_password": "new correct password value"}
-	call("change_local_password", password, "edge-gateway", cct, 400, nil)
+	var passwordFailure struct {
+		Code      string `json:"code"`
+		Retryable *bool  `json:"retryable"`
+	}
+	call("change_local_password", password, "edge-gateway", cct, 400, &passwordFailure)
+	if passwordFailure.Code != "invalid_current_password" || passwordFailure.Retryable == nil || *passwordFailure.Retryable {
+		t.Fatal("wrong current password lost its stable nonretryable business code")
+	}
 	call("change_local_password", password, "admin-console", consoleCCT, 403, nil)
 	call("get_current_account", accountBody, "edge-gateway", cct, 200, nil)
 	var revoked browsersessions.RevokeResult

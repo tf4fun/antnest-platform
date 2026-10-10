@@ -51,7 +51,7 @@ func TestBrowserWrongCurrentPasswordIsABusinessErrorAndNeverRotates(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"wrong-current", "no-local-credential", "short-new", "different-user", "empty-current", "missing-request"} {
+	for _, name := range []string{"wrong-current", "no-local-credential", "short-new", "long-new", "different-user", "empty-current", "missing-request"} {
 		t.Run(name, func(t *testing.T) {
 			r := &passwordRepository{credential: domain.LocalCredential{UserID: "user-1", PasswordHash: hash}}
 			input := PasswordInput{RequestID: "r", ActorPrincipalID: "user-1", UserID: "user-1", CurrentPassword: "current password value", NewPassword: "replacement password value"}
@@ -59,10 +59,13 @@ func TestBrowserWrongCurrentPasswordIsABusinessErrorAndNeverRotates(t *testing.T
 			switch name {
 			case "wrong-current":
 				input.CurrentPassword = "wrong"
+				want = domain.NewError("invalid_current_password", "", false)
 			case "no-local-credential":
 				r.loadErr = domain.ErrNotFound
 			case "short-new":
 				input.NewPassword = "short"
+			case "long-new":
+				input.NewPassword = string(make([]byte, 1025))
 			case "different-user":
 				input.UserID = "target"
 				want = domain.ErrForbidden
@@ -74,6 +77,9 @@ func TestBrowserWrongCurrentPasswordIsABusinessErrorAndNeverRotates(t *testing.T
 			result, err := NewService(r).ChangePassword(browserCaller(t, domain.OrganizationRoleMember, domain.SystemRoleUser), input)
 			if !errors.Is(err, want) || r.rotations != 0 || result.AccessToken != "" {
 				t.Fatalf("invalid password mutation reached storage or signed out caller: %v", err)
+			}
+			if _, _, retryable := domain.ErrorDetails(err); retryable {
+				t.Fatal("password business error must not trigger automatic retries")
 			}
 			if name == "different-user" && r.loads != 0 {
 				t.Fatal("administrator read target user's password credential")

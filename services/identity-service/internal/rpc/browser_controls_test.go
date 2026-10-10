@@ -223,7 +223,7 @@ func TestBrowserRPCConsoleScopeAndWorkloadOnlySessionFeed(t *testing.T) {
 }
 
 func TestBrowserRPCPasswordUsesGatewayAtomicRotationAndRetiresConsolePath(t *testing.T) {
-	for _, state := range []string{"live", "missing", "console", "wrong-password", "actor-spoof"} {
+	for _, state := range []string{"live", "missing", "console", "wrong-password", "password-policy", "no-local-password", "actor-spoof"} {
 		t.Run(state, func(t *testing.T) {
 			h, _, _, service, cct := browserRPC(t)
 			body := `{"request_id":"password-1","actor_principal_id":"admin","user_id":"admin","current_password":"current password value","new_password":"replacement password value"}`
@@ -236,7 +236,10 @@ func TestBrowserRPCPasswordUsesGatewayAtomicRotationAndRetiresConsolePath(t *tes
 				workload = consoleTestToken
 				want, calls = 403, 0
 			case "wrong-password":
-				service.passwordErr = domain.InvalidArgument("Current password is incorrect")
+				service.passwordErr = domain.NewError("invalid_current_password", "Current password is incorrect", false)
+				want = 400
+			case "password-policy", "no-local-password":
+				service.passwordErr = domain.InvalidArgument("Password operation is not available")
 				want = 400
 			case "actor-spoof":
 				body = strings.Replace(body, `"actor_principal_id":"admin"`, `"actor_principal_id":"victim"`, 1)
@@ -245,6 +248,19 @@ func TestBrowserRPCPasswordUsesGatewayAtomicRotationAndRetiresConsolePath(t *tes
 			r := browserRPCRequest(h, "/rpc/identity/change-local-password", body, workload, cct)
 			if r.Code != want || service.calls != calls {
 				t.Fatalf("password route did not enforce atomic Gateway authority: status=%d calls=%d", r.Code, service.calls)
+			}
+			if want == 400 {
+				var failure struct {
+					Code      string `json:"code"`
+					Retryable *bool  `json:"retryable"`
+				}
+				code := "invalid_argument"
+				if state == "wrong-password" {
+					code = "invalid_current_password"
+				}
+				if json.Unmarshal(r.Body.Bytes(), &failure) != nil || failure.Code != code || failure.Retryable == nil || *failure.Retryable {
+					t.Fatal("password business error lost its stable classification")
+				}
 			}
 			if state == "live" {
 				var result browsersessions.PasswordResult
