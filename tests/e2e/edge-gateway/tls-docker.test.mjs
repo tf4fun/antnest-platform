@@ -64,6 +64,91 @@ async function browserLogin(context, gateway, credentials, path) {
   return page;
 }
 
+async function assertAPIOriginAdmission(gateway, cookies, agentID, signal) {
+  const origin = new URL(gateway).origin;
+  const headers = {
+    "Content-Type": "application/json",
+    Cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; "),
+    "X-Antnest-CSRF-Token": cookies.find(({ name }) => name === "antnest_csrf")
+      .value,
+  };
+  let checks = 0;
+  const request = async (
+    method,
+    path,
+    extraHeaders,
+    status,
+    code,
+    body = {},
+  ) => {
+    const response = await fetch(`${gateway}${path}`, {
+      method,
+      headers: { ...headers, ...extraHeaders },
+      ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
+      redirect: "manual",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+    });
+    const result = await response.json();
+    assert.equal(response.status, status, `${method} ${path} Origin admission`);
+    if (code) assert.equal(result.code, code);
+    if (code === "forbidden")
+      assert.equal(result.message, "Request origin is not allowed");
+    assert.equal(response.headers.getSetCookie().length, 0);
+    assert.equal(
+      response.headers.get("strict-transport-security"),
+      "max-age=31536000",
+    );
+    checks++;
+  };
+  for (const [method, path] of [
+    ["POST", "/api/session/login"],
+    ["POST", "/api/session/login-methods"],
+    ["POST", "/api/session/oidc/start"],
+    ["DELETE", "/api/session"],
+    ["POST", "/api/admin/agents"],
+    ["PUT", `/api/admin/agents/${agentID}`],
+    ["PATCH", `/api/admin/agents/${agentID}`],
+    ["DELETE", `/api/admin/agents/${agentID}`],
+    ["POST", `/api/app/workspace/v1/agents/${agentID}/sessions`],
+    ["POST", `/api/app/agents/${agentID}/v1/acp`],
+    ["DELETE", `/api/app/agents/${agentID}/v1/acp`],
+  ])
+    await request(method, path, {}, 403, "forbidden");
+  for (const evidence of [
+    { Origin: "https://foreign.example" },
+    { Origin: "null", "Sec-Fetch-Site": "same-origin" },
+    { Origin: "" },
+    { "Sec-Fetch-Site": "none" },
+    { Origin: origin, "Sec-Fetch-Site": "cross-site" },
+    { Origin: origin, "Sec-Fetch-Site": "same-site" },
+  ])
+    await request("POST", "/api/session/login", evidence, 403, "forbidden");
+  await request(
+    "GET",
+    "/api/admin/agents",
+    { Origin: "https://foreign.example" },
+    403,
+    "forbidden",
+  );
+  await request("GET", "/api/admin/agents", {}, 200);
+  await request(
+    "POST",
+    "/api/session/login-methods",
+    { "Sec-Fetch-Site": "same-origin" },
+    200,
+    undefined,
+    { organization_slug: admin.organization_slug },
+  );
+  await request(
+    "POST",
+    "/api/admin/agents",
+    { Origin: origin, "X-Antnest-CSRF-Token": "incorrect" },
+    403,
+    "csrf_failed",
+  );
+  return checks;
+}
+
 test(
   "reference HTTPS proxy serves login, Console, Workspace and WSS with independent client admission",
   {
@@ -175,6 +260,14 @@ test(
         {},
         "cleartext Gateway must not have a host publication",
       );
+      assert(
+        !gatewayContainer.Config.Env.some(
+          (value) =>
+            value.startsWith("ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=") &&
+            value !== "ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=false",
+        ),
+        "Origin admission must use the default closed setting",
+      );
       // Node verifies the private CA and hostname. Chromium pins only this disposable
       // leaf SPKI, avoiding a system trust-store mutation or a global TLS bypass.
       setDefaultCACertificates([...roots, certificate.ca]);
@@ -230,6 +323,12 @@ test(
       );
       assert.equal(consoleResult.hsts, "max-age=31536000");
       assert(JSON.stringify(consoleResult.body).includes(fixture.agentID));
+      const originChecks = await assertAPIOriginAdmission(
+        config.gateway,
+        await consoleContext.cookies(),
+        fixture.agentID,
+        signal,
+      );
       const workspaceContext = await browser.newContext();
       workspacePage = await browserLogin(
         workspaceContext,
@@ -434,12 +533,16 @@ test(
           "workspace-prompt-and-sse",
           "authenticated-wss-initialize-and-session",
           "wrong-origin-rejected",
+          "api-origin-admission-before-routing",
+          "same-origin-fetch-metadata",
+          "csrf-independent-of-origin",
           "hsts",
           "spoofed-forwarding-headers-ignored",
           "distinct-proxy-client-rate-limits",
           "resolved-client-address-logs",
         ],
         clients: clientResults,
+        originChecks,
         sseFrames: frames.length,
       };
       assertSecretFree(JSON.stringify(evidence), [
