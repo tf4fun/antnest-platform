@@ -315,7 +315,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/node-server.ts": {
-      "sha256": "c4c9d7ca83bb9271d66e7ec149b72bca6c15ea7eabf26b12f7ee1fdc78cbd422",
+      "sha256": "e601beee6c71f961406feeb369fbd8fdb32de738839e7bd5d8b297a2448251a1",
       "routes": [
         "GET /status",
         "GET /live",
