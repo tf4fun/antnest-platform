@@ -31,6 +31,7 @@ test("state probe captures the server Trace ID without inventing a parent and cl
   let request,
     response,
     disconnected = false;
+  const serverDate = new Date(Date.now() + 5000).toUTCString();
   const client = await fixture(t, (req, res) => {
     request = req;
     response = res;
@@ -40,10 +41,12 @@ test("state probe captures the server Trace ID without inventing a parent and cl
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "x-antnest-trace-id": "a".repeat(32),
+      date: serverDate,
     });
     res.write(`event: workspace_state\ndata: ${JSON.stringify(ready)}\n\n`);
   });
   const abort = new AbortController();
+  const startedAt = Date.now();
   const watch = observeState(client, "a1", abort.signal);
   t.after(watch.close);
   await watch.wait((state) => state.availability === "ready");
@@ -51,6 +54,10 @@ test("state probe captures the server Trace ID without inventing a parent and cl
   assert.equal(request.headers.origin, client.base);
   assert.equal(request.headers.traceparent, undefined);
   assert.equal(watch.traceID, "a".repeat(32));
+  assert.equal(watch.clock.serverDate, serverDate);
+  assert(watch.clock.requestStartedAt >= startedAt);
+  assert(watch.clock.responseReceivedAt >= watch.clock.requestStartedAt);
+  assert(watch.clock.responseReceivedAt <= Date.now());
   const index = watch.states.length;
   response.write(
     `event: workspace_state\ndata: ${JSON.stringify({ ...ready, availability: "busy", active_session_id: "s1" })}\n\n`,

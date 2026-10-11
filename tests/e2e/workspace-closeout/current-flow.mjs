@@ -110,6 +110,7 @@ export async function workspaceProtocol({
       { mode: 0o600 },
     );
   const closeWatch = async (watch) => {
+    watch.assertOpen();
     watch.stopWindow = { start: Date.now() };
     watch.close();
     await delay(1000, undefined, { signal });
@@ -460,6 +461,7 @@ export async function workspaceProtocol({
         body: { active: false },
       },
     );
+    watch.revocationTraceID = revoked.traceID;
     await watch.waitClosed();
     await delay(1000, undefined, { signal });
     watch.stopWindow.end = Date.now();
@@ -559,7 +561,9 @@ export async function workspaceProtocol({
         traceID: w.traceID,
         states: w.states,
         stopWindow: w.stopWindow,
+        clock: w.clock,
         revoked: w.revoked,
+        revocationTraceID: w.revocationTraceID,
       })),
     );
     await flushTraceProducers(config, docker);
