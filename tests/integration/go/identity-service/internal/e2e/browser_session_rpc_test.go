@@ -22,6 +22,9 @@ import (
 
 func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) {
 	oidc := browserOIDCFixture(t)
+	// Exercise the nanosecond clock even on platforms whose wall clock only
+	// supplies microseconds. PostgreSQL returns its stored microsecond value.
+	oidc.now.Store(oidc.time().Truncate(time.Microsecond).Add(1789 * time.Nanosecond).UnixNano())
 	f := browserControlsForFixture(t, oidc.localAdmissionFixture, &oidc.now)
 	if err := f.store.InitializeBrowserSessions(t.Context(), 5*time.Second); err != nil {
 		t.Fatal(err)
@@ -66,8 +69,17 @@ func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) 
 	var current, other localauth.LoginResult
 	call("local_login", loginBody, "edge-gateway", "", 200, &current)
 	call("local_login", loginBody, "edge-gateway", "", 200, &other)
-	if current.AccessToken == "" || current.TokenID == other.TokenID || current.ActivityIntervalMS != 1666 || !current.IdleExpiresAt.Equal(f.clock().Add(5*time.Second)) {
-		t.Fatal("real login lost fresh credential or session policy")
+	if current.AccessToken == "" || other.AccessToken == "" || current.AccessToken == other.AccessToken {
+		t.Fatal("real logins must return distinct nonempty credentials")
+	}
+	if current.TokenID == "" || other.TokenID == "" || current.TokenID == other.TokenID {
+		t.Fatal("real logins must create distinct nonempty session identities")
+	}
+	if current.ActivityIntervalMS != 1666 {
+		t.Fatalf("real login activity interval=%d want=1666", current.ActivityIntervalMS)
+	}
+	if want := f.clock().Add(5 * time.Second).Truncate(time.Microsecond); !current.IdleExpiresAt.Equal(want) {
+		t.Fatalf("real login idle deadline delta=%s want=0", current.IdleExpiresAt.Sub(want))
 	}
 	contextFor := func(raw, profile string) string {
 		t.Helper()
@@ -108,7 +120,7 @@ func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) 
 	f.now.Add(int64(time.Second))
 	var activity browsersessions.Deadlines
 	call("touch_browser_session", map[string]any{"actor_principal_id": f.user.User.ID}, "edge-gateway", cct, 200, &activity)
-	if !activity.ExpiresAt.Equal(current.ExpiresAt) || !activity.IdleExpiresAt.Equal(f.clock().Add(5*time.Second)) {
+	if !activity.ExpiresAt.Equal(current.ExpiresAt) || !activity.IdleExpiresAt.Equal(f.clock().Add(5*time.Second).Truncate(time.Microsecond)) {
 		t.Fatal("real activity changed absolute deadline or failed to extend idle")
 	}
 	password := map[string]any{"request_id": "rpc-password", "actor_principal_id": f.user.User.ID, "user_id": f.user.User.ID, "current_password": "incorrect password value", "new_password": "new correct password value"}

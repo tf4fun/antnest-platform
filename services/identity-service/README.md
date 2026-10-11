@@ -193,6 +193,8 @@ the PostgreSQL suite. The suite covers workload authentication, CCT issuance/liv
 strict JSON/media types, real token-TLS/mTLS handshakes, browser session
 activity/inventory/rotation, atomic lifecycle feeds, legacy reactivation, and
 deterministic login/password/role/startup lock races. It includes
+a frozen nanosecond-clock RPC regression that compares returned login and
+activity deadlines exactly at PostgreSQL's stored microsecond precision, and
 a local HTTPS OIDC fixture (authorization redirect, PKCE, client
 authentication, signed ID token, and JWKS). It also checks completion
 deadlines, immutable client registration, and secret rotation.
