@@ -39,12 +39,20 @@ lockout confirmation, and acknowledge immutable notice IDs independently of bind
 
 ## Browser sessions and password
 
-The Console consumes Gateway revision 20 and Identity revision 16 under the
+The Console consumes Gateway revision 21 and Identity revision 16 under the
 [browser session contract](../identity/browser-sessions.md). Account reads,
 activity, password rotation and cross-organization self session controls use
 Gateway `/api/session/...` routes. The old Console `/api/admin/account/password`
 route is denied without a dependency call. The read-only `/api/admin/account`
 projection remains available to existing consumers.
+
+Organization labels in the account UI come from the validated session Principal.
+Gateway may reuse that complete snapshot within its configured Resolve TTL
+(default 10 seconds); hits and empty revocation-feed pages do not renew its age.
+After expiry, the next real session read requires live resolution. Reloading
+Console consumes that response; updating the account profile alone does not
+replace the session Principal. Visible timing includes the next read and its
+latency, with no background rename watcher. Labels do not alter authorization.
 
 Password rotation revokes all of the user's browser sessions and returns a
 replacement with the original absolute deadline. Passwords and retry intents
