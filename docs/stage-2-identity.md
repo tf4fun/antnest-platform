@@ -55,6 +55,12 @@ User
   the domain policy requires an exact allowlist match. Organization admins
   additionally require an authoritative Provider. Existing bindings do not
   require current email claims or UserInfo.
+- Identity's explicit binding controls reserve revoked Provider/subject
+  tombstones. Unbind atomically revokes only the target Membership's browser
+  sessions, with a guard for its last usable sign-in method and no Agent
+  offboarding. Administrator restoration creates a fresh immutable notice;
+  acknowledgment targets exact owned notice IDs. Gateway, Console, Agent UI
+  and SCIM pairing remain separate delivery batches under #61.
 - Provider identity is `(organization_id, name)`. Issuer and Client ID are
   immutable; a replacement registration requires a new Provider name.
   Client-secret rotation remains supported. The old Provider and external identities stay

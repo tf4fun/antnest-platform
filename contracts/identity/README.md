@@ -20,9 +20,10 @@ producer, consumer and HTTPS integration batches were delivered by #58.
 Revision 16 adds [OIDC linking policy and ownership](oidc-linking.md), binding
 controls, immutable SCIM token pairing and durable exact-ID notice acknowledgment.
 Its method authorization declarations specify the required policy; active caller
-grants change with the owning service implementation. Identity, Gateway, Console,
-Agent UI and final HTTPS integration remain separate pending #61 batches.
-The shared contract does not activate those new routes or behaviors.
+grants change with the owning service implementation. Identity's Provider policy
+and five binding/notice RPCs implement their producer grants. SCIM pairing,
+Gateway, Console, Agent UI and final HTTPS integration remain separate pending
+#61 batches; the shared contract alone does not deliver these consumers.
 
 OIDC and SCIM payloads keep their standard field names and are not translated
 into this RPC envelope. `start_oidc_login.authorization_url` necessarily

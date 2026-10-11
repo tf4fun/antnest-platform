@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// Shared revision 16 precedes the next Identity lifecycle batch. These exact
-// methods must remain absent from runtime routes and active workload grants
-// until that batch implements and admits them.
-var pendingOIDCLinkingMethods = map[string]bool{
-	"list_external_identities":              true,
-	"bind_external_identity":                true,
-	"unbind_external_identity":              true,
-	"acknowledge_external_identity_notices": true,
-	"list_external_identity_providers":      true,
-}
-
 func TestOIDCPolicyRPCPreservesOmissionAndExplicitFalse(t *testing.T) {
 	for _, test := range []struct {
 		name, fields    string

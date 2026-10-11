@@ -190,37 +190,13 @@ try {
   const callerCatalog = JSON.parse(
     readFileSync(resolve(root, "contracts/identity/callers.json"), "utf8"),
   );
-  // Exact not-yet-implemented #61 routes remain closed during producer batches.
-  const pendingOIDCLinking = new Set([
-    "list_external_identities",
-    "bind_external_identity",
-    "unbind_external_identity",
-    "acknowledge_external_identity_notices",
-    "list_external_identity_providers",
-  ]);
-  for (const name of pendingOIDCLinking)
-    assert(contract.methods[name], `missing pending contract: ${name}`);
-  for (const [name, method] of Object.entries(contract.methods)) {
+  for (const method of Object.values(contract.methods)) {
     if (!method.request.properties.actor_principal_id) continue;
     const body = {
       actor_principal_id: login.principal.user_id,
       organization_id: login.principal.organization_id,
     };
     const policy = callerCatalog.routes[`POST /rpc/identity${method.path}`];
-    if (pendingOIDCLinking.has(name)) {
-      assert.equal(
-        policy,
-        undefined,
-        `pending route acquired a grant: ${name}`,
-      );
-      const rejected = await rpc(method.path.slice(1), body, {
-        caller: "admin-console",
-        cct: resolved.caller_context,
-        status: 403,
-      });
-      assert.equal(rejected.code, "caller_not_allowed");
-      continue;
-    }
     assert(
       policy?.callers.length,
       `missing active caller policy: ${method.path}`,

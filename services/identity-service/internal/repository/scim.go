@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -136,6 +137,19 @@ func (a *SCIMAdapter) ResolveToken(
 }
 
 func (a *SCIMAdapter) CreateUser(ctx context.Context, command scim.CreateUserCommand) (scim.UserResource, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		result, err := a.createUserAttempt(ctx, command)
+		if errors.Is(err, errSCIMReprovisionChanged) {
+			continue
+		}
+		return result, err
+	}
+	return scim.UserResource{}, domain.ErrVersionConflict
+}
+
+var errSCIMReprovisionChanged = errors.New("SCIM reprovision lineage changed")
+
+func (a *SCIMAdapter) createUserAttempt(ctx context.Context, command scim.CreateUserCommand) (scim.UserResource, error) {
 	var result scim.UserResource
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		reprovisioned := false
@@ -486,22 +500,48 @@ func (a *SCIMAdapter) findDeletedSCIMUserForReprovision(
 	organizationID string,
 	externalID string,
 ) (domain.User, bool, error) {
-	var user domain.User
+	// Discover first, then lock one exact lineage in parent-first order. A
+	// joint row-mark query can hold a deleted Membership while waiting for
+	// its User, opposing binding/callback admission.
+	var userID, membershipID string
 	err := tx.QueryRow(ctx, `
-		SELECT u.id, u.system_role, u.active, u.created_at, u.updated_at
+		SELECT m.user_id, m.id
 		FROM organization_memberships m
-		JOIN users u ON u.id = m.user_id
 		WHERE m.organization_id = $1 AND m.source = 'scim'
 		  AND m.scim_external_id = $2 AND m.scim_deleted_at IS NOT NULL
 		ORDER BY m.scim_deleted_at DESC, m.id DESC
-		LIMIT 1
-		FOR UPDATE OF m, u`, organizationID, externalID,
-	).Scan(&user.ID, &user.SystemRole, &user.Active, &user.CreatedAt, &user.UpdatedAt)
+		LIMIT 1`, organizationID, externalID,
+	).Scan(&userID, &membershipID)
 	if err == pgx.ErrNoRows {
 		return domain.User{}, false, nil
 	}
 	if err != nil {
 		return domain.User{}, false, fmt.Errorf("find deleted SCIM user for reprovisioning: %w", err)
+	}
+	var user domain.User
+	if err := tx.QueryRow(ctx, `SELECT id, system_role, active, created_at, updated_at FROM users WHERE id=$1 FOR UPDATE`, userID).
+		Scan(&user.ID, &user.SystemRole, &user.Active, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		return domain.User{}, false, err
+	}
+	var found string
+	if err := tx.QueryRow(ctx, `SELECT id FROM organizations WHERE id=$1 FOR SHARE`, organizationID).Scan(&found); err != nil {
+		return domain.User{}, false, err
+	}
+	err = tx.QueryRow(ctx, `SELECT id FROM organization_memberships WHERE id=$1 AND user_id=$2 AND organization_id=$3
+		AND source='scim' AND scim_external_id=$4 AND scim_deleted_at IS NOT NULL FOR UPDATE`, membershipID, userID, organizationID, externalID).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.User{}, false, errSCIMReprovisionChanged
+	}
+	if err != nil {
+		return domain.User{}, false, err
+	}
+	var latest string
+	if err := tx.QueryRow(ctx, `SELECT id FROM organization_memberships WHERE organization_id=$1 AND source='scim'
+		AND scim_external_id=$2 AND scim_deleted_at IS NOT NULL ORDER BY scim_deleted_at DESC, id DESC LIMIT 1`, organizationID, externalID).Scan(&latest); err != nil {
+		return domain.User{}, false, err
+	}
+	if latest != membershipID {
+		return domain.User{}, false, errSCIMReprovisionChanged
 	}
 	return user, true, nil
 }

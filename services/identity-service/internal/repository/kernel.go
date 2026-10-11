@@ -49,6 +49,9 @@ func (s *Store) LocalAuth() *LocalAuthAdapter             { return &LocalAuthAda
 func (s *Store) OIDC() *OIDCAdapter                       { return &OIDCAdapter{store: s} }
 func (s *Store) SCIM() *SCIMAdapter                       { return &SCIMAdapter{store: s} }
 func (s *Store) BrowserSessions() *BrowserSessionsAdapter { return &BrowserSessionsAdapter{store: s} }
+func (s *Store) ExternalIdentities() *ExternalIdentitiesAdapter {
+	return &ExternalIdentitiesAdapter{store: s}
+}
 
 func (s *Store) Ping(ctx context.Context) error {
 	if err := s.pool.Ping(ctx); err != nil {

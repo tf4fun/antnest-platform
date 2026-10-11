@@ -6,6 +6,7 @@ import {
   createFixtureClient,
   parseFixtureJSON,
 } from "../../identity-closeout/oidc-transport.mjs";
+import { exerciseExternalIdentities } from "./external-identities-flow.mjs";
 
 export async function exerciseOIDCPolicy({
   rpc,
@@ -74,10 +75,11 @@ export async function exerciseOIDCPolicy({
     password: randomBytes(24).toString("base64url"),
     role: "member",
   });
+  const organizationAdminPassword = randomBytes(24).toString("base64url");
   const administrator = await administer("create-local-user", {
     email: "stage3-admin@example.com",
     display_name: "OIDC policy administrator",
-    password: randomBytes(24).toString("base64url"),
+    password: organizationAdminPassword,
     role: "admin",
   });
   const issuer = "https://oidc-fixture:8443";
@@ -124,7 +126,9 @@ export async function exerciseOIDCPolicy({
     sql(
       `SELECT md5(jsonb_build_object(
         'bindings', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY id), '[]'::jsonb) FROM external_identities e),
+        'notices', (SELECT coalesce(jsonb_agg(to_jsonb(n) ORDER BY id), '[]'::jsonb) FROM external_identity_notices n),
         'sessions', (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY id), '[]'::jsonb) FROM api_tokens t),
+        'bound', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY id), '[]'::jsonb) FROM identity_events e WHERE event_type='external_identity.bound'),
         'completed', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY id), '[]'::jsonb) FROM identity_events e WHERE event_type='oidc_login.completed')
       )::text)`,
     );
@@ -180,6 +184,7 @@ export async function exerciseOIDCPolicy({
         "denied callback changed binding/session/completion facts",
       );
     }
+    return result;
   };
   const denied = { status: 403, code: "oidc_membership_required" };
   const exchangeDenied = { status: 500, code: "oidc_exchange_failed" };
@@ -270,30 +275,38 @@ export async function exerciseOIDCPolicy({
     "",
   );
   metadata(provider, "none", [], false, false);
-  await docker([...compose, "restart", "identity-service"], true);
-  checkpoint("review-restart", callbacks);
-  const serviceID = await docker([...compose, "ps", "-q", "identity-service"]);
-  let healthy = false;
-  for (const deadline = Date.now() + 30000; Date.now() < deadline;) {
-    try {
-      await docker([
-        "exec",
-        serviceID,
-        "/usr/local/bin/identity-service",
-        "--healthcheck",
-      ]);
-      healthy = true;
-      break;
-    } catch {
-      signal.throwIfAborted();
-      await delay(100);
+  const restart = async () => {
+    await docker([...compose, "restart", "identity-service"], true);
+    const serviceID = await docker([
+      ...compose,
+      "ps",
+      "-q",
+      "identity-service",
+    ]);
+    let healthy = false;
+    for (const deadline = Date.now() + 30000; Date.now() < deadline;) {
+      try {
+        await docker([
+          "exec",
+          serviceID,
+          "/usr/local/bin/identity-service",
+          "--healthcheck",
+        ]);
+        healthy = true;
+        break;
+      } catch {
+        signal.throwIfAborted();
+        await delay(100);
+      }
     }
-  }
-  assert(healthy, "Identity did not recover after restart");
-  const [restarted] = JSON.parse(await docker(["inspect", serviceID]));
-  const binding = restarted.NetworkSettings.Ports["8080/tcp"][0];
-  assert.equal(binding.HostIp, "127.0.0.1");
-  rebind(`http://127.0.0.1:${binding.HostPort}`);
+    assert(healthy, "Identity did not recover after restart");
+    const [restarted] = JSON.parse(await docker(["inspect", serviceID]));
+    const binding = restarted.NetworkSettings.Ports["8080/tcp"][0];
+    assert.equal(binding.HostIp, "127.0.0.1");
+    rebind(`http://127.0.0.1:${binding.HostPort}`);
+  };
+  checkpoint("review-restart", callbacks);
+  await restart();
   metadata(
     (await list()).find((p) => p.id === provider.id),
     "none",
@@ -301,11 +314,24 @@ export async function exerciseOIDCPolicy({
     false,
     false,
   );
+  checkpoint("external-identity-controls", callbacks);
+  const bindings = await exerciseExternalIdentities({
+    rpc,
+    sql,
+    quote,
+    register,
+    complete,
+    restart,
+    administrator,
+    organizationAdminPassword,
+    administer,
+  });
   return {
     complete: true,
     callbacks,
     scope:
-      "Identity Provider policy producer; binding management, paired SCIM, notices and browser consumers remain pending",
+      "Identity Provider policy and binding/notice producers; paired SCIM and browser consumers remain pending",
+    bindings,
     covered: [
       "safe defaults",
       "exact-domain admission",

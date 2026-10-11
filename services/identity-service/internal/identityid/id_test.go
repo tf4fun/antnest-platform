@@ -7,7 +7,7 @@ import (
 
 func TestNewProducesTypedDistinctIDs(t *testing.T) {
 	seen := map[string]bool{}
-	for _, kind := range []string{"org", "user", "membership", "group", "groupmembership", "oidcprovider", "oidcsession", "oidcclaim", "externalidentity", "authtoken", "browsersession", "scimtoken", "event"} {
+	for _, kind := range []string{"org", "user", "membership", "group", "groupmembership", "oidcprovider", "oidcsession", "oidcclaim", "externalidentity", "externalidentitynotice", "authtoken", "browsersession", "scimtoken", "event"} {
 		pattern := regexp.MustCompile("^" + kind + "_[0-9a-f]{32}$")
 		for range 4 {
 			id, err := New(kind)

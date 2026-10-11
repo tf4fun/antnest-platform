@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -131,16 +132,33 @@ func (a *DirectoryAdapter) AddOrganizationMembership(
 ) (domain.OrganizationMembership, error) {
 	membership := command.Membership
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		if err := a.store.requireOrganizationAdmin(
+		// Read-only User authority must precede every Membership lock. Share
+		// locks also avoid mutual actor/target upgrades with SetUserActive.
+		ids := sortedIdentityIDs(command.ActorPrincipalID, membership.UserID)
+		rows, err := tx.Query(ctx, `SELECT id FROM users WHERE id=ANY($1::text[]) ORDER BY id FOR SHARE`, ids)
+		if err != nil {
+			return err
+		}
+		found, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(found, ids) {
+			return domain.ErrNotFound
+		}
+		// Serialize same-organization additions before taking child locks so
+		// concurrent duplicate requests retain their idempotent result.
+		if err := a.store.requireOrganizationAdminWithLock(
 			ctx,
 			tx,
 			command.ActorPrincipalID,
 			membership.OrganizationID,
+			true,
 		); err != nil {
 			return err
 		}
 		var userActive bool
-		if err := tx.QueryRow(ctx, `SELECT active FROM users WHERE id = $1 FOR UPDATE`, membership.UserID).
+		if err := tx.QueryRow(ctx, `SELECT active FROM users WHERE id = $1`, membership.UserID).
 			Scan(&userActive); err != nil {
 			return err
 		}
@@ -148,7 +166,7 @@ func (a *DirectoryAdapter) AddOrganizationMembership(
 			return domain.ErrInactive
 		}
 		var existing domain.OrganizationMembership
-		err := tx.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			SELECT id, organization_id, user_id, email, display_name, role, source, active,
 			       COALESCE(scim_external_id, ''), COALESCE(scim_user_name, ''), created_at, updated_at
 			FROM organization_memberships

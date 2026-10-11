@@ -2,8 +2,11 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestOIDCPolicyMigrationPreservesLegacyAuthorityAndReviewState(t *testing.T) {
@@ -45,7 +48,7 @@ func TestOIDCPolicyMigrationPreservesLegacyAuthorityAndReviewState(t *testing.T)
 		var raw []byte
 		if err := pool.QueryRow(ctx, `SELECT jsonb_build_object(
 			'provider', (SELECT to_jsonb(p) - '{link_policy,link_domains,authoritative,link_policy_review_required}'::text[] FROM oidc_providers p WHERE id='provider-1'),
-			'binding', (SELECT to_jsonb(e) FROM external_identities e WHERE id='binding-1'),
+			'binding', (SELECT to_jsonb(e) - '{method,bound_at,revoked_at}'::text[] FROM external_identities e WHERE id='binding-1'),
 			'token', (SELECT to_jsonb(t) FROM api_tokens t WHERE id='token-1'))`).Scan(&raw); err != nil {
 			t.Fatal(err)
 		}
@@ -62,6 +65,29 @@ func TestOIDCPolicyMigrationPreservesLegacyAuthorityAndReviewState(t *testing.T)
 	}
 	if snapshot() != before {
 		t.Fatal("migration changed legacy registration, binding or session authority")
+	}
+	var method string
+	var boundAt time.Time
+	var revokedAt *time.Time
+	var notices int
+	if err := pool.QueryRow(ctx, `SELECT method,bound_at,revoked_at,(SELECT count(*) FROM external_identity_notices) FROM external_identities WHERE id='binding-1'`).Scan(&method, &boundAt, &revokedAt, &notices); err != nil {
+		t.Fatal(err)
+	}
+	if method != "auto" || !boundAt.Equal(now) || revokedAt != nil || notices != 0 {
+		t.Fatal("legacy binding migration changed activation or generated a notice")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE external_identities SET revoked_at=$1 WHERE id='binding-1'`, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO external_identities (id,organization_id,provider_id,user_id,membership_id,subject,created_at,updated_at,bound_at)
+		VALUES ('binding-2','org-1','provider-1','user-1','member-1','new subject',$1,$1,$1)`, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("revoked subject prevented a new active subject: %v", err)
+	}
+	_, duplicateErr := pool.Exec(ctx, `INSERT INTO external_identities (id,organization_id,provider_id,user_id,membership_id,subject,created_at,updated_at,bound_at,revoked_at)
+		VALUES ('binding-3','org-1','provider-1','user-1','member-1',' legacy subject ',$1,$1,$1,$1)`, now)
+	var conflict *pgconn.PgError
+	if !errors.As(duplicateErr, &conflict) || conflict.Code != "23505" || conflict.ConstraintName != "external_identities_subject_unique" {
+		t.Fatalf("revoked subject lost its historical uniqueness: %v", duplicateErr)
 	}
 	var policy string
 	var domains []string
@@ -85,6 +111,9 @@ func TestOIDCPolicyMigrationPreservesLegacyAuthorityAndReviewState(t *testing.T)
 	read()
 	if policy != "none" || review {
 		t.Fatal("restart reset reviewed policy")
+	}
+	if err := pool.QueryRow(ctx, `SELECT revoked_at,(SELECT count(*) FROM external_identity_notices) FROM external_identities WHERE id='binding-1'`).Scan(&revokedAt, &notices); err != nil || revokedAt == nil || !revokedAt.Equal(now.Add(time.Second)) || notices != 0 {
+		t.Fatalf("restart restored a tombstone or generated migration notices: %v", err)
 	}
 	var policyDefault, reviewDefault string
 	if err := pool.QueryRow(ctx, `SELECT

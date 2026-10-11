@@ -611,6 +611,60 @@
         "edge-gateway": "operation"
       },
       "request_body": "json"
+    },
+    "POST /rpc/identity/list-external-identities": {
+      "callers": [
+        "edge-gateway",
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/bind-external-identity": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/unbind-external-identity": {
+      "callers": [
+        "edge-gateway",
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/acknowledge-external-identity-notices": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-external-identity-providers": {
+      "callers": [
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
     }
   },
   "guarded_sources": {}

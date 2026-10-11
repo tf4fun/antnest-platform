@@ -444,21 +444,15 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if contract.Revision != 16 {
 		t.Fatalf("identity contract revision=%d want=16", contract.Revision)
 	}
-	if len(contract.Methods) != len(ContractRoutes)+len(pendingOIDCLinkingMethods) {
+	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
-	}
-	for name := range pendingOIDCLinkingMethods {
-		method, exists := contract.Methods[name]
-		if !exists || ContractRoutes[name] != "" || len(routeCallers["/rpc/identity"+method.Path]) != 0 {
-			t.Fatalf("pending method %s must be defined and inactive", name)
-		}
 	}
 	for name, method := range contract.Methods {
 		if method.Method != http.MethodPost {
 			t.Errorf("method %s HTTP method=%q want=%q", name, method.Method, http.MethodPost)
 		}
 		want := "/rpc/identity" + method.Path
-		if got := ContractRoutes[name]; !pendingOIDCLinkingMethods[name] && got != want {
+		if got := ContractRoutes[name]; got != want {
 			t.Errorf("method %s route=%q want=%q", name, got, want)
 		}
 		for _, field := range method.Request.Required {

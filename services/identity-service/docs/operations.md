@@ -197,9 +197,21 @@ There is no per-field filtering or bespoke payload size limit. See
   `acknowledge_link_policy_review=true` after assessing the IdP's email controls.
   Secret rotation and enable/disable do not clear the warning. Migration does
   not remove an existing unwanted binding or invalidate existing sessions.
-  The Console warning, binding management, SCIM pairing and notice workflows
+  The Console warning, browser binding/notice workflows and SCIM pairing
   remain pending consumer/lifecycle batches under
   [#61](../../../contracts/identity/oidc-linking.md).
+- Identity's binding RPCs require live CCT authority and the exact workload:
+  Console administers bindings for a Membership in the signed organization;
+  Gateway lists/unbinds the signed User's bindings and acknowledges owned
+  notices. New bindings work with `none` and disabled Providers, but disabled
+  Providers cannot issue a login. Unbinding preserves a subject tombstone,
+  revokes that Membership's browser sessions and leaves Agent lifecycle intact.
+  `external_identity_last_method` requires an explicit `allow_lockout=true`
+  second action. `external_identity_restore_required` requires an administrator
+  to submit `restore_revoked=true` for the original owner and Membership.
+  Migration `0007` backfills `method=auto` and the original binding time without
+  emitting notices or changing sessions. Restoring produces a fresh notice ID;
+  list reads never confirm it, and acknowledgment is limited to exact owned IDs.
 - An OIDC exchange that reaches the login deadline before issuing its token
   fails with `oidc_session_expired` (`410`), records an `expired` failure stage,
   and cannot be retried under the same login state. Start a new login instead.

@@ -128,12 +128,6 @@ func TestEveryAdministrativeRPCRejectsBodyActorWithoutCallerContext(t *testing.T
 				request.Header.Set(serviceauth.Header, "Bearer "+token)
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)
-				if pendingOIDCLinkingMethods[name] {
-					if _, active := catalog.Routes["POST /rpc/identity"+method.Path]; active || response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "caller_not_allowed") {
-						t.Fatalf("pending lifecycle method %s gained an active grant: %d", name, response.Code)
-					}
-					return
-				}
 				if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "caller_context_required") {
 					t.Fatalf("body-selected administrator reached %s: status=%d body=%s", name, response.Code, response.Body.String())
 				}

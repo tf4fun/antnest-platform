@@ -30,6 +30,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/externalidentities"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/identityid"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcclient"
@@ -108,8 +109,9 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	authentication, authority, tokens := identityTestAuthentication(t, store)
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
-		BrowserSessions: browsersessions.NewService(store.BrowserSessions()),
-		Authentication:  authentication, CallerContext: authority,
+		BrowserSessions:    browsersessions.NewService(store.BrowserSessions()),
+		ExternalIdentities: externalidentities.NewService(store.ExternalIdentities()),
+		Authentication:     authentication, CallerContext: authority,
 	})
 	if err != nil {
 		t.Fatal(err)

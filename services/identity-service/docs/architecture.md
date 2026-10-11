@@ -135,8 +135,35 @@ serialize per Organization before locking possible name/issuer conflicts, so
 an insert conflict cannot reverse that order. Callback issuance locks its auth
 session, then Provider, User, Organization and Membership, and rechecks policy
 and roles before binding. Browser authority is revalidated after mutation lock
-waits. Binding administration, tombstones, SCIM pairing and durable notices are
-the next Identity batch in the [shared delivery contract](../../../contracts/identity/oidc-linking.md).
+waits.
+
+The external identity application preserves the complete signed Caller for
+transactional authorization. Organization controls use the signed organization
+and exact target Membership; self controls use the signed User across its
+organizations. Migration `0007` preserves historical method/time metadata and
+reserves every Provider/subject tombstone while limiting active bindings to
+one per Provider/User. Only an explicit administrator restoration can reactivate
+the same owner and Membership. New automatic bindings and administrator
+bindings/restorations atomically append an audit event and an immutable notice.
+Migration does not manufacture notifications for historical bindings.
+
+Binding writers lock Providers, sorted Users, Organizations, Memberships,
+mapping rows and browser sessions in that order. A changed set of usable
+Providers restarts the entire transaction before any effects. Add-Membership
+and SCIM reprovisioning also lock Users before Memberships. Unbind serializes
+with callback issuance, revokes only the target Membership's sessions and
+publishes its session feed in the same transaction; it never emits principal
+offboarding. The final usable-method guard excludes disabled/revoked Providers
+and bindings in another Membership. Explicit lockout permission does not relax
+caller authorization. Self-revocation still checks the original signed Caller
+and deadlines at completion while holding the parent/session locks.
+
+Inventory reads do not touch session activity or acknowledge notices. Binding
+and pending-notice pages have independent exclusive ID cursors; organization
+responses omit private notices. Acknowledgment validates every requested owned
+notice ID before updating any row. An old acknowledgment cannot clear a later
+restoration notice. SCIM pairing and browser consumers remain separate batches
+in the [shared delivery contract](../../../contracts/identity/oidc-linking.md).
 
 ### AuthSession And Token
 

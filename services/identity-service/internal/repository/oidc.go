@@ -395,7 +395,7 @@ func (a *OIDCAdapter) CompleteLogin(
 		}
 		command.Identity.Email, _ = domain.NormalizeEmail(command.Identity.Email)
 
-		principal, externalIdentityID, err := a.resolveOIDCIdentity(ctx, tx, command, provider)
+		principal, externalIdentityID, err := a.resolveOIDCIdentity(ctx, tx, command, provider, requestID)
 		if err != nil {
 			return err
 		}
@@ -493,6 +493,7 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	tx *databaseTransaction,
 	command oidcflow.CompleteLoginCommand,
 	provider oidcflow.Provider,
+	requestID string,
 ) (domain.Principal, string, error) {
 	var externalID, userID, membershipID string
 	err := tx.QueryRow(ctx, `
@@ -515,14 +516,15 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 		// Reprovisioning locks parents before updating external identities. Do
 		// not hold a mapping lock while waiting for those same parent rows.
 		var currentExternalID, currentUserID, currentMembershipID string
+		var revokedAt *time.Time
 		err := tx.QueryRow(ctx, `
-			SELECT id, user_id, membership_id FROM external_identities
+			SELECT id, user_id, membership_id, revoked_at FROM external_identities
 			WHERE provider_id = $1 AND subject = $2 FOR UPDATE`, command.ProviderID, command.Identity.Subject).
-			Scan(&currentExternalID, &currentUserID, &currentMembershipID)
+			Scan(&currentExternalID, &currentUserID, &currentMembershipID, &revokedAt)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return domain.Principal{}, "", err
 		}
-		if err != nil || currentExternalID != externalID || currentUserID != userID || currentMembershipID != membershipID {
+		if err != nil || revokedAt != nil || currentExternalID != externalID || currentUserID != userID || currentMembershipID != membershipID {
 			return domain.Principal{}, "", oidcMembershipRequired()
 		}
 		return principal, externalID, nil
@@ -548,12 +550,15 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	externalID = a.store.newID("externalidentity")
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO external_identities (
-			id, organization_id, provider_id, user_id, membership_id, subject, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+			id, organization_id, provider_id, user_id, membership_id, subject, created_at, updated_at, method, bound_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 'auto', $7)`,
 		externalID, command.OrganizationID, command.ProviderID, userID,
 		principal.MembershipID, command.Identity.Subject, command.IssuedAt,
 	); err != nil {
 		return domain.Principal{}, "", fmt.Errorf("insert external identity: %w", err)
+	}
+	if err := a.store.recordExternalIdentityBound(ctx, tx, externalID, userID, userID, "", requestID, command.IssuedAt); err != nil {
+		return domain.Principal{}, "", err
 	}
 	return principal, externalID, nil
 }

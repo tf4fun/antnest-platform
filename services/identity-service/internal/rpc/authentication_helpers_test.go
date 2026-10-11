@@ -16,6 +16,7 @@ import (
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/externalidentities"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/identityid"
 )
 
@@ -62,6 +63,9 @@ func authenticationDependencies(t *testing.T, deps Dependencies) (Dependencies, 
 	deps.Authentication, deps.CallerContext = receiver, authority
 	if deps.BrowserSessions == nil {
 		deps.BrowserSessions = &browserRPCService{}
+	}
+	if deps.ExternalIdentities == nil {
+		deps.ExternalIdentities = externalidentities.NewService(&bindingRPCRepository{})
 	}
 	return deps, sessions
 }
