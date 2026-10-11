@@ -865,3 +865,12 @@ func (*identityServiceStub) ListSessions(context.Context, identity.SessionListIn
 func (*identityServiceStub) RevokeSessions(context.Context, identity.SessionRevokeInput) (identity.SessionRevokeResult, error) {
 	panic("unexpected session revocation in legacy fixture")
 }
+func (*identityServiceStub) ListExternalIdentities(context.Context, identity.ExternalIdentityListInput) (identity.ExternalIdentityPage, error) {
+	panic("unexpected external identity inventory in legacy fixture")
+}
+func (*identityServiceStub) UnbindExternalIdentity(context.Context, identity.ExternalIdentityUnbindInput) (identity.SessionRevokeResult, error) {
+	panic("unexpected external identity unbind in legacy fixture")
+}
+func (*identityServiceStub) AcknowledgeExternalIdentityNotices(context.Context, identity.ExternalIdentityAcknowledgeInput) (identity.ExternalIdentityAcknowledgeResult, error) {
+	panic("unexpected external identity acknowledgment in legacy fixture")
+}

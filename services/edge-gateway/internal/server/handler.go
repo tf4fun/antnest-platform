@@ -64,6 +64,9 @@ type IdentityService interface {
 	ChangePassword(context.Context, identity.PasswordInput) (identity.LoginResult, error)
 	ListSessions(context.Context, identity.SessionListInput) (identity.SessionPage, error)
 	RevokeSessions(context.Context, identity.SessionRevokeInput) (identity.SessionRevokeResult, error)
+	ListExternalIdentities(context.Context, identity.ExternalIdentityListInput) (identity.ExternalIdentityPage, error)
+	UnbindExternalIdentity(context.Context, identity.ExternalIdentityUnbindInput) (identity.SessionRevokeResult, error)
+	AcknowledgeExternalIdentityNotices(context.Context, identity.ExternalIdentityAcknowledgeInput) (identity.ExternalIdentityAcknowledgeResult, error)
 }
 
 type Config struct {
@@ -221,6 +224,9 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("POST /api/session/password", telemetry.Handler(h.changeBrowserPassword))
 	h.mux.HandleFunc("GET /api/session/sessions", telemetry.Handler(h.listBrowserSessions))
 	h.mux.HandleFunc("POST /api/session/sessions/revoke", telemetry.Handler(h.revokeBrowserSessions))
+	h.mux.HandleFunc("GET /api/session/external-identities", telemetry.Handler(h.listBrowserExternalIdentities))
+	h.mux.HandleFunc("DELETE /api/session/external-identities/{binding_id}", telemetry.Handler(h.unbindBrowserExternalIdentity))
+	h.mux.HandleFunc("POST /api/session/external-identities/notices/acknowledge", telemetry.Handler(h.acknowledgeBrowserExternalIdentityNotices))
 	h.mux.HandleFunc("GET /api/app/bootstrap", telemetry.Handler(h.workspaceBootstrap))
 	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state", telemetry.Handler(h.getWorkspaceState))
 	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state/watch", telemetry.Handler(h.watchWorkspaceState))

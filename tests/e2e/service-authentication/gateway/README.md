@@ -6,11 +6,20 @@ authenticated dependency doubles, with distinct temporary CSPRNG token files
 and an Ed25519 test issuer. It covers login, session JSON privacy, server-owned
 CCT profiles and Agent scopes, forged headers, CSRF, discovery, ACP HTTP, SCIM,
 credential rotation, missing/replaced credentials and recovery. It also checks
-the revision 19 browser boundary: account projection, explicit non-cookie-writing
+the revision 20 browser boundary: account projection, explicit non-cookie-writing
 activity, independent public session IDs/pagination, self revocation, wrong-password
 classification, password cookie/CSRF rotation with inherited absolute expiry,
 old-session rejection and the explicit logout matrix. Ordinary and upstream
 responses cannot overwrite session cookies.
+
+The external identity flow covers independent binding/notice pagination,
+cross-organization self entries, immutable historical notice fields, exact opaque
+subjects, explicit per-ID acknowledgment and idempotent zero counts. It checks
+input/Origin/CSRF rejection, 404/409 error mapping, unbind with current-session
+revocation, subsequent 401 responses and silent SSE retirement through the
+private feed. Ordinary reads and acknowledgments preserve both session deadlines.
+The Identity double checks the exact RPC fields and original session CCT scope;
+its in-memory state does not prove real Identity transactions or grants.
 
 A quiet administrator SSE stream must close within three seconds of starting
 its HTTP request after another session revokes it. The dependency double returns
@@ -27,6 +36,7 @@ Go service tests cover real TLS/mTLS receiver identity checks, five HTTP receive
 paths, both WebSocket directions and socket cancellation. The separate
 `tests/e2e/edge-gateway/shutdown-docker.mjs` regression covers SIGTERM, restart
 and SIGINT with five active receives. Real Identity, Console, Agent UI and
-two-browser HTTPS session behavior belongs to the final #58 integration batch
-after all owning-service admissions; these dependency doubles do not complete
-that workflow.
+two-browser HTTPS session behavior has separate #58 integration evidence. The
+real Identity/Console/Agent UI linking workflow remains the explicit #61
+integration batch after the owning-service admissions; these dependency doubles
+do not complete that workflow.

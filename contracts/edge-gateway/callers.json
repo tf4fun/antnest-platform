@@ -113,6 +113,14 @@
       },
       "request_body": "none"
     },
+    "DELETE /api/session/external-identities/{binding_id}": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "json"
+    },
     "GET /api/app/agents/{agent_id}/acp": {
       "callers": ["browser"],
       "authentication": "public",
@@ -177,6 +185,14 @@
       },
       "request_body": "none"
     },
+    "GET /api/session/external-identities": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "none"
+    },
     "GET /api/session/sessions": {
       "callers": ["browser"],
       "authentication": "public",
@@ -218,6 +234,14 @@
       "request_body": "json"
     },
     "POST /api/session/activity": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "json"
+    },
+    "POST /api/session/external-identities/notices/acknowledge": {
       "callers": ["browser"],
       "authentication": "public",
       "caller_context": {

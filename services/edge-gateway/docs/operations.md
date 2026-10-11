@@ -19,11 +19,15 @@ Do not restart into an intermediate configuration or change receiver origins
 through browser inputs. Public listener TLS uses a separate certificate and key;
 it does not reuse internal workload credentials.
 
-Deploy Identity revision 15 before this Gateway batch. Its required session
-metadata, account/session RPCs and private revocation feed must be available.
-Console and Agent UI activity/account controls, scripted consumers and final
-two-browser HTTPS acceptance remain separate #58 batches; use the coordinated
-branch only after that integration admission. Identity policy defaults to a
+Deploy Identity revision 16 before Gateway revision 20. Its required session
+metadata, account/session RPCs, external identity list/unbind/notice RPCs and
+private revocation feed must be available. The three new self routes preserve
+cookies on success and failure; after unbinding the current session, the next
+request returns 401. Stream retirement uses the existing private feed and live
+session checks. Reading bindings or notices and acknowledging specific notices
+does not extend the idle deadline. Console and Agent UI linking consumers and
+the real Identity HTTPS linking workflow remain separate #61 batches; admit
+that integration before releasing the coordinated change. Identity policy defaults to a
 30-minute idle deadline and a 12-hour absolute deadline; ordinary traffic does
 not renew either. See the [session lifecycle contract](../../../contracts/identity/browser-sessions.md).
 

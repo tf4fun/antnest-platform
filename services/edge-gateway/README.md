@@ -60,6 +60,7 @@ Gateway still owns browser credential stripping and route authorization.
 | --------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Inbound   | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback` | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
 | Inbound | `/api/session/account`, `/api/session/password`, `/api/session/activity`, `/api/session/sessions`, `/api/session/sessions/revoke` | Current account, password rotation, explicit user activity, self inventory and revocation |
+| Inbound | `GET /api/session/external-identities`, `DELETE /api/session/external-identities/{binding_id}`, `POST /api/session/external-identities/notices/acknowledge` | Self binding inventory, explicit unbind and individual notice acknowledgment |
 | Inbound   | `/scim/v2/*`                                                                                                                 | Protocol-preserving SCIM proxy to Identity                                                                                                           |
 | Inbound   | `/api/admin/*` and Console application                                                                                       | Administrator-only BFF routes forwarded to Admin Console with CSRF checks                                                                            |
 | Inbound   | `GET /api/app/bootstrap`                                                                                                     | Principal display facts and accessible Agent IDs and names                                                                                           |
@@ -82,6 +83,17 @@ login, OIDC completion, password rotation and logout, using absolute expiry.
 Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
 See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
 for the logout matrix, password recovery and consumer integration.
+
+Gateway revision 20 consumes Identity revision 16's external identity controls.
+Self inventory includes the User's bindings across organizations and independently
+paginated immutable notices. Unbind and notice acknowledgment enforce the same
+Origin/session-bound CSRF boundary; all three routes use `no-store` and preserve
+cookies, including a successful unbind that revokes the current session. Gateway
+forwards the verified session CCT and derives self scope and actor locally.
+It does not offer browser binding creation or a Provider chooser. See the
+[OIDC linking contract](../../contracts/identity/oidc-linking.md).
+Console and Agent UI consumption and the real HTTPS linking workflow remain
+separate #61 delivery batches.
 
 Browser login and session principals preserve Identity's required Organization
 slug/name. Gateway projects these display facts to the active Node Workspace
