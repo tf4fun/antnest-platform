@@ -83,6 +83,12 @@ unbounded direct RPC. Shared RPC lifetime is at most the minimum of five
 seconds, configured request timeout and `T`, including reading and validating
 the response. A caller may have a smaller independent deadline.
 
+The per-scope waiter count includes every retained invalidation generation.
+A work slot remains occupied until both its RPC has finished cleanup and its
+last waiter has consumed the completed result. This also bounds valid oversized
+live results retained outside the LRU while their ready waiters are unscheduled.
+Cancellation releases a waiter promptly; it does not free an unjoined RPC slot.
+
 Shared work has a process-owned context. Cancelling its first waiter cannot
 poison other waiters; when its last waiter or explicit background owner leaves,
 its RPC is cancelled. After half the TTL, a still-valid hit may start a shared
@@ -201,6 +207,20 @@ span under this new marker. A shared waiter keeps its own request ancestry and
 links its decision to the exact actual RPC CLIENT span through a SpanLink.
 Archive that source Trace and validate both complete parent chains; the
 waiter's own Trace does not pretend to contain the source SQL.
+
+The fixed `antnest.identity.resolve.shared_source_state` is `actual-client`
+when the CLIENT exists. A cancelled shared waiter may instead record
+`cancelled-before-client`, with outcome `unavailable` and a fixed
+`cancel_kind` (`caller-cancelled`, `caller-deadline`, `shared-cancelled`,
+`shared-deadline` or `process-shutdown`), only if no CLIENT existed at its
+cancellation snapshot. CLIENT creation/publication and that snapshot must be
+linearized; an unpublished SpanContext alone does not establish absence.
+This narrow branch has no upstream admission and cannot substitute for any
+successful authorization or business evidence. It still requires complete
+request ancestry and cancellation evidence. Another waiter may start the RPC
+later. Normal replies, denials and cancellation after CLIENT creation retain
+the exact link, archived source and both-parent-chain requirements. Never wait
+for a future RPC or invent a span merely to decorate a cancelled request.
 
 A half-TTL background refresh is process-owned work with its own root and a
 link to the triggering request-admission decision. It must not extend a

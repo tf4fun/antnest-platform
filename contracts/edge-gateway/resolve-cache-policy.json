@@ -66,6 +66,8 @@
     "active_scopes": 32,
     "waiters_per_scope": 128,
     "total_waiters": 1024,
+    "completed_results_keep_work_slot_until_delivery": true,
+    "scope_waiters_include_retained_generations": true,
     "shared_rpc_max_ms": 5000,
     "rpc_clipped_by_request_timeout_and_ttl": true,
     "oversized_valid_response": "return-live-without-caching",
@@ -154,6 +156,16 @@
     "background_requires_trigger_link": true,
     "shared_source_link": "actual-rpc-client-span",
     "shared_source_trace_archived": true,
+    "shared_source_states": ["actual-client", "cancelled-before-client"],
+    "cancelled_before_client": {
+      "outcome": "unavailable",
+      "requires_cancellation_evidence": true,
+      "snapshot": "linearized-with-client-creation-and-publication",
+      "permits_upstream_admission": false,
+      "substitutes_for_authorization_evidence": false,
+      "existing_client_requires_link_and_source_trace": true,
+      "missing_synchronous_parent_allowed": false
+    },
     "both_parent_chains_required": true,
     "preserve_actual_rpc_parent": true,
     "cache_required_facts": [

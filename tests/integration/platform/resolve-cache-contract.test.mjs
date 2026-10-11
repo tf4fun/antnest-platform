@@ -268,3 +268,26 @@ test("authoritative inactive responses evict every token scope and fence in-flig
     "token-all-scopes-with-inflight-barrier",
   );
 });
+
+test("cancelled shared waiters cannot invent an RPC or waive an existing source", () => {
+  const { diagnostics } = policy();
+  assert.deepEqual(diagnostics.shared_source_states, [
+    "actual-client",
+    "cancelled-before-client",
+  ]);
+  assert.deepEqual(diagnostics.cancelled_before_client, {
+    outcome: "unavailable",
+    requires_cancellation_evidence: true,
+    snapshot: "linearized-with-client-creation-and-publication",
+    permits_upstream_admission: false,
+    substitutes_for_authorization_evidence: false,
+    existing_client_requires_link_and_source_trace: true,
+    missing_synchronous_parent_allowed: false,
+  });
+});
+
+test("work limits include completed results and every retained generation", () => {
+  const { limits } = policy();
+  assert.equal(limits.completed_results_keep_work_slot_until_delivery, true);
+  assert.equal(limits.scope_waiters_include_retained_generations, true);
+});
