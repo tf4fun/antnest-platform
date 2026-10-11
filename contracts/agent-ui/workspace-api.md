@@ -7,6 +7,13 @@ values are [`workspace-api.schema.json`](workspace-api.schema.json). The Node
 implementation and Gateway routing are checked against both. Service ownership
 is described in the [Agent UI architecture](../../services/agent-ui/docs/architecture.md).
 
+The catalog declares the browser's account/session consumers separately from
+Node routes. External binding inventory, unbind and notice acknowledgment use
+Gateway's `/api/session/external-identities` routes under the
+[OIDC linking contract](../identity/oidc-linking.md). They are available to a
+validated ordinary member without Agent discovery or local-password capability;
+no corresponding Bridge routes or Agent CCT scope are introduced.
+
 ## Authority and identity
 
 The public prefix is `/api/app/workspace/v1`. Gateway authenticates each request,

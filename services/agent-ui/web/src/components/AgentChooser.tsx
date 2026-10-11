@@ -61,7 +61,7 @@ export function AgentChooser({
             <h1 id="agent-directory-heading">Your workspaces</h1>
           </div>
           <nav className="chooser-actions" aria-label="Workspace actions">
-            {onAccount ? <button className="icon-button" type="button" onClick={onAccount}
+            {onAccount ? <button className="icon-button" type="button" data-browser-account-trigger onClick={onAccount}
               title="Account and sessions" aria-label="Account and sessions"><UserRound size={17} aria-hidden="true" /></button> : null}
             <button
               className="icon-button"

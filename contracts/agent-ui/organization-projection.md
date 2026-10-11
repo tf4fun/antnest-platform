@@ -1,6 +1,6 @@
 # Verified Organization display metadata
 
-Gateway session contract revision 19 consumes Identity contract revision 15.
+Gateway session contract revision 20 consumes Identity contract revision 16.
 Node verifies Gateway workload identity and the signed CCT; display headers
 never supply subject, Organization or administrator authority.
 `organization_slug` and `organization_name` are required, non-whitespace strings

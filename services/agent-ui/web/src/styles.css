@@ -2826,6 +2826,12 @@ details[open] > summary > .disclosure-chevron {
   color: var(--danger);
 }
 
+.browser-workspace-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.browser-workspace-content { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
+.external-login-banner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.external-login-banner button { border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; background: var(--paper); color: var(--ink); cursor: pointer; }
+.external-login-banner button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.external-login-subject { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .browser-account-panel {
   width: min(680px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);

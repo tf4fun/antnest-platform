@@ -66,7 +66,7 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 19 and Identity revision 15 under the
+The browser consumes Gateway revision 20 and Identity revision 16 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
 Hydrated SSR content stays inert until a fresh Gateway session read succeeds.
 Only genuine input reports activity; background reads, SSE and reconnection do
@@ -74,6 +74,16 @@ not extend idle time. Account controls remain available without an Agent and
 for accounts with an external sign-in provider. Local password capability comes
 from Identity. Password replacement validates the new Cookies before rebuilding
 the private workspace, including for the same user and Agent.
+
+The validated application shell reads personal external bindings and notices
+independently of Agent discovery and local-password capability. The account
+panel displays cross-organization bindings, historical notices and exact
+subjects as plain text, with separate pagination for each stream. Acknowledging
+a notice sends only its ID; failed writes never replay automatically. Unbinding
+requires confirmation, with a separate explicit action if Identity reports the
+last available login method. A committed current-session revocation closes the
+private workspace without a follow-up read. See the
+[external identity contract](../../contracts/identity/oidc-linking.md).
 
 ## Configuration
 
@@ -197,6 +207,13 @@ builds the image, and `make e2e-workspace-browser`,
 `make e2e-browser-sessions-https` verifies password replacement, revocation,
 silent stream closure and short idle expiry across real Console and Workspace
 browser contexts.
+The external-identity browser suite also runs against the production Agent UI
+container in `test:bridge:docker`, with authenticated Controller/JWKS fixtures
+and an explicit Gateway browser API double. It verifies desktop/mobile
+pagination, exact notice acknowledgment, failure retention, plaintext subjects,
+lockout confirmation and current-session retirement. This owning-service gate
+does not substitute for real Identity transactions and two-browser HTTPS
+integration.
 
 ## Documentation
 
