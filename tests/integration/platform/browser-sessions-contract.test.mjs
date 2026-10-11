@@ -526,8 +526,8 @@ test("explicit activity returns deadlines and a bounded scheduling hint without 
 });
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
-  assert.equal(identity.revision, 15);
-  assert.equal(gateway.version, 19);
+  assert.equal(identity.revision, 16);
+  assert.equal(gateway.version, 20);
   assert.equal(
     gateway.browser_session_contract,
     "../identity/browser-sessions.md",
