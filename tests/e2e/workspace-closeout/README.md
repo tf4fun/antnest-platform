@@ -28,14 +28,34 @@ An in-flight Tool cancellation keeps unknown effects and
 profile checks physical process exit separately from ACP's immutable unknown Run
 facts. It does not cover automatic reuse or browser layout.
 
-Each state watch must retain successful Identity admission and SQL before the
-Gateway starts its ACP watch. Revocation evidence records the actual authority
-request Trace ID and observed remote-close window. A private feed may close the
-stream before a final Identity 401: the oracle accepts only the directly owned
-Gateway response-read failure paired with an interrupted ACP watch in that
-window. `revocation_verified` records whether the watch Trace contains the final
-Identity denial; the authority request remains separately linked. Raw errors
-and clock warnings still fail the strict check.
+Each state watch must prove a successful `workspace` Resolve decision before
+the Gateway starts its actual ACP watch. The initial decision and every later
+revalidation use the shared `rpc/cache/shared` contract: cache admission needs a
+valid snapshot and feed-proof budget; actual RPCs need their receiving Identity
+SERVER and SQL. Shared decisions bind the exact archived CLIENT, with the
+original request or refresh root and its cache trigger. Multiple shared waiters
+may reuse one actual SQL owner; multiple RPC creators cannot claim one CLIENT.
+The collector archives current, source and trigger traces and requires three
+consecutive identical complete snapshots before returning evidence.
+
+Revocation evidence records the actual authority request Trace ID and observed
+remote-close window. A private feed may close the stream before a final
+Identity 401: the oracle accepts only the directly owned Gateway response-read
+failure paired with an interrupted ACP watch in that window.
+`revocation_verified` requires a validated actual Identity denial; a cancelled
+pending check alone does not prove it. Raw errors and clock warnings throughout
+the collected traces still fail the strict check.
+
+The observer preserves the first closure's actual Trace ID, time and cause;
+cleanup cannot relabel it. A pending unavailable Resolve additionally needs
+that independent observation, a matching Gateway cancellation or private-feed
+closure, and its exact source state. Global aborts and invalid states fail the
+watch gate. Retained shared work may finish after the watch closes, but an
+actual-client link cannot point to a CLIENT created after the cancellation
+snapshot. A missing RPC CLIENT cannot distinguish caller cancellation from
+preflight unavailability, so that case remains unverified. Unknown receiver
+5xx and SQL errors also remain failures, including an Identity dependency 503
+that might have resulted from query cancellation.
 
 The observer also records the Gateway's actual HTTP `Date` and host request /
 response times. These bound the host-to-service clock offset, including the

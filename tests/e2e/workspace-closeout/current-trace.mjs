@@ -10,15 +10,45 @@ import {
   assertCaptureDisabled,
   tag,
   traceTopology,
-  databaseChildrenTopology,
 } from "../observability/trace-tree.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
+import {
+  collectResolveTraceEvidence,
+  resolveTraceSources,
+  resolveTraceDiagnostics,
+} from "../../support/gateway-resolution-evidence.mjs";
+import { inspectWatchResolutions } from "./watch-resolution.mjs";
+import { assertGatewayResolutionAttributes } from "../../support/gateway-resolution.mjs";
 
-export function inspectWorkspaceWatch(trace, expected, secrets) {
+export async function collectWorkspaceWatch(
+  base,
+  expected,
+  secrets,
+  options = {},
+) {
+  const [result] = await collectResolveTraceEvidence(
+    base,
+    [expected],
+    secrets,
+    {
+      ...options,
+      inspect: inspectWorkspaceWatch,
+    },
+  );
+  return result;
+}
+
+export function inspectWorkspaceWatch(trace, expected, secrets, options = {}) {
   assert.equal(trace?.traceID, expected.traceID);
+  assert(
+    !["aborted", "invalid-state"].includes(expected.closure?.kind),
+    "watch observation did not complete",
+  );
   const tree = traceTopology(trace);
   assertCaptureDisabled(trace);
   assertSecretFree(JSON.stringify(trace), secrets);
+  const sources = resolveTraceSources(trace, secrets, options);
+  for (const source of sources) assertGatewayResolutionAttributes(source);
   const one = (rows, label) => {
     assert.equal(rows.length, 1, `missing or duplicate ${label}`);
     return rows[0];
@@ -71,14 +101,6 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
     (s.startTime + s.duration) / 1000 < window.end + clockOffset.max;
   assert(inWindow(root), "watch did not finish in observed closure window");
   assert.equal(tag(root, "http.response.status_code"), 200);
-  const identities = trace.spans.filter(
-    (s) =>
-      tree.service(s) === "identity-service" &&
-      tag(s, "span.kind") === "server",
-  );
-  assert(identities.length > 0);
-  const denied = [],
-    successfulIdentityClients = [];
   function forwarded(server, peer) {
     const client = tree.parent(server);
     assert.equal(tree.service(client), "edge-gateway");
@@ -88,28 +110,6 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
     assert.equal(tag(client, "http.request.method"), "POST");
     return client;
   }
-  for (const s of identities) {
-    assert.equal(tag(s, "http.route"), "/rpc/identity/resolve-access-token");
-    assert.equal(tag(s, "http.request.method"), "POST");
-    assert.equal(tag(s, "rpc.method"), "resolve_access_token");
-    databaseChildrenTopology(trace, s);
-    const client = forwarded(s, "identity-service"),
-      status = tag(s, "http.response.status_code");
-    assert.equal(tag(client, "http.response.status_code"), status);
-    if (status === 200) successfulIdentityClients.push(client);
-    if (status !== 200) {
-      assert.equal(expected.revoked, true);
-      assert.equal(status, 401);
-      assert.equal(tag(s, "error.type"), "unauthenticated");
-      assert.equal(tag(client, "error.type"), "401");
-      assert(
-        inWindow(s) && inWindow(client),
-        "denial outside revocation window",
-      );
-      denied.push(s, client);
-    }
-  }
-  assert(denied.length <= 2, "duplicate unauthorized revalidation");
   const server = one(
     trace.spans.filter(
       (s) =>
@@ -127,17 +127,6 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
   assert.equal(tag(server, "http.response.status_code"), 200);
   const client = forwarded(server, "agent-acp-workspace");
   assert.equal(tag(client, "http.response.status_code"), 200);
-  assert(
-    Number.isFinite(client.startTime) &&
-      successfulIdentityClients.some(
-        (initial) =>
-          Number.isFinite(initial.startTime) &&
-          Number.isFinite(initial.duration) &&
-          initial.duration >= 0 &&
-          initial.startTime + initial.duration <= client.startTime,
-      ),
-    "successful Identity admission before upstream watch missing",
-  );
   // A private revocation feed may cancel the stream before another Resolve.
   // Its custom context cause is recorded by the HTTP transport as an
   // operation failure while reading the already admitted response body.
@@ -170,43 +159,46 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
       (s === root &&
         tag(s, "otel.status_description") === "handler_aborted" &&
         tag(s, "antnest.http.request_cancelled") === true));
+  const { allowedErrors, ...resolution } = inspectWatchResolutions(
+    trace,
+    root,
+    client,
+    expected,
+    options,
+    inWindow,
+    {
+      clockOffset,
+      localCancelled: hasError(root) && cancellation(root),
+      feedCancelled: revokedStreamRead,
+    },
+  );
   for (const s of trace.spans) {
     assert(tree.chain(s).includes(root));
     assert(!["agent-controller", "admin-console"].includes(tree.service(s)));
     if (!hasError(s)) continue;
     assert(
-      denied.includes(s) ||
+      allowedErrors.has(s) ||
         cancellation(s) ||
         (s === root &&
-          denied.length === 2 &&
+          resolution.revocation_verified &&
           tag(s, "error.type") === "operation_failed" &&
           tag(s, "otel.status_description") ===
             "Operation failed; unclassified error text was not exported"),
       "unrelated watch error",
     );
   }
-  const warnings = [
-    ...(trace.warnings ?? []),
-    ...trace.spans.flatMap((s) => s.warnings ?? []),
-  ];
-  return strictSessionEvidence(
-    {
-      trace_id: trace.traceID,
-      spans: trace.spans.length,
-      gateway_ancestry: true,
-      identity_checks: identities.length,
-      revocation_verified: denied.length === 2,
-      ...(expected.revoked
-        ? { revocation_trace_id: expected.revocationTraceID }
-        : {}),
-      stop_window_verified: true,
-      clock_offset_ms: clockOffset,
-      warning_count: warnings.length,
-      warnings: [...new Set(warnings)],
-      strict_trace: warnings.length ? "failed" : "passed",
-    },
-    trace,
-  );
+  return {
+    trace_id: trace.traceID,
+    spans: trace.spans.length,
+    gateway_ancestry: true,
+    ...resolution,
+    ...(expected.revoked
+      ? { revocation_trace_id: expected.revocationTraceID }
+      : {}),
+    stop_window_verified: true,
+    clock_offset_ms: clockOffset,
+    ...resolveTraceDiagnostics(trace, sources),
+  };
 }
 
 export function inspectCancelledTrace(trace, expected, secrets, requests) {

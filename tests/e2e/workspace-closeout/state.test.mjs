@@ -65,6 +65,12 @@ test("state probe captures the server Trace ID without inventing a parent and cl
   await watch.wait((state) => state.active_session_id === "s1", index);
   abort.abort();
   await until(() => disconnected, "aborted observer disconnect");
+  assert.equal(watch.closure.kind, "aborted");
+  assert.equal(watch.closure.traceID, watch.traceID);
+  assert(
+    watch.closure.observedAt >= startedAt &&
+      watch.closure.observedAt <= Date.now(),
+  );
 });
 
 test("state probe rejects malformed, foreign and cursor-bearing snapshots", async (t) => {
@@ -101,6 +107,14 @@ test("lost access closes observation and transport failure is never ready", asyn
   t.after(watch.close);
   await watch.wait((state) => !state.access_allowed);
   await watch.waitClosed();
+  assert.equal(watch.closure.kind, "access-denied");
+  const closure = watch.closure;
+  watch.close();
+  assert.equal(
+    watch.closure,
+    closure,
+    "cleanup must not relabel an observed peer closure",
+  );
   const rejected = await fixture(t, (_req, res) => {
     res.writeHead(401);
     res.end();
@@ -113,6 +127,33 @@ test("lost access closes observation and transport failure is never ready", asyn
   );
   assert.deepEqual(failed.states, []);
 });
+
+for (const local of [false, true])
+  test(`state probe preserves an independent ${local ? "local" : "transport"} closure witness`, async (t) => {
+    let response;
+    const client = await fixture(t, (_req, res) => {
+      response = res;
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "x-antnest-trace-id": "a".repeat(32),
+      });
+      res.write(`event: workspace_state\ndata: ${JSON.stringify(ready)}\n\n`);
+    });
+    const watch = observeState(client, "a1");
+    t.after(watch.close);
+    await watch.wait((state) => state.availability === "ready");
+    const startedAt = Date.now();
+    if (local) watch.close();
+    else response.end();
+    await watch.waitClosed();
+    assert.equal(watch.closure.kind, local ? "local-close" : "transport-end");
+    assert.equal(watch.closure.traceID, watch.traceID);
+    assert(
+      watch.closure.observedAt >= startedAt &&
+        watch.closure.observedAt <= Date.now(),
+    );
+    assert(Object.isFrozen(watch.closure));
+  });
 
 test("state probe refuses a success response without the actual server Trace ID", async (t) => {
   const client = await fixture(t, (_req, res) => {

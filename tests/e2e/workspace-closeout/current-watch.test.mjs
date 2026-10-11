@@ -1,84 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { databaseRequest, fields } from "../observability/trace-fixtures.mjs";
+import { fields } from "../observability/trace-fixtures.mjs";
 import { inspectWorkspaceWatch } from "./current-trace.mjs";
+import {
+  workspaceWatchFixture as fixture,
+  revokedWatchFixture as revoked,
+  feedClosedWatchFixture as feedClosed,
+} from "./watch-fixtures.mjs";
 
-function fixture() {
-  const traceID = "a".repeat(32);
-  const span = (spanID, processID, parent, tags) => ({
-    spanID,
-    processID,
-    traceID,
-    startTime: 1000000,
-    duration: 1000,
-    operationName: "fixture",
-    tags: fields(tags),
-    references: parent
-      ? [{ refType: "CHILD_OF", traceID, spanID: parent }]
-      : [],
-  });
-  const trace = {
-    traceID,
-    processes: Object.fromEntries(
-      ["edge-gateway", "identity-service", "agent-acp-service"].map((s) => [
-        s,
-        { serviceName: s },
-      ]),
-    ),
-    spans: [
-      span("root", "edge-gateway", null, {
-        "span.kind": "server",
-        "http.request.method": "GET",
-        "http.route": "/api/app/agents/{agent_id}/state/watch",
-        "http.response.status_code": 200,
-      }),
-      span("identity-client", "edge-gateway", "root", {
-        "span.kind": "client",
-        "http.request.method": "POST",
-        "http.response.status_code": 200,
-      }),
-      ...databaseRequest(
-        traceID,
-        "identity",
-        "identity-client",
-        "identity-service",
-        "/rpc/identity/resolve-access-token",
-        "POST",
-        "resolve_access_token",
-      ),
-      span("acp-client", "edge-gateway", "root", {
-        "span.kind": "client",
-        "http.request.method": "POST",
-        "http.response.status_code": 200,
-      }),
-      span("acp", "agent-acp-service", "acp-client", {
-        "span.kind": "server",
-        "http.request.method": "POST",
-        "http.route": "/rpc/agent-acp/watch-agent-execution-state",
-        "rpc.method": "watch_agent_execution_state",
-        "http.response.status_code": 200,
-      }),
-    ],
-  };
-  for (const s of trace.spans) s.startTime ??= 1000000;
-  trace.spans[0].duration = 4000;
-  trace.spans[4].startTime = 1002000;
-  trace.spans[5].startTime = 1002100;
-  trace.spans[1].operationName = "HTTP POST identity-service";
-  trace.spans[4].operationName = "HTTP POST agent-acp-workspace";
-  return {
-    trace,
-    expected: {
-      traceID,
-      stopWindow: { start: 1000, end: 3000 },
-      clock: {
-        requestStartedAt: 1000,
-        responseReceivedAt: 1000,
-        serverDate: new Date(1000).toUTCString(),
-      },
-    },
-  };
-}
 const inspect = (f) => inspectWorkspaceWatch(f.trace, f.expected, ["PRIVATE"]);
 test("current state watch requires actual Gateway, Identity SQL and ACP transport parents", () =>
   assert.equal(inspect(fixture()).gateway_ancestry, true));
@@ -129,12 +58,15 @@ for (const [label, mutate] of [
   [
     "wrong ACP route",
     (f) =>
-      (f.trace.spans.at(-1).tags.find((t) => t.key === "http.route").value =
-        "/old-route"),
+      (f.trace.spans
+        .find((s) => s.spanID === "acp")
+        .tags.find((t) => t.key === "http.route").value = "/old-route"),
   ],
   [
     "direct ACP parent",
-    (f) => (f.trace.spans.at(-1).references[0].spanID = "root"),
+    (f) =>
+      (f.trace.spans.find((s) => s.spanID === "acp").references[0].spanID =
+        "root"),
   ],
   ["missing Identity SQL", (f) => f.trace.spans.splice(3, 1)],
   ["missing parent", (f) => f.trace.spans.splice(4, 1)],
@@ -157,34 +89,6 @@ for (const [label, mutate] of [
     assert.throws(() => inspect(f));
   });
 
-function revoked() {
-  const f = fixture();
-  f.expected.revoked = true;
-  f.expected.revocationTraceID = "b".repeat(32);
-  const root = f.trace.spans[0];
-  root.tags.push(
-    ...fields({
-      error: true,
-      "error.type": "operation_failed",
-      "otel.status_description":
-        "Operation failed; unclassified error text was not exported",
-    }),
-  );
-  const parent = structuredClone(f.trace.spans[1]);
-  parent.spanID = "denied-client";
-  parent.tags.find((t) => t.key === "http.response.status_code").value = 401;
-  parent.tags.push(...fields({ error: true, "error.type": "401" }));
-  const server = structuredClone(f.trace.spans[2]);
-  server.spanID = "denied";
-  server.references[0].spanID = parent.spanID;
-  server.tags.find((t) => t.key === "http.response.status_code").value = 401;
-  server.tags.push({ key: "error.type", value: "unauthenticated" });
-  const sql = structuredClone(f.trace.spans[3]);
-  sql.spanID = "denied-sql";
-  sql.references[0].spanID = server.spanID;
-  f.trace.spans.push(parent, server, sql);
-  return f;
-}
 test("observed owner revocation requires a matching final unauthorized Identity request and retains strict failure", () => {
   const f = revoked(),
     before = structuredClone(f.trace);
@@ -216,38 +120,6 @@ for (const [label, mutate] of [
     mutate(f);
     assert.throws(() => inspect(f));
   });
-
-function feedClosed() {
-  const f = fixture();
-  f.expected.revoked = true;
-  f.expected.revocationTraceID = "b".repeat(32);
-  const client = f.trace.spans[4],
-    server = f.trace.spans[5];
-  client.tags.push(
-    ...fields({
-      error: true,
-      "error.type": "operation_failed",
-      "otel.status_description":
-        "Operation failed; unclassified error text was not exported",
-    }),
-  );
-  client.logs = [
-    {
-      fields: fields({
-        event: "antnest.error",
-        "antnest.error.stage": "read_response",
-      }),
-    },
-  ];
-  server.tags.push(
-    ...fields({
-      error: true,
-      "error.type": "stream_interrupted",
-      "antnest.outcome": "disconnected",
-    }),
-  );
-  return f;
-}
 
 test("revocation closes the admitted watch without requiring another Identity denial", () => {
   const f = feedClosed(),

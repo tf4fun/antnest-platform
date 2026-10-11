@@ -22,7 +22,7 @@ export async function until(read, label, signal, timeout = 15000) {
 
 export function observeState(client, agentID, signal) {
   const states = [];
-  let traceID, clock;
+  let traceID, clock, closure;
   let ended = false,
     failure;
   const source = new EventSource(
@@ -55,11 +55,13 @@ export function observeState(client, agentID, signal) {
       },
     },
   );
-  const close = () => {
+  const close = (kind) => {
+    closure ??= Object.freeze({ traceID, kind, observedAt: Date.now() });
     source.close();
     ended = true;
-    signal?.removeEventListener("abort", close);
+    signal?.removeEventListener("abort", aborted);
   };
+  const aborted = () => close("aborted");
   source.addEventListener("workspace_state", (event) => {
     try {
       assert(!event.lastEventId, "state watch must not add a replay cursor");
@@ -67,15 +69,15 @@ export function observeState(client, agentID, signal) {
       assertState(state, agentID);
       states.push(state);
       assert(states.length < 100, "state watch produced unbounded changes");
-      if (!state.access_allowed) close();
+      if (!state.access_allowed) close("access-denied");
     } catch (error) {
       failure = error;
-      close();
+      close("invalid-state");
     }
   });
-  source.addEventListener("error", () => close());
-  signal?.addEventListener("abort", close, { once: true });
-  if (signal?.aborted) close();
+  source.addEventListener("error", () => close("transport-end"));
+  signal?.addEventListener("abort", aborted, { once: true });
+  if (signal?.aborted) aborted();
   return {
     states,
     get traceID() {
@@ -84,7 +86,10 @@ export function observeState(client, agentID, signal) {
     get clock() {
       return clock;
     },
-    close,
+    get closure() {
+      return closure;
+    },
+    close: () => close("local-close"),
     assertOpen: () => {
       if (failure) throw failure;
       assert(!ended && states.length > 0, "state observer is not live");

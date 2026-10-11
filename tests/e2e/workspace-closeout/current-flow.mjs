@@ -34,7 +34,7 @@ import {
 } from "./current-evidence.mjs";
 import {
   inspectCancelledTrace,
-  inspectWorkspaceWatch,
+  collectWorkspaceWatch,
 } from "./current-trace.mjs";
 import { observeState, until } from "./state.mjs";
 import { groupAlive, processStat, readProcesses } from "./process.mjs";
@@ -562,6 +562,7 @@ export async function workspaceProtocol({
         states: w.states,
         stopWindow: w.stopWindow,
         clock: w.clock,
+        closure: w.closure,
         revoked: w.revoked,
         revocationTraceID: w.revocationTraceID,
       })),
@@ -608,15 +609,10 @@ export async function workspaceProtocol({
     const watchTraces = await collectLifecycleEvidence(
       watches,
       (observed) =>
-        collectTrace(
-          config.jaeger,
-          observed.traceID,
-          (trace) => {
-            saveFoundationTrace(config, trace);
-            return inspectWorkspaceWatch(trace, observed, traceSecrets);
-          },
+        collectWorkspaceWatch(config.jaeger, observed, traceSecrets, {
+          directory: `${config.evidence}/traces`,
           signal,
-        ),
+        }),
       (observed, error) => saveFoundationFailure(config, observed, error),
       signal,
     );

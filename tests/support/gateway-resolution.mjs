@@ -42,11 +42,7 @@ function end(span) {
   return span.startTime + span.duration;
 }
 
-function treeFor(trace, options = {}) {
-  const tree = traceTopology(trace);
-  if (options.captureRpcContent !== true) assertCaptureDisabled(trace);
-  // This is a topology oracle. Callers retain raw warnings/error classification
-  // and their strict trace gate; no warning or missing parent is removed here.
+export function assertGatewayResolutionAttributes(trace) {
   for (const span of trace.spans)
     for (const field of span.tags ?? [])
       if (field.key.startsWith(prefix))
@@ -54,6 +50,14 @@ function treeFor(trace, options = {}) {
           attributes.has(field.key.slice(prefix.length)),
           "unknown Resolve diagnostic attribute",
         );
+}
+
+function treeFor(trace, options = {}) {
+  const tree = traceTopology(trace);
+  if (options.captureRpcContent !== true) assertCaptureDisabled(trace);
+  // This is a topology oracle. Callers retain raw warnings/error classification
+  // and their strict trace gate; no warning or missing parent is removed here.
+  assertGatewayResolutionAttributes(trace);
   return tree;
 }
 
