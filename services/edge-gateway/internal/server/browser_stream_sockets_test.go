@@ -20,6 +20,14 @@ type observedBrowserConn struct {
 	probe *browserWriteProbe
 }
 
+func (conn *observedBrowserConn) SetWriteDeadline(deadline time.Time) error {
+	err := conn.Conn.SetWriteDeadline(deadline)
+	if err == nil {
+		conn.probe.recordDeadline(deadline)
+	}
+	return err
+}
+
 func (conn *observedBrowserConn) Write(data []byte) (int, error) {
 	conn.probe.active.Add(1)
 	defer func() { conn.probe.completed.Add(1); conn.probe.active.Add(-1) }()
@@ -48,6 +56,7 @@ func TestBrowserWebSocketRevocationInterruptsBothBlockedDirections(t *testing.T)
 		for _, direction := range []string{"upstream-to-browser", "browser-to-upstream"} {
 			t.Run(version+"/"+direction, func(t *testing.T) {
 				service := newStreamIdentity()
+				service.principal.ActivityIntervalMS = 500
 				start, release := make(chan struct{}), make(chan struct{})
 				var startOnce sync.Once
 				begin := func() { startOnce.Do(func() { close(start) }) }
@@ -76,8 +85,10 @@ func TestBrowserWebSocketRevocationInterruptsBothBlockedDirections(t *testing.T)
 				}))
 				defer upstream.Close()
 				h := newTestHandler(t, service, http.NotFoundHandler(), time.Now()).(*handler)
-				h.maximumSessionStale = 300 * time.Millisecond
-				h.requestTimeout = 2 * time.Second
+				h.maximumSessionStale = blockedBrowserSessionStale
+				// The ordinary write deadline must not make a broken cancellation
+				// path pass the shorter session-revocation deadline.
+				h.requestTimeout = 2 * blockedBrowserSessionStale
 				var err error
 				h.agentACPURL, err = parseServiceURL(upstream.URL)
 				if err != nil {
@@ -142,16 +153,18 @@ func TestBrowserWebSocketRevocationInterruptsBothBlockedDirections(t *testing.T)
 						_ = client.WriteMessage(websocket.BinaryMessage, []byte(strings.Repeat("x", 4<<20)))
 					}()
 				}
-				awaitBlockedBrowserWrite(t, probe)
+				awaitBlockedBrowserWrite(t, probe, handlerDone)
+				deadline := time.Now().Add(blockedBrowserSessionStale)
+				probe.requireCancellationBeforeWriteTimeout(t, deadline)
 				service.mu.Lock()
 				service.failure = &identity.RemoteError{Code: "unauthenticated"}
 				service.mu.Unlock()
 				select {
 				case <-handlerDone:
-				case <-time.After(400 * time.Millisecond):
+				case <-time.After(time.Until(deadline)):
 					t.Fatal("WebSocket session cancellation failed to close blocked sockets and join relays")
 				}
-				if browserProbe.active.Load() != 0 || upstreamProbe.active.Load() != 0 {
+				if time.Now().After(deadline) || browserProbe.active.Load() != 0 || upstreamProbe.active.Load() != 0 {
 					t.Fatal("WebSocket handler left a writer behind")
 				}
 			})

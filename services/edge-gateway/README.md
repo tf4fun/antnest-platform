@@ -195,6 +195,10 @@ node tests/e2e/edge-gateway/shutdown-docker.mjs
 
 Integration sources live in
 [`tests/integration/go/edge-gateway`](../../tests/integration/go/edge-gateway).
+Real TCP backpressure tests use a 500 ms revalidation interval and a 3 s
+staleness bound so race-detector scheduling can establish a blocked write before
+revocation. They still require cancellation and writer cleanup within that bound;
+the guard's exact timing boundaries use Go's virtual test clock.
 Root targets: `make test-go-unit`, `make test-go` and `make test-integration-go`
 include the Gateway;
 `make e2e-stage3` runs the real-stack
