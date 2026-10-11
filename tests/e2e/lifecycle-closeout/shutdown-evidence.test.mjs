@@ -8,12 +8,12 @@ import {
   assertIdleMaintenance,
 } from "./shutdown-evidence.mjs";
 import {
-  route,
   expected,
   traceFixture,
   cancelledTrace,
   dependencyCancellationFixture,
 } from "./shutdown-fixtures.mjs";
+import { shutdownResolutionFixture } from "./shutdown-resolution-fixtures.mjs";
 
 const project = "antnest-lifecycle-01234567";
 const before = [
@@ -150,7 +150,8 @@ for (const [name, mutate] of [
   [
     "abort before stop",
     (t) => {
-      t.spans[0].startTime = 100000;
+      t.spans[0].startTime =
+        expected.stopWindow.start * 1000 - t.spans[0].duration - 1;
     },
   ],
   [
@@ -187,16 +188,7 @@ test("shutdown trace requires the observed stop window", () => {
 });
 test("shutdown trace checks errors in intermediate client spans", () => {
   const trace = cancelledTrace();
-  const client = {
-    ...trace.spans[2],
-    spanID: "console-client",
-    references: [
-      { refType: "CHILD_OF", traceID: expected.traceID, spanID: "console" },
-    ],
-    tags: [{ key: "span.kind", value: "client" }],
-  };
-  trace.spans.push(client);
-  trace.spans[3].references[0].spanID = client.spanID;
+  const client = trace.spans.find((span) => span.spanID === "console-forward");
   assert.equal(
     inspectShutdownTrace(trace, expected, []).gateway_outcome,
     "cancelled_stream",
@@ -207,26 +199,11 @@ test("shutdown trace checks errors in intermediate client spans", () => {
 
 test("shutdown accepts only a Gateway HTTP client cancellation in the same stop window", () => {
   const trace = cancelledTrace();
-  const client = {
-    ...trace.spans[0],
-    spanID: "gateway-client",
-    operationName: "HTTP GET admin-console",
-    references: [
-      {
-        refType: "CHILD_OF",
-        traceID: expected.traceID,
-        spanID: trace.spans[0].spanID,
-      },
-    ],
-    tags: [
-      { key: "span.kind", value: "client" },
-      { key: "error", value: true },
-      { key: "error.type", value: "cancelled" },
-      { key: "http.request.method", value: "GET" },
-      { key: "http.response.status_code", value: 200 },
-    ],
-  };
-  trace.spans.push(client);
+  const client = trace.spans.find((span) => span.spanID === "forward");
+  client.tags.push(
+    { key: "error", value: true },
+    { key: "error.type", value: "cancelled" },
+  );
   assert.equal(
     inspectShutdownTrace(trace, expected, []).gateway_outcome,
     "cancelled_stream",
@@ -242,7 +219,7 @@ test("shutdown accepts only a Gateway HTTP client cancellation in the same stop 
     (s) => (s.processID = "unknown"),
   ]) {
     const changed = structuredClone(trace);
-    mutate(changed.spans.at(-1));
+    mutate(changed.spans.find((span) => span.spanID === "forward"));
     assert.throws(() => inspectShutdownTrace(changed, expected, []));
   }
 });
@@ -261,7 +238,7 @@ test("shutdown trace checks errors in additional internal spans", () => {
 for (const [name, mutate] of [
   ["missing Console", (t) => t.spans.splice(2, 1)],
   ["missing Identity", (t) => t.spans.splice(1, 1)],
-  ["missing Controller", (t) => t.spans.pop()],
+  ["missing Controller", (t) => t.spans.splice(3, 1)],
   [
     "detached Controller",
     (t) => {
@@ -416,19 +393,11 @@ test("watch topology validates all spans, preserves warnings and retains cancell
   }
 });
 test("execution state watch requires the ACP POST RPC and rejects a Controller substitute", () => {
-  const trace = traceFixture();
-  trace.spans.splice(2, 1);
-  trace.processes["agent-acp-service"] = { serviceName: "agent-acp-service" };
-  const span = trace.spans.at(-1);
-  span.processID = "agent-acp-service";
-  span.references[0].spanID = "edge";
-  span.tags.find((t) => t.key === "http.route").value =
-    "/rpc/agent-acp/watch-agent-execution-state";
-  span.tags.push(
-    { key: "http.request.method", value: "POST" },
-    { key: "rpc.method", value: "watch_agent_execution_state" },
-  );
-  const want = { ...expected, console: false, executionState: true };
+  const {
+    trace,
+    receiver: span,
+    expected: want,
+  } = shutdownResolutionFixture("rpc", true);
   assert.equal(inspectShutdownTrace(trace, want, []).gateway_ancestry, true);
   span.processID = "agent-controller";
   assert.throws(() => inspectShutdownTrace(trace, want, []));

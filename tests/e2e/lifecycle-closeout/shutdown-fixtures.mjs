@@ -1,51 +1,53 @@
-export const route = "/api/admin/{path...}";
-export const expected = {
-  traceID: "a".repeat(32),
-  route,
-  console: true,
-  controllerRoute: "/internal/agents/{agent_id}/events/watch",
-  stopWindow: { start: 1000, end: 3000 },
-};
-export function traceFixture() {
-  const span = (id, service, parent, extra = []) => ({
-    spanID: id,
-    traceID: expected.traceID,
-    processID: service,
-    startTime: 1000000,
-    duration: 10,
-    references: parent
-      ? [{ refType: "CHILD_OF", traceID: expected.traceID, spanID: parent }]
-      : [],
-    tags: [
-      { key: "span.kind", value: "server" },
-      { key: "http.response.status_code", value: 200 },
-      ...extra,
-    ],
-  });
-  return {
-    traceID: expected.traceID,
-    processes: Object.fromEntries(
-      [
-        "edge-gateway",
-        "identity-service",
-        "admin-console",
-        "agent-controller",
-      ].map((s) => [s, { serviceName: s }]),
-    ),
-    spans: [
-      span("edge", "edge-gateway", null, [
-        { key: "http.route", value: route },
-        { key: "http.request.method", value: "GET" },
-      ]),
-      span("identity", "identity-service", "edge"),
-      span("console", "admin-console", "edge"),
-      span("controller", "agent-controller", "console", [
-        { key: "http.route", value: expected.controllerRoute },
-      ]),
-    ],
-  };
-}
+import {
+  shutdownResolutionFixture,
+  eventRoute,
+} from "./shutdown-resolution-fixtures.mjs";
+import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 
+export const route = eventRoute;
+export const expected = shutdownResolutionFixture("rpc").expected;
+
+function legacyTrace(executionState = false) {
+  const f = shutdownResolutionFixture("rpc", executionState);
+  const ids = {
+    root: "edge",
+    "resolve-server": "identity",
+    "resolve-client": "identity-client",
+    sql: "identity-sql",
+    upstream: "forward",
+  };
+  const id = (value) => ids[value] ?? value;
+  f.trace.processes["edge-gateway"] = f.trace.processes.edge;
+  f.trace.processes["identity-service"] = f.trace.processes.identity;
+  for (const span of f.trace.spans) {
+    span.spanID = id(span.spanID);
+    for (const ref of span.references) ref.spanID = id(ref.spanID);
+    if (span.processID === "edge") span.processID = "edge-gateway";
+    if (span.processID === "identity") span.processID = "identity-service";
+    // Keep the old mutation tests' stable server tag positions.
+    const order = [
+      "span.kind",
+      "http.response.status_code",
+      "http.route",
+      "http.request.method",
+    ];
+    span.tags.sort(
+      (a, b) =>
+        (order.includes(a.key) ? order.indexOf(a.key) : 4) -
+        (order.includes(b.key) ? order.indexOf(b.key) : 4),
+    );
+  }
+  return f;
+}
+export function traceFixture() {
+  const f = legacyTrace();
+  const first = ["edge", "identity", "console", "controller"];
+  f.trace.spans = [
+    ...first.map((id) => f.trace.spans.find((span) => span.spanID === id)),
+    ...f.trace.spans.filter((span) => !first.includes(span.spanID)),
+  ];
+  return f.trace;
+}
 export function cancelledTrace() {
   const trace = traceFixture();
   trace.spans[0].tags.push(
@@ -57,83 +59,28 @@ export function cancelledTrace() {
 }
 
 export function dependencyCancellationFixture(executionState = false) {
-  const trace = traceFixture();
-  const server = (id, service, parent, route, method = "GET") => ({
-    spanID: id,
-    traceID: trace.traceID,
-    processID: service,
-    operationName: `HTTP ${method} ${route}`,
-    startTime: 1000000,
-    duration: 20,
-    references: parent
-      ? [{ refType: "CHILD_OF", traceID: trace.traceID, spanID: parent }]
-      : [],
-    tags: Object.entries({
-      "span.kind": "server",
-      "http.route": route,
-      "http.request.method": method,
-      "http.response.status_code": 200,
-    }).map(([key, value]) => ({ key, value })),
-  });
-  const client = (id, parent, peer, method = "GET") => ({
-    ...server(
-      id,
-      parent === "edge" ? "edge-gateway" : "admin-console",
-      parent,
-      `unused`,
-      method,
+  const f = legacyTrace(executionState);
+  const first = [
+    f.root,
+    f.trace.spans.find((span) => span.spanID === "identity"),
+    f.upstream,
+  ];
+  if (!executionState) first.push(f.console);
+  f.trace.spans = [
+    ...first,
+    ...f.trace.spans.filter(
+      (span) => !first.includes(span) && span !== f.receiver,
     ),
-    operationName: `HTTP ${method} ${peer}`,
-    tags: Object.entries({
-      "span.kind": "client",
-      "http.request.method": method,
-      "http.response.status_code": 200,
-      "error.type": "cancelled",
-      error: true,
-    }).map(([key, value]) => ({ key, value })),
-  });
+    f.receiver,
+  ];
+  setTag(f.upstream, "error", true);
+  setTag(f.upstream, "error.type", "cancelled");
   if (executionState) {
-    trace.processes["agent-acp-service"] = { serviceName: "agent-acp-service" };
-    trace.spans = [
-      trace.spans[0],
-      trace.spans[1],
-      client("forward", "edge", "agent-acp-workspace", "POST"),
-      server(
-        "acp",
-        "agent-acp-service",
-        "forward",
-        "/rpc/agent-acp/watch-agent-execution-state",
-        "POST",
-      ),
-    ];
-    trace.spans
-      .at(-1)
-      .tags.push(
-        { key: "rpc.method", value: "watch_agent_execution_state" },
-        { key: "error.type", value: "stream_interrupted" },
-        { key: "otel.status_code", value: "ERROR" },
-      );
+    setTag(f.receiver, "error.type", "stream_interrupted");
+    setTag(f.receiver, "otel.status_code", "ERROR");
   } else {
-    trace.spans = [
-      trace.spans[0],
-      trace.spans[1],
-      client("forward", "edge", "admin-console"),
-      server(
-        "console",
-        "admin-console",
-        "forward",
-        "/api/admin/agents/{agent_id}/events/watch",
-      ),
-      client("console-forward", "console", "agent-controller"),
-      server(
-        "controller",
-        "agent-controller",
-        "console-forward",
-        expected.controllerRoute,
-      ),
-    ];
-    trace.spans[3].tags.push({ key: "error.type", value: "cancelled" });
-    trace.spans[3].logs = [
+    setTag(f.console, "error.type", "cancelled");
+    f.console.logs = [
       {
         fields: [
           { key: "event", value: "antnest.error" },
@@ -141,14 +88,11 @@ export function dependencyCancellationFixture(executionState = false) {
         ],
       },
     ];
-    trace.spans[5].tags.push(
-      { key: "error.type", value: "canceled" },
-      { key: "otel.status_code", value: "ERROR" },
-      { key: "otel.status_description", value: "request_failed" },
-    );
+    setTag(f.consoleClient, "error", true);
+    setTag(f.consoleClient, "error.type", "cancelled");
+    setTag(f.receiver, "error.type", "canceled");
+    setTag(f.receiver, "otel.status_code", "ERROR");
+    setTag(f.receiver, "otel.status_description", "request_failed");
   }
-  return {
-    trace,
-    want: { ...expected, console: !executionState, executionState },
-  };
+  return { trace: f.trace, want: f.expected };
 }

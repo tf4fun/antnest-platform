@@ -168,8 +168,17 @@ observation time and delivered-event count in an immutable record. Test-owned
 close, global abort and invalid responses or events have separate causes;
 subsequent cleanup cannot relabel them as a remote transport end. A remote end
 also clears the reconnect timer that EventSource creates after its error callback.
-Resolve-aware shutdown Trace admission and collection remain pending in the #59
-consumer batch.
+The watch collector validates `console` event-watch and `workspace` state-watch
+Resolve admission before their actual forwarding CLIENT. Every successful
+revalidation proves its `rpc/cache/shared` source; linked sources and refresh
+triggers are archived and must converge over three complete raw snapshots.
+Pending shutdown cancellation has its own non-admission evidence, including the
+actual stop operation, the same cleanly exited Gateway container and remote
+closure. Source errors remain strict failures and cannot inherit the current
+watch's cancellation classification. See the
+[shutdown Trace rules](shutdown-migration-contract.md#trace-rules) for timing,
+concurrency and unavailable-result limits. The separate ACP request consumer and
+the #59 cross-service Docker/HTTPS integration are still pending.
 
 An HTTP stream cancelled by shutdown may end as `handler_aborted` only when the
 span also carries `antnest.http.request_cancelled=true`, keeps HTTP 200 and ends
