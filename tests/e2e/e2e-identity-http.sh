@@ -67,7 +67,7 @@ if [ "$ANTNEST_IDENTITY_SUITE" = core ]; then
     identity_fixture organization-display-seed.mjs \
       >"$temporary/organization-seed.json" 2>"$evidence/organization-seed.stderr"
     run_suite organization-display "$root/tests/e2e/identity-closeout/organization-display-client.mjs" \
-      "$gateway" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/organization-seed.json" "$temporary/canaries.json"
+      "$gateway" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/organization-seed.json" "$temporary/canaries.json" "$jaeger"
   else
     run_suite local-scim "$root/tests/e2e/identity-closeout/client.mjs" "$gateway" "$jaeger"
     run_suite oidc "$root/tests/e2e/identity-closeout/oidc-client.mjs" "$gateway" "$jaeger" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/canaries.json"

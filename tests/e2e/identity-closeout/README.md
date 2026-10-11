@@ -118,14 +118,48 @@ restores those columns on exit. Reload and re-bootstrap must observe the change
 without altering principal IDs/roles, Agent selection or an unsaved draft. The
 other Organization remains unaffected. This fixture is not a product rename API.
 
+The cache admission reads the actual Gateway container settings and requires
+the default 10-second Resolve TTL with RPC content capture disabled. Six fresh
+login tokens independently warm session, bootstrap and SSR, each in continuous
+and quiet-expiry modes. Bootstrap and SSR otherwise share the same workspace
+profile with no Agent selection. Two early cache hits precede the rename;
+continuous passive GETs span the TTL, while the quiet scopes are next read only
+after the observed commit plus TTL. Half-TTL refresh may expose the new labels
+earlier. The report separates read scheduling delay from response latency and
+does not reject a request admitted before expiry solely for completing later.
+
+This passive interval precedes browser draft input and Refresh clicks, whose
+activity requests can evict a session cache. Actual Gateway/Node admission,
+Resolve CLIENT/SERVER/SQL and separately searched refresh/trigger traces are
+archived with complete source closures. Healthy empty feed pages require the
+real `session_revocations` SELECT with `pgx.rows_affected=0`; observed poll gaps
+must stay within 2.5 seconds, cover the interval and accompany advancing cache
+proof observations. Hits cannot reset the original snapshot age. These checks
+retain strict Trace warnings and missing-parent failures. This HTTP composition
+does not substitute for #59's separate HTTPS outage and load admission.
+
 `ANTNEST_E2E_AGENT_UI_IMAGE` selects an isolated UI candidate alongside the
 Identity, Gateway and RC overrides above. Playwright comes from the locked Agent
 UI dependencies and requires its Chromium installation. All contexts and child
 processes are closed before the parent removes its Docker resources. Browser
-JSON/HTML and service logs are scanned for synthetic access credentials; only
-check names and counts become lasting evidence. Session cookies and IdP canaries
+JSON/HTML and service logs are scanned for synthetic access credentials. Private
+evidence retains timing, synthetic display values and raw Trace closures, with
+no session cookies or RPC content. Session cookies and IdP canaries
 remain in memory or the parent's private temporary directory and are removed on
 teardown.
+
+Unexpected browser 5xx responses retain their actual response Trace IDs. Before
+teardown, the runner attempts to archive the last four failed request closures
+as diagnostics while retaining the original business failure. A failed Refresh
+response body is scanned for fixture secrets before private retention. The
+optional private diagnostic log also includes Agent UI, Controller and ACP;
+these diagnostic records never establish admission or replace a passing run.
+
+The shared Stage 3a overlay also accepts `ANTNEST_E2E_CONSOLE_IMAGE`,
+`ANTNEST_E2E_CONTROLLER_IMAGE`, `ANTNEST_E2E_ACP_IMAGE` and
+`ANTNEST_E2E_EGRESS_IMAGE`. Local admission must verify build inputs or build
+current candidates for every changed image; an old `:local` tag is not evidence
+for the current checkout. Candidate overrides leave baseline tags intact.
 
 1. Local login establishes HttpOnly session cookies without returning the token
    in JSON. Member access, rejected CSRF logout, successful logout and replay of
