@@ -73,3 +73,15 @@ jobs:
       # skip and only the dependency-free component tests run.
       - name: Integration tests without external dependencies
         run: node tests/integration/go/run.mjs "${{ inputs.service }}" -- -race
+
+      - name: Upload Go integration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-integration-${{ inputs.service }}
+          path: |
+            artifacts/verification/go-integration/*.log
+            artifacts/verification/go-integration/*.result.json
+            !artifacts/verification/go-integration/*.private.*
+          if-no-files-found: ignore
+          retention-days: 14
