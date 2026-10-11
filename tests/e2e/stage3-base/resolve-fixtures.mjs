@@ -9,7 +9,7 @@ import {
 
 // Keep the existing owning business fixtures and attach their real Console
 // boundary to an independent Resolve provenance fixture.
-function attachAdmission(business, source, clientID) {
+export function attachAdmission(business, source, clientID) {
   const f =
     source === "shared"
       ? sharedResolutionFixture(true)

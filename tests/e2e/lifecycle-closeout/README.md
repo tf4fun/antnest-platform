@@ -91,10 +91,13 @@ workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
 errors; a restart exception requires the exact reviewed total.
 
 Controller-root Runtime observation and Identity offboarding keep their own
-admission paths. The opt-in killed-process crash collector still uses its
-existing recovery scope; its Resolve-source integration is pending. Keeping
-that path does not declare raw missing-parent evidence fully admitted. Shutdown
-watches, policy writes and ACP requests also remain separate consumer batches.
+admission paths. The opt-in killed-process crash collector validates the original
+Console admission through its existing verified recovery projection, preserving
+the complete raw current/source/trigger closure and its failed strict verdict.
+External sources receive no crash exception. See the
+[crash Trace rules](crash-contract.md#trace-rules). Shutdown watches have their
+own cancellation gate; policy writes and ACP requests remain pending consumer
+batches. Cross-service #59 Docker/HTTPS admission remains pending.
 
 ## Foundation
 

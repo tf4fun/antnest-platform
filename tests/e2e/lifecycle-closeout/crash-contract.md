@@ -30,4 +30,26 @@ reported as strictly passing. Gaps on the successful path, unrelated missing
 parents, unexpected errors and wrong retry identities are failures. Clock
 findings are diagnostics. The diagnostic target can exit 2.
 
+Both recovery phases retain the original public Rebuild's `console` admission.
+Its sole raw `gateway.identity.resolve` decision must survive the verified
+recovery projection and complete before the actual Gateway-to-Console CLIENT.
+The `rpc/cache/shared` source obeys the shared cache budget and exact successful
+Identity CLIENT/SERVER/SQL receipt rules. A hit does not require a new Identity
+SERVER, and a shared waiter must archive and validate its actual source and any
+refresh trigger. Unknown Resolve fields in excluded spans still fail.
+
+The crash collector applies the existing projection only to this current raw
+trace. External source and trigger traces require complete parent chains; they
+cannot inherit the killed Runtime process's missing-parent or error exception.
+The canonical `{trace_id}.json` files always contain raw snapshots, including
+excluded spans. Collection converges over three identical complete raw closures,
+so late diagnostics reset stability even when span IDs are unchanged. Reports
+retain the current crash diagnostics separately from full-closure error and
+warning counts and remain strictly failed. Cancelling the actual Foundation run
+joins the active Jaeger request and response body.
+
+These local consumer gates do not replace the opt-in Docker crash scenario or
+the separate #59 HTTPS outage/load integration. Ordinary collectors still reject
+all missing parents, including the unrelated #247 diagnostic.
+
 Teardown removes only the disposable project's resources.

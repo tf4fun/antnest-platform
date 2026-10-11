@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { collectLifecycleAdmissionTrace } from "../stage3-base/resolve-trace.mjs";
-import { inspectCrashTrace } from "./crash-trace.mjs";
+import { collectCrashAdmissionTrace } from "./crash-resolution.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import {
   inspectReplayObservation,
@@ -10,6 +10,11 @@ import {
 } from "./replay-history.mjs";
 import { lines } from "./docker.mjs";
 import { inspectReadonlyCreateReplay } from "./replay-admission.mjs";
+
+export {
+  collectCrashAdmissionTrace,
+  inspectCrashAdmissionTrace,
+} from "./crash-resolution.mjs";
 
 export async function collectReadonlyCreateReplay(
   config,
@@ -115,15 +120,11 @@ export async function collectFoundationLifecycle(
   // A killed Runtime process has a separately verified recovery projection;
   // its missing-parent contract is not waived by normal admission collection.
   if (operation.crashRecovery)
-    return collectTrace(
-      config.jaeger,
-      operation.traceID,
-      (trace) => {
-        saveFoundationTrace(config, trace);
-        return inspectCrashTrace(trace, expected, secrets);
-      },
+    return collectCrashAdmissionTrace(config.jaeger, expected, secrets, {
+      ...options,
+      directory: `${config.evidence}/traces`,
       signal,
-    );
+    });
   return collectLifecycleAdmissionTrace(config.jaeger, expected, secrets, {
     ...options,
     directory: `${config.evidence}/traces`,
