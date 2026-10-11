@@ -3,10 +3,7 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import {
-  collectManagedTrace,
-  inspectManagedTrace,
-} from "../managed-mcp/request-trace.mjs";
+import { inspectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import {
   inspectBarrierTrace,
@@ -35,6 +32,7 @@ import {
 import {
   inspectCancelledTrace,
   collectWorkspaceWatch,
+  collectWorkspaceRequestTrace,
 } from "./current-trace.mjs";
 import { observeState, until } from "./state.mjs";
 import { groupAlive, processStat, readProcesses } from "./process.mjs";
@@ -571,32 +569,34 @@ export async function workspaceProtocol({
     const requestTraces = await collectLifecycleEvidence(
       requests,
       (expected) =>
-        collectManagedTrace(
+        collectWorkspaceRequestTrace(
           config.jaeger,
           expected,
           traceSecrets,
           expected.phase ? calls.filter((c) => c.phase === expected.phase) : [],
-          (trace) => {
-            expected.traceID = trace.traceID;
-            saveFoundationTrace(config, trace);
+          {
+            directory: `${config.evidence}/traces`,
+            signal,
+            onSelected: (traceID) => {
+              expected.traceID = traceID;
+            },
+            inspect: (trace, expected, secrets, modelCalls) => {
+              const inspect =
+                expected.kind === "cancelled"
+                  ? inspectCancelledTrace
+                  : expected.rejection === "runtime_barrier_required"
+                    ? inspectBarrierTrace
+                    : expected.rejection
+                      ? inspectManagedTrace
+                      : inspectCommandTrace;
+              const evidence = inspect(trace, expected, secrets, modelCalls);
+              if (expected.runId) {
+                assert.equal(evidence.run_id, expected.runId);
+                assertRuntimeBinding(trace, expected.run, expected.runtime);
+              }
+              return strictSessionEvidence(evidence, trace);
+            },
           },
-          (trace, expected, secrets, modelCalls) => {
-            const inspect =
-              expected.kind === "cancelled"
-                ? inspectCancelledTrace
-                : expected.rejection === "runtime_barrier_required"
-                  ? inspectBarrierTrace
-                  : expected.rejection
-                    ? inspectManagedTrace
-                    : inspectCommandTrace;
-            const evidence = inspect(trace, expected, secrets, modelCalls);
-            if (expected.runId) {
-              assert.equal(evidence.run_id, expected.runId);
-              assertRuntimeBinding(trace, expected.run, expected.runtime);
-            }
-            return strictSessionEvidence(evidence, trace);
-          },
-          signal,
         ),
       (expected, error) =>
         saveFoundationFailure(

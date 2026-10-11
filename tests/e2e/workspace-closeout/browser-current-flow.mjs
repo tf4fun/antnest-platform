@@ -8,15 +8,12 @@ import {
 import { runMigratedBrowser } from "./browser-current-ui.mjs";
 import { assertWorkspaceBytes } from "./browser-control.mjs";
 import { runtimeBinding } from "./current-evidence.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+import { collectWorkspaceRequestTrace } from "./request-trace.mjs";
 import { inspectBrowserTrace } from "./browser-trace.mjs";
 import { assertRuntimeBinding } from "../acp-restart/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { collectLifecycleEvidence } from "../lifecycle-closeout/foundation-evidence.mjs";
-import {
-  saveFoundationTrace,
-  saveFoundationFailure,
-} from "../lifecycle-closeout/foundation-trace.mjs";
+import { saveFoundationFailure } from "../lifecycle-closeout/foundation-trace.mjs";
 import { flushTraceProducers } from "../lifecycle-closeout/network-support.mjs";
 import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 
@@ -136,29 +133,31 @@ export async function runBrowserProfile({
   const traces = await collectLifecycleEvidence(
     browser.requests,
     (expected) =>
-      collectManagedTrace(
+      collectWorkspaceRequestTrace(
         config.jaeger,
         expected,
         traceSecrets,
         expected.phase ? calls.filter((c) => c.phase === expected.phase) : [],
-        (trace) => {
-          expected.traceID = trace.traceID;
-          saveFoundationTrace(config, trace);
+        {
+          directory: `${config.evidence}/traces`,
+          signal,
+          onSelected: (traceID) => {
+            expected.traceID = traceID;
+          },
+          inspect: (trace, expected, secrets, modelCalls) => {
+            const result = inspectBrowserTrace(
+              trace,
+              expected,
+              secrets,
+              modelCalls,
+            );
+            if (expected.run) {
+              assert.equal(result.run_id, expected.runId);
+              assertRuntimeBinding(trace, expected.run, runtime);
+            }
+            return strictSessionEvidence(result, trace);
+          },
         },
-        (trace, expected, secrets, modelCalls) => {
-          const result = inspectBrowserTrace(
-            trace,
-            expected,
-            secrets,
-            modelCalls,
-          );
-          if (expected.run) {
-            assert.equal(result.run_id, expected.runId);
-            assertRuntimeBinding(trace, expected.run, runtime);
-          }
-          return strictSessionEvidence(result, trace);
-        },
-        signal,
       ),
     (expected, error) =>
       saveFoundationFailure(

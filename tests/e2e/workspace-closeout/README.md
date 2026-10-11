@@ -28,6 +28,16 @@ An in-flight Tool cancellation keeps unknown effects and
 profile checks physical process exit separately from ACP's immutable unknown Run
 facts. It does not cover automatic reuse or browser layout.
 
+Each direct ACP request also proves its own Resolve admission before the actual
+Gateway forwarding span. Both WebSocket messages and direct HTTP ACP requests
+use the `acp` profile. WebSocket evidence selects the message using its actual
+request ID and connection link; HTTP evidence uses the response Trace ID. The
+selected message ID remains in failure reports even when source admission
+fails. Complete Resolve sources are collected before awaiting the original
+command, replay, barrier, cancellation or browser no-Tool inspector. Those
+execution, persistence and Runtime-binding checks remain independent of cache
+admission, and source diagnostics cannot clear their strict failures.
+
 Each state watch must prove a successful `workspace` Resolve decision before
 the Gateway starts its actual ACP watch. The initial decision and every later
 revalidation use the shared `rpc/cache/shared` contract: cache admission needs a
@@ -89,6 +99,21 @@ external model through a deterministic OpenAI-compatible peer. It covers:
 Two real browser connections observe the same Session. Its activity time must
 change after a new prompt, both pages must display the received title and time,
 and a fresh list/load after reload must preserve those values.
+
+The HTTP Bridge uses the `workspace` Resolve profile and must retain the actual
+Gateway → Agent UI → ACP prompt → Run ancestry. Each model-fixture request binds
+its exact Provider CLIENT and `model.complete` parent inside that Run, which must
+retain successful terminal SQL. Current, shared-source and refresh-trigger
+traces are archived in `traces/` and must converge across three full snapshots.
+
+Before Stop, the browser records the member's actual Bridge view and its unique
+ACP-accepted Run. Only the declared held-model cancellation phase may classify
+the single observed Provider disconnect: it requires that exact Run to finish
+cancelled and quiescent without Tool effects, with successful terminal SQL. The
+model error must point back to the actual HTTP CLIENT failure. Other Gateway,
+Bridge, ACP, SQL or Tool errors still fail business validation. Expected
+cancellation retains raw errors and strict failure; every trace must have an
+explicit strict verdict, and unknown source warnings still fail CI review.
 
 ```sh
 node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs

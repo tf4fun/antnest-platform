@@ -7,48 +7,8 @@ import {
 } from "./chat-trace.mjs";
 import { unreviewedWarnings } from "../../support/strict-findings.mjs";
 import { verdict } from "../../support/ci-shard.mjs";
+import { chatTraceFixture as fixture } from "./chat-fixtures.mjs";
 
-function fixture() {
-  const trace = { traceID: "chat", spans: [], processes: {} };
-  function add(id, parent, service, name, tags) {
-    trace.processes[service] = { serviceName: service };
-    trace.spans.push({
-      traceID: "chat",
-      spanID: id,
-      processID: service,
-      operationName: name,
-      references: parent
-        ? [{ refType: "CHILD_OF", traceID: "chat", spanID: parent }]
-        : [],
-      tags: Object.entries(tags ?? {}).map(([key, value]) => ({ key, value })),
-    });
-  }
-  add("gateway", null, "edge-gateway", "acp session/prompt", {
-    "rpc.method": "session/prompt",
-    "span.kind": "server",
-  });
-  add("forward", "gateway", "edge-gateway", "acp session/prompt", {
-    "span.kind": "producer",
-    "antnest.operation.phase": "forward",
-  });
-  add("prompt", "forward", "agent-acp-service", "acp session/prompt", {
-    "rpc.method": "session/prompt",
-    "span.kind": "server",
-    "antnest.session.id": "session",
-  });
-  add("run", "prompt", "agent-acp-service", "agent.run");
-  add("model", "run", "agent-acp-service", "HTTP POST model", {
-    "span.kind": "client",
-  });
-  add("mcp", "run", "agent-acp-service", "HTTP POST antnest-runtime", {
-    "span.kind": "client",
-  });
-  add("runtime", "mcp", "antnest-runtime", "tools/call", {
-    "span.kind": "server",
-    "rpc.method": "tools/call",
-  });
-  return trace;
-}
 const expected = {
   sessionId: "session",
   requireTools: true,
@@ -133,9 +93,10 @@ test("strict-only trace findings exit 2 so the reviewed gate decides", () => {
     strict_trace: "failed",
     exitCode: 2,
   });
-  assert.deepEqual(
-    strictTraceOutcome([{ phase: "cancel", expected_cancellation: true }]),
-    { strict_trace: "passed", exitCode: 0 },
+  assert.throws(
+    () =>
+      strictTraceOutcome([{ phase: "cancel", expected_cancellation: true }]),
+    /strict verdict missing/u,
   );
   const report = {
     status: "browser_passed",

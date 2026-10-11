@@ -20,6 +20,11 @@ import {
 import { inspectWatchResolutions } from "./watch-resolution.mjs";
 import { assertGatewayResolutionAttributes } from "../../support/gateway-resolution.mjs";
 
+export {
+  inspectWorkspaceRequestResolution,
+  collectWorkspaceRequestTrace,
+} from "./request-trace.mjs";
+
 export async function collectWorkspaceWatch(
   base,
   expected,

@@ -2,7 +2,6 @@ import { durablePath } from "../../support/storage.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   configuration,
   dockerClient,
@@ -15,14 +14,9 @@ import { setup } from "./c4-setup.mjs";
 import { runBrowser } from "./c4-browser.mjs";
 import { assertWorkspaceBytes } from "./browser-control.mjs";
 import {
-  inspectChatTrace,
-  inspectChatTraceTopology,
+  collectWorkspaceChatTrace,
   strictTraceOutcome,
 } from "./chat-trace.mjs";
-import {
-  assertCaptureDisabled,
-  traceTopology,
-} from "../observability/trace-tree.mjs";
 
 process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));
 const abort = new AbortController();
@@ -129,48 +123,30 @@ try {
     report.workspace_bytes = "exact, single write retained across rebuild";
   };
   await runBrowser(config, fixture, abort.signal, output, report, checkpoint);
-  await delay(6000, undefined, { signal: abort.signal });
   for (const id of new Set(
     report.model.requests.map((request) => request.trace_id),
   )) {
     const requests = report.model.requests.filter(
       (request) => request.trace_id === id,
     );
-    const response = await fetch(`${config.jaeger}/api/traces/${id}`, {
-      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
-    });
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.errors?.length ?? 0, 0);
-    assert.equal(body.data?.length, 1);
-    const trace = body.data[0];
-    assert.equal(trace.traceID, id);
-    assertCaptureDisabled(trace);
-    assert(!JSON.stringify(trace).includes("stage3-model-secret"));
-    await writeFile(`${output}/trace-${id}.json`, JSON.stringify(trace));
-    if (requests.some((request) => request.disconnected)) {
-      traceTopology(trace);
-      report.traces.push({
-        phase: requests[0].phase,
-        trace_id: id,
-        expected_cancellation: true,
-      });
-      continue;
-    }
     const expected = {
+      traceID: id,
+      phase: requests[0].phase,
+      agentId: fixture.agentID,
       sessionId: report.sessions[requests[0].phase],
       bridge: true,
-      requireTools: requests.some((request) => request.stage === "tool"),
-      secrets: ["stage3-model-secret", "c4-member-password"],
+      requests,
+      ...(requests[0].phase === "c4-browser-hold-cancel"
+        ? { runId: report.cancelled_run?.runId }
+        : {}),
     };
-    const checked = inspectChatTraceTopology(trace, expected);
-    let strict = "passed";
-    try {
-      inspectChatTrace(trace, expected);
-    } catch {
-      strict = "failed";
-    }
-    report.traces.push({ phase: requests[0].phase, ...checked, strict });
+    const checked = await collectWorkspaceChatTrace(
+      config.jaeger,
+      expected,
+      ["stage3-model-secret", "c4-member-password"],
+      { directory: `${output}/traces`, signal: abort.signal },
+    );
+    report.traces.push({ phase: requests[0].phase, ...checked });
   }
   report.status = "browser_passed";
   const outcome = strictTraceOutcome(report.traces);
