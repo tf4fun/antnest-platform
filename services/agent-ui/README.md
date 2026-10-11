@@ -207,6 +207,9 @@ builds the image, and `make e2e-workspace-browser`,
 `make e2e-browser-sessions-https` verifies password replacement, revocation,
 silent stream closure and short idle expiry across real Console and Workspace
 browser contexts.
+It also verifies real OIDC binding notices, explicit unbinding/restoration and
+paired SCIM users without passwords or Agents. Removing the active binding
+retires both browsers and quiet SSE/WSS without cancelling an accepted Run.
 The external-identity browser suite also runs against the production Agent UI
 container in `test:bridge:docker`, with authenticated Controller/JWKS fixtures
 and an explicit Gateway browser API double. It verifies desktop/mobile

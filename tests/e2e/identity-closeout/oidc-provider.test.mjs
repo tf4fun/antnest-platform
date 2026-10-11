@@ -20,13 +20,23 @@ test("IdP records exact protocol traceparents without credentials or query strin
   assert(!JSON.stringify(records).includes("private-canary"));
 });
 
-async function setup(t, prefix = "", userInfo = false) {
+async function setup(
+  t,
+  prefix = "",
+  userInfo = false,
+  additionalAccounts = {},
+) {
   const server = createServer();
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const issuer = `http://127.0.0.1:${server.address().port}${prefix}`;
   const callback = "http://127.0.0.1:8090/protocol/oidc/callback";
-  const provider = createOIDCProvider({ issuer, callback, userInfo });
+  const provider = createOIDCProvider({
+    issuer,
+    callback,
+    userInfo,
+    additionalAccounts,
+  });
   server.on("request", provider.handle);
   t.after(
     () =>
@@ -77,6 +87,24 @@ async function setup(t, prefix = "", userInfo = false) {
   }
   return { issuer, callback, provider, authorize, exchange };
 }
+
+test("explicit integration accounts preserve opaque subjects and omitted email claims", async (t) => {
+  const subject = " <b>opaque subject 中文</b> ";
+  const f = await setup(t, "/linking", false, { opaque: { sub: subject } });
+  const authorized = await f.authorize({}, "opaque");
+  assert.equal(authorized.status, 302);
+  const code = new URL(authorized.headers.get("location")).searchParams.get(
+    "code",
+  );
+  const response = await f.exchange(code);
+  assert.equal(response.status, 200);
+  const token = (await response.json()).id_token;
+  const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url"));
+  assert.equal(claims.sub, subject);
+  assert.equal(Object.hasOwn(claims, "email"), false);
+  assert.equal(claims.iss, f.issuer);
+  assert.equal(claims.nonce, "nonce-canary");
+});
 
 test("IdP signs verifiable nonce-bound tokens and consumes each code once", async (t) => {
   const f = await setup(t);

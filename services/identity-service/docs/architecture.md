@@ -162,8 +162,10 @@ Inventory reads do not touch session activity or acknowledge notices. Binding
 and pending-notice pages have independent exclusive ID cursors; organization
 responses omit private notices. Acknowledgment validates every requested owned
 notice ID before updating any row. An old acknowledgment cannot clear a later
-restoration notice. Gateway and browser consumers remain separate batches
+restoration notice. Gateway and browser consumers are delivered in separate batches
 in the [shared delivery contract](../../../contracts/identity/oidc-linking.md).
+The real HTTPS integration exercises their public routes and both browser
+applications, including a held Run that survives binding removal.
 
 Paired SCIM token issuance locks the same-organization Provider before actor
 parents and SID, and revalidates the original signed Caller after audit writes.

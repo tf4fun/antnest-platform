@@ -25,9 +25,10 @@ private revocation feed must be available. The three new self routes preserve
 cookies on success and failure; after unbinding the current session, the next
 request returns 401. Stream retirement uses the existing private feed and live
 session checks. Reading bindings or notices and acknowledging specific notices
-does not extend the idle deadline. Console and Agent UI linking consumers and
-the real Identity HTTPS linking workflow remain separate #61 batches; admit
-that integration before releasing the coordinated change. Identity policy defaults to a
+does not extend the idle deadline. `make e2e-browser-sessions-https` verifies the
+coordinated Identity, Gateway, Console and Agent UI linking workflow through
+the reference proxy, including session retirement without Agent offboarding.
+Identity policy defaults to a
 30-minute idle deadline and a 12-hour absolute deadline; ordinary traffic does
 not renew either. See the [session lifecycle contract](../../../contracts/identity/browser-sessions.md).
 

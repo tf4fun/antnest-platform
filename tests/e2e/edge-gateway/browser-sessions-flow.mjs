@@ -15,14 +15,14 @@ const passwordPath = "/api/session/password";
 const revokePath = "/api/session/sessions/revoke";
 const activityPath = "/api/session/activity";
 
-async function bounded(operation) {
+async function bounded(operation, label = "browser wire inspection") {
   let timer;
   try {
     return await Promise.race([
       operation,
       new Promise((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error("browser wire inspection deadline exceeded")),
+          () => reject(new Error(`${label} deadline exceeded`)),
           10_000,
         );
       }),
@@ -124,7 +124,7 @@ function wireAudit(context, inspectActivity) {
   };
 }
 
-async function browserClient(context, gateway) {
+export async function browserClient(context, gateway) {
   const client = new GatewayClient(gateway);
   client.cookies = new Map(
     (await context.cookies(gateway)).map(({ name, value }) => [name, value]),
@@ -143,34 +143,56 @@ async function readSession(client, status = 200) {
   return result;
 }
 
-async function login(context, gateway, credentials, path) {
+export async function login(context, gateway, credentials, path) {
   // Retire the previous document before sharing its Cookie jar with a fresh login.
   for (const page of context.pages()) await page.close();
   const page = await context.newPage();
   page.setDefaultTimeout(30_000);
-  await page.goto(new URL(path, gateway).href);
+  // All password-login fixtures here are administrators. Authenticate on the
+  // Console first so its document remains alive while we inspect the real
+  // response, then open the requested Workspace after that inspection.
+  await page.goto(new URL("/", gateway).href);
   for (const [name, value] of Object.entries(credentials))
     await page.locator(`[name="${name}"]`).fill(value);
-  const [response] = await Promise.all([
-    page.waitForResponse(
-      (value) =>
-        new URL(value.url()).pathname === "/api/session/login" &&
-        value.request().method() === "POST",
-    ),
+  const [{ metadata, hsts, cookieHeaders }] = await Promise.all([
+    page
+      .waitForResponse(
+        (value) =>
+          new URL(value.url()).pathname === "/api/session/login" &&
+          value.request().method() === "POST",
+      )
+      .then((response) =>
+        bounded(
+          (async () => {
+            assert.equal(response.status(), 200, "real browser login failed");
+            // Response reads have their own deadline; page action timeouts do
+            // not cover Chromium's response-body lifecycle.
+            const metadata = await response.json();
+            return {
+              metadata,
+              hsts: await response.headerValue("strict-transport-security"),
+              cookieHeaders: await response.headerValues("set-cookie"),
+            };
+          })(),
+          "browser login response capture",
+        ),
+      ),
     page.getByRole("button", { name: "Sign in", exact: true }).click(),
   ]);
-  assert.equal(response.status(), 200, "real browser login failed");
-  await response.finished();
-  const metadata = await response.json();
   await page.locator('[name="password"]').waitFor({ state: "hidden" });
-  await page.waitForURL(new URL(path, gateway).href, {
+  assert(
+    metadata.principal.system_role === "admin" ||
+      metadata.principal.organization_role === "admin",
+    "password-login fixture must remain on the authenticated Console",
+  );
+  await page.waitForURL(new URL("/", gateway).href, {
     waitUntil: "domcontentloaded",
   });
-  assert.equal(
-    await response.headerValue("strict-transport-security"),
-    "max-age=31536000",
+  assert.equal(hsts, "max-age=31536000");
+  const cookies = await bounded(
+    context.cookies(gateway),
+    "browser login cookie snapshot",
   );
-  const cookies = await context.cookies(gateway);
   for (const name of ["__Host-antnest_session", "__Host-antnest_csrf"]) {
     const cookie = cookies.find((value) => value.name === name);
     assert(cookie?.secure, "HTTPS browser Cookies must be Secure");
@@ -185,9 +207,7 @@ async function login(context, gateway, credentials, path) {
     "legacy Cookie names must be absent",
   );
   assert(
-    !/;\s*Domain=/iu.test(
-      (await response.headerValues("set-cookie")).join("\n"),
-    ),
+    !/;\s*Domain=/iu.test(cookieHeaders.join("\n")),
     "Host Cookies must not contain Domain",
   );
   if (path === "/") {
@@ -196,6 +216,7 @@ async function login(context, gateway, credentials, path) {
       .getByRole("heading", { name: "Directory", exact: true })
       .waitFor();
   } else {
+    await page.goto(new URL(path, gateway).href);
     await page
       .getByRole("combobox", { name: "Message", exact: true })
       .waitFor();
@@ -227,7 +248,7 @@ async function clickResponse(
   return readBody ? response.json() : undefined;
 }
 
-async function signedOut(page) {
+export async function signedOut(page) {
   await page
     .getByRole("heading", { name: "Welcome back", exact: true })
     .waitFor();
@@ -256,7 +277,7 @@ async function account(page) {
 
 // These observers use a real browser's delivered Cookie but have their own
 // transport lifetime. A UI unmount/local abort therefore cannot pass revocation.
-async function quietObservers(config, agentID, client, signal) {
+export async function quietObservers(config, agentID, client, signal) {
   const started = Date.now(),
     stop = new AbortController();
   const observerSignal = AbortSignal.any([signal, stop.signal]);

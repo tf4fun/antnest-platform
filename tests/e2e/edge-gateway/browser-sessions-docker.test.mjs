@@ -23,6 +23,8 @@ import {
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { certificates } from "./tls-certificates.mjs";
 import { verifyBrowserSessions } from "./browser-sessions-flow.mjs";
+import { startLinkingProvider } from "./oidc-linking-fixture.mjs";
+import { verifyOIDCLinking } from "./oidc-linking-flow.mjs";
 
 const ownerLabel = "io.antnest.verification.project";
 
@@ -45,6 +47,7 @@ test(
     let before,
       config,
       browser,
+      linkingProvider,
       certificateDirectory,
       credentialsDirectory,
       failure,
@@ -85,8 +88,15 @@ test(
         JSON.stringify(before, null, 2),
       );
       certificateDirectory = resolve(output, "private-tls");
-      const certificate = certificates(certificateDirectory);
+      const certificate = certificates(certificateDirectory, {
+        dnsNames: ["host.docker.internal"],
+      });
       config.gateway = config.gateway.replace("http:", "https:");
+      linkingProvider = await startLinkingProvider({
+        directory: certificateDirectory,
+        callback: `${config.gateway}/protocol/oidc/callback`,
+        signal,
+      });
       Object.assign(config.env, {
         ANTNEST_EDGE_PUBLIC_BASE_URL: config.gateway,
         ANTNEST_EDGE_TLS_DIRECTORY: certificateDirectory,
@@ -211,9 +221,15 @@ test(
         handleSIGINT: false,
         handleSIGTERM: false,
         handleSIGHUP: false,
-        args: [`--ignore-certificate-errors-spki-list=${certificate.spki}`],
+        args: [
+          `--ignore-certificate-errors-spki-list=${certificate.spki}`,
+          "--host-resolver-rules=MAP host.docker.internal 127.0.0.1",
+        ],
       });
-      const browserAbort = () => void browser.close();
+      // launch() can finish after an interruption; retain browser ownership and
+      // enter cleanup instead of starting more business mutations.
+      signal.throwIfAborted();
+      const browserAbort = () => void browser.close().catch(() => {});
       signal.addEventListener("abort", browserAbort, { once: true });
       t.after(() => signal.removeEventListener("abort", browserAbort));
       const setIdlePolicy = async (ttl) => {
@@ -232,6 +248,25 @@ test(
           true,
         );
       };
+      const linkingEvidence = await verifyOIDCLinking({
+        browser,
+        config,
+        fixture,
+        provider: linkingProvider,
+        signal,
+        output,
+        record: (evidence) =>
+          writeEvidenceFile(
+            output,
+            "oidc-linking-progress.json",
+            JSON.stringify({ complete: false, ...evidence }, null, 2),
+          ),
+      });
+      writeEvidenceFile(
+        output,
+        "oidc-linking.json",
+        JSON.stringify({ complete: true, ...linkingEvidence }, null, 2),
+      );
       const evidence = await verifyBrowserSessions({
         browser,
         config,
@@ -279,6 +314,7 @@ test(
         }
       };
       await attempt(async () => browser?.close());
+      await attempt(async () => linkingProvider?.close());
       setDefaultCACertificates(roots);
       if (config) {
         await attempt(() => cleanup(config));

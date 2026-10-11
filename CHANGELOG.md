@@ -4,6 +4,16 @@
 
 ### Upgrade requirement
 
+**#61 requires matching Identity, Gateway, Console and Agent UI consumers.**
+Stop old Identity replicas before applying migrations `0006`–`0008`, and deploy
+Identity revision 16, Gateway revision 20 and Console revision 52 with the updated
+Workspace account controls before reopening browser traffic. Historical Providers
+retain `verified_email` with `authoritative=false` and a durable review warning;
+existing bindings remain usable and are not automatically removed. Review each
+Provider and its existing bindings explicitly. Existing SCIM credentials remain
+unpaired; issue a new credential to select an immutable Provider pairing. See
+[OIDC account linking](contracts/identity/oidc-linking.md).
+
 **#58 requires a coordinated Identity, Gateway, Console and Agent UI rollout.**
 Stop old Identity replicas before applying the browser-session migration; mixed
 old/new Identity replicas are unsupported. Deploy the updated session consumers
@@ -85,6 +95,15 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+New OIDC Providers require administrator or paired SCIM pre-binding by default
+(#61). Verified-email linking is an explicit policy, with optional exact domains;
+organization administrators additionally require an authoritative Provider.
+Console and Workspace show durable new-binding notices and let users review and
+remove external logins, including accounts without local passwords or Agents.
+Unbinding revokes the target Membership's browser sessions and closes quiet
+streams while accepted Runs continue. Automatic login and SCIM retries cannot
+restore a removed subject; restoration requires an explicit administrator action.
 
 Browser sessions now separate idle and absolute expiry (#58). Only genuine
 browser input reports activity; background reads, polling and stream output do

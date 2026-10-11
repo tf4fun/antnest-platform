@@ -197,9 +197,9 @@ There is no per-field filtering or bespoke payload size limit. See
   `acknowledge_link_policy_review=true` after assessing the IdP's email controls.
   Secret rotation and enable/disable do not clear the warning. Migration does
   not remove an existing unwanted binding or invalidate existing sessions.
-  The Console warning and browser binding/notice workflows remain pending
-  consumer batches under
-  [#61](../../../contracts/identity/oidc-linking.md).
+  Console keeps the warning visible until explicit review. Console and Workspace
+  expose binding inventories and durable notices under the
+  [OIDC linking contract](../../../contracts/identity/oidc-linking.md).
 - Identity's binding RPCs require live CCT authority and the exact workload:
   Console administers bindings for a Membership in the signed organization;
   Gateway lists/unbinds the signed User's bindings and acknowledges owned
@@ -290,8 +290,9 @@ logout and explicit session revocation do not create principal offboarding.
 Back up `session_revocations` with the database and preserve its sequence and
 writer-lock protocol. A consumer starts at zero, reads committed pages of at
 most 500 records, and advances only to the returned cursor. Empty pages preserve
-the cursor. Consumer implementation and stream integration remain separate
-Gateway delivery work under #58.
+the cursor. Gateway consumes the feed and revalidates quiet streams within its
+bounded stale interval; the real HTTPS browser-session gate verifies remote
+SSE/WSS retirement without terminating an accepted Agent Run.
 
 `list_principal_revocations` is a workload-authenticated Controller-only RPC and must not be
 forwarded by Gateway. It uses the same route and automatic driver spans and
@@ -337,5 +338,6 @@ even on loopback; in mTLS mode it uses the Identity certificate for the probe.
 
 Deploy this strict Identity producer together with the completed Gateway/Console
 consumer batches and deployment credential mounts. Existing unauthenticated
-consumers cannot call revision 14. The full Docker/browser regression is deferred
-to the final integration batch on `feat/service-authentication`.
+consumers cannot call the authenticated RPC surface. Service-owned Docker gates
+verify those credentials and grants; `make e2e-browser-sessions-https` also
+verifies the complete Identity/Gateway/Console/Workspace session and OIDC flows.

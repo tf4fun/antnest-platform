@@ -3,10 +3,10 @@
 This defines Identity revision 16, Gateway session revision 20 and Console
 revision 52 for [#61](https://github.com/tf4fun/antnest-platform/issues/61).
 It extends the delivered [browser session contract](browser-sessions.md).
-The shared definitions precede implementation: Identity, Gateway, Console,
-Agent UI, remaining revision consumers and final HTTPS integration have
-separate admission batches. Active caller grants change with their owning
-service; publishing this document does not activate a route or a workflow.
+Identity, Gateway, Console, Agent UI and the Controller revision consumer
+implement this contract in separate admission batches. The shared definitions
+precede those changes; their combined behavior is verified by the real HTTPS
+workflow described below.
 
 ## Provider policy
 
@@ -257,16 +257,21 @@ account, clear a newer notice or replace a newer login. A last-method conflict
 requires an explicit second action with `allow_lockout=true`; no pending write
 is automatically retried after login or a transient failure.
 
-## Admission remaining after the shared batch
+## Delivery and acceptance
 
-Identity owns policy/migration and issuer/subject resolution first, followed by
+Identity owns policy/migration and issuer/subject resolution, followed by
 binding/SCIM/notice transactions, actual PostgreSQL concurrency and session
 feed evidence, including the M1-path/M2-binding rejection with unchanged state.
-Gateway then owns self routes and grants, Console owns both
+Gateway owns self routes and grants, Console owns both
 account and organization UI, and Agent UI owns its account consumer. Consumers
-with exact Identity revision assertions must adopt revision 16 in their own
+with exact Identity revision assertions adopt revision 16 in their own
 batch. Each batch has its own documentation, unit/contract/component gates
-and applicable Docker evidence. The final mock-OIDC HTTPS workflow proves
+and applicable Docker evidence. `make e2e-browser-sessions-https` runs the real
+Identity, Gateway, Console and Workspace with a signed mock OIDC Provider. It proves
 default-policy refusal of an asserted administrator email, explicit pre-binding
 admission, notice visibility, unbinding, session retirement and forbidden
-automatic restoration. A completed producer is not this completed workflow.
+automatic restoration even after an automatic-linking policy is enabled. Paired
+SCIM also proves exact opaque-subject login without an email claim and explicit
+last-method lockout. Quiet SSE/WSS retire while an already accepted Run finishes
+on the same Runtime. The existing password, revocation and idle-session flows
+run afterward in the same HTTPS gate.

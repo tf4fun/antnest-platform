@@ -85,7 +85,7 @@ notice acknowledgment by ID. Revoked subjects remain reserved and cannot be
 restored by an ordinary callback. These five RPCs require both their exact
 workload grant and a live browser Caller. SCIM reprovisioning preserves the
 confirmed owner's pairing, activation history and any explicit revocation.
-Gateway and browser consumers remain separate batches; see the
+Gateway and browser consumers are delivered in separate batches; see the
 [OIDC linking contract](../../contracts/identity/oidc-linking.md).
 
 Local login, access-token resolution, and both initial and replayed OIDC
@@ -226,9 +226,14 @@ renames during local login without weakening password/role/status checks.
 in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
 real policy-gated callbacks and review persistence through rotation, toggles
 and service restart. The broader `make e2e-identity-core`
-remains a final integration gate after Gateway/Console adoption; it checks token
+is an integration gate after Gateway/Console adoption; it checks token
 resolution inside the disposable Docker network, before the Gateway/SCIM/OIDC
 suite.
+`make e2e-browser-sessions-https` additionally exercises real Console pre-binding,
+paired SCIM and two-browser account controls through the reference TLS proxy.
+It proves default-policy refusal, exact notice acknowledgment, explicit restore,
+last-method confirmation and remote session/stream retirement while an accepted
+Run continues on the same Runtime.
 
 Root `make` targets that cover this service: `make fmt-check`, `make lint`,
 `make test-go`, `make test-identity-postgres`, and `make docker-build-stage3`.
