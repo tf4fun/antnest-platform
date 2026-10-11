@@ -57,7 +57,7 @@ validation remains enabled; the document's CSP does not allow `unsafe-eval`.
 Server-side parsing keeps its existing configuration.
 
 Bootstrap and SSR share `readWorkspacePrincipal`: it requires private verified
-CCT claims and the two display headers from Gateway revision 15. Signed claims
+CCT claims and the two display headers from Gateway revision 21. Signed claims
 determine Organization/Principal IDs and administrator status; raw identity and
 administrator hints grant nothing. Each label must be canonical unpadded Base64URL over
 valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata
@@ -68,11 +68,16 @@ the chooser and account footer render the name as escaped text. SSR serializes
 the same response for hydration; there is no successful placeholder fallback.
 
 Labels are excluded from owner keys, Agent/Session admission and identity-change
-comparisons. Node does not cache Organization metadata. Each new Gateway-authenticated
-bootstrap/reload observes the current Identity row; a display-only rename
-updates presentation while retaining a same-identity Agent/Session selection.
+comparisons. Node does not cache Organization metadata. Gateway may supply the
+same complete Principal until its bounded Resolve snapshot expires (default
+TTL 10 seconds, measured from the actual Resolve start). Hits and healthy empty
+feed pages do not renew it. After expiry the next actual session/bootstrap/SSR
+read requires live resolution; user-visible timing includes that read and its
+request latency. Already rendered text has no background rename watcher.
+Repeated old snapshots and a later display-only update retain the same-identity
+Agent/Session selection and unsaved draft.
 See the [projection contract](../../../contracts/agent-ui/organization-projection.md)
-for the #92 producer → #93 consumer → explicit integration order.
+for the shared cache policy and explicit display integration requirements.
 
 The [Skill learning system notices](../../../docs/skill-learning-notifications-design.md)
 use SDK 1.5.0's `notice` for live delivery from ACP, then reuse this HTTP/SSE

@@ -7,7 +7,7 @@
   "transport": "same-origin authenticated HTTP; SSE for observation",
   "browser_session_consumer": {
     "browser_session_contract": "../identity/browser-sessions.md",
-    "gateway_revision": 20,
+    "gateway_revision": 21,
     "identity_revision": 16,
     "gateway_routes": [
       "get_session",

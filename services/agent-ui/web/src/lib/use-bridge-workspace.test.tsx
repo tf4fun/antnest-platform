@@ -478,6 +478,18 @@ test("display-only re-bootstrap updates Organization labels without resetting Se
   const { result } = renderHook(() => useBridgeWorkspace({ api: api as never, makeController }));
   await waitFor(() => expect(select).toHaveBeenCalledWith("session-1"));
   act(() => result.current.setDraft("Keep my unsent message"));
+  // Repeated bootstrap responses may still contain Gateway's bounded old snapshot.
+  // The UI must retain presentation and private state until a new read changes it.
+  for (let index = 0; index < 2; index++) {
+    await act(async () => { await result.current.refreshWorkspace(); });
+    expect(result.current.workspace?.principal.organizationName).toBe("Engineering");
+    expect(result.current.workspace?.principal.organizationSlug).toBe("engineering");
+    expect(result.current.workspace?.activeAgentId).toBe("agent-1");
+    expect(result.current.workspace?.activeConversationId).toBe("session-1");
+    expect(result.current.draft).toBe("Keep my unsent message");
+    expect(makeController).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  }
   organizationName = "研发 · Équipe 🚀"; organizationSlug = "renamed";
   await act(async () => { await result.current.refreshWorkspace(); });
   expect(result.current.workspace?.principal.organizationName).toBe(organizationName);
