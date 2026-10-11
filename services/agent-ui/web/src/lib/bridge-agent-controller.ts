@@ -10,7 +10,7 @@ import { WorkspaceApiError, type BridgeHttpClient } from "./workspace-api-client
 
 type ControllerApi = Pick<BridgeHttpClient,
   "agentView" | "eventsURL" | "turnContent" | "turns" | "prompt" | "operation" | "cancel" |
-  "decidePermission" | "configuration">;
+  "decidePermission" | "configuration" | "sessionCurrent" | "onSessionCancelled">;
 type ObserverOpen = typeof openBridgeObserver;
 
 export type BridgeControllerSnapshot = {

@@ -2,6 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { useBridgeWorkspace } from "./use-bridge-workspace";
 import { WorkspaceApiError } from "./workspace-api-client";
+import { BrowserSessionClient } from "./browser-session";
 
 afterEach(cleanup);
 
@@ -14,7 +15,14 @@ test.each([204, 401, 403, 503, "network"])("logout %s clears an ended session an
   };
   let finishRefresh!: (value: typeof bootstrap) => void;
   const lateBootstrap = new Promise<typeof bootstrap>((resolve) => { finishRefresh = resolve; });
-  const api = { bootstrap: vi.fn().mockResolvedValueOnce(bootstrap).mockReturnValue(lateBootstrap),
+  const session = new BrowserSessionClient({ csrf: () => "csrf", fetch: async (path, init) => {
+    if (init?.method !== "GET") return globalThis.fetch(path, init);
+    return Response.json({ principal: { user_id: "user-1", organization_id: "org-1", membership_id: "member-1",
+      organization_slug: "engineering", organization_name: "Engineering", system_role: "user", organization_role: "member", active: true },
+      expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666 });
+  } });
+  await session.read();
+  const api = { session, sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: vi.fn().mockResolvedValueOnce(bootstrap).mockReturnValue(lateBootstrap),
     sessions: async () => ({ items: [], nextCursor: null }) };
   const close = vi.fn();
   const snapshot = { connection: "ready", view: { agentId: "agent-1", bridgeEpoch: "epoch-1",
@@ -66,7 +74,7 @@ test.each([204, 401, 403, 503, "network"])("logout %s clears an ended session an
 test("leaving a Session releases completed process from published workspace history", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let changed!: (snapshot: unknown) => void;
-  const api = { bootstrap: async () => ({
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({
     principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
@@ -108,7 +116,7 @@ test("a missing Session deep link returns to the Agent directory", async () => {
     renderedAt: "2026-09-25T00:00:00Z", bridgeEpoch: "epoch-1",
   });
   const { result } = renderHook(() => useBridgeWorkspace({
-    api: { bootstrap, sessions: async () => ({ items: [], nextCursor: null }) } as never,
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap, sessions: async () => ({ items: [], nextCursor: null }) } as never,
     makeController: () => ({ select: async (sessionId: string | null) => {
       if (sessionId === "gone") throw new WorkspaceApiError("Session not found", 404,
         "session_not_found", "none");
@@ -129,7 +137,7 @@ test("Bridge workspace bootstraps through HTTP and observes the selected Agent",
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
   }));
   const select = vi.fn(async () => {});
-  const api = { bootstrap, sessions: vi.fn(async () => ({ items: [], nextCursor: null })) };
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap, sessions: vi.fn(async () => ({ items: [], nextCursor: null })) };
   const { result } = renderHook(() => useBridgeWorkspace({
     api: api as never,
     makeController: () => ({ select, close: vi.fn(),
@@ -150,7 +158,7 @@ test("a disconnected observer keeps saved history but does not advertise stale a
     bridgeEpoch: "epoch-1", availability: "ready", activeSessionId: null,
     selectedSessionId: "session-1", selectedView: { historyState: "ready" } },
     operations: [], permissions: [], conversation };
-  const api = { bootstrap: async () => ({
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({
     principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
@@ -179,7 +187,7 @@ test("Bridge prompt clears the draft after HTTP admission while operation stays 
   });
   const submitPrompt = vi.fn(async () => ({ operationId: "intent-1", sessionId: "session-1",
     phase: "dispatching", acceptance: "bridge" }));
-  const api = { bootstrap, sessions: vi.fn(async () => ({ items: [], nextCursor: null })) };
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap, sessions: vi.fn(async () => ({ items: [], nextCursor: null })) };
   const { result } = renderHook(() => useBridgeWorkspace({
     api: api as never,
     makeController: ({ changed }) => {
@@ -215,7 +223,7 @@ test("first send creates a Session, waits for its View, and submits once", async
     changed(snapshot as never);
   });
   let changed!: (snapshot: never) => void;
-  const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
     organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
     name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -250,7 +258,7 @@ test("first send stays pending until the created Session View becomes ready", as
   });
   const submitPrompt = vi.fn(async () => ({ operationId: "intent", sessionId: "created",
     phase: "dispatching", acceptance: "bridge" }));
-  const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
     organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
     name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -285,7 +293,7 @@ test("ambiguous creation retains the draft and requires a directory refresh befo
     "Workspace request timed out", undefined, "workspace_request_timeout", "retry_read"); });
   let changed!: (snapshot: never) => void;
   let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
-  const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
     organizationId: "org-1", administrator: false }, agents: [{ agentId: "agent-1",
     name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
@@ -318,7 +326,7 @@ test("ambiguous creation retains the draft and requires a directory refresh befo
 test("blocked selected View keeps saved messages read-only and offers retry", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   const select = vi.fn(async () => {});
-  const api = { bootstrap: async () => ({
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({
     principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
     agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
       activation: "enabled", runtime: "available" }],
@@ -348,7 +356,7 @@ test("blocked selected View keeps saved messages read-only and offers retry", as
 
 test("Bridge Session switching preserves separate unsent drafts", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
       lifecycle: "created", activation: "enabled", runtime: "available" }],
@@ -375,7 +383,7 @@ test("Bridge Session switching preserves separate unsent drafts", async () => {
 
 test("new conversation selects a local Agent draft without creating a Session", async () => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
       lifecycle: "created", activation: "enabled", runtime: "available" }],
@@ -398,7 +406,7 @@ test("late Session creation does not replace a newer explicit selection", async 
   let finishCreation!: (value: { sessionId: string }) => void;
   let changed!: (snapshot: never) => void;
   let snapshot: unknown = { connection: "offline", view: null, operations: [], permissions: [] };
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
       administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
       lifecycle: "created", activation: "enabled", runtime: "available" }],
@@ -436,7 +444,7 @@ test("late hydration bootstrap retains a local Agent draft without creating a Se
     lifecycle: "created", activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" };
   let finishBootstrap!: (value: typeof bootstrap) => void;
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: () => new Promise<typeof bootstrap>((resolve) => { finishBootstrap = resolve; }),
     sessions: async () => ({ items: [], nextCursor: null }),
     createSession: async () => ({ sessionId: "session-new" }),
@@ -460,7 +468,7 @@ test("display-only re-bootstrap updates Organization labels without resetting Se
   const select = vi.fn(async () => {});
   const makeController = vi.fn(() => ({ select, close,
     snapshot: { connection: "ready", view: null, operations: [], permissions: [] } }) as never);
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: async () => ({ principal: { userId: "user-1", organizationId: "org-1",
       organizationSlug, organizationName, administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
@@ -485,7 +493,7 @@ test("refreshing into another principal clears private drafts for an overlapping
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
   let principal = "user-1";
   const select = vi.fn(async () => {});
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: vi.fn(async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: principal,
       organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
@@ -520,7 +528,7 @@ test("hydration bootstrap replacing the principal drops the SSR identity's draft
       activation: "enabled", runtime: "available" }],
     renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" });
   let resolveBootstrap!: (value: ReturnType<typeof bootstrapFor>) => void;
-  const api = { bootstrap: () => new Promise<ReturnType<typeof bootstrapFor>>((resolve) => {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: () => new Promise<ReturnType<typeof bootstrapFor>>((resolve) => {
     resolveBootstrap = resolve;
   }), sessions: async () => ({ items: [], nextCursor: null }) };
   const { result } = renderHook(() => useBridgeWorkspace({
@@ -539,7 +547,7 @@ test("removing a Bridge attachment releases its preview URL before page unload",
   const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview-one");
   const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   try {
-    const api = { bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
+    const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {}, bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
       organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
         activation: "enabled", runtime: "available" }],
@@ -567,4 +575,19 @@ test("removing a Bridge attachment releases its preview URL before page unload",
     create.mockRestore();
     revoke.mockRestore();
   }
+});
+
+test("a completed bootstrap cannot publish after its browser session binding changes", async () => {
+  let current = true;
+  let finish!: (value: unknown) => void;
+  const pending = new Promise<unknown>(resolve => { finish = resolve; });
+  const api = { sessionCurrent: () => current, onSessionCancelled: () => () => {}, bootstrap: async () => pending };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never }));
+  await act(async () => {
+    current = false;
+    finish({ principal: { organizationSlug: "old", organizationName: "Old private organization", userId: "old", organizationId: "old", administrator: false },
+      agents: [], renderedAt: "2026-10-11T00:00:00Z", bridgeEpoch: "old" });
+  });
+  expect(result.current.workspace).toBeUndefined();
+  expect(result.current.error).toBe("");
 });

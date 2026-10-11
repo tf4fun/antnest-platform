@@ -1,14 +1,16 @@
-import { LogOut, Settings } from "lucide-react";
+import { LogOut, Settings, UserRound } from "lucide-react";
 import type { Principal } from "../lib/types";
 
 export function AccountFooter({
   principal,
   onLogout,
   logoutDisabled,
+  onAccount,
 }: {
   principal: Principal;
   onLogout: () => void;
   logoutDisabled: boolean;
+  onAccount?: () => void;
 }) {
   const initials = principal.displayName
     .split(/\s+/)
@@ -24,6 +26,8 @@ export function AccountFooter({
         <small>{principal.organizationName}</small>
       </span>
       <span className="profile-actions">
+        {onAccount ? <button className="icon-button" type="button" onClick={onAccount}
+          title="Account and sessions" aria-label="Account and sessions"><UserRound size={15} aria-hidden="true" /></button> : null}
         {principal.administrator ? (
           <a
             className="icon-button"

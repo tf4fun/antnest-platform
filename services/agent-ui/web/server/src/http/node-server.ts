@@ -194,31 +194,9 @@ async function serve(
       await serveOrdinary(dispatch, request, outgoing, disconnect, options.requestDeadlineMs ?? 60_000);
       return;
     }
-    const result = await runtime.handle(request);
-    const response =
-      result ??
-      Response.json(
-        {
-          code: "route_not_found",
-          message: "Workspace route was not found",
-          requestId: randomUUID(),
-          retryable: false,
-          recovery: "none",
-        },
-        { status: 404 },
-      );
-    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-    if (response.headers.get("content-type")?.startsWith("text/event-stream"))
-      outgoing.flushHeaders();
-    if (response.body === null) {
-      outgoing.end();
-      return;
-    }
-    for await (const part of response.body) {
-      if (outgoing.destroyed) break;
-      if (!outgoing.write(part)) await waitForDrainOrClose(outgoing);
-    }
-    if (!outgoing.destroyed) outgoing.end();
+    // The original verified delegation caps this subscription. Gateway's live
+    // session revalidation does not replace the CCT already delivered to Node.
+    await serveEventStream(runtime, request, outgoing, disconnect, admitted.context!.claims.exp * 1000);
   } catch (cause) {
     if (outgoing.destroyed) return;
     if (outgoing.headersSent) {
@@ -243,6 +221,68 @@ async function serve(
         recovery: "retry_read",
       }),
     );
+  }
+}
+
+async function serveEventStream(
+  runtime: WorkspaceHandler,
+  request: Request,
+  output: ServerResponse,
+  disconnect: AbortController,
+  expiresAt: number,
+): Promise<void> {
+  const retire = () => {
+    disconnect.abort(new Error("Workspace stream delegation expired"));
+    // Also wake a native writer blocked on drain. Expiry requests a fresh
+    // authenticated observation; it is not browser logout or ACP cancellation.
+    output.destroy();
+  };
+  const assertOpen = () => {
+    if (Date.now() >= expiresAt) retire();
+    request.signal.throwIfAborted();
+  };
+  if (request.signal.aborted || output.destroyed) return;
+  if (Date.now() >= expiresAt) { retire(); return; }
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    abort = () => reject(request.signal.reason);
+    request.signal.addEventListener("abort", abort, { once: true });
+  });
+  const timer = setTimeout(retire, expiresAt - Date.now());
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let finished = false;
+  const responseTask = async () => {
+    const response = await runtime.handle(request) ?? workspaceFailure(404, "route_not_found");
+    if (request.signal.aborted || Date.now() >= expiresAt) {
+      await response.body?.cancel();
+      assertOpen();
+    }
+    return response;
+  };
+  try {
+    const response = await Promise.race([responseTask(), interrupted]);
+    // Own the body before the final delivery check so an expiry in the async
+    // handoff cannot leave an acquired subscription without cancellation.
+    reader = response.body?.getReader();
+    assertOpen();
+    output.writeHead(response.status, Object.fromEntries(response.headers));
+    if (response.headers.get("content-type")?.startsWith("text/event-stream")) output.flushHeaders();
+    if (reader) {
+      for (;;) {
+        const part = await Promise.race([reader.read(), interrupted]);
+        assertOpen();
+        if (part.done) { finished = true; break; }
+        if (!output.write(part.value)) await Promise.race([waitForDrainOrClose(output), interrupted]);
+      }
+    }
+    if (!output.destroyed) output.end();
+  } finally {
+    clearTimeout(timer);
+    request.signal.removeEventListener("abort", abort);
+    if (reader) {
+      try { if (!finished) await reader.cancel(); }
+      finally { reader.releaseLock(); }
+    }
   }
 }
 

@@ -12,7 +12,7 @@ test("Bridge receipt returns immediately while the Run remains active until obse
   const updates: string[] = [];
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => ({ operationId: "intent-1", acceptance: "bridge", phase: "dispatching" }),
       operation: async () => assert.fail("unexpected lookup"),
       cancel: async () => assert.fail("unexpected cancel"),
@@ -34,7 +34,7 @@ test("Bridge receipt returns immediately while the Run remains active until obse
 test("failed operation retains the durable failure class after an HTTP reread", async () => {
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => assert.fail("unexpected prompt"),
       operation: async () => assert.fail("unexpected lookup"),
       cancel: async () => assert.fail("unexpected cancel"),
@@ -50,7 +50,7 @@ test("failed operation retains the durable failure class after an HTTP reread", 
 test("operation observation retains active work while bounding completed history", () => {
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => assert.fail("unexpected prompt"),
       operation: async () => assert.fail("unexpected lookup"),
       cancel: async () => assert.fail("unexpected cancel"),
@@ -76,7 +76,7 @@ test("lost prompt response queries the original intent without submitting again"
   let submits = 0;
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => { submits++; throw new WorkspaceApiError("lost", undefined, "workspace_network_error", "query_operation", "intent-1"); },
       operation: async (_agentId, _sessionId, intentId) => {
         assert.equal(intentId, "intent-1");
@@ -94,7 +94,7 @@ test("unknown receipt remains uncertain and never silently retries the Prompt", 
   let submits = 0;
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => { submits++; throw new WorkspaceApiError("lost", 503, "workspace_unavailable", "query_operation", "intent-1"); },
       operation: async () => { throw new WorkspaceApiError("missing", 404, "not_found", "none"); },
       cancel: async () => assert.fail("unexpected cancel"),
@@ -110,7 +110,7 @@ test("cancel uses only the known Run ID bound to the original Session and intent
   const calls: unknown[] = [];
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => ({ operationId: "intent-1", acceptance: "bridge", phase: "dispatching" }),
       operation: async () => assert.fail("unexpected lookup"),
       cancel: async (...args) => {
@@ -133,7 +133,7 @@ test("lost cancel response reads the original Run without sending Stop twice", a
   let reads = 0;
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => ({ operationId: "intent-1", acceptance: "bridge", phase: "dispatching" }),
       operation: async (_agentId, sessionId, intentId) => {
         reads++;
@@ -162,7 +162,7 @@ test("lost cancel response reads the original Run without sending Stop twice", a
 test("lost cancel response rejects a lookup for another Run", async () => {
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => ({ operationId: "intent-1", acceptance: "bridge", phase: "dispatching" }),
       operation: async () => ({ operationId: "intent-1", sessionId: "session-1",
         phase: "running", acceptance: "acp", runId: "run-2", outputWatermark: 3 }),
@@ -181,7 +181,7 @@ test("closing a browser tracker releases local state without cancelling ACP work
   let cancelled = 0;
   const tracker = new BridgeOperationTracker({
     agentId: "agent-1",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       prompt: async () => ({ operationId: "intent-1", acceptance: "bridge", phase: "dispatching" }),
       operation: async () => assert.fail("unexpected lookup"),
       cancel: async () => { cancelled++; return {}; },
@@ -191,4 +191,61 @@ test("closing a browser tracker releases local state without cancelling ACP work
   tracker.close();
   assert.equal(tracker.get("session-1", "intent-1"), undefined);
   assert.equal(cancelled, 0);
+});
+
+for (const action of ["submit", "cancel"] as const) {
+  for (const outcome of ["success", "ambiguous"] as const) {
+    for (const boundary of ["close", "replacement"] as const) {
+      test(`${action} ${outcome} after ${boundary} neither publishes nor recovers old work`, async () => {
+        let current = true;
+        let complete!: (value: never) => void;
+        let fail!: (cause: unknown) => void;
+        const pendingResponse = new Promise<never>((resolve, reject) => { complete = resolve; fail = reject; });
+        let queries = 0;
+        const updates: unknown[] = [];
+        const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+          sessionCurrent: () => current,
+          prompt: async () => pendingResponse,
+          cancel: async () => pendingResponse,
+          operation: async () => { queries++; return {}; },
+        }, changed: value => updates.push(value) });
+        if (action === "cancel") tracker.observe([{ operationId: "intent-1", sessionId: "session-1", phase: "running",
+          acceptance: "acp", runId: "run-1", outputWatermark: 1 }]);
+        updates.length = 0;
+        const pending = action === "submit" ? tracker.submit("session-1", admission) : tracker.cancel("session-1", "intent-1");
+        if (boundary === "close") tracker.close();
+        else current = false;
+        if (outcome === "success") complete((action === "submit"
+          ? { operationId: "intent-1", acceptance: "bridge", phase: "dispatching" }
+          : { operationId: "intent-1", sessionId: "session-1", phase: "cancelling", acceptance: "acp", runId: "run-1", outputWatermark: 2 }) as never);
+        else fail(new WorkspaceApiError("response lost", undefined, "workspace_network_error", "query_operation", "intent-1"));
+        await assert.rejects(pending);
+        assert.equal(queries, 0);
+        assert.deepEqual(updates, []);
+        if (boundary === "close") assert.deepEqual(tracker.snapshot, []);
+      });
+    }
+  }
+}
+
+test("a replaced session during recovery never publishes uncertain state", async () => {
+  let current = true;
+  let complete!: (value: unknown) => void;
+  let entered!: () => void;
+  const reading = new Promise<void>(resolve => { entered = resolve; });
+  const result = new Promise<unknown>(resolve => { complete = resolve; });
+  const updates: unknown[] = [];
+  const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+    sessionCurrent: () => current,
+    prompt: async () => { throw new WorkspaceApiError("lost", undefined, "workspace_network_error", "query_operation", "intent-1"); },
+    cancel: async () => ({}),
+    operation: async () => { entered(); return result; },
+  }, changed: value => updates.push(value) });
+  const pending = tracker.submit("session-1", admission);
+  await reading;
+  current = false;
+  complete({ operationId: "intent-1", sessionId: "session-1", phase: "completed", acceptance: "acp", runId: "run-1", outputWatermark: 2 });
+  await assert.rejects(pending);
+  assert.deepEqual(updates, []);
+  assert.deepEqual(tracker.snapshot, []);
 });

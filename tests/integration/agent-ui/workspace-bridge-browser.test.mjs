@@ -1,4 +1,5 @@
 import { workspaceLocation } from "../../support/agent-ui/workspace-location.mjs";
+import { createBrowserSessionFixture } from "../../support/agent-ui/browser-session-fixture.mjs";
 import assert from "node:assert/strict";
 import { diffAgentViews } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { test } from "node:test";
@@ -184,6 +185,7 @@ test(
       response.setHeader("cache-control", "no-store");
       response.end(JSON.stringify(value));
     };
+    const browserSession = createBrowserSessionFixture();
     let publishedView = agentView("cursor-0");
     const publications = [];
     const publish = () => {
@@ -235,7 +237,12 @@ test(
                   );
                   return;
                 }
-                if (expired && path.startsWith("/api/app/workspace/v1/")) {
+                if (
+                  expired &&
+                  (path.startsWith("/api/app/workspace/v1/") ||
+                    path === "/api/session" ||
+                    path === "/api/session/activity")
+                ) {
                   writeJSON(
                     response,
                     {
@@ -246,6 +253,17 @@ test(
                     },
                     401,
                   );
+                  return;
+                }
+                if (path === "/api/session" && request.method === "GET") {
+                  writeJSON(response, browserSession.read());
+                  return;
+                }
+                if (
+                  path === "/api/session/activity" &&
+                  request.method === "POST"
+                ) {
+                  writeJSON(response, browserSession.activity());
                   return;
                 }
                 if (path === "/api/app/workspace/v1/bootstrap") {
@@ -1591,6 +1609,7 @@ test(
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify(body));
     };
+    const browserSession = createBrowserSessionFixture();
     try {
       server = await createServer({
         root: fileURLToPath(
@@ -1603,6 +1622,22 @@ test(
             configureServer(vite) {
               vite.middlewares.use((request, response, next) => {
                 const url = new URL(request.url, "http://fixture");
+                if (
+                  url.pathname === "/api/session" &&
+                  request.method === "GET"
+                ) {
+                  response.setHeader("cache-control", "no-store");
+                  writeJSON(response, browserSession.read());
+                  return;
+                }
+                if (
+                  url.pathname === "/api/session/activity" &&
+                  request.method === "POST"
+                ) {
+                  response.setHeader("cache-control", "no-store");
+                  writeJSON(response, browserSession.activity());
+                  return;
+                }
                 if (url.pathname === "/api/app/workspace/v1/bootstrap") {
                   writeJSON(response, {
                     principal: {
@@ -2248,6 +2283,9 @@ test(
         viewport: { width: 390, height: 844 },
         isMobile: true,
       });
+      await mobileContext.addCookies([
+        { name: "antnest_csrf", value: "session-csrf", url: origin },
+      ]);
       const mobilePage = await mobileContext.newPage();
       await mobilePage.goto(`${origin}/workspace/agent-1/sessions/one`);
       await mobilePage.getByText("Answer one").waitFor();

@@ -1,4 +1,5 @@
 import type { ContentBlock } from "@agentclientprotocol/sdk";
+import { BrowserSessionChanged, type BrowserSessionClient, type BrowserRequest } from "./browser-session.ts";
 import { validAgentView } from "../../server/src/protocol/agent-view-delta.ts";
 import type { LearningStatus } from "../../server/src/protocol/learning-status.ts";
 import { controlResultSchema, type ControlRequest, type ControlResult } from "../../server/src/protocol/workspace-commands.ts";
@@ -48,7 +49,7 @@ export function isWorkspaceReadTimeout(cause: unknown): boolean {
 
 type Options = {
   fetch?: typeof fetch;
-  csrf: () => string | undefined;
+  session: BrowserSessionClient;
   timeoutMs?: number;
 };
 
@@ -67,13 +68,35 @@ const sessionPath = (agentId: string, sessionId: string) =>
 
 export class BridgeHttpClient {
   private readonly fetcher: typeof fetch;
-  private readonly csrf: Options["csrf"];
+  readonly session: BrowserSessionClient;
   private readonly timeoutMs: number;
+  private binding: BrowserRequest | undefined;
 
   constructor(options: Options) {
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
-    this.csrf = options.csrf;
+    this.session = options.session;
     this.timeoutMs = options.timeoutMs ?? ordinaryTimeoutMs;
+  }
+
+  /** A client never migrates old intentions into a replacement browser session. */
+  private captureSession(): BrowserRequest {
+    try {
+      const current = this.session.capture();
+      this.binding ??= current;
+      this.session.assert(this.binding);
+      return this.binding;
+    } catch (cause) {
+      if (cause instanceof BrowserSessionChanged) throw changedSession();
+      throw cause;
+    }
+  }
+
+  sessionCurrent(): boolean {
+    return this.binding !== undefined && this.session.current(this.binding);
+  }
+
+  onSessionCancelled(cancel: () => void): () => void {
+    return this.session.onCancel(this.captureSession(), cancel);
   }
 
   bootstrap(signal?: AbortSignal): Promise<unknown> {
@@ -87,10 +110,11 @@ export class BridgeHttpClient {
 
   async learningStatus(agentId: string, signal?: AbortSignal): Promise<LearningStatus> {
     const view = await this.request(`${agentPath(agentId)}/view?learningStatus=1`, { signal });
+    const request = this.captureSession();
     if (!validAgentView(view) || view.agentId !== agentId || view.learningStatus == null)
       throw new WorkspaceApiError("Learning status is unavailable", undefined,
         "learning_status_unavailable", "retry_read");
-    return view.learningStatus;
+    return this.session.track(view.learningStatus, request);
   }
 
   sessionView(agentId: string, sessionId: string, signal?: AbortSignal): Promise<unknown> {
@@ -126,10 +150,11 @@ export class BridgeHttpClient {
 
   async control(agentId: string, input: ControlRequest, signal?: AbortSignal): Promise<ControlResult> {
     const raw = await this.request(`${agentPath(agentId)}/commands`, { method: "POST", body: input, signal });
+    const request = this.captureSession();
     const result = controlResultSchema.safeParse(raw);
     if (!result.success) throw new WorkspaceApiError("Command result could not be verified. Refresh before retrying.",
       503, "invalid_command_result", "refresh");
-    return result.data;
+    return this.session.track(result.data, request);
   }
 
   prompt(agentId: string, sessionId: string, admission: PromptAdmission, signal?: AbortSignal): Promise<PromptAccepted> {
@@ -172,6 +197,7 @@ export class BridgeHttpClient {
   }
 
   eventsURL(agentId: string, sessionId: string | null, cursor?: string): string {
+    this.captureSession();
     const query = new URLSearchParams();
     if (sessionId !== null) query.set("sessionId", sessionId);
     if (cursor !== undefined) query.set("cursor", cursor);
@@ -180,16 +206,16 @@ export class BridgeHttpClient {
   }
 
   private async request(path: string, options: RequestOptions = {}): Promise<unknown> {
+    const requestSession = this.captureSession();
     const method = options.method ?? "GET";
     const headers = new Headers(options.headers);
     headers.set("Accept", "application/json");
     if (method === "POST") {
-      const csrf = this.csrf();
-      if (!csrf) throw new WorkspaceApiError("Request could not be verified", undefined, "csrf_missing", "refresh");
-      headers.set("X-Antnest-CSRF-Token", csrf);
+      headers.set("X-Antnest-CSRF-Token", requestSession.hint!);
       headers.set("Content-Type", "application/json");
     }
     const controller = new AbortController();
+    const detachSession = this.session.onCancel(requestSession, () => controller.abort(new BrowserSessionChanged()));
     const abort = () => controller.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) abort();
@@ -203,16 +229,22 @@ export class BridgeHttpClient {
       rejectAbort = () => reject(controller.signal.reason);
       controller.signal.addEventListener("abort", rejectAbort, { once: true });
     });
+    let responseStatus: number | undefined;
     try {
       if (controller.signal.aborted) throw controller.signal.reason;
-      return await Promise.race([interrupted, (async () => {
+      const result = await Promise.race([interrupted, (async () => {
         const response = await this.fetcher(path, {
-          method, credentials: "same-origin", headers,
+          method, credentials: "same-origin", cache: "no-store", headers,
           ...(method === "POST" ? { body: JSON.stringify(options.body) } : {}),
           signal: controller.signal,
         });
+        this.captureSession();
+        controller.signal.throwIfAborted();
+        responseStatus = response.status;
         const result: unknown = await response.json();
-        if (response.ok) return result;
+        this.captureSession();
+        controller.signal.throwIfAborted();
+        if (response.ok) return this.session.track(result, requestSession);
         const error = isRecord(result) ? result : {};
         throw new WorkspaceApiError(
           typeof error.message === "string" ? error.message : "Workspace request failed",
@@ -224,7 +256,16 @@ export class BridgeHttpClient {
           options.ambiguousOperationId,
         );
       })()]);
+      this.captureSession();
+      controller.signal.throwIfAborted();
+      return result;
     } catch (cause) {
+      if (!this.session.current(requestSession) || cause instanceof BrowserSessionChanged) throw changedSession();
+      if (responseStatus === 401) {
+        detachSession();
+        this.session.end(requestSession);
+        throw new WorkspaceApiError("Your browser session ended. Sign in again.", 401, "unauthorized", "login");
+      }
       if (cause instanceof WorkspaceApiError) throw cause;
       throw new WorkspaceApiError(
         timedOut ? "Workspace request timed out" :
@@ -238,11 +279,17 @@ export class BridgeHttpClient {
         options.ambiguousOperationId,
       );
     } finally {
+      detachSession();
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", abort);
       controller.signal.removeEventListener("abort", rejectAbort);
     }
   }
+}
+
+function changedSession(): WorkspaceApiError {
+  return new WorkspaceApiError("The browser session changed. Validate the current session before trying again.",
+    undefined, "browser_session_changed", "none");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

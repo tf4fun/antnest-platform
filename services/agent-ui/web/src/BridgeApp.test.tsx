@@ -29,6 +29,11 @@ test.each(["antnest_csrf", "__Host-antnest_csrf"])("Bridge page uses HTTP/SSE an
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     requests.push(url);
+    if (url === "/api/session" && init?.method === "GET") return Response.json({
+      principal: { user_id: "user-1", organization_id: "org-1", membership_id: "member-1",
+        organization_slug: "engineering", organization_name: "Engineering", system_role: "user", organization_role: "member", active: true },
+      expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
+    });
     if (url.endsWith("/bootstrap")) return Response.json({
       principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",

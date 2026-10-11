@@ -5,8 +5,9 @@ import {
   type BridgeAgentView,
 } from "./bridge-stream.ts";
 import type { BridgeHttpClient } from "./workspace-api-client.ts";
+import { BrowserSessionChanged } from "./browser-session.ts";
 
-type ObserverApi = Pick<BridgeHttpClient, "agentView" | "eventsURL">;
+type ObserverApi = Pick<BridgeHttpClient, "agentView" | "eventsURL" | "sessionCurrent" | "onSessionCancelled">;
 
 export async function openBridgeObserver(input: {
   api: ObserverApi;
@@ -27,28 +28,40 @@ export async function openBridgeObserver(input: {
     input.sessionId,
   );
   input.signal?.throwIfAborted();
+  if (!input.api.sessionCurrent()) throw new BrowserSessionChanged();
   if (initial === null)
     throw new Error("Workspace View does not match the selected Agent and Session");
   input.onView(initial);
+  if (!input.api.sessionCurrent()) throw new BrowserSessionChanged();
   let state = { ...initialBridgeStream(input.agentId, input.sessionId), view: initial as BridgeAgentView | null };
   const source = (input.sourceFactory ?? ((url) => new EventSource(url)))(
     input.api.eventsURL(input.agentId, input.sessionId, initial.streamCursor),
   );
   let closed = false;
+  let detachSession = () => {};
   const stop = () => {
     if (closed) return;
     closed = true;
     input.signal?.removeEventListener("abort", stop);
+    detachSession();
     source.close();
   };
+  try { detachSession = input.api.onSessionCancelled(stop); }
+  catch (cause) { stop(); throw cause; }
+  if (closed) detachSession();
   input.signal?.addEventListener("abort", stop, { once: true });
   if (input.signal?.aborted) stop();
+  const current = () => {
+    if (closed) return false;
+    if (!input.api.sessionCurrent()) { stop(); return false; }
+    return true;
+  };
   source.addEventListener("open", () => {
-    if (!closed) input.onConnected?.();
+    if (current()) input.onConnected?.();
   });
   for (const name of ["snapshot", "reset", "delta", "access_revoked"]) {
     source.addEventListener(name, (event) => {
-      if (closed) return;
+      if (!current()) return;
       let raw: unknown;
       try {
         const data = (event as MessageEvent<string>).data;
@@ -80,7 +93,7 @@ export async function openBridgeObserver(input: {
     });
   }
   source.addEventListener("error", () => {
-    if (closed) return;
+    if (!current()) return;
     stop();
     input.onDisconnect();
   });

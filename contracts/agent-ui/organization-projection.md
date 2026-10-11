@@ -1,6 +1,6 @@
 # Verified Organization display metadata
 
-Gateway session contract revision 15 consumes Identity principal revision 14.
+Gateway session contract revision 19 consumes Identity contract revision 15.
 Node verifies Gateway workload identity and the signed CCT; display headers
 never supply subject, Organization or administrator authority.
 `organization_slug` and `organization_name` are required, non-whitespace strings
@@ -43,8 +43,10 @@ operations or SSE authorization scope. No continuous rename watcher is added.
 
 Malformed Identity principals yield Gateway `503 identity_unavailable`, preserve
 an existing browser session and never reach Node. Inactive or revoked identities
-retain the existing `401` and cookie-clearing behavior. Browser JSON and SSR
-contain display facts only, never Identity access credentials or token IDs.
+return `401` without changing browser cookies. Only explicit login, OIDC
+completion, successful password rotation and logout can write session cookies;
+see [browser session semantics](../identity/browser-sessions.md). Browser JSON
+and SSR contain display facts only, never Identity access credentials or token IDs.
 
 ## Delivery sequence
 

@@ -646,7 +646,7 @@ test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", (
 
 test("active Gateway contract describes the deployed Node Workspace routes", () => {
   const gateway = json("../../../contracts/edge-gateway/session-contract.json");
-  assert.equal(gateway.version, 18);
+  assert.equal(gateway.version, 19);
   assert.equal(
     gateway.routes.workspace_application.authentication,
     "browser_session_for_html; none_for_assets",
@@ -688,6 +688,48 @@ test("active Gateway contract describes the deployed Node Workspace routes", () 
     "none; reject query fields and Last-Event-ID",
   );
   assert.equal(gateway.routes.workspace_acp.transport, "websocket");
+});
+
+test("Workspace browser session consumer binds to the current Gateway and Identity contracts", () => {
+  const catalog = json("../../../contracts/agent-ui/workspace-api.json");
+  const gateway = json("../../../contracts/edge-gateway/session-contract.json");
+  const identity = json("../../../contracts/identity/identity-contract.json");
+  const consumer = catalog.browser_session_consumer;
+  assert.ok(
+    consumer,
+    "browser session consumption must be declared independently of Node routes",
+  );
+  assert.equal(consumer.gateway_revision, gateway.version);
+  assert.equal(consumer.identity_revision, identity.revision);
+  assert.equal(
+    consumer.browser_session_contract,
+    "../identity/browser-sessions.md",
+  );
+  assert.deepEqual(consumer.gateway_routes, [
+    "get_session",
+    "get_account",
+    "session_activity",
+    "list_sessions",
+    "revoke_sessions",
+    "change_password",
+    "logout",
+  ]);
+  for (const name of consumer.gateway_routes) {
+    const route = gateway.routes[name];
+    assert.equal(route.authentication, "browser_session", name);
+    assert(route.path.startsWith("/api/session"), name);
+    assert(
+      !Object.values(catalog.routes).some(
+        (node) => catalog.base_path + node.path === route.path,
+      ),
+      `${name} must remain Gateway-owned`,
+    );
+    if (route.response_schema)
+      definition(
+        "../../../contracts/edge-gateway/session-response.schema.json",
+        route.response_schema.split("/").at(-1),
+      );
+  }
 });
 
 test("the active Workspace route catalog points only to compiled wire definitions", () => {

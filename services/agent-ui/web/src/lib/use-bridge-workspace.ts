@@ -4,6 +4,7 @@ import { BridgeSessionCatalog } from "./bridge-catalog.ts";
 import { workspaceFromBridgeBootstrap } from "./bootstrap.ts";
 import { buildPromptBlocks } from "./prompt.ts";
 import { csrfFromCookie } from "./session.ts";
+import { BrowserSessionClient } from "./browser-session.ts";
 import { describeAttachment, validateAttachmentCount } from "./attachments.ts";
 import { formatBytes } from "./presentation.ts";
 import { runFailureMessage } from "./run-failure.ts";
@@ -31,6 +32,7 @@ const loginPath = () => `/?${new URLSearchParams({
 
 export function useBridgeWorkspace(options: {
   api?: BridgeHttpClient;
+  enabled?: boolean;
   makeController?: ControllerFactory;
   initialBootstrap?: unknown;
   initialRoute?: WorkspaceRoute;
@@ -38,7 +40,7 @@ export function useBridgeWorkspace(options: {
   const apiRef = useRef<BridgeHttpClient | undefined>(undefined);
   if (!apiRef.current)
     apiRef.current = options.api ?? new BridgeHttpClient({
-      csrf: () => csrfFromCookie(document.cookie),
+      session: new BrowserSessionClient({ csrf: () => csrfFromCookie(document.cookie) }),
     });
   const api = apiRef.current;
   const factoryRef = useRef(options.makeController ?? defaultController);
@@ -54,6 +56,13 @@ export function useBridgeWorkspace(options: {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const sessionEnded = useRef(false);
+  const mounted = useRef(false);
+  const enabled = options.enabled !== false;
+  const live = () => enabled && mounted.current && !sessionEnded.current && api.sessionCurrent();
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [configuring, setConfiguring] = useState(false);
@@ -148,7 +157,7 @@ export function useBridgeWorkspace(options: {
     const agentId = workspace?.activeAgentId;
     if (!agentId) return Promise.reject(new Error("No active Agent"));
     return api.learningStatus(agentId, signal);
-  }, [api, workspace?.activeAgentId]);
+  }, [api, enabled, workspace?.activeAgentId]);
   const conversationReady = connected && bridge.view !== null && Boolean(selected) &&
     bridge.view?.selectedSessionId === selected &&
     bridge.view.selectedView?.historyState === "ready";
@@ -180,9 +189,10 @@ export function useBridgeWorkspace(options: {
   const commandFeedback = connected && commandResponse?.key === responseKey(selected ?? null) ? commandResponse.result : null;
 
   useEffect(() => {
+    if (!enabled) return;
     const request = new AbortController();
     void api.bootstrap(request.signal).then((raw) => {
-      if (request.signal.aborted || sessionEnded.current) return;
+      if (request.signal.aborted || !live()) return;
       const latest = workspaceFromBridgeBootstrap(raw);
       if (workspaceRef.current && !sameIdentity(workspaceRef.current, latest)) {
         presentation.clear();
@@ -193,7 +203,7 @@ export function useBridgeWorkspace(options: {
         ? applyDiscovery(current, latest)
         : selectWorkspaceRoute(latest, readWorkspaceRoute(window.location.pathname + window.location.search)));
     }).catch((cause: unknown) => {
-      if (sessionEnded.current) return;
+      if (!live()) return;
       if (!request.signal.aborted && cause instanceof WorkspaceApiError &&
         (cause.status === 401 || cause.recovery === "login")) {
         presentation.clear();
@@ -203,26 +213,45 @@ export function useBridgeWorkspace(options: {
         setError(message(cause, "The Agent workspace could not be loaded."));
     });
     return () => request.abort();
-  }, [api]);
+  }, [api, enabled]);
 
   useEffect(() => {
+    if (!enabled || !api.sessionCurrent()) return;
+    return api.onSessionCancelled(() => {
+      sessionEnded.current = true;
+      controllerRef.current?.close();
+      controllerRef.current = undefined;
+      catalogRef.current = undefined;
+      workspaceRef.current = undefined;
+      navigationEpoch.current++;
+      settleViewWaiter(new Error("The browser session changed."));
+      presentation.clear();
+      for (const url of previewURLs.current) URL.revokeObjectURL(url);
+      previewURLs.current.clear();
+      setWorkspace(undefined);
+      setBridge({ connection: "offline", view: null, operations: [], permissions: [] });
+    });
+  }, [api, enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
     const pop = () => navigate(readWorkspaceRoute(window.location.pathname + window.location.search), false);
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
   });
 
   useEffect(() => {
-    if (!workspace) return;
+    if (!enabled || !workspace) return;
     const target = workspacePath({ agentId: workspace.activeAgentId,
       sessionId: workspace.activeConversationId });
     const path = target;
     if (window.location.pathname + window.location.search !== path)
       window.history.replaceState(null, "", path);
-  }, [workspace?.activeAgentId, workspace?.activeConversationId]);
+  }, [enabled, workspace?.activeAgentId, workspace?.activeConversationId]);
 
   useEffect(() => {
     const agentId = workspace?.activeAgentId;
-    if (!agentId) return;
+    if (!agentId || !live()) return;
     let disposed = false;
     selectedRef.current = undefined;
     const catalog = new BridgeSessionCatalog(agentId, api);
@@ -230,7 +259,7 @@ export function useBridgeWorkspace(options: {
     const controller = factoryRef.current({
       agentId, api,
       changed: (snapshot) => {
-        if (disposed || sessionEnded.current) return;
+        if (disposed || !live()) return;
         inspectViewWaiter(controller, snapshot);
         setBridge(snapshot);
         if (snapshot.unauthenticated) {
@@ -267,12 +296,12 @@ export function useBridgeWorkspace(options: {
     setBridge(controller.snapshot);
     setCatalogState({ loading: true, hasMore: true, error: "" });
     void catalog.loadPage().then((page) => {
-      if (disposed) return;
+      if (disposed || !live()) return;
       setWorkspace((current) => current?.activeAgentId === agentId
         ? applySessionCatalog(current, agentId, catalog.conversations) : current);
       setCatalogState({ loading: false, hasMore: page.hasMore, error: "" });
     }).catch((cause: unknown) => {
-      if (!disposed) setCatalogState({ loading: false, hasMore: true,
+      if (!disposed && live()) setCatalogState({ loading: false, hasMore: true,
         error: message(cause, "Conversations could not be loaded.") });
     });
     return () => {
@@ -289,11 +318,11 @@ export function useBridgeWorkspace(options: {
     const agentId = workspace?.activeAgentId;
     const sessionId = workspace?.activeConversationId ?? null;
     const controller = controllerRef.current;
-    if (!agentId || !controller || selectedRef.current === sessionId) return;
+    if (!live() || !agentId || !controller || selectedRef.current === sessionId) return;
     selectedRef.current = sessionId;
     setHistoryError(undefined);
     void controller.select(sessionId).catch((cause: unknown) => {
-      if (controllerRef.current !== controller) return;
+      if (!live() || controllerRef.current !== controller) return;
       if (sessionId !== null && cause instanceof WorkspaceApiError &&
         cause.code === "session_not_found" &&
         workspaceRef.current?.activeAgentId === agentId &&
@@ -303,9 +332,10 @@ export function useBridgeWorkspace(options: {
       }
       setHistoryError(message(cause, "Conversation history could not be loaded."));
     });
-  }, [workspace?.activeAgentId, workspace?.activeConversationId]);
+  }, [enabled, workspace?.activeAgentId, workspace?.activeConversationId]);
 
   function navigate(route: WorkspaceRoute, push = true) {
+    if (!live()) return;
     const current = workspaceRef.current;
     if (!current) return;
     const next = selectWorkspaceRoute(current, route);
@@ -331,16 +361,16 @@ export function useBridgeWorkspace(options: {
   async function loadMoreCatalog() {
     const catalog = catalogRef.current;
     const agentId = workspaceRef.current?.activeAgentId;
-    if (!catalog || !agentId || catalogState.loading || !catalogState.hasMore) return;
+    if (!live() || !catalog || !agentId || catalogState.loading || !catalogState.hasMore) return;
     setCatalogState((current) => ({ ...current, loading: true, error: "" }));
     try {
       const page = await catalog.loadPage();
-      if (catalogRef.current !== catalog) return;
+      if (!live() || catalogRef.current !== catalog) return;
       setWorkspace((current) => current?.activeAgentId === agentId
         ? applySessionCatalog(current, agentId, catalog.conversations) : current);
       setCatalogState({ loading: false, hasMore: page.hasMore, error: "" });
     } catch (cause) {
-      if (catalogRef.current === catalog)
+      if (live() && catalogRef.current === catalog)
         setCatalogState({ loading: false, hasMore: true,
           error: message(cause, "Conversations could not be loaded.") });
     }
@@ -354,6 +384,7 @@ export function useBridgeWorkspace(options: {
   }
 
   async function submit() {
+    if (!live()) return;
     if (control) { await submitControl(); return; }
     const controller = controllerRef.current;
     const agentId = workspaceRef.current?.activeAgentId;
@@ -375,6 +406,7 @@ export function useBridgeWorkspace(options: {
         creatingSession = true;
         setCreating(true);
         const raw = await api.createSession(agentId);
+        if (!live()) return;
         if (!isRecord(raw) || typeof raw.sessionId !== "string" || !raw.sessionId)
           throw new Error("Bridge returned an invalid Session ID");
         creatingSession = false;
@@ -384,7 +416,7 @@ export function useBridgeWorkspace(options: {
           catalog?.remember(conversation);
         setWorkspace((current) => current?.activeAgentId === agentId
           ? applyConversation(current, conversation) : current);
-        if (controllerRef.current !== controller || workspaceRef.current?.activeAgentId !== agentId ||
+        if (!live() || controllerRef.current !== controller || workspaceRef.current?.activeAgentId !== agentId ||
           navigationEpoch.current !== startedAtNavigation) return;
         sessionId = raw.sessionId;
         presentation.move(sessionId);
@@ -392,9 +424,10 @@ export function useBridgeWorkspace(options: {
         navigate({ agentId, sessionId });
         try {
           await controller.select(sessionId);
-          if (controllerRef.current !== controller ||
+          if (!live() || controllerRef.current !== controller ||
             workspaceRef.current?.activeConversationId !== sessionId) return;
           await waitForReadyView(controller, agentId, sessionId);
+          if (!live()) return;
         }
         catch (cause) {
           if (workspaceRef.current?.activeConversationId === sessionId)
@@ -404,7 +437,7 @@ export function useBridgeWorkspace(options: {
         setCreating(false);
       }
       const view = controller.snapshot.view;
-      if (controllerRef.current !== controller || workspaceRef.current?.activeConversationId !== sessionId ||
+      if (!live() || controllerRef.current !== controller || workspaceRef.current?.activeConversationId !== sessionId ||
         controller.snapshot.connection !== "ready" || view?.selectedSessionId !== sessionId ||
         view.selectedView?.historyState !== "ready") {
         if (workspaceRef.current?.activeConversationId === sessionId)
@@ -412,16 +445,18 @@ export function useBridgeWorkspace(options: {
         return;
       }
       const blocks = await buildPromptBlocks(text, attachments, view.promptCapabilities);
-      if (controllerRef.current !== controller || workspaceRef.current?.activeConversationId !== sessionId ||
+      if (!live() || controllerRef.current !== controller || workspaceRef.current?.activeConversationId !== sessionId ||
         controller.snapshot.connection !== "ready" ||
         controller.snapshot.view?.selectedSessionId !== sessionId ||
         controller.snapshot.view.selectedView?.historyState !== "ready")
         return;
       const operation = await controller.submitPrompt(crypto.randomUUID(), blocks);
+      if (!live()) return;
       presentation.clearSubmitted(sessionId, text, attachments);
       if (operation.phase === "uncertain")
         presentation.setErrorFor(sessionId, "Message status is uncertain. Refresh this conversation to check the original operation.");
     } catch (cause) {
+      if (!live()) return;
       if (creatingSession && (!(cause instanceof WorkspaceApiError) ||
         cause.status === undefined || cause.status >= 500)) {
         setUncertainCreationAgentId(agentId);
@@ -438,13 +473,13 @@ export function useBridgeWorkspace(options: {
   async function submitControl() {
     const controller = controllerRef.current;
     const started = workspaceRef.current;
-    if (!controller || !started || !controlEnabled || submitFlight.current) return;
+    if (!live() || !controller || !started || !controlEnabled || submitFlight.current) return;
     const agentId = started.activeAgentId;
     const sessionId = started.activeConversationId;
     const text = presentation.draft;
     const parsed = parseControlCommand(text)!;
     const epoch = navigationEpoch.current;
-    const stillSelected = () => controllerRef.current === controller && navigationEpoch.current === epoch &&
+    const stillSelected = () => live() && controllerRef.current === controller && navigationEpoch.current === epoch &&
       workspaceRef.current !== undefined && sameIdentity(started, workspaceRef.current) &&
       workspaceRef.current.activeAgentId === agentId && workspaceRef.current.activeConversationId === sessionId;
     submitFlight.current = true;
@@ -478,12 +513,12 @@ export function useBridgeWorkspace(options: {
 
   async function cancelRun() {
     const controller = controllerRef.current;
-    if (!controller || !connected || !activeOperation?.runId || cancelling) return;
+    if (!live() || !controller || !connected || !activeOperation?.runId || cancelling) return;
     setCancelling(true);
     try {
       await controller.cancelOperation(activeOperation.sessionId, activeOperation.operationId);
     } catch (cause) {
-      setConnectionError(message(cause, "The operation could not be stopped."));
+      if (live()) setConnectionError(message(cause, "The operation could not be stopped."));
     } finally {
       setCancelling(false);
     }
@@ -491,15 +526,15 @@ export function useBridgeWorkspace(options: {
 
   async function setConfiguration(id: string, value: string | boolean) {
     const controller = controllerRef.current;
-    if (!controller || !connected || !conversationReady || configuring || commanding) return;
+    if (!live() || !controller || !connected || !conversationReady || configuring || commanding) return;
     setConfiguring(true);
     try { await controller.setConfiguration(id, value); }
-    catch (cause) { presentation.setError(message(cause, "Session configuration could not be changed.")); }
+    catch (cause) { if (live()) presentation.setError(message(cause, "Session configuration could not be changed.")); }
     finally { setConfiguring(false); }
   }
 
   function addFiles(files: FileList) {
-    if (!connected || (workspaceRef.current?.activeConversationId !== null && !conversationReady) ||
+    if (!live() || !connected || (workspaceRef.current?.activeConversationId !== null && !conversationReady) ||
       !activeAgent || activeAgent.status !== "ready") return;
     try {
       validateAttachmentCount(presentation.attachments.length + files.length);
@@ -524,12 +559,12 @@ export function useBridgeWorkspace(options: {
   }, []);
 
   async function refreshWorkspace() {
-    if (refreshing || sessionEnded.current) return;
+    if (refreshing || !live()) return;
     setRefreshing(true);
     setConnectionError("");
     try {
       const latest = workspaceFromBridgeBootstrap(await api.bootstrap());
-      if (sessionEnded.current) return;
+      if (!live()) return;
       const identityChanged = Boolean(workspaceRef.current &&
         !sameIdentity(workspaceRef.current, latest));
       if (identityChanged)
@@ -541,7 +576,7 @@ export function useBridgeWorkspace(options: {
       const agentId = workspaceRef.current?.activeAgentId;
       if (!identityChanged && catalog && agentId) {
         const page = await catalog.refreshFirstPage();
-        if (catalogRef.current === catalog) {
+        if (live() && catalogRef.current === catalog) {
           setWorkspace((current) => current?.activeAgentId === agentId
             ? applySessionCatalog(current, agentId, catalog.conversations) : current);
           setCatalogState({ loading: false, hasMore: page.hasMore, error: "" });
@@ -549,23 +584,21 @@ export function useBridgeWorkspace(options: {
         }
       }
       const controller = controllerRef.current;
-      if (!identityChanged && controller)
+      if (live() && !identityChanged && controller)
         await controller.select(workspaceRef.current?.activeConversationId ?? null);
     } catch (cause) {
-      if (!sessionEnded.current)
+      if (live())
         setConnectionError(message(cause, "Workspace status could not be refreshed."));
     } finally { setRefreshing(false); }
   }
 
   async function logout() {
-    if (loggingOut) return;
+    if (loggingOut || !live()) return;
     setLoggingOut(true);
     try {
-      const csrf = csrfFromCookie(document.cookie);
-      const response = await fetch("/api/session", { method: "DELETE", credentials: "same-origin",
-        headers: csrf ? { "X-Antnest-CSRF-Token": csrf } : {} });
-      if (!response.ok && response.status !== 401)
-        throw new Error("Your session could not be closed.");
+      await api.session.logout();
+      // The authentication owner normally unmounts this generation synchronously.
+      if (sessionEnded.current || !mounted.current) return;
       sessionEnded.current = true;
       controllerRef.current?.close();
       presentation.clear();
@@ -579,8 +612,9 @@ export function useBridgeWorkspace(options: {
       setConnectionError("");
       setHistoryError(undefined);
       window.location.assign("/");
-    } catch (cause) {
-      setConnectionError(message(cause, "Your session could not be closed."));
+    } catch {
+      if (!live()) return;
+      setConnectionError("Your session could not be closed.");
       setLoggingOut(false);
     }
   }
@@ -613,9 +647,9 @@ export function useBridgeWorkspace(options: {
     submit, cancelRun, setConnectionError,
     sessionWorking, sessionSettled, openingHistory, cancellable,
     onAnswerPermission: (id: string, optionId: string) => {
-      if (!connected) return;
+      if (!live() || !connected) return;
       void controllerRef.current?.decidePermission(id, optionId).catch((cause: unknown) =>
-        setConnectionError(message(cause, "This permission request is no longer active.")));
+        { if (live()) setConnectionError(message(cause, "This permission request is no longer active.")); });
     },
     hasOlderTurns: controllerRef.current?.hasOlderTurns ?? false,
     hasNewerTurns: controllerRef.current?.hasNewerTurns ?? false,

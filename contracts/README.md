@@ -39,6 +39,12 @@ Related design documents: [Skill Registry design](../docs/skill-registry-minimal
 [Skill deployment](../docs/skill-deployment.md) and
 [Stage 4 services](../docs/stage-4-services.md).
 
+The Agent UI browser also consumes the
+[Gateway session routes](edge-gateway/session-contract.json) and
+[Identity browser-session lifecycle](identity/browser-sessions.md).
+Its producer revision bindings are recorded separately from Node routes in
+[`workspace-api.json`](agent-ui/workspace-api.json).
+
 Channel Manager and Task Scheduler contracts are not yet defined. Workspace
 control-command semantics are intended for reuse by a future Channel Manager,
 but they are not a channel wire contract.

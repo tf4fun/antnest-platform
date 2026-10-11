@@ -5,6 +5,20 @@
   "base_path": "/api/app/workspace/v1",
   "schema": "workspace-api.schema.json",
   "transport": "same-origin authenticated HTTP; SSE for observation",
+  "browser_session_consumer": {
+    "browser_session_contract": "../identity/browser-sessions.md",
+    "gateway_revision": 19,
+    "identity_revision": 15,
+    "gateway_routes": [
+      "get_session",
+      "get_account",
+      "session_activity",
+      "list_sessions",
+      "revoke_sessions",
+      "change_password",
+      "logout"
+    ]
+  },
   "routes": {
     "control_command": {
       "method": "POST",
@@ -99,7 +113,8 @@
   "ordinary_browser_timeout_ms": 30000,
   "ordinary_node_timeout_ms": 60000,
   "sse_heartbeat_ms": 15000,
-  "sse_identity_lease_max_ms": 300000,
+  "sse_delegation_deadline": "original_verified_cct_expiry",
+  "sse_session_stale_max_ms": 30000,
   "sse_subscriber_queue_max_bytes": 1048576,
   "process_page_max_bytes": 262144
 }
