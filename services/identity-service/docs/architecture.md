@@ -406,7 +406,9 @@ whose Organization, User, and Membership match the session result.
 - Startup recovery terminalizes only callbacks whose durable session lifetime
   has expired. It does not fail another replica's still-valid exchange.
 - SCIM POST is create-only and returns conflict for an existing resource ID or
-  external ID. PUT/PATCH are transactional updates addressed by resource ID.
+  external ID. User creation returns the persisted resource metadata, including
+  PostgreSQL timestamp precision, so the response version matches an immediate
+  read. PUT/PATCH are transactional updates addressed by resource ID.
 - Membership and Group replacement compare the previously read update version
   under row lock; successful writes advance it monotonically at PostgreSQL
   timestamp precision.

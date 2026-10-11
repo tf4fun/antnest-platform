@@ -279,6 +279,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+SCIM User creation returns persisted timestamps, so its metadata matches an
+immediate read and its internal update version can be used for replacement.
+Nanosecond host clocks no longer produce a creation response with a version
+that PostgreSQL did not store (#61).
+
 Runtime survives connected UDP `ConnectionRefused` while Runtime Egress restarts
 (#219). Established sessions count refused sends and receives as dropped traffic
 and recover through WireGuard's existing timers. Readiness remains fail-closed;

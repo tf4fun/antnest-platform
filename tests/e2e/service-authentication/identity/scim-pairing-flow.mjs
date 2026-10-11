@@ -129,6 +129,17 @@ export async function exerciseSCIMPairing({
     checks++;
     return result;
   };
+  const assertStoredUserMetadata = async (token, created) => {
+    const stored = await request(token, "GET", `Users/${created.id}`);
+    for (const field of ["created", "lastModified"]) {
+      assert.equal(typeof created.meta[field], "string");
+      assert.equal(
+        created.meta[field],
+        stored.meta[field],
+        `SCIM POST ${field} must match the persisted GET metadata`,
+      );
+    }
+  };
   const user = (fields = {}) => ({
     schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
     userName: "scim-paired@example.test",
@@ -175,6 +186,7 @@ export async function exerciseSCIMPairing({
     user({ externalId: "scim-subject" }),
     201,
   );
+  await assertStoredUserMetadata(tokenA, resource);
   const firstMember = resource.id;
   const userID = await sql(
     `SELECT user_id FROM organization_memberships WHERE id=${quote(resource.id)}`,
@@ -321,6 +333,7 @@ export async function exerciseSCIMPairing({
     user({ userName: "legacy-pairing@example.test" }),
     201,
   );
+  await assertStoredUserMetadata(legacy, legacyResource);
   assert.equal(
     await sql(
       `SELECT scim_oidc_provider_id IS NULL FROM organization_memberships WHERE id=${quote(legacyResource.id)}`,
@@ -385,6 +398,7 @@ export async function exerciseSCIMPairing({
     user({ externalId: "scim-subject" }),
     201,
   );
+  await assertStoredUserMetadata(tokenA, resource);
   assert.notEqual(resource.id, firstMember);
   assert.equal(
     await sql(
@@ -422,6 +436,7 @@ export async function exerciseSCIMPairing({
     user({ externalId: "scim-subject", userName: "oidc-scim@example.com" }),
     201,
   );
+  await assertStoredUserMetadata(tokenA, resource);
   assert.notEqual(resource.id, revokedMember);
   assert.equal(
     await sql(

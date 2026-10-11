@@ -232,10 +232,60 @@ func TestSCIMPairingCreateRevalidatesStoredTokenAuthorization(t *testing.T) {
 	}
 }
 
+func TestSCIMPairingCreateReturnsPersistedResource(t *testing.T) {
+	for _, paired := range []bool{false, true} {
+		name := "unpaired"
+		if paired {
+			name = "paired"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newBindingFixture(t)
+			f.now.Store(f.clock().Truncate(time.Microsecond).Add(123 * time.Nanosecond).UnixNano())
+			s := pairingService(t, f)
+			var providerID *string
+			if paired {
+				providerID = &f.providerID
+			}
+			auth := pairingAuthorization(t, f, s, providerID)
+			created, err := s.CreateUser(t.Context(), auth, pairedUserInput())
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := s.GetUser(t.Context(), auth, created.Membership.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for label, timestamps := range map[string][2]time.Time{
+				"user created":       {created.User.CreatedAt, stored.User.CreatedAt},
+				"user updated":       {created.User.UpdatedAt, stored.User.UpdatedAt},
+				"membership created": {created.Membership.CreatedAt, stored.Membership.CreatedAt},
+				"membership updated": {created.Membership.UpdatedAt, stored.Membership.UpdatedAt},
+			} {
+				if !timestamps[0].Equal(timestamps[1]) {
+					t.Fatalf("%s response differs from persisted timestamp: %s != %s", label, timestamps[0], timestamps[1])
+				}
+			}
+			command := scim.ReplaceUserCommand{OrganizationID: auth.OrganizationID, ActorTokenID: auth.TokenID, User: created.User, Membership: created.Membership, ExpectedUpdatedAt: created.Membership.UpdatedAt}
+			command.Membership.DisplayName = "Replacement"
+			command.Membership.UpdatedAt = domain.NextUpdatedAt(f.clock(), created.Membership.UpdatedAt)
+			updated, err := f.store.SCIM().ReplaceUser(t.Context(), command)
+			if err != nil || updated.Membership.DisplayName != "Replacement" || !updated.Membership.UpdatedAt.After(created.Membership.UpdatedAt) {
+				t.Fatalf("create response version could not replace its persisted resource: %v", err)
+			}
+			before := scimPairingSnapshot(t, f)
+			if _, err := f.store.SCIM().ReplaceUser(t.Context(), command); !errors.Is(err, domain.ErrVersionConflict) || scimPairingSnapshot(t, f) != before {
+				t.Fatalf("stale create response version was accepted or mutated state: %v", err)
+			}
+		})
+	}
+}
+
 func TestSCIMPairingRepositoryProtectsStoredSubjectAndPairing(t *testing.T) {
 	for _, change := range []string{"subject", "clear_pairing"} {
 		t.Run(change, func(t *testing.T) {
 			f := newBindingFixture(t)
+			// Exercise PostgreSQL's microsecond precision on every host OS.
+			f.now.Store(f.clock().Truncate(time.Microsecond).Add(123 * time.Nanosecond).UnixNano())
 			s := pairingService(t, f)
 			auth := pairingAuthorization(t, f, s, &f.providerID)
 			user, err := s.CreateUser(t.Context(), auth, pairedUserInput())

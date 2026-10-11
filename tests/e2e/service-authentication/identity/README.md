@@ -51,6 +51,8 @@ subject changes and ownership collisions preserve full business-state
 summaries (SCIM authentication's bounded last-used accounting is excluded).
 Paired creation enables signed subject login under `none` with an atomic
 SCIM-actor audit and notice. Other credentials retain directory CRUD authority.
+Paired, unpaired and reprovisioned User POST timestamps match the persisted
+metadata returned by an immediate GET.
 Delete performs actual offboarding; exact-lineage reprovision preserves the
 User, creates a fresh Membership and moves its binding without recreating a
 notice. Explicit unbind remains revoked after deletion, reprovision, enabling

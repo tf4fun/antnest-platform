@@ -237,7 +237,15 @@ func (a *SCIMAdapter) createUserAttempt(ctx context.Context, command scim.Create
 		if err := a.store.bindSCIMSubject(ctx, tx, command); err != nil {
 			return err
 		}
-		result = scim.UserResource{User: command.User, Membership: command.Membership}
+		// Return the persisted version, including PostgreSQL timestamp precision.
+		// Echoing the command can expose nanoseconds that were never stored and
+		// make the returned version conflict with an immediate replacement.
+		result, err = scanSCIMUser(tx.QueryRow(ctx, scimUserSelect+`
+			WHERE m.organization_id = $1 AND m.id = $2 AND m.source = 'scim'
+			  AND m.scim_deleted_at IS NULL`, command.OrganizationID, command.Membership.ID))
+		if err != nil {
+			return err
+		}
 		eventType := "scim_user.created"
 		if reprovisioned {
 			eventType = "scim_user.reprovisioned"
