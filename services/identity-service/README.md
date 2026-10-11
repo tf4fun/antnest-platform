@@ -38,8 +38,8 @@ not rejected or reset by that unused value.
   atomic password/session rotation, with a separate Gateway-only
   `list_session_revocations` feed. These follow the
   [browser session contract](../../contracts/identity/browser-sessions.md).
-  The #58 producer rollout is in progress; consumer and HTTPS integration
-  batches remain pending.
+  Gateway, Console, Workspace and script consumers use these controls;
+  `make e2e-browser-sessions-https` verifies the deployed browser lifecycle.
 - Its private PostgreSQL schema and migrations.
 
 ## Non-responsibilities

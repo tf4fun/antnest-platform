@@ -344,6 +344,12 @@ export const suites = [
       "make e2e-gateway-tls",
     ],
     [
+      "browser-sessions-https",
+      "Browser session HTTPS integration",
+      ["agent-ui-web", "chromium"],
+      "make e2e-browser-sessions-https",
+    ],
+    [
       "gateway-security-headers",
       "Edge Gateway security headers",
       ["agent-ui-web", "chromium"],
@@ -362,8 +368,9 @@ export const suites = [
     setup,
     disabled,
     images: platformImages,
-    pull:
-      id === "gateway-tls" ? [...temporal, "caddy:2.11.7-alpine"] : temporal,
+    pull: ["gateway-tls", "browser-sessions-https"].includes(id)
+      ? [...temporal, "caddy:2.11.7-alpine"]
+      : temporal,
     paths: [
       "services/**",
       "deploy/tls/**",
@@ -1049,6 +1056,7 @@ export const shards = [
     name: "Edge Gateway and Agent UI",
     suites: [
       "gateway-tls",
+      "browser-sessions-https",
       "gateway-security-headers",
       "agent-ui-receipt",
       "gateway-shutdown",

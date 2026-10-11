@@ -47,6 +47,25 @@ test("reference TLS proxy changes select the HTTPS browser and deployment contra
   assert(tls.run.includes("make e2e-gateway-tls"));
 });
 
+test("browser session HTTPS integration is selected with each owning service and TLS deployment", () => {
+  for (const file of [
+    "services/identity-service/internal/repository/browser_sessions.go",
+    "services/edge-gateway/internal/server/session.go",
+    "services/admin-console/web/src/api.ts",
+    "services/agent-ui/web/src/main.tsx",
+    "tests/e2e/edge-gateway/browser-sessions-flow.mjs",
+    "deploy/tls/Caddyfile",
+  ]) {
+    const selected = selectSuites([file]);
+    const session = selected.find(({ id }) => id === "browser-sessions-https");
+    assert(session, `${file} must select real browser session integration`);
+    assert(session.pull.includes("caddy:2.11.7-alpine"));
+    assert(session.setup.includes("chromium"));
+    assert(session.run.includes("make e2e-browser-sessions-https"));
+    assert(shards.some((shard) => shard.suites.includes(session.id)));
+  }
+});
+
 test("documentation-only changes select no suites", () => {
   assert.deepEqual(
     selectSuites([

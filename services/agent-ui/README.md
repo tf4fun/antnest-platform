@@ -194,6 +194,9 @@ tests in [`tests/e2e/agent-ui`](../../tests/e2e/agent-ui). Root targets:
 builds the image, and `make e2e-workspace-browser`,
 `make e2e-skill-learning-browser`, `make e2e-tool-permissions`,
 `make e2e-multimodal` and `make e2e-session-cost` exercise the full stack.
+`make e2e-browser-sessions-https` verifies password replacement, revocation,
+silent stream closure and short idle expiry across real Console and Workspace
+browser contexts.
 
 ## Documentation
 

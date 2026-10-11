@@ -157,8 +157,8 @@ controls, OIDC-only accounts, password replacement, stale delivery and a
 five-second idle fixture. It uses built Console assets with API doubles.
 The Docker acceptance runs the real Console against owning-service doubles
 and checks signed organization scope, projection, pagination and revocation.
-Gateway/Identity session transactions and two-browser HTTPS behavior require
-the separate cross-service integration batch.
+`make e2e-browser-sessions-https` separately verifies real Gateway/Identity
+session transactions and two-browser HTTPS behavior with Console and Workspace.
 
 Go integration sources live in
 [`tests/integration/go/admin-console`](../../tests/integration/go/admin-console);

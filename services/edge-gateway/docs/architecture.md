@@ -51,7 +51,7 @@ replacement is received; a lost reply requires fresh login with the new
 password. Only a wrong current password returns `invalid_current_password`;
 generic input failures return `invalid_request`, both without cookie changes.
 See the [shared lifecycle contract](../../../contracts/identity/browser-sessions.md)
-for the pending Console, Agent UI, script and HTTPS integration batches.
+for the Console, Agent UI and script consumers and their HTTPS integration.
 
 Gateway defaults COOP and CORP to `same-origin`. Console and Workspace currently
 share one origin; these controls do not provide an XSS privilege boundary
@@ -434,9 +434,10 @@ are removed, and principal JSON never serializes the CCT.
 
 Direct WebSockets require the original session and an unexpired handshake CCT.
 Hard expiry closes quiet connections as well as active ones and requires
-reconnect; it does not cancel previously accepted ACP work. Browser activity,
-account controls and request generations in Console and Agent UI remain pending
-with scripted consumers and the final #58 HTTPS integration. The earlier
+reconnect; it does not cancel previously accepted ACP work. Console and Agent UI
+implement browser activity, account controls and request generations. Scripted
+consumers adopt replacement credentials and non-touch reads; the separate
+`make e2e-browser-sessions-https` target verifies the browser workflow. The earlier
 workload-authentication admissions are recorded in the
 [rollout ledger](../../../contracts/platform/service-authentication-rollout.json).
 

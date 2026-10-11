@@ -81,7 +81,7 @@ Origin/CSRF-admitted activity route does. Gateway writes session/CSRF cookies on
 login, OIDC completion, password rotation and logout, using absolute expiry.
 Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
 See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
-for the logout matrix, password recovery and staged consumer rollout.
+for the logout matrix, password recovery and consumer integration.
 
 Browser login and session principals preserve Identity's required Organization
 slug/name. Gateway projects these display facts to the active Node Workspace
@@ -93,8 +93,8 @@ rename without changing authorization scope. Organization display delivery
 [#93](https://github.com/tf4fun/antnest-platform/issues/93) are complete. The
 workload/CCT deployment and integration admissions are recorded in the
 [authentication rollout ledger](../../contracts/platform/service-authentication-rollout.json).
-Console and Agent UI browser-session consumers and the final #58 HTTPS
-acceptance remain pending. The unused legacy
+Console and Agent UI consume the session lifecycle; `make e2e-browser-sessions-https`
+checks their shared HTTPS password, revocation and idle behavior. The unused legacy
 `/api/app/bootstrap` projection is unchanged, pending
 [#64](https://github.com/tf4fun/antnest-platform/issues/64).
 

@@ -19,10 +19,9 @@ with their owning implementation, never ahead of a route. The rollout is:
 5. Agent UI account controls, session generations and activity reporting.
 6. Scripted consumers and an explicit two-browser HTTPS integration batch.
 
-The shared contract, Identity producer and Gateway boundary have passed their
-local admission checks. Console, Agent UI, scripted consumers and the final
-HTTPS integration remain pending. The completed service batches do not yet
-complete the browser workflow.
+Identity, Gateway, Console, Agent UI and scripted consumers implement this
+contract. Owning-service checks are supplemented by the explicit two-browser
+HTTPS integration described under [required evidence](#required-evidence).
 
 ## Deadlines and activity
 
@@ -297,3 +296,23 @@ and stale successful/401 responses. Final Docker acceptance uses two real
 browser contexts and a 5-second idle policy: password change invalidates the
 other browser and its streams, an inactive browser expires, and genuine input
 renews idle without extending absolute lifetime. Verify owned-resource cleanup.
+
+Run `make e2e-browser-sessions-https` for the final integration. It builds six
+isolated candidate services and uses the reference HTTPS proxy, real Identity,
+Runtime, Console and Workspace. Separate browser contexts sign in as the same
+User, with an independent administrator as the unaffected control. Normal idle
+policy remains in effect during password and self/administrator revocation.
+Quiet SSE and WSS observers use the peer browser's delivered credential and
+must close within 30 seconds, before the original CCT expires; local cleanup
+cannot satisfy this assertion.
+
+The runner then recreates only Identity with a 5-second idle policy and signs
+in fresh browsers. Real pointer input keeps Console active across multiple idle
+windows without changing its absolute expiry or Cookies. The inactive Workspace
+keeps its production event observer while authenticated reads cross idle expiry;
+neither may report user activity. Its next observer recovery must receive 401
+and retire private UI. Directory, which has no background observer, instead
+retires on its next genuine input after revocation. The runner checks ordinary
+response Cookie boundaries, closes browser/transport resources, removes its
+label-owned deployment and candidate images, and compares the retained Docker
+environment. Private exception diagnostics stay outside CI artifact uploads.

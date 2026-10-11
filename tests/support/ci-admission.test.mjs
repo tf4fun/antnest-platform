@@ -158,6 +158,7 @@ test("uploaded evidence excludes generated fixture credentials but retains suite
     "artifacts/verification/run/credentials/tokens/service",
     "artifacts/verification/run/private.key",
     "artifacts/verification/run/private.pem",
+    "artifacts/verification/run/failure.private.txt",
   ])
     assert(filtered(path), `${path} contains fixture credentials`);
   for (const path of [
