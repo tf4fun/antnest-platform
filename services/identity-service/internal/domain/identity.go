@@ -55,19 +55,20 @@ type LocalCredential struct {
 }
 
 type OrganizationMembership struct {
-	ID             string           `json:"id"`
-	OrganizationID string           `json:"organization_id"`
-	UserID         string           `json:"user_id"`
-	Email          string           `json:"email"`
-	DisplayName    string           `json:"display_name"`
-	Role           OrganizationRole `json:"role"`
-	Source         Source           `json:"source"`
-	Active         bool             `json:"active"`
-	SCIMExternalID string           `json:"scim_external_id,omitempty"`
-	SCIMUserName   string           `json:"scim_user_name,omitempty"`
-	SCIMDeletedAt  *time.Time       `json:"scim_deleted_at,omitempty"`
-	CreatedAt      time.Time        `json:"created_at"`
-	UpdatedAt      time.Time        `json:"updated_at"`
+	ID                 string           `json:"id"`
+	OrganizationID     string           `json:"organization_id"`
+	UserID             string           `json:"user_id"`
+	Email              string           `json:"email"`
+	DisplayName        string           `json:"display_name"`
+	Role               OrganizationRole `json:"role"`
+	Source             Source           `json:"source"`
+	Active             bool             `json:"active"`
+	SCIMExternalID     string           `json:"scim_external_id,omitempty"`
+	SCIMUserName       string           `json:"scim_user_name,omitempty"`
+	SCIMDeletedAt      *time.Time       `json:"scim_deleted_at,omitempty"`
+	SCIMOIDCProviderID *string          `json:"-"`
+	CreatedAt          time.Time        `json:"created_at"`
+	UpdatedAt          time.Time        `json:"updated_at"`
 }
 
 type Group struct {

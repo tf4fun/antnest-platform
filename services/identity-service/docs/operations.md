@@ -197,8 +197,8 @@ There is no per-field filtering or bespoke payload size limit. See
   `acknowledge_link_policy_review=true` after assessing the IdP's email controls.
   Secret rotation and enable/disable do not clear the warning. Migration does
   not remove an existing unwanted binding or invalidate existing sessions.
-  The Console warning, browser binding/notice workflows and SCIM pairing
-  remain pending consumer/lifecycle batches under
+  The Console warning and browser binding/notice workflows remain pending
+  consumer batches under
   [#61](../../../contracts/identity/oidc-linking.md).
 - Identity's binding RPCs require live CCT authority and the exact workload:
   Console administers bindings for a Membership in the signed organization;
@@ -246,14 +246,34 @@ There is no per-field filtering or bespoke payload size limit. See
   intended.
 - SCIM User `active=false` deactivates the SCIM-owned Membership without
   deleting it. DELETE tombstones and hides that SCIM resource; reprovisioning
-  with the same external ID creates a fresh Membership on the same global User
-  and repoints its OIDC identity while audit history remains. POST never
+  with the same external ID and stored Provider pairing creates a fresh
+  Membership on the confirmed global User and repoints only that old
+  Membership's OIDC identities. Explicit revocation and activation/audit/notice
+  history remain unchanged. POST never
   overwrites an active User or Group; use PUT/PATCH for updates.
   SCIM Group DELETE removes the Group and its owned edges; it does not expose a
   nonstandard Group `active` state.
 - Multiple SCIM bearer tokens for an Organization are rotating credentials for
   the same logical directory authority. Operators must not connect competing
   provisioning authorities to the same Organization.
+- `issue_scim_token` optionally accepts a same-organization `oidc_provider_id`;
+  omission issues a directory-only token, while explicit null is invalid.
+  Pairing cannot be edited. Migration `0008` preserves legacy tokens and
+  Memberships as unpaired; it infers no Provider authority. Paired User POST
+  requires an exact nonempty `externalId` subject (1–255 Unicode scalars, no
+  NUL), and commits binding, audit and notice atomically. Paired PUT omission
+  preserves that subject; changing/clearing it returns 400 `invalidValue`.
+  Pairing/owner collisions return 409 `uniqueness`. A different or unpaired
+  credential can update ordinary directory fields but cannot reinterpret the
+  stored subject or restore a revoked mapping. Create/delete transactions
+  serialize per Organization before row locks to preserve reprovision lineage.
+- Reprovisioning advances the new Membership timestamp beyond its confirmed
+  predecessor, so a fixed or regressing clock cannot reorder new generations.
+  Historical candidates with equal highest deletion timestamps return 409
+  without changes and require explicit reconciliation from reliable lineage
+  evidence. The migration does not reconstruct historical clock regressions
+  that predate this ordering rule; timestamp order alone cannot recover their
+  original execution order.
 - Protocol request bodies and responses are bounded. Unknown fields are
   rejected on internal RPC and tolerated only where the standards require
   extensibility.

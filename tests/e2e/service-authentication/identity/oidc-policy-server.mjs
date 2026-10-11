@@ -4,7 +4,14 @@ import { createOIDCProvider } from "./oidc-provider.mjs";
 
 const origin = "https://oidc-fixture:8443";
 const providers = new Map(
-  ["policy", "mismatch", "fallback", "bindings"].map((name) => [
+  [
+    "policy",
+    "mismatch",
+    "fallback",
+    "bindings",
+    "scim-pairing-a",
+    "scim-pairing-b",
+  ].map((name) => [
     name,
     {
       provider: createOIDCProvider({

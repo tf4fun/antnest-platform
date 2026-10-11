@@ -452,11 +452,12 @@ type revokeTokenRequest struct {
 }
 
 type issueSCIMTokenRequest struct {
-	RequestID        string   `json:"request_id"`
-	ActorPrincipalID string   `json:"actor_principal_id"`
-	OrganizationID   string   `json:"organization_id"`
-	Name             string   `json:"name"`
-	Scopes           []string `json:"scopes"`
+	RequestID        string          `json:"request_id"`
+	ActorPrincipalID string          `json:"actor_principal_id"`
+	OrganizationID   string          `json:"organization_id"`
+	OIDCProviderID   json.RawMessage `json:"oidc_provider_id"`
+	Name             string          `json:"name"`
+	Scopes           []string        `json:"scopes"`
 }
 
 func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Request) {
@@ -466,10 +467,18 @@ func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
-	result, err := h.dependencies.SCIM.IssueToken(request.Context(), scim.IssueTokenInput{
+	input := scim.IssueTokenInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
 		OrganizationID: body.OrganizationID, Name: body.Name, Scopes: body.Scopes,
-	})
+	}
+	if body.OIDCProviderID != nil {
+		var providerID string
+		if !externalOptionalID(response, body.OIDCProviderID, &providerID) {
+			return
+		}
+		input.OIDCProviderID = &providerID
+	}
+	result, err := h.dependencies.SCIM.IssueToken(request.Context(), input)
 	writeResult(response, result, err)
 }
 

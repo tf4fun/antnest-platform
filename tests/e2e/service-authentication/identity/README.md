@@ -42,8 +42,20 @@ cannot restore it even after automatic email linking is enabled. Explicit
 restoration produces a new notice; exact-ID acknowledgment retries cannot hide
 that notice, including across a service restart. An isolated Membership proves
 the last-method conflict and explicit self lockout. Inventory, chooser and
-rejected writes preserve full durable-state summaries. Paired SCIM, browser
-consumers and cross-service HTTPS acceptance remain separate batches.
+rejected writes preserve full durable-state summaries.
+
+The SCIM flow issues A/B/unpaired credentials through an ordinary organization
+administrator, verifies pairing metadata across restart, and exercises the
+production Users/Groups HTTP routes. Invalid raw subjects, duplicate JSON,
+subject changes and ownership collisions preserve full business-state
+summaries (SCIM authentication's bounded last-used accounting is excluded).
+Paired creation enables signed subject login under `none` with an atomic
+SCIM-actor audit and notice. Other credentials retain directory CRUD authority.
+Delete performs actual offboarding; exact-lineage reprovision preserves the
+User, creates a fresh Membership and moves its binding without recreating a
+notice. Explicit unbind remains revoked after deletion, reprovision, enabling
+email linking and restart. Gateway/browser consumers and cross-service HTTPS
+acceptance remain separate batches.
 
 The service runs as the invoking nonroot UID solely so it can read the temporary
 0600 bind-mounted credentials. The image's production nonroot default is unchanged.

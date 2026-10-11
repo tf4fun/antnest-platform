@@ -7,6 +7,7 @@ import {
   parseFixtureJSON,
 } from "../../identity-closeout/oidc-transport.mjs";
 import { exerciseExternalIdentities } from "./external-identities-flow.mjs";
+import { exerciseSCIMPairing } from "./scim-pairing-flow.mjs";
 
 export async function exerciseOIDCPolicy({
   rpc,
@@ -326,12 +327,27 @@ export async function exerciseOIDCPolicy({
     organizationAdminPassword,
     administer,
   });
+  checkpoint("scim-pairing", callbacks);
+  const scim = await exerciseSCIMPairing({
+    rpc,
+    sql,
+    quote,
+    register,
+    complete,
+    restart,
+    administrator,
+    organizationAdminPassword,
+    identityURL,
+    serviceToken,
+    signal,
+  });
   return {
     complete: true,
     callbacks,
     scope:
-      "Identity Provider policy and binding/notice producers; paired SCIM and browser consumers remain pending",
+      "Identity Provider policy, binding/notice and paired SCIM producers; browser consumers remain pending",
     bindings,
+    scim,
     covered: [
       "safe defaults",
       "exact-domain admission",

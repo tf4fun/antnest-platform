@@ -445,6 +445,7 @@ try {
   writeFileSync(resolve(evidence, "oidc-policy.json"), JSON.stringify(oidc), {
     mode: 0o600,
   });
+  checks += oidc.scim.checks;
   complete = true;
 } catch (error) {
   // Preserve only this disposable project's diagnostics before removing it.

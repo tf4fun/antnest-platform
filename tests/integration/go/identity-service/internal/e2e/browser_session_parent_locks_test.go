@@ -361,7 +361,7 @@ func TestBrowserOIDCAndSCIMReprovisionDoNotReverseExternalMappingLocks(t *testin
 	loginPID := make(chan uint32, 1)
 	var loginCaptured sync.Once
 	f.repository.Repository = f.tracedStore(t, func(_ context.Context, conn *pgx.Conn, sql string) {
-		if strings.Contains(sql, "FROM users") && strings.Contains(sql, "FOR UPDATE") {
+		if strings.Contains(sql, "FROM oidc_providers") && strings.Contains(sql, "FOR UPDATE") {
 			loginCaptured.Do(func() { loginPID <- conn.PgConn().PID() })
 		}
 	}).OIDC()
@@ -376,7 +376,7 @@ func TestBrowserOIDCAndSCIMReprovisionDoNotReverseExternalMappingLocks(t *testin
 		waitForDatabaseLock(t, ctx, f.pool, id)
 		var blocked bool
 		if err := f.pool.QueryRow(ctx, `SELECT $1::integer = ANY(pg_blocking_pids($2))`, provisionPID, id).Scan(&blocked); err != nil || !blocked {
-			t.Fatalf("OIDC did not wait on reprovision parent lock: %v", err)
+			t.Fatalf("OIDC did not wait on reprovision Provider lock: %v", err)
 		}
 	case result := <-completed:
 		t.Fatalf("OIDC did not reach reprovision overlap: %v", result.err)
@@ -394,12 +394,15 @@ func TestBrowserOIDCAndSCIMReprovisionDoNotReverseExternalMappingLocks(t *testin
 	}
 	select {
 	case result := <-completed:
-		if code, _, _ := domain.ErrorDetails(result.err); code != "oidc_membership_required" || result.result.AccessToken != "" {
+		// Provider serialization happens before the first binding lookup. This
+		// login has not selected the old Membership, so it must see the fully
+		// committed replacement and issue a new credential for that Membership.
+		if result.err != nil || result.result.AccessToken == "" || result.result.Principal.UserID != initial.Principal.UserID || result.result.Principal.MembershipID != newMembershipID {
 			var databaseError *pgconn.PgError
 			if errors.As(result.err, &databaseError) {
 				t.Logf("OIDC persistence SQLSTATE = %s", databaseError.Code)
 			}
-			t.Fatalf("in-flight login followed a replaced membership or deadlocked: %v", result.err)
+			t.Fatalf("in-flight login did not use the committed replacement or deadlocked: %v", result.err)
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
@@ -415,7 +418,7 @@ func TestBrowserOIDCAndSCIMReprovisionDoNotReverseExternalMappingLocks(t *testin
 	if err := f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM api_tokens), (SELECT count(*) FROM external_identities), (SELECT count(*) FROM identity_events WHERE event_type = 'oidc_login.completed')`).Scan(&tokens, &links, &completedEvents); err != nil {
 		t.Fatal(err)
 	}
-	if tokens != 2 || links != 1 || completedEvents != 2 || f.idp.ExchangeCount() != 3 {
+	if tokens != 3 || links != 1 || completedEvents != 3 || f.idp.ExchangeCount() != 3 {
 		t.Fatal("reprovision overlap lost or duplicated token/link/exchange effects")
 	}
 }

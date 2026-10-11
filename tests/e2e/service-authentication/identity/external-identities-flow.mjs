@@ -318,6 +318,6 @@ export async function exerciseExternalIdentities({
       "last-method guard and explicit self lockout",
     ],
     scope:
-      "Identity-owned RPC, PostgreSQL and signed HTTPS IdP callbacks; browser consumers and paired SCIM remain pending",
+      "Identity-owned binding RPC, PostgreSQL and signed HTTPS IdP callbacks; browser consumers remain pending",
   };
 }

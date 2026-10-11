@@ -76,13 +76,16 @@ authoritative flag govern first-time administrator linking. Migration preserves
 historical member linking with a durable review warning. Existing issuer/subject
 bindings do not depend on email claims or UserInfo. Optional profile claim
 type errors are treated as absence; they never become verified email authority.
-Existing unpaired SCIM token metadata explicitly returns `oidc_provider_id=null`.
+SCIM token metadata returns its immutable `oidc_provider_id`, or explicit null
+for directory-only credentials. A paired token requires an exact opaque
+`externalId` on User creation and atomically binds that subject with a notice.
 Identity also owns explicit administrator binding/restoration, self and exact
 Membership inventories, atomic unbinding/session revocation, and durable
 notice acknowledgment by ID. Revoked subjects remain reserved and cannot be
 restored by an ordinary callback. These five RPCs require both their exact
-workload grant and a live browser Caller. SCIM pairing and browser consumers
-remain separate batches; see the
+workload grant and a live browser Caller. SCIM reprovisioning preserves the
+confirmed owner's pairing, activation history and any explicit revocation.
+Gateway and browser consumers remain separate batches; see the
 [OIDC linking contract](../../contracts/identity/oidc-linking.md).
 
 Local login, access-token resolution, and both initial and replayed OIDC

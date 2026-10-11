@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
@@ -26,30 +27,41 @@ func (a *SCIMAdapter) GetPrincipal(
 func (a *SCIMAdapter) IssueToken(ctx context.Context, command scim.IssueTokenCommand) (scim.Token, error) {
 	token := scim.Token{
 		ID: command.TokenID, OrganizationID: command.OrganizationID, Name: command.Name,
-		Scopes: command.Scopes, CreatedAt: command.CreatedAt,
+		OIDCProviderID: command.OIDCProviderID,
+		Scopes:         command.Scopes, CreatedAt: command.CreatedAt,
 	}
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		if err := a.store.requireOrganizationAdmin(
-			ctx,
-			tx,
-			command.ActorPrincipalID,
-			command.OrganizationID,
-		); err != nil {
+		if err := domain.CheckCallerOrganization(ctx, command.OrganizationID); err != nil {
+			return err
+		}
+		if command.OIDCProviderID != nil {
+			if !domain.ValidID(*command.OIDCProviderID) {
+				return domain.InvalidArgument("invalid Provider ID")
+			}
+			var providerID string
+			if err := tx.QueryRow(ctx, `SELECT id FROM oidc_providers WHERE id=$1 AND organization_id=$2 FOR UPDATE`, *command.OIDCProviderID, command.OrganizationID).Scan(&providerID); err != nil {
+				return err
+			}
+		}
+		if err := a.store.authorizeSCIMTokenIssuer(ctx, tx, command, true); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO scim_tokens (id, organization_id, token_hash, name, scopes, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			INSERT INTO scim_tokens (id, organization_id, token_hash, name, scopes, created_at, oidc_provider_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			command.TokenID, command.OrganizationID, command.TokenHash,
-			command.Name, command.Scopes, command.CreatedAt,
+			command.Name, command.Scopes, command.CreatedAt, command.OIDCProviderID,
 		); err != nil {
 			return fmt.Errorf("insert SCIM token: %w", err)
 		}
-		return a.store.appendEvent(ctx, tx, event{
+		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID: command.OrganizationID, ActorPrincipalID: command.ActorPrincipalID,
 			Type: "scim_token.issued", SubjectType: "scim_token", SubjectID: command.TokenID,
 			RequestID: command.RequestID, CreatedAt: command.CreatedAt,
-		})
+		}); err != nil {
+			return err
+		}
+		return a.store.authorizeSCIMTokenIssuer(ctx, tx, command, false)
 	})
 	return token, err
 }
@@ -88,7 +100,7 @@ func (a *SCIMAdapter) RevokeToken(ctx context.Context, actorUserID, tokenID stri
 
 func (a *SCIMAdapter) ListTokens(ctx context.Context, organizationID string) ([]scim.Token, error) {
 	rows, err := a.store.pool.Query(ctx, `
-			SELECT id, organization_id, name, scopes, created_at, revoked_at
+			SELECT id, organization_id, name, scopes, created_at, revoked_at, oidc_provider_id
 			FROM scim_tokens
 			WHERE organization_id = $1
 			ORDER BY created_at DESC, id`, organizationID)
@@ -101,7 +113,7 @@ func (a *SCIMAdapter) ListTokens(ctx context.Context, organizationID string) ([]
 		var token scim.Token
 		if err := rows.Scan(
 			&token.ID, &token.OrganizationID, &token.Name, &token.Scopes,
-			&token.CreatedAt, &token.RevokedAt,
+			&token.CreatedAt, &token.RevokedAt, &token.OIDCProviderID,
 		); err != nil {
 			return nil, fmt.Errorf("scan SCIM token: %w", err)
 		}
@@ -128,8 +140,8 @@ func (a *SCIMAdapter) ResolveToken(
 		FROM organizations o
 		WHERE t.token_hash = $1 AND t.revoked_at IS NULL
 		  AND o.id = t.organization_id AND o.active
-		RETURNING t.id, t.organization_id, t.scopes`, digest, now,
-	).Scan(&authorization.TokenID, &authorization.OrganizationID, &authorization.Scopes)
+		RETURNING t.id, t.organization_id, t.scopes, t.oidc_provider_id`, digest, now,
+	).Scan(&authorization.TokenID, &authorization.OrganizationID, &authorization.Scopes, &authorization.OIDCProviderID)
 	if err != nil {
 		return scim.Authorization{}, normalizeError(err)
 	}
@@ -137,6 +149,12 @@ func (a *SCIMAdapter) ResolveToken(
 }
 
 func (a *SCIMAdapter) CreateUser(ctx context.Context, command scim.CreateUserCommand) (scim.UserResource, error) {
+	if command.Membership.OrganizationID != command.OrganizationID || command.Membership.UserID != command.User.ID || command.Membership.Source != domain.SourceSCIM {
+		return scim.UserResource{}, domain.ErrInvalidArgument
+	}
+	if pairing := command.Membership.SCIMOIDCProviderID; pairing != nil && (!domain.ValidID(*pairing) || !oidcflow.ValidSubject(command.Membership.SCIMExternalID)) {
+		return scim.UserResource{}, domain.InvalidArgument("invalid SCIM Provider pairing or opaque subject")
+	}
 	for attempt := 0; attempt < 5; attempt++ {
 		result, err := a.createUserAttempt(ctx, command)
 		if errors.Is(err, errSCIMReprovisionChanged) {
@@ -152,22 +170,39 @@ var errSCIMReprovisionChanged = errors.New("SCIM reprovision lineage changed")
 func (a *SCIMAdapter) createUserAttempt(ctx context.Context, command scim.CreateUserCommand) (scim.UserResource, error) {
 	var result scim.UserResource
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		reprovisioned := false
-		if command.Membership.SCIMExternalID != "" {
-			user, found, err := a.findDeletedSCIMUserForReprovision(
-				ctx,
-				tx,
-				command.OrganizationID,
-				command.Membership.SCIMExternalID,
-			)
+		if err := lockSCIMUserDirectory(ctx, tx, command.OrganizationID); err != nil {
+			return err
+		}
+		lineage, err := discoverSCIMReprovision(ctx, tx, command.OrganizationID, command.Membership.SCIMExternalID)
+		if err != nil {
+			return err
+		}
+		reprovisioned := lineage.membershipID != ""
+		// Do not filter discovery by Provider: a different or NULL pairing is
+		// a directory collision, not permission to create/adopt another User.
+		if reprovisioned && !sameSCIMPairing(lineage.providerID, command.Membership.SCIMOIDCProviderID) {
+			return domain.ErrConflict
+		}
+		providers, err := scimReprovisionProviders(ctx, tx, lineage, command.Membership.SCIMOIDCProviderID)
+		if err != nil {
+			return err
+		}
+		if err := lockExternalProviders(ctx, tx, providers); err != nil {
+			return err
+		}
+		if err := lockSCIMCreateAuthorization(ctx, tx, command); err != nil {
+			return err
+		}
+		if reprovisioned {
+			user, err := lockSCIMReprovision(ctx, tx, command, lineage, providers)
 			if err != nil {
 				return err
 			}
-			if found {
-				command.User = user
-				command.Membership.UserID = user.ID
-				reprovisioned = true
-			}
+			command.User, command.Membership.UserID = user, user.ID
+			// A random Membership ID is not a generation cursor. Advancing
+			// beyond the confirmed predecessor also survives clock regression.
+			createdAt := domain.NextUpdatedAt(command.Membership.CreatedAt, lineage.deletedAt)
+			command.Membership.CreatedAt, command.Membership.UpdatedAt = createdAt, createdAt
 		}
 		if !reprovisioned {
 			if _, err := tx.Exec(ctx, `
@@ -178,6 +213,9 @@ func (a *SCIMAdapter) createUserAttempt(ctx context.Context, command scim.Create
 			); err != nil {
 				return fmt.Errorf("insert SCIM user: %w", err)
 			}
+			if err := lockSCIMOrganization(ctx, tx, command.OrganizationID); err != nil {
+				return err
+			}
 		}
 		if err := insertMembership(ctx, tx, command.Membership); err != nil {
 			return err
@@ -186,14 +224,18 @@ func (a *SCIMAdapter) createUserAttempt(ctx context.Context, command scim.Create
 			if _, err := tx.Exec(ctx, `
 				UPDATE external_identities
 				SET membership_id = $3, updated_at = $4
-				WHERE organization_id = $1 AND user_id = $2`,
+				WHERE organization_id = $1 AND user_id = $2 AND membership_id = $5`,
 				command.OrganizationID,
 				command.User.ID,
 				command.Membership.ID,
 				command.Membership.CreatedAt,
+				lineage.membershipID,
 			); err != nil {
 				return fmt.Errorf("repoint OIDC identities after SCIM reprovisioning: %w", err)
 			}
+		}
+		if err := a.store.bindSCIMSubject(ctx, tx, command); err != nil {
+			return err
 		}
 		result = scim.UserResource{User: command.User, Membership: command.Membership}
 		eventType := "scim_user.created"
@@ -274,6 +316,10 @@ func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserC
 		if !current.Membership.UpdatedAt.Equal(command.ExpectedUpdatedAt) {
 			return domain.ErrVersionConflict
 		}
+		if !sameSCIMPairing(current.Membership.SCIMOIDCProviderID, command.Membership.SCIMOIDCProviderID) ||
+			current.Membership.SCIMOIDCProviderID != nil && current.Membership.SCIMExternalID != command.Membership.SCIMExternalID {
+			return domain.InvalidArgument("paired externalId and Membership pairing cannot be changed or cleared")
+		}
 		command.User.ID, command.User.CreatedAt = current.User.ID, current.User.CreatedAt
 		command.Membership.ID = current.Membership.ID
 		command.Membership.UserID = current.User.ID
@@ -318,6 +364,9 @@ func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserC
 
 func (a *SCIMAdapter) DeleteUser(ctx context.Context, command scim.DeleteUserCommand) error {
 	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
+		if err := lockSCIMUserDirectory(ctx, tx, command.OrganizationID); err != nil {
+			return err
+		}
 		var userID string
 		var updatedAt time.Time
 		if err := tx.QueryRow(ctx, `
@@ -492,58 +541,6 @@ func (a *SCIMAdapter) DeleteGroup(ctx context.Context, command scim.DeleteGroupC
 			SubjectType:      "group", SubjectID: command.GroupID, CreatedAt: command.DeletedAt,
 		})
 	})
-}
-
-func (a *SCIMAdapter) findDeletedSCIMUserForReprovision(
-	ctx context.Context,
-	tx *databaseTransaction,
-	organizationID string,
-	externalID string,
-) (domain.User, bool, error) {
-	// Discover first, then lock one exact lineage in parent-first order. A
-	// joint row-mark query can hold a deleted Membership while waiting for
-	// its User, opposing binding/callback admission.
-	var userID, membershipID string
-	err := tx.QueryRow(ctx, `
-		SELECT m.user_id, m.id
-		FROM organization_memberships m
-		WHERE m.organization_id = $1 AND m.source = 'scim'
-		  AND m.scim_external_id = $2 AND m.scim_deleted_at IS NOT NULL
-		ORDER BY m.scim_deleted_at DESC, m.id DESC
-		LIMIT 1`, organizationID, externalID,
-	).Scan(&userID, &membershipID)
-	if err == pgx.ErrNoRows {
-		return domain.User{}, false, nil
-	}
-	if err != nil {
-		return domain.User{}, false, fmt.Errorf("find deleted SCIM user for reprovisioning: %w", err)
-	}
-	var user domain.User
-	if err := tx.QueryRow(ctx, `SELECT id, system_role, active, created_at, updated_at FROM users WHERE id=$1 FOR UPDATE`, userID).
-		Scan(&user.ID, &user.SystemRole, &user.Active, &user.CreatedAt, &user.UpdatedAt); err != nil {
-		return domain.User{}, false, err
-	}
-	var found string
-	if err := tx.QueryRow(ctx, `SELECT id FROM organizations WHERE id=$1 FOR SHARE`, organizationID).Scan(&found); err != nil {
-		return domain.User{}, false, err
-	}
-	err = tx.QueryRow(ctx, `SELECT id FROM organization_memberships WHERE id=$1 AND user_id=$2 AND organization_id=$3
-		AND source='scim' AND scim_external_id=$4 AND scim_deleted_at IS NOT NULL FOR UPDATE`, membershipID, userID, organizationID, externalID).Scan(&found)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.User{}, false, errSCIMReprovisionChanged
-	}
-	if err != nil {
-		return domain.User{}, false, err
-	}
-	var latest string
-	if err := tx.QueryRow(ctx, `SELECT id FROM organization_memberships WHERE organization_id=$1 AND source='scim'
-		AND scim_external_id=$2 AND scim_deleted_at IS NOT NULL ORDER BY scim_deleted_at DESC, id DESC LIMIT 1`, organizationID, externalID).Scan(&latest); err != nil {
-		return domain.User{}, false, err
-	}
-	if latest != membershipID {
-		return domain.User{}, false, errSCIMReprovisionChanged
-	}
-	return user, true, nil
 }
 
 func replaceSCIMUser(
@@ -768,7 +765,7 @@ func scimGroupFilter(query scim.ListQuery) (string, []any, error) {
 const scimUserSelect = `
 	SELECT u.id, u.system_role, u.active, u.created_at, u.updated_at,
 	       m.id, m.organization_id, m.user_id, m.email, m.display_name, m.role, m.source, m.active,
-	       COALESCE(m.scim_external_id, ''), COALESCE(m.scim_user_name, ''), m.scim_deleted_at,
+	       COALESCE(m.scim_external_id, ''), COALESCE(m.scim_user_name, ''), m.scim_deleted_at, m.scim_oidc_provider_id,
 	       m.created_at, m.updated_at
 	FROM organization_memberships m
 	JOIN users u ON u.id = m.user_id`
@@ -785,7 +782,7 @@ func scanSCIMUser(row rowScanner) (scim.UserResource, error) {
 		&member.Membership.Email, &member.Membership.DisplayName,
 		&member.Membership.Role, &member.Membership.Source, &member.Membership.Active,
 		&member.Membership.SCIMExternalID, &member.Membership.SCIMUserName,
-		&member.Membership.SCIMDeletedAt,
+		&member.Membership.SCIMDeletedAt, &member.Membership.SCIMOIDCProviderID,
 		&member.Membership.CreatedAt, &member.Membership.UpdatedAt,
 	)
 	if err != nil {

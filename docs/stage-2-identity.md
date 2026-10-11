@@ -60,7 +60,8 @@ User
   sessions, with a guard for its last usable sign-in method and no Agent
   offboarding. Administrator restoration creates a fresh immutable notice;
   acknowledgment targets exact owned notice IDs. Gateway, Console, Agent UI
-  and SCIM pairing remain separate delivery batches under #61.
+  remain separate delivery batches under #61. Paired SCIM provisioning is owned
+  by Identity and preserves explicit binding revocation on reprovisioning.
 - Provider identity is `(organization_id, name)`. Issuer and Client ID are
   immutable; a replacement registration requires a new Provider name.
   Client-secret rotation remains supported. The old Provider and external identities stay
@@ -245,6 +246,9 @@ SCIM error instead of being silently discarded. Bulk, sorting, ETags, and
 password mutation are explicitly unsupported.
 
 Mutation bodies contain exactly one JSON object and are limited to 1 MiB.
+User and PATCH objects reject duplicate keys, including case-folded aliases;
+opaque subject validation rejects invalid UTF-8 and unpaired JSON surrogates
+before decoding can repair them.
 Group member references must be non-empty; a Group replacement and its owned
 membership set commit as one row-locked transaction. PUT/PATCH use an
 optimistic compare-and-swap version and strictly advance `updated_at` even
@@ -262,12 +266,29 @@ schema does not invent an `active` attribute.
 `active=false` is a visible deactivation and can be reversed by a later SCIM
 write. User DELETE is different: the SCIM Membership is tombstoned, disappears
 from GET, list, and filters, and can later be provisioned as a fresh resource.
-Exact `externalId` reprovisioning reuses the stable global User, creates a new
-Membership, and repoints existing OIDC identities to that Membership; it never
-reactivates the tombstone. The global User and audit facts remain because they
-are not SCIM resources. Multiple active SCIM tokens are rotating credentials
-for one logical Organization directory authority, not independent ownership
-domains.
+Exact organization/`externalId` reprovisioning reuses the confirmed stable User
+only when the issuing token's Provider pairing equals the deleted Membership's
+pairing, including null. It creates a new Membership and repoints only bindings
+of that confirmed old Membership. Binding method, activation time, explicit
+revocation and prior notices remain unchanged; neither the Membership tombstone
+nor a revoked sign-in method is reactivated. The global User and audit facts
+remain because they are not SCIM resources.
+
+An organization administrator may issue a SCIM token paired to a Provider in
+the signed organization. The pairing is immutable; migration leaves existing
+tokens and Memberships unpaired. Paired User POST requires `externalId` to be
+an exact opaque subject of 1–255 Unicode scalar values without NUL. It is never
+trimmed. A new paired Membership, `method=scim` binding, audit and notice commit
+together. Missing/invalid subjects return SCIM 400 `invalidValue`; ownership or
+pairing collisions return 409 `uniqueness` without business effects.
+
+Stored paired Memberships preserve `externalId` when PUT omits it. PUT/PATCH
+cannot change or clear it, regardless of which same-organization token performs
+the write. Other paired and unpaired tokens can still perform ordinary directory
+CRUD, including Groups, but cannot change the stored pairing or restore revoked
+bindings. Unpaired Memberships retain the existing optional/trimmed external-ID
+semantics. Multiple tokens still operate one logical organization directory;
+the additional pairing grants a specific Provider binding side effect.
 
 ## Credentials
 

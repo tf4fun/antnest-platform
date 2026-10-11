@@ -21,7 +21,8 @@ Revision 16 adds [OIDC linking policy and ownership](oidc-linking.md), binding
 controls, immutable SCIM token pairing and durable exact-ID notice acknowledgment.
 Its method authorization declarations specify the required policy; active caller
 grants change with the owning service implementation. Identity's Provider policy
-and five binding/notice RPCs implement their producer grants. SCIM pairing,
+and five binding/notice RPCs implement their producer grants. Identity also
+implements paired SCIM token issuance and exact-lineage reprovisioning.
 Gateway, Console, Agent UI and final HTTPS integration remain separate pending
 #61 batches; the shared contract alone does not deliver these consumers.
 

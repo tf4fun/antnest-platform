@@ -580,12 +580,12 @@ func insertMembership(ctx context.Context, tx *databaseTransaction, membership d
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO organization_memberships (
 			id, organization_id, user_id, email, display_name, role, source, active,
-			scim_external_id, scim_user_name, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, $12)`,
+			scim_external_id, scim_user_name, created_at, updated_at, scim_oidc_provider_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, $12, $13)`,
 		membership.ID, membership.OrganizationID, membership.UserID,
 		membership.Email, membership.DisplayName, membership.Role,
 		membership.Source, membership.Active, membership.SCIMExternalID, membership.SCIMUserName,
-		membership.CreatedAt, membership.UpdatedAt,
+		membership.CreatedAt, membership.UpdatedAt, membership.SCIMOIDCProviderID,
 	); err != nil {
 		return fmt.Errorf("insert organization membership: %w", err)
 	}

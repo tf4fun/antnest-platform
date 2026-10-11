@@ -162,8 +162,28 @@ Inventory reads do not touch session activity or acknowledge notices. Binding
 and pending-notice pages have independent exclusive ID cursors; organization
 responses omit private notices. Acknowledgment validates every requested owned
 notice ID before updating any row. An old acknowledgment cannot clear a later
-restoration notice. SCIM pairing and browser consumers remain separate batches
+restoration notice. Gateway and browser consumers remain separate batches
 in the [shared delivery contract](../../../contracts/identity/oidc-linking.md).
+
+Paired SCIM token issuance locks the same-organization Provider before actor
+parents and SID, and revalidates the original signed Caller after audit writes.
+Migration `0008` adds nullable token/Membership Provider references without
+backfilling authority. A paired User creation commits the exact subject binding,
+SCIM-actor audit and immutable notice with its new directory resource.
+
+SCIM User creation and deletion first acquire a transaction advisory lock in a
+dedicated namespace for the organization. This protects both absence of a
+deleted candidate and the newest deleted lineage through commit. Creation then
+locks all discovered Providers (including revoked mappings), the issuing token,
+User, Organization and old Membership, rechecking the discovered Provider set.
+Other or null pairing cannot adopt the old lineage. Reprovisioning changes only
+the confirmed old Membership's mapping pointers; method, activation timestamp,
+revocation and existing notices stay unchanged. Directory updates do not publish
+tombstones and retain optimistic concurrency plus active-resource uniqueness.
+Each replacement Membership starts strictly after its confirmed predecessor's
+deletion at database microsecond precision, even when the wall clock stays
+fixed or moves backwards. Equal highest historical deletion timestamps refuse
+reprovisioning rather than selecting a generation by random ID.
 
 ### AuthSession And Token
 
@@ -352,10 +372,13 @@ event without resetting an existing password.
 - SCIM User `active=false` is reversible deactivation. User DELETE tombstones
   the SCIM Membership and hides it from GET, list, and filter results while the
   global User and audit facts remain. Exact external-ID reprovisioning reuses
-  that User, creates a fresh SCIM Membership ID, and repoints any durable OIDC
-  identity to the new Membership.
+  that User only under the same stored Provider pairing (including null),
+  creates a fresh SCIM Membership ID, and repoints that exact old Membership's
+  durable OIDC identities without restoring revoked bindings.
 - SCIM tokens are rotating credentials for one logical directory authority per
-  Organization. They do not create separate ownership namespaces.
+  Organization. They do not create separate directory namespaces. Optional
+  immutable Provider pairing grants only the additional subject-binding effect;
+  another token cannot reinterpret a paired Membership's external ID.
 
 ## Persistence Boundary
 

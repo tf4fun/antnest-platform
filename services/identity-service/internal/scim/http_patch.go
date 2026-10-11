@@ -23,6 +23,22 @@ type patchOperation struct {
 	Value     json.RawMessage `json:"value"`
 }
 
+func (b *patchRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := scimObject(raw); err != nil {
+		return err
+	}
+	type body patchRequest
+	return json.Unmarshal(raw, (*body)(b))
+}
+
+func (b *patchOperation) UnmarshalJSON(raw []byte) error {
+	if _, err := scimObject(raw); err != nil {
+		return err
+	}
+	type body patchOperation
+	return json.Unmarshal(raw, (*body)(b))
+}
+
 func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	var body patchRequest
 	if !decodeSCIMBody(response, request, &body) {
@@ -49,6 +65,10 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 	for _, operation := range body.Operations {
 		if err := applyUserPatch(&input, operation); err != nil {
 			writeSCIMError(response, http.StatusBadRequest, patchErrorType(err), err.Error())
+			return
+		}
+		if _, err := input.replacementExternalID(current.Membership); err != nil {
+			writeServiceError(response, err)
 			return
 		}
 	}
@@ -110,12 +130,12 @@ func applyUserPatch(input *UserInput, operation patchOperation) error {
 		if op == "remove" {
 			return fmt.Errorf("path is required for remove")
 		}
-		var values map[string]json.RawMessage
-		if err := json.Unmarshal(operation.Value, &values); err != nil {
+		values, err := scimObject(operation.Value)
+		if err != nil {
 			return invalidPatchValue("patch value must be an object")
 		}
 		for name, value := range values {
-			if err := setUserPatchValue(input, strings.ToLower(name), value, op); err != nil {
+			if err := setUserPatchValue(input, name, value, op); err != nil {
 				return err
 			}
 		}
@@ -147,10 +167,18 @@ func setUserPatchValue(input *UserInput, path string, value json.RawMessage, ope
 	case "emails":
 		return patchEmails(&input.Email, value, operation)
 	case "externalid":
+		input.externalIDJSON = operationJSON(value, operation)
 		return patchString(&input.ExternalID, value, operation)
 	default:
 		return fmt.Errorf("unsupported SCIM User patch path %q", path)
 	}
+}
+
+func operationJSON(value json.RawMessage, operation string) json.RawMessage {
+	if operation == "remove" {
+		return json.RawMessage("null")
+	}
+	return value
 }
 
 func patchEmails(target *string, value json.RawMessage, operation string) error {
