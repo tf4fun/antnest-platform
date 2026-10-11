@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import { collectLifecycleAdmissionTrace } from "../stage3-base/resolve-trace.mjs";
 import { inspectCrashTrace } from "./crash-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import {
@@ -15,16 +16,14 @@ export async function collectReadonlyCreateReplay(
   expected,
   secrets,
   signal,
+  options = {},
 ) {
-  return collectTrace(
-    config.jaeger,
-    expected.traceID,
-    (trace) => {
-      saveFoundationTrace(config, trace);
-      return inspectReadonlyCreateReplay(trace, expected, secrets);
-    },
+  return collectLifecycleAdmissionTrace(config.jaeger, expected, secrets, {
+    ...options,
+    directory: `${config.evidence}/traces`,
     signal,
-  );
+    inspect: inspectReadonlyCreateReplay,
+  });
 }
 
 export async function collectReplayObservation(
@@ -98,30 +97,37 @@ export async function collectFoundationLifecycle(
   operation,
   secrets,
   signal,
+  options = {},
 ) {
-  return collectTrace(
-    config.jaeger,
-    operation.traceID,
-    (trace) => {
-      saveFoundationTrace(config, trace);
-      return (operation.crashRecovery ? inspectCrashTrace : inspectLifecycle)(
-        trace,
-        {
-          kind: operation.kind,
-          crashRecovery: operation.crashRecovery,
-          requestId: operation.requestID,
-          agentId: operation.agentID,
-          traceID: operation.traceID,
-          workerRestart: operation.workerRestart,
-          updateRestart: operation.updateRestart,
-          settlementOutcome: operation.settlementOutcome,
-          networkAlreadyClosed: operation.networkAlreadyClosed,
-          skillPreparation: operation.skillPreparation,
-          missingSourceGeneration: operation.missingSourceGeneration,
-        },
-        secrets,
-      );
-    },
+  const expected = {
+    kind: operation.kind,
+    crashRecovery: operation.crashRecovery,
+    requestId: operation.requestID,
+    agentId: operation.agentID,
+    traceID: operation.traceID,
+    workerRestart: operation.workerRestart,
+    updateRestart: operation.updateRestart,
+    settlementOutcome: operation.settlementOutcome,
+    networkAlreadyClosed: operation.networkAlreadyClosed,
+    skillPreparation: operation.skillPreparation,
+    missingSourceGeneration: operation.missingSourceGeneration,
+  };
+  // A killed Runtime process has a separately verified recovery projection;
+  // its missing-parent contract is not waived by normal admission collection.
+  if (operation.crashRecovery)
+    return collectTrace(
+      config.jaeger,
+      operation.traceID,
+      (trace) => {
+        saveFoundationTrace(config, trace);
+        return inspectCrashTrace(trace, expected, secrets);
+      },
+      signal,
+    );
+  return collectLifecycleAdmissionTrace(config.jaeger, expected, secrets, {
+    ...options,
+    directory: `${config.evidence}/traces`,
     signal,
-  );
+    inspect: inspectLifecycle,
+  });
 }

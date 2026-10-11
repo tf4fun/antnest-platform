@@ -17,17 +17,23 @@ import { inspectUpdateRestart } from "./update-restart.mjs";
 import { clockSkewWarning } from "../../support/strict-findings.mjs";
 
 export { clockSkewWarning };
+export {
+  inspectLifecycleResolution,
+  collectLifecycleAdmissionTrace,
+} from "./resolve-trace.mjs";
 
 export function clockWarningsOnly(traces) {
   return traces.every(
     (result) =>
-      result.strict_trace === "passed" ||
-      (result.strict_trace === "failed" &&
-        result.warning_count > 0 &&
-        result.warnings?.length > 0 &&
-        result.warnings.every((warning) => clockSkewWarning.test(warning)) &&
-        (result.platform_probe_errors ?? 0) === 0 &&
-        (result.restart_error_spans ?? 0) === 0),
+      (result.resolve_source_error_spans ?? 0) === 0 &&
+      (result.error_spans ?? 0) === 0 &&
+      (result.strict_trace === "passed" ||
+        (result.strict_trace === "failed" &&
+          result.warning_count > 0 &&
+          result.warnings?.length > 0 &&
+          result.warnings.every((warning) => clockSkewWarning.test(warning)) &&
+          (result.platform_probe_errors ?? 0) === 0 &&
+          (result.restart_error_spans ?? 0) === 0)),
   );
 }
 
@@ -39,7 +45,9 @@ export function reviewedFencedRestartOnly(traces) {
   const [result] = restarted;
   return (
     result.kind === "rebuild" &&
+    (result.resolve_source_error_spans ?? 0) === 0 &&
     result.restart_error_spans === 2 &&
+    (result.error_spans ?? result.restart_error_spans) === 2 &&
     result.platform_probe_errors === 0 &&
     (result.warnings ?? []).every((warning) =>
       clockSkewWarning.test(warning),

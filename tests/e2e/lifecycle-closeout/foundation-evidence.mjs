@@ -30,6 +30,7 @@ export function foundationAcceptedTraceExitCode(
     evidence.every((item) => {
       if (
         item.topology !== "passed" ||
+        (item.resolve_source_error_spans ?? 0) !== 0 ||
         (item.platform_probe_errors ?? 0) !== 0 ||
         (item.expected_transport_faults ?? 0) !== 0 ||
         !(item.warnings ?? []).every((warning) =>
@@ -51,6 +52,7 @@ export function foundationAcceptedTraceExitCode(
         return (
           item.kind === "rebuild" &&
           item.restart_error_spans === 3 &&
+          (item.error_spans ?? item.restart_error_spans) === 3 &&
           Array.isArray(item.workflow_spans) &&
           item.workflow_spans.length === 2 &&
           item.workflow_spans[0].end_reason === "worker_shutdown" &&

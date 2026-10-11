@@ -25,16 +25,16 @@ COMPOSE_PARALLEL_LIMIT=1 make docker-build-stage3 -j1
 make e2e-lifecycle
 ```
 
-| Target | Profile | Contract |
-| --- | --- | --- |
-| `make e2e-lifecycle` | Foundation, including the active-Run drain | [migration-contract.md](migration-contract.md) |
-| `make e2e-lifecycle-shutdown` | Whole-platform stream shutdown and restart | [shutdown-migration-contract.md](shutdown-migration-contract.md) |
-| `make e2e-lifecycle-health` | Runtime health and observation | [health-migration-contract.md](health-migration-contract.md) |
-| `make e2e-lifecycle-restore` | Offline backup and restore | [restore-migration-contract.md](restore-migration-contract.md) |
+| Target                           | Profile                                                   | Contract                                                               |
+| -------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `make e2e-lifecycle`             | Foundation, including the active-Run drain                | [migration-contract.md](migration-contract.md)                         |
+| `make e2e-lifecycle-shutdown`    | Whole-platform stream shutdown and restart                | [shutdown-migration-contract.md](shutdown-migration-contract.md)       |
+| `make e2e-lifecycle-health`      | Runtime health and observation                            | [health-migration-contract.md](health-migration-contract.md)           |
+| `make e2e-lifecycle-restore`     | Offline backup and restore                                | [restore-migration-contract.md](restore-migration-contract.md)         |
 | `make e2e-lifecycle-interrupted` | Interrupted Runtime update with a lost committed response | [interrupted-migration-contract.md](interrupted-migration-contract.md) |
-| `make e2e-lifecycle-network` | Runtime network policy on the real packet path | [network-migration-contract.md](network-migration-contract.md) |
-| `make e2e-lifecycle-loss` | Unplanned Runtime loss, live and cold | [loss-migration-contract.md](loss-migration-contract.md) |
-| `make e2e-lifecycle-crash` | Opt-in Runtime Controller crash during reconstruction | [crash-contract.md](crash-contract.md) |
+| `make e2e-lifecycle-network`     | Runtime network policy on the real packet path            | [network-migration-contract.md](network-migration-contract.md)         |
+| `make e2e-lifecycle-loss`        | Unplanned Runtime loss, live and cold                     | [loss-migration-contract.md](loss-migration-contract.md)               |
+| `make e2e-lifecycle-crash`       | Opt-in Runtime Controller crash during reconstruction     | [crash-contract.md](crash-contract.md)                                 |
 
 The workspace protocol profile reuses the same Foundation runner; see
 [its contract](../workspace-closeout/protocol-migration-contract.md).
@@ -77,6 +77,24 @@ and make the strict result exit 2. Supplied passwords, model keys and session
 cookies must not appear in any span; RPC content capture is disabled. A span
 that was never exported because its process was killed is reported as a gap,
 never replaced by a fabricated span.
+
+Normal Console lifecycle admission and HTTP Create replay additionally validate
+the `console` Resolve source before the actual Gateway-to-Console CLIENT.
+Current, shared-source and refresh-trigger traces are archived by Trace ID and
+must converge across three complete snapshots. The exact Resolve RPC receipt
+must have successful CLIENT, SERVER and owning SQL evidence; cached admission
+does not replace Controller owner authorization or committed business writes.
+Create replay still requires its one read-only transaction with no work dispatch.
+The owning inspector is awaited, and its strict verdict and full source
+diagnostics are both retained. Source errors cannot inherit clock-only or
+workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
+errors; a restart exception requires the exact reviewed total.
+
+Controller-root Runtime observation and Identity offboarding keep their own
+admission paths. The opt-in killed-process crash collector still uses its
+existing recovery scope; its Resolve-source integration is pending. Keeping
+that path does not declare raw missing-parent evidence fully admitted. Shutdown
+watches, policy writes and ACP requests also remain separate consumer batches.
 
 ## Foundation
 
