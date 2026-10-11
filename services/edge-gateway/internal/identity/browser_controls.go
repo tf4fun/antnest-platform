@@ -139,6 +139,7 @@ func (client *Client) TouchSession(ctx context.Context) (SessionMetadata, error)
 	if !result.Valid() || !result.ExpiresAt.Equal(principal.ExpiresAt) {
 		return SessionMetadata{}, fmt.Errorf("identity returned invalid activity metadata")
 	}
+	client.invalidateActivity(principal.SessionID)
 	return result, nil
 }
 
@@ -170,6 +171,7 @@ func (client *Client) ChangePassword(ctx context.Context, input PasswordInput) (
 		return LoginResult{}, fmt.Errorf("identity returned invalid password replacement")
 	}
 	result.LoginResult.Principal = replacement
+	client.invalidateUser(principal.UserID)
 	return result.LoginResult, nil
 }
 
@@ -245,6 +247,7 @@ func (client *Client) RevokeSessions(ctx context.Context, input SessionRevokeInp
 		*result.CurrentRevoked && (*result.RevokedCount == 0 || input.Mode == "others") {
 		return SessionRevokeResult{}, fmt.Errorf("identity returned invalid session revocation")
 	}
+	client.invalidateUser(principal.UserID)
 	return SessionRevokeResult{RevokedCount: *result.RevokedCount, CurrentRevoked: *result.CurrentRevoked}, nil
 }
 

@@ -57,11 +57,15 @@ ACP receive/message slots, so observation does not consume cancel capacity.
 Identity is resolved at entry, before subsequent snapshots and independently
 while quiet. It must retain the original active SID, User/Organization/Membership
 and roles. Non-touch checks run at `min(30s/3, activity_interval_ms)`, with a
-hard stale-output deadline anchored to the start of each check and including
-RPC latency and socket closure. Initial checks must fit that budget before
+hard stale-output deadline anchored to the source's actual Resolve RPC start,
+including RPC latency and socket closure. A cache hit does not reset that age;
+the current probe's wait and scheduling budget remains separate. Initial checks must fit that budget before
 opening ACP. Mutable idle expiry schedules a fresh read; absolute expiry is a
 hard cap. The private session-revocation feed accelerates closure without
-replacing live checks. Revocation, expiry or outage interrupts delivery and
+replacing bounded checks. Missing or stale feed proof requires live Resolve;
+the [cache policy](../../../contracts/edge-gateway/resolve-cache.md) governs
+whether an exact-scope snapshot can still admit a probe during an outage.
+Revocation, expiry or unavailable resolution interrupts delivery and
 blocked browser writes. A valid ACP access-loss snapshot is delivered to the
 still-valid original identity and closes the stream. The stream lease remains
 an additional cap. See [session lifecycle](../../../contracts/identity/browser-sessions.md).

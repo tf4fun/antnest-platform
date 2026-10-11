@@ -75,8 +75,8 @@ func resolveError(err error) error {
 	return ErrUnavailable
 }
 
-// Start must run before opening upstream. InitialStarted is the beginning of
-// the first Resolve RPC, not the time its successful response was received.
+// Start must run before opening upstream. InitialStarted is the first probe's
+// invocation start; private Principal provenance retains the actual RPC start.
 func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, error) {
 	if cfg.MaximumStale == 0 {
 		cfg.MaximumStale = DefaultMaximumStale
@@ -89,9 +89,9 @@ func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, erro
 	if err := Validate(cfg.Original, cfg.Original, now); err != nil {
 		return nil, err
 	}
-	interval := Interval(cfg.MaximumStale, cfg.Original.ActivityIntervalMS)
-	if now.Sub(cfg.InitialStarted) > interval {
-		return nil, ErrUnavailable
+	authorityStarted, err := ValidateTiming(cfg.Original, cfg.InitialStarted, cfg.MaximumStale, now)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	guard := &Guard{ctx: ctx, cancel: cancel, done: make(chan struct{}), original: cfg.Original,
@@ -106,13 +106,13 @@ func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, erro
 			guard.hardCap, guard.hardCause = cfg.Original.ContextExpiresAt, ErrCallerContextExpired
 		}
 	}
-	deadline, cause := guard.deadline(cfg.InitialStarted)
+	deadline, cause := guard.deadline(authorityStarted)
 	if !deadline.After(now) {
 		cancel(cause)
 		return nil, cause
 	}
 	remove := registry.register(guard)
-	go guard.run(cfg, remove)
+	go guard.run(cfg, authorityStarted, remove)
 	return guard, nil
 }
 
@@ -139,7 +139,7 @@ type checkResult struct {
 	err       error
 }
 
-func (guard *Guard) run(cfg Config, remove func()) {
+func (guard *Guard) run(cfg Config, lastAuthorityStart time.Time, remove func()) {
 	var workers sync.WaitGroup
 	var cancelCheck context.CancelFunc
 	var checkDone <-chan struct{}
@@ -153,8 +153,7 @@ func (guard *Guard) run(cfg Config, remove func()) {
 		close(guard.done)
 	}()
 	current := cfg.Original
-	lastStarted := cfg.InitialStarted
-	next := nextCheck(lastStarted, guard.maximumStale, current)
+	next := nextCheck(cfg.InitialStarted, guard.maximumStale, current)
 	results := make(chan checkResult, 1)
 	pending := false
 	timer := time.NewTimer(0)
@@ -163,7 +162,7 @@ func (guard *Guard) run(cfg Config, remove func()) {
 		if guard.ctx.Err() != nil {
 			return
 		}
-		deadline, cause := guard.deadline(lastStarted)
+		deadline, cause := guard.deadline(lastAuthorityStart)
 		now := time.Now()
 		if !deadline.After(now) {
 			guard.cancel(cause)
@@ -220,12 +219,13 @@ func (guard *Guard) run(cfg Config, remove func()) {
 				guard.cancel(err)
 				return
 			}
-			if time.Since(result.started) > Interval(guard.maximumStale, result.principal.ActivityIntervalMS) {
-				guard.cancel(ErrUnavailable)
+			authorityStarted, err := ValidateTiming(result.principal, result.started, guard.maximumStale, time.Now())
+			if err != nil {
+				guard.cancel(err)
 				return
 			}
-			lastStarted, current = result.started, result.principal
-			next = nextCheck(lastStarted, guard.maximumStale, current)
+			lastAuthorityStart, current = authorityStarted, result.principal
+			next = nextCheck(result.started, guard.maximumStale, current)
 		}
 	}
 }
@@ -233,7 +233,11 @@ func (guard *Guard) run(cfg Config, remove func()) {
 func nextCheck(started time.Time, maximumStale time.Duration, principal identity.Principal) time.Time {
 	// An idle deadline is an observation, never a permanent close timer: a
 	// different tab may have recorded explicit activity in the meantime.
-	return minTime(started.Add(Interval(maximumStale, principal.ActivityIntervalMS)), principal.IdleExpiresAt)
+	next := minTime(started.Add(Interval(maximumStale, principal.ActivityIntervalMS)), principal.IdleExpiresAt)
+	if !principal.ResolveValidUntil.IsZero() {
+		next = minTime(next, principal.ResolveValidUntil)
+	}
+	return next
 }
 
 func minTime(a, b time.Time) time.Time {

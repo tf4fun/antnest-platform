@@ -87,8 +87,6 @@ func (h *handler) validateStreamIdentity(ctx context.Context, token string, orig
 	if err := browserstream.Validate(current, original, time.Now()); err != nil {
 		return err
 	}
-	if time.Since(started) > browserstream.Interval(h.maximumSessionStale, current.ActivityIntervalMS) {
-		return browserstream.ErrUnavailable
-	}
-	return nil
+	_, err = browserstream.ValidateTiming(current, started, h.maximumSessionStale, time.Now())
+	return err
 }

@@ -23,7 +23,9 @@ import (
 )
 
 func TestWorkspaceWatchStopsBeforeGatewayTelemetryShutdown(t *testing.T) {
-	for _, path := range []string{"/api/app/agents/agent-1/state/watch", "/api/app/agents/agent%2F1/state/watch"} {
+	// Exercise escaped routing with a public ID accepted by Identity. A decoded
+	// slash is outside that contract and is rejected before a stream can open.
+	for _, path := range []string{"/api/app/agents/agent-1/state/watch", "/api/app/agents/agent%2D1/state/watch"} {
 		t.Run(path, func(t *testing.T) { testReceiveShutdown(t, path) })
 	}
 }

@@ -24,6 +24,8 @@ type Config struct {
 	TLSCertFile              string
 	TLSKeyFile               string
 	RequestTimeout           time.Duration
+	ResolveCacheTTL          time.Duration
+	ResolveCacheSize         int
 	StreamLease              time.Duration
 	LoginWindow              time.Duration
 	LoginSourceMax           int
@@ -38,6 +40,14 @@ func Load(lookup func(string) string) (Config, error) {
 	requestTimeout, err := duration(lookup, "ANTNEST_EDGE_REQUEST_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return Config{}, err
+	}
+	resolveCacheTTL, err := time.ParseDuration(valueOr(lookup, "ANTNEST_EDGE_RESOLVE_CACHE_TTL", "10s"))
+	if err != nil || resolveCacheTTL < 0 || resolveCacheTTL > 30*time.Second {
+		return Config{}, fmt.Errorf("ANTNEST_EDGE_RESOLVE_CACHE_TTL must be a duration from zero through 30s")
+	}
+	resolveCacheSize, err := positiveInteger(lookup, "ANTNEST_EDGE_RESOLVE_CACHE_SIZE", 50000)
+	if err != nil || resolveCacheSize > 50000 {
+		return Config{}, fmt.Errorf("ANTNEST_EDGE_RESOLVE_CACHE_SIZE must be an integer from 1 through 50000")
 	}
 	streamLease, err := duration(lookup, "ANTNEST_EDGE_STREAM_LEASE", 5*time.Minute)
 	if err != nil {
@@ -81,6 +91,8 @@ func Load(lookup func(string) string) (Config, error) {
 		TLSCertFile:              strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_CERT_FILE")),
 		TLSKeyFile:               strings.TrimSpace(lookup("ANTNEST_EDGE_TLS_KEY_FILE")),
 		RequestTimeout:           requestTimeout,
+		ResolveCacheTTL:          resolveCacheTTL,
+		ResolveCacheSize:         resolveCacheSize,
 		StreamLease:              streamLease,
 		LoginWindow:              loginWindow,
 		LoginSourceMax:           loginSourceMax,

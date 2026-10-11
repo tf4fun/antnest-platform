@@ -31,6 +31,10 @@ type Principal struct {
 	ExpiresAt          time.Time `json:"-"`
 	IdleExpiresAt      time.Time `json:"-"`
 	ActivityIntervalMS int       `json:"-"`
+	ResolveStartedAt   time.Time `json:"-"`
+	ResolveCompletedAt time.Time `json:"-"`
+	ResolveValidUntil  time.Time `json:"-"`
+	ResolveCacheHit    bool      `json:"-"`
 }
 
 func (principal Principal) Administrator() bool {
@@ -98,6 +102,8 @@ const (
 type Client struct {
 	base       *url.URL
 	httpClient *http.Client
+	cache      *resolveCache
+	metrics    *resolveMetrics
 }
 
 func NewClient(rawBaseURL string, httpClient *http.Client) (*Client, error) {
@@ -111,7 +117,11 @@ func NewClient(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
 		return nil, fmt.Errorf("identity HTTP client is required")
 	}
-	return &Client{base: base, httpClient: httpClient}, nil
+	metrics, err := newResolveMetrics()
+	if err != nil {
+		return nil, fmt.Errorf("create Identity Resolve metrics: %w", err)
+	}
+	return &Client{base: base, httpClient: httpClient, metrics: metrics}, nil
 }
 
 func (client *Client) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
@@ -186,31 +196,33 @@ func (client *Client) CompleteOIDCLogin(
 	return result.OIDCCallbackResult, nil
 }
 
-func (client *Client) Resolve(ctx context.Context, accessToken string) (Principal, error) {
+func (client *Client) resolveLive(ctx context.Context, accessToken string, selection resolution) (principal Principal, err error) {
 	var result struct {
 		SessionMetadata
 		Principal     *principalResponse `json:"principal"`
 		CallerContext string             `json:"caller_context"`
 	}
-	selection, ok := ctx.Value(resolutionKey{}).(resolution)
-	if !ok {
-		selection.Profile = "workspace"
-	}
-	if selection.Profile != "workspace" && selection.Profile != "console" && selection.Profile != "acp" && selection.Profile != "session" || selection.Profile == "session" && selection.Agent != "" {
-		return Principal{}, fmt.Errorf("invalid server-owned audience profile")
-	}
 	input := map[string]string{"access_token": accessToken, "profile": selection.Profile}
 	if selection.Agent != "" {
 		input["agent_id"] = selection.Agent
 	}
-	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/resolve-access-token",
+	started := time.Now()
+	defer func() {
+		client.metrics.rpc(ctx, selection.Profile, resolveOutcome(principal, err), time.Since(started))
+	}()
+	err = client.doJSON(ctx, http.MethodPost, "/rpc/identity/resolve-access-token",
 		input, &result)
 	if err != nil {
 		return Principal{}, err
 	}
-	principal, err := result.Principal.verified()
+	principal, err = result.Principal.verified()
 	if err != nil {
 		return Principal{}, err
+	}
+	if client.cache != nil && (!ValidPublicID(principal.UserID) || !ValidPublicID(principal.OrganizationID) ||
+		!ValidPublicID(principal.MembershipID) || principal.SystemRole != "user" && principal.SystemRole != "admin" ||
+		principal.OrganizationRole != "member" && principal.OrganizationRole != "admin") {
+		return Principal{}, fmt.Errorf("identity service returned invalid principal authority")
 	}
 	issuer, err := parseIssuerContext(result.CallerContext)
 	if err != nil {
@@ -223,6 +235,8 @@ func (client *Client) Resolve(ctx context.Context, accessToken string) (Principa
 	}
 	principal.ExpiresAt, principal.IdleExpiresAt = result.ExpiresAt, result.IdleExpiresAt
 	principal.ActivityIntervalMS = result.ActivityIntervalMS
+	principal.ResolveStartedAt, principal.ResolveCompletedAt = started, time.Now()
+	principal.ResolveValidUntil = earliestTime(principal.ExpiresAt, principal.IdleExpiresAt, principal.ContextExpiresAt)
 	return principal, nil
 }
 
@@ -265,6 +279,7 @@ func (client *Client) RevokeByAccessToken(
 	if result.Status != RevokeStatusRevoked && result.Status != RevokeStatusAlreadyInvalid {
 		return "", fmt.Errorf("identity service returned an invalid revoke status")
 	}
+	client.invalidateAccessToken(accessToken)
 	return result.Status, nil
 }
 

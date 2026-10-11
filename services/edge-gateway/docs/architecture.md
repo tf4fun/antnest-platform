@@ -74,14 +74,58 @@ committed counts even if the current SID was revoked; a later request resolves
 again. POST notice acknowledgment accepts 1–100 unique IDs and never acknowledges
 by a watermark or as a side effect of reading. Both mutations use server-generated
 request IDs; browser actor, scope and Membership overrides are rejected.
-`not_found` stays 404 and `external_identity_last_method` stays 409. Console,
-Agent UI and real Identity HTTPS integration remain subsequent #61 batches.
+`not_found` stays 404 and `external_identity_last_method` stays 409. The Console,
+Agent UI and real Identity HTTPS workflow was delivered with #61.
 
 Gateway defaults COOP and CORP to `same-origin`. Console and Workspace currently
 share one origin; these controls do not provide an XSS privilege boundary
 between them. The [session security contract](../../../contracts/edge-gateway/session-security.md)
 defines a separate Admin-origin phase with independent host-only sessions,
 fresh authentication and explicit routing, callback and deployment admission.
+
+## Bounded Identity Resolution
+
+Gateway revision 21 uses one process-owned Identity client and the existing
+revision 16 session-revocation feed. The [shared cache policy](../../../contracts/edge-gateway/resolve-cache.md)
+defines admission separately from the downstream service's authorization.
+The LRU key contains SHA-256 of the exact browser token, the server-selected
+`console`, `workspace`, `acp` or `session` profile, and exact Agent scope (including
+absence). Each client/issuer owns its cache; no raw browser token is retained
+in an entry. Only complete active Principals, their exact display fields and
+original private SID/CCT may enter it.
+
+An entry expires at the earliest of the actual Resolve RPC start plus TTL,
+idle expiry, absolute expiry and original CCT expiry. Equality is expired.
+Hits and feed proofs never move that deadline. The default TTL is 10 seconds,
+bounded at 30 seconds; zero preserves direct Resolve without coalescing or
+background refresh. The entry count, accounted byte budget and shared-work
+limits are independent; a valid response above the per-entry budget is returned
+live without retaining an LRU entry. These budgets do not describe process RSS.
+
+Concurrent misses share one exact-scope generation. The process owns the RPC,
+with deadline `min(5s, request timeout, TTL)`; each caller can stop waiting
+independently. The final foreground waiter cancels abandoned work. Its slot
+remains occupied through transport cleanup and final waiter delivery, including
+completed oversized results. Capacity refusal returns 503. After half TTL, a
+valid hit may trigger bounded refresh, with at least half TTL between attempts
+even after failure; saturated refresh does not invalidate a still-valid hit.
+
+The single feed poller applies each event to the stream registry and cache.
+Only a validated short terminal page, after all consumers apply its events,
+updates catch-up proof, anchored to that page RPC's start. A short fourth page
+qualifies; four full pages, failure, cancellation or partial application do not.
+Missing proof at startup or proof age reaching TTL requires live resolution.
+Revocations fence in-flight completion and late delivery. Authoritative denial
+or a complete inactive response evicts every cached scope for the token,
+including denial from background refresh.
+
+Validated local logout evicts the token. Password changes, self revocation and
+OIDC unbinding evict the trusted User across organizations, even when the current
+session survives. Activity evicts the trusted SID's old observations without
+patching cached CCT/deadline fields or fencing unrelated users' work. A truly
+cold in-flight response whose SID was not yet known can only deliver its still
+valid conservative old idle observation, clipped to every original deadline.
+Each subsequent expired observation requires another Resolve.
 
 ## OIDC Browser Transaction
 
@@ -119,8 +163,10 @@ the Gateway SERVER span. WebSocket handshakes use the same observation rules
 without changing the message relay or its socket configuration.
 
 HTTP middleware and error-returning handler bindings own request diagnostics.
-Business clients return errors and preserve their causes; they do not create
-spans. HTTP observation records metadata and errors only, without Header values
+Business clients return errors and preserve their causes; actual RPC CLIENT
+spans belong to the shared Transport. Resolve additionally emits a request-owned
+INTERNAL decision marker without replacing the actual RPC parent. HTTP
+observation records metadata and errors only, without Header values
 or request/response content. ACP/SCIM/Console payloads are not decoded or buffered
 for tracing. The receiving service's RPC adapter owns optional content capture;
 Gateway does not duplicate it on each HTTP hop.
@@ -243,7 +289,10 @@ and `X-Antnest-Organization-Name`: one canonical unpadded Base64URL value per
 header over the exact UTF-8 label. Browser values are removed before admission;
 anonymous assets and other upstreams receive neither header. Neither label
 affects scope or administrator status. A new authenticated bootstrap or SSR
-request observes current Identity metadata without a Gateway cache. Missing or
+request observes the complete bounded Principal snapshot. Rename visibility
+is bounded by snapshot expiry plus the next actual read and request latency;
+there is no background browser rename watcher. Empty feed pages do not renew
+display fields. Missing or
 blank metadata fails as `503 identity_unavailable`, preserving existing cookies.
 The blank check includes U+FEFF, matching the Node consumer's whitespace check;
 valid labels retain their exact UTF-8 bytes rather than being trimmed.
@@ -329,7 +378,7 @@ Origin checks and trusted identity injection. Edge does not translate ACP messag
 infer the version from their content.
 
 After upgrade, a message relay replaces blind byte copying. Each complete
-client message is buffered within 64 MiB, then checked against Identity using
+client message is buffered within 64 MiB, then checked by scoped Resolve using
 the original browser token before forwarding. Protocol values remain unchanged,
 except W3C context in standard request/notification `params._meta`, which the
 transport tracing wrapper replaces with the actual Gateway PRODUCER context.
@@ -343,8 +392,9 @@ client replies are subject to the same session check as every other message.
 
 Revocation/expiry closes both hops with 1008; dependency failure uses 1013.
 These are transport outcomes, not invented ACP errors. No cookies or Bearer
-tokens reach ACP. All checks are children of the Gateway request context and
-log only stable result classes. Writes and dependency calls are bounded by the
+tokens reach ACP. Each request owns its decision marker; a shared waiter links
+the exact actual RPC CLIENT, and background refresh owns a separate root linked
+to its trigger. Diagnostics expose only stable result classes. Writes and dependency calls are bounded by the
 request timeout; connection cancellation closes both sockets and joins relay
 workers. Signal or listener failure stops new upgrades, cancels WebSocket
 contexts and waits for handlers (including their telemetry) within the shutdown
@@ -357,17 +407,24 @@ v1 HTTP receive (including its alias), and both direct WebSocket versions.
 The guard starts before opening the upstream. It binds the original SID,
 User/Organization/Membership and roles, with maximum stale bound `R = 30s`.
 The check interval and RPC budget are at most `min(R/3, activity_interval_ms)`.
-Each hard stale deadline is anchored to the check's start, including RPC latency
+Each hard stale deadline is anchored to the actual source Resolve RPC start,
+including RPC latency
 and at most `min(1s, R/3)` for socket closure. Initial resolution is bounded by
 `R/3`, then by the returned hint; a late successful response cannot open a stream.
+Current probe wait/scheduling time is separate from that source age. A cached
+snapshot may be older than the scheduling hint when every authority deadline,
+proof and stale-output budget remains valid; a hit cannot reset source age.
+Live/shared results must also satisfy the actual RPC duration budget.
 Idle expiry schedules a fresh check, so activity through another replica can
 extend it. Absolute expiry and the direct WebSocket's original handshake CCT
 remain hard caps. Fresh CCTs never extend an existing direct WebSocket.
 
 One main-owned private revocation-feed poller accelerates closure through the
 active SID registry. It starts at cursor zero, uses pages of at most 500 and at
-most four pages per catch-up pass, and retains no event cache. Feed failure,
-backlog, restart or a register/poll race cannot weaken independent live checks.
+most four pages per catch-up pass, and retains no event cache. The same events
+fence cached authority, with terminal-page catch-up proof as described above.
+Feed failure, backlog, restart or a register/poll race cannot weaken independent
+bounded checks; stale proof forces live Resolve.
 Cancellation interrupts blocked HTTP writes and both WebSocket directions;
 later frame deadlines cannot reopen a cancelled write. Guard workers, relay
 workers and callbacks are joined, and HTTP deadlines clear only after completion.
@@ -451,7 +508,7 @@ define the implemented internal connection boundary. Each dependency origin
 has a distinct token file or verified mTLS service identity. Tokens are re-read
 for HTTP requests and WebSocket handshakes. Browser-supplied service/CCT headers
 and both complete reserved namespaces are removed; CSRF is kept privately for
-local comparison. Identity revision 15 resolves the session with a fixed
+local comparison. Identity revision 16 resolves the session with a fixed
 server-selected audience profile and target Agent; Gateway forwards its CCT
 unchanged from private request context. Internal credential response headers and upstream Set-Cookie
 are removed, and principal JSON never serializes the CCT.

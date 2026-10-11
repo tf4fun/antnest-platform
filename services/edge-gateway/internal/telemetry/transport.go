@@ -63,7 +63,7 @@ func startClient(ctx context.Context, method string, target *url.URL) (context.C
 }
 
 func (t *httpTransport) RoundTrip(original *http.Request) (*http.Response, error) {
-	ctx, span := startClient(original.Context(), original.Method, original.URL)
+	ctx, span := startObservedClient(original.Context(), original.Method, original.URL)
 	r := original.Clone(ctx)
 	r.Header.Del("Baggage")
 	request := &bodyObservation{}

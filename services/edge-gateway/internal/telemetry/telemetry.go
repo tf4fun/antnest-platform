@@ -2,16 +2,21 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -25,8 +30,11 @@ type Config struct {
 }
 
 type Runtime struct {
-	logger   *slog.Logger
-	provider *sdktrace.TracerProvider
+	logger        *slog.Logger
+	shutdownMu    sync.Mutex
+	provider      *sdktrace.TracerProvider
+	traceExporter *ownedTraceExporter
+	meterProvider *sdkmetric.MeterProvider
 }
 
 func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, error) {
@@ -36,12 +44,16 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	correlated := correlatedHandler{next: base}
 	runtime := &Runtime{logger: slog.New(correlated)}
 	otel.SetTextMapPropagator(propagation.TraceContext{})
-	if !tracesEnabled() {
-		return runtime, nil
-	}
-	exporter, err := otlptracehttp.New(ctx)
+	metrics, err := metricsEnabled()
 	if err != nil {
-		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
+		return nil, err
+	}
+	traces := tracesEnabled()
+	if !metrics {
+		otel.SetMeterProvider(noop.NewMeterProvider())
+	}
+	if !traces && !metrics {
+		return runtime, nil
 	}
 	serviceName := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAME"))
 	if serviceName == "" {
@@ -62,10 +74,25 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	if err != nil {
 		return nil, fmt.Errorf("create telemetry resource: %w", err)
 	}
-	runtime.provider = sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter), sdktrace.WithResource(res),
-	)
-	otel.SetTracerProvider(runtime.provider)
+	if traces {
+		exporter, err := otlptracehttp.New(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
+		}
+		runtime.traceExporter = newOwnedTraceExporter(exporter)
+		runtime.provider = sdktrace.NewTracerProvider(sdktrace.WithBatcher(runtime.traceExporter), sdktrace.WithResource(res))
+		otel.SetTracerProvider(runtime.provider)
+	}
+	if metrics {
+		exporter, err := otlpmetrichttp.New(ctx)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("create OTLP metric exporter: %w", err), runtime.Shutdown(context.Background()))
+		}
+		runtime.meterProvider = sdkmetric.NewMeterProvider(
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)), sdkmetric.WithResource(res),
+		)
+		otel.SetMeterProvider(runtime.meterProvider)
+	}
 	return runtime, nil
 }
 
@@ -77,17 +104,63 @@ func (runtime *Runtime) Logger() *slog.Logger {
 }
 
 func (runtime *Runtime) Shutdown(ctx context.Context) error {
-	if runtime == nil || runtime.provider == nil {
+	if runtime == nil {
 		return nil
 	}
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
+	runtime.shutdownMu.Lock()
+	defer runtime.shutdownMu.Unlock()
+	var result error
+	// Cleanup must run even for an already-cancelled caller. Otherwise the
+	// trace SDK marks itself shut down before ever stopping its batch worker.
+	// Preserve caller failure in the result, with independent cleanup budgets.
+	parent := context.WithoutCancel(ctx)
+	if runtime.meterProvider != nil {
+		bounded, cancel := context.WithTimeout(parent, 5*time.Second)
+		result = errors.Join(result, runtime.meterProvider.Shutdown(bounded))
+		cancel()
+		runtime.meterProvider = nil
 	}
-	err := runtime.provider.Shutdown(ctx)
-	runtime.provider = nil
-	return err
+	if runtime.provider != nil {
+		if runtime.traceExporter != nil {
+			// BSP uses background contexts for active/queued exports. At drain
+			// expiry, cancel their owned scope, then let BSP finish joining its
+			// worker instead of returning early on an expired SDK shutdown ctx.
+			// Exporter resource shutdown has a separate five-second budget.
+			finish := runtime.traceExporter.beginDrain(parent)
+			result = errors.Join(result, runtime.provider.Shutdown(parent))
+			_ = finish() // Also release timer state if the SDK was already closed.
+			runtime.traceExporter.cancel()
+			runtime.traceExporter = nil
+		} else {
+			bounded, cancel := context.WithTimeout(parent, 5*time.Second)
+			result = errors.Join(result, runtime.provider.Shutdown(bounded))
+			cancel()
+		}
+		runtime.provider = nil
+	}
+	return errors.Join(result, ctx.Err())
+}
+
+// Metrics are opt-in: a trace-only Jaeger endpoint is not a metrics receiver.
+func metricsEnabled() (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_SDK_DISABLED")), "true") {
+		return false, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OTEL_METRICS_EXPORTER"))) {
+	case "", "none":
+		return false, nil
+	case "otlp":
+		protocol := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"))
+		if protocol == "" {
+			protocol = strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL"))
+		}
+		if protocol != "" && !strings.EqualFold(protocol, "http/protobuf") {
+			return false, fmt.Errorf("gateway OTLP metrics supports only http/protobuf")
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("OTEL_METRICS_EXPORTER supports only otlp or none")
+	}
 }
 
 func tracesEnabled() bool {
