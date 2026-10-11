@@ -34,6 +34,16 @@ Agent can still reach ACP to receive its protocol error or read authorized histo
 Authentication, CSRF, same-origin validation, payload and connection limits,
 shutdown cancellation and trace propagation remain Gateway responsibilities.
 
+Browser-session guards start before opening every upstream receive stream,
+including quiet ACP HTTP and WebSocket connections. They retain the original
+SID, User/Organization/Membership and roles, check Identity without recording
+activity, and bound stale output to 30 seconds including RPC and socket closure.
+Absolute expiry and a direct WebSocket's original CCT cap the connection;
+mutable idle expiry schedules fresh validation. The private session feed can
+close a stream sooner. Closing transport does not send an ACP cancel command
+or revoke Agent ownership. See the
+[browser session contract](../../../contracts/identity/browser-sessions.md).
+
 Route classification preserves escaped path segment boundaries, so IDs that
 contain encoded separators cannot escape shutdown tracking. State IDs use
 header-safety and length checks rather than a Gateway-owned namespace grammar.

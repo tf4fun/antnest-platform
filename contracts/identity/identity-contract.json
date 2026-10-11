@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 14,
+  "revision": 15,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "base_path": "/rpc/identity",
@@ -17,16 +17,51 @@
       "additionalProperties": false,
       "required": ["sequence", "user_id", "reason", "occurred_at"],
       "properties": {
-        "sequence": { "type": "integer", "minimum": 1 },
-        "user_id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "reason": { "type": "string", "enum": ["user_deactivated", "membership_deactivated", "membership_deleted"] },
-        "occurred_at": { "$ref": "#/definitions/timestamp" },
-        "traceparent": { "type": "string", "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" }
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "user_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "user_deactivated",
+            "membership_deactivated",
+            "membership_deleted"
+          ]
+        },
+        "occurred_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        }
       },
       "oneOf": [
-        { "properties": { "reason": { "const": "user_deactivated" } }, "not": { "required": ["organization_id"] } },
-        { "properties": { "reason": { "enum": ["membership_deactivated", "membership_deleted"] } }, "required": ["organization_id"] }
+        {
+          "properties": {
+            "reason": {
+              "const": "user_deactivated"
+            }
+          },
+          "not": {
+            "required": ["organization_id"]
+          }
+        },
+        {
+          "properties": {
+            "reason": {
+              "enum": ["membership_deactivated", "membership_deleted"]
+            }
+          },
+          "required": ["organization_id"]
+        }
       ]
     },
     "id": {
@@ -35,32 +70,71 @@
       "maxLength": 200,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
     },
-    "timestamp": { "type": "string", "format": "date-time" },
-    "organization_role": { "type": "string", "enum": ["member", "admin"] },
-    "system_role": { "type": "string", "enum": ["user", "admin"] },
-    "source": { "type": "string", "enum": ["local", "scim"] },
-    "scim_scope": { "type": "string", "enum": ["scim:read", "scim:write"] },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "organization_role": {
+      "type": "string",
+      "enum": ["member", "admin"]
+    },
+    "system_role": {
+      "type": "string",
+      "enum": ["user", "admin"]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["local", "scim"]
+    },
+    "scim_scope": {
+      "type": "string",
+      "enum": ["scim:read", "scim:write"]
+    },
     "organization": {
       "type": "object",
       "required": ["id", "slug", "name", "active", "created_at", "updated_at"],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "slug": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "active": { "type": "boolean" },
-        "created_at": { "$ref": "#/definitions/timestamp" },
-        "updated_at": { "$ref": "#/definitions/timestamp" }
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/timestamp"
+        }
       }
     },
     "user": {
       "type": "object",
       "required": ["id", "system_role", "active", "created_at", "updated_at"],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "system_role": { "$ref": "#/definitions/system_role" },
-        "active": { "type": "boolean" },
-        "created_at": { "$ref": "#/definitions/timestamp" },
-        "updated_at": { "$ref": "#/definitions/timestamp" }
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "system_role": {
+          "$ref": "#/definitions/system_role"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/timestamp"
+        }
       }
     },
     "membership": {
@@ -78,18 +152,44 @@
         "updated_at"
       ],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "user_id": { "$ref": "#/definitions/id" },
-        "email": { "type": "string", "format": "email" },
-        "display_name": { "type": "string", "minLength": 1 },
-        "role": { "$ref": "#/definitions/organization_role" },
-        "source": { "$ref": "#/definitions/source" },
-        "active": { "type": "boolean" },
-        "scim_external_id": { "type": "string" },
-        "scim_user_name": { "type": "string" },
-        "created_at": { "$ref": "#/definitions/timestamp" },
-        "updated_at": { "$ref": "#/definitions/timestamp" }
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "user_id": {
+          "$ref": "#/definitions/id"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "$ref": "#/definitions/organization_role"
+        },
+        "source": {
+          "$ref": "#/definitions/source"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "scim_external_id": {
+          "type": "string"
+        },
+        "scim_user_name": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/timestamp"
+        }
       }
     },
     "group": {
@@ -104,22 +204,43 @@
         "updated_at"
       ],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "display_name": { "type": "string", "minLength": 1 },
-        "source": { "$ref": "#/definitions/source" },
-        "active": { "type": "boolean" },
-        "scim_external_id": { "type": "string" },
-        "created_at": { "$ref": "#/definitions/timestamp" },
-        "updated_at": { "$ref": "#/definitions/timestamp" }
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/definitions/source"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "scim_external_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/timestamp"
+        }
       }
     },
     "directory_member": {
       "type": "object",
       "required": ["user", "membership"],
       "properties": {
-        "user": { "$ref": "#/definitions/user" },
-        "membership": { "$ref": "#/definitions/membership" }
+        "user": {
+          "$ref": "#/definitions/user"
+        },
+        "membership": {
+          "$ref": "#/definitions/membership"
+        }
       }
     },
     "principal": {
@@ -135,21 +256,44 @@
         "active"
       ],
       "properties": {
-        "user_id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "organization_slug": { "type": "string", "minLength": 1 },
-        "organization_name": { "type": "string", "minLength": 1 },
-        "membership_id": { "$ref": "#/definitions/id" },
-        "system_role": { "$ref": "#/definitions/system_role" },
-        "organization_role": { "$ref": "#/definitions/organization_role" },
-        "active": { "type": "boolean" }
-      }
+        "user_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "membership_id": {
+          "$ref": "#/definitions/id"
+        },
+        "system_role": {
+          "$ref": "#/definitions/system_role"
+        },
+        "organization_role": {
+          "$ref": "#/definitions/organization_role"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     },
     "current_account": {
       "type": "object",
       "required": [
         "user_id",
         "organization_id",
+        "organization_slug",
+        "organization_name",
         "membership_id",
         "email",
         "display_name",
@@ -157,23 +301,58 @@
         "local_password_available"
       ],
       "properties": {
-        "user_id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "membership_id": { "$ref": "#/definitions/id" },
-        "email": { "type": "string", "format": "email" },
-        "display_name": { "type": "string", "minLength": 1 },
-        "source": { "$ref": "#/definitions/source" },
-        "local_password_available": { "type": "boolean" }
-      }
+        "user_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "membership_id": {
+          "$ref": "#/definitions/id"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/definitions/source"
+        },
+        "local_password_available": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     },
     "organization_principal_binding": {
       "type": "object",
       "required": ["user_id", "organization_id", "membership_id", "active"],
       "properties": {
-        "user_id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "membership_id": { "$ref": "#/definitions/id" },
-        "active": { "type": "boolean" }
+        "user_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "membership_id": {
+          "$ref": "#/definitions/id"
+        },
+        "active": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
@@ -181,15 +360,28 @@
       "type": "object",
       "required": ["id", "organization_id", "name", "scopes", "created_at"],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "name": { "type": "string", "minLength": 1 },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "scopes": {
           "type": "array",
-          "items": { "$ref": "#/definitions/scim_scope" }
+          "items": {
+            "$ref": "#/definitions/scim_scope"
+          }
         },
-        "created_at": { "$ref": "#/definitions/timestamp" },
-        "revoked_at": { "$ref": "#/definitions/timestamp" }
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "revoked_at": {
+          "$ref": "#/definitions/timestamp"
+        }
       }
     },
     "oidc_provider": {
@@ -213,20 +405,50 @@
         "updated_at"
       ],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "organization_id": { "$ref": "#/definitions/id" },
-        "name": { "type": "string", "minLength": 1 },
-        "display_name": { "type": "string", "minLength": 1 },
-        "issuer": { "type": "string", "format": "uri" },
-        "client_id": { "type": "string", "minLength": 1 },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issuer": {
+          "type": "string",
+          "format": "uri"
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "scopes": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "enabled": { "type": "boolean" },
-        "revision": { "type": "integer", "minimum": 1 },
-        "authorization_endpoint": { "type": "string", "format": "uri" },
-        "token_endpoint": { "type": "string", "format": "uri" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "authorization_endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "token_endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
         "token_endpoint_auth_method": {
           "type": "string",
           "enum": ["client_secret_basic", "client_secret_post"]
@@ -234,20 +456,141 @@
         "id_token_signing_algs": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "userinfo_endpoint": { "type": "string" },
-        "jwks_uri": { "type": "string", "format": "uri" },
-        "created_at": { "$ref": "#/definitions/timestamp" },
-        "updated_at": { "$ref": "#/definitions/timestamp" }
+        "userinfo_endpoint": {
+          "type": "string"
+        },
+        "jwks_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/timestamp"
+        }
       }
     },
     "login_method": {
       "type": "object",
       "required": ["name", "display_name"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "display_name": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "activity_interval_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30000
+    },
+    "browser_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organization_id",
+        "organization_slug",
+        "organization_name",
+        "created_at",
+        "last_active_at",
+        "idle_expires_at",
+        "expires_at",
+        "user_agent_hint",
+        "current"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "created_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "last_active_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "idle_expires_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "user_agent_hint": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "current": {
+          "type": "boolean"
+        }
+      }
+    },
+    "session_revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "token_id",
+        "user_id",
+        "organization_id",
+        "reason",
+        "occurred_at"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "token_id": {
+          "$ref": "#/definitions/id"
+        },
+        "user_id": {
+          "$ref": "#/definitions/id"
+        },
+        "organization_id": {
+          "$ref": "#/definitions/id"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "session_revoked",
+            "password_changed",
+            "role_changed",
+            "user_deactivated",
+            "membership_deactivated",
+            "membership_deleted"
+          ]
+        },
+        "occurred_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        }
       }
     }
   },
@@ -258,6 +601,7 @@
         "type": "string",
         "enum": [
           "invalid_argument",
+          "invalid_current_password",
           "bad_request",
           "unauthenticated",
           "service_unauthenticated",
@@ -293,8 +637,13 @@
           "internal_error"
         ]
       },
-      "message": { "type": "string", "minLength": 1 },
-      "retryable": { "type": "boolean" }
+      "message": {
+        "type": "string",
+        "minLength": 1
+      },
+      "retryable": {
+        "type": "boolean"
+      }
     },
     "http_status_by_code": {
       "invalid_argument": 400,
@@ -330,7 +679,8 @@
       "oidc_identity_failed": 500,
       "oidc_token_failed": 500,
       "oidc_persistence_failed": 500,
-      "internal_error": 500
+      "internal_error": 500,
+      "invalid_current_password": 400
     }
   },
   "methods": {
@@ -339,18 +689,45 @@
       "path": "/resolve-owner-authorization",
       "request": {
         "required": ["user_id", "organization_id"],
-        "properties": { "user_id": { "$ref": "#/definitions/id" }, "organization_id": { "$ref": "#/definitions/id" } }
+        "properties": {
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
+        }
       },
       "response": {
         "required": ["authorization"],
         "properties": {
           "authorization": {
-            "type": "object", "additionalProperties": false,
-            "required": ["user_id", "organization_id", "membership_id", "active", "last_revocation_sequence"],
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "user_id",
+              "organization_id",
+              "membership_id",
+              "active",
+              "last_revocation_sequence"
+            ],
             "properties": {
-              "user_id": { "$ref": "#/definitions/id" }, "organization_id": { "$ref": "#/definitions/id" },
-              "membership_id": { "$ref": "#/definitions/id" }, "active": { "type": "boolean" },
-              "last_revocation_sequence": { "type": "integer", "minimum": 0 }
+              "user_id": {
+                "$ref": "#/definitions/id"
+              },
+              "organization_id": {
+                "$ref": "#/definitions/id"
+              },
+              "membership_id": {
+                "$ref": "#/definitions/id"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "last_revocation_sequence": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           }
         }
@@ -363,15 +740,31 @@
         "additionalProperties": false,
         "required": ["after_sequence", "limit"],
         "properties": {
-          "after_sequence": { "type": "integer", "minimum": 0 },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+          "after_sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
         }
       },
       "response": {
         "required": ["events", "next_sequence"],
         "properties": {
-          "events": { "type": "array", "maxItems": 500, "items": { "$ref": "#/definitions/principal_revocation" } },
-          "next_sequence": { "type": "integer", "minimum": 0 }
+          "events": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/definitions/principal_revocation"
+            }
+          },
+          "next_sequence": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       }
     },
@@ -388,18 +781,36 @@
           "owner_display_name"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "slug": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
-          "owner_email": { "type": "string", "format": "email" },
-          "owner_display_name": { "type": "string", "minLength": 1 }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "slug": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "owner_email": {
+            "type": "string",
+            "format": "email"
+          },
+          "owner_display_name": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "response": {
         "required": ["organization"],
         "properties": {
-          "organization": { "$ref": "#/definitions/organization" }
+          "organization": {
+            "$ref": "#/definitions/organization"
+          }
         }
       }
     },
@@ -417,25 +828,43 @@
           "role"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" },
-          "email": { "type": "string", "format": "email" },
-          "display_name": { "type": "string", "minLength": 1 },
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
           "password": {
             "type": "string",
             "minLength": 12,
             "maxLength": 1024,
             "secret": true
           },
-          "role": { "$ref": "#/definitions/organization_role" }
+          "role": {
+            "$ref": "#/definitions/organization_role"
+          }
         }
       },
       "response": {
         "required": ["user", "membership"],
         "properties": {
-          "user": { "$ref": "#/definitions/user" },
-          "membership": { "$ref": "#/definitions/membership" }
+          "user": {
+            "$ref": "#/definitions/user"
+          },
+          "membership": {
+            "$ref": "#/definitions/membership"
+          }
         }
       }
     },
@@ -453,18 +882,38 @@
           "role"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" },
-          "user_id": { "$ref": "#/definitions/id" },
-          "email": { "type": "string", "format": "email" },
-          "display_name": { "type": "string", "minLength": 1 },
-          "role": { "$ref": "#/definitions/organization_role" }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          },
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "$ref": "#/definitions/organization_role"
+          }
         }
       },
       "response": {
         "required": ["membership"],
-        "properties": { "membership": { "$ref": "#/definitions/membership" } }
+        "properties": {
+          "membership": {
+            "$ref": "#/definitions/membership"
+          }
+        }
       }
     },
     "get_current_account": {
@@ -472,16 +921,34 @@
       "path": "/get-current-account",
       "audience": "internal-service",
       "request": {
+        "type": "object",
+        "additionalProperties": false,
         "required": ["actor_principal_id", "organization_id"],
         "properties": {
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" }
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
+        "type": "object",
+        "additionalProperties": false,
         "required": ["account"],
         "properties": {
-          "account": { "$ref": "#/definitions/current_account" }
+          "account": {
+            "$ref": "#/definitions/current_account"
+          }
+        }
+      },
+      "authorization": {
+        "authentication": "workload",
+        "callers": ["edge-gateway", "admin-console"],
+        "caller_context": {
+          "edge-gateway": "required",
+          "admin-console": "required"
         }
       }
     },
@@ -489,6 +956,8 @@
       "method": "POST",
       "path": "/change-local-password",
       "request": {
+        "type": "object",
+        "additionalProperties": false,
         "required": [
           "request_id",
           "actor_principal_id",
@@ -497,20 +966,72 @@
           "new_password"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "user_id": { "$ref": "#/definitions/id" },
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
           "current_password": {
             "type": "string",
             "minLength": 1,
             "secret": true
           },
-          "new_password": { "type": "string", "minLength": 12, "secret": true }
+          "new_password": {
+            "type": "string",
+            "minLength": 12,
+            "secret": true
+          }
         }
       },
       "response": {
-        "required": ["status"],
-        "properties": { "status": { "type": "string", "const": "changed" } }
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "principal",
+          "token_id",
+          "access_token",
+          "expires_at",
+          "idle_expires_at",
+          "activity_interval_ms"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "changed"
+          },
+          "principal": {
+            "$ref": "#/definitions/principal"
+          },
+          "token_id": {
+            "$ref": "#/definitions/id"
+          },
+          "access_token": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "idle_expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "activity_interval_ms": {
+            "$ref": "#/definitions/activity_interval_ms"
+          }
+        }
+      },
+      "authorization": {
+        "authentication": "workload",
+        "callers": ["edge-gateway"],
+        "caller_context": {
+          "edge-gateway": "required"
+        }
       }
     },
     "update_membership": {
@@ -528,19 +1049,41 @@
           "active"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" },
-          "membership_id": { "$ref": "#/definitions/id" },
-          "email": { "type": "string", "format": "email" },
-          "display_name": { "type": "string", "minLength": 1 },
-          "role": { "$ref": "#/definitions/organization_role" },
-          "active": { "type": "boolean" }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          },
+          "membership_id": {
+            "$ref": "#/definitions/id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "$ref": "#/definitions/organization_role"
+          },
+          "active": {
+            "type": "boolean"
+          }
         }
       },
       "response": {
         "required": ["membership"],
-        "properties": { "membership": { "$ref": "#/definitions/membership" } }
+        "properties": {
+          "membership": {
+            "$ref": "#/definitions/membership"
+          }
+        }
       }
     },
     "set_user_active": {
@@ -549,15 +1092,28 @@
       "request": {
         "required": ["request_id", "actor_principal_id", "user_id", "active"],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "user_id": { "$ref": "#/definitions/id" },
-          "active": { "type": "boolean" }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
+          "active": {
+            "type": "boolean"
+          }
         }
       },
       "response": {
         "required": ["status"],
-        "properties": { "status": { "type": "string", "const": "updated" } }
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "updated"
+          }
+        }
       }
     },
     "list_directory": {
@@ -566,8 +1122,12 @@
       "request": {
         "required": ["actor_principal_id", "organization_id"],
         "properties": {
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" }
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
@@ -575,11 +1135,15 @@
         "properties": {
           "users": {
             "type": "array",
-            "items": { "$ref": "#/definitions/directory_member" }
+            "items": {
+              "$ref": "#/definitions/directory_member"
+            }
           },
           "groups": {
             "type": "array",
-            "items": { "$ref": "#/definitions/group" }
+            "items": {
+              "$ref": "#/definitions/group"
+            }
           }
         }
       }
@@ -591,14 +1155,20 @@
       "request": {
         "required": ["user_id", "organization_id"],
         "properties": {
-          "user_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" }
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
         "required": ["principal"],
         "properties": {
-          "principal": { "$ref": "#/definitions/organization_principal_binding" }
+          "principal": {
+            "$ref": "#/definitions/organization_principal_binding"
+          }
         }
       }
     },
@@ -608,19 +1178,62 @@
       "request": {
         "required": ["request_id", "organization_slug", "email", "password"],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "organization_slug": { "type": "string", "minLength": 1 },
-          "email": { "type": "string", "format": "email" },
-          "password": { "type": "string", "minLength": 1, "secret": true }
-        }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_slug": {
+            "type": "string",
+            "minLength": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "user_agent_hint": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "type": "object",
+        "additionalProperties": false
       },
       "response": {
-        "required": ["token_id", "access_token", "expires_at", "principal"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "principal",
+          "token_id",
+          "access_token",
+          "expires_at",
+          "idle_expires_at",
+          "activity_interval_ms"
+        ],
         "properties": {
-          "token_id": { "$ref": "#/definitions/id" },
-          "access_token": { "type": "string", "minLength": 1, "secret": true },
-          "expires_at": { "$ref": "#/definitions/timestamp" },
-          "principal": { "$ref": "#/definitions/principal" }
+          "principal": {
+            "$ref": "#/definitions/principal"
+          },
+          "token_id": {
+            "$ref": "#/definitions/id"
+          },
+          "access_token": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "idle_expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "activity_interval_ms": {
+            "$ref": "#/definitions/activity_interval_ms"
+          }
         }
       }
     },
@@ -628,10 +1241,9 @@
       "method": "POST",
       "path": "/resolve-access-token",
       "request": {
-        "required": [
-          "access_token",
-          "profile"
-        ],
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["access_token", "profile"],
         "properties": {
           "access_token": {
             "type": "string",
@@ -640,21 +1252,38 @@
           },
           "profile": {
             "type": "string",
-            "enum": [
-              "console",
-              "workspace",
-              "acp"
-            ]
+            "enum": ["console", "workspace", "acp", "session"]
           },
           "agent_id": {
             "$ref": "#/definitions/id"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "const": "session"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": ["agent_id"]
+              }
+            }
+          }
+        ]
       },
       "response": {
+        "type": "object",
+        "additionalProperties": false,
         "required": [
           "principal",
-          "caller_context"
+          "caller_context",
+          "expires_at",
+          "idle_expires_at",
+          "activity_interval_ms"
         ],
         "properties": {
           "principal": {
@@ -665,6 +1294,15 @@
             "minLength": 1,
             "maxLength": 8192,
             "secret": true
+          },
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "idle_expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "activity_interval_ms": {
+            "$ref": "#/definitions/activity_interval_ms"
           }
         }
       }
@@ -675,7 +1313,11 @@
       "request": {
         "required": ["access_token"],
         "properties": {
-          "access_token": { "type": "string", "minLength": 1, "secret": true }
+          "access_token": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          }
         }
       },
       "response": {
@@ -700,22 +1342,39 @@
           "scopes"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" },
-          "name": { "type": "string", "minLength": 1 },
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
           "scopes": {
             "type": "array",
             "minItems": 1,
-            "items": { "$ref": "#/definitions/scim_scope" }
+            "items": {
+              "$ref": "#/definitions/scim_scope"
+            }
           }
         }
       },
       "response": {
         "required": ["token", "credential"],
         "properties": {
-          "token": { "$ref": "#/definitions/scim_token" },
-          "credential": { "type": "string", "minLength": 1, "secret": true }
+          "token": {
+            "$ref": "#/definitions/scim_token"
+          },
+          "credential": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          }
         }
       }
     },
@@ -725,13 +1384,22 @@
       "request": {
         "required": ["actor_principal_id", "token_id"],
         "properties": {
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "token_id": { "$ref": "#/definitions/id" }
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "token_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
         "required": ["status"],
-        "properties": { "status": { "type": "string", "const": "revoked" } }
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "revoked"
+          }
+        }
       }
     },
     "list_scim_tokens": {
@@ -740,8 +1408,12 @@
       "request": {
         "required": ["actor_principal_id", "organization_id"],
         "properties": {
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" }
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
@@ -749,7 +1421,9 @@
         "properties": {
           "tokens": {
             "type": "array",
-            "items": { "$ref": "#/definitions/scim_token" }
+            "items": {
+              "$ref": "#/definitions/scim_token"
+            }
           }
         }
       }
@@ -770,23 +1444,50 @@
           "enabled"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" },
-          "name": { "type": "string", "minLength": 1 },
-          "issuer": { "type": "string", "format": "uri" },
-          "client_id": { "type": "string", "minLength": 1 },
-          "client_secret": { "type": "string", "secret": true },
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "issuer": {
+            "type": "string",
+            "format": "uri"
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "client_secret": {
+            "type": "string",
+            "secret": true
+          },
           "scopes": {
             "type": "array",
-            "items": { "type": "string", "minLength": 1 }
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "enabled": { "type": "boolean" }
+          "enabled": {
+            "type": "boolean"
+          }
         }
       },
       "response": {
         "required": ["provider"],
-        "properties": { "provider": { "$ref": "#/definitions/oidc_provider" } }
+        "properties": {
+          "provider": {
+            "$ref": "#/definitions/oidc_provider"
+          }
+        }
       }
     },
     "set_oidc_provider_enabled": {
@@ -802,16 +1503,31 @@
           "enabled"
         ],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" },
-          "name": { "type": "string", "minLength": 1 },
-          "enabled": { "type": "boolean" }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          }
         }
       },
       "response": {
         "required": ["provider"],
-        "properties": { "provider": { "$ref": "#/definitions/oidc_provider" } }
+        "properties": {
+          "provider": {
+            "$ref": "#/definitions/oidc_provider"
+          }
+        }
       }
     },
     "list_oidc_providers": {
@@ -820,8 +1536,12 @@
       "request": {
         "required": ["actor_principal_id", "organization_id"],
         "properties": {
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "organization_id": { "$ref": "#/definitions/id" }
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
         }
       },
       "response": {
@@ -829,7 +1549,9 @@
         "properties": {
           "providers": {
             "type": "array",
-            "items": { "$ref": "#/definitions/oidc_provider" }
+            "items": {
+              "$ref": "#/definitions/oidc_provider"
+            }
           }
         }
       }
@@ -840,7 +1562,10 @@
       "request": {
         "required": ["organization_slug"],
         "properties": {
-          "organization_slug": { "type": "string", "minLength": 1 }
+          "organization_slug": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "response": {
@@ -848,7 +1573,9 @@
         "properties": {
           "methods": {
             "type": "array",
-            "items": { "$ref": "#/definitions/login_method" }
+            "items": {
+              "$ref": "#/definitions/login_method"
+            }
           }
         }
       }
@@ -859,10 +1586,24 @@
       "request": {
         "required": ["request_id", "organization_slug", "provider_name"],
         "properties": {
-          "request_id": { "$ref": "#/definitions/id" },
-          "organization_slug": { "type": "string", "minLength": 1 },
-          "provider_name": { "type": "string", "minLength": 1 }
-        }
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_slug": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "user_agent_hint": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "type": "object",
+        "additionalProperties": false
       },
       "response": {
         "required": ["authorization_url", "expires_at"],
@@ -872,7 +1613,223 @@
             "format": "uri",
             "contains_secret_query": ["state"]
           },
-          "expires_at": { "$ref": "#/definitions/timestamp" }
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          }
+        }
+      }
+    },
+    "touch_browser_session": {
+      "method": "POST",
+      "path": "/touch-browser-session",
+      "audience": "internal-service",
+      "authorization": {
+        "authentication": "workload",
+        "callers": ["edge-gateway"],
+        "caller_context": {
+          "edge-gateway": "required"
+        }
+      },
+      "request": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actor_principal_id"],
+        "properties": {
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["expires_at", "idle_expires_at", "activity_interval_ms"],
+        "properties": {
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "idle_expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "activity_interval_ms": {
+            "$ref": "#/definitions/activity_interval_ms"
+          }
+        }
+      }
+    },
+    "list_user_sessions": {
+      "method": "POST",
+      "path": "/list-user-sessions",
+      "audience": "internal-service",
+      "authorization": {
+        "authentication": "workload",
+        "callers": ["edge-gateway", "admin-console"],
+        "caller_context": {
+          "edge-gateway": "required",
+          "admin-console": "required"
+        }
+      },
+      "request": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actor_principal_id", "user_id", "scope", "limit"],
+        "properties": {
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["self", "organization"]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "after_id": {
+            "$ref": "#/definitions/id"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessions"],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/definitions/browser_session"
+            }
+          },
+          "next_after_id": {
+            "$ref": "#/definitions/id"
+          }
+        }
+      }
+    },
+    "revoke_user_sessions": {
+      "method": "POST",
+      "path": "/revoke-user-sessions",
+      "audience": "internal-service",
+      "authorization": {
+        "authentication": "workload",
+        "callers": ["edge-gateway", "admin-console"],
+        "caller_context": {
+          "edge-gateway": "required",
+          "admin-console": "required"
+        }
+      },
+      "request": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "user_id",
+          "scope",
+          "mode"
+        ],
+        "properties": {
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "user_id": {
+            "$ref": "#/definitions/id"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["self", "organization"]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["others", "all"]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "scope": {
+                  "const": "organization"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "mode": {
+                  "const": "all"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["revoked_count", "current_revoked"],
+        "properties": {
+          "revoked_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "current_revoked": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "list_session_revocations": {
+      "method": "POST",
+      "path": "/list-session-revocations",
+      "audience": "internal-service",
+      "authorization": {
+        "authentication": "workload",
+        "callers": ["edge-gateway"],
+        "caller_context": {
+          "edge-gateway": "operation"
+        }
+      },
+      "request": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["after_sequence", "limit"],
+        "properties": {
+          "after_sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["events", "next_sequence"],
+        "properties": {
+          "events": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/definitions/session_revocation"
+            }
+          },
+          "next_sequence": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       }
     }
@@ -891,24 +1848,96 @@
       "query": {
         "required": ["state"],
         "properties": {
-          "state": { "type": "string", "minLength": 1, "secret": true },
-          "code": { "type": "string", "minLength": 1, "secret": true },
-          "error": { "type": "string", "minLength": 1 },
-          "error_description": { "type": "string" },
-          "error_uri": { "type": "string", "format": "uri" }
+          "state": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "error": {
+            "type": "string",
+            "minLength": 1
+          },
+          "error_description": {
+            "type": "string"
+          },
+          "error_uri": {
+            "type": "string",
+            "format": "uri"
+          }
         },
         "oneOfRequired": [["code"], ["error"]]
       },
       "initial_response": {
-        "required": ["principal", "token_id", "access_token", "expires_at"]
-      },
-      "replay_response": {
+        "type": "object",
+        "additionalProperties": false,
         "required": [
           "principal",
           "token_id",
+          "access_token",
           "expires_at",
-          "already_completed"
+          "idle_expires_at",
+          "activity_interval_ms"
         ],
+        "properties": {
+          "principal": {
+            "$ref": "#/definitions/principal"
+          },
+          "token_id": {
+            "$ref": "#/definitions/id"
+          },
+          "access_token": {
+            "type": "string",
+            "minLength": 1,
+            "secret": true
+          },
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "idle_expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "activity_interval_ms": {
+            "$ref": "#/definitions/activity_interval_ms"
+          }
+        }
+      },
+      "replay_response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "principal",
+          "token_id",
+          "already_completed",
+          "expires_at",
+          "idle_expires_at",
+          "activity_interval_ms"
+        ],
+        "properties": {
+          "principal": {
+            "$ref": "#/definitions/principal"
+          },
+          "token_id": {
+            "$ref": "#/definitions/id"
+          },
+          "already_completed": {
+            "type": "boolean",
+            "const": true
+          },
+          "expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "idle_expires_at": {
+            "$ref": "#/definitions/timestamp"
+          },
+          "activity_interval_ms": {
+            "$ref": "#/definitions/activity_interval_ms"
+          }
+        },
         "forbidden": ["access_token"]
       }
     },
@@ -947,5 +1976,6 @@
       "authority": "one logical directory authority per organization; bearer tokens are rotating credentials",
       "unsupported": ["bulk", "sort", "etag", "changePassword"]
     }
-  }
+  },
+  "browser_session_contract": "browser-sessions.md"
 }

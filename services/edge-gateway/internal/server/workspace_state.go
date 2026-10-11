@@ -13,11 +13,6 @@ import (
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
-var (
-	errWorkspaceSessionRejected     = errors.New("workspace session rejected")
-	errWorkspaceIdentityUnavailable = errors.New("workspace identity unavailable")
-)
-
 func (h *handler) validStateRequest(response http.ResponseWriter, request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		writeError(response, 405, "method_not_allowed", "Method is not allowed")
@@ -68,7 +63,12 @@ func (h *handler) watchWorkspaceState(response http.ResponseWriter, request *htt
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), h.streamLease)
+	response, request, finish, err := h.guardBrowserStream(response, request, values.AccessToken, principal)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	firstSnapshot := time.AfterFunc(h.requestTimeout, cancel)
 	defer firstSnapshot.Stop()
@@ -103,17 +103,7 @@ func (h *handler) watchWorkspaceState(response http.ResponseWriter, request *htt
 }
 
 func (h *handler) validateStateIdentity(ctx context.Context, token string, original identity.Principal) error {
-	ctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
-	defer cancel()
-	current, err := h.identity.Resolve(ctx, token)
-	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
-		return errWorkspaceIdentityUnavailable
-	}
-	if err != nil || !current.Active || current.UserID == "" || current.OrganizationID == "" || current.MembershipID == "" ||
-		current.UserID != original.UserID || current.OrganizationID != original.OrganizationID || current.MembershipID != original.MembershipID {
-		return errWorkspaceSessionRejected
-	}
-	return nil
+	return h.validateStreamIdentity(ctx, token, original)
 }
 
 func workspaceStateError(response http.ResponseWriter, err error) {

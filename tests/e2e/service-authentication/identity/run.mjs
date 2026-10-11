@@ -15,6 +15,7 @@ import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { assertJsonRpcContentTypeRejection } from "../../../support/json-rpc-security.mjs";
 import { runCommand } from "../../../support/run-command.mjs";
 import { rotateIdentityFixture } from "./rekey-flow.mjs";
+import { exerciseBrowserSessions } from "./browser-sessions-flow.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-identity-auth-${randomUUID()}`;
@@ -154,17 +155,29 @@ try {
       "utf8",
     ),
   );
+  const callerCatalog = JSON.parse(
+    readFileSync(resolve(root, "contracts/identity/callers.json"), "utf8"),
+  );
   for (const method of Object.values(contract.methods)) {
     if (!method.request.properties.actor_principal_id) continue;
     const body = {
       actor_principal_id: login.principal.user_id,
       organization_id: login.principal.organization_id,
     };
-    const rejected = await rpc(method.path.slice(1), body, {
-      caller: "admin-console",
-      status: 401,
-    });
-    assert.equal(rejected.code, "caller_context_required");
+    const policy = callerCatalog.routes[`POST /rpc/identity${method.path}`];
+    assert(
+      policy?.callers.length,
+      `missing active caller policy: ${method.path}`,
+    );
+    for (const caller of policy.callers) {
+      assert.equal(policy.caller_context[caller], "required");
+      assert(tokens[caller], `missing workload test credential: ${caller}`);
+      const rejected = await rpc(method.path.slice(1), body, {
+        caller,
+        status: 401,
+      });
+      assert.equal(rejected.code, "caller_context_required");
+    }
   }
   const body = {
     actor_principal_id: login.principal.user_id,
@@ -260,6 +273,17 @@ try {
     "rejected administrative calls changed business facts",
   );
   checks++;
+
+  stage = "browser-sessions";
+  const browserSessions = await exerciseBrowserSessions({
+    rpc,
+    adminPassword: env.IDENTITY_TEST_ADMIN_PASSWORD,
+  });
+  writeFileSync(
+    resolve(evidence, "browser-sessions.json"),
+    JSON.stringify(browserSessions),
+    { mode: 0o600 },
+  );
 
   // A second instance binds only its own Docker address, not loopback. An
   // unreachable environment proxy must not replace the actual health target.

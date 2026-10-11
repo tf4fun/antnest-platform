@@ -204,48 +204,6 @@ func (a *DirectoryAdapter) GetLocalCredential(
 	return credential, nil
 }
 
-func (a *DirectoryAdapter) ChangeLocalPassword(
-	ctx context.Context,
-	command directory.ChangeLocalPasswordCommand,
-) error {
-	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		if command.ActorPrincipalID != command.UserID {
-			return domain.ErrForbidden
-		}
-		var active bool
-		if err := tx.QueryRow(ctx, `SELECT active FROM users WHERE id = $1 FOR SHARE`, command.UserID).
-			Scan(&active); err != nil {
-			return err
-		}
-		if !active {
-			return domain.ErrForbidden
-		}
-		result, err := tx.Exec(ctx, `
-			UPDATE local_credentials
-			SET password_hash = $3, updated_at = $4
-			WHERE user_id = $1 AND password_hash = $2`,
-			command.UserID,
-			command.ExpectedPasswordHash,
-			command.PasswordHash,
-			command.UpdatedAt,
-		)
-		if err != nil {
-			return fmt.Errorf("change local password: %w", err)
-		}
-		if result.RowsAffected() != 1 {
-			return domain.ErrConflict
-		}
-		return a.store.appendEvent(ctx, tx, event{
-			ActorPrincipalID: command.ActorPrincipalID,
-			Type:             "local_credential.changed",
-			SubjectType:      "user",
-			SubjectID:        command.UserID,
-			RequestID:        command.RequestID,
-			CreatedAt:        command.UpdatedAt,
-		})
-	})
-}
-
 func (a *DirectoryAdapter) GetMembership(
 	ctx context.Context,
 	organizationID string,
@@ -287,21 +245,14 @@ func (a *DirectoryAdapter) UpdateMembership(
 ) (domain.OrganizationMembership, error) {
 	membership := command.Membership
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		if err := a.store.requireOrganizationAdmin(
+		if err := a.store.requireOrganizationAdminWithLock(
 			ctx,
 			tx,
 			command.ActorPrincipalID,
 			membership.OrganizationID,
+			true,
 		); err != nil {
 			return err
-		}
-		var lockedOrganizationID string
-		if err := tx.QueryRow(ctx, `
-			SELECT id
-			FROM organizations
-			WHERE id = $1
-			FOR UPDATE`, membership.OrganizationID).Scan(&lockedOrganizationID); err != nil {
-			return fmt.Errorf("lock organization membership lifecycle: %w", err)
 		}
 		var source domain.Source
 		var currentRole domain.OrganizationRole
@@ -344,6 +295,27 @@ func (a *DirectoryAdapter) UpdateMembership(
 				return domain.ErrLastOrganizationAdmin
 			}
 		}
+		reason := ""
+		if currentActive && !membership.Active {
+			reason = "membership_deactivated"
+		} else if !currentActive {
+			// Pre-upgrade deactivation did not persist token revocation. Retire
+			// any legacy credentials before restoring this Membership's facts.
+			reason = "session_revoked"
+		} else if currentRole != membership.Role {
+			reason = "role_changed"
+		}
+		var ids []string
+		if reason != "" {
+			var err error
+			ids, err = lockBrowserSessionIDs(ctx, tx, membership.UserID)
+			if err != nil {
+				return err
+			}
+		}
+		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, membership.OrganizationID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE organization_memberships
 			SET email = $3, display_name = $4, role = $5, active = $6, updated_at = $7
@@ -358,6 +330,14 @@ func (a *DirectoryAdapter) UpdateMembership(
 		); err != nil {
 			return fmt.Errorf("update organization membership: %w", err)
 		}
+		var sessionEvents []domain.SessionRevocation
+		if reason != "" {
+			var err error
+			sessionEvents, err = revokeLockedBrowserSessions(ctx, tx, ids, membership.OrganizationID, membership.ID, "", reason, membership.UpdatedAt)
+			if err != nil {
+				return err
+			}
+		}
 		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID:   membership.OrganizationID,
 			ActorPrincipalID: command.ActorPrincipalID,
@@ -369,13 +349,15 @@ func (a *DirectoryAdapter) UpdateMembership(
 		}); err != nil {
 			return err
 		}
-		if !currentActive || membership.Active {
-			return nil
+		if currentActive && !membership.Active {
+			if err := a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+				UserID: membership.UserID, OrganizationID: membership.OrganizationID,
+				Reason: "membership_deactivated", OccurredAt: membership.UpdatedAt,
+			}); err != nil {
+				return err
+			}
 		}
-		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
-			UserID: membership.UserID, OrganizationID: membership.OrganizationID,
-			Reason: "membership_deactivated", OccurredAt: membership.UpdatedAt,
-		})
+		return appendSessionRevocations(ctx, tx, sessionEvents)
 	})
 	return membership, err
 }
@@ -400,12 +382,23 @@ func (a *DirectoryAdapter) SetUserActive(
 			return err
 		}
 		if active == command.Active {
-			return nil
+			return a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, "")
 		}
 		if !command.Active {
 			if err := retainActiveOrganizationAdministrators(ctx, tx, command.UserID); err != nil {
 				return err
 			}
+		}
+		var ids []string
+		if !command.Active {
+			var err error
+			ids, err = lockBrowserSessionIDs(ctx, tx, command.UserID)
+			if err != nil {
+				return err
+			}
+		}
+		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, ""); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE users
@@ -414,13 +407,12 @@ func (a *DirectoryAdapter) SetUserActive(
 		); err != nil {
 			return fmt.Errorf("set user active: %w", err)
 		}
+		var sessionEvents []domain.SessionRevocation
 		if !command.Active {
-			if _, err := tx.Exec(ctx, `
-				UPDATE api_tokens
-				SET revoked_at = $2
-				WHERE user_id = $1 AND revoked_at IS NULL`, command.UserID, command.UpdatedAt,
-			); err != nil {
-				return fmt.Errorf("revoke disabled user tokens: %w", err)
+			var err error
+			sessionEvents, err = revokeLockedBrowserSessions(ctx, tx, ids, "", "", "", "user_deactivated", command.UpdatedAt)
+			if err != nil {
+				return err
 			}
 		}
 		eventType := "user.activated"
@@ -440,9 +432,12 @@ func (a *DirectoryAdapter) SetUserActive(
 		if command.Active {
 			return nil
 		}
-		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+		if err := a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
 			UserID: command.UserID, Reason: "user_deactivated", OccurredAt: command.UpdatedAt,
-		})
+		}); err != nil {
+			return err
+		}
+		return appendSessionRevocations(ctx, tx, sessionEvents)
 	})
 }
 

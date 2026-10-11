@@ -240,10 +240,20 @@ func (a *SCIMAdapter) ListUsers(ctx context.Context, query scim.ListQuery) (scim
 func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserCommand) (scim.UserResource, error) {
 	var result scim.UserResource
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
+		var userID string
+		if err := tx.QueryRow(ctx, `
+			SELECT user_id FROM organization_memberships
+			WHERE organization_id = $1 AND id = $2 AND source = 'scim' AND scim_deleted_at IS NULL`,
+			command.OrganizationID, command.Membership.ID).Scan(&userID); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&userID); err != nil {
+			return err
+		}
 		current, err := scanSCIMUser(tx.QueryRow(ctx, scimUserSelect+`
 			WHERE m.organization_id = $1 AND m.id = $2 AND m.source = 'scim'
-			  AND m.scim_deleted_at IS NULL
-			FOR UPDATE OF m, u`, command.OrganizationID, command.Membership.ID))
+			  AND m.scim_deleted_at IS NULL AND u.id = $3
+			FOR UPDATE OF m`, command.OrganizationID, command.Membership.ID, userID))
 		if err != nil {
 			return err
 		}
@@ -258,6 +268,19 @@ func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserC
 		if err != nil {
 			return err
 		}
+		var sessionEvents []domain.SessionRevocation
+		if !current.Membership.Active || !result.Membership.Active {
+			reason := "membership_deactivated"
+			if !current.Membership.Active {
+				// Inactive rows from before persistent browser revocation must
+				// not revive their old credentials when reactivated.
+				reason = "session_revoked"
+			}
+			sessionEvents, err = revokeBrowserSessionsForLifecycle(ctx, tx, current.User.ID, command.OrganizationID, current.Membership.ID, reason, result.Membership.UpdatedAt)
+			if err != nil {
+				return err
+			}
+		}
 		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID: command.OrganizationID, Type: "scim_user.replaced",
 			ActorSCIMTokenID: command.ActorTokenID,
@@ -266,13 +289,15 @@ func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserC
 		}); err != nil {
 			return err
 		}
-		if !current.Membership.Active || result.Membership.Active {
-			return nil
+		if current.Membership.Active && !result.Membership.Active {
+			if err := a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+				UserID: current.User.ID, OrganizationID: command.OrganizationID,
+				Reason: "membership_deactivated", OccurredAt: result.Membership.UpdatedAt,
+			}); err != nil {
+				return err
+			}
 		}
-		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
-			UserID: current.User.ID, OrganizationID: command.OrganizationID,
-			Reason: "membership_deactivated", OccurredAt: result.Membership.UpdatedAt,
-		})
+		return appendSessionRevocations(ctx, tx, sessionEvents)
 	})
 	return result, err
 }
@@ -320,6 +345,10 @@ func (a *SCIMAdapter) DeleteUser(ctx context.Context, command scim.DeleteUserCom
 		); err != nil {
 			return fmt.Errorf("tombstone SCIM user: %w", err)
 		}
+		sessionEvents, err := revokeBrowserSessionsForLifecycle(ctx, tx, userID, command.OrganizationID, command.MembershipID, "membership_deleted", deletedAt)
+		if err != nil {
+			return err
+		}
 		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID: command.OrganizationID, Type: "scim_user.deleted",
 			ActorSCIMTokenID: command.ActorTokenID,
@@ -328,10 +357,13 @@ func (a *SCIMAdapter) DeleteUser(ctx context.Context, command scim.DeleteUserCom
 		}); err != nil {
 			return err
 		}
-		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+		if err := a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
 			UserID: userID, OrganizationID: command.OrganizationID,
 			Reason: "membership_deleted", OccurredAt: deletedAt,
-		})
+		}); err != nil {
+			return err
+		}
+		return appendSessionRevocations(ctx, tx, sessionEvents)
 	})
 }
 

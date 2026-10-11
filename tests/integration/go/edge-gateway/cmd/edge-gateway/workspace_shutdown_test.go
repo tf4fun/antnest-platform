@@ -40,6 +40,9 @@ func TestHTTPReceiveStreamsStopBeforeGatewayTelemetryShutdown(t *testing.T) {
 
 func testReceiveShutdown(t *testing.T, path string) {
 	t.Helper()
+	now := time.Now()
+	expiresAt := now.Add(time.Hour).Format(time.RFC3339Nano)
+	idleExpiresAt := now.Add(30 * time.Minute).Format(time.RFC3339Nano)
 	parts := strings.Split(path, "/")
 	agentID, err := url.PathUnescape(parts[4])
 	if err != nil {
@@ -48,7 +51,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 	upstreamStopped := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/rpc/identity/resolve-access-token" {
-			if _, err := io.WriteString(w, `{"caller_context":"`+testIssuerContext(t)+`","principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","active":true}}`); err != nil {
+			if _, err := io.WriteString(w, `{"caller_context":"`+testIssuerContext(t)+`","expires_at":"`+expiresAt+`","idle_expires_at":"`+idleExpiresAt+`","activity_interval_ms":30000,"principal":{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"admin","active":true}}`); err != nil {
 				t.Error(err)
 			}
 			return

@@ -210,3 +210,13 @@ test("collapsing the sidebar preserves the current workspace's search", () => {
     "First",
   );
 });
+
+test("account sessions remain reachable after collapsing navigation", () => {
+  const onAccount = vi.fn();
+  render(<Sidebar {...props()} onAccount={onAccount} />);
+  fireEvent.click(screen.getByRole("button", { name: "Account and sessions" }));
+  expect(onAccount).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Account and sessions" }));
+  expect(onAccount).toHaveBeenCalledTimes(2);
+});

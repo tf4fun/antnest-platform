@@ -6,6 +6,7 @@ import {
   RefreshCw,
   ChevronDown,
   Search,
+  UserRound,
 } from "lucide-react";
 import { useState } from "react";
 import type { AgentSummary, Conversation, Principal } from "../lib/types";
@@ -31,6 +32,7 @@ type Props = {
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
   onLogout: () => void;
+  onAccount?: () => void;
   onChooseAgent: () => void;
   catalog: {
     loading: boolean;
@@ -126,9 +128,11 @@ export function Sidebar(props: Props) {
             principal={props.principal}
             onLogout={props.onLogout}
             logoutDisabled={props.logoutDisabled}
+            onAccount={props.onAccount}
           />
         </>
-      ) : null}
+      ) : props.onAccount ? <button className="icon-button" type="button" onClick={props.onAccount}
+        title="Account and sessions" aria-label="Account and sessions"><UserRound size={18} aria-hidden="true" /></button> : null}
     </NavigationPanel>
   );
 }

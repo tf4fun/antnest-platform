@@ -157,3 +157,227 @@ test("denial selection distinguishes an earlier successful prompt on the same co
   );
   assert.equal(selectDeniedMessage([success], expected), undefined);
 });
+
+function closureFixture() {
+  const traceID = "d".repeat(32);
+  const span = (spanID, processID, tags, parent) => ({
+    traceID,
+    spanID,
+    processID,
+    operationName: "HTTP connection",
+    duration: 100,
+    startTime: spanID === "socket-client" ? 300 : 100,
+    tags: fields(tags),
+    references: parent
+      ? [{ refType: "CHILD_OF", traceID, spanID: parent }]
+      : [],
+  });
+  return {
+    traceID,
+    processes: {
+      edge: { serviceName: "edge-gateway" },
+      acp: { serviceName: "agent-acp-service" },
+      identity: { serviceName: "identity-service" },
+    },
+    spans: [
+      span("gateway", "edge", {
+        "span.kind": "server",
+        "http.request.method": "GET",
+        "http.route": "/api/app/agents/{agent_id}/v2/acp",
+        "http.response.status_code": 101,
+      }),
+      span(
+        "socket-client",
+        "edge",
+        { "span.kind": "client", "http.request.method": "GET" },
+        "gateway",
+      ),
+      span(
+        "socket-server",
+        "acp",
+        {
+          "span.kind": "server",
+          "http.request.method": "GET",
+          "http.route": "/v2/acp",
+          "http.response.status_code": 101,
+        },
+        "socket-client",
+      ),
+      span(
+        "identity-client",
+        "edge",
+        { "span.kind": "client", "http.request.method": "POST" },
+        "gateway",
+      ),
+      ...databaseRequest(
+        traceID,
+        "identity-server",
+        "identity-client",
+        "identity",
+        "/rpc/identity/resolve-access-token",
+        "POST",
+        "resolve_access_token",
+      ),
+    ],
+  };
+}
+function closureExpectation() {
+  return {
+    connectionTraceID: "d".repeat(32),
+    version: 2,
+    reason: "revoked",
+    closeCode: 1008,
+    closeReason: "session_rejected",
+    localClose: false,
+    postCloseRequestSent: false,
+    startedAt: 100,
+    closedAt: 500,
+    requestCount: 2,
+  };
+}
+
+test("silent closure binds a complete real Gateway/ACP connection and initial Identity SQL", async () => {
+  const { inspectSessionClosure } = await import("./session-trace.mjs");
+  const result = inspectSessionClosure(
+    closureFixture(),
+    closureExpectation(),
+    [],
+  );
+  assert.equal(result.trace_id, "d".repeat(32));
+  assert.equal(result.closure, "silent");
+  assert.equal(result.identity_sql, 1);
+  assert.equal(result.strict_trace, "passed");
+});
+
+test("closure topology rejects foreign connections, missing parents, wrong routes and secret capture", async () => {
+  const { inspectSessionClosure } = await import("./session-trace.mjs");
+  for (const mutate of [
+    (t) => {
+      t.traceID = "f".repeat(32);
+    },
+    (t) => t.spans.splice(1, 1),
+    (t) => t.spans.pop(),
+    (t) => {
+      t.spans[0].references = [
+        {
+          refType: "CHILD_OF",
+          traceID: t.traceID,
+          spanID: "unexported-parent",
+        },
+      ];
+    },
+    (t) => {
+      t.spans[2].tags = fields({
+        "span.kind": "server",
+        "http.route": "/v1/acp",
+        "http.response.status_code": 101,
+      });
+    },
+    (t) => {
+      t.spans[0].tags = fields({
+        "span.kind": "server",
+        "http.request.method": "GET",
+        "http.route": "/api/app/agents/{agent_id}/v2/acp",
+        "http.response.status_code": 503,
+      });
+    },
+    (t) => t.spans[0].tags.push(...fields({ secret: "PRIVATE" })),
+    (t) => t.spans[0].tags.push(...fields({ "rpc.method": "session/prompt" })),
+  ]) {
+    const trace = closureFixture();
+    mutate(trace);
+    assert.throws(() =>
+      inspectSessionClosure(trace, closureExpectation(), ["PRIVATE"]),
+    );
+  }
+});
+
+test("closure reports cannot substitute local shutdown or a sent request for passive revocation", async () => {
+  const { inspectSessionClosure } = await import("./session-trace.mjs");
+  for (const patch of [
+    { localClose: true },
+    { postCloseRequestSent: true },
+    { closeCode: 1006 },
+    { closeReason: "caller_context_expired" },
+    { closedAt: 99 },
+    { closedAt: 30101 },
+    { requestCount: 0 },
+    { version: 3 },
+  ])
+    assert.throws(() =>
+      inspectSessionClosure(
+        closureFixture(),
+        { ...closureExpectation(), ...patch },
+        [],
+      ),
+    );
+});
+
+test("connection warnings and error spans remain strict failures without rewriting raw evidence", async () => {
+  const { inspectSessionClosure } = await import("./session-trace.mjs");
+  const trace = closureFixture();
+  trace.spans[0].warnings = [
+    "clock skew adjustment disabled; not applying calculated delta of -1ms",
+  ];
+  trace.spans[3].tags.push(...fields({ error: true }));
+  const original = JSON.stringify(trace);
+  const result = inspectSessionClosure(trace, closureExpectation(), []);
+  assert.equal(result.strict_trace, "failed");
+  assert.equal(result.error_spans, 1);
+  assert.equal(result.warning_count, 1);
+  assert.equal(JSON.stringify(trace), original);
+});
+
+test("a later live resolution cannot replace missing initial connection admission", async () => {
+  const { inspectSessionClosure } = await import("./session-trace.mjs");
+  const trace = closureFixture();
+  trace.spans.find((span) => span.spanID === "identity-client").startTime = 400;
+  assert.throws(() => inspectSessionClosure(trace, closureExpectation(), []));
+});
+
+test("natural expiry evidence retains the actual issued deadline", async () => {
+  const { inspectSessionClosure } = await import("./session-trace.mjs");
+  const expected = {
+    ...closureExpectation(),
+    reason: "expired",
+    closeReason: "caller_context_expired",
+    expiresAt: 1500,
+    derivedCCTExpiresAt: 1000,
+  };
+  assert.equal(
+    inspectSessionClosure(closureFixture(), expected, []).expiresAt,
+    1500,
+  );
+  for (const expiresAt of [undefined, NaN, 400, 2100])
+    assert.throws(() =>
+      inspectSessionClosure(closureFixture(), { ...expected, expiresAt }, []),
+    );
+  assert.equal(
+    inspectSessionClosure(
+      closureFixture(),
+      { ...expected, closeReason: "session_rejected" },
+      [],
+    ).derivedCCTExpiresAt,
+    1000,
+  );
+  const fractional = {
+    ...expected,
+    expiresAt: 2250,
+    derivedCCTExpiresAt: 2000,
+    closedAt: 1100,
+  };
+  assert.equal(
+    inspectSessionClosure(closureFixture(), fractional, []).derivedCCTExpiresAt,
+    2000,
+  );
+  for (const patch of [
+    { derivedCCTExpiresAt: undefined },
+    { derivedCCTExpiresAt: 2250 },
+    { closedAt: 999 },
+    { closedAt: 2001 },
+    { closeReason: "identity_unavailable" },
+  ])
+    assert.throws(() =>
+      inspectSessionClosure(closureFixture(), { ...fractional, ...patch }, []),
+    );
+});

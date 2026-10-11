@@ -27,6 +27,7 @@ Gateway still owns browser credential stripping and route authorization.
 
 - Public HTTP listener and route policy.
 - Browser cookie and CSRF policy.
+- Current-account, password rotation, explicit activity and self-session controls.
 - Access-token resolution and administrator admission.
 - Bounded login admission before Identity performs password verification.
 - Browser OIDC discovery, start and callback, and transparent SCIM protocol
@@ -34,9 +35,8 @@ Gateway still owns browser credential stripping and route authorization.
 - Metadata-only Agent workspace discovery (`GET /api/app/bootstrap`); ACP owns
   per-Agent access decisions.
 - Authenticated workspace state snapshots and subscriptions with bounded leases.
-- Same-origin ACP v1/v2 WebSocket routing with per-message browser session
-  revalidation, and ACP v1 Streamable HTTP routing with per-request browser
-  authentication.
+- Same-origin ACP v1/v2 WebSocket and ACP v1 Streamable HTTP routing, with
+  bounded live browser-session checks on quiet streams and per-message admission.
 - Scoped Agent UI proxy through `ANTNEST_AGENT_UI_URL`: `/workspace/` HTML,
   hashed assets, and the Workspace HTTP/SSE API with leased SSE observation.
 - Per-dependency workload credentials, route-selected caller context, verified
@@ -59,6 +59,7 @@ Gateway still owns browser credential stripping and route authorization.
 | Direction | Interface                                                                                                                    | Purpose                                                                                                                                              |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Inbound   | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback` | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
+| Inbound | `/api/session/account`, `/api/session/password`, `/api/session/activity`, `/api/session/sessions`, `/api/session/sessions/revoke` | Current account, password rotation, explicit user activity, self inventory and revocation |
 | Inbound   | `/scim/v2/*`                                                                                                                 | Protocol-preserving SCIM proxy to Identity                                                                                                           |
 | Inbound   | `/api/admin/*` and Console application                                                                                       | Administrator-only BFF routes forwarded to Admin Console with CSRF checks                                                                            |
 | Inbound   | `GET /api/app/bootstrap`                                                                                                     | Principal display facts and accessible Agent IDs and names                                                                                           |
@@ -66,13 +67,21 @@ Gateway still owns browser credential stripping and route authorization.
 | Inbound   | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias)                                                            | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay                                                                                               |
 | Inbound   | `/workspace/*`, `/api/app/workspace/v1/*`                                                                                    | Agent UI HTML, assets and Workspace HTTP/SSE API                                                                                                     |
 | Inbound   | `GET /status`                                                                                                                | Local readiness only; it never probes another service                                                                                                |
-| Outbound  | Identity Service RPC                                                                                                         | Login, token resolution, revocation, OIDC                                                                                                            |
+| Outbound  | Identity Service RPC                                                                                                         | Login, non-touch resolution, account/session controls, OIDC and the private session-revocation feed |
 | Outbound  | Agent Controller RPC                                                                                                         | Principal-scoped Agent ID/name discovery only                                                                                                        |
 | Outbound  | Agent ACP Service                                                                                                            | ACP protocol traffic and execution-state reads/watches                                                                                               |
 | Outbound  | Admin Console, Agent UI                                                                                                      | Reverse-proxied application traffic                                                                                                                  |
 
 All other service interfaces are private deployment details. ACP HTTP and
 WebSocket behavior is described in [Architecture](docs/architecture.md).
+
+Identity supplies absolute and idle deadlines plus an activity scheduling hint.
+Ordinary requests and stream checks never extend idle expiry; only the explicit
+Origin/CSRF-admitted activity route does. Gateway writes session/CSRF cookies on
+login, OIDC completion, password rotation and logout, using absolute expiry.
+Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
+See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
+for the logout matrix, password recovery and consumer integration.
 
 Browser login and session principals preserve Identity's required Organization
 slug/name. Gateway projects these display facts to the active Node Workspace
@@ -81,9 +90,11 @@ API and SSR as verified UTF-8 Base64URL headers; see
 Every authenticated request re-resolves Identity, so re-bootstrap observes a
 rename without changing authorization scope. Organization display delivery
 [#92](https://github.com/tf4fun/antnest-platform/issues/92) and
-[#93](https://github.com/tf4fun/antnest-platform/issues/93) are complete. CCT
-consumer enforcement is delivered in the #26 service batch; coordinated
-deployment and cross-service acceptance remain pending. The unused legacy
+[#93](https://github.com/tf4fun/antnest-platform/issues/93) are complete. The
+workload/CCT deployment and integration admissions are recorded in the
+[authentication rollout ledger](../../contracts/platform/service-authentication-rollout.json).
+Console and Agent UI consume the session lifecycle; `make e2e-browser-sessions-https`
+checks their shared HTTPS password, revocation and idle behavior. The unused legacy
 `/api/app/bootstrap` projection is unchanged, pending
 [#64](https://github.com/tf4fun/antnest-platform/issues/64).
 
@@ -145,9 +156,9 @@ rotation. Public TLS configuration is independent of internal service TLS.
 
 ## Dependencies
 
-- Identity Service: required for login, every authenticated request and
-  per-message revalidation. Unavailability denies access with `503` without
-  clearing browser cookies.
+- Identity Service: required for login, every authenticated request and live
+  stream revalidation. Unavailability denies finite requests with `503` and
+  closes active streams within their authorization bound, preserving cookies.
 - Admin Console: required for administrator routes.
 - Agent Controller: required only for first-load workspace discovery. ACP
   protocol and state traffic never depends on it.
@@ -184,6 +195,10 @@ node tests/e2e/edge-gateway/shutdown-docker.mjs
 
 Integration sources live in
 [`tests/integration/go/edge-gateway`](../../tests/integration/go/edge-gateway).
+Real TCP backpressure tests use a 500 ms revalidation interval and a 3 s
+staleness bound so race-detector scheduling can establish a blocked write before
+revocation. They still require cancellation and writer cleanup within that bound;
+the guard's exact timing boundaries use Go's virtual test clock.
 Root targets: `make test-go-unit`, `make test-go` and `make test-integration-go`
 include the Gateway;
 `make e2e-stage3` runs the real-stack

@@ -112,6 +112,53 @@ test("HTTP status failures never echo sensitive response bodies", async (t) => {
   );
 });
 
+for (const status of [204, 401])
+  test(`explicit logout accepts ${status} and exposes its cookie clearing`, async (t) => {
+    const base = await fixture(t, (_, response) => {
+      response.setHeader("Set-Cookie", [
+        "antnest_session=; Path=/; Max-Age=0",
+        "antnest_csrf=; Path=/; Max-Age=0",
+      ]);
+      response
+        .writeHead(status)
+        .end(status === 401 ? '{"code":"unauthenticated"}' : undefined);
+    });
+    const client = new GatewayClient(base);
+    client.cookies = new Map([
+      ["antnest_session", "secret"],
+      ["antnest_csrf", "csrf"],
+    ]);
+    const response = await client.request("/api/session", {
+      method: "DELETE",
+      status: [204, 401],
+    });
+    assert.equal(response.status, status);
+    assert.equal(response.headers.getSetCookie().length, 2);
+    assert.equal(client.cookie, "");
+  });
+
+for (const status of [403, 503])
+  test(`explicit logout rejects unaccepted ${status} without mutating local cookies`, async (t) => {
+    const base = await fixture(t, (_, response) =>
+      response.writeHead(status).end("private-credential"),
+    );
+    const client = new GatewayClient(base);
+    client.cookies = new Map([
+      ["antnest_session", "secret"],
+      ["antnest_csrf", "csrf"],
+    ]);
+    await assert.rejects(
+      client.request("/api/session", { method: "DELETE", status: [204, 401] }),
+      (error) => {
+        assert.match(error.message, new RegExp(`HTTP ${status}`));
+        assert(!inspect(error).includes("private-credential"));
+        assert.equal(summarizeFailure(error).http_status, status);
+        return true;
+      },
+    );
+    assert.equal(client.accessToken, "secret");
+  });
+
 test("redirect responses preserve cookies without printing callback query secrets", async (t) => {
   const base = await fixture(t, (_, response) => {
     response.setHeader("Location", "/");

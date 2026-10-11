@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
@@ -27,6 +28,7 @@ type LoginInput struct {
 	OrganizationSlug string
 	Email            string
 	Password         string
+	UserAgentHint    string
 }
 
 type IssueTokenCommand struct {
@@ -37,18 +39,23 @@ type IssueTokenCommand struct {
 	RequestID            string
 	IssuedAt             time.Time
 	ExpiresAt            time.Time
+	UserAgentHint        string
 }
 
 type Token struct {
-	ID        string    `json:"id"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID                 string    `json:"id"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	IdleExpiresAt      time.Time `json:"idle_expires_at"`
+	ActivityIntervalMS int       `json:"activity_interval_ms"`
 }
 
 type LoginResult struct {
-	Principal   domain.Principal `json:"principal"`
-	TokenID     string           `json:"token_id"`
-	AccessToken string           `json:"access_token"`
-	ExpiresAt   time.Time        `json:"expires_at"`
+	Principal          domain.Principal `json:"principal"`
+	TokenID            string           `json:"token_id"`
+	AccessToken        string           `json:"access_token"`
+	ExpiresAt          time.Time        `json:"expires_at"`
+	IdleExpiresAt      time.Time        `json:"idle_expires_at"`
+	ActivityIntervalMS int              `json:"activity_interval_ms"`
 }
 
 type RevokeStatus string
@@ -92,6 +99,9 @@ func NewService(
 }
 
 func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
+	if utf8.RuneCountInString(input.UserAgentHint) > 256 {
+		return LoginResult{}, domain.InvalidArgument("user_agent_hint must contain at most 256 characters")
+	}
 	slug, email, validInput := normalizeLoginIdentity(input.OrganizationSlug, input.Email)
 	credential, lookupErr := s.lookupCredential(ctx, slug, email, validInput)
 	encoded := credential.PasswordHash
@@ -119,12 +129,14 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 		TokenID: s.newID("authtoken"), TokenHash: tokenHash, Principal: credential.Principal,
 		ExpectedPasswordHash: credential.PasswordHash,
 		RequestID:            input.RequestID, IssuedAt: now, ExpiresAt: expiresAt,
+		UserAgentHint: input.UserAgentHint,
 	})
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("issue access token: %w", err)
 	}
 	return LoginResult{
 		Principal: credential.Principal, TokenID: token.ID, AccessToken: rawToken, ExpiresAt: token.ExpiresAt,
+		IdleExpiresAt: token.IdleExpiresAt, ActivityIntervalMS: token.ActivityIntervalMS,
 	}, nil
 }
 

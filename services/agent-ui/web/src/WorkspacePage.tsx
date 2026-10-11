@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Settings,
   WifiOff,
+  UserRound,
 } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import { Composer } from "./components/Composer";
@@ -23,7 +24,7 @@ import type { useBridgeWorkspace } from "./lib/use-bridge-workspace";
 
 export type WorkspacePageModel = ReturnType<typeof useBridgeWorkspace>;
 
-export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
+export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel; onAccount?: () => void }) {
   const composerRoot = useRef<HTMLDivElement>(null);
   const retryConversation = useRef<HTMLButtonElement>(null);
   const composerHadFocus = useRef(false);
@@ -147,6 +148,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
           </span>
           <h1>Workspace unavailable</h1>
           <p>{error}</p>
+          {onAccount ? <button type="button" onClick={onAccount}>Account and sessions</button> : null}
           <button
             className="action-button unavailable-retry"
             type="button"
@@ -164,6 +166,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
       <main className="loading-page">
         <span className="loading-mark" aria-hidden="true" />
         <p role="status">Opening workspace</p>
+        {onAccount ? <button type="button" onClick={onAccount}>Account and sessions</button> : null}
       </main>
     );
 
@@ -181,6 +184,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
           void refreshWorkspace();
         }}
         refreshing={refreshing}
+        onAccount={onAccount}
       />
     );
   if (!activeAgent) {
@@ -202,6 +206,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
             </div>
           ) : null}
           <div className="unavailable-actions">
+            {onAccount ? <button type="button" onClick={onAccount}><UserRound size={15} /> Account and sessions</button> : null}
             {workspace.principal.administrator ? (
               <a href="/">
                 <Settings size={15} /> Control Center
@@ -243,6 +248,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
         onClosed={focusAfterDialogClose}
         newConversationDisabled={creating || sending || !connected}
         logoutDisabled={loggingOut}
+        onAccount={onAccount ? () => { setMenuOpen(false); onAccount(); } : undefined}
         onNewConversation={startNewConversation}
         onLogout={() => {
           void logout();

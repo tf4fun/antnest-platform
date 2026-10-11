@@ -35,16 +35,40 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
   assert.equal(tree.parent(root), undefined, "invented watch parent");
   assert.equal(tag(root, "http.request.method"), "GET");
   const window = expected.stopWindow;
+  if (expected.revoked)
+    assert.match(
+      expected.revocationTraceID ?? "",
+      /^[a-f0-9]{32}$/,
+      "revocation source trace missing",
+    );
   assert(
     Number.isFinite(window?.start) &&
       Number.isFinite(window?.end) &&
       window.end >= window.start,
     "observed closure window missing",
   );
+  const clock = expected.clock,
+    serverDate = Date.parse(clock?.serverDate);
+  assert(
+    Number.isFinite(serverDate) &&
+      new Date(serverDate).toUTCString() === clock.serverDate &&
+      Number.isSafeInteger(clock.requestStartedAt) &&
+      Number.isSafeInteger(clock.responseReceivedAt) &&
+      clock.responseReceivedAt >= clock.requestStartedAt &&
+      window.start >= clock.responseReceivedAt,
+    "observed Gateway clock interval missing or invalid",
+  );
+  // HTTP Date has one-second precision. The server sent those headers between
+  // the host's request and response observations; retain that measured range
+  // instead of assuming the host and Docker VM share an exact wall clock.
+  const clockOffset = {
+    min: serverDate - clock.responseReceivedAt,
+    max: serverDate + 1000 - clock.requestStartedAt,
+  };
   const inWindow = (s) =>
     s.duration > 0 &&
-    (s.startTime + s.duration) / 1000 >= window.start &&
-    (s.startTime + s.duration) / 1000 <= window.end;
+    (s.startTime + s.duration) / 1000 >= window.start + clockOffset.min &&
+    (s.startTime + s.duration) / 1000 < window.end + clockOffset.max;
   assert(inWindow(root), "watch did not finish in observed closure window");
   assert.equal(tag(root, "http.response.status_code"), 200);
   const identities = trace.spans.filter(
@@ -53,7 +77,8 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
       tag(s, "span.kind") === "server",
   );
   assert(identities.length > 0);
-  const denied = [];
+  const denied = [],
+    successfulIdentityClients = [];
   function forwarded(server, peer) {
     const client = tree.parent(server);
     assert.equal(tree.service(client), "edge-gateway");
@@ -71,6 +96,7 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
     const client = forwarded(s, "identity-service"),
       status = tag(s, "http.response.status_code");
     assert.equal(tag(client, "http.response.status_code"), status);
+    if (status === 200) successfulIdentityClients.push(client);
     if (status !== 200) {
       assert.equal(expected.revoked, true);
       assert.equal(status, 401);
@@ -101,11 +127,46 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
   assert.equal(tag(server, "http.response.status_code"), 200);
   const client = forwarded(server, "agent-acp-workspace");
   assert.equal(tag(client, "http.response.status_code"), 200);
+  assert(
+    Number.isFinite(client.startTime) &&
+      successfulIdentityClients.some(
+        (initial) =>
+          Number.isFinite(initial.startTime) &&
+          Number.isFinite(initial.duration) &&
+          initial.duration >= 0 &&
+          initial.startTime + initial.duration <= client.startTime,
+      ),
+    "successful Identity admission before upstream watch missing",
+  );
+  // A private revocation feed may cancel the stream before another Resolve.
+  // Its custom context cause is recorded by the HTTP transport as an
+  // operation failure while reading the already admitted response body.
+  const revokedStreamRead =
+    expected.revoked === true &&
+    inWindow(client) &&
+    inWindow(server) &&
+    tag(client, "error.type") === "operation_failed" &&
+    tag(client, "otel.status_description") ===
+      "Operation failed; unclassified error text was not exported" &&
+    client.logs?.some(
+      (entry) =>
+        entry.fields?.some(
+          (field) => field.key === "event" && field.value === "antnest.error",
+        ) &&
+        entry.fields?.some(
+          (field) =>
+            field.key === "antnest.error.stage" &&
+            field.value === "read_response",
+        ),
+    ) &&
+    tag(server, "error.type") === "stream_interrupted" &&
+    tag(server, "antnest.outcome") === "disconnected";
   const cancellation = (s) =>
     inWindow(s) &&
     tag(s, "http.response.status_code") === 200 &&
     ((s === server && tag(s, "error.type") === "stream_interrupted") ||
-      (s === client && tag(s, "error.type") === "cancelled") ||
+      (s === client &&
+        (tag(s, "error.type") === "cancelled" || revokedStreamRead)) ||
       (s === root &&
         tag(s, "otel.status_description") === "handler_aborted" &&
         tag(s, "antnest.http.request_cancelled") === true));
@@ -135,7 +196,11 @@ export function inspectWorkspaceWatch(trace, expected, secrets) {
       gateway_ancestry: true,
       identity_checks: identities.length,
       revocation_verified: denied.length === 2,
+      ...(expected.revoked
+        ? { revocation_trace_id: expected.revocationTraceID }
+        : {}),
       stop_window_verified: true,
+      clock_offset_ms: clockOffset,
       warning_count: warnings.length,
       warnings: [...new Set(warnings)],
       strict_trace: warnings.length ? "failed" : "passed",

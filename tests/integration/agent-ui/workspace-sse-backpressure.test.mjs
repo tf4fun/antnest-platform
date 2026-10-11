@@ -54,10 +54,13 @@ test(
     let latestOperationId = null;
     const eventHandler = createEventHandler({
       subscribe: async (_scope, _sessionId, cursor) => {
-        const index = subscriptions++;
+        const index = subscriptions++ % subscribers;
+        let initialSnapshot = true;
         return {
           events: journal.subscribe(cursor, (streamCursor) => {
-            if (index < slowIntervals.length) slowResets[index]++;
+            if (!initialSnapshot && index < slowIntervals.length)
+              slowResets[index]++;
+            initialSnapshot = false;
             return {
               agentId: "agent-1",
               selectedSessionId: "session-1",
@@ -80,6 +83,12 @@ test(
     const slowRequests = [];
     let fastResponse;
     let reader;
+    let fastReads = Promise.resolve(false);
+    let readFailure;
+    let closing = false;
+    let leaseExpiresAt = Infinity;
+    let renewals = 0;
+    let resetBaseline = [];
     const slowReadTimers = [];
     const slowBytes = slowIntervals.map(() => 0);
     const samples = [];
@@ -92,42 +101,97 @@ test(
         "x-antnest-principal-id": "user-1",
         "x-antnest-agent-id": "agent-1",
       };
-      for (const [index, interval] of slowIntervals.entries()) {
-        const response = await new Promise((resolve, reject) => {
-          const request = get(url, { headers: testHeaders(headers) }, resolve);
-          slowRequests.push(request);
-          request.once("error", reject);
-        });
-        assert.equal(response.statusCode, 200);
-        response.pause();
-        slowReadTimers.push(
-          setInterval(() => {
-            const chunk = response.read(1024);
-            if (chunk) slowBytes[index] += chunk.length;
-          }, interval),
-        );
-      }
-      fastResponse = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(runMs + 60_000),
-      });
-      assert.equal(fastResponse.status, 200);
-      reader = fastResponse.body.getReader();
       let received = "";
-      const fastReads = (async () => {
-        for (;;) {
-          const next = await reader.read();
-          if (next.done) return false;
-          received += new TextDecoder().decode(next.value);
-          if (received.includes(`"operationId":"final-${waves}"`)) return true;
-          if (received.length > 256 * 1024)
-            received = received.slice(-128 * 1024);
+      const openObservers = async () => {
+        closing = false;
+        resetBaseline = [...slowResets];
+        leaseExpiresAt = Infinity;
+        for (const [index, interval] of slowIntervals.entries()) {
+          const signed = testHeaders(headers);
+          leaseExpiresAt = Math.min(leaseExpiresAt, credentialExpiry(signed));
+          const response = await new Promise((resolve, reject) => {
+            const request = get(url, { headers: signed }, resolve);
+            slowRequests.push(request);
+            request.once("error", reject);
+          });
+          assert.equal(response.statusCode, 200);
+          response.pause();
+          slowReadTimers.push(
+            setInterval(() => {
+              const chunk = response.read(1024);
+              if (chunk) slowBytes[index] += chunk.length;
+            }, interval),
+          );
         }
-      })();
+        fastResponse = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(runMs + 60_000),
+        });
+        assert.equal(fastResponse.status, 200);
+        reader = fastResponse.body.getReader();
+        const current = reader;
+        fastReads = (async () => {
+          for (;;) {
+            const next = await current.read();
+            if (next.done) {
+              assert(
+                closing,
+                "Fast observer ended before planned credential renewal",
+              );
+              return false;
+            }
+            received += new TextDecoder().decode(next.value);
+            if (received.includes(`"operationId":"final-${waves}"`))
+              return true;
+            if (received.length > 256 * 1024)
+              received = received.slice(-128 * 1024);
+          }
+        })();
+        void fastReads.catch((error) => {
+          readFailure ??= error;
+        });
+      };
+      const closeObservers = async () => {
+        closing = true;
+        slowResets.forEach((count, index) =>
+          assert(
+            count > resetBaseline[index],
+            `lease ${renewals} slow observer ${index} must encounter real overflow resets`,
+          ),
+        );
+        for (const timer of slowReadTimers.splice(0)) clearInterval(timer);
+        for (const request of slowRequests.splice(0)) request.destroy();
+        await reader?.cancel().catch(() => {});
+        await fastReads.catch(() => {});
+        assert.equal(readFailure, undefined);
+        reader?.releaseLock();
+        reader = undefined;
+        for (
+          let attempt = 0;
+          attempt < 100 && releases < subscriptions;
+          attempt++
+        )
+          await delay(20);
+        assert.equal(releases, subscriptions);
+        assert.equal(journal.snapshotMetrics().subscribers, 0);
+        assert.equal(journal.snapshotMetrics().queuedBytes, 0);
+      };
+      await openObservers();
       global.gc?.();
       const baselineHeapBytes = process.memoryUsage().heapUsed;
       const startedAt = performance.now();
       for (let wave = 1; wave <= waves; wave++) {
+        assert.equal(readFailure, undefined);
+        // Preserve the sustained logical observers with fresh, ordinary 60s
+        // credentials. Initial reset snapshots do not count as overflow resets.
+        if (
+          wave > 1 &&
+          ((wave - 1) % 8 === 0 || leaseExpiresAt - Date.now() < 15_000)
+        ) {
+          await closeObservers();
+          await openObservers();
+          renewals++;
+        }
         let peakQueuedBytes = 0;
         let peakRetainedBytes = 0;
         const observeBudget = () => {
@@ -192,7 +256,7 @@ test(
       }
       assert.ok(
         performance.now() - startedAt >= runMs,
-        "Throttled observers must remain connected through the sustained load",
+        "Throttled observers must span the sustained load across bounded credential leases",
       );
       const deadline = new AbortController();
       try {
@@ -219,13 +283,11 @@ test(
           `Throttled observer ${index} must keep reading throughout the load`,
         );
       }
-      for (const request of slowRequests) request.destroy();
-      await reader.cancel();
-      for (let attempt = 0; attempt < 100 && releases < subscribers; attempt++)
-        await delay(20);
+      assert.equal(readFailure, undefined);
+      await closeObservers();
       assert.equal(
         releases,
-        subscribers,
+        subscriptions,
         "Disconnected HTTP observers release their leases",
       );
       assert.equal(journal.snapshotMetrics().subscribers, 0);
@@ -265,6 +327,8 @@ test(
             slowIntervals,
             slowReadBytes: slowBytes,
             slowResets,
+            subscriptions,
+            renewals,
             baselineHeapBytes,
             gcAvailable: Boolean(global.gc),
             afterDisconnect: {
@@ -279,15 +343,29 @@ test(
         ) + "\n",
       );
     } finally {
+      closing = true;
       for (const timer of slowReadTimers) clearInterval(timer);
       for (const request of slowRequests) request.destroy();
       await reader?.cancel().catch(() => {});
+      await fastReads.catch(() => {});
       journal.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     }
   },
 );
+
+function credentialExpiry(headers) {
+  const token = new Headers(headers).get("Antnest-Caller-Context");
+  const claims = JSON.parse(
+    Buffer.from(token.split(".")[1], "base64url").toString("utf8"),
+  );
+  assert(
+    claims.exp - claims.iat <= 60,
+    "test renewal must retain the real CCT TTL bound",
+  );
+  return claims.exp * 1000;
+}
 
 const scopedWaves = soak ? 12 : 1;
 const scopedRunMs = soak ? scopedWaves * 5_000 : 0;
@@ -322,14 +400,19 @@ test(
         get releases() {
           return releases;
         },
+        get subscriptions() {
+          return subscriptions;
+        },
         set latest(value) {
           latest = value;
         },
         subscribe: (cursor) => {
-          const slow = subscriptions++ === 0;
+          const slow = subscriptions++ % 2 === 0;
+          let initialSnapshot = true;
           return {
             events: journal.subscribe(cursor, (streamCursor) => {
-              if (slow) slowResets++;
+              if (slow && !initialSnapshot) slowResets++;
+              initialSnapshot = false;
               return { streamCursor, marker, latest };
             }),
             release: () => {
@@ -358,6 +441,14 @@ test(
     const slowReadTimers = [];
     const slowReadBytes = streams.map(() => 0);
     const fastResponses = [];
+    const fastReaders = [];
+    let fastReads = [];
+    const crossedScopes = streams.map(() => false);
+    let readFailure;
+    let closing = false;
+    let leaseExpiresAt = Infinity;
+    let renewals = 0;
+    let resetBaseline = [];
     const scopedSamples = [];
     try {
       const address = server.address();
@@ -370,58 +461,113 @@ test(
           "x-antnest-agent-id": "agent-1",
         },
       }));
-      for (const [index, connection] of connections.entries()) {
-        const response = await new Promise((resolve, reject) => {
-          const request = get(
-            connection.url,
-            { headers: testHeaders(connection.headers) },
-            resolve,
-          );
-          slowRequests.push(request);
-          request.once("error", reject);
-        });
-        assert.equal(response.statusCode, 200);
-        response.pause();
-        slowResponses.push(response);
-        if (soak)
-          slowReadTimers.push(
-            setInterval(
-              () => {
-                const chunk = response.read(1024);
-                if (chunk) slowReadBytes[index] += chunk.length;
-              },
-              index === 0 ? 10 : 50,
-            ),
-          );
-        const fast = await fetch(connection.url, {
-          headers: connection.headers,
-        });
-        assert.equal(fast.status, 200);
-        fastResponses.push(fast);
-      }
-      const fastReads = fastResponses.map(async (response, index) => {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let tail = "";
-        let crossed = false;
-        try {
-          for (;;) {
-            const next = await reader.read();
-            if (next.done) return { complete: false, crossed };
-            tail += decoder.decode(next.value, { stream: true });
-            crossed ||= tail.includes(streams[1 - index].marker);
-            if (tail.includes(`final-${scopedWaves}-${streams[index].marker}`))
-              return { complete: true, crossed };
-            if (tail.length > 128 * 1024) tail = tail.slice(-64 * 1024);
-          }
-        } finally {
-          await reader.cancel().catch(() => {});
+      const openObservers = async () => {
+        closing = false;
+        resetBaseline = streams.map((stream) => stream.slowResets);
+        leaseExpiresAt = Infinity;
+        for (const [index, connection] of connections.entries()) {
+          const signed = testHeaders(connection.headers);
+          leaseExpiresAt = Math.min(leaseExpiresAt, credentialExpiry(signed));
+          const response = await new Promise((resolve, reject) => {
+            const request = get(connection.url, { headers: signed }, resolve);
+            slowRequests.push(request);
+            request.once("error", reject);
+          });
+          assert.equal(response.statusCode, 200);
+          response.pause();
+          slowResponses.push(response);
+          if (soak)
+            slowReadTimers.push(
+              setInterval(
+                () => {
+                  const chunk = response.read(1024);
+                  if (chunk) slowReadBytes[index] += chunk.length;
+                },
+                index === 0 ? 10 : 50,
+              ),
+            );
+          const fast = await fetch(connection.url, {
+            headers: connection.headers,
+          });
+          assert.equal(fast.status, 200);
+          fastResponses.push(fast);
         }
-      });
+        fastReads = fastResponses.map(async (response, index) => {
+          const reader = response.body.getReader();
+          fastReaders.push(reader);
+          const decoder = new TextDecoder();
+          let tail = "";
+          try {
+            for (;;) {
+              const next = await reader.read();
+              if (next.done) {
+                assert(
+                  closing,
+                  "Scoped fast observer ended before planned credential renewal",
+                );
+                return { complete: false, crossed: crossedScopes[index] };
+              }
+              tail += decoder.decode(next.value, { stream: true });
+              crossedScopes[index] ||= tail.includes(streams[1 - index].marker);
+              if (
+                tail.includes(`final-${scopedWaves}-${streams[index].marker}`)
+              )
+                return { complete: true, crossed: crossedScopes[index] };
+              if (tail.length > 128 * 1024) tail = tail.slice(-64 * 1024);
+            }
+          } finally {
+            await reader.cancel().catch(() => {});
+            reader.releaseLock();
+          }
+        });
+        for (const read of fastReads)
+          void read.catch((error) => {
+            readFailure ??= error;
+          });
+      };
+      const closeObservers = async () => {
+        closing = true;
+        streams.forEach((stream, index) =>
+          assert(
+            stream.slowResets > resetBaseline[index],
+            `lease ${renewals} scope ${index} must encounter real overflow resets`,
+          ),
+        );
+        for (const timer of slowReadTimers.splice(0)) clearInterval(timer);
+        for (const request of slowRequests.splice(0)) request.destroy();
+        for (const response of slowResponses.splice(0)) response.destroy();
+        for (const reader of fastReaders.splice(0))
+          await reader.cancel().catch(() => {});
+        await Promise.allSettled(fastReads);
+        assert.equal(readFailure, undefined);
+        fastResponses.length = 0;
+        for (
+          let attempt = 0;
+          attempt < 100 &&
+          streams.some((item) => item.releases < item.subscriptions);
+          attempt++
+        )
+          await delay(20);
+        for (const stream of streams) {
+          assert.equal(stream.releases, stream.subscriptions);
+          assert.equal(stream.journal.snapshotMetrics().subscribers, 0);
+          assert.equal(stream.journal.snapshotMetrics().queuedBytes, 0);
+        }
+      };
+      await openObservers();
       global.gc?.();
       const baselineHeapBytes = process.memoryUsage().heapUsed;
       const startedAt = performance.now();
       for (let wave = 1; wave <= scopedWaves; wave++) {
+        assert.equal(readFailure, undefined);
+        if (
+          wave > 1 &&
+          ((wave - 1) % 8 === 0 || leaseExpiresAt - Date.now() < 15_000)
+        ) {
+          await closeObservers();
+          await openObservers();
+          renewals++;
+        }
         const peaks = streams.map(() => ({ queuedBytes: 0, retainedBytes: 0 }));
         const observeBudget = (stream, streamIndex) => {
           const metrics = stream.journal.snapshotMetrics();
@@ -480,7 +626,7 @@ test(
       if (soak)
         assert.ok(
           performance.now() - startedAt >= scopedRunMs,
-          "Both scoped slow observers must stay connected through the sustained load",
+          "Both scoped slow observers must span the sustained load across bounded credential leases",
         );
       const deadline = new AbortController();
       let results;
@@ -511,15 +657,10 @@ test(
             "Each scoped slow observer must continue reading through the load",
           );
       }
-      for (const request of slowRequests) request.destroy();
-      for (
-        let attempt = 0;
-        attempt < 100 && streams.some((item) => item.releases < 2);
-        attempt++
-      )
-        await delay(20);
+      assert.equal(readFailure, undefined);
+      await closeObservers();
       for (const stream of streams) {
-        assert.equal(stream.releases, 2);
+        assert.equal(stream.releases, stream.subscriptions);
         assert.equal(stream.journal.snapshotMetrics().subscribers, 0);
         assert.equal(stream.journal.snapshotMetrics().queuedBytes, 0);
       }
@@ -547,6 +688,8 @@ test(
               publishedEventsPerScope: scopedWaves * 501,
               slowReadBytes,
               slowResets: streams.map((stream) => stream.slowResets),
+              subscriptions: streams.map((stream) => stream.subscriptions),
+              renewals,
               baselineHeapBytes,
               afterDisconnect: {
                 heapUsedBytes: afterDisconnect.heapUsed,
@@ -560,11 +703,12 @@ test(
         );
       }
     } finally {
+      closing = true;
       for (const timer of slowReadTimers) clearInterval(timer);
       for (const request of slowRequests) request.destroy();
       for (const response of slowResponses) response.destroy();
-      for (const response of fastResponses)
-        await response.body?.cancel().catch(() => {});
+      for (const reader of fastReaders) await reader.cancel().catch(() => {});
+      await Promise.allSettled(fastReads);
       for (const stream of streams) stream.journal.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

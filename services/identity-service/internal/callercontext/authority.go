@@ -28,9 +28,11 @@ var ErrInvalid = domain.NewError("caller_context_invalid", "Caller context verif
 var ErrDependency = domain.NewError("identity_dependency_unavailable", "Identity authorization dependency is unavailable", true)
 
 type Session struct {
-	ID        string
-	Principal domain.Principal
-	ExpiresAt time.Time
+	ID                 string
+	Principal          domain.Principal
+	ExpiresAt          time.Time
+	IdleExpiresAt      time.Time
+	ActivityIntervalMS int
 }
 
 type SessionRepository interface {
@@ -77,27 +79,28 @@ func NewAuthority(config Config) (*Authority, error) {
 	return &Authority{signer: signer, keys: keys, repository: config.Repository, now: config.Now, newID: config.NewID}, nil
 }
 
-func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent string) (domain.Principal, string, error) {
+func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent string) (Session, string, error) {
 	audience := profileAudience(profile)
-	if len(audience) == 0 || agent != "" && !protocol.ValidID(agent) {
-		return domain.Principal{}, "", domain.InvalidArgument("Caller context profile or Agent scope is invalid")
+	if len(audience) == 0 || agent != "" && (profile == "session" || !protocol.ValidID(agent)) {
+		return Session{}, "", domain.InvalidArgument("Caller context profile or Agent scope is invalid")
 	}
 	if accessToken == "" {
-		return domain.Principal{}, "", domain.ErrUnauthenticated
+		return Session{}, "", domain.ErrUnauthenticated
 	}
 	now := a.now().UTC()
 	session, err := a.repository.ResolveTokenSession(ctx, credentials.HashToken(accessToken), now)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrUnauthenticated) {
-			return domain.Principal{}, "", domain.ErrUnauthenticated
+			return Session{}, "", domain.ErrUnauthenticated
 		}
-		return domain.Principal{}, "", ErrDependency
+		return Session{}, "", ErrDependency
 	}
-	if !session.Principal.Active || !session.ExpiresAt.After(now) || !protocol.ValidID(session.ID) {
-		return domain.Principal{}, "", domain.ErrUnauthenticated
+	now = a.now().UTC()
+	if !session.Principal.Active || !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) || !protocol.ValidID(session.ID) {
+		return Session{}, "", domain.ErrUnauthenticated
 	}
 	principal := session.Principal
-	expiry := min(now.Unix()+60, session.ExpiresAt.Unix())
+	expiry := min(now.Unix()+60, session.ExpiresAt.Unix(), session.IdleExpiresAt.Unix())
 	claims := Claims{Issuer: Issuer, Subject: principal.UserID, Organization: principal.OrganizationID,
 		Membership: principal.MembershipID, SystemRole: string(principal.SystemRole), OrganizationRole: string(principal.OrganizationRole),
 		Session: session.ID, Audience: audience, IssuedAt: now.Unix(), ExpiresAt: expiry, ID: a.newID()}
@@ -105,43 +108,54 @@ func (a *Authority) Issue(ctx context.Context, accessToken, profile, agent strin
 		claims.Agent = &agent
 	}
 	if expiry <= claims.IssuedAt {
-		return domain.Principal{}, "", domain.ErrUnauthenticated
+		return Session{}, "", domain.ErrUnauthenticated
 	}
 	raw, err := json.Marshal(claims)
 	if err != nil || !protocol.ValidClaims(raw, claims) {
-		return domain.Principal{}, "", ErrDependency
+		return Session{}, "", ErrDependency
 	}
 	signed, err := a.signer.Sign(raw)
 	if err != nil {
-		return domain.Principal{}, "", ErrDependency
+		return Session{}, "", ErrDependency
 	}
 	token, err := signed.CompactSerialize()
 	if err != nil {
-		return domain.Principal{}, "", ErrDependency
+		return Session{}, "", ErrDependency
 	}
-	return principal, token, nil
+	return session, token, nil
 }
 
 func (a *Authority) VerifySession(ctx context.Context, token string) (Claims, error) {
+	_, claims, err := a.verifySession(ctx, token, a.repository.ResolveSession)
+	return claims, err
+}
+
+func (a *Authority) verifySession(ctx context.Context, token string, resolve SessionResolver) (Session, Claims, error) {
 	now := a.now().UTC()
 	claims, err := protocol.Verify(token, a.keys, protocol.Expected{Consumer: "identity-service", Now: now, Tolerance: 30})
 	if err != nil {
-		return Claims{}, ErrInvalid
+		return Session{}, Claims{}, ErrInvalid
 	}
-	session, err := a.repository.ResolveSession(ctx, claims.Session, now)
+	session, err := resolve(ctx, claims.Session, now)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrUnauthenticated) {
-			return Claims{}, ErrInvalid
+			return Session{}, Claims{}, ErrInvalid
 		}
-		return Claims{}, ErrDependency
+		return Session{}, Claims{}, ErrDependency
+	}
+	// A storage read may wait beyond the CCT's own validity window. Use the
+	// shared verifier with a fresh clock as well as checking the live session.
+	now = a.now().UTC()
+	if _, err := protocol.Verify(token, a.keys, protocol.Expected{Consumer: "identity-service", Now: now, Tolerance: 30}); err != nil {
+		return Session{}, Claims{}, ErrInvalid
 	}
 	principal := session.Principal
-	if session.ID != claims.Session || !principal.Active || !session.ExpiresAt.After(now) ||
+	if session.ID != claims.Session || !principal.Active || !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) ||
 		principal.UserID != claims.Subject || principal.OrganizationID != claims.Organization || principal.MembershipID != claims.Membership ||
 		string(principal.SystemRole) != claims.SystemRole || string(principal.OrganizationRole) != claims.OrganizationRole {
-		return Claims{}, ErrInvalid
+		return Session{}, Claims{}, ErrInvalid
 	}
-	return claims, nil
+	return session, claims, nil
 }
 
 func (a *Authority) PublicJWKS() any {
@@ -165,6 +179,8 @@ func profileAudience(profile string) []string {
 		return []string{"agent-ui", "agent-acp-service", "agent-controller"}
 	case "acp":
 		return []string{"agent-acp-service"}
+	case "session":
+		return []string{"identity-service"}
 	default:
 		return nil
 	}

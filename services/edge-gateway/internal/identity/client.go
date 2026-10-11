@@ -17,17 +17,20 @@ import (
 const maximumResponseBytes = 2 << 20
 
 type Principal struct {
-	UserID           string    `json:"user_id"`
-	OrganizationID   string    `json:"organization_id"`
-	OrganizationSlug string    `json:"organization_slug"`
-	OrganizationName string    `json:"organization_name"`
-	MembershipID     string    `json:"membership_id"`
-	SystemRole       string    `json:"system_role"`
-	OrganizationRole string    `json:"organization_role"`
-	Active           bool      `json:"active"`
-	CallerContext    string    `json:"-"`
-	ContextExpiresAt time.Time `json:"-"`
-	SessionID        string    `json:"-"`
+	UserID             string    `json:"user_id"`
+	OrganizationID     string    `json:"organization_id"`
+	OrganizationSlug   string    `json:"organization_slug"`
+	OrganizationName   string    `json:"organization_name"`
+	MembershipID       string    `json:"membership_id"`
+	SystemRole         string    `json:"system_role"`
+	OrganizationRole   string    `json:"organization_role"`
+	Active             bool      `json:"active"`
+	CallerContext      string    `json:"-"`
+	ContextExpiresAt   time.Time `json:"-"`
+	SessionID          string    `json:"-"`
+	ExpiresAt          time.Time `json:"-"`
+	IdleExpiresAt      time.Time `json:"-"`
+	ActivityIntervalMS int       `json:"-"`
 }
 
 func (principal Principal) Administrator() bool {
@@ -40,13 +43,16 @@ type LoginInput struct {
 	OrganizationSlug string `json:"organization_slug"`
 	Email            string `json:"email"`
 	Password         string `json:"password"`
+	UserAgentHint    string `json:"user_agent_hint,omitempty"`
 }
 
 type LoginResult struct {
-	Principal   Principal `json:"principal"`
-	TokenID     string    `json:"token_id"`
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Principal          Principal `json:"principal"`
+	TokenID            string    `json:"token_id"`
+	AccessToken        string    `json:"access_token"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	IdleExpiresAt      time.Time `json:"idle_expires_at"`
+	ActivityIntervalMS int       `json:"activity_interval_ms"`
 }
 
 type LoginMethod struct {
@@ -58,6 +64,7 @@ type StartOIDCLoginInput struct {
 	RequestID        string `json:"request_id"`
 	OrganizationSlug string `json:"organization_slug"`
 	ProviderName     string `json:"provider_name"`
+	UserAgentHint    string `json:"user_agent_hint,omitempty"`
 }
 
 type StartOIDCLoginResult struct {
@@ -72,11 +79,13 @@ type OIDCCallbackInput struct {
 }
 
 type OIDCCallbackResult struct {
-	Principal        Principal `json:"principal"`
-	TokenID          string    `json:"token_id"`
-	AccessToken      string    `json:"access_token,omitempty"`
-	AlreadyCompleted bool      `json:"already_completed,omitempty"`
-	ExpiresAt        time.Time `json:"expires_at"`
+	Principal          Principal `json:"principal"`
+	TokenID            string    `json:"token_id"`
+	AccessToken        string    `json:"access_token,omitempty"`
+	AlreadyCompleted   bool      `json:"already_completed,omitempty"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	IdleExpiresAt      time.Time `json:"idle_expires_at"`
+	ActivityIntervalMS int       `json:"activity_interval_ms"`
 }
 
 type RevokeStatus string
@@ -119,6 +128,9 @@ func (client *Client) Login(ctx context.Context, input LoginInput) (LoginResult,
 		return LoginResult{}, err
 	}
 	result.LoginResult.Principal = principal
+	if !result.LoginResult.SessionMetadata().Valid() {
+		return LoginResult{}, fmt.Errorf("identity returned incomplete browser session metadata")
+	}
 	return result.LoginResult, nil
 }
 
@@ -168,11 +180,15 @@ func (client *Client) CompleteOIDCLogin(
 		return OIDCCallbackResult{}, err
 	}
 	result.OIDCCallbackResult.Principal = principal
+	if !result.OIDCCallbackResult.SessionMetadata().Valid() {
+		return OIDCCallbackResult{}, fmt.Errorf("identity returned incomplete browser session metadata")
+	}
 	return result.OIDCCallbackResult, nil
 }
 
 func (client *Client) Resolve(ctx context.Context, accessToken string) (Principal, error) {
 	var result struct {
+		SessionMetadata
 		Principal     *principalResponse `json:"principal"`
 		CallerContext string             `json:"caller_context"`
 	}
@@ -180,7 +196,7 @@ func (client *Client) Resolve(ctx context.Context, accessToken string) (Principa
 	if !ok {
 		selection.Profile = "workspace"
 	}
-	if selection.Profile != "workspace" && selection.Profile != "console" && selection.Profile != "acp" {
+	if selection.Profile != "workspace" && selection.Profile != "console" && selection.Profile != "acp" && selection.Profile != "session" || selection.Profile == "session" && selection.Agent != "" {
 		return Principal{}, fmt.Errorf("invalid server-owned audience profile")
 	}
 	input := map[string]string{"access_token": accessToken, "profile": selection.Profile}
@@ -202,6 +218,11 @@ func (client *Client) Resolve(ctx context.Context, accessToken string) (Principa
 	}
 	principal.CallerContext, principal.ContextExpiresAt = result.CallerContext, issuer.expiresAt
 	principal.SessionID = issuer.sessionID
+	if !result.Valid() {
+		return Principal{}, fmt.Errorf("identity returned incomplete browser session metadata")
+	}
+	principal.ExpiresAt, principal.IdleExpiresAt = result.ExpiresAt, result.IdleExpiresAt
+	principal.ActivityIntervalMS = result.ActivityIntervalMS
 	return principal, nil
 }
 
@@ -265,6 +286,10 @@ func (client *Client) doRequest(
 	input any,
 	output any,
 ) error {
+	return client.doRequestWithCaller(ctx, method, target, input, output, "")
+}
+
+func (client *Client) doRequestWithCaller(ctx context.Context, method string, target *url.URL, input, output any, caller string) error {
 	var body io.Reader
 	if input != nil {
 		payload, err := json.Marshal(input)
@@ -278,6 +303,9 @@ func (client *Client) doRequest(
 		return fmt.Errorf("create identity request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
+	if caller != "" {
+		request.Header.Set(CallerContextHeader, caller)
+	}
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

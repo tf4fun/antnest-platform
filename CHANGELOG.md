@@ -4,6 +4,19 @@
 
 ### Upgrade requirement
 
+**#58 requires a coordinated Identity, Gateway, Console and Agent UI rollout.**
+Stop old Identity replicas before applying the browser-session migration; mixed
+old/new Identity replicas are unsupported. Deploy the updated session consumers
+before reopening browser traffic. Sessions now default to 30 minutes idle and
+12 hours absolute lifetime. Startup tightens existing idle deadlines, so an
+inactive browser may need to sign in again. Configure
+`ANTNEST_IDENTITY_SESSION_IDLE_TTL` and
+`ANTNEST_IDENTITY_SESSION_ABSOLUTE_TTL`; `ANTNEST_IDENTITY_TOKEN_TTL` remains an
+absolute-lifetime alias for one release, and conflicting explicit values reject
+startup. Scripted password changes move to `POST /api/session/password` and
+must consume the replacement Cookies. See the
+[browser session lifecycle](contracts/identity/browser-sessions.md).
+
 **#62 requires an independent 32-byte Gateway CSRF secret file and a fresh
 browser login.** Configure `ANTNEST_EDGE_CSRF_KEY_FILE`; all Gateway replicas
 must share that key. Existing deployments add only `edge-gateway/csrf.key` to
@@ -72,6 +85,16 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Browser sessions now separate idle and absolute expiry (#58). Only genuine
+browser input reports activity; background reads, polling and stream output do
+not keep a session alive. Console and Workspace expose account details,
+password changes and session revocation, while Directory administrators can
+revoke a User's sessions in the current organization. Password changes revoke
+all previous sessions for that User and replace the current browser's Cookies
+without extending its absolute lifetime. Quiet streams close after revocation
+or expiry; accepted Agent Runs continue. Ordinary responses preserve Cookies,
+and stale responses cannot restore private state from an earlier session.
 
 Secure browser sessions use host-prefixed cookies and a CSRF HMAC bound to the
 authenticated Identity session (#62). Matching a planted cookie and header or

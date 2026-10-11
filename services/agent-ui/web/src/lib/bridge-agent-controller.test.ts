@@ -24,7 +24,7 @@ test("Controller swaps one scoped observer when selected Session changes", async
   let closes = 0;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: { agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
     openObserver: async (input) => {
       input.onView(view(input.sessionId));
       const observer = { sessionId: input.sessionId, onView: input.onView,
@@ -51,7 +51,7 @@ test("Controller snapshot does not retain an unbounded second operation history"
   let push!: (view: BridgeAgentView) => void;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: { agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
     openObserver: async (input) => { push = input.onView; input.onView(view("session")); return () => {}; },
   });
   try {
@@ -79,7 +79,7 @@ test("Controller resync reopens only the current selected Session", async () => 
   let resync!: () => void;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: { agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
     openObserver: async (input) => {
       selected.push(input.sessionId);
       resync = input.onResync;
@@ -98,7 +98,7 @@ test("a missing Session ends selection without scheduling another observer", asy
   let attempts = 0;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: { agentView: async () => ({}), eventsURL: () => "" },
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, agentView: async () => ({}), eventsURL: () => "" },
     openObserver: async () => {
       attempts++;
       throw new WorkspaceApiError("Session not found", 404,
@@ -121,7 +121,7 @@ test("Controller backs off repeated transport failures and resets after recovery
   let disconnect!: () => void;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: { agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
     openObserver: async (input) => {
       attempts++;
       if (attempts === 2 || attempts === 3)
@@ -163,7 +163,7 @@ test("Controller clears private View when reconnect discovers an inactive identi
   let attempts = 0;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: { agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {}, agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}) },
     openObserver: async (input) => {
       if (++attempts === 1) {
         input.onView(view("session"));
@@ -187,7 +187,7 @@ test("Prompt acceptance and Run terminal are distinct controller states", async 
   const submissions: unknown[] = [];
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       prompt: async (_agentId, _sessionId, admission) => {
         submissions.push(admission);
@@ -224,7 +224,7 @@ test("Controller answers only the current permission generation", async () => {
   const decisions: unknown[][] = [];
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       prompt: async () => ({}), operation: async () => ({}), cancel: async () => ({}),
       decidePermission: async (...args) => { decisions.push(args); return {}; },
@@ -249,7 +249,7 @@ test("disconnected Controller refuses commands derived from its stale View", asy
   const writes: string[] = [];
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       prompt: async () => { writes.push("prompt"); return {}; },
       cancel: async () => { writes.push("cancel"); return {}; },
@@ -295,7 +295,7 @@ test("lost permission response rereads the current request without deciding twic
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }] };
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       decidePermission: async () => {
         commands++;
@@ -328,7 +328,7 @@ test("lost permission response preserves an error while the same request remains
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }] };
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       decidePermission: async () => {
         commands++;
@@ -355,7 +355,7 @@ test("Configuration command carries the selected View token", async () => {
   const changes: unknown[][] = [];
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       prompt: async () => ({}), operation: async () => ({}), cancel: async () => ({}),
       decidePermission: async () => ({}),
@@ -383,7 +383,7 @@ test("lost configuration response reloads authoritative choices without resendin
   let observations = 0;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       configuration: async () => {
         commands++;
@@ -418,7 +418,7 @@ test("lost configuration response reports failure when authoritative choice stay
   let observations = 0;
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       configuration: async () => { commands++; throw new Error("response lost"); },
     },
@@ -449,7 +449,7 @@ test("late configuration failure cannot reopen a Session selected before it arri
   const selections: (string | null)[] = [];
   const controller = new BridgeAgentController({
     agentId: "agent",
-    api: {
+    api: { sessionCurrent: () => true, onSessionCancelled: () => () => {},
       agentView: async () => ({}), eventsURL: () => "", turnContent: async () => ({}),
       configuration: async () => command,
     },

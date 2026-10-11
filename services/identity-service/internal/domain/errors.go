@@ -68,6 +68,7 @@ var (
 		"The referenced identity resource is invalid",
 		false,
 	)
-	ErrInactive        = NewError("inactive_principal", "The principal is inactive", false)
-	ErrInvalidArgument = NewError("invalid_argument", "The request contains an invalid argument", false)
+	ErrInactive               = NewError("inactive_principal", "The principal is inactive", false)
+	ErrInvalidArgument        = NewError("invalid_argument", "The request contains an invalid argument", false)
+	ErrInvalidCurrentPassword = NewError("invalid_current_password", "Current password is incorrect", false)
 )

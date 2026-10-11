@@ -19,9 +19,13 @@ Do not restart into an intermediate configuration or change receiver origins
 through browser inputs. Public listener TLS uses a separate certificate and key;
 it does not reuse internal workload credentials.
 
-Deploy Identity revision 14 before this Gateway batch. Console, UI, ACP and
-Controller workload/CCT consumers and deployment mounts are separate pending
-batches; use the coordinated branch only after the final integration acceptance.
+Deploy Identity revision 15 before this Gateway batch. Its required session
+metadata, account/session RPCs and private revocation feed must be available.
+Console and Agent UI activity/account controls, scripted consumers and final
+two-browser HTTPS acceptance remain separate #58 batches; use the coordinated
+branch only after that integration admission. Identity policy defaults to a
+30-minute idle deadline and a 12-hour absolute deadline; ordinary traffic does
+not renew either. See the [session lifecycle contract](../../../contracts/identity/browser-sessions.md).
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -252,10 +256,10 @@ an abnormal `1006` disconnect. This notification does not cancel a durable Run.
 
 The shutdown contract includes every receive-only long-lived transport: ACP
 WebSockets, ACP v1 GET/SSE (including the unversioned v1 alias), Workspace state
-Watch and administrator Agent event Watch. Stop cancels their upstream receive
+Watch, Workspace API events and administrator Agent event Watch. Stop cancels their upstream receive
 requests and waits for handlers and request telemetry. It never sends an ACP
 cancel command or retries a prompt. Ordinary HTTP requests, including ACP
-POST/DELETE, keep graceful drain. Regression tests must cover all four HTTP
+POST/DELETE, keep graceful drain. Regression tests must cover all five HTTP
 receive routes on a real listener and signal/restart behavior in Docker;
 testing only WebSocket or one Watch route is insufficient.
 
@@ -270,6 +274,12 @@ five seconds for cancelled handlers, up to five seconds for exporter shutdown,
 and margin. Increase the platform stop grace as well when increasing the HTTP
 shutdown budget.
 
+Main owns one private session-revocation poller and cancels/joins it before
+transport teardown on both signal and listener failure. It starts from cursor
+zero after restart, reads at most 500 events per page and four pages per catch-up
+pass, and retains only active stream registrations. Feed outage or lag never
+waives each stream's independent Identity checks. Constructors start no poller.
+
 Run the service-owned signal regression from the repository root after building
 its image:
 
@@ -279,7 +289,7 @@ node tests/e2e/edge-gateway/shutdown-docker.mjs
 ```
 
 The regression starts only a Gateway container and a controlled Node HTTP
-dependency. Four active receive routes must close on SIGTERM, reopen after a
+dependency. Five active receive routes must close on SIGTERM, reopen after a
 restart, and close on SIGINT, with both exits zero and no extra upstream
 commands. It verifies the image ID and removes only its labeled containers and
 network. No database, model Provider or retained deployment is used.
@@ -292,9 +302,12 @@ Login admission is deliberately replica-local and bounded to 4096 source and
 frees no space, new keys are refused with `429` instead of evicting existing
 windows. It protects Argon2 work before Identity is called; a shared limiter is
 justified only if deployment-scale measurements require cross-replica
-enforcement. Event streams are force-reconnected at the stream lease so
-Identity revocation and principal disable are rechecked without an Identity
-call for every event.
+enforcement. Event streams retain their maximum lease and independently check
+Identity even without incoming events. Checks run at the smaller of 10 seconds
+and Identity's activity hint. The 30-second stale-output bound includes time
+spent in the RPC and at most one second for closing sockets. Initial resolution
+must fit 10 seconds and the returned hint before any upstream opens; reducing
+the request timeout can tighten this further. Checks never record user activity.
 
 OIDC method discovery and login start are public, no-store browser APIs. The
 callback establishes cookies and redirects to `/`; it never returns an access
@@ -307,8 +320,9 @@ Trusted Organization/Principal/Agent headers are injected server-side.
 Browser-supplied identity and the retired access subject are discarded.
 ACP owns Agent/Session authorization; Controller is not a chat dependency.
 Each client data message performs a bounded Identity resolution before relay;
-server output and ping/pong do not create Identity requests. There is no idle
-polling. A 1008 close requires fresh session/Agent access;
+server output and ping/pong do not record activity. Independent live checks
+continue while idle, and the original handshake CCT expiry closes the socket
+even if later resolutions return fresh contexts. A 1008 close requires fresh session/Agent access;
 1013 signals temporary admission unavailability. Neither close changes HTTP
 cookies or promises Run cancellation. A reconnect must repeat admission.
 The relay supports complete messages up to 64 MiB in either direction and uses
@@ -339,8 +353,10 @@ as normal stream cancellation.
 
 Workspace state GET/SSE uses the same browser identity boundary, with no caller
 scope parameters. Its stream is capped by `ANTNEST_EDGE_STREAM_LEASE`; every
-reconnect revalidates Identity and reads fresh ACP state. A quiet stream
-may therefore retain its last snapshot until lease expiry. On transport loss,
+reconnect revalidates Identity and reads fresh ACP state. Quiet streams are
+also subject to live checks, feed-driven closure and the absolute deadline.
+An old idle deadline schedules fresh validation rather than overriding activity
+recorded through another replica. On transport loss,
 the UI must close actionable state and reconnect with backoff, not poll or
 replay a prompt. See [Workspace state](workspace-state.md) for the consumer
 contract. State subscriptions have 64 independent slots and do not consume ACP

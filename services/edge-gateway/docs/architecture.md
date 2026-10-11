@@ -26,8 +26,32 @@ No-session logout clears local cookies with 204. Invalid cookies or an inactive,
 expired or revoked session clear local cookies with 401; without a trusted sid,
 this path does not promise durable token revocation. Identity transport/issuer
 failures and revocation outages return 503 while preserving browser credentials.
-Bad CSRF returns 403 without revocation or cookie changes. Session lifecycle and
-sign-out-everywhere remain tracked by #58.
+Bad Origin or CSRF returns 403 without revocation or cookie changes. Successful
+revocation returns 204 and clears cookies; a token already invalid at revocation
+returns 401 and clears them.
+
+Identity supplies absolute and idle deadlines plus `activity_interval_ms` in
+login, OIDC completion and every resolution. Gateway validates their shape and
+checks fresh time and request cancellation after resolution. Only
+`POST /api/session/activity` records real user activity; reads, CCT issuance,
+business mutations and streams do not extend idle expiry. Session/CSRF cookies
+are written only by login, OIDC completion, successful password rotation and
+logout, always with absolute expiry. Ordinary 401, SSR rejection and session
+revocation responses preserve cookies, including when revoking the current SID.
+Proxy responses cannot set browser cookies.
+
+Gateway owns current account, password, activity, session inventory and
+revocation routes under `/api/session`. They use the `session` CCT profile,
+whose sole audience is Identity and which carries no Agent. Self scope, actor
+and target User come from the verified principal. Public inventory exposes
+independent public references and bounded plain-text user-agent hints, never
+private SID/CCT/raw credentials. Mutations enforce Origin, session-bound CSRF
+and strict typed bodies. Password rotation replaces cookies only after a live
+replacement is received; a lost reply requires fresh login with the new
+password. Only a wrong current password returns `invalid_current_password`;
+generic input failures return `invalid_request`, both without cookie changes.
+See the [shared lifecycle contract](../../../contracts/identity/browser-sessions.md)
+for the Console, Agent UI and script consumers and their HTTPS integration.
 
 Gateway defaults COOP and CORP to `same-origin`. Console and Workspace currently
 share one origin; these controls do not provide an XSS privilege boundary
@@ -79,7 +103,7 @@ Gateway does not duplicate it on each HTTP hop.
 
 Session rejection and Identity unavailability are distinct. Authoritative
 `unauthenticated`/`inactive_principal` responses or an inactive resolved principal
-return 401 and clear browser cookies. Transport, timeout, malformed-response and
+return 401 without changing browser cookies. Transport, timeout, malformed-response and
 other upstream errors deny access with 503 without destroying the browser's
 session. A retry must revalidate with Identity; unavailable never means admitted.
 
@@ -235,7 +259,7 @@ ACP retains durable execution authority.
 
 ## Routing
 
-Login and logout call Identity Service directly because the Gateway owns the
+Login, logout and account/session controls call Identity directly because Gateway owns the
 browser credential boundary. Every administrative command goes to Admin
 Console. Only workspace discovery calls Agent Controller's principal-scoped
 ID/name list. ACP protocol and execution-state traffic goes directly to ACP,
@@ -286,7 +310,7 @@ the original browser token before forwarding. Protocol values remain unchanged,
 except W3C context in standard request/notification `params._meta`, which the
 transport tracing wrapper replaces with the actual Gateway PRODUCER context.
 Responses and non-JSON frames remain byte-for-byte unchanged. The current
-principal must be active and retain the same User/Organization/Membership;
+principal must be active and retain the same SID, User/Organization/Membership and roles;
 authentication cannot switch identity inside an existing connection. One
 message per direction is processed at a time, so a message waiting for Identity
 cannot bypass the check through fragmentation or pipelining. Independent
@@ -303,9 +327,28 @@ contexts and waits for handlers (including their telemetry) within the shutdown
 deadline. Ordinary HTTP requests retain their graceful drain window; their
 contexts are not tied directly to the process signal.
 
-This is new-message admission, not cancellation of previously admitted work.
-An idle connection is not periodically checked, and output for an admitted Run
-can still arrive until another client message or disconnect. A check overlapping
+All long-lived browser transports also run independent non-touch checks while
+quiet: administrator Agent events, Workspace state, Workspace API events, ACP
+v1 HTTP receive (including its alias), and both direct WebSocket versions.
+The guard starts before opening the upstream. It binds the original SID,
+User/Organization/Membership and roles, with maximum stale bound `R = 30s`.
+The check interval and RPC budget are at most `min(R/3, activity_interval_ms)`.
+Each hard stale deadline is anchored to the check's start, including RPC latency
+and at most `min(1s, R/3)` for socket closure. Initial resolution is bounded by
+`R/3`, then by the returned hint; a late successful response cannot open a stream.
+Idle expiry schedules a fresh check, so activity through another replica can
+extend it. Absolute expiry and the direct WebSocket's original handshake CCT
+remain hard caps. Fresh CCTs never extend an existing direct WebSocket.
+
+One main-owned private revocation-feed poller accelerates closure through the
+active SID registry. It starts at cursor zero, uses pages of at most 500 and at
+most four pages per catch-up pass, and retains no event cache. Feed failure,
+backlog, restart or a register/poll race cannot weaken independent live checks.
+Cancellation interrupts blocked HTTP writes and both WebSocket directions;
+later frame deadlines cannot reopen a cancelled write. Guard workers, relay
+workers and callbacks are joined, and HTTP deadlines clear only after completion.
+
+Stream closure does not cancel previously admitted ACP work. A check overlapping
 revocation can authorize a message even if ACP creates its Run after logout
 returns. A check started after authoritative revocation completes must reject;
 there is no distributed transaction between that check and ACP Run creation.
@@ -327,14 +370,15 @@ matching Origin. Only `Content-Type`, `Accept`, `Acp-Connection-Id` and
 `Acp-Session-Id` are forwarded from the client, with trusted identity and trace
 context injected by Edge. Responses preserve ACP routing headers.
 
-GET SSE responses are flushed immediately and live until disconnect or upstream
-closure, not an ordinary short request timeout. They consume receive-connection
+GET SSE responses are flushed immediately and bounded by the browser-session
+guard and `ANTNEST_EDGE_STREAM_LEASE`, not an ordinary short request timeout.
+They consume receive-connection
 capacity separately from POST/DELETE message admission. Cancelling the client
 HTTP request cancels the upstream receive request; it does not become a
 session/cancel command. ACP Service owns connection IDs, expiry and recovery;
 Gateway owns no ACP connection registry. HTTP reuses the new-message admission
 policy above, including its explicit already-admitted-work boundary. Gateway
-does not poll idle connections or translate disconnect into Run cancellation;
+does not translate browser-session closure into Run cancellation;
 ACP owns access updates, output subscription revocation, reconnect and
 connection expiry.
 
@@ -344,9 +388,8 @@ Login admission consumes bounded per-source and normalized-account windows
 before Identity performs Argon2 verification. Each table holds at most 4096
 keys per replica. When a table is full, expired windows are pruned; if it is
 still full, a login for a new key is refused with `429` rather than evicting an
-existing window. Logout asks Identity to revoke
-the presented opaque access token directly and clears browser cookies only
-after `revoked` or `already_invalid`. Agent event watches have a bounded stream
+existing window. Logout follows the explicit outcome matrix above, including
+clearing invalid browser state without promising token revocation. Agent event watches have a bounded stream
 lease; reconnect repeats normal token resolution.
 
 Unknown `/protocol/oidc` paths return JSON `404`; route matching cannot send
@@ -384,17 +427,19 @@ define the implemented internal connection boundary. Each dependency origin
 has a distinct token file or verified mTLS service identity. Tokens are re-read
 for HTTP requests and WebSocket handshakes. Browser-supplied service/CCT headers
 and both complete reserved namespaces are removed; CSRF is kept privately for
-local comparison. Identity revision 14 resolves the session with a fixed
+local comparison. Identity revision 15 resolves the session with a fixed
 server-selected audience profile and target Agent; Gateway forwards its CCT
-unchanged from private request context. Internal credential response headers
+unchanged from private request context. Internal credential response headers and upstream Set-Cookie
 are removed, and principal JSON never serializes the CCT.
 
-Direct WebSocket messages require the original session and an unexpired
-handshake CCT. Expiry rejects the next client message and requires reconnect;
-it does not cancel previously accepted ACP work. #58 owns in-place renewal.
-Console, UI, ACP and Controller consumer enforcement remains pending in their
-own batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
-for local admissions and the final cross-service Docker acceptance.
+Direct WebSockets require the original session and an unexpired handshake CCT.
+Hard expiry closes quiet connections as well as active ones and requires
+reconnect; it does not cancel previously accepted ACP work. Console and Agent UI
+implement browser activity, account controls and request generations. Scripted
+consumers adopt replacement credentials and non-touch reads; the separate
+`make e2e-browser-sessions-https` target verifies the browser workflow. The earlier
+workload-authentication admissions are recorded in the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json).
 
 The browser's `X-Antnest-Expected-Principal` is a private account-switch CAS
 guard. After session, administrator and CSRF checks, only the network-policy PUT

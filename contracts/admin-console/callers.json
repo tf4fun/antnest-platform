@@ -89,6 +89,12 @@
       },
       "request_body": "none"
     },
+    "GET /api/admin/directory/users/{user_id}/sessions": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": { "edge-gateway": "required" },
+      "request_body": "none"
+    },
     "GET /api/admin/execution-audits": {
       "callers": ["edge-gateway"],
       "authentication": "workload",
@@ -265,14 +271,6 @@
       },
       "request_body": "none"
     },
-    "POST /api/admin/account/password": {
-      "callers": ["edge-gateway"],
-      "authentication": "workload",
-      "caller_context": {
-        "edge-gateway": "required"
-      },
-      "request_body": "json"
-    },
     "POST /api/admin/agents": {
       "callers": ["edge-gateway"],
       "authentication": "workload",
@@ -335,6 +333,12 @@
       "caller_context": {
         "edge-gateway": "required"
       },
+      "request_body": "json"
+    },
+    "POST /api/admin/directory/users/{user_id}/sessions/revoke": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": { "edge-gateway": "required" },
       "request_body": "json"
     },
     "POST /api/admin/model-profiles": {

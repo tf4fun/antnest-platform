@@ -162,6 +162,39 @@ for (const [name, selection] of cases) {
   });
 }
 
+for (const [name, selection] of [
+  ["base", { base_profile: "true" }],
+  ["identity", { tool_profile: "identity-http" }],
+]) {
+  test(`Stage 3a ${name} uses isolated browser-session candidate images`, () => {
+    const selected = dispatch(selection, "config");
+    const candidates = {
+      "edge-gateway": ["GATEWAY", "gateway"],
+      "identity-service": ["IDENTITY", "identity"],
+      "agent-ui": ["AGENT_UI", "agent-ui"],
+      "admin-console": ["CONSOLE", "console"],
+    };
+    const overrides = Object.fromEntries(
+      Object.values(candidates).map(([variable, image]) => [
+        `ANTNEST_E2E_${variable}_IMAGE`,
+        `antnest/e2e-session-${image}:isolated-contract`,
+      ]),
+    );
+    const config = composeConfig(selected.files, {
+      ...environment,
+      ...selected.ranges,
+      ...overrides,
+    });
+    for (const [service, [variable]] of Object.entries(candidates)) {
+      assert.equal(
+        config.services[service].image,
+        overrides[`ANTNEST_E2E_${variable}_IMAGE`],
+        `${service} must use this run's candidate without replacing local tags`,
+      );
+    }
+  });
+}
+
 for (const [name, overlay, prefix] of [
   ["foundation", "lifecycle-closeout/foundation.compose.yaml", "LIFECYCLE"],
   ["c4", "workspace-closeout/c4.compose.yaml", "C4"],

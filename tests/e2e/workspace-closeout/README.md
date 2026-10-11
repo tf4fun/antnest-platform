@@ -28,6 +28,21 @@ An in-flight Tool cancellation keeps unknown effects and
 profile checks physical process exit separately from ACP's immutable unknown Run
 facts. It does not cover automatic reuse or browser layout.
 
+Each state watch must retain successful Identity admission and SQL before the
+Gateway starts its ACP watch. Revocation evidence records the actual authority
+request Trace ID and observed remote-close window. A private feed may close the
+stream before a final Identity 401: the oracle accepts only the directly owned
+Gateway response-read failure paired with an interrupted ACP watch in that
+window. `revocation_verified` records whether the watch Trace contains the final
+Identity denial; the authority request remains separately linked. Raw errors
+and clock warnings still fail the strict check.
+
+The observer also records the Gateway's actual HTTP `Date` and host request /
+response times. These bound the host-to-service clock offset, including the
+header's one-second precision, when comparing the local close window with raw
+Trace timestamps. The raw timestamps remain unchanged; the observer must be
+live before local closure, and the remote-close wait remains bounded separately.
+
 The profile requires the current local application images, isolates its
 subnets, and removes its own labeled containers, volumes and networks even on
 failure. Raw traces stay private under

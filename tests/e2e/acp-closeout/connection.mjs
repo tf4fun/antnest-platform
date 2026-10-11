@@ -3,8 +3,8 @@ export function observeSocket(WebSocket, closed, onClose) {
     constructor(...args) {
       super(...args);
       this.on("error", (error) => closed.abort(error));
-      this.once("close", (code) => {
-        onClose(code);
+      this.once("close", (code, reason) => {
+        onClose(code, reason);
         closed.abort(new Error("ACP connection closed"));
       });
       this.once("unexpected-response", (_request, response) => {

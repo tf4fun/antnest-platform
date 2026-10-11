@@ -317,11 +317,16 @@ verifying the Gateway and user session:
 | `console`   | Console → Identity/Controller/Registry/ACP |
 | `workspace` | Agent UI → ACP/Controller                  |
 | `acp`       | ACP direct transport                       |
+| `session`   | Identity only                              |
 
 The console profile includes only its five named consumers; workspace includes
-only its three. Every hop authenticates its **immediate** calling service as
-well as the CCT. For example Identity still allows administrative RPCs only
-from Console even if a workspace CCT's claims identify an administrator.
+only its three. The Identity revision-15 `session` profile names only
+`identity-service` and forbids Agent scope. Its activation follows the separate
+Identity and Gateway batches in the [browser lifecycle contract](../identity/browser-sessions.md);
+publishing this shared profile does not grant a new caller access to an RPC.
+Every hop authenticates its **immediate** calling service as well as the CCT.
+Identity retains each route's explicit workload allowlist even when the CCT's
+claims identify an administrator.
 
 No BFF rewrites or re-signs `aud`, roles or Agent scope. A new route needing
 another audience must have its profile reviewed by Identity and its caller
@@ -365,9 +370,11 @@ and derives the actor from `sub`. A body actor is only an audit echo; mismatch
 returns Identity's `403 actor_mismatch`. Other consumers must not promise instant
 session revocation from offline signature verification: their bound is the
 token lifetime plus tolerance unless they implement revocation observation.
-Long-lived connection renewal/revalidation remains #58; expiry does not cancel
-already accepted model work. It does prevent a new user operation being admitted
-with an expired token.
+The [#58 browser lifecycle contract](../identity/browser-sessions.md) defines
+bounded live checks and a private session-revocation feed for Gateway streams;
+owning-service implementation and integration remain pending. Expiry does not
+cancel already accepted model work. It does prevent a new user operation being
+admitted with an expired token.
 
 ### User actions and service operations
 

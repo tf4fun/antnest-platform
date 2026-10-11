@@ -62,7 +62,7 @@ import {
   agentEventRecoveryDecision,
 } from "../lib/agent-detail-resources";
 import { agentConfigurationLinks, agentConfigurationSummary } from "../lib/agent-configuration";
-import { api, errorMessage, type CreateAgentInput } from "../lib/api";
+import { api, captureSessionRequest, errorMessage, onSessionRequestCancelled, sessionRequestCurrent, type CreateAgentInput } from "../lib/api";
 import { useTemplateOptions } from "../lib/catalog-options";
 import { dateTime } from "../lib/format";
 import { modelInputLabel } from "../lib/model-catalog";
@@ -811,12 +811,21 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
 
   useEffect(() => {
     if (streamCursor === null) return;
+    let request;
+    try { request = captureSessionRequest(); } catch { return; }
     const stream = new EventSource(api.eventStream(agentID, streamCursor));
     let reconnecting = false;
     let disposed = false;
     let retryTimer: number | undefined;
+    const stop = () => {
+      disposed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      stream.close();
+    };
+    const unbind = onSessionRequestCancelled(request, stop);
+    const current = () => !disposed && sessionRequestCurrent(request);
     stream.onopen = () => {
-      if (disposed) return;
+      if (!current()) return;
       if (networkNeedsResync.current) {
         networkNeedsResync.current = false;
         setNetworkRefreshRevision(current => current + 1);
@@ -826,21 +835,22 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     };
 
     async function recoverEvents(): Promise<void> {
+      if (!current()) return;
       try {
         const page = await api.events(agentID, latestSequence.current);
-        if (disposed) return;
+        if (!current()) return;
         setEvents((current) => mergeAgentEvents(current, page.events));
         rememberEventOperation(page.events);
         latestSequence.current = page.next_sequence;
         setEventFailure(undefined);
         await recoverAgent();
-        if (disposed) return;
+        if (!current()) return;
         setStreamCursor(page.next_sequence);
         retryTimer = window.setTimeout(() => {
-          setStreamGeneration((value) => value + 1);
+          if (current()) setStreamGeneration((value) => value + 1);
         }, 1000);
       } catch (cause) {
-        if (disposed) return;
+        if (!current()) return;
         const failure = agentDetailFailure("lifecycle_events", cause);
         setEventFailure(failure);
         const decision = agentEventRecoveryDecision(failure);
@@ -853,6 +863,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     }
 
     async function recoverAgent(): Promise<void> {
+      if (!current()) return;
       try {
         await refreshAgent(true);
       } catch {
@@ -861,7 +872,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     }
 
     stream.onerror = () => {
-      if (reconnecting) return;
+      if (!current() || reconnecting) return;
       reconnecting = true;
       networkNeedsResync.current = true;
       stream.close();
@@ -870,6 +881,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       void recoverEvents();
     };
     stream.addEventListener("agent_event", (message) => {
+      if (!current()) return;
       try {
         const event = JSON.parse(
           (message as MessageEvent<string>).data,
@@ -889,9 +901,8 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       }
     });
     return () => {
-      disposed = true;
-      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-      stream.close();
+      unbind();
+      stop();
     };
   }, [agentID, refreshAgent, rememberEventOperation, streamCursor, streamGeneration]);
 

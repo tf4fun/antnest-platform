@@ -22,13 +22,14 @@ export async function until(read, label, signal, timeout = 15000) {
 
 export function observeState(client, agentID, signal) {
   const states = [];
-  let traceID;
+  let traceID, clock;
   let ended = false,
     failure;
   const source = new EventSource(
     `${client.base}/api/app/agents/${agentID}/state/watch`,
     {
       fetch: async (url, init) => {
+        const requestStartedAt = Date.now();
         const response = await fetch(url, {
           ...init,
           signal: signal ? AbortSignal.any([signal, init.signal]) : init.signal,
@@ -37,6 +38,11 @@ export function observeState(client, agentID, signal) {
             Cookie: client.cookie,
             Origin: gatewayOrigin(client.base),
           },
+        });
+        clock = Object.freeze({
+          requestStartedAt,
+          responseReceivedAt: Date.now(),
+          serverDate: response.headers.get("date"),
         });
         const actual = response.headers.get("x-antnest-trace-id");
         if (!response.ok || !/^[a-f0-9]{32}$/.test(actual ?? "")) {
@@ -74,6 +80,9 @@ export function observeState(client, agentID, signal) {
     states,
     get traceID() {
       return traceID;
+    },
+    get clock() {
+      return clock;
     },
     close,
     assertOpen: () => {

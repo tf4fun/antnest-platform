@@ -234,6 +234,10 @@ e2e-gateway-security-headers:
 e2e-gateway-tls:
 	ANTNEST_GATEWAY_TLS_E2E=1 node --test tests/e2e/edge-gateway/tls-docker.test.mjs
 
+.PHONY: e2e-browser-sessions-https
+e2e-browser-sessions-https:
+	ANTNEST_BROWSER_SESSIONS_E2E=1 node --test tests/e2e/edge-gateway/browser-sessions-docker.test.mjs
+
 .PHONY: e2e-lifecycle-interrupted
 e2e-lifecycle-interrupted:
 	node tests/e2e/lifecycle-closeout/interrupted-run.mjs
@@ -654,6 +658,7 @@ test-integration-node:
 	npm --prefix services/admin-console/web run test:browser:skills
 	npm --prefix services/admin-console/web run test:browser:template-skills
 	npm --prefix services/admin-console/web run test:browser:managed-mcp-secrets
+	npm --prefix services/admin-console/web run test:browser:sessions
 	npm --prefix services/agent-ui/web run test:browser
 
 .PHONY: test-agent-acp-audit

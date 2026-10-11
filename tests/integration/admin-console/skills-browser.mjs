@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { durablePath } from "../../support/storage.mjs";
 import {
   assertNoOverflow,
+  consoleSessionMetadata,
+  prepareConsoleSession,
+  fulfillConsoleActivity,
   withConsoleBrowser,
 } from "./console-browser-harness.mjs";
 
@@ -28,6 +31,7 @@ const metadata = {
 
 async function exercise(browser, origin, viewport, label) {
   const context = await browser.newContext({ viewport, acceptDownloads: true });
+  await prepareConsoleSession(context, origin);
   const unexpected = [];
   const errors = [];
   const publicationKeys = [];
@@ -41,6 +45,7 @@ async function exercise(browser, origin, viewport, label) {
         await route.abort();
         return;
       }
+      if (await fulfillConsoleActivity(route)) return;
       if (!url.pathname.startsWith("/api/")) {
         await route.continue();
         return;
@@ -48,7 +53,10 @@ async function exercise(browser, origin, viewport, label) {
       if (url.pathname === "/api/session")
         return route.fulfill({
           json: {
+            ...consoleSessionMetadata,
             principal: {
+              organization_slug: "test",
+              organization_name: "Test organization",
               user_id: "user-admin",
               organization_id: "org-test",
               membership_id: "member-test",
@@ -58,15 +66,16 @@ async function exercise(browser, origin, viewport, label) {
             },
           },
         });
-      if (url.pathname === "/api/admin/account")
+      if (url.pathname === "/api/session/account")
         return route.fulfill({
           json: {
             account: {
+              user_id: "user-admin",
+              organization_id: "org-test",
+              membership_id: "member-test",
               email: "admin@example.test",
               display_name: "Administrator",
               source: "local",
-              organization_slug: "test",
-              organization_name: "Test organization",
               local_password_available: true,
             },
           },

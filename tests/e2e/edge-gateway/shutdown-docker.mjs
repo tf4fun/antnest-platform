@@ -25,6 +25,12 @@ const dependencyPorts = {
 
 function upstream() {
   const hashes = JSON.parse(readFileSync("/run/auth/hashes.json", "utf8"));
+  const now = Date.now();
+  const metadata = {
+    expires_at: new Date(now + 3600000).toISOString(),
+    idle_expires_at: new Date(now + 1800000).toISOString(),
+    activity_interval_ms: 30000,
+  };
   const context = () => {
     const now = Math.floor(Date.now() / 1000);
     return (
@@ -44,7 +50,7 @@ function upstream() {
   const unexpected = [];
   const watches = new Set();
   const servers = Object.entries(dependencyPorts).map(([service, port]) => {
-    const server = createServer((request, response) => {
+    const server = createServer(async (request, response) => {
       const path = new URL(request.url, "http://upstream").pathname;
       const json = (value) => {
         response.setHeader("Content-Type", "application/json");
@@ -67,6 +73,7 @@ function upstream() {
       if (path === "/rpc/identity/resolve-access-token") {
         json({
           caller_context: context(),
+          ...metadata,
           principal: {
             user_id: "user-admin",
             organization_id: "org-1",
@@ -78,6 +85,22 @@ function upstream() {
             active: true,
           },
         });
+        return;
+      }
+      if (path === "/rpc/identity/list-session-revocations") {
+        assert(
+          !request.headers["antnest-caller-context"],
+          "workload feed received browser CCT",
+        );
+        let body = "";
+        for await (const chunk of request) {
+          body += chunk;
+          assert(body.length <= 65536);
+        }
+        const input = JSON.parse(body);
+        assert.equal(input.after_sequence, 0);
+        assert.equal(input.limit, 500);
+        json({ events: [], next_sequence: input.after_sequence });
         return;
       }
       const statePath = "/rpc/agent-acp/watch-agent-execution-state";

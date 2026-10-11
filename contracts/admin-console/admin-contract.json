@@ -1,18 +1,61 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 50,
+  "version": 51,
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
   "routes": {
-    "search_skill_sources": {"method": "POST", "path": "/skill-sources/search", "schema": "skill-discovery.schema.json#/$defs/search_request"},
-    "preview_skill_source": {"method": "POST", "path": "/skill-sources/preview", "schema": "skill-discovery.schema.json#/$defs/selection"},
-    "promote_skill_source": {"method": "POST", "path": "/skill-sources/promote", "schema": "skill-discovery.schema.json#/$defs/promote_request", "requires": ["Idempotency-Key"]},
-    "list_skills": {"method": "GET", "path": "/skills", "query": {"optional": ["after_id", "limit"], "cursor_response": "next_after_id"}},
-    "publish_skill": {"method": "POST", "path": "/skills", "content_type": "multipart/form-data", "parts": ["artifact"], "requires": ["Idempotency-Key"]},
-    "list_skill_versions": {"method": "GET", "path": "/skills/{skill_id}/versions", "query": {"optional": ["after_version", "limit"], "cursor_response": "next_after_version"}},
-    "publish_skill_version": {"method": "POST", "path": "/skills/{skill_id}/versions", "content_type": "multipart/form-data", "parts": ["artifact", "expected_version"], "requires": ["Idempotency-Key"]},
-    "download_skill_version": {"method": "GET", "path": "/skills/{skill_id}/versions/{version}/artifact", "content_type": "application/zip"},
+    "search_skill_sources": {
+      "method": "POST",
+      "path": "/skill-sources/search",
+      "schema": "skill-discovery.schema.json#/$defs/search_request"
+    },
+    "preview_skill_source": {
+      "method": "POST",
+      "path": "/skill-sources/preview",
+      "schema": "skill-discovery.schema.json#/$defs/selection"
+    },
+    "promote_skill_source": {
+      "method": "POST",
+      "path": "/skill-sources/promote",
+      "schema": "skill-discovery.schema.json#/$defs/promote_request",
+      "requires": ["Idempotency-Key"]
+    },
+    "list_skills": {
+      "method": "GET",
+      "path": "/skills",
+      "query": {
+        "optional": ["after_id", "limit"],
+        "cursor_response": "next_after_id"
+      }
+    },
+    "publish_skill": {
+      "method": "POST",
+      "path": "/skills",
+      "content_type": "multipart/form-data",
+      "parts": ["artifact"],
+      "requires": ["Idempotency-Key"]
+    },
+    "list_skill_versions": {
+      "method": "GET",
+      "path": "/skills/{skill_id}/versions",
+      "query": {
+        "optional": ["after_version", "limit"],
+        "cursor_response": "next_after_version"
+      }
+    },
+    "publish_skill_version": {
+      "method": "POST",
+      "path": "/skills/{skill_id}/versions",
+      "content_type": "multipart/form-data",
+      "parts": ["artifact", "expected_version"],
+      "requires": ["Idempotency-Key"]
+    },
+    "download_skill_version": {
+      "method": "GET",
+      "path": "/skills/{skill_id}/versions/{version}/artifact",
+      "content_type": "application/zip"
+    },
     "set_provider_availability": {
       "method": "PUT",
       "path": "/provider-connections/{connection_id}/availability"
@@ -69,9 +112,20 @@
       "method": "GET",
       "path": "/account"
     },
-    "change_own_password": {
+    "list_organization_sessions": {
+      "method": "GET",
+      "path": "/directory/users/{user_id}/sessions",
+      "query": {
+        "required": ["limit"],
+        "optional": ["after_id"],
+        "cursor_response": "next_after_id"
+      }
+    },
+    "revoke_organization_sessions": {
       "method": "POST",
-      "path": "/account/password"
+      "path": "/directory/users/{user_id}/sessions/revoke",
+      "body": "empty_object",
+      "requires": ["Idempotency-Key"]
     },
     "directory": {
       "method": "GET",
@@ -185,7 +239,7 @@
     "get_agent_skill_preparation_by_key": {
       "method": "GET",
       "path": "/agent-skill-preparations/by-idempotency-key",
-      "headers": {"required": ["Idempotency-Key"]},
+      "headers": { "required": ["Idempotency-Key"] },
       "query": "reject_all",
       "request_identity": "derive_lifecycle_request_id_from_trusted_organization_and_original_key",
       "cache_control": "no-store"
@@ -273,7 +327,8 @@
     "identity": [
       "list_directory",
       "get_current_account",
-      "change_local_password",
+      "list_user_sessions",
+      "revoke_user_sessions",
       "create_local_user",
       "update_membership",
       "set_user_active",
@@ -450,12 +505,17 @@
       "redisclosure": "forbidden"
     },
     "resource_identity": {
-      "organization_id": "trusted_scope_only_not_projected",
+      "organization_id": "trusted_scope_only_except_explicit_browser_session_metadata",
       "directory_group_id": "read_only_internal_identity_not_projected",
       "oidc_record_id": "internal_identity_not_projected_provider_name_is_command_key",
       "scim_token_id": "revoke_action_handle_not_presentation_label"
     },
     "account_security": {
+      "browser_session_contract": "../identity/browser-sessions.md",
+      "gateway_revision": 19,
+      "identity_revision": 15,
+      "password_owner": "edge_gateway_POST_/api/session/password",
+      "retired_console_password_route": "deny_without_dependency_effect",
       "profile_fields": [
         "email",
         "display_name",
@@ -470,12 +530,36 @@
       "browser_persistence": "forbidden",
       "retry_intent_persistence": "forbidden",
       "invalid_current_password": {
-        "status": 401,
+        "status": 400,
         "code": "invalid_current_password",
         "session_invalidation": false
       },
-      "other_password_401": "invalidate_session_including_unknown_or_malformed_response",
-      "success_response": ["status"]
+      "password_401": "invalidate_current_generation_session_including_unknown_or_malformed_response",
+      "password_success": "replace_session_from_gateway_then_validate_current_cookie_generation",
+      "self_session_controls": "gateway_cross_organization_scope",
+      "organization_sessions": {
+        "actor_and_organization": "verified_cct_only_including_system_admin",
+        "target_user": "path_member_of_current_organization_validated_by_identity",
+        "scope": "organization",
+        "revoke_mode": "all",
+        "query": "strict_limit_1_to_100_and_optional_public_after_id",
+        "projection": [
+          "id",
+          "organization_id",
+          "organization_slug",
+          "organization_name",
+          "created_at",
+          "last_active_at",
+          "idle_expires_at",
+          "expires_at",
+          "user_agent_hint",
+          "current"
+        ],
+        "user_agent_hint": "plain_text_at_most_256_unicode_characters",
+        "revocation_response": ["revoked_count", "current_revoked"],
+        "cookie_writes": "forbidden",
+        "cache_control": "no-store"
+      }
     },
     "lists": {
       "default_limit": 100,

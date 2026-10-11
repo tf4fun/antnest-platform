@@ -65,29 +65,12 @@ func (h *handler) workspaceBridgeEvents(response http.ResponseWriter, request *h
 		writeError(response, http.StatusServiceUnavailable, "workspace_unavailable", "Workspace stream capacity is unavailable")
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), h.streamLease)
-	defer cancel()
-	done := make(chan struct{})
-	interval := min(h.streamLease/4, 30*time.Second)
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if h.validateStateIdentity(ctx, token, principal) != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
-	h.workspaceBridgeProxy.ServeHTTP(response, request.WithContext(ctx))
-	cancel()
-	<-done
+	response, request, finish, err := h.guardBrowserStream(response, request, token, principal)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	h.workspaceBridgeProxy.ServeHTTP(response, request)
 	return nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
@@ -28,7 +29,14 @@ func (h *handler) relayWorkspaceACP(
 		return
 	}
 	defer func() { _ = upstream.Close() }()
-	upgrader := websocket.Upgrader{HandshakeTimeout: h.requestTimeout, CheckOrigin: h.sameOrigin}
+	if request.Context().Err() != nil {
+		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		return
+	}
+	// A blocked handshake write must also finish within the reserved close
+	// grace, even before relayMessages can own and close the hijacked socket.
+	closeGrace := browserstream.CloseGrace(h.maximumSessionStale)
+	upgrader := websocket.Upgrader{HandshakeTimeout: min(h.requestTimeout, closeGrace), CheckOrigin: h.sameOrigin}
 	if protocol := upstream.Subprotocol(); protocol != "" {
 		upgrader.Subprotocols = []string{protocol}
 	}
@@ -37,7 +45,7 @@ func (h *handler) relayWorkspaceACP(
 		return
 	}
 	defer func() { _ = client.Close() }()
-	result := relayMessages(request.Context(), client, upstream, h.requestTimeout, maximumACPMessageBytes, h.acpMessages,
+	result := relayMessages(request.Context(), client, upstream, h.requestTimeout, closeGrace, maximumACPMessageBytes, h.acpMessages,
 		func(ctx context.Context) *relayEnd {
 			if !principal.ContextExpiresAt.IsZero() && !time.Now().Before(principal.ContextExpiresAt) {
 				return &relayEnd{websocket.ClosePolicyViolation, "caller_context_expired"}
@@ -88,17 +96,14 @@ func (h *handler) dialWorkspaceACP(request *http.Request, principal identity.Pri
 }
 
 func (h *handler) checkRelaySession(ctx context.Context, token string, original identity.Principal) *relayEnd {
-	ctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
-	defer cancel()
-	current, err := h.identity.Resolve(ctx, token)
+	err := h.validateStreamIdentity(ctx, token, original)
 	if !original.ContextExpiresAt.IsZero() && !time.Now().Before(original.ContextExpiresAt) {
 		return &relayEnd{websocket.ClosePolicyViolation, "caller_context_expired"}
 	}
-	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
+	if err != nil && !errors.Is(err, browserstream.ErrRejected) {
 		return &relayEnd{websocket.CloseTryAgainLater, "identity_unavailable"}
 	}
-	if err != nil || !current.Active || current.UserID == "" || current.OrganizationID == "" || current.MembershipID == "" ||
-		current.UserID != original.UserID || current.OrganizationID != original.OrganizationID || current.MembershipID != original.MembershipID {
+	if err != nil {
 		return &relayEnd{websocket.ClosePolicyViolation, "session_rejected"}
 	}
 	return nil
@@ -112,7 +117,7 @@ type relayEnd struct {
 func (end *relayEnd) Error() string { return end.reason }
 
 func relayMessages(
-	ctx context.Context, client, upstream *websocket.Conn, timeout time.Duration, limit int64,
+	ctx context.Context, client, upstream *websocket.Conn, timeout, closeGrace time.Duration, limit int64,
 	permits chan struct{},
 	admit func(context.Context) *relayEnd,
 ) relayEnd {
@@ -131,10 +136,10 @@ func relayMessages(
 	case <-ctx.Done():
 	}
 	if ctx.Err() != nil {
-		result = relayEnd{websocket.CloseGoingAway, "connection_closed"}
+		result = cancelledRelayEnd(context.Cause(ctx))
 	}
 	// A cancelled request must notify peers before sockets unblock the readers.
-	deadline := time.Now().Add(min(timeout, time.Second))
+	deadline := time.Now().Add(min(timeout, closeGrace))
 	message := websocket.FormatCloseMessage(result.code, result.reason)
 	_ = client.WriteControl(websocket.CloseMessage, message, deadline)
 	_ = upstream.WriteControl(websocket.CloseMessage, message, deadline)
@@ -145,6 +150,19 @@ func relayMessages(
 		<-completed
 	}
 	return result
+}
+
+func cancelledRelayEnd(cause error) relayEnd {
+	switch {
+	case errors.Is(cause, browserstream.ErrRejected):
+		return relayEnd{websocket.ClosePolicyViolation, "session_rejected"}
+	case errors.Is(cause, browserstream.ErrCallerContextExpired):
+		return relayEnd{websocket.ClosePolicyViolation, "caller_context_expired"}
+	case errors.Is(cause, browserstream.ErrUnavailable):
+		return relayEnd{websocket.CloseTryAgainLater, "identity_unavailable"}
+	default:
+		return relayEnd{websocket.CloseGoingAway, "connection_closed"}
+	}
 }
 
 func relayDirection(

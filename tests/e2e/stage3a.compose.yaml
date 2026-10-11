@@ -1,6 +1,14 @@
 # Disposable Stage 3a stacks only. Each run publishes loopback diagnostics on
 # its own ports, and model peers are private test containers.
 services:
+  edge-gateway:
+    image: ${ANTNEST_E2E_GATEWAY_IMAGE:-antnest/edge-gateway:local}
+  identity-service:
+    image: ${ANTNEST_E2E_IDENTITY_IMAGE:-antnest/identity-service:local}
+  agent-ui:
+    image: ${ANTNEST_E2E_AGENT_UI_IMAGE:-antnest/agent-ui:local}
+  admin-console:
+    image: ${ANTNEST_E2E_CONSOLE_IMAGE:-antnest/admin-console:local}
   diagnostic-relay:
     ports: !override
       - "127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:?required}:5432"

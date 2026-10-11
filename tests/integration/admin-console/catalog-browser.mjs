@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertNoOverflow,
+  consoleSessionMetadata,
+  prepareConsoleSession,
+  fulfillConsoleActivity,
   withConsoleBrowser,
 } from "./console-browser-harness.mjs";
 
@@ -117,7 +120,10 @@ function fixtures() {
     if (path === "/api/session")
       return {
         json: {
+          ...consoleSessionMetadata,
           principal: {
+            organization_slug: "test",
+            organization_name: "Test organization",
             user_id: "admin-test",
             organization_id: "org-test",
             membership_id: "member-test",
@@ -127,15 +133,16 @@ function fixtures() {
           },
         },
       };
-    if (path === "/api/admin/account")
+    if (path === "/api/session/account")
       return {
         json: {
           account: {
+            user_id: "admin-test",
+            organization_id: "org-test",
+            membership_id: "member-test",
             email: "admin@example.test",
             display_name: "Test administrator",
             source: "local",
-            organization_slug: "test",
-            organization_name: "Test organization",
             local_password_available: true,
           },
         },
@@ -199,6 +206,7 @@ function fixtures() {
 
 async function exercise(browser, origin, viewport, label) {
   const context = await browser.newContext({ viewport });
+  await prepareConsoleSession(context, origin);
   const fixture = fixtures();
   const errors = [];
   const writes = [];
@@ -211,6 +219,7 @@ async function exercise(browser, origin, viewport, label) {
         await route.abort();
         return;
       }
+      if (await fulfillConsoleActivity(route)) return;
       if (!url.pathname.startsWith("/api/")) {
         await route.continue();
         return;

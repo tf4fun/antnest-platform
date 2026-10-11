@@ -1,20 +1,39 @@
 export type Principal = {
   user_id: string;
   organization_id: string;
+  organization_slug: string;
+  organization_name: string;
   membership_id: string;
   system_role: string;
   organization_role: string;
   active: boolean;
 };
 
-export type Session = { principal: Principal; expires_at?: string };
+export type SessionMetadata = { expires_at: string; idle_expires_at: string; activity_interval_ms: number };
+export type Session = SessionMetadata & { principal: Principal };
+
+export type BrowserSession = {
+  id: string;
+  organization_id: string;
+  organization_slug: string;
+  organization_name: string;
+  created_at: string;
+  last_active_at: string;
+  idle_expires_at: string;
+  expires_at: string;
+  user_agent_hint: string;
+  current: boolean;
+};
+export type BrowserSessionPage = { sessions: BrowserSession[]; next_after_id?: string };
+export type SessionRevocation = { revoked_count: number; current_revoked: boolean };
 
 export type CurrentAccount = {
+  user_id: string;
+  organization_id: string;
+  membership_id: string;
   email: string;
   display_name: string;
   source: "local" | "scim";
-  organization_slug: string;
-  organization_name: string;
   local_password_available: boolean;
 };
 

@@ -19,9 +19,9 @@ func TestSessionAdmissionDistinguishesInvalidFromUnavailable(t *testing.T) {
 		status int
 		clear  bool
 	}{
-		{"expired or revoked", &identity.RemoteError{Code: "unauthenticated", StatusCode: 401}, true, 401, true},
-		{"inactive error", &identity.RemoteError{Code: "inactive_principal", StatusCode: 401}, true, 401, true},
-		{"inactive principal", nil, false, 401, true},
+		{"expired or revoked", &identity.RemoteError{Code: "unauthenticated", StatusCode: 401}, true, 401, false},
+		{"inactive error", &identity.RemoteError{Code: "inactive_principal", StatusCode: 401}, true, 401, false},
+		{"inactive principal", nil, false, 401, false},
 		{"timeout", context.DeadlineExceeded, true, 503, false},
 		{"transport", errors.New("upstream transport unavailable"), true, 503, false},
 		{"server error", &identity.RemoteError{Code: "internal_error", StatusCode: 500}, true, 503, false},

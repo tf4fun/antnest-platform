@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountSecurity } from "./account-security";
+import { testSession } from "../test/session-fixture";
 
 declare const jsdom: { window: Window };
 
@@ -15,19 +16,19 @@ const fieldNames = ["Current password", "New password", "Confirm new password"];
 
 function mount(write: () => Promise<Response>) {
   const request = vi.fn(async (path: string, init: RequestInit) => {
-    expect(path).toBe("/api/admin/account/password");
+    expect(path).toBe("/api/session/password");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
       current_password: currentPassword, new_password: newPassword,
     });
     return write();
   });
-  vi.stubGlobal("fetch", request);
+  vi.stubGlobal("fetch", (path: string, init: RequestInit) => path === "/api/session" ? Promise.resolve(Response.json(testSession)) : request(path, init));
   function Host() {
     const [open, setOpen] = useState(true);
     return <>
       <button onClick={() => setOpen(true)}>Open account security</button>
-      <AccountSecurity open={open} onOpenChange={setOpen} />
+      <AccountSecurity open={open} onOpenChange={setOpen} onSession={() => undefined} />
     </>;
   }
   render(<Host />);
@@ -57,7 +58,7 @@ it.each(["mismatch", "short"])("rejects %s input before making a password reques
   }
   fireEvent.click(screen.getByRole("button", { name: "Update password" }));
   expect((await screen.findByRole("alert")).textContent).toContain(
-    kind === "mismatch" ? "New passwords do not match." : "Use at least 12 bytes",
+    kind === "mismatch" ? "New passwords do not match." : "Use at least 12 characters",
   );
   expect(request).not.toHaveBeenCalled();
   expectCredentialsNotStored();
@@ -91,13 +92,13 @@ it("prevents duplicate submission and dismissal until confirmed success", async 
   expectCredentialsNotStored();
 });
 
-it.each([401, 503, "network"] as const)("retains rejected input after %s without ending the session or retrying automatically", async (failure) => {
+it.each([400, 503, "network"] as const)("retains rejected input after %s without ending the session or retrying automatically", async (failure) => {
   const expired = vi.fn();
   window.addEventListener("antnest:session-expired", expired);
   try {
     const write = vi.fn(async () => {
       if (failure === "network") throw new TypeError("Network unavailable");
-      return Response.json({ code: failure === 401 ? "invalid_current_password" : "dependency_unavailable", message: "Password change rejected" }, { status: failure });
+      return Response.json({ code: failure === 400 ? "invalid_current_password" : "dependency_unavailable", message: "Password change rejected" }, { status: failure });
     });
     const request = mount(write);
     fill();
@@ -121,7 +122,7 @@ it.each([401, 503, "network"] as const)("retains rejected input after %s without
 });
 
 it("clears rejected credentials and errors when the dialog is dismissed", async () => {
-  mount(async () => Response.json({ code: "invalid_current_password", message: "Password rejected" }, { status: 401 }));
+  mount(async () => Response.json({ code: "invalid_current_password", message: "Password rejected" }, { status: 400 }));
   fill();
   fireEvent.click(screen.getByRole("button", { name: "Update password" }));
   await screen.findByRole("alert");

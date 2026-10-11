@@ -11,7 +11,11 @@ import {
 } from "./acp-session-evidence.mjs";
 import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { collectDeniedMessage, saveSessionTrace } from "./session-trace.mjs";
+import { collectSessionClosure, saveSessionTrace } from "./session-trace.mjs";
+import {
+  expectSilentSessionClose,
+  sessionCloseCheckpoint,
+} from "./session-close.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
 import { createAccessCatalog } from "./catalog.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
@@ -77,7 +81,9 @@ async function login(target = browser) {
   return result.body;
 }
 async function open(version, cookie = browser.cookie) {
-  const client = connectACP(version, agent, cookie);
+  const client = connectACP(version, agent, cookie, {
+    injectTraceParent: false,
+  });
   clients.add(client);
   await client.initialize();
   return client;
@@ -164,21 +170,19 @@ function unchanged(before, after) {
     "denied request or replay mutated durable state",
   );
 }
-async function rejectedPrompt(client, sessionId, code, reason) {
-  const before = await snapshot(sessionId);
+async function rejectedPrompt(client, sessionId, reason, checkpoint, before) {
   assert.equal(
     before.runs.length,
     0,
     "denial probe must use idle unused Session",
   );
-  await assert.rejects(prompt(client, sessionId, "denied-must-not-run"));
-  assert.equal(client.closeCode, code, "unexpected admission close");
+  denied.push(
+    await expectSilentSessionClose(client, checkpoint, reason, "prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: "denied-must-not-run" }],
+    }),
+  );
   unchanged(before, await snapshot(sessionId));
-  denied.push({
-    ...remember(client, "session/prompt"),
-    closeCode: code,
-    reason,
-  });
   close(client);
 }
 async function modelState() {
@@ -266,8 +270,16 @@ async function logoutIdle() {
     const client = await open(version);
     const { sessionId } = await createSession(client);
     assertEmptySession(client.updates, sessionId, version, "new");
+    const beforeState = await snapshot(sessionId);
+    const beforeClose = sessionCloseCheckpoint(client);
     await browser.request("/api/session", { method: "DELETE", status: 204 });
-    await rejectedPrompt(client, sessionId, 1008, "revoked");
+    await rejectedPrompt(
+      client,
+      sessionId,
+      "revoked",
+      beforeClose,
+      beforeState,
+    );
     await login();
     const restored = await open(version);
     assertEmptySession(
@@ -288,12 +300,21 @@ async function outageAndExpiry() {
     connected.push({ version, client, sessionId });
   }
   step = "identity_outage";
+  for (const item of connected) {
+    item.beforeState = await snapshot(item.sessionId);
+    item.beforeClose = sessionCloseCheckpoint(item.client);
+  }
   await checkpoint(1);
-  // Each socket keeps its 60s caller context from admission; probing both
-  // together keeps the later one well inside it.
+  // Observe both remote closures without sending a message to trigger admission.
   await Promise.all(
     connected.map((item) =>
-      rejectedPrompt(item.client, item.sessionId, 1013, "unavailable"),
+      rejectedPrompt(
+        item.client,
+        item.sessionId,
+        "unavailable",
+        item.beforeClose,
+        item.beforeState,
+      ),
     ),
   );
   // Gateway's dependency connect bound must report the outage within the default.
@@ -312,8 +333,17 @@ async function outageAndExpiry() {
     const shortClient = await open(version, short.cookie);
     const created = await createSession(shortClient);
     await shortClient.request("list", {});
+    const beforeState = await snapshot(created.sessionId);
+    const beforeClose = sessionCloseCheckpoint(shortClient);
+    beforeClose.expiresAt = Date.parse(issued.expires_at);
     await waitForExpiry(issued.expires_at);
-    await rejectedPrompt(shortClient, created.sessionId, 1008, "expired");
+    await rejectedPrompt(
+      shortClient,
+      created.sessionId,
+      "expired",
+      beforeClose,
+      beforeState,
+    );
   }
   assert.equal(
     (await modelState()).requests.length,
@@ -354,14 +384,11 @@ async function admittedRun(version) {
       closedBeforeResponse: version === 1,
     }),
   );
+  const beforeClose = sessionCloseCheckpoint(client);
   await browser.request("/api/session", { method: "DELETE", status: 204 });
-  await assert.rejects(client.request("list", {}));
-  assert.equal(client.closeCode, 1008);
-  denied.push({
-    ...remember(client, "session/list"),
-    closeCode: 1008,
-    reason: "revoked",
-  });
+  denied.push(
+    await expectSilentSessionClose(client, beforeClose, "revoked", "list", {}),
+  );
   await pending;
   close(client);
   const release = await fetch(
@@ -440,7 +467,7 @@ try {
   const traces = [];
   for (const expected of denied)
     traces.push(
-      await collectDeniedMessage("http://jaeger:16686", expected, secrets),
+      await collectSessionClosure("http://jaeger:16686", expected, secrets),
     );
   const executionTraces = [];
   for (const expected of [...restored, ...execution])
@@ -461,7 +488,8 @@ try {
     asciiJSON({
       status: "business_passed",
       versions: [1, 2],
-      denied_prompts: 6,
+      silent_closures: denied.length,
+      post_close_requests_blocked: denied.length,
       empty_logout_recoveries: 2,
       continued_runs: 2,
       recovered_runs: 2,

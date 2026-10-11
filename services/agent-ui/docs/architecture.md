@@ -36,7 +36,9 @@ A failed replay never replaces the previous readable view.
 
 1. Gateway authenticates the principal and forwards the scoped request to Node.
 2. Node renders a request-scoped SSR shell with a bounded bootstrap wait. The
-   browser hydrates that exact shell and starts observing the selected Agent.
+   browser hydrates that exact shell in an inert state, validates its current
+   Cookies with `GET /api/session`, then loads discovery and observes the
+   selected Agent. SSR data is not proof of the browser's current session.
 3. Browser commands use same-origin HTTP. A Prompt carries one stable intent;
    an uncertain HTTP response is reconciled by that intent rather than resent.
 4. SSE delivers versioned Agent and Session views. On a gap or process epoch
@@ -101,8 +103,31 @@ internal service addresses or Runtime endpoints. Gateway owns browser identity
 and CSRF; Node scopes its owners and private caches to that identity. Access
 loss clears the browser's private view and redirects through the Gateway login
 entry with the selected route preserved. If an authorized bootstrap replaces
-the principal without a redirect, the browser also clears in-memory drafts and
-unsent attachments before the new identity can select the same Agent ID.
+the browser session without a redirect, the browser also clears in-memory
+drafts and unsent attachments before resuming, even for the same principal and
+Agent ID. Each application instance owns its validation generation; requests,
+response bodies, operations, attachments and SSE callbacks verify both that
+generation and the current CSRF delivery hint before applying a result. The
+hint detects replacement and is not authentication. Replacement aborts old
+requests and observers, clears recovery timers and releases attachment URLs.
+
+Account controls are reachable from the chooser, no-Agent page, and expanded,
+collapsed or mobile navigation. Public session inventory spans the user's
+organizations and renders browser descriptions as plain text. Revocation asks
+for confirmation; a transient failure keeps the current view and does not
+replay the mutation. Local password controls require Identity's capability.
+A successful password writer owns a fresh session read independently of the old
+dialog's lifetime. The application offers explicit validation retry after a
+transient read failure. Explicit sign-out returns to the login entry; expiry
+preserves the current workspace return route.
+
+The browser reports activity only for trusted keyboard, input, pointer, wheel
+and touch events in a visible document. Reports have a leading call and a
+trailing call only when more input arrived, with one in-flight request and the
+server's interval measured from dispatch. Reads, stream events, focus changes,
+synthetic input and periodic timers alone cannot extend idle time. All activity
+timers and requests are disposed with their session generation. See the
+[browser session contract](../../../contracts/identity/browser-sessions.md).
 
 Workspace writes and logout copy the opaque CSRF delivery value from
 `__Host-antnest_csrf`. The explicit insecure loopback deployment can supply
@@ -328,7 +353,14 @@ There is no browser ACP or Nginx compatibility mode.
 - The HTTP integration test sustains throttled SSE output for at least one
   minute; the extended soak runs three minutes with three slow observers, then
   one minute across two identities and Sessions. Each publish checks the
-  pending queue and retained suffix limits.
+  pending queue and retained suffix limits. The fixture renews bounded CCT
+  leases between load waves, checks real overflow in every lease, and requires
+  every old subscription to release before attaching its replacement.
+- The account browser tests use built assets and Gateway response fixtures for
+  desktop/mobile controls, session replacement, genuine input and quiet idle
+  expiry. The receipt Docker test adds a real held Run observed for 95 seconds:
+  the browser renews its original SSE delegation and receives the terminal
+  state without another Prompt, model request or test-side Workspace read.
 - `test:bridge:memory` samples V8 allocation and post-GC retained heap for small
   updates beside a large unchanged tool body; its RSS values are diagnostic,
   not a container memory limit. `test:bridge:runtime-memory` samples the
@@ -370,8 +402,18 @@ it into bootstrap. Owner reuse accepts context from newer ordinary authenticated
 requests in the same user/Organization/Agent scope; SDK HTTP and observation calls
 use that context unchanged with UI's own workload credentials. Invalid or expired
 context cannot initiate a new upstream request; accepted model work and existing
-notification delivery retain their independent lifetime. #58 owns future
-long-lived renewal. No credential is encoded in a browser cursor or View.
+notification delivery retain their independent lifetime. Each Node Workspace
+SSE subscription ends at the original verified CCT expiry, including quiet,
+backpressured and still-opening subscriptions. This ends only the HTTP observer.
+The browser reconnects through a fresh authorized View and SSE request, retaining
+its draft and accepted operation without resubmission. Gateway independently
+enforces the browser session's 30-second stale bound and absolute deadline.
+When no browser remains, no synthetic activity or credential renewal is created;
+later authorized requests refresh the owner context. If the last execution
+observation was active, expired delegation can prevent terminal reconciliation
+and keep the local owner retained until a fresh authorized request or retirement.
+Bounding that headless retention is pending lifecycle work. No credential is
+encoded in a browser cursor or View.
 
 Dependency origins are distinct and pinned, native TLS verifies DNS/chain and
 service URI, and outgoing tokens are validated before listen and reread each

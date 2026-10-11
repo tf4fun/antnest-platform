@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { evidenceDirectory } from "../../support/storage.mjs";
 import { assertNoStore, GatewayClient } from "./support.mjs";
+import { assertOrganizationSession } from "./organization-session.mjs";
 import {
   verifyIdentityEvidence as verifyIdentityTraces,
   identityEvidenceExitCode,
@@ -35,7 +36,12 @@ async function login(client, slug, email, password, status = 200) {
 const state = async (client) =>
   (await client.request("/api/session")).body.principal;
 await login(root, "stage3", "stage3-admin@example.com", secrets[0]);
-await login(a, "stage3", "access-admin@example.com", secrets[1]);
+const initialA = await login(
+  a,
+  "stage3",
+  "access-admin@example.com",
+  secrets[1],
+);
 await login(a2, "stage3", "access-admin@example.com", secrets[1]);
 await login(b, "access-b", "access-admin@example.com", secrets[2]);
 await login(shared, "access-b", "shared-member@example.com", secrets[1]);
@@ -216,15 +222,15 @@ async function unrelatedIdentityStillWorks() {
   await fresh.request("/api/session", { method: "DELETE", status: 204 });
 }
 
-const rejectedPassword = await a.request("/api/admin/account/password", {
+const rejectedPassword = await a.request("/api/session/password", {
   body: { current_password: "wrong-password", new_password: secrets[3] },
-  status: 401,
+  status: 400,
 });
 assert.equal(rejectedPassword.body.code, "invalid_current_password");
 assertNoStore(rejectedPassword.headers);
 assert.equal(rejectedPassword.headers.getSetCookie().length, 0);
 await state(a);
-await a.request("/api/admin/account/password", {
+await a.request("/api/session/password", {
   body: {
     current_password: secrets[1],
     new_password: secrets[3],
@@ -232,19 +238,45 @@ await a.request("/api/admin/account/password", {
   },
   status: 400,
 });
-const changed = await a.request("/api/admin/account/password", {
+const originalACookie = a.cookie;
+const originalACsrf = a.csrf;
+const changed = await a.request("/api/session/password", {
   body: { current_password: secrets[1], new_password: secrets[3] },
 });
-assert.equal(changed.body.status, "changed");
+assert.deepEqual(assertOrganizationSession(changed.body, "login"), pa);
+assert.equal(changed.body.expires_at, initialA.body.expires_at);
+assert(Date.parse(changed.body.idle_expires_at) > Date.now());
+assert(
+  Date.parse(changed.body.idle_expires_at) <=
+    Date.parse(changed.body.expires_at),
+);
+assertNoStore(changed.headers);
+assert.equal(changed.headers.getSetCookie().length, 2);
+assert(
+  a.cookie !== originalACookie,
+  "password change must replace the browser session",
+);
+assert(
+  a.csrf !== originalACsrf,
+  "password change must replace the CSRF binding",
+);
+remember(a);
 traces.push({
   traceID: changed.traceID,
   method: "POST",
   route: "/rpc/identity/change-local-password",
   rpcMethod: "change_local_password",
-  console: true,
 });
-for (const browser of [a, a2, shared])
-  assert.equal((await state(browser)).user_id, pa.user_id);
+const oldA = await a.request("/api/session", {
+  headers: { Cookie: originalACookie },
+  status: 401,
+});
+assert.equal(oldA.headers.getSetCookie().length, 0);
+assert.equal((await state(a)).user_id, pa.user_id);
+for (const browser of [a2, shared]) {
+  const denied = await browser.request("/api/session", { status: 401 });
+  assert.equal(denied.headers.getSetCookie().length, 0);
+}
 for (const [slug, email] of [
   ["stage3", "access-admin@example.com"],
   ["access-b", "shared-member@example.com"],
@@ -257,8 +289,14 @@ for (const [slug, email] of [
   );
   await fresh.request("/api/session", { method: "DELETE", status: 204 });
 }
-checks.push("password-change-is-user-global-but-preserves-issued-sessions");
+checks.push(
+  "password-change-rotates-current-session-and-revokes-user-global-prior-sessions",
+);
 await unrelatedIdentityStillWorks();
+
+// Independent logout and directory checks require fresh, currently live sessions.
+await login(a2, "stage3", "access-admin@example.com", secrets[3]);
+await login(shared, "access-b", "shared-member@example.com", secrets[3]);
 
 const savedA = a.cookie;
 await a.request("/api/session", { method: "DELETE", status: 204 });
@@ -271,8 +309,7 @@ for (const path of [
 }
 await state(a2);
 await state(shared);
-const savedA2 = a2.cookie;
-const savedShared = shared.cookie;
+const membershipCookie = a2.cookie;
 const membershipState = {
   email: seed.a.membership.email,
   display_name: "Organization a admin",
@@ -286,11 +323,16 @@ await shared.request("/api/app/bootstrap");
 await root.request(`/api/admin/directory/memberships/${pa.membership_id}`, {
   body: { ...membershipState, active: true },
 });
-assert.equal(
-  (await a2.request("/api/session", { headers: { Cookie: savedA2 } })).body
-    .principal.user_id,
-  pa.user_id,
-);
+const restoredMembership = await a2.request("/api/session", {
+  headers: { Cookie: membershipCookie },
+  status: 401,
+});
+assert.equal(restoredMembership.headers.getSetCookie().length, 0);
+await login(a2, "stage3", "access-admin@example.com", secrets[3]);
+assert.equal((await state(a2)).user_id, pa.user_id);
+assert.equal((await state(shared)).user_id, pa.user_id);
+const savedA2 = a2.cookie;
+const savedShared = shared.cookie;
 const disabled = await root.request(
   `/api/admin/directory/users/${pa.user_id}/active`,
   { body: { active: false } },

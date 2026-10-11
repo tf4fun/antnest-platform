@@ -145,34 +145,35 @@ browser-visible Edge origin. OIDC uses `/protocol/oidc/callback` and SCIM uses
 address. Admin Console does not expose or discover Identity Service's internal
 network location.
 
-The account summary is a non-persistent Identity projection. Admin Console
-injects actor and organization from the trusted principal, then allowlists only
-display name, email, source, Organization name/slug, and the authoritative
-`local_password_available` capability. User, Membership, and Organization IDs
-are internal query-binding facts and are stripped from this browser DTO. The
-browser does not derive password capability from Membership source. An
-unavailable summary keeps the Console usable, shows a local retry, presents
-neutral labels instead of IDs, and hides credential actions.
+The account summary uses Gateway `/api/session/account`; organization display
+comes from the validated Session principal. Local password capability remains
+Identity-authoritative and is independent of Membership source. An unavailable
+summary degrades only that card and credential action; session management stays
+reachable for local and OIDC-only accounts. The old read-only BFF account
+projection remains compatible, but its password mutation is retired.
 
-Account password rotation is a self-targeting command. Admin Console injects
-both actor and target User from the same trusted principal, forwards the two
-password fields once to Identity Service, and allowlists only the resulting
-status. Password values never enter browser storage or a durable Console retry
-record.
-Identity's password RPC currently returns `401 unauthenticated` only when the
-credential comparison fails. This specific response becomes
-`401 invalid_current_password` with a fixed message at the BFF; it stays in the
-dialog. Other protected Admin API 401 responses, including malformed responses
-and Gateway rejections on the password route, trigger session-expiry handling.
-Request notifications belong to the browser session in which they started;
-late responses cannot invalidate a newly established session.
-This guard covers in-page notifications, not browser-applied `Set-Cookie`
-headers from concurrent HTTP responses or sign-ins in another tab.
+Password rotation uses Gateway `/api/session/password`. Identity updates the
+password, revokes all user browser sessions and issues the replacement in one
+transaction; the original absolute deadline remains. The browser never stores
+passwords or password retry intents. Wrong current password is the operation-local
+`400 invalid_current_password`; protected `401` responses invalidate only their
+current generation. Dependency failure preserves the session without replay.
 
-The mapping is not a guarantee that the session is still valid when the
-response arrives. Revocation after Gateway admission is checked on the next
-protected request. Inactive actors, missing credentials, concurrent password
-replacement and dependency failure retain their distinct upstream errors.
+Every request captures its generation and CSRF delivery hint, checks before
+dispatch and after asynchronous response reads, and is aborted on transition.
+This includes artifact downloads and upload preprocessing. Missing or changed
+hints suspend private pages and trigger fresh session validation; a missing
+hint after validation requires a new sign-in. Login/password may legitimately
+write Cookies, so they validate the resulting current session before handing a
+generation-bound result to App. Same-user replacements remount the private page
+tree and close its streams, dialogs and caches. Ordinary requests cannot write
+Cookies; server authority remains with Gateway and Identity.
+
+Directory session inventory and revocation always use the signed administrator's
+organization. Identity verifies target membership; the BFF fixes organization
+scope and revoke-all mode and strips private fields. Self controls call Gateway
+and span organizations. Public random session references and plain-text browser
+hints are presentation metadata, never authentication credentials.
 
 ## Page Behavior
 
@@ -288,8 +289,12 @@ The account area shows the administrator's display name, email, and
 Organization name/slug instead of opaque internal IDs, and exposes local
 password rotation only when Identity confirms a local credential. Unknown or
 unreadable protected-API `401` responses end the current page session. Pending
-requests cannot emit expiry notifications into a later in-page session. This
-does not replace Edge's cookie and revocation authority.
+requests cannot apply data or emit expiry notifications into a later session.
+Activity uses trusted input with one leading report and a dispatch-anchored dirty
+trailing report; the server hint bounds timeout and spacing. No new input means
+no automatic activity retry. Stream callbacks and recovery also recheck their
+captured generation and hint, and stop on transition or unmount. These browser
+checks complement Edge's cookie and revocation authority.
 
 Sign-out waits for Edge to confirm revocation (`204`) or an already invalid
 browser session (`401`, with cookie removal) before showing the login page.

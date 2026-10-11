@@ -124,6 +124,17 @@ export async function runConsoleAcceptance({
       ]),
     );
     checks++;
+    const dependencyId = await docker([...compose, "ps", "-q", "dependencies"]);
+    const state = async () =>
+      JSON.parse(
+        await docker([
+          "exec",
+          dependencyId,
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8101/test/state').then(r=>r.text()).then(v=>process.stdout.write(v))",
+        ]),
+      );
     if (authentication) {
       await request("/status", { service: null, context: null });
       await request("/", {
@@ -227,29 +238,29 @@ export async function runConsoleAcceptance({
       for (const [media, body, status] of [
         [
           "application/json; charset=utf-8",
-          '{"current_password":"old","new_password":"new-password-value"}',
+          '{"email":"new@example.test","display_name":"New user","password":"new-password-value","role":"member"}',
           200,
         ],
         ["application/json; charset=iso-8859-1", "{}", 415],
         ["application/json; profile=other", "{}", 415],
         [
           "application/json",
-          '{"current_password":"old","new_password":"new-password-value","new_password":"another-password"}',
+          '{"email":"new@example.test","display_name":"New user","password":"new-password-value","role":"member","role":"admin"}',
           400,
         ],
         [
           "application/json",
-          '{"current_password":"old","New_Password":"new-password-value"}',
+          '{"email":"new@example.test","display_name":"New user","Password":"new-password-value","role":"member"}',
           400,
         ],
         ["application/json", "null", 400],
         ["application/json", "{} {}", 400],
       ])
-        await request("/api/admin/account/password", {
+        await request("/api/admin/directory/users", {
           method: "POST",
           headers: {
             "Content-Type": media,
-            "Idempotency-Key": "console-password-key-0001",
+            "Idempotency-Key": "console-directory-key-0001",
           },
           body,
           status,
@@ -267,7 +278,7 @@ export async function runConsoleAcceptance({
         headers[name] = [headers[name], headers[name]];
         const result = await new Promise((resolve, reject) => {
           const req = httpRequest(
-            base + "/api/admin/account/password",
+            base + "/api/admin/directory/users",
             { method: "POST", headers, signal: controller.signal },
             (res) => {
               res.resume();
@@ -280,6 +291,159 @@ export async function runConsoleAcceptance({
         assert.equal(result, name === "Content-Type" ? 415 : 401);
         checks++;
       }
+      const untouched = (await state()).calls;
+      await request("/api/admin/account/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        status: 403,
+        code: "caller_not_allowed",
+      });
+      const sessionPath = "/api/admin/directory/users/target-user/sessions";
+      for (const query of [
+        "",
+        "?limit=0",
+        "?limit=101",
+        "?limit=01",
+        "?limit=1&limit=2",
+        "?limit=1&scope=self",
+        "?limit=1&organization_id=org-2",
+        "?limit=1&after_id=",
+      ])
+        await request(sessionPath + query, { status: 400 });
+      await request(sessionPath + "?limit=1", {
+        context: callerContext(fixture, { org_role: "member" }),
+        status: 403,
+      });
+      await request(sessionPath + "/revoke", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "session-revoke-scope-0001",
+        },
+        body: '{"scope":"self","mode":"others"}',
+        status: 400,
+      });
+      assert.equal(
+        (await state()).calls,
+        untouched,
+        "invalid requests and retired password route must have no upstream effects",
+      );
+      checks++;
+      const sessionContext = callerContext(fixture, { sys_role: "admin" });
+      const safeSessionRequest = async (path, options = {}) => {
+        const result = await request(path, {
+          context: sessionContext,
+          ...options,
+        });
+        assert.equal(result.response.headers.get("set-cookie"), null);
+        assert.equal(result.response.headers.get("cache-control"), "no-store");
+        for (const secret of [
+          "private-session-canary",
+          "private-token-canary",
+          "private-token-hash-canary",
+        ])
+          assert(
+            !result.text.includes(secret),
+            "private session fields must be projected out",
+          );
+        return JSON.parse(result.text);
+      };
+      const first = await safeSessionRequest(sessionPath + "?limit=1", {
+        headers: {
+          "X-Antnest-Organization-ID": "org-2",
+          Cookie: "browser=secret",
+        },
+      });
+      assert.equal(first.sessions.length, 1);
+      assert.equal(first.sessions[0].id, "public-session-01");
+      assert.equal(first.sessions[0].organization_id, "org-1");
+      assert.equal(
+        first.sessions[0].user_agent_hint,
+        "<img src=x onerror=alert(1)> Synthetic browser",
+      );
+      assert.equal(first.next_after_id, "public-session-01");
+      assert.deepEqual(
+        await safeSessionRequest(sessionPath + "?limit=1"),
+        first,
+        "inventory reads must preserve activity and both deadlines",
+      );
+      const second = await safeSessionRequest(
+        sessionPath + "?limit=1&after_id=" + first.next_after_id,
+      );
+      assert.deepEqual(
+        second.sessions.map((row) => row.id),
+        ["public-session-02"],
+      );
+      assert.equal(second.next_after_id, undefined);
+      const org2Context = callerContext(fixture, {
+        org: "org-2",
+        mbr: "member-2",
+        sys_role: "admin",
+      });
+      const org2 = await safeSessionRequest(sessionPath + "?limit=100", {
+        context: org2Context,
+      });
+      assert.deepEqual(
+        org2.sessions.map((row) => row.id),
+        ["public-session-03"],
+      );
+      for (const [user, status] of [
+        ["unavailable", 503],
+        ["expired", 401],
+        ["missing", 404],
+      ])
+        await safeSessionRequest(
+          `/api/admin/directory/users/${user}/sessions?limit=1`,
+          { status },
+        );
+      const beforeRevoke = (await state()).browserSessions.length;
+      const revokeOptions = {
+        method: "POST",
+        body: "{}",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "console-session-revoke-0001",
+        },
+      };
+      await safeSessionRequest(
+        "/api/admin/directory/users/unavailable/sessions/revoke",
+        { ...revokeOptions, status: 503 },
+      );
+      assert.equal(
+        (await state()).browserSessions.length,
+        beforeRevoke + 1,
+        "503 mutation must not be retried by Console",
+      );
+      const revoked = await safeSessionRequest(
+        sessionPath + "/revoke",
+        revokeOptions,
+      );
+      assert.deepEqual(revoked, { revoked_count: 2, current_revoked: false });
+      assert.deepEqual(
+        (await safeSessionRequest(sessionPath + "?limit=100")).sessions,
+        [],
+      );
+      assert.deepEqual(
+        await safeSessionRequest(sessionPath + "?limit=100", {
+          context: org2Context,
+        }),
+        org2,
+      );
+      const calls = (await state()).browserSessions;
+      for (const call of calls) {
+        assert.equal(call.scope, "organization");
+        assert.equal(call.actor_principal_id, "user-admin");
+        const expectedContext =
+          call.organization === "org-1" ? sessionContext : org2Context;
+        assert.equal(
+          call.contextDigest,
+          createHash("sha256").update(expectedContext).digest("hex"),
+        );
+        if (call.path.endsWith("revoke-user-sessions"))
+          assert.equal(call.mode, "all");
+      }
+      checks++;
       const file = resolve(credentials, "outgoing/agent-controller");
       writeFileSync(file + ".next", fixture.next, { mode: 0o600 });
       renameSync(file + ".next", file);
@@ -291,17 +455,6 @@ export async function runConsoleAcceptance({
       writeFileSync(file, fixture.next, { mode: 0o600 });
       await request("/api/admin/agents");
     }
-    const dependencyId = await docker([...compose, "ps", "-q", "dependencies"]);
-    const state = async () =>
-      JSON.parse(
-        await docker([
-          "exec",
-          dependencyId,
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:8101/test/state').then(r=>r.text()).then(v=>process.stdout.write(v))",
-        ]),
-      );
     if (discovery) {
       const draftSecret = "synthetic-provider-secret";
       const hash = (value) => createHash("sha256").update(value).digest("hex");

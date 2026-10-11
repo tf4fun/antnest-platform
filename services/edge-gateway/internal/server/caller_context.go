@@ -82,6 +82,9 @@ func (h *handler) validCSRF(request *http.Request, sessionID string) bool {
 }
 
 func callerSelection(request *http.Request) (string, string) {
+	if request.URL.Path == "/api/session" || strings.HasPrefix(request.URL.Path, "/api/session/") {
+		return "session", ""
+	}
 	profile := "workspace"
 	agent := request.PathValue("agent_id")
 	if request.PathValue("acp_version") != "" {
@@ -111,6 +114,8 @@ func pathAgent(target *url.URL, index int) string {
 }
 
 func stripCredentialResponse(response *http.Response) error {
+	// Browser cookie transitions belong exclusively to Gateway session routes.
+	response.Header.Del("Set-Cookie")
 	for name := range response.Header {
 		// HSTS belongs to the public Gateway, including ReverseProxy's raw 101 path.
 		if strings.EqualFold(name, serviceauth.Header) || strings.EqualFold(name, identity.CallerContextHeader) || strings.EqualFold(name, "Strict-Transport-Security") {

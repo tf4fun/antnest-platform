@@ -1,28 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://antnest.dev/contracts/edge-gateway/session-response.schema.json",
-  "title": "Gateway browser session responses, revision 14",
+  "title": "Gateway browser session requests and responses, revision 19",
   "$defs": {
     "principal": {
       "type": "object",
-      "properties": {
-        "user_id": { "type": "string", "minLength": 1 },
-        "organization_id": { "type": "string", "minLength": 1 },
-        "organization_slug": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "organization_name": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "membership_id": { "type": "string", "minLength": 1 },
-        "system_role": { "enum": ["admin", "user"] },
-        "organization_role": { "enum": ["admin", "member"] },
-        "active": { "type": "boolean" }
-      },
       "required": [
         "user_id",
         "organization_id",
@@ -33,22 +15,333 @@
         "organization_role",
         "active"
       ],
+      "properties": {
+        "user_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "membership_id": {
+          "$ref": "#/$defs/id"
+        },
+        "system_role": {
+          "$ref": "#/$defs/system_role"
+        },
+        "organization_role": {
+          "$ref": "#/$defs/organization_role"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
       "additionalProperties": false
     },
     "login": {
       "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "expires_at",
+        "idle_expires_at",
+        "activity_interval_ms"
+      ],
       "properties": {
-        "principal": { "$ref": "#/$defs/principal" },
-        "expires_at": { "type": "string", "format": "date-time" }
-      },
-      "required": ["principal", "expires_at"],
-      "additionalProperties": false
+        "principal": {
+          "$ref": "#/$defs/principal"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idle_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "activity_interval_ms": {
+          "$ref": "#/$defs/activity_interval_ms"
+        }
+      }
     },
     "session": {
       "type": "object",
-      "properties": { "principal": { "$ref": "#/$defs/principal" } },
-      "required": ["principal"],
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "expires_at",
+        "idle_expires_at",
+        "activity_interval_ms"
+      ],
+      "properties": {
+        "principal": {
+          "$ref": "#/$defs/principal"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idle_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "activity_interval_ms": {
+          "$ref": "#/$defs/activity_interval_ms"
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "system_role": {
+      "type": "string",
+      "enum": ["user", "admin"]
+    },
+    "organization_role": {
+      "type": "string",
+      "enum": ["member", "admin"]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["local", "scim"]
+    },
+    "current_account": {
+      "type": "object",
+      "required": [
+        "user_id",
+        "organization_id",
+        "membership_id",
+        "email",
+        "display_name",
+        "source",
+        "local_password_available"
+      ],
+      "properties": {
+        "user_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "membership_id": {
+          "$ref": "#/$defs/id"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "local_password_available": {
+          "type": "boolean"
+        }
+      },
       "additionalProperties": false
+    },
+    "browser_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organization_id",
+        "organization_slug",
+        "organization_name",
+        "created_at",
+        "last_active_at",
+        "idle_expires_at",
+        "expires_at",
+        "user_agent_hint",
+        "current"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "last_active_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idle_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "user_agent_hint": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "current": {
+          "type": "boolean"
+        }
+      }
+    },
+    "activity_interval_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30000
+    },
+    "password_rotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "expires_at",
+        "idle_expires_at",
+        "activity_interval_ms"
+      ],
+      "properties": {
+        "principal": {
+          "$ref": "#/$defs/principal"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idle_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "activity_interval_ms": {
+          "$ref": "#/$defs/activity_interval_ms"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expires_at", "idle_expires_at", "activity_interval_ms"],
+      "properties": {
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idle_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "activity_interval_ms": {
+          "$ref": "#/$defs/activity_interval_ms"
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account"],
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/current_account"
+        }
+      }
+    },
+    "session_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessions"],
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/browser_session"
+          }
+        },
+        "next_after_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "session_revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revoked_count", "current_revoked"],
+      "properties": {
+        "revoked_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_revoked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "password_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_password", "new_password"],
+      "properties": {
+        "current_password": {
+          "type": "string",
+          "minLength": 1,
+          "secret": true
+        },
+        "new_password": {
+          "type": "string",
+          "minLength": 12,
+          "secret": true
+        }
+      }
+    },
+    "activity_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "list_sessions_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limit"],
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "after_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "revoke_sessions_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["others", "all"]
+        }
+      }
     }
   }
 }

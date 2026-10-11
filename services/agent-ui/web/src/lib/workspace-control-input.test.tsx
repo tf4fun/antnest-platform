@@ -6,7 +6,7 @@ import { controlCatalogue } from "../../server/src/protocol/workspace-commands.t
 afterEach(cleanup);
 async function setup(sessionId: string | null = null, busy = false) {
   window.history.replaceState(null, "", `/workspace/agent/${sessionId ? `sessions/${sessionId}` : ""}`);
-  const api = {
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
     bootstrap: async () => ({ principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user", organizationId: "org", administrator: false },
       agents: [{ agentId: "agent", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }], renderedAt: "now", bridgeEpoch: "epoch" }),
     sessions: async () => ({ items: [], nextCursor: null }),

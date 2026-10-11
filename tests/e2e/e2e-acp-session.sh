@@ -36,6 +36,7 @@ cleanup() {
   trap - EXIT INT TERM
   export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+150000))')
   docker logs "$client" >"$evidence/client.json" 2>"$evidence/client.stderr" || true
+  compose logs --no-color --tail 200 edge-gateway identity-service >"$evidence/services.private.txt" 2>&1 || true
   docker rm -f "$client" "$model" >/dev/null 2>&1 || status=1
   rm -rf -- "${checkpoints:?}"
   exit "$status"

@@ -66,9 +66,9 @@ for (const line of readFileSync(resolve(output, `${name}.log`), "utf8").split(
 )) {
   if (!line.startsWith("{")) continue;
   try {
-    results.accept(JSON.parse(line), () => {});
+    results.accept(JSON.parse(line), console.error);
   } catch {
-    /* Go compiler output is retained in the private log. */
+    /* Non-JSON compiler output remains available in the raw log. */
   }
 }
 console.log(

@@ -131,13 +131,19 @@ pending -> exchanging -> completed
 
 State is addressed by a SHA-256 hash. One callback claim performs one code
 exchange. The initial successful callback returns the access credential once.
-A completed callback replay returns only the committed principal, token ID,
-and expiry; state is never a credential-retrieval secret. Failed or expired
+A completed callback replay returns only the current principal, original token
+ID, both deadlines and activity interval; state is never a credential-retrieval
+secret. The callback locks its state before independently resolving the original
+live SID, so token/principal facts committed during the wait cannot hide behind
+a joined statement's earlier snapshot. Replay does not record browser activity.
+Failed or expired
 sessions require a new login.
 The login deadline applies at completion too: an exchange that finishes at or
 after expiry cannot bind an external identity or issue an API token. Persistence
 resamples its injected clock after Provider/session and identity row locks,
-before token insertion; time spent waiting on those locks is not excluded. Its
+and again after token insertion; time spent waiting on locks or storage is not
+excluded. It checks the stored microsecond deadlines as well as the OIDC workflow
+deadline. Its
 terminal failure is recorded as `expired`; a callback retry never re-exchanges
 the authorization code. A timely completed callback remains replayable as
 metadata until its issued access token becomes unavailable.
@@ -153,6 +159,70 @@ and must be handled as a secret. The callback response never echoes it.
 
 API and SCIM token rows contain hashes and metadata only. Plaintext exists
 only in the issuance response.
+Browser tokens have an independent random public reference, an absolute and an
+idle deadline, a last-activity timestamp and a bounded display-only user-agent
+hint. New local/OIDC credentials initialize activity at issuance. Raw-token,
+SID, CCT and completed-callback reads never touch that activity. Before listening,
+startup clamps existing unrevoked browser rows to the minimum of their current
+idle deadline, absolute deadline and last activity plus configured idle TTL.
+The transaction locks token IDs in the same order as bulk revocation; it does
+not acquire parent locks. Only a successful commit publishes the immutable
+per-Store policy. Data-plane reads use an atomic policy snapshot rather than
+holding a configuration mutex across database waits.
+
+The browser-session application service requires an authenticated `Caller`
+retaining the original signed CCT. Claims are routing facts; mutations reverify
+the signature and current SID using their own database transaction after all
+business locks. They do not borrow another pool connection while holding a
+transaction. Activity locks only that SID and renews idle expiry without
+extending absolute expiry. Inventory is a non-touch read of active sessions,
+projects only the independent public reference and display metadata, and uses
+an exclusive ascending public-reference cursor.
+
+Self inventory/revocation spans the signed User's Organizations. Administrative
+scope always uses the signed current Organization, including for system
+administrators, and requires a nondeleted target Membership. Bulk revocation
+locks target User then ordered browser rows, and observes fresh actor facts
+without acquiring another actor User/Organization/Membership lock. That final
+observation is the authorization point for overlapping administrator actions.
+
+Password change is a separate session operation rather than a Directory
+credential-only mutation. It locks the User, current Organization/Membership,
+and ordered User tokens; revalidates the signed SID and expected password hash;
+changes the password; revokes all previous browser sessions; and inserts a
+replacement in one transaction. The replacement inherits the original absolute
+deadline and display hint. Wrong current password is a business `400`, not a
+session authentication failure. The old SID and request ID cannot recover a
+secret after a lost response: log in with the new password.
+The transaction checks the replacement deadlines after any feed writer wait.
+Expiry before commit rolls everything back; expiry first observed after commit
+returns no raw credential while retaining the committed password and revocations.
+
+`session_revocations` is a private Gateway feed distinct from principal
+offboarding. Actual changed rows determine events and counts. A writer obtains
+the table lock before allocating sequence numbers, after business locks; event
+rows have no parent foreign keys. Operations that publish both feeds must
+publish principal then session. Rollback publishes neither effects nor events.
+Membership role changes, local/SCIM deactivation and SCIM deletion persistently
+revoke only that Membership's browser rows; global User disable revokes across
+Organizations. Logout revokes only its locked SID after fresh nonlocking live
+authority checks. Role, password, logout and explicit browser revocations emit
+no principal offboarding event and never disable Agents.
+Directory role/lifecycle requests carrying a browser Caller revalidate it with
+the same transaction after the last business lock and before changing authority.
+The check therefore rejects a logged-out waiting administrator while permitting
+authorized self-demotion. Trusted internal directory calls may omit browser
+context; a present invalid context fails closed, and public RPCs require CCT.
+Reactivating a legacy inactive local/SCIM Membership retires any remaining
+unrevoked browser rows with `session_revoked`; it does not synthesize a new
+principal offboarding event or revoke another Organization's credentials.
+
+OIDC first discovers User/Membership identifiers without locks, then locks User,
+Organization and Membership explicitly and revalidates the original email or
+subject binding. Existing external mappings are locked and compared after those
+parents, matching SCIM reprovisioning. SCIM replacement locks User before
+Membership. Role mutations acquire the Organization update lock during initial
+authorization, after actor User, without upgrading a shared lock.
 Local password verification runs outside a database transaction. Token issuance
 must then revalidate the verified password hash and authorization facts against
 active Organization, User, and Membership records inside the issuance
@@ -166,9 +236,9 @@ The lock order is User, Organization, then Membership/credential, matching
 directory authorization and global deactivation. The relevant rows remain
 locked through token/event commit, so a concurrent
 disable or password change orders before or after issuance, not between its
-authorization check and write. This does not retroactively revoke sessions on
-password rotation or cancel already-admitted Agent work; those are separate
-contracts. Global User disable continues to revoke that User's existing tokens.
+authorization check and write. Password rotation revokes the User's existing
+browser sessions, as does global User disable. Session revocation does not
+cancel already-admitted Agent work or change Agent ownership.
 Administrative SCIM lists retain active and revoked metadata for audit and
 rotation, but never select the token hash. Listing and revocation require
 organization administration; Provider administration requires a system
@@ -179,6 +249,7 @@ administrator.
 ```text
 internal/directory/       organization and local-user commands plus directory queries
 internal/localauth/       password login and access-token resolution
+internal/browsersessions/ activity, inventory, revocation and atomic password rotation
 internal/oidcflow/        Provider configuration and login state machine
 internal/oidcclient/      standards-based OIDC discovery and verification adapter
 internal/scim/            SCIM resource semantics and HTTP projection

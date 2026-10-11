@@ -40,6 +40,7 @@ func displayPrincipal(t *testing.T, name string, administrator bool) identity.Pr
 	}
 	principal.CallerContext = "trusted-issuer-context"
 	principal.SessionID = "private-token-id"
+	principal.ExpiresAt, principal.IdleExpiresAt, principal.ActivityIntervalMS = time.Now().Add(time.Hour), time.Now().Add(30*time.Minute), 30000
 	return principal
 }
 
@@ -80,7 +81,7 @@ func TestOrganizationSessionHandlersMatchCentralSchemas(t *testing.T) {
 		name := "研发 · Équipe 🚀"
 		principal := displayPrincipal(t, name, administrator)
 		stub := &identityServiceStub{
-			loginResult:      identity.LoginResult{Principal: principal, TokenID: "private-token-id", AccessToken: "ant_api_private", ExpiresAt: time.Now().Add(time.Hour)},
+			loginResult:      identity.LoginResult{Principal: principal, TokenID: "private-token-id", AccessToken: "ant_api_private", ExpiresAt: principal.ExpiresAt, IdleExpiresAt: principal.IdleExpiresAt, ActivityIntervalMS: 30000},
 			resolvePrincipal: principal,
 		}
 		handler := newTestHandler(t, stub, http.NotFoundHandler(), time.Now())
@@ -160,7 +161,9 @@ func TestOrganizationProjectionIsVerifiedFreshAndSchemaValid(t *testing.T) {
 				}
 			}
 		}
-		if end := gateway.(*handler).checkRelaySession(context.Background(), "token", displayPrincipal(t, "Old name", administrator)); end != nil {
+		original := stub.resolvePrincipal
+		original.OrganizationName = "Old name"
+		if end := gateway.(*handler).checkRelaySession(context.Background(), "token", original); end != nil {
 			t.Fatal("display-only rename invalidated existing authorization scope")
 		}
 	}

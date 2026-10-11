@@ -33,6 +33,7 @@ Route authorization and management projections remain Console-owned.
 - Model selection and a thin proxy to Controller-owned Provider discovery.
 - Skill inventory, upload, discovery and promotion through Skill Registry.
 - Static application delivery and lifecycle event forwarding (SSE).
+- Browser activity reporting, self session controls through Gateway, and organization session administration through Identity.
 
 ## Non-responsibilities
 
@@ -53,7 +54,7 @@ Route authorization and management projections remain Console-owned.
 | Inbound   | `/api/admin/skill-sources/*`    | Skill discovery and promotion; see the [skill discovery contract](../../contracts/admin-console/skill-discovery.md) |
 | Inbound   | `/` and static assets           | Embedded React application                                                                                          |
 | Inbound   | `GET /status`                   | Local readiness only                                                                                                |
-| Outbound  | Identity Service RPC            | Directory, OIDC, SCIM credentials, account profile and password                                                     |
+| Outbound  | Identity Service RPC            | Directory, OIDC, SCIM credentials, legacy account profile and organization browser sessions                         |
 | Outbound  | Agent Controller RPC            | Catalog, Templates, Agents, lifecycle, events, network policy, synchronization                                      |
 | Outbound  | Agent ACP Service RPC           | Organization-scoped execution audit                                                                                 |
 | Outbound  | Skill Registry HTTP (optional)  | Skill packages, versions and artifacts                                                                              |
@@ -130,6 +131,7 @@ npm --prefix services/admin-console/web run test:browser:catalog
 npm --prefix services/admin-console/web run test:browser:audit
 npm --prefix services/admin-console/web run test:browser:skills
 npm --prefix services/admin-console/web run test:browser:template-skills
+npm --prefix services/admin-console/web run test:browser:sessions
 
 # HTTP startup and shutdown integration tests
 node tests/integration/go/run.mjs admin-console
@@ -149,6 +151,14 @@ Install Chromium for Playwright with
 if it is absent. `npm test` runs pure-function tests (`node --test`) followed by
 Vitest/Testing Library component tests that use the real API parser with
 HTTP-shaped synthetic responses; they need no Provider or Docker.
+
+The browser session journey covers desktop and mobile self/organization
+controls, OIDC-only accounts, password replacement, stale delivery and a
+five-second idle fixture. It uses built Console assets with API doubles.
+The Docker acceptance runs the real Console against owning-service doubles
+and checks signed organization scope, projection, pagination and revocation.
+`make e2e-browser-sessions-https` separately verifies real Gateway/Identity
+session transactions and two-browser HTTPS behavior with Console and Workspace.
 
 Go integration sources live in
 [`tests/integration/go/admin-console`](../../tests/integration/go/admin-console);

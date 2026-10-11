@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
@@ -23,6 +24,10 @@ import (
 const maxRequestBytes = 1 << 20
 
 var ContractRoutes = map[string]string{
+	"touch_browser_session":       "/rpc/identity/touch-browser-session",
+	"list_user_sessions":          "/rpc/identity/list-user-sessions",
+	"revoke_user_sessions":        "/rpc/identity/revoke-user-sessions",
+	"list_session_revocations":    "/rpc/identity/list-session-revocations",
 	"resolve_owner_authorization": "/rpc/identity/resolve-owner-authorization",
 	"list_principal_revocations":  "/rpc/identity/list-principal-revocations",
 	"create_organization":         "/rpc/identity/create-organization",
@@ -53,7 +58,6 @@ type DirectoryService interface {
 	CreateOrganization(context.Context, directory.CreateOrganizationInput) (domain.Organization, error)
 	CreateLocalUser(context.Context, directory.CreateLocalUserInput) (directory.CreateLocalUserResult, error)
 	AddOrganizationMembership(context.Context, directory.AddOrganizationMembershipInput) (domain.OrganizationMembership, error)
-	ChangeLocalPassword(context.Context, directory.ChangeLocalPasswordInput) error
 	UpdateMembership(context.Context, directory.UpdateMembershipInput) (domain.OrganizationMembership, error)
 	SetUserActive(context.Context, directory.SetUserActiveInput) error
 	List(context.Context, string, string) (directory.Directory, error)
@@ -82,13 +86,22 @@ type SCIMService interface {
 	ListTokens(context.Context, string, string) ([]scim.Token, error)
 }
 
+type BrowserSessionsService interface {
+	ChangePassword(context.Context, browsersessions.PasswordInput) (browsersessions.PasswordResult, error)
+	Touch(context.Context, string) (browsersessions.Deadlines, error)
+	List(context.Context, browsersessions.ListInput) (browsersessions.Page, error)
+	Revoke(context.Context, browsersessions.RevokeInput) (browsersessions.RevokeResult, error)
+	ListRevocations(context.Context, browsersessions.RevocationQuery) (domain.SessionRevocationPage, error)
+}
+
 type Dependencies struct {
-	Directory      DirectoryService
-	LocalAuth      LocalAuthService
-	OIDC           OIDCService
-	SCIM           SCIMService
-	Authentication *serviceauth.Receiver
-	CallerContext  *callercontext.Authority
+	Directory       DirectoryService
+	LocalAuth       LocalAuthService
+	OIDC            OIDCService
+	SCIM            SCIMService
+	BrowserSessions BrowserSessionsService
+	Authentication  *serviceauth.Receiver
+	CallerContext   *callercontext.Authority
 }
 
 type Handler struct {
@@ -98,10 +111,14 @@ type Handler struct {
 
 func NewHandler(dependencies Dependencies) (*Handler, error) {
 	if dependencies.Directory == nil || dependencies.LocalAuth == nil ||
-		dependencies.OIDC == nil || dependencies.SCIM == nil || dependencies.Authentication == nil || dependencies.CallerContext == nil {
+		dependencies.OIDC == nil || dependencies.SCIM == nil || dependencies.BrowserSessions == nil || dependencies.Authentication == nil || dependencies.CallerContext == nil {
 		return nil, fmt.Errorf("identity RPC handler requires all application services")
 	}
 	handler := &Handler{dependencies: dependencies, mux: http.NewServeMux()}
+	handler.mux.HandleFunc("POST /rpc/identity/touch-browser-session", handler.touchBrowserSession)
+	handler.mux.HandleFunc("POST /rpc/identity/list-user-sessions", handler.listUserSessions)
+	handler.mux.HandleFunc("POST /rpc/identity/revoke-user-sessions", handler.revokeUserSessions)
+	handler.mux.HandleFunc("POST /rpc/identity/list-session-revocations", handler.listSessionRevocations)
 	handler.mux.HandleFunc("POST /rpc/identity/resolve-owner-authorization", handler.resolveOwnerAuthorization)
 	handler.mux.HandleFunc("POST /rpc/identity/list-principal-revocations", handler.listPrincipalRevocations)
 	handler.mux.HandleFunc("POST /rpc/identity/create-organization", handler.createOrganization)
@@ -234,11 +251,11 @@ func (h *Handler) changeLocalPassword(response http.ResponseWriter, request *htt
 		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.UserID) {
 		return
 	}
-	err := h.dependencies.Directory.ChangeLocalPassword(request.Context(), directory.ChangeLocalPasswordInput{
+	result, err := h.dependencies.BrowserSessions.ChangePassword(request.Context(), browsersessions.PasswordInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID, UserID: body.UserID,
 		CurrentPassword: body.CurrentPassword, NewPassword: body.NewPassword,
 	})
-	writeResult(response, map[string]string{"status": "changed"}, err)
+	writeResult(response, result, err)
 }
 
 type updateMembershipRequest struct {
@@ -358,6 +375,7 @@ type localLoginRequest struct {
 	OrganizationSlug string `json:"organization_slug"`
 	Email            string `json:"email"`
 	Password         string `json:"password"`
+	UserAgentHint    string `json:"user_agent_hint,omitempty"`
 }
 
 func (h *Handler) localLogin(response http.ResponseWriter, request *http.Request) {
@@ -369,7 +387,7 @@ func (h *Handler) localLogin(response http.ResponseWriter, request *http.Request
 	}
 	result, err := h.dependencies.LocalAuth.Login(request.Context(), localauth.LoginInput{
 		RequestID: body.RequestID, OrganizationSlug: body.OrganizationSlug,
-		Email: body.Email, Password: body.Password,
+		Email: body.Email, Password: body.Password, UserAgentHint: body.UserAgentHint,
 	})
 	writeResult(response, result, err)
 }
@@ -385,8 +403,12 @@ func (h *Handler) resolveAccessToken(response http.ResponseWriter, request *http
 	if !decodeRequest(response, request, &body) || !require(response, body.AccessToken) {
 		return
 	}
-	principal, token, err := h.dependencies.CallerContext.Issue(request.Context(), body.AccessToken, body.Profile, body.AgentID)
-	writeResult(response, map[string]any{"principal": principal, "caller_context": token}, err)
+	session, token, err := h.dependencies.CallerContext.Issue(request.Context(), body.AccessToken, body.Profile, body.AgentID)
+	writeResult(response, map[string]any{
+		"principal": session.Principal, "caller_context": token,
+		"expires_at": session.ExpiresAt, "idle_expires_at": session.IdleExpiresAt,
+		"activity_interval_ms": session.ActivityIntervalMS,
+	}, err)
 }
 
 type revokeAccessTokenRequest struct {
@@ -554,6 +576,7 @@ type startOIDCLoginRequest struct {
 	RequestID        string `json:"request_id"`
 	OrganizationSlug string `json:"organization_slug"`
 	ProviderName     string `json:"provider_name"`
+	UserAgentHint    string `json:"user_agent_hint,omitempty"`
 }
 
 func (h *Handler) startOIDCLogin(response http.ResponseWriter, request *http.Request) {
@@ -565,6 +588,7 @@ func (h *Handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 	}
 	result, err := h.dependencies.OIDC.StartLogin(request.Context(), oidcflow.StartLoginInput{
 		RequestID: body.RequestID, OrganizationSlug: body.OrganizationSlug, ProviderName: body.ProviderName,
+		UserAgentHint: body.UserAgentHint,
 	})
 	writeResult(response, result, err)
 }
@@ -683,7 +707,7 @@ func writeError(response http.ResponseWriter, err error) {
 		status, code, message, retryable = 503, "identity_dependency_unavailable", "Identity authorization dependency is unavailable", true
 	}
 	switch {
-	case errors.Is(err, domain.ErrInvalidArgument):
+	case errors.Is(err, domain.ErrInvalidArgument), errors.Is(err, domain.ErrInvalidCurrentPassword):
 		status = http.StatusBadRequest
 	case errors.Is(err, domain.ErrUnauthenticated):
 		status = http.StatusUnauthorized

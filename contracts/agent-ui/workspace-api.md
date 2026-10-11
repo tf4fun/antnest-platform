@@ -347,9 +347,16 @@ subscribed journal is protected and new demand gets
 causes a fresh reset snapshot. These caps are separate from retained
 history, so tab count and old SSE cursors cannot silently consume unbounded
 owner memory.
-The initial heartbeat interval is 15 seconds. Gateway must revalidate the
-original Identity session within a maximum five-minute lease, including when
-no business events arrive, and must forward flushes without SSE buffering.
+The initial heartbeat interval is 15 seconds. Gateway revalidates the original
+Identity session under the browser-session contract's 30-second stale bound,
+including quiet streams, and forwards flushes without SSE buffering. Its
+separate transport lease defaults to five minutes. Node ends each Workspace
+SSE at its original verified CCT expiry, which may precede the Gateway lease;
+Gateway revalidation cannot replace credentials on an existing Node request.
+Expiry closes the native transport even during backpressure or subscription
+setup. It does not produce a browser-session 401. The browser obtains a fresh
+authorized View and stream through the usual reconnect path without replaying
+a Prompt. Reconnection and ordinary reads never report browser activity.
 Disconnecting an observer never cancels an ACP Run.
 
 ## Related contracts

@@ -7,6 +7,7 @@ import { WebSocket } from "ws";
 import { observeSocket, requestWithin } from "../acp-closeout/connection.mjs";
 
 import { observeStream } from "../acp-commands/transport.mjs";
+import { createSessionCloseObserver } from "./session-close.mjs";
 
 export const gateway = "http://edge-gateway:8080";
 
@@ -14,11 +15,21 @@ export function connectACP(version, agent, cookie, options = {}) {
   const acp = version === 1 ? v1 : v2;
   const traceID = randomBytes(16).toString("hex");
   const parent = randomBytes(8).toString("hex");
-  let closeCode;
+  let closeCode, actualTraceID;
   const closed = new AbortController();
-  const ObservedSocket = observeSocket(WebSocket, closed, (code) => {
+  const peerClose = createSessionCloseObserver();
+  const SocketBase = observeSocket(WebSocket, closed, (code, reason) => {
     closeCode = code;
+    peerClose.record(code, reason);
   });
+  class ObservedSocket extends SocketBase {
+    constructor(...args) {
+      super(...args);
+      this.once("upgrade", (response) => {
+        actualTraceID = response.headers["x-antnest-trace-id"];
+      });
+    }
+  }
   const updates = [],
     requests = [];
   const connection = acp
@@ -52,22 +63,35 @@ export function connectACP(version, agent, cookie, options = {}) {
         requests,
       ),
     );
+  const close = () => {
+    peerClose.markLocalClose();
+    connection.close();
+  };
+  const observedTraceID = () =>
+    actualTraceID ??
+    (options.injectTraceParent === false ? undefined : traceID);
   const request = (method, params, timeout = 15000) =>
     requestWithin(
       (requestOptions) =>
         connection.agent.request(method, params, requestOptions),
       closed.signal,
-      () => connection.close(),
+      close,
       timeout,
     );
   return {
-    traceID,
+    get traceID() {
+      return observedTraceID();
+    },
+    version,
     updates,
     requests,
     agentId: agent,
-    connectionTraceID: traceID,
+    get connectionTraceID() {
+      return observedTraceID();
+    },
     transport: "websocket",
-    close: () => connection.close(),
+    close,
+    waitForClose: (timeoutMs) => peerClose.wait(timeoutMs),
     get closeCode() {
       return closeCode;
     },

@@ -1,7 +1,7 @@
 import { Building2, KeyRound, LoaderCircle, LogIn, RefreshCw, ShieldCheck } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Brand } from "../components/brand";
-import { api, errorMessage } from "../lib/api";
+import { api, captureSessionRequest, errorMessage, sessionRequestCurrent, sessionResponseCurrent } from "../lib/api";
 import { authorizationDestination, callbackError } from "../lib/login";
 import type { LoginMethod, Session } from "../lib/types";
 import { Button } from "../components/ui/button";
@@ -17,6 +17,17 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
   const [methodsError, setMethodsError] = useState("");
   const [methodRefresh, setMethodRefresh] = useState(0);
   const [startingMethod, setStartingMethod] = useState("");
+  const mounted = useRef(false);
+  const oidcOperation = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      oidcOperation.current?.abort();
+      oidcOperation.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const location = new URL(window.location.href);
@@ -34,23 +45,28 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
       return;
     }
     let active = true;
+    const session = captureSessionRequest(true);
+    const controller = new AbortController();
+    const current = () => active && sessionRequestCurrent(session);
     const timer = window.setTimeout(() => {
-      api.loginMethods(slug)
+      if (!current()) return;
+      api.loginMethods(slug, controller.signal)
         .then((result) => {
-          if (active) setMethods(result.methods);
+          if (current()) setMethods(result.methods);
         })
         .catch(() => {
-          if (active) {
+          if (current()) {
             setMethods([]);
             setMethodsError("Single sign-on options could not be loaded.");
           }
         })
         .finally(() => {
-          if (active) setMethodsPending(false);
+          if (current()) setMethodsPending(false);
         });
     }, 250);
     return () => {
       active = false;
+      controller.abort();
       window.clearTimeout(timer);
     };
   }, [organization, methodRefresh]);
@@ -66,23 +82,34 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
         String(data.get("email") ?? ""),
         String(data.get("password") ?? ""),
       );
-      onLogin(session);
+      if (mounted.current && sessionResponseCurrent(session)) onLogin(session);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (mounted.current) setError(errorMessage(cause));
     } finally {
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   }
 
   async function startOIDC(method: LoginMethod) {
+    if (oidcOperation.current) return;
+    const session = captureSessionRequest(true);
+    const controller = new AbortController();
+    oidcOperation.current = controller;
+    const current = () => mounted.current && oidcOperation.current === controller &&
+      !controller.signal.aborted && sessionRequestCurrent(session);
     setStartingMethod(method.name);
     setError("");
     try {
-      const result = await api.startOIDCLogin(organization.trim(), method.name);
+      const result = await api.startOIDCLogin(organization.trim(), method.name, controller.signal);
+      if (!current()) return;
       window.location.assign(authorizationDestination(result.authorization_url));
     } catch (cause) {
-      setError(errorMessage(cause));
-      setStartingMethod("");
+      if (current()) {
+        setError(errorMessage(cause));
+        setStartingMethod("");
+      }
+    } finally {
+      if (oidcOperation.current === controller) oidcOperation.current = null;
     }
   }
 

@@ -288,11 +288,11 @@
     },
     "POST /rpc/identity/change-local-password": {
       "callers": [
-        "admin-console"
+        "edge-gateway"
       ],
       "authentication": "workload",
       "caller_context": {
-        "admin-console": "required"
+        "edge-gateway": "required"
       },
       "request_body": "json"
     },
@@ -318,10 +318,12 @@
     },
     "POST /rpc/identity/get-current-account": {
       "callers": [
+        "edge-gateway",
         "admin-console"
       ],
       "authentication": "workload",
       "caller_context": {
+        "edge-gateway": "required",
         "admin-console": "required"
       },
       "request_body": "json"
@@ -565,6 +567,50 @@
       },
       "request_body": "none",
       "notes": "Public verification keys require immediate workload identity; never a caller context."
+    },
+    "POST /rpc/identity/touch-browser-session": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-user-sessions": {
+      "callers": [
+        "edge-gateway",
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/revoke-user-sessions": {
+      "callers": [
+        "edge-gateway",
+        "admin-console"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required",
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/identity/list-session-revocations": {
+      "callers": [
+        "edge-gateway"
+      ],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "operation"
+      },
+      "request_body": "json"
     }
   },
   "guarded_sources": {}

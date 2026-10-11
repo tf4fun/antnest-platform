@@ -169,6 +169,22 @@
       },
       "request_body": "none"
     },
+    "GET /api/session/account": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "none"
+    },
+    "GET /api/session/sessions": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "none"
+    },
     "GET /protocol/oidc/callback": {
       "callers": ["browser"],
       "authentication": "public",
@@ -201,6 +217,14 @@
       },
       "request_body": "json"
     },
+    "POST /api/session/activity": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "json"
+    },
     "POST /api/session/login": {
       "callers": ["browser"],
       "authentication": "public",
@@ -222,6 +246,22 @@
       "authentication": "public",
       "caller_context": {
         "browser": "none"
+      },
+      "request_body": "json"
+    },
+    "POST /api/session/password": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
+      },
+      "request_body": "json"
+    },
+    "POST /api/session/sessions/revoke": {
+      "callers": ["browser"],
+      "authentication": "public",
+      "caller_context": {
+        "browser": "session"
       },
       "request_body": "json"
     }

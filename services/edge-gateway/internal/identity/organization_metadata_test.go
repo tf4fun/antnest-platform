@@ -17,7 +17,8 @@ func organizationResponse(t *testing.T) map[string]any {
 			"system_role": "user", "organization_role": "member", "active": true,
 		},
 		"token_id": "token-1", "access_token": "ant_api_contract_only",
-		"expires_at": "2026-10-03T13:00:00Z",
+		"expires_at":      "2026-10-03T13:00:00Z",
+		"idle_expires_at": "2026-10-03T01:30:00Z", "activity_interval_ms": 30000,
 	}
 }
 

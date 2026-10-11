@@ -12,7 +12,7 @@ it("Skill upload keeps its key after uncertain failure and sends multipart witho
     get length() { return values.size; },
   } as Storage;
   Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: storage });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: { cookie: "" } });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { cookie: "__Host-antnest_csrf=synthetic-test-session" } });
   Object.defineProperty(globalThis, "window", { configurable: true, value: { dispatchEvent() {} } });
   resetSessionRequests({ organization_id: "org-1", user_id: "user-1", membership_id: "member-1" });
   const keys: string[] = [];

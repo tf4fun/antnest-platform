@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertNoOverflow,
+  consoleSessionMetadata,
+  prepareConsoleSession,
+  fulfillConsoleActivity,
   withConsoleBrowser,
 } from "./console-browser-harness.mjs";
 
@@ -44,7 +47,10 @@ const detail = {
 function apiFixture(url) {
   if (url.pathname === "/api/session")
     return {
+      ...consoleSessionMetadata,
       principal: {
+        organization_slug: "test",
+        organization_name: "Test organization",
         user_id: "admin-test",
         organization_id: "org-test",
         membership_id: "member-test",
@@ -53,14 +59,15 @@ function apiFixture(url) {
         active: true,
       },
     };
-  if (url.pathname === "/api/admin/account")
+  if (url.pathname === "/api/session/account")
     return {
       account: {
+        user_id: "admin-test",
+        organization_id: "org-test",
+        membership_id: "member-test",
         email: "audit-admin@example.test",
         display_name: "Audit administrator",
         source: "local",
-        organization_slug: "test",
-        organization_name: "Test organization",
         local_password_available: true,
       },
     };
@@ -112,6 +119,7 @@ function apiFixture(url) {
 
 async function exercise(browser, origin, viewport, label) {
   const context = await browser.newContext({ viewport });
+  await prepareConsoleSession(context, origin);
   const unexpected = [];
   const requests = [];
   try {
@@ -123,6 +131,7 @@ async function exercise(browser, origin, viewport, label) {
         await route.abort();
         return;
       }
+      if (await fulfillConsoleActivity(route)) return;
       if (!url.pathname.startsWith("/api/")) {
         await route.continue();
         return;

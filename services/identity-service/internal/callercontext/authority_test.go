@@ -13,11 +13,13 @@ import (
 )
 
 type sessionsStub struct {
-	session Session
-	err     error
+	session  Session
+	err      error
+	rawReads int
 }
 
 func (s *sessionsStub) ResolveTokenSession(context.Context, string, time.Time) (Session, error) {
+	s.rawReads++
 	return s.session, s.err
 }
 
@@ -32,7 +34,7 @@ func newTestAuthority(t *testing.T) (*Authority, *sessionsStub, time.Time) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1800000000, 0)
-	store := &sessionsStub{session: Session{ID: "session-1", ExpiresAt: now.Add(time.Hour), Principal: domain.Principal{
+	store := &sessionsStub{session: Session{ID: "session-1", ExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(30 * time.Minute), ActivityIntervalMS: 30000, Principal: domain.Principal{
 		UserID: "admin", OrganizationID: "org-1", MembershipID: "membership-1", Active: true,
 		SystemRole: domain.SystemRoleAdmin, OrganizationRole: domain.OrganizationRoleAdmin,
 	}}}
@@ -48,8 +50,8 @@ func newTestAuthority(t *testing.T) (*Authority, *sessionsStub, time.Time) {
 
 func TestIssueUsesServerOwnedProfileAndDurableSession(t *testing.T) {
 	authority, store, now := newTestAuthority(t)
-	principal, token, err := authority.Issue(context.Background(), "ant_api_test", "console", "")
-	if err != nil || principal != store.session.Principal {
+	session, token, err := authority.Issue(context.Background(), "ant_api_test", "console", "")
+	if err != nil || session != store.session || store.rawReads != 1 {
 		t.Fatalf("issuance failed: %v", err)
 	}
 	claims, err := protocol.Verify(token, authority.keys, protocol.Expected{Consumer: "identity-service", Organization: "org-1", Now: now, Tolerance: 30})

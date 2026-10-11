@@ -7,14 +7,13 @@ test("current account displays human identity and authoritative password capabil
     accountPresentation({
       status: "ready",
       data: {
+        user_id: "user-1", organization_id: "org-1", membership_id: "membership-1",
         email: "alice@example.com",
         display_name: "Alice",
         source: "local",
-        organization_slug: "engineering",
-        organization_name: "Engineering",
         local_password_available: true,
       },
-    }),
+    }, { organization_slug: "engineering", organization_name: "Engineering" }),
     {
       primary: "Alice",
       secondary: "alice@example.com",
@@ -70,11 +69,10 @@ test("external-only account does not expose local password rotation", () => {
   const presentation = accountPresentation({
     status: "ready",
     data: {
+      user_id: "user-1", organization_id: "org-1", membership_id: "membership-1",
       email: "external@example.com",
       display_name: "External User",
       source: "scim",
-      organization_slug: "engineering",
-      organization_name: "Engineering",
       local_password_available: false,
     },
   });

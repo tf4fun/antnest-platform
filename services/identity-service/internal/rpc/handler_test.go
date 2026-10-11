@@ -163,24 +163,12 @@ func TestRPCLocalIdentityLifecycleBindings(t *testing.T) {
 	services := &rpcServicesStub{}
 	handler := newRPCHandler(t, services)
 
-	request := httptest.NewRequest(http.MethodPost, ContractRoutes["change_local_password"], strings.NewReader(`{
-		"request_id":"password-request","actor_principal_id":"user-1","user_id":"user-1",
-		"current_password":"current correct password","new_password":"replacement correct password"
-	}`))
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || services.changePasswordInput.RequestID != "password-request" ||
-		services.changePasswordInput.UserID != "user-1" {
-		t.Fatalf("change password status=%d input=%#v body=%s",
-			response.Code, services.changePasswordInput, response.Body.String())
-	}
-
-	request = httptest.NewRequest(http.MethodPost, ContractRoutes["update_membership"], strings.NewReader(`{
+	request := httptest.NewRequest(http.MethodPost, ContractRoutes["update_membership"], strings.NewReader(`{
 		"request_id":"membership-request","actor_principal_id":"admin","organization_id":"org-1",
 		"membership_id":"membership-1","email":"alice@example.com","display_name":"Alice",
 		"role":"member","active":false
 	}`))
-	response = httptest.NewRecorder()
+	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || services.updateMembershipInput.RequestID != "membership-request" ||
 		services.updateMembershipInput.Active {
@@ -453,8 +441,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 14 {
-		t.Fatalf("identity contract revision=%d want=14", contract.Revision)
+	if contract.Revision != 15 {
+		t.Fatalf("identity contract revision=%d want=15", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -513,7 +501,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 		t.Fatal("organization role contract must enumerate member and admin")
 	}
 	for _, code := range []string{
-		"invalid_argument", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
+		"invalid_argument", "invalid_current_password", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
 		"last_organization_admin",
 		"version_conflict",
 		"oidc_provider_client_id_immutable",
@@ -525,7 +513,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 		}
 	}
 	for code, status := range map[string]int{
-		"invalid_argument": 400, "invalid_reference": 400, "unauthenticated": 401,
+		"invalid_argument": 400, "invalid_current_password": 400, "invalid_reference": 400, "unauthenticated": 401,
 		"forbidden": 403, "not_found": 404, "conflict": 409, "last_organization_admin": 409,
 		"version_conflict":                  409,
 		"oidc_session_expired":              410,
@@ -562,7 +550,6 @@ type rpcServicesStub struct {
 	createOrganizationInput        directory.CreateOrganizationInput
 	createLocalUserInput           directory.CreateLocalUserInput
 	addMembershipInput             directory.AddOrganizationMembershipInput
-	changePasswordInput            directory.ChangeLocalPasswordInput
 	currentAccount                 directory.CurrentAccount
 	currentAccountActorID          string
 	currentAccountOrganizationID   string
@@ -600,11 +587,6 @@ func (s *rpcServicesStub) AddOrganizationMembership(
 ) (domain.OrganizationMembership, error) {
 	s.addMembershipInput = input
 	return domain.OrganizationMembership{}, nil
-}
-
-func (s *rpcServicesStub) ChangeLocalPassword(_ context.Context, input directory.ChangeLocalPasswordInput) error {
-	s.changePasswordInput = input
-	return nil
 }
 
 func (s *rpcServicesStub) GetCurrentAccount(

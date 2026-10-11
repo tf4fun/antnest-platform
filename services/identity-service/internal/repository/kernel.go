@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,9 +17,12 @@ import (
 )
 
 type Store struct {
-	pool  *databasePool
-	newID func(string) string
-	now   func() time.Time
+	pool                     *databasePool
+	newID                    func(string) string
+	now                      func() time.Time
+	browserInitialization    sync.Mutex
+	browserIdleTTL           atomic.Int64
+	browserPolicyInitialized bool
 }
 
 // ParsePoolConfig instruments every connection before the caller creates its pool.
@@ -34,13 +39,16 @@ func New(pool *pgxpool.Pool, newID func(string) string, now func() time.Time) (*
 	if pool == nil || newID == nil || now == nil {
 		return nil, fmt.Errorf("identity repository requires pool, ID generator, and clock")
 	}
-	return &Store{pool: &databasePool{pool}, newID: newID, now: now}, nil
+	store := &Store{pool: &databasePool{pool}, newID: newID, now: now}
+	store.browserIdleTTL.Store(int64(30 * time.Minute))
+	return store, nil
 }
 
-func (s *Store) Directory() *DirectoryAdapter { return &DirectoryAdapter{store: s} }
-func (s *Store) LocalAuth() *LocalAuthAdapter { return &LocalAuthAdapter{store: s} }
-func (s *Store) OIDC() *OIDCAdapter           { return &OIDCAdapter{store: s} }
-func (s *Store) SCIM() *SCIMAdapter           { return &SCIMAdapter{store: s} }
+func (s *Store) Directory() *DirectoryAdapter             { return &DirectoryAdapter{store: s} }
+func (s *Store) LocalAuth() *LocalAuthAdapter             { return &LocalAuthAdapter{store: s} }
+func (s *Store) OIDC() *OIDCAdapter                       { return &OIDCAdapter{store: s} }
+func (s *Store) SCIM() *SCIMAdapter                       { return &SCIMAdapter{store: s} }
+func (s *Store) BrowserSessions() *BrowserSessionsAdapter { return &BrowserSessionsAdapter{store: s} }
 
 func (s *Store) Ping(ctx context.Context) error {
 	if err := s.pool.Ping(ctx); err != nil {
@@ -197,6 +205,12 @@ func (s *Store) requireOrganizationAdmin(
 	actorUserID string,
 	organizationID string,
 ) error {
+	return s.requireOrganizationAdminWithLock(ctx, tx, actorUserID, organizationID, false)
+}
+
+func (s *Store) requireOrganizationAdminWithLock(
+	ctx context.Context, tx *databaseTransaction, actorUserID, organizationID string, organizationUpdate bool,
+) error {
 	var role domain.SystemRole
 	var userActive bool
 	if err := tx.QueryRow(ctx, `
@@ -208,11 +222,15 @@ func (s *Store) requireOrganizationAdmin(
 		return normalizeError(err)
 	}
 	var organizationActive bool
+	organizationLock := "FOR SHARE"
+	if organizationUpdate {
+		organizationLock = "FOR UPDATE"
+	}
 	if err := tx.QueryRow(ctx, `
 		SELECT active
 		FROM organizations
 		WHERE id = $1
-		FOR SHARE`, organizationID,
+		`+organizationLock, organizationID,
 	).Scan(&organizationActive); err != nil {
 		return normalizeError(err)
 	}

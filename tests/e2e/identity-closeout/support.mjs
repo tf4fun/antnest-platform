@@ -94,11 +94,17 @@ export class GatewayClient {
     }
     // Deliberately exclude response bodies and request headers from failures.
     try {
-      assert.equal(
-        response.status,
-        status,
-        `${label}: HTTP ${response.status}, expected ${status}`,
-      );
+      if (Array.isArray(status))
+        assert(
+          status.includes(response.status),
+          `${label}: HTTP ${response.status}, expected ${status.join(" or ")}`,
+        );
+      else
+        assert.equal(
+          response.status,
+          status,
+          `${label}: HTTP ${response.status}, expected ${status}`,
+        );
     } catch (error) {
       throw annotateFailure(error, {
         request_phase: "http-status",
@@ -124,6 +130,7 @@ export class GatewayClient {
       });
     }
     return {
+      status: response.status,
       body: parsed,
       headers: response.headers,
       traceID: response.headers.get("x-antnest-trace-id"),

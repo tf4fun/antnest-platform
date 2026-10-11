@@ -16,7 +16,7 @@ export type BridgeOperation = {
   errorClass?: string | null;
 };
 
-type OperationApi = Pick<BridgeHttpClient, "prompt" | "operation" | "cancel">;
+type OperationApi = Pick<BridgeHttpClient, "prompt" | "operation" | "cancel" | "sessionCurrent">;
 
 export class BridgeOperationTracker {
   private static readonly recentTerminalLimit = 64;
@@ -52,6 +52,7 @@ export class BridgeOperationTracker {
       throw new Error("Prompt intent is already tracked");
     try {
       const accepted = await this.api.prompt(this.agentId, sessionId, admission, signal);
+      this.ensureOpen();
       if (accepted.operationId !== admission.intentId ||
         accepted.acceptance !== "bridge" || accepted.phase !== "dispatching")
         throw new Error("Bridge returned an invalid Prompt receipt");
@@ -62,6 +63,7 @@ export class BridgeOperationTracker {
         acceptance: "bridge",
       });
     } catch (cause) {
+      this.ensureOpen();
       if (!(cause instanceof WorkspaceApiError) || cause.recovery !== "query_operation" ||
         cause.operationId !== admission.intentId)
         throw cause;
@@ -73,8 +75,9 @@ export class BridgeOperationTracker {
           recovered.operationId === admission.intentId)
           return this.put(recovered);
       } catch (readError) {
+        this.ensureOpen();
         if (readError instanceof WorkspaceApiError &&
-          (readError.status === 401 || readError.status === 403))
+          (readError.status === 401 || readError.status === 403 || readError.code === "browser_session_changed"))
           throw readError;
       }
       return this.put({
@@ -87,7 +90,7 @@ export class BridgeOperationTracker {
   }
 
   observe(values: readonly unknown[]): void {
-    if (this.closed) return;
+    if (this.closed || !this.api.sessionCurrent()) return;
     for (const value of values) {
       const operation = operationFromWire(value);
       if (operation !== null) this.put(operation);
@@ -103,7 +106,9 @@ export class BridgeOperationTracker {
     try {
       raw = await this.api.cancel(this.agentId, sessionId, intentId, current.runId, signal);
     } catch (cause) {
+      this.ensureOpen();
       if (!(cause instanceof WorkspaceApiError) ||
+        cause.code === "browser_session_changed" ||
         (cause.status !== undefined && cause.status < 500)) throw cause;
       try {
         const recovered = operationFromWire(
@@ -113,11 +118,13 @@ export class BridgeOperationTracker {
           recovered.operationId === intentId && recovered.runId === current.runId)
           return this.put(recovered);
       } catch (readError) {
+        this.ensureOpen();
         if (readError instanceof WorkspaceApiError &&
-          (readError.status === 401 || readError.status === 403)) throw readError;
+          (readError.status === 401 || readError.status === 403 || readError.code === "browser_session_changed")) throw readError;
       }
       throw cause;
     }
+    this.ensureOpen();
     const result = operationFromWire(raw);
     if (result === null || result.sessionId !== sessionId ||
       result.operationId !== intentId || result.runId !== current.runId)
@@ -132,6 +139,7 @@ export class BridgeOperationTracker {
   }
 
   private put(next: BridgeOperation): BridgeOperation {
+    this.ensureOpen();
     const item = key(next.sessionId, next.operationId);
     const current = this.operations.get(item);
     if (current !== undefined && (
@@ -160,6 +168,8 @@ export class BridgeOperationTracker {
 
   private ensureOpen(): void {
     if (this.closed) throw new Error("Bridge observation is closed");
+    if (!this.api.sessionCurrent()) throw new WorkspaceApiError("The browser session changed.",
+      undefined, "browser_session_changed", "none");
   }
 }
 

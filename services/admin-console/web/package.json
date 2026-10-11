@@ -14,7 +14,8 @@
     "test:browser:catalog": "node ../../../tests/integration/admin-console/catalog-browser.mjs",
     "test:browser:skills": "node ../../../tests/integration/admin-console/skills-browser.mjs",
     "test:browser:template-skills": "node ../../../tests/integration/admin-console/template-skills-browser.mjs",
-    "test:browser:managed-mcp-secrets": "node ../../../tests/integration/admin-console/managed-mcp-secrets-browser.mjs"
+    "test:browser:managed-mcp-secrets": "node ../../../tests/integration/admin-console/managed-mcp-secrets-browser.mjs",
+    "test:browser:sessions": "node ../../../tests/integration/admin-console/browser-sessions-browser.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.23",

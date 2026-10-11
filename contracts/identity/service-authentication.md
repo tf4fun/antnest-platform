@@ -34,11 +34,11 @@ never receive Antnest workload credentials. Receiver hash JSON is limited to
 All three variables are mandatory. They are read once before the HTTP listener
 opens, mounted read-only, and never exposed in configuration responses.
 
-| Variable | Exact format |
-| --- | --- |
-| `ANTNEST_IDENTITY_CCT_SIGNING_KID` | 1–128 printable non-space ASCII characters, compared exactly with no trimming. |
-| `ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE` | One unencrypted PKCS#8 PEM `PRIVATE KEY` block containing an Ed25519 private key, at most 4 KiB. Separate from TLS, encryption and Runtime maintenance keys. |
-| `ANTNEST_IDENTITY_CCT_JWKS_FILE` | UTF-8 JSON matching the [public JWKS schema](../platform/caller-context-jwks.schema.json), at most 16 KiB: 1–8 public Ed25519 keys with distinct exact IDs. No `d` or unknown members. |
+| Variable                                | Exact format                                                                                                                                                                           |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_IDENTITY_CCT_SIGNING_KID`      | 1–128 printable non-space ASCII characters, compared exactly with no trimming.                                                                                                         |
+| `ANTNEST_IDENTITY_CCT_SIGNING_KEY_FILE` | One unencrypted PKCS#8 PEM `PRIVATE KEY` block containing an Ed25519 private key, at most 4 KiB. Separate from TLS, encryption and Runtime maintenance keys.                           |
+| `ANTNEST_IDENTITY_CCT_JWKS_FILE`        | UTF-8 JSON matching the [public JWKS schema](../platform/caller-context-jwks.schema.json), at most 16 KiB: 1–8 public Ed25519 keys with distinct exact IDs. No `d` or unknown members. |
 
 The configured signing ID must occur in the JWKS and its public bytes must
 match the private key. Unknown/malformed/mismatched keys fail startup. Generate
@@ -51,10 +51,13 @@ must not fetch an issuer/key URL from unverified token fields.
 ## CCT issuance
 
 `POST /rpc/identity/resolve-access-token` requires Gateway workload identity.
-Revision 14 requires `access_token` and `profile`; optional `agent_id` scopes a
+Revision 15 requires `access_token` and `profile`; optional `agent_id` scopes a
 request to that exact Agent. The Gateway selects `profile` from its route, not
-browser-supplied arbitrary audiences. Only `console`, `workspace` and `acp` are
-accepted, mapped to the exact platform audience arrays. Identity takes all user,
+browser-supplied arbitrary audiences. The `console`, `workspace` and `acp`
+profiles retain their exact platform audience arrays. The new `session` profile
+has only `identity-service` as its audience and forbids `agent_id`; it supports
+the account, activity and session-management routes in the
+[browser lifecycle contract](browser-sessions.md). Identity takes all user,
 Organization, membership and role claims from its active access-token record.
 An Agent ID is a binding to the request target, not proof of Agent access; the
 owning receiver still validates Organization, owner and resource authorization.
@@ -65,7 +68,14 @@ the Identity `api_tokens.id` of the resolved credential, including credentials
 issued through OIDC. It is not Gateway's cookie-session ID or the transient
 OIDC login-state ID. No extra authentication/session table is introduced.
 `iat` is integer UTC seconds; `exp` is no later than `iat + 60` or the underlying
-credential's expiry. Each issuance has a new `jti`. `act` is never issued.
+credential's absolute and idle deadlines. Each issuance has a new `jti`. `act`
+is never issued. Resolution and CCT issuance do not extend either deadline.
+Time is checked again after storage reads, so a delayed result cannot authorize
+an already expired session.
+
+The revision-15 shared contract precedes Identity implementation and active
+caller-grant changes, then Gateway and browser consumer admission. The new
+profile and lifecycle rules are pending those owning-service batches.
 
 Only internal authenticated responses contain a CCT. Consumers forward it
 unchanged in exactly one `Antnest-Caller-Context` field; do not put it into
@@ -87,8 +97,10 @@ It rejects duplicate/unknown JWS members, noncanonical segments, invalid UTF-8,
 non-Ed25519 keys, wrong type/issuer/audience, unsupported `act`, invalid lifetime
 and expired/future times (30 seconds maximum tolerance). Key IDs are exact.
 
-It reloads the `sid` record, checks active User/Organization/membership, expiry
-and revocation, and matches `sub`, `org`, `mbr` and roles against those live facts.
+It reloads the `sid` record, checks active User/Organization/membership, both
+session deadlines and revocation, and matches `sub`, `org`, `mbr` and roles
+against those live facts. Session and CCT expiry use fresh time after the read;
+transactional session mutations revalidate after their lock waits.
 A missing/revoked/mismatched session is `401 caller_context_invalid`. Database
 failure is a dependency error (503), never an authentication success. Already
 admitted effects are not retroactively cancelled by session revocation.

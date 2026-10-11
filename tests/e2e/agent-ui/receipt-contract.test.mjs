@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
+import { verifyBrowserStreamRenewal } from "./browser-session-stream.mjs";
 import {
   parseIntentObservation,
   parseExecutionObservation,
@@ -56,7 +57,7 @@ const validExecution = validator.compile({
 const ownerLabel = "io.antnest.verification.project";
 
 test(
-  "Gateway failed Run produces schema-valid Bridge receipts and a durable workspace failure",
+  "Gateway failed Run receipts survive reload and a silent Run survives browser delegation renewal",
   {
     timeout: 900_000,
     skip: process.env.ANTNEST_UI_RECEIPT_E2E !== "1",
@@ -318,17 +319,26 @@ test(
         false,
         "Unsupported content must fail before inference",
       );
+      const browserSessionStream = await verifyBrowserStreamRenewal({
+        page,
+        config,
+        fixture,
+        signal,
+      });
       assert.deepEqual(problems, []);
       const evidence = {
         receipt,
         execution,
+        browserSessionStream,
         checks: [
           "gateway-failed-run",
           "actual-acp-receipt-schema",
           "actual-acp-observation-schema",
           "node-parsers",
           "workspace-failure-and-reload",
-          "no-model-inference",
+          "unsupported-content-no-model-inference",
+          "silent-run-after-browser-delegation-renewal",
+          "genuine-input-activity-without-prompt-replay",
         ],
       };
       assertSecretFree(JSON.stringify(evidence), [

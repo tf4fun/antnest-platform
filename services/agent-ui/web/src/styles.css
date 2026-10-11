@@ -2825,3 +2825,43 @@ details[open] > summary > .disclosure-chevron {
   overflow-wrap: anywhere;
   color: var(--danger);
 }
+
+.browser-account-panel {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  overflow: auto;
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 24px 80px #0003;
+}
+.browser-account-panel::backdrop { background: #1d1d1b66; }
+.browser-account-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.browser-account-panel h1 { margin: 4px 0 12px; font-size: 22px; }
+.browser-account-panel h2 { font-size: 17px; }
+.browser-account-panel p { line-height: 1.55; overflow-wrap: anywhere; }
+.browser-account-panel > section { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 8px; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.browser-account-panel button:not(.icon-button) { border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; background: var(--paper); color: var(--ink); cursor: pointer; }
+.browser-account-panel button:disabled { opacity: 0.5; cursor: default; }
+.browser-account-panel button:focus-visible, .browser-account-panel input:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.account-confirmation { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.browser-session-list { list-style: none; margin: 16px 0; padding: 0; }
+.browser-session-list li { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.browser-session-list dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin-bottom: 0; font-size: 13px; }
+.browser-session-list dt { color: var(--muted); }
+.browser-session-list dd { margin: 0; overflow-wrap: anywhere; }
+.session-agent-hint { white-space: pre-wrap; font-size: 13px; }
+.browser-account-panel form { display: grid; gap: 12px; }
+.browser-account-panel form label { display: grid; gap: 6px; font-size: 14px; }
+.browser-account-panel input { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.browser-account-panel form button { justify-self: start; }
+@media (max-width: 480px) {
+  .browser-account-panel { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); padding: 18px; }
+  .browser-session-list dl { grid-template-columns: 1fr; gap: 4px; }
+  .browser-session-list dd { margin-bottom: 6px; }
+}

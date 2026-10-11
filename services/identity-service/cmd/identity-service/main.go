@@ -17,6 +17,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/config"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
@@ -183,6 +184,9 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	if err := store.InitializeBrowserSessions(ctx, cfg.SessionIdleTTL); err != nil {
+		return classifyFailure("browser_session_initialization", err)
+	}
 	if err := initializeIdentityFacts(ctx, cfg, store, logger); err != nil {
 		return classifyFailure("identity_bootstrap", err)
 	}
@@ -207,7 +211,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		return classifyFailure("service_composition", err)
 	}
 	directoryService := directory.NewService(store.Directory(), identityid.MustNew, time.Now)
-	localAuthService, err := localauth.NewService(store.LocalAuth(), identityid.MustNew, time.Now, cfg.TokenTTL)
+	localAuthService, err := localauth.NewService(store.LocalAuth(), identityid.MustNew, time.Now, cfg.SessionAbsoluteTTL)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
@@ -215,7 +219,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		Repository: store.OIDC(), Federation: federation, SecretBox: secretBox,
 		NewID: identityid.MustNew, NewOpaque: credentials.NewOpaqueToken, Now: time.Now,
 		RedirectURI: cfg.PublicBaseURL + "/protocol/oidc/callback",
-		SessionTTL:  cfg.OIDCSessionTTL, TokenTTL: cfg.TokenTTL,
+		SessionTTL:  cfg.OIDCSessionTTL, TokenTTL: cfg.SessionAbsoluteTTL,
 	})
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -233,7 +237,8 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	}
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
-		Authentication: authentication.Receiver, CallerContext: authority,
+		BrowserSessions: browsersessions.NewService(store.BrowserSessions()),
+		Authentication:  authentication.Receiver, CallerContext: authority,
 	})
 	if err != nil {
 		return classifyFailure("service_composition", err)

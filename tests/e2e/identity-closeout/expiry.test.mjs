@@ -3,7 +3,7 @@ import test from "node:test";
 import { waitForExpiry, assertClearedSessionCookies } from "./expiry.mjs";
 
 for (const prefix of ["", "__Host-"])
-  test(`cookie expiry evidence requires both ${prefix || "insecure "}cookies with empty values`, () => {
+  test(`explicit logout evidence requires both ${prefix || "insecure "}cookies with empty values`, () => {
     const complete = [
       `${prefix}antnest_session=; Path=/; Max-Age=0`,
       `${prefix}antnest_csrf=; Path=/; Max-Age=0`,

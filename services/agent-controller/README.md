@@ -93,6 +93,12 @@ enforced here; raw identity hints provide no authority.
 | Outbound  | Agent ACP Service                                                                                        | [Execution configuration publication](docs/execution-publication.md) and lifecycle settlement                    |
 | Outbound  | Skill Registry                                                                                           | Resolve exact Skill versions for Template revisions (optional)                                                   |
 
+The Identity consumer is reviewed against revision 15 of the
+[Identity contract](../../contracts/identity/identity-contract.json).
+`resolve_principal`, `resolve_owner_authorization` and
+`list_principal_revocations` retain their request, response and authorization
+semantics in the browser-session revision.
+
 Resource identifiers follow the
 [platform resource ID contract](../../contracts/resource-identifiers.md). Create
 and Rebuild generate `agentspec_` IDs, execution revisions use `execution_`,

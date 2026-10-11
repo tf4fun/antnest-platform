@@ -21,7 +21,6 @@ type Repository interface {
 	CreateLocalUser(context.Context, CreateLocalUserCommand) (CreateLocalUserResult, error)
 	AddOrganizationMembership(context.Context, AddOrganizationMembershipCommand) (domain.OrganizationMembership, error)
 	GetLocalCredential(context.Context, string) (domain.LocalCredential, error)
-	ChangeLocalPassword(context.Context, ChangeLocalPasswordCommand) error
 	GetMembership(context.Context, string, string) (domain.OrganizationMembership, error)
 	UpdateMembership(context.Context, UpdateMembershipCommand) (domain.OrganizationMembership, error)
 	SetUserActive(context.Context, SetUserActiveCommand) error
@@ -81,23 +80,6 @@ type AddOrganizationMembershipCommand struct {
 	RequestID        string
 	ActorPrincipalID string
 	Membership       domain.OrganizationMembership
-}
-
-type ChangeLocalPasswordInput struct {
-	RequestID        string
-	ActorPrincipalID string
-	UserID           string
-	CurrentPassword  string
-	NewPassword      string
-}
-
-type ChangeLocalPasswordCommand struct {
-	RequestID            string
-	ActorPrincipalID     string
-	UserID               string
-	ExpectedPasswordHash string
-	PasswordHash         string
-	UpdatedAt            time.Time
 }
 
 type UpdateMembershipInput struct {
@@ -298,41 +280,6 @@ func (s *Service) AddOrganizationMembership(
 	}
 	return s.repository.AddOrganizationMembership(ctx, AddOrganizationMembershipCommand{
 		RequestID: input.RequestID, ActorPrincipalID: input.ActorPrincipalID, Membership: membership,
-	})
-}
-
-func (s *Service) ChangeLocalPassword(ctx context.Context, input ChangeLocalPasswordInput) error {
-	actorID := strings.TrimSpace(input.ActorPrincipalID)
-	userID := strings.TrimSpace(input.UserID)
-	if actorID == "" || userID == "" {
-		return domain.InvalidArgument("actor principal ID and user ID are required")
-	}
-	principal, err := s.repository.GetPrincipal(ctx, actorID, "")
-	if err != nil {
-		return fmt.Errorf("resolve password actor: %w", err)
-	}
-	if !principal.Active || principal.UserID != userID {
-		return domain.ErrForbidden
-	}
-	credential, err := s.repository.GetLocalCredential(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("load local credential: %w", err)
-	}
-	valid, err := credentials.VerifyPassword(credential.PasswordHash, input.CurrentPassword)
-	if err != nil {
-		return fmt.Errorf("verify current password: %w", err)
-	}
-	if !valid {
-		return domain.ErrUnauthenticated
-	}
-	passwordHash, err := credentials.HashPassword(input.NewPassword)
-	if err != nil {
-		return domain.InvalidArgument(err.Error())
-	}
-	return s.repository.ChangeLocalPassword(ctx, ChangeLocalPasswordCommand{
-		RequestID: input.RequestID, ActorPrincipalID: actorID, UserID: userID,
-		ExpectedPasswordHash: credential.PasswordHash, PasswordHash: passwordHash,
-		UpdatedAt: s.now().UTC(),
 	})
 }
 

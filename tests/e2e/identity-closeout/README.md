@@ -189,14 +189,21 @@ or clocks are modified.
 The same email is provisioned with separate identities and passwords in each
 organization. Tests compare directory and SCIM projections, reject foreign
 resource mutation and forged scope headers or body fields, and exercise password
-rotation and logout independently. A password change preserves issued sessions,
-and logout revokes only the presented session; tests state these semantics
-explicitly. The password command assertions distinguish BFF
-`401 invalid_current_password` (no session cookie change, later access succeeds)
-from Gateway `401 unauthenticated` after real token expiry (both session cookies
-cleared, password unchanged). Console API and App tests consume the same error
-codes and verify dialog retention versus returning to login, including late
-responses from an older in-page session.
+rotation and logout independently. A password change at `/api/session/password`
+replaces the current session without extending its absolute deadline and revokes
+all previous sessions of that User, including sessions in other organizations.
+Logout revokes only the presented session. Membership deactivation revokes that
+membership's sessions; restoring the membership does not revive old cookies.
+The User-deactivation check starts with newly authenticated sessions so an
+earlier revocation cannot produce a false pass.
+
+The password command assertions distinguish `400 invalid_current_password`
+(no cookie change, later access succeeds) from `401 unauthenticated` after real
+token expiry (no cookie change, password unchanged). Ordinary requests never
+clear cookies on 401; explicit logout clears both session cookies even when the
+session has expired. Console and Agent UI tests verify password-dialog retention
+versus returning to login, including late responses from an older in-page
+session.
 
 Finally the coordinator stops only Identity and proves that protected requests
 return 503 without deleting cookies. The stopped Identity keeps its pinned
@@ -204,9 +211,10 @@ Compose address and drops connects. Gateway's 5-second dependency connect bound
 must report the outage within the default 15-second request wait. It restarts Identity with the token TTL set
 to five seconds for new tokens: the earlier long-lived cookie must recover, and a
 new short-lived cookie must work before its deadline and fail after it, even when
-replayed manually. A fresh login must then work. The short TTL override exists
-only in the fixture Compose. HTTP logout and expiry results are not WebSocket
-token revocation results.
+replayed manually. Explicit logout must clear the expired cookies, and a fresh
+login must then work. The short absolute TTL override exists only in the fixture
+Compose. HTTP logout and expiry results are not WebSocket token revocation
+results.
 
 ## Agent organization access and offboarding
 
@@ -278,16 +286,16 @@ cancellation and convergence of arbitrary unavailable Runtimes.
 Identity and ACP services, with synthetic credentials and a local model fixture.
 
 **Logout.** For each v1 and v2 route, the client creates a Session, completes
-browser logout through the Gateway, then submits a prompt on the original
-WebSocket. The request must fail with close code 1008. A new login must load or
+browser logout through the Gateway, then waits for the silent WebSocket to close
+with `1008/session_rejected`. A subsequent SDK prompt is rejected locally and
+must not add a transport request. A new login must load or
 resume the same Session with no rejected prompt or Run events in its history.
 
 **Identity outage.** Official v1 and v2 clients connect before the coordinator
-stops only Identity. A prompt on each old connection must close with 1013
-without any durable Run, message or Tool change. Both prompts are sent at once:
-Gateway waits out its Identity request timeout, and a later serial probe would
-outlive the socket's 60-second caller context and close with 1008 instead. The
-same long-lived cookies
+stops only Identity. Both old connections must close without a client message,
+with `1013/identity_unavailable` and no durable Run, message or Tool change.
+The close observations run together and must occur within the 30-second
+authority bound, before the original caller context expires. The same long-lived cookies
 must reconnect after Identity recovers. An empty recovered Session must contain
 its current command catalog, one untitled Session info update with a valid
 timestamp and, for v2 replay only, exactly one idle control update
@@ -297,12 +305,18 @@ helper and the SDK's `cancellationSignal`; socket errors are observed, and no
 upgrade retry is introduced.
 
 **Expiry.** The coordinator restarts Identity with a five-second token TTL. New
-connections must work before their deadlines and reject prompts with 1008 after
-natural expiry, without changing database rows or clocks. Earlier long-lived
+connections must work before their deadlines and close with `1008` without
+another message. The reason is `caller_context_expired` when the original CCT
+ends first, or `session_rejected` when it equals the absolute session deadline.
+For this short session the CCT deadline is the issued absolute deadline rounded
+down to a whole second. Evidence retains both the issued deadline and this
+derived CCT deadline and requires closure within its preceding one-second
+closing grace. The later SDK probe waits until the issued deadline has passed
+and must remain local. Database rows and clocks are not modified. Earlier long-lived
 credentials keep working. The normal TTL is restored before the last scenario.
 
 **Admitted work.** A local model fixture holds a real request. Only after the
-Run is running does the client log out and force rejection on the old
+Run is running does the client log out and observe the remote close on the old
 connection. Releasing the fixture must let the same Run complete one real
 Runtime Tool, finish with a quiescent executor and a settled Tool effect, and
 resume without re-execution on reconnect. The Run and request IDs and the
@@ -312,17 +326,19 @@ A v1 prompt answers only after its Run, so its own ACP dispatch span may end
 in error because the socket is already closed; every Run, model and Tool span
 must still be error-free.
 
-Each rejected message has its own Gateway root linked to the connection.
-Revocation and outage denials carry exactly one failed Gateway Identity check.
-An expiry denial may instead be a lone Gateway root, because Gateway closes on
-an expired caller context before re-resolving the session. Successful requests
+Silent close evidence records the peer code, reason, time, absence of local
+shutdown and unchanged SDK request list. The fixture obtains its connection
+Trace ID from the actual upgrade response, without injecting an unexported
+parent. Complete connection Traces must include Gateway, ACP upgrade and the
+initial owning Identity SQL; no message Trace is invented for a request that
+was never sent. Actual message-denial trace validators remain separate.
+Successful requests
 bind the SDK request ID and returned Session ID, and execution binds the
 Provider HTTP span IDs. Traces are scanned for the synthetic cookies and model
 credential, including URL-encoded forms. The service relay unit tests
 separately cover identity changes, dependency failure, timeout,
-fragmented and pipelined messages, bounded capacity and shutdown cleanup. No
-test claims immediate revocation of idle sockets or automatic cancellation of
-admitted Runs.
+fragmented and pipelined messages, bounded capacity and shutdown cleanup. Silent
+revocation has a bounded delay; admitted Runs continue to completion.
 
 ## Evidence and cleanup
 

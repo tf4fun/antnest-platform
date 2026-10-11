@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
@@ -126,6 +127,7 @@ type StartLoginInput struct {
 	RequestID        string
 	OrganizationSlug string
 	ProviderName     string
+	UserAgentHint    string
 }
 
 type StartLoginResult struct {
@@ -180,6 +182,7 @@ type AuthSession struct {
 	Secrets          credentials.SealedSecret
 	ExpiresAt        time.Time
 	CreatedAt        time.Time
+	UserAgentHint    string
 }
 
 type CreateSessionCommand struct {
@@ -221,18 +224,22 @@ type CompleteLoginCommand struct {
 }
 
 type CompletedLogin struct {
-	SessionID string
-	TokenID   string
-	Principal domain.Principal
-	ExpiresAt time.Time
+	SessionID          string
+	TokenID            string
+	Principal          domain.Principal
+	ExpiresAt          time.Time
+	IdleExpiresAt      time.Time
+	ActivityIntervalMS int
 }
 
 type CompleteLoginResult struct {
-	Principal        domain.Principal `json:"principal"`
-	TokenID          string           `json:"token_id"`
-	AccessToken      string           `json:"access_token,omitempty"`
-	AlreadyCompleted bool             `json:"already_completed,omitempty"`
-	ExpiresAt        time.Time        `json:"expires_at"`
+	Principal          domain.Principal `json:"principal"`
+	TokenID            string           `json:"token_id"`
+	AccessToken        string           `json:"access_token,omitempty"`
+	AlreadyCompleted   bool             `json:"already_completed,omitempty"`
+	ExpiresAt          time.Time        `json:"expires_at"`
+	IdleExpiresAt      time.Time        `json:"idle_expires_at"`
+	ActivityIntervalMS int              `json:"activity_interval_ms"`
 }
 
 type FailSessionCommand struct {
@@ -426,6 +433,9 @@ func (s *Service) ListLoginMethods(ctx context.Context, organizationSlug string)
 }
 
 func (s *Service) StartLogin(ctx context.Context, input StartLoginInput) (StartLoginResult, error) {
+	if utf8.RuneCountInString(input.UserAgentHint) > 256 {
+		return StartLoginResult{}, domain.InvalidArgument("user_agent_hint must contain at most 256 characters")
+	}
 	slug, err := domain.NormalizeSlug(input.OrganizationSlug)
 	if err != nil {
 		return StartLoginResult{}, err
@@ -474,6 +484,7 @@ func (s *Service) StartLogin(ctx context.Context, input StartLoginInput) (StartL
 			ID: sessionID, ProviderID: provider.ID, OrganizationID: provider.OrganizationID,
 			ProviderRevision: provider.Revision,
 			Status:           SessionStatusPending, Secrets: sealed, ExpiresAt: expiresAt, CreatedAt: now,
+			UserAgentHint: input.UserAgentHint,
 		},
 	}); err != nil {
 		return StartLoginResult{}, fmt.Errorf("create OIDC session: %w", err)
@@ -492,10 +503,7 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 		return CompleteLoginResult{}, fmt.Errorf("claim OIDC session: %w", err)
 	}
 	if claim.Disposition == ClaimCompleted {
-		return CompleteLoginResult{
-			Principal: claim.Completed.Principal, TokenID: claim.Completed.TokenID,
-			ExpiresAt: claim.Completed.ExpiresAt, AlreadyCompleted: true,
-		}, nil
+		return s.completedLoginResult(claim.Completed, "", true)
 	}
 	if claim.Disposition == ClaimExpired {
 		return CompleteLoginResult{}, domain.NewError("oidc_session_expired", "OIDC login session expired", false)
@@ -586,11 +594,8 @@ func (s *Service) issueLoginCredential(
 		if code, _, _ := domain.ErrorDetails(err); code == "oidc_session_expired" {
 			return CompleteLoginResult{}, s.failSession(ctx, session, claimID, "expired", err)
 		}
-		if reconciled, ok := s.reconcileCompletedLogin(ctx, state, tokenID, now); ok {
-			return CompleteLoginResult{
-				Principal: reconciled.Principal, TokenID: reconciled.TokenID,
-				AccessToken: rawToken, ExpiresAt: reconciled.ExpiresAt,
-			}, nil
+		if reconciled, ok := s.reconcileCompletedLogin(ctx, state, tokenID); ok {
+			return s.completedLoginResult(reconciled, rawToken, false)
 		}
 		stage := "persistence"
 		if code, _, _ := domain.ErrorDetails(err); code == "oidc_provider_changed" {
@@ -598,9 +603,19 @@ func (s *Service) issueLoginCredential(
 		}
 		return CompleteLoginResult{}, s.failSession(ctx, session, claimID, stage, err)
 	}
+	return s.completedLoginResult(completed, rawToken, false)
+}
+
+func (s *Service) completedLoginResult(completed CompletedLogin, rawToken string, replay bool) (CompleteLoginResult, error) {
+	now := s.now().UTC()
+	if !completed.Principal.Active || !completed.ExpiresAt.After(now) || !completed.IdleExpiresAt.After(now) {
+		return CompleteLoginResult{}, domain.NewError("oidc_completed_token_unavailable", "The completed OIDC login token is no longer available", false)
+	}
 	return CompleteLoginResult{
 		Principal: completed.Principal, TokenID: completed.TokenID,
-		AccessToken: rawToken, ExpiresAt: completed.ExpiresAt,
+		AccessToken: rawToken, AlreadyCompleted: replay,
+		ExpiresAt: completed.ExpiresAt, IdleExpiresAt: completed.IdleExpiresAt,
+		ActivityIntervalMS: completed.ActivityIntervalMS,
 	}, nil
 }
 
@@ -608,9 +623,8 @@ func (s *Service) reconcileCompletedLogin(
 	ctx context.Context,
 	state string,
 	tokenID string,
-	now time.Time,
 ) (CompletedLogin, bool) {
-	claim, err := s.repository.ClaimSession(ctx, credentials.HashToken(state), s.newID("oidcclaim"), now)
+	claim, err := s.repository.ClaimSession(ctx, credentials.HashToken(state), s.newID("oidcclaim"), s.now().UTC())
 	if err != nil || claim.Disposition != ClaimCompleted || claim.Completed.TokenID != tokenID {
 		return CompletedLogin{}, false
 	}

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, APIError, resetSessionRequests } from "./api";
+import { testSession } from "../test/session-fixture";
 
 afterEach(() => {
   sessionStorage.clear();
@@ -56,7 +57,7 @@ describe("catalog command boundary", () => {
           updated_at: "2026-09-15T00:00:00Z",
         }),
       );
-      await old;
+      await expect(old).rejects.toMatchObject({ name: "AbortError" });
       failNew(new Error("New response lost"));
       await current;
       await api.setCatalogAvailability("templates", "item", input);
@@ -147,7 +148,8 @@ describe("catalog command boundary", () => {
             }),
           )
           .mockResolvedValueOnce(Response.json({ synchronization: null }))
-          .mockResolvedValueOnce(Response.json({ status: "changed" })),
+          .mockResolvedValueOnce(Response.json(testSession))
+          .mockResolvedValueOnce(Response.json(testSession)),
       );
       const input = { expected_enabled: true, enabled: false };
       await api
@@ -190,7 +192,7 @@ describe("catalog command boundary", () => {
           updated_at: "2026-09-14T00:00:00Z",
         }),
       );
-      await pending;
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
       expect(listener).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("antnest:configuration-changed", listener);

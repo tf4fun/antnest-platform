@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { durablePath } from "../../support/storage.mjs";
 import {
   assertNoOverflow,
+  consoleSessionMetadata,
+  prepareConsoleSession,
+  fulfillConsoleActivity,
   withConsoleBrowser,
 } from "./console-browser-harness.mjs";
 
@@ -63,6 +66,7 @@ const template = {
 
 async function exercise(browser, origin, viewport, label) {
   const context = await browser.newContext({ viewport });
+  await prepareConsoleSession(context, origin);
   const writes = [],
     errors = [],
     unexpected = [];
@@ -71,6 +75,7 @@ async function exercise(browser, origin, viewport, label) {
       const request = route.request(),
         url = new URL(request.url());
       if (url.origin !== origin) return route.abort();
+      if (await fulfillConsoleActivity(route)) return;
       if (!url.pathname.startsWith("/api/")) return route.continue();
       if (
         request.method() === "POST" &&
@@ -84,7 +89,10 @@ async function exercise(browser, origin, viewport, label) {
       }
       const fixtures = {
         "/api/session": {
+          ...consoleSessionMetadata,
           principal: {
+            organization_slug: "test",
+            organization_name: "Test",
             user_id: "admin",
             organization_id: "org",
             membership_id: "member",
@@ -93,13 +101,14 @@ async function exercise(browser, origin, viewport, label) {
             active: true,
           },
         },
-        "/api/admin/account": {
+        "/api/session/account": {
           account: {
+            user_id: "admin",
+            organization_id: "org",
+            membership_id: "member",
             email: "admin@example.test",
             display_name: "Admin",
             source: "local",
-            organization_slug: "test",
-            organization_name: "Test",
             local_password_available: true,
           },
         },

@@ -17,7 +17,9 @@ test("real-response admission requires matching nonempty Organization labels and
   for (const kind of ["login", "session"]) {
     const payload = {
       principal,
-      ...(kind === "login" ? { expires_at: "2026-10-03T13:00:00Z" } : {}),
+      expires_at: "2026-10-03T13:00:00Z",
+      idle_expires_at: "2026-10-03T12:30:00Z",
+      activity_interval_ms: 30000,
     };
     assert.equal(assertOrganizationSession(payload, kind), principal);
     for (const field of ["organization_slug", "organization_name"]) {

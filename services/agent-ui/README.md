@@ -27,7 +27,7 @@ permissions.
 - Exact Tool approval requests with once/Session decisions, cancellation and
   reissued requests after reconnect.
 - Connection, unavailable, cancellation and retry feedback in the browser.
-- Account exit, administrator application switching and usable no-Agent states.
+- Account/session controls, administrator application switching and usable no-Agent states.
 - The `Antnest / Workspace` implementation of the shared design language.
 
 ## Non-responsibilities
@@ -43,14 +43,15 @@ permissions.
 
 ## Interfaces
 
-| Direction | Interface | Purpose |
-| --- | --- | --- |
-| Inbound | `/workspace/*` via Edge Gateway | Signed SSR identity; browser-anonymous assets with Gateway workload authentication |
-| Inbound | `/api/app/workspace/v1/*` via Edge Gateway | Workspace HTTP commands, bootstrap and Agent SSE; see the [Workspace API](../../contracts/agent-ui/workspace-api.md) |
-| Inbound | `GET /status`, `GET /live` | Readiness (503 while draining) and liveness; neither opens an ACP owner |
-| Outbound | Agent ACP Service (official SDK over HTTP, execution-state RPC) | Sessions, prompts, replay, permissions, execution state |
-| Outbound | Agent Controller | Principal-scoped Agent directory for bootstrap |
-| Outbound | Identity Service | Workload-authenticated public JWKS discovery |
+| Direction        | Interface                                                                   | Purpose                                                                                                              |
+| ---------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Inbound          | `/workspace/*` via Edge Gateway                                             | Signed SSR identity; browser-anonymous assets with Gateway workload authentication                                   |
+| Inbound          | `/api/app/workspace/v1/*` via Edge Gateway                                  | Workspace HTTP commands, bootstrap and Agent SSE; see the [Workspace API](../../contracts/agent-ui/workspace-api.md) |
+| Inbound          | `GET /status`, `GET /live`                                                  | Readiness (503 while draining) and liveness; neither opens an ACP owner                                              |
+| Outbound         | Agent ACP Service (official SDK over HTTP, execution-state RPC)             | Sessions, prompts, replay, permissions, execution state                                                              |
+| Outbound         | Agent Controller                                                            | Principal-scoped Agent directory for bootstrap                                                                       |
+| Outbound         | Identity Service                                                            | Workload-authenticated public JWKS discovery                                                                         |
+| Browser outbound | `/api/session` and account/activity/session/password routes on Edge Gateway | Fresh browser validation, explicit input activity, public session inventory, revocation and password rotation        |
 
 Edge Gateway resolves the browser session through Identity Service and enforces
 CSRF and Origin before forwarding. Node verifies Gateway workload identity and
@@ -65,27 +66,36 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
+The browser consumes Gateway revision 19 and Identity revision 15 under the
+[browser session contract](../../contracts/identity/browser-sessions.md).
+Hydrated SSR content stays inert until a fresh Gateway session read succeeds.
+Only genuine input reports activity; background reads, SSE and reconnection do
+not extend idle time. Account controls remain available without an Agent and
+for accounts with an external sign-in provider. Local password capability comes
+from Identity. Password replacement validates the new Cookies before rebuilding
+the private workspace, including for the same user and Agent.
+
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | - | Agent ACP Service origin (HTTP(S), no path, credentials, query or fragment) |
-| `ANTNEST_AGENT_CONTROLLER_URL` | for discovery | unset | Agent Controller origin; without it bootstrap returns `503 workspace_unavailable` |
-| `ANTNEST_AGENT_UI_IDENTITY_URL` | yes | - | Authenticated Identity JWKS origin, distinct from ACP/Controller |
-| `ANTNEST_SERVICE_AUTH_MODE` | yes | - | Exactly `token` or `mtls`; no fallback |
-| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | no | `false` | Exactly `true` permits disposable token-mode HTTP; production uses TLS |
-| `ANTNEST_SERVICE_AUTH_CALLERS_FILE` | token mode | - | Read-only caller-to-SHA256 JSON, loaded once; restart to reload |
-| `ANTNEST_SERVICE_AUTH_TOKEN_DIR` | token mode | - | Read-only per-receiver Identity, ACP and configured Controller token files, reread each request |
-| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS/mTLS | - | Complete native TLS 1.3; own URI SAN `antnest://service/agent-ui` |
-| `ANTNEST_AGENT_UI_BRIDGE_HOST` | no | `0.0.0.0` | Listen host |
-| `ANTNEST_AGENT_UI_BRIDGE_PORT` | no | `8080` | Listen port (1-65535) |
-| `ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES` | no | `16777216` | Serialized Prompt limit, 1024 to 67108864; must equal ACP's `ANTNEST_ACP_MAX_PROMPT_BYTES` (Compose sets both) |
-| `ANTNEST_AGENT_UI_BRIDGE_MAX_OWNERS` | no | `16` | Maximum concurrent owner scopes |
-| `ANTNEST_AGENT_UI_BRIDGE_IDLE_MS` | no | `300000` | Per-Session idle lifetime in milliseconds (zero allowed) |
-| `ANTNEST_AGENT_UI_BRIDGE_SWEEP_INTERVAL_MS` | no | `30000` | Idle sweep interval in milliseconds (positive) |
-| `OTEL_SDK_DISABLED` | no | `false` | `true` or `false`; telemetry exports only when not disabled and an endpoint is set |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | unset | OTLP/HTTP base endpoint for traces and metrics |
-| `OTEL_SERVICE_NAME` | no | `agent-ui` | Telemetry service name |
+| Variable                                                                                          | Required      | Default    | Description                                                                                                    |
+| ------------------------------------------------------------------------------------------------- | ------------- | ---------- | -------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_AGENT_ACP_SERVICE_URL`                                                                   | yes           | -          | Agent ACP Service origin (HTTP(S), no path, credentials, query or fragment)                                    |
+| `ANTNEST_AGENT_CONTROLLER_URL`                                                                    | for discovery | unset      | Agent Controller origin; without it bootstrap returns `503 workspace_unavailable`                              |
+| `ANTNEST_AGENT_UI_IDENTITY_URL`                                                                   | yes           | -          | Authenticated Identity JWKS origin, distinct from ACP/Controller                                               |
+| `ANTNEST_SERVICE_AUTH_MODE`                                                                       | yes           | -          | Exactly `token` or `mtls`; no fallback                                                                         |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | no            | `false`    | Exactly `true` permits disposable token-mode HTTP; production uses TLS                                         |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                                                               | token mode    | -          | Read-only caller-to-SHA256 JSON, loaded once; restart to reload                                                |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                                                                  | token mode    | -          | Read-only per-receiver Identity, ACP and configured Controller token files, reread each request                |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS/mTLS      | -          | Complete native TLS 1.3; own URI SAN `antnest://service/agent-ui`                                              |
+| `ANTNEST_AGENT_UI_BRIDGE_HOST`                                                                    | no            | `0.0.0.0`  | Listen host                                                                                                    |
+| `ANTNEST_AGENT_UI_BRIDGE_PORT`                                                                    | no            | `8080`     | Listen port (1-65535)                                                                                          |
+| `ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES`                                                           | no            | `16777216` | Serialized Prompt limit, 1024 to 67108864; must equal ACP's `ANTNEST_ACP_MAX_PROMPT_BYTES` (Compose sets both) |
+| `ANTNEST_AGENT_UI_BRIDGE_MAX_OWNERS`                                                              | no            | `16`       | Maximum concurrent owner scopes                                                                                |
+| `ANTNEST_AGENT_UI_BRIDGE_IDLE_MS`                                                                 | no            | `300000`   | Per-Session idle lifetime in milliseconds (zero allowed)                                                       |
+| `ANTNEST_AGENT_UI_BRIDGE_SWEEP_INTERVAL_MS`                                                       | no            | `30000`    | Idle sweep interval in milliseconds (positive)                                                                 |
+| `OTEL_SDK_DISABLED`                                                                               | no            | `false`    | `true` or `false`; telemetry exports only when not disabled and an endpoint is set                             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                     | no            | unset      | OTLP/HTTP base endpoint for traces and metrics                                                                 |
+| `OTEL_SERVICE_NAME`                                                                               | no            | `agent-ui` | Telemetry service name                                                                                         |
 
 Telemetry exports HTTP request spans plus `antnest.ui.http.requests` and
 `antnest.ui.http.duration` metrics, aggregate Bridge gauges (owners, observer
@@ -184,6 +194,9 @@ tests in [`tests/e2e/agent-ui`](../../tests/e2e/agent-ui). Root targets:
 builds the image, and `make e2e-workspace-browser`,
 `make e2e-skill-learning-browser`, `make e2e-tool-permissions`,
 `make e2e-multimodal` and `make e2e-session-cost` exercise the full stack.
+`make e2e-browser-sessions-https` verifies password replacement, revocation,
+silent stream closure and short idle expiry across real Console and Workspace
+browser contexts.
 
 ## Documentation
 

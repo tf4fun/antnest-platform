@@ -47,8 +47,13 @@ func (lifecycle *streamLifecycle) ServeHTTP(response http.ResponseWriter, reques
 	}
 	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
-	stop := context.AfterFunc(lifecycle.ctx, cancel)
-	defer stop()
+	cancelled := make(chan struct{})
+	stop := context.AfterFunc(lifecycle.ctx, func() { defer close(cancelled); cancel() })
+	defer func() {
+		if !stop() {
+			<-cancelled
+		}
+	}()
 	if !websocket.IsWebSocketUpgrade(request) {
 		writer, finish := cancelHTTPStreamWrites(ctx, response, lifecycle.logger)
 		defer finish()
