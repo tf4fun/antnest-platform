@@ -2,7 +2,8 @@
 
 Gateway session revision 21 defines the positive Resolve cache for
 [#59](https://github.com/tf4fun/antnest-platform/issues/59). The machine-readable
-limits are in [resolve-cache-policy.json](resolve-cache-policy.json). Identity
+limits are in [resolve-cache-policy.json](resolve-cache-policy.json), policy
+revision 2. Identity
 revision 16 and its existing `resolve-access-token` and
 `list-session-revocations` wire schemas remain unchanged. This shared batch
 precedes the owning-service implementation and explicit integration admission;
@@ -141,11 +142,47 @@ zero; a process holding a pre-restore cursor must not resume using it.
 Successful local Gateway mutations evict before returning their response:
 logout evicts the exact token hash across scopes; password change and self
 session revocation evict the trusted User; unbinding evicts the trusted User
-across Organizations even when `current_revoked` is false. Activity evicts the
-current SID's old observations, without modifying old CCTs. Identity and other
-replica mutations remain covered by the feed and absolute snapshot-age bound.
+across Organizations even when `current_revoked` is false. Activity follows the
+bounded in-flight exception below, without modifying old CCTs. Identity and
+other replica mutations remain covered by the feed and absolute snapshot-age bound.
 Eviction is not itself denial of another still-valid session: the next live
 Resolve determines that session's authority.
+
+### Activity and concurrent reads
+
+A successful, metadata-validated Touch extends idle eligibility; it does not
+revoke authority. Under the cache lock and before returning that response,
+evict the trusted SID's entries and mark its existing work obsolete for reuse.
+Use SID evidence from entries, known-SID flights and completed results to cover
+all flights for each identified token across profiles and Agents. Do not
+advance the global epoch or affect an unrelated SID.
+
+An obsolete flight cannot accept new waiters or store its result. Waiters
+already attached may still receive its actual live result, subject to the
+same final checks for security invalidation, epoch, shutdown, caller/shared
+cancellation and every original TTL, idle, absolute and CCT deadline. This
+exception prevents normal browser input from cancelling a concurrent read.
+It never edits the old Principal, extends a deadline or automatically retries
+Resolve. A truly unknown SID retains the existing conservative bounded live
+behavior; no unbounded SID/token tombstones are introduced.
+
+Later requests use eligible cache state or new bounded work. Old work retains
+its capacity through RPC cleanup and final waiter delivery, including completed
+but undelivered results. It cannot remove or overwrite a newer generation.
+An authoritative denial from an obsolete flight still evicts and fences every
+scope for that token, including newer work. Revocation and other security
+mutations always override the activity exception. An obsolete background
+refresh without waiters may finish within its original budget but cannot store.
+
+Keep actual RPC accounting and existing `rpc`/`shared` provenance: delivery from
+an obsolete live flight is never a cache hit, and discarded real RPCs still
+count. Acceptance requires deterministic held and ready-result interleavings,
+new-before-old completion, later denial/revocation/expiry, generation capacity,
+failed Touch, unrelated sessions and TTL-zero compatibility. Real HTTP
+acceptance must witness a controlled overlap: bootstrap's Resolve is already
+in flight or awaiting delivery when the successful Touch invalidates its old
+generation, then both requests' first responses succeed without retries.
+Sequential successes cannot establish this concurrency acceptance.
 
 ## Streams and timing provenance
 

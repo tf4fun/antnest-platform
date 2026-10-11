@@ -18,7 +18,7 @@ test("Gateway cache revision reuses the issued Identity wire contract", () => {
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");
   const value = policy();
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
-  assert.equal(value.revision, 1);
+  assert.equal(value.revision, 2);
   assert.equal(value.identity_revision, identity.revision);
   assert.equal(identity.revision, 16);
   assert.equal(
@@ -140,6 +140,37 @@ test("refresh and shared work preserve cancellation ownership and bounded retrie
     "join-flights",
     "close-transports",
   ]);
+});
+
+test("successful activity excludes old work from reuse without cancelling its existing readers", () => {
+  const { activity } = policy();
+  assert(activity, "activity needs an explicit benign-invalidation boundary");
+  assert.equal(activity.requires_validated_successful_touch, true);
+  assert.equal(activity.scope, "trusted-sid-and-known-token-flights");
+  assert.equal(activity.evict_before_response, true);
+  assert.equal(activity.old_flights_accept_new_waiters, false);
+  assert.equal(activity.old_flights_store_results, false);
+  assert.equal(activity.cancel_existing_waiters, false);
+  assert.equal(
+    activity.old_result_delivery,
+    "original-authority-and-deadline-checks",
+  );
+  assert.equal(activity.modify_principal_or_cct, false);
+  assert.equal(activity.denial_and_revocation_override, true);
+  assert.equal(
+    activity.old_work_retains_capacity_until_join_and_delivery,
+    true,
+  );
+  assert.equal(activity.automatic_resolve_retry, false);
+  assert.equal(
+    activity.truly_unknown_sid,
+    "conservative-original-bounded-result",
+  );
+  assert.equal(activity.actual_rpc_counted, true);
+  assert.equal(
+    activity.http_admission,
+    "held-resolve-overlaps-validated-touch-first-responses-200-without-retry",
+  );
 });
 
 test("stream provenance separates real authority age, RPC duration and probe scheduling", () => {

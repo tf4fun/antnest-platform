@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.resolve-cache",
-  "revision": 1,
+  "revision": 2,
   "identity_revision": 16,
   "gateway_session_revision": 21,
   "resolve_method": "resolve_access_token",
@@ -106,6 +106,22 @@
       "join-flights",
       "close-transports"
     ]
+  },
+  "activity": {
+    "requires_validated_successful_touch": true,
+    "scope": "trusted-sid-and-known-token-flights",
+    "evict_before_response": true,
+    "old_flights_accept_new_waiters": false,
+    "old_flights_store_results": false,
+    "cancel_existing_waiters": false,
+    "old_result_delivery": "original-authority-and-deadline-checks",
+    "modify_principal_or_cct": false,
+    "denial_and_revocation_override": true,
+    "old_work_retains_capacity_until_join_and_delivery": true,
+    "automatic_resolve_retry": false,
+    "truly_unknown_sid": "conservative-original-bounded-result",
+    "actual_rpc_counted": true,
+    "http_admission": "held-resolve-overlaps-validated-touch-first-responses-200-without-retry"
   },
   "streams": {
     "private_provenance": [
