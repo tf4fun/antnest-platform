@@ -1,6 +1,6 @@
 # Verified Organization display metadata
 
-Gateway session contract revision 20 consumes Identity contract revision 16.
+Gateway session contract revision 21 consumes Identity contract revision 16.
 Node verifies Gateway workload identity and the signed CCT; display headers
 never supply subject, Organization or administrator authority.
 `organization_slug` and `organization_name` are required, non-whitespace strings
@@ -34,12 +34,16 @@ as a bootstrap refresh. React renders the name as text with the existing styles.
 
 ## Freshness and failure
 
-There is no Organization metadata cache in Gateway or Node. Each authenticated
-HTTP request resolves the opaque session token through Identity again. Reloading
-SSR or re-fetching bootstrap sees a committed display change while retaining the
-same authenticated IDs and administrator semantics. Existing rendered text need
-not change until re-bootstrap; display changes do not invalidate Agent sessions,
-operations or SSE authorization scope. No continuous rename watcher is added.
+Gateway revision 21 reuses a complete authenticated Principal only within the
+[bounded Resolve policy](../edge-gateway/resolve-cache.md#organization-display).
+Its snapshot age is at most the configured TTL (default 10 seconds), anchored to
+the actual Resolve RPC start. Neither cache hits nor healthy empty feed pages
+renew that age. After expiry, the next real SSR/bootstrap/session read requires
+live resolution. User-visible timing also includes that next read and its
+request latency; already rendered text does not update by itself. Node adds no
+separate metadata cache. IDs, administrator semantics, Agent sessions, drafts
+and SSE scope remain unchanged, and no continuous rename watcher is added.
+TTL zero retains direct resolution for every authenticated request.
 
 Malformed Identity principals yield Gateway `503 identity_unavailable`, preserve
 an existing browser session and never reach Node. Inactive or revoked identities
@@ -49,6 +53,12 @@ see [browser session semantics](../identity/browser-sessions.md). Browser JSON
 and SSR contain display facts only, never Identity access credentials or token IDs.
 
 ## Delivery sequence
+
+The #59 shared policy precedes Gateway implementation and the separate display
+consumer/integration batch. Warm session, bootstrap and SSR scopes independently;
+then rename and perform real repeated reads through expiry while feed polling
+continues. Verify names converge without changing IDs, roles, cookies, drafts or
+the other Organization. The original projection delivery was:
 
 1. [#92](https://github.com/tf4fun/antnest-platform/issues/92): freeze this contract,
    add the shared principal definition, implement Gateway and prove its local

@@ -10,6 +10,12 @@ revision-20 Gateway and revision-52 Console contract for #61. Binding ownership,
 SCIM pairing and exact-ID notices precede their separate service and integration
 batches; active caller grants remain tied to service implementation.
 
+[Bounded Identity resolution](edge-gateway/resolve-cache.md) and its
+[policy](edge-gateway/resolve-cache-policy.json) define Gateway revision 21 for
+#59. They reuse Identity revision 16's private session feed; Gateway, trace/
+display consumers and explicit HTTPS outage/load integration remain separate
+pending batches.
+
 ## Active Contracts
 
 | Directory                                                                    | Owner service                                                                                                     | Consumers                                                                            | Files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

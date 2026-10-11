@@ -527,7 +527,7 @@ test("explicit activity returns deadlines and a bounded scheduling hint without 
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
   assert.equal(identity.revision, 16);
-  assert.equal(gateway.version, 20);
+  assert.equal(gateway.version, 21);
   assert.equal(
     gateway.browser_session_contract,
     "../identity/browser-sessions.md",
@@ -595,8 +595,13 @@ test("Gateway owns session mutations and records cookie concurrency and stream b
         "at most maximum stale bound / 3 before the activity hint is known",
       reply_budget:
         "elapsed at most min(maximum stale bound / 3, returned activity_interval_ms)",
-      stale_deadline_anchor: "initial RPC start",
+      stale_deadline_anchor:
+        "actual Resolve RPC start, including a reused cached snapshot",
       late_reply: "reject before starting upstream",
+      cache_hit:
+        "current invocation must meet its reply budget and retained snapshot must pass cache/feed/session/CCT and remaining stale-output bounds; cache age is not RPC duration",
+      live_miss:
+        "actual RPC duration and current invocation must fit the existing initial reply budget",
     },
   );
 });

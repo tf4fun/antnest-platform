@@ -1,0 +1,275 @@
+# Bounded Identity resolution
+
+Gateway session revision 21 defines the positive Resolve cache for
+[#59](https://github.com/tf4fun/antnest-platform/issues/59). The machine-readable
+limits are in [resolve-cache-policy.json](resolve-cache-policy.json). Identity
+revision 16 and its existing `resolve-access-token` and
+`list-session-revocations` wire schemas remain unchanged. This shared batch
+precedes the owning-service implementation and explicit integration admission;
+it does not establish that caching is already delivered.
+
+## Scope and authority
+
+One Identity client owns one issuer's cache. The key is the SHA-256 digest of
+the exact opaque token, the server-selected CCT profile and the exact Agent
+scope, including an absent Agent. Validate the profile/Agent combination
+against the Identity contract before any lookup. `session` forbids an Agent.
+No browser field can select a profile or overwrite route-derived scope. Keys
+and values must not cross client/issuer boundaries. Cached entries retain no
+raw browser token.
+
+A value is the complete validated, active Principal, original unchanged CCT,
+private SID, browser session metadata and private resolution provenance.
+Inactive principals, authorization errors, transport failures and malformed
+responses are never positive entries. A successful snapshot is immutable;
+activity or a hit cannot patch its CCT or its deadlines.
+
+For positive TTL `T`, the reuse deadline is the earliest of:
+
+- The actual Resolve RPC start plus `T`.
+- Observed idle expiry.
+- Absolute session expiry.
+- The returned CCT's expiry.
+
+Equality is expired. RPC latency consumes this budget; receiving a slow
+successful reply does not move the start. Cache hits, waiter arrival, LRU
+movement and empty feed pages never extend it. Every hit and completed waiter
+rechecks deadlines, active state, the applicable invalidation generation and
+feed proof. After a deadline expires, a new live Resolve is required; an old
+positive is never used as fallback for a failed live call. Explicit activity
+on another replica may produce a newer idle observation through that live
+call, but cannot revive an expired credential.
+
+Authoritative `unauthenticated` or `inactive_principal` errors, and complete
+successful responses with `Active: false`, evict that token's cached authority
+across every profile/Agent scope and invalidate its in-flight results. This
+includes background refresh; simply declining to cache an inactive reply would
+leave old active authority reusable. These denials are not negatively cached.
+Revocation also invalidates
+work already in flight: a result begun before the invalidation cannot refill
+the cache or escape to a late waiter as old authority. A conservative process
+generation barrier is permitted when an in-flight result's SID is not known.
+Any bounded retry remains within the caller and shared-work deadlines.
+
+Cache lookup is an admission point, not a distributed transaction with an
+upstream business effect. Already admitted Runs keep their documented lifetime;
+revoking a browser session does not cancel a durable Run.
+
+## Configuration and resource ownership
+
+| Setting                           | Default | Accepted values                                                              |
+| --------------------------------- | ------- | ---------------------------------------------------------------------------- |
+| `ANTNEST_EDGE_RESOLVE_CACHE_TTL`  | `10s`   | Go duration from zero through `30s`; negative or larger values fail startup. |
+| `ANTNEST_EDGE_RESOLVE_CACHE_SIZE` | `50000` | Integer from 1 through 50000; entry ceiling, also constrained by bytes.      |
+
+TTL zero preserves direct Resolve behavior. It disables positive entries,
+coalescing, background refresh, and the new shared-work capacity/deadline rules.
+The existing session stream poller and live bounds still operate.
+
+Enabled caching has a 64 MiB accounting budget, a 16 KiB per-entry ceiling and
+an LRU entry ceiling. Charge all retained strings, including the CCT, SID,
+profile/Agent key and display metadata, plus a conservative 1024-byte structure
+charge for each entry and its indexes. Do not size entries by public JSON,
+which omits private fields. LRU pressure evicts entries. An otherwise valid
+live response above the per-entry ceiling is returned without caching; the
+existing 2 MiB Identity response ceiling is not reduced. These limits bound
+accounted retained data, not process RSS, transport buffers or allocator peaks.
+
+At most 32 distinct scope resolutions may run concurrently, with 128 waiters
+per scope and 1024 waiters in total. Enabled cache misses share work only for
+one exact key and invalidation generation. Work-capacity exhaustion returns
+`503 identity_unavailable`, preserving cookies; it must not fall back to an
+unbounded direct RPC. Shared RPC lifetime is at most the minimum of five
+seconds, configured request timeout and `T`, including reading and validating
+the response. A caller may have a smaller independent deadline.
+
+Shared work has a process-owned context. Cancelling its first waiter cannot
+poison other waiters; when its last waiter or explicit background owner leaves,
+its RPC is cancelled. After half the TTL, a still-valid hit may start a shared
+background refresh. Attempts for that entry are separated by at least half the
+TTL, including after failure. Refresh uses the same flight limits; if capacity
+is full, serve the valid hit without launching work. Refresh failure never
+extends the old entry or becomes a new entry. Authoritative denial invalidates
+it immediately.
+
+Constructors start no goroutines. Main owns the feed and cache work lifecycle:
+stop new work, cancel and join flights/poller, then close transports and
+telemetry. `CloseIdleConnections` alone is not cancellation of active RPCs.
+Shutdown must not wait for the normal five-second RPC budget when its own
+budget is shorter.
+
+## Revocation and caught-up proof
+
+Reuse the private session feed from
+[browser-sessions.md](../identity/browser-sessions.md). Do not introduce a
+`list-access-revocations` alias or change the Controller offboarding feed.
+One process-owned poller fans each validated event to the SID stream registry
+and cache. Invalidation is by private SID across every profile/Agent entry.
+The events already cover logout, password changes, role changes, User and
+Membership deactivation/deletion, and OIDC unbinding's session revocations.
+There is no implemented Organization-disable command to claim as new coverage.
+
+The current producer locks the writer before allocating a sequence and holds
+that lock until transaction completion. Reads are a fresh single-statement
+snapshot on the authoritative store. The proof therefore covers committed
+history visible at that query, not future commits or an uncommitted writer.
+Replica reads or feed retention require a separately specified consistency
+protocol; no watermark, epoch or retention migration is introduced here.
+
+Poll every second, at most four pages per turn, 500 events per page and five
+seconds per RPC. Start with cursor zero and no fresh proof. Only a validated
+short page, after **all** its events have been applied to both consumers, proves
+catch-up. Its age anchors to that page's RPC start, not response completion or
+application completion. A short fourth page is eligible. Four full pages,
+failed/cancelled calls, malformed pages or unfinished event application do not
+refresh proof. Sequence gaps are legal; an empty page preserves the cursor.
+
+Cache reuse requires proof younger than `T`. If proof is absent or stale,
+bypass stored entries and require a successful live Resolve, with the enabled
+work bounds still in force. A stale proof never extends a snapshot; a fresh
+proof never refreshes one. The independent live stream output bound remains
+in force even when polling fails. Following an Identity database restore,
+restart every Gateway to clear entries, reset the cursor and catch up from
+zero; a process holding a pre-restore cursor must not resume using it.
+
+Successful local Gateway mutations evict before returning their response:
+logout evicts the exact token hash across scopes; password change and self
+session revocation evict the trusted User; unbinding evicts the trusted User
+across Organizations even when `current_revoked` is false. Activity evicts the
+current SID's old observations, without modifying old CCTs. Identity and other
+replica mutations remain covered by the feed and absolute snapshot-age bound.
+Eviction is not itself denial of another still-valid session: the next live
+Resolve determines that session's authority.
+
+## Streams and timing provenance
+
+Private `resolve_started_at`, `resolve_completed_at`, `valid_until` and
+`cache_hit` distinguish actual RPC work from a reused snapshot. They never
+appear in browser JSON or headers. Keep the current probe's start separately:
+
+- Real Resolve start anchors snapshot age and the independent stream bound `R`
+  (30 seconds by default), including the existing socket-close grace.
+- Real Resolve completion minus start measures RPC duration.
+- Probe start bounds this invocation's waiting time and schedules its next
+  check. A cache hit cannot reset the first timestamp to the third.
+
+A live miss retains the existing initial RPC and invocation reply budgets of
+`min(R / 3, activity_interval_ms)`. A cache-hit stream admission may reuse a
+snapshot older than that polling interval if it is still within every
+cache/feed/session/CCT deadline and `real Resolve start + R - close grace`.
+The current invocation must still fit its reply budget. Snapshot age is not
+RPC duration. Do not reject a valid hit merely by treating its age as network
+latency, or repeatedly schedule immediate probes from the old authority start.
+
+Every stream remains bound to its original SID, identities and roles.
+Background checks and per-message admission use the same scoped resolver but
+cannot extend authority through hits. Silent output still stops within `R`;
+absolute session expiry and the original direct WebSocket handshake CCT are
+hard caps. Reconnection is required when that original CCT expires. An idle
+observation still schedules a fresh lookup/live resolution because genuine
+activity may have extended the session elsewhere. Polling availability cannot
+relax these rules.
+
+## Organization display
+
+Gateway caches the complete Principal, including display name and slug, for
+at most `T` from real Resolve start. There is no independent metadata cache in
+Node. Empty feed pages, requests and stream traffic do not renew that snapshot.
+After expiry, the next real bootstrap/session/SSR read must resolve Identity
+again. A browser observes the updated name after that read and its request
+latency; no promise is made that already rendered text changes by itself
+within `T`. IDs, roles, drafts, Agent sessions and authorization scope retain
+their existing semantics. The browser still receives `Cache-Control: no-store`.
+
+## Diagnostics and delivery evidence
+
+Record actual Resolve RPC duration/outcome separately from cache lookup
+outcome, so hit ratio is measurable without counting a hit as a network call.
+Expose bounded cache occupancy and caught-up proof age/availability. Use only
+fixed outcome/profile labels. Tokens, token hashes, private SIDs, CCTs and
+cache keys must not become metric labels or diagnostic log fields. A proof-age
+measurement is not proof of zero replication or event lag.
+
+Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
+under the current HTTP or ACP-message root, ending before any resulting upstream
+admission. Its `antnest.identity.resolve.` attributes include `source` from
+`rpc | cache | shared`, the server-owned `profile`, and `outcome` from
+`admitted | rejected | unavailable`. An admitted cache hit also records numeric
+`snapshot_age_ms`, `proof_age_ms` and positive `valid_for_ms`; ages must fit the
+configured policy. Preserve real RPC parentage rather than wrapping its CLIENT
+span under this new marker. A shared waiter keeps its own request ancestry and
+links its decision to the exact actual RPC CLIENT span through a SpanLink.
+Archive that source Trace and validate both complete parent chains; the
+waiter's own Trace does not pretend to contain the source SQL.
+
+A half-TTL background refresh is process-owned work with its own root and a
+link to the triggering request-admission decision. It must not extend a
+finished request root or invent a current HTTP/ACP request. If a request later
+joins that flight, its request-admission marker links to the background RPC's
+actual CLIENT span. The source Trace is validated from its process-owned root;
+the waiter's Trace still requires its actual Gateway request root. Background
+refresh outcome/duration remains separately observable without counting it as
+a request-admission decision.
+
+Trace consumers first require complete synchronous parentage and the actual
+Gateway root. A cache marker must belong to that root, use the expected profile,
+end before upstream admission, and have valid budgets. Only then may it replace
+the Resolve-specific Identity SQL expectation. The rpc branch still requires
+CLIENT → Identity SERVER → SQL, and a shared branch requires its real source.
+Missing/unknown markers, missing parents, wrong profiles and expired budgets
+reject. Login, OIDC, password mutations, Controller owner authorization, ACP
+persistence and Runtime evidence keep their original requirements.
+
+Update the shared trace consumer expectations in a separate consumer batch,
+retaining strict missing-parent diagnostics such as #247. A legitimate cached
+request has no new Identity SQL span; no fabricated span or broad SQL exemption
+is acceptable.
+
+Delivery order:
+
+1. Shared policy, schemas already supplied by Identity, admission assertions
+   and explicit consumer work. No owning-service implementation in this batch.
+2. Identity documentation and PostgreSQL proof: from a nonzero cursor, read a
+   terminal page while another writer is uncommitted, then commit/rollback and
+   continue from that cursor without skipping events. Existing ordering tests
+   remain; no production Identity schema change is planned.
+3. Gateway config/cache/stream/poller/lifecycle and diagnostics, unit/contract/
+   component gates, real owning-service Docker admission and independent review.
+4. Consumer compatibility and trace/display fixture changes, each with its
+   own checks. A Gateway producer alone is not complete delivery.
+5. Explicit real HTTPS integration, then full required repository/CI admission.
+
+Tests must exercise scope and issuer isolation, exact deadline equality, slow
+responses, uncached inactive/error/malformed/oversized responses, byte/LRU/work
+limits, waiter cancellation, shutdown, revocation versus in-flight completion
+and late waiter arrival, and retry spacing after failed refresh. Fake-clock
+feed tests include slow terminal pages, blocked application, a short fourth
+page and four full pages. Check both real and cached initial stream admission
+without authority renewal or timer spin.
+
+For the five-second Identity outage, first warm the **exact** token/profile/
+Agent scopes on established WSS/SSE connections with sufficient remaining
+cache, idle, absolute, CCT and JWKS budgets. Require real new model output,
+an actual cancel, and terminal/quiescent Run evidence while Identity is down.
+Cold tokens, profiles and Agents, new login, and exhausted deadlines fail;
+cookies and upstream rejection boundaries remain intact. This does not claim
+new/unknown-key handshakes or expired JWKS work during the outage. After
+recovery, real logout/password/role/deactivation operations must reach HTTP
+rejection and remote stream closure within the declared respective bounds.
+Local socket cleanup cannot satisfy remote-closure evidence.
+
+The load check sends 100 actual ACP `session/list` exchanges for one exact
+scope in at most eight seconds, including the handshake in the measurement.
+Each response must complete. At default TTL, at most **three actual Resolve
+RPC attempts** may occur, including handshake and background refresh. Count
+Gateway CLIENT attempts and Identity SERVER calls independently from raw
+trace/fixture evidence; feed, activity and JWKS calls are separate. Record
+message count, elapsed time, settings and counter deltas rather than inferring
+network calls from a cache-hit metric.
+
+For names, warm session/bootstrap/SSR separately, commit a rename, continue
+healthy empty-page polling and issue real repeated reads through the expiry.
+Prove hits and feed proof do not extend the old snapshot; preserve IDs, roles,
+cookies, drafts and the other Organization. Archive failure and success
+evidence under `artifacts/verification/issue-59/`, outside `.cache`, and verify
+owned-resource cleanup. Existing #246/#247 evidence limits remain explicit.

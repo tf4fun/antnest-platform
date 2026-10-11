@@ -6,11 +6,18 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+Revision 21 defines [bounded Identity resolution](resolve-cache.md) and its
+[machine-readable policy](resolve-cache-policy.json): scoped positive caching,
+private session-feed invalidation, resource limits and unchanged hard stream
+boundaries. The shared batch precedes Gateway implementation, trace/display
+consumers and real HTTPS outage/load admission. It does not enable caching on
+its own or add an Identity RPC.
+
 Revision 20 adds the three self binding/notice routes defined by
 [OIDC account linking](../identity/oidc-linking.md), with closed browser schemas,
 the Identity-only session CCT profile, shared Origin/CSRF admission and no Cookie
-mutation. Identity, Gateway, browser consumers and HTTPS integration have separate
-pending #61 batches; these declarations do not activate the routes.
+mutation. Identity, Gateway, browser consumers and the explicit HTTPS integration
+were admitted in separate #61 batches.
 
 [Public entry](public-entry.md) defines native TLS, HTTPS proxy trust, public
 Origin, client addresses, forwarding headers, HSTS and certificate rotation.
@@ -137,10 +144,12 @@ for the Gateway side of the Controller/ACP split.
 
 After upgrade, Edge terminates both WebSocket hops and relays opaque complete
 messages using the Gorilla WebSocket library. The upgrade requires a
-same-origin request. Before each client data message is forwarded, Identity
-resolves the original cookie token again; its active User, Organization and
-Membership must match upgrade admission. Revoked, expired or mismatched
-identity closes both hops with 1008. An unavailable Identity closes with 1013
+same-origin request. Before each client data message is forwarded, Gateway
+resolves the original cookie token under the exact CCT scope, using a still-valid
+positive snapshot only under revision 21's bounded policy. Its active User,
+Organization and Membership must match upgrade admission. Revoked, expired or
+mismatched identity closes both hops with 1008. When neither a bounded positive
+snapshot nor a successful live Resolve is available, the relay closes with 1013
 and never forwards the waiting message. No cookie is changed after upgrade;
 reconnect uses normal HTTP authentication.
 
