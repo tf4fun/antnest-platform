@@ -5,6 +5,12 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { assertWcagPage } from "./accessibility.mjs";
+import {
+  installRevocationObserver,
+  readRevocationObservation,
+  assertRevocationStoppedRequests,
+  assertOnlyPendingActivity,
+} from "./revocation-observer.mjs";
 
 const path = "/api/session/external-identities";
 const principal = {
@@ -78,6 +84,23 @@ const secondNotice = {
   subject: "second notice",
 };
 
+async function waitForGate(promise, label) {
+  let timer;
+  try {
+    await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timed out: ${label}`)),
+          5000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function verifyExternalIdentitiesBrowser({
   base,
   output,
@@ -110,6 +133,12 @@ export async function verifyExternalIdentitiesBrowser({
         writes: [],
         keys: new Set(),
         privateAfterRevocation: [],
+        revocationCommitted: Promise.withResolvers(),
+        revocationReply: Promise.withResolvers(),
+        overlappingActivity: Promise.withResolvers(),
+        activityReply: Promise.withResolvers(),
+        activityCancelled: Promise.withResolvers(),
+        heldActivity: undefined,
       };
       const unexpected = [],
         errors = [];
@@ -119,6 +148,10 @@ export async function verifyExternalIdentitiesBrowser({
         activity_interval_ms: 1666,
       };
       try {
+        await installRevocationObserver(
+          context,
+          path + "/" + currentBinding.id,
+        );
         await context.addCookies([
           {
             name: "antnest_csrf",
@@ -141,7 +174,7 @@ export async function verifyExternalIdentitiesBrowser({
             });
           if (!url.pathname.startsWith("/api/session")) {
             if (!state.live && url.pathname.startsWith("/api/"))
-              state.privateAfterRevocation.push(url.pathname);
+              state.privateAfterRevocation.push(request);
             return route.continue({
               headers: headersForRequest(
                 { ...request.headers(), ...hints },
@@ -157,7 +190,18 @@ export async function verifyExternalIdentitiesBrowser({
               headers: { "cache-control": "no-store" },
             });
           if (!state.live) {
-            state.privateAfterRevocation.push(url.pathname);
+            state.privateAfterRevocation.push(request);
+            if (
+              url.pathname === "/api/session/activity" &&
+              request.method() === "POST"
+            ) {
+              state.heldActivity = request;
+              state.overlappingActivity.resolve();
+              // Keep the 401 pending until the successful unbind has been
+              // consumed, so a racing 401 cannot hide that result's handling.
+              await state.activityReply.promise;
+              if (request.failure()) return;
+            }
             return reply(
               { code: "unauthenticated", message: "Session ended" },
               401,
@@ -307,6 +351,8 @@ export async function verifyExternalIdentitiesBrowser({
                 409,
               );
             state.live = false;
+            state.revocationCommitted.resolve();
+            await state.revocationReply.promise;
             return reply({ revoked_count: 2, current_revoked: true });
           }
           unexpected.push(`${request.method()} ${url.pathname}`);
@@ -315,6 +361,9 @@ export async function verifyExternalIdentitiesBrowser({
         const page = await context.newPage();
         page.setDefaultTimeout(10_000);
         page.on("pageerror", (error) => errors.push(error.message));
+        page.on("requestfailed", (request) => {
+          if (request === state.heldActivity) state.activityCancelled.resolve();
+        });
         page.on("dialog", async (dialog) => {
           errors.push("Unexpected script dialog");
           await dialog.dismiss();
@@ -486,13 +535,32 @@ export async function verifyExternalIdentitiesBrowser({
           fullPage: true,
         });
         await lockout.click();
+        await waitForGate(state.revocationCommitted.promise, "unbind commit");
+        // A genuine input while the reply is held must remain observable as
+        // activity; the browser does not yet know its session was revoked.
+        await page.mouse.move(5, 5);
+        await waitForGate(
+          state.overlappingActivity.promise,
+          "overlapping input activity",
+        );
+        const pendingActivity = state.heldActivity;
+        state.revocationReply.resolve();
         await page
           .getByRole("heading", { name: "Sign in", exact: true })
           .waitFor();
-        assert.deepEqual(
+        await waitForGate(
+          state.activityCancelled.promise,
+          "old activity cancellation",
+        );
+        state.activityReply.resolve();
+        const revocationObservation = await readRevocationObservation(page);
+        // The browser snapshot proves consumption order. The route-side
+        // collection also covers dispatch between that snapshot and closure.
+        await context.close();
+        assertRevocationStoppedRequests(revocationObservation);
+        assertOnlyPendingActivity(
           state.privateAfterRevocation,
-          [],
-          "Committed current revocation cannot reread or logout",
+          pendingActivity,
         );
         assert.deepEqual(errors, []);
         assert.deepEqual(unexpected, []);
@@ -500,12 +568,17 @@ export async function verifyExternalIdentitiesBrowser({
           viewport: label,
           inventory_requests: state.reads,
           mutations: state.writes,
-          current_revoked_extra_private_requests:
+          revocation_observation: revocationObservation,
+          pending_revocation_activity_requests:
             state.privateAfterRevocation.length,
+          pending_activity_cancelled: Boolean(pendingActivity.failure()),
+          current_revoked_extra_private_requests: 0,
           browser_errors: errors,
           unexpected_requests: unexpected,
         });
       } finally {
+        state.revocationReply.resolve();
+        state.activityReply.resolve();
         await context.close();
       }
       signal?.throwIfAborted();

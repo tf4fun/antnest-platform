@@ -217,6 +217,14 @@ pagination, exact notice acknowledgment, failure retention, plaintext subjects,
 lockout confirmation and current-session retirement. This owning-service gate
 does not substitute for real Identity transactions and two-browser HTTPS
 integration.
+The retirement fixture holds the unbind response while genuine input produces
+an activity request. It verifies cancellation of that pending request and no
+private fetch after the client consumes `current_revoked`; server commit alone
+does not mean the browser has received the result. A separate browser probe
+verifies that activity, session reads, inventory, logout and Workspace reads after consumption
+all fail the assertion, including across navigation.
+Network requests remain counted until the browser context closes; only the
+specific activity request proven to precede the held response is excluded.
 
 ## Documentation
 
