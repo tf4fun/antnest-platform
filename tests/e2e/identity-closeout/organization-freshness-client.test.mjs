@@ -53,6 +53,42 @@ test("membership rejection observes bounded 200-to-401 convergence with real req
   assert.equal(saved.length, 3);
 });
 
+test("membership content failure preserves its actual response and trace before validation", async () => {
+  const saved = [];
+  const body = { principal: { userId: "synthetic-member" }, agents: [] };
+  const failure = new Error("membership bootstrap content failed");
+  let calls = 0;
+  await assert.rejects(
+    observeDisplayRejection({
+      committedMS: 100,
+      ttlMS: 1000,
+      now: () => 110,
+      wait: async () => {},
+      request: async () => ({
+        status: ++calls === 1 ? 200 : 401,
+        traceID: calls.toString(16).padStart(32, "0"),
+        body,
+      }),
+      record: (item, response) => saved.push({ item, response }),
+      validate: async (response, item) => {
+        assert.equal(saved.length, 1);
+        assert.equal(saved[0].item, item);
+        assert.equal(saved[0].response, response);
+        assert.equal(response.body, body);
+        throw failure;
+      },
+    }),
+    (error) => error === failure,
+  );
+  assert.equal(calls, 1, "content failure must not retry the request");
+  assert.deepEqual(saved[0].item, {
+    startedMS: 110,
+    completedMS: 110,
+    status: 200,
+    traceID: "00000000000000000000000000000001",
+  });
+});
+
 test("membership rejection fails on continued admission after TTL or an unrelated HTTP failure", async () => {
   for (const status of [200, 503]) {
     let clock = 0;

@@ -152,7 +152,12 @@ Unexpected browser 5xx responses retain their actual response Trace IDs. Before
 teardown, the runner attempts to archive the last four failed request closures
 as diagnostics while retaining the original business failure. A failed Refresh
 response body is scanned for fixture secrets before private retention. The
-optional private diagnostic log also includes Agent UI, Controller and ACP;
+membership rejection loop also saves each completed read's timing/status/Trace
+and the last secret-checked JSON response before validating its content. A
+failed content assertion therefore retains its actual 200 response and Trace
+closure without retrying the request or changing the admission verdict. JSON
+decoding or credential-scan failures still reject before body retention.
+The optional private diagnostic log also includes Agent UI, Controller and ACP;
 these diagnostic records never establish admission or replace a passing run.
 
 The shared Stage 3a overlay also accepts `ANTNEST_E2E_CONSOLE_IMAGE`,

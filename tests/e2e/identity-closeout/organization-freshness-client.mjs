@@ -55,6 +55,7 @@ export async function observeDisplayRejection({
   now = () => performance.now(),
   wait = delay,
   record = () => {},
+  validate = () => {},
 }) {
   assert(
     Number.isFinite(committedMS) &&
@@ -74,13 +75,14 @@ export async function observeDisplayRejection({
       traceID: response.traceID,
     };
     observations.push(item);
-    record(item);
+    record(item, response);
     assert.match(item.traceID ?? "", /^[a-f0-9]{32}$/u);
     assert(item.completedMS >= startedMS);
     assert(
       [200, 401].includes(item.status),
       "unexpected membership rejection response",
     );
+    await validate(response, item);
     if (item.status === 401) return observations;
     assert(
       startedMS < committedMS + ttlMS,

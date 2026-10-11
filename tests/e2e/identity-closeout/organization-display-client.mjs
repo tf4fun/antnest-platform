@@ -61,6 +61,7 @@ const browserRequests = [];
 let browser,
   original,
   freshnessEvidence,
+  failedMembershipRead,
   renamed = false,
   step = "ownership",
   bootstraps = 0,
@@ -672,10 +673,12 @@ try {
   // This token has not warmed a workspace scope, so it must fail immediately.
   await fresh.request("/api/app/workspace/v1/bootstrap", { status: 401 });
   const revocationReads = [];
+  let membershipRead;
   await observeDisplayRejection({
     committedMS: deactivatedMS,
     ttlMS: freshnessEvidence.timeline.ttl_ms,
-    record: (item) => {
+    record: (item, response) => {
+      membershipRead = item;
       revocationReads.push(item);
       writeEvidenceFile(
         process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
@@ -686,8 +689,16 @@ try {
           reads: revocationReads,
         }),
       );
+      // Keep the actual last response before content assertions can fail.
+      // writeEvidenceFile restricts this secret-checked evidence to mode 0600.
+      writeEvidenceFile(
+        process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+        "organization-membership-response.private.json",
+        JSON.stringify({ ...item, body: response.body }),
+      );
     },
     request: async () => {
+      membershipRead = undefined;
       const response = await gatewayBrowserRequest(
         oidcContext,
         gateway + "/api/app/workspace/v1/bootstrap",
@@ -695,19 +706,25 @@ try {
       );
       const body = await response.json();
       assertSecretFree(JSON.stringify(body), secrets);
-      if (response.status() === 200)
+      return {
+        status: response.status(),
+        traceID: response.headers()["x-antnest-trace-id"],
+        body,
+      };
+    },
+    validate: (response) => {
+      if (response.status === 200)
         assertWorkspaceBootstrap(
-          body,
+          response.body,
           oidcPrincipal,
           changed,
           [agentA],
           secrets,
         );
-      return {
-        status: response.status(),
-        traceID: response.headers()["x-antnest-trace-id"],
-      };
     },
+  }).catch((error) => {
+    failedMembershipRead = membershipRead;
+    throw error;
   });
   await bootstrap(other, b, foreign, [agentB]);
   await admin.request(`/api/admin/directory/memberships/${a.membership_id}`, {
@@ -725,11 +742,11 @@ try {
 } catch (error) {
   // Diagnostic collection cannot admit this run or replace its original error.
   // Keep the failed request and its actual Resolve closure before stack teardown.
-  const failedRequests = browserRequests
-    .filter(
-      (request) =>
-        request.status >= 500 && /^[a-f0-9]{32}$/u.test(request.traceID ?? ""),
-    )
+  const failedRequests = [
+    ...browserRequests.filter((request) => request.status >= 500),
+    ...(failedMembershipRead ? [failedMembershipRead] : []),
+  ]
+    .filter((request) => /^[a-f0-9]{32}$/u.test(request.traceID ?? ""))
     .slice(-4);
   if (failedRequests.length) {
     let diagnostics;
