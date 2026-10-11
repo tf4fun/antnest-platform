@@ -18,15 +18,17 @@ type resolveFlight struct {
 	background  bool
 	completed   bool
 	invalidated bool
-	principal   Principal
-	err         error
-	rpcSpan     trace.SpanContext
-	triggerSpan trace.SpanContext
+	// Activity retires reuse without revoking already-attached live readers.
+	activityObsolete bool
+	principal        Principal
+	err              error
+	rpcSpan          trace.SpanContext
+	triggerSpan      trace.SpanContext
 }
 
 func (cache *resolveCache) joinable(key resolveKey) *resolveFlight {
 	flight := cache.flights[key]
-	if flight == nil || flight.completed || flight.invalidated || flight.epoch != cache.epoch || flight.ctx.Err() != nil {
+	if flight == nil || flight.completed || flight.invalidated || flight.activityObsolete || flight.epoch != cache.epoch || flight.ctx.Err() != nil {
 		return nil
 	}
 	return flight
@@ -86,7 +88,7 @@ func (client *Client) runResolve(flight *resolveFlight, token string) {
 		principal.ResolveValidUntil = earliestTime(principal.ResolveValidUntil, principal.ResolveStartedAt.Add(cache.config.TTL))
 		if cache.closed || flight.invalidated || flight.epoch != cache.epoch || !principal.ResolveValidUntil.After(time.Now()) {
 			principal, err = Principal{}, resolveUnavailable()
-		} else {
+		} else if !flight.activityObsolete {
 			cache.store(flight.key, principal)
 		}
 	}

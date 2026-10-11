@@ -91,6 +91,9 @@ and bypasses cached authority until the feed proves catch-up. Scope includes
 the exact token hash, server-owned audience profile and Agent. TTL zero restores
 direct resolution. See the [cache contract](../../contracts/edge-gateway/resolve-cache.md)
 and [operations guide](docs/operations.md) for capacity, outages and diagnostics.
+Successful activity retires old cache observations while preserving already
+attached live readers within their original deadlines and security checks.
+Subsequent reads resolve again; obsolete results cannot refill the cache.
 
 Self inventory includes the User's bindings across organizations and independently
 paginated immutable notices. Unbind and notice acknowledgment enforce the same

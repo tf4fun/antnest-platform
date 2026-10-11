@@ -52,13 +52,24 @@ func (client *Client) invalidateActivity(sid string) {
 	if cache := client.cache; cache != nil {
 		cache.mu.Lock()
 		defer cache.mu.Unlock()
+		// SID evidence may survive only in retained work after the first
+		// activity has evicted entries. Collect it before removing anything;
+		// the temporary set is bounded by existing entries and work slots.
+		tokens := make(map[[sha256.Size]byte]struct{})
 		for key := range cache.bySID[sid] {
-			cache.invalidateToken(key.token)
+			tokens[key.token] = struct{}{}
+			cache.removeEntry(cache.entries[key])
 		}
 		for flight := range cache.retained {
 			if flight.knownSID == sid || flight.completed && flight.principal.SessionID == sid {
-				flight.invalidated = true
-				flight.cancel()
+				tokens[flight.key.token] = struct{}{}
+			}
+		}
+		for flight := range cache.retained {
+			if _, known := tokens[flight.key.token]; known {
+				// Existing readers keep their original authority and deadlines.
+				// Later readers start new work; old results cannot refill cache.
+				flight.activityObsolete = true
 			}
 		}
 		// Activity must not advance the global generation: ordinary activity

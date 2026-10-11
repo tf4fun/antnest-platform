@@ -241,8 +241,13 @@ new cache/shared-work budgets. Restart with the chosen TTL to switch modes.
 The shared RPC timeout is `min(5s, request timeout, TTL)`. At half TTL, valid hits
 may initiate bounded refresh. Failures do not extend the old snapshot, and
 attempts for that entry remain spaced by at least half TTL. Revocation and
-validated local mutations evict/fence old authority before later delivery.
-Activity discards old observations; it does not edit the signed CCT in place.
+validated local security mutations evict/fence old authority before later delivery.
+Validated activity evicts same-session entries and prevents identified old work
+from accepting new readers or refilling the cache. Readers already attached may
+finish with their original live result, subject to the original deadlines and
+final revocation/cancellation checks. No CCT or deadline is edited, and there is
+no automatic retry. Old and new generations both count against capacity; an old
+authoritative denial still invalidates newer work and every cached token scope.
 
 A short Identity outage can preserve admission only for a prewarmed exact scope
 whose snapshot, proof, session, stale-output and existing connection CCT budgets

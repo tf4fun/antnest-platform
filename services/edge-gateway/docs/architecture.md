@@ -121,11 +121,18 @@ including denial from background refresh.
 
 Validated local logout evicts the token. Password changes, self revocation and
 OIDC unbinding evict the trusted User across organizations, even when the current
-session survives. Activity evicts the trusted SID's old observations without
-patching cached CCT/deadline fields or fencing unrelated users' work. A truly
-cold in-flight response whose SID was not yet known can only deliver its still
-valid conservative old idle observation, clipped to every original deadline.
-Each subsequent expired observation requires another Resolve.
+session survives. A validated activity response evicts the trusted SID's cached
+observations. Retained work identified by entries or known/completed SID evidence
+for the same token becomes obsolete for joining and cache refill. Its existing
+readers may still receive the live response within its original deadlines and
+final security checks; activity neither cancels their RPC nor patches its CCT or
+Principal. Later readers start a new generation, which old completion cannot
+remove or overwrite. Old authoritative denial still fences every token scope.
+All generations retain their work/waiter charges through cleanup and delivery;
+there is no retry or capacity exemption. Unrelated users' work is unchanged.
+A truly cold response whose SID remains unknown may deliver its still-valid
+conservative old idle observation, clipped to every original deadline. Each
+subsequent expired observation requires another Resolve.
 
 ## OIDC Browser Transaction
 

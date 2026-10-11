@@ -64,7 +64,7 @@ func TestResolveCacheLocalMutationsEvictBeforeReturning(t *testing.T) {
 	}
 }
 
-func TestResolveCacheActivityFencesKnownSIDWithoutInvalidatingOtherUsers(t *testing.T) {
+func TestResolveCacheActivityPreservesKnownSIDReadersAndOtherUsers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		gate := make(chan struct{})
 		var releaseOnce sync.Once
@@ -104,14 +104,17 @@ func TestResolveCacheActivityFencesKnownSIDWithoutInvalidatingOtherUsers(t *test
 			t.Fatal(err)
 		}
 		releaseOnce.Do(func() { close(gate) })
-		if result := <-alice; result.err == nil || result.principal.Active {
-			t.Error("activity allowed a known-SID old observation to refill or escape")
+		if result := <-alice; result.err != nil || !result.principal.Active || result.principal.ResolveCacheHit || !result.principal.IdleExpiresAt.Equal(authority.IdleExpiresAt) {
+			t.Errorf("activity cancelled or renewed a still-valid known-SID live reader: %v", result.err)
 		}
 		if result := <-bob; result.err != nil || !result.principal.Active {
 			t.Errorf("activity invalidated an unrelated user's in-flight result: %v", result.err)
 		}
 		if result, err := client.Resolve(context.Background(), "bob"); err != nil || !result.ResolveCacheHit {
 			t.Errorf("activity discarded an unrelated user entry: %v", err)
+		}
+		if result, err := client.Resolve(WithResolution(context.Background(), "console", ""), "alice"); err != nil || result.ResolveCacheHit {
+			t.Errorf("obsolete activity result was cached: %v", err)
 		}
 	})
 }
