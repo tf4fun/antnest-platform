@@ -1,14 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { inspect } from "node:util";
 import { exerciseLocalAdminLogin } from "./exercise-local-admin-login.mjs";
 
 function fakeClient({
   mutateSession,
+  mutateMetadata,
   keepToken = false,
   secureCookies = true,
   cookiePrefix = secureCookies ? "__Host-" : "",
+  logoutStatus = 204,
+  logoutCode = "unauthenticated",
 } = {}) {
-  const principal = { active: true, system_role: "admin", user_id: "user" };
+  const principal = {
+    active: true,
+    system_role: "admin",
+    user_id: "user",
+    organization_id: "org",
+    organization_slug: "stage3",
+    organization_name: "Stage 3",
+    membership_id: "membership",
+    organization_role: "admin",
+  };
+  const metadata = {
+    expires_at: new Date(Date.now() + 60000).toISOString(),
+    idle_expires_at: new Date(Date.now() + 30000).toISOString(),
+    activity_interval_ms: 10000,
+  };
   const sessionName = `${cookiePrefix}antnest_session`;
   const csrfName = `${cookiePrefix}antnest_csrf`;
   return {
@@ -35,11 +53,10 @@ function fakeClient({
             `${name}=${this.cookies.get(name)}; Path=/; ${secureCookies ? "Secure; " : ""}SameSite=Lax${name === sessionName ? "; HttpOnly" : ""}`,
           );
         }
+        const body = { principal, ...metadata };
+        mutateMetadata?.(body, "login");
         return {
-          body: {
-            principal,
-            expires_at: new Date(Date.now() + 60000).toISOString(),
-          },
+          body,
           headers,
           traceID: "a".repeat(32),
         };
@@ -51,9 +68,22 @@ function fakeClient({
           "must revoke the original login",
         );
         assert.equal(this.cookies.get(csrfName), "original-csrf");
+        const accepted = Array.isArray(options.status)
+          ? options.status
+          : [options.status];
+        assert(
+          accepted.includes(logoutStatus),
+          `unexpected logout status ${logoutStatus}`,
+        );
         this.revoked = !keepToken;
         this.cookies.clear();
-        return { body: null, headers };
+        for (const name of [sessionName, csrfName])
+          headers.append("set-cookie", `${name}=; Path=/; Max-Age=0`);
+        return {
+          status: logoutStatus,
+          body: logoutStatus === 401 ? { code: logoutCode } : null,
+          headers,
+        };
       }
       if (options.status === 401) {
         assert(
@@ -70,7 +100,9 @@ function fakeClient({
         if (mutateSession === "clear") this.cookies.clear();
         headers.append("set-cookie", `${sessionName}=changed; Path=/`);
       }
-      return { body: { principal }, headers, traceID: "b".repeat(32) };
+      const body = { principal, ...metadata };
+      mutateMetadata?.(body, "session");
+      return { body, headers, traceID: "b".repeat(32) };
     },
   };
 }
@@ -147,4 +179,187 @@ test("trace failure still revokes the original session", async () => {
     /trace unavailable/u,
   );
   assert(client.revoked);
+});
+
+for (const stage of ["login", "session"])
+  for (const [name, mutate] of [
+    [
+      "missing idle deadline",
+      (body) => {
+        delete body.idle_expires_at;
+      },
+    ],
+    [
+      "invalid absolute deadline",
+      (body) => {
+        body.expires_at = "invalid";
+      },
+    ],
+    [
+      "expired idle deadline",
+      (body) => {
+        body.idle_expires_at = new Date(Date.now() - 1).toISOString();
+      },
+    ],
+    [
+      "idle beyond absolute",
+      (body) => {
+        body.idle_expires_at = new Date(
+          Date.parse(body.expires_at) + 1,
+        ).toISOString();
+      },
+    ],
+    [
+      "zero interval",
+      (body) => {
+        body.activity_interval_ms = 0;
+      },
+    ],
+    [
+      "oversized interval",
+      (body) => {
+        body.activity_interval_ms = 30001;
+      },
+    ],
+    [
+      "fractional interval",
+      (body) => {
+        body.activity_interval_ms = 1.5;
+      },
+    ],
+    [
+      "unexpected credential",
+      (body) => {
+        body.access_token = "must-not-be-public";
+      },
+    ],
+  ])
+    test(`${stage} admission rejects ${name} and revokes its original session`, async () => {
+      const client = fakeClient({
+        mutateMetadata(body, current) {
+          if (current === stage) mutate(body);
+        },
+      });
+      await assert.rejects(
+        exerciseLocalAdminLogin({
+          client,
+          settings: {},
+          jaeger: "http://jaeger",
+          collect: async () => ({}),
+        }),
+      );
+      assert(client.revoked);
+    });
+
+for (const field of ["expires_at", "idle_expires_at"])
+  test(`ordinary restoration cannot extend ${field}`, async () => {
+    const client = fakeClient({
+      mutateMetadata(body, stage) {
+        if (stage === "session")
+          body[field] = new Date(Date.parse(body[field]) + 1000).toISOString();
+      },
+    });
+    await assert.rejects(
+      exerciseLocalAdminLogin({
+        client,
+        settings: {},
+        jaeger: "http://jaeger",
+        collect: async () => ({}),
+      }),
+    );
+    assert(client.revoked);
+  });
+
+for (const value of [
+  "2099-01-01",
+  "2099-01-01T00:00:00",
+  "2099-02-31T00:00:00Z",
+])
+  test(`both responses must reject malformed date-time ${value}`, async () => {
+    const client = fakeClient({
+      mutateMetadata(body) {
+        body.expires_at = value;
+        body.idle_expires_at = value;
+      },
+    });
+    await assert.rejects(
+      exerciseLocalAdminLogin({
+        client,
+        settings: {},
+        jaeger: "http://jaeger",
+        collect: async () => ({}),
+      }),
+    );
+    assert(client.revoked);
+  });
+
+for (const field of ["access_token", "token_id"])
+  test(`matching principals cannot expose nested ${field}`, async () => {
+    const client = fakeClient({
+      mutateMetadata(body) {
+        body.principal[field] = "nested-credential-canary";
+      },
+    });
+    await assert.rejects(
+      exerciseLocalAdminLogin({
+        client,
+        settings: {},
+        jaeger: "http://jaeger",
+        collect: async () => ({}),
+      }),
+      (error) => {
+        assert(!String(error).includes("nested-credential-canary"));
+        return true;
+      },
+    );
+    assert(client.revoked);
+  });
+
+test("expiry during trace collection still requires explicit logout clearing and replay denial", async () => {
+  const client = fakeClient({ logoutStatus: 401 });
+  const result = await exerciseLocalAdminLogin({
+    client,
+    settings: {},
+    jaeger: "http://jaeger",
+    collect: async () => ({}),
+  });
+  assert(result.cleanup_revoked);
+  assert.equal(client.calls.filter((c) => c.method === "DELETE").length, 1);
+  assert.equal(client.calls.filter((c) => c.method === "GET").length, 2);
+  assert.equal(client.cookie, "");
+});
+
+for (const logoutStatus of [403, 503])
+  test(`logout ${logoutStatus} cannot report successful cleanup`, async () => {
+    const client = fakeClient({ logoutStatus });
+    await assert.rejects(
+      exerciseLocalAdminLogin({
+        client,
+        settings: {},
+        jaeger: "http://jaeger",
+        collect: async () => ({}),
+      }),
+      /unexpected logout status/u,
+    );
+  });
+
+test("unexpected expired-logout code never leaks through the exported helper", async () => {
+  const canary = "private-logout-code-canary";
+  const client = fakeClient({ logoutStatus: 401, logoutCode: canary });
+  await assert.rejects(
+    exerciseLocalAdminLogin({
+      client,
+      settings: {},
+      jaeger: "http://jaeger",
+      collect: async () => ({}),
+    }),
+    (error) => {
+      assert(
+        !inspect(error).includes(canary),
+        "logout failure retained a private response value",
+      );
+      return true;
+    },
+  );
+  assert.equal(client.cookie, "");
 });

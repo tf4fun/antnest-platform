@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { parseArgs, parseEnv } from "node:util";
 import {
   GatewayClient,
@@ -10,6 +11,76 @@ import { collectTrace } from "./collect.mjs";
 import { inspectLocalAdminLogin } from "./local-admin-login.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
+import { assertClearedSessionCookies } from "../identity-closeout/expiry.mjs";
+
+const requireAcp = createRequire(
+  new URL("../../../services/agent-acp-service/package.json", import.meta.url),
+);
+const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
+const schema = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../contracts/edge-gateway/session-response.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+const compiler = new Ajv2020({ strict: true });
+compiler.addFormat("date-time", {
+  type: "string",
+  validate(value) {
+    const parts =
+      /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/u.exec(
+        value,
+      );
+    if (!parts) return false;
+    const [year, month, day, hour, minute, second, offsetHour, offsetMinute] =
+      parts.slice(1).map((part) => Number(part ?? 0));
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return (
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= days[month - 1] &&
+      hour <= 23 &&
+      minute <= 59 &&
+      second <= 59 &&
+      offsetHour <= 23 &&
+      offsetMinute <= 59
+    );
+  },
+});
+const validSession = compiler.compile({
+  $schema: schema.$schema,
+  $defs: schema.$defs,
+  $ref: "#/$defs/session",
+});
+
+function assertSessionMetadata(body) {
+  assert(
+    validSession(body),
+    "response violates the public browser session schema",
+  );
+  const absolute = Date.parse(body.expires_at);
+  const idle = Date.parse(body.idle_expires_at);
+  assert(
+    typeof body.expires_at === "string" &&
+      typeof body.idle_expires_at === "string" &&
+      Number.isFinite(absolute) &&
+      Number.isFinite(idle) &&
+      idle > Date.now() &&
+      idle <= absolute,
+    "session deadlines must be live and bounded by the absolute expiry",
+  );
+  assert(
+    Number.isInteger(body.activity_interval_ms) &&
+      body.activity_interval_ms >= 1 &&
+      body.activity_interval_ms <= 30000,
+    "invalid browser activity interval",
+  );
+}
 
 export async function exerciseLocalAdminLogin({
   client,
@@ -30,16 +101,12 @@ export async function exerciseLocalAdminLogin({
       },
     });
     originalCookies = new Map(client.cookies);
-    assert.deepEqual(Object.keys(login.body).sort(), [
-      "expires_at",
-      "principal",
-    ]);
+    assertSessionMetadata(login.body);
     assert(
       login.body.principal.active &&
         login.body.principal.system_role === "admin",
       "active system admin required",
     );
-    assert(Date.parse(login.body.expires_at) > Date.now(), "session expired");
     assertNoStore(login.headers);
     const cookies = login.headers.getSetCookie();
     assert.equal(cookies.length, 2);
@@ -62,7 +129,16 @@ export async function exerciseLocalAdminLogin({
     const restored = await client.request("/api/session", {
       headers: { "X-Antnest-CSRF-Token": "" },
     });
-    assert.deepEqual(Object.keys(restored.body), ["principal"]);
+    assertSessionMetadata(restored.body);
+    for (const field of [
+      "expires_at",
+      "idle_expires_at",
+      "activity_interval_ms",
+    ])
+      assert(
+        restored.body[field] === login.body[field],
+        "ordinary session reads must preserve issuance metadata",
+      );
     assert(
       JSON.stringify(restored.body.principal) ===
         JSON.stringify(login.body.principal),
@@ -89,7 +165,17 @@ export async function exerciseLocalAdminLogin({
     if (originalCookies && gatewaySessionCookies(originalCookies).accessToken) {
       client.cookies = new Map(originalCookies);
       const originalCookie = client.cookie;
-      await client.request("/api/session", { method: "DELETE", status: 204 });
+      const logout = await client.request("/api/session", {
+        method: "DELETE",
+        status: [204, 401],
+      });
+      if (logout.status === 401)
+        assert(
+          logout.body?.code === "unauthenticated",
+          "unexpected expired-logout error code",
+        );
+      assertNoStore(logout.headers);
+      assertClearedSessionCookies(logout.headers);
       assertCookiesCleared(client.cookie);
       await client.request("/api/session", {
         status: 401,

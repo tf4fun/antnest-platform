@@ -2,6 +2,7 @@ import { assertResourceId } from "./contracts.mjs";
 import assert from "node:assert/strict";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
+import { assertClearedSessionCookies } from "../identity-closeout/expiry.mjs";
 
 export const gateway = "http://edge-gateway:8080";
 export const ownerCredentials = {
@@ -26,9 +27,12 @@ export async function identity(admin, secrets) {
   });
   assertNoStore(methods.headers);
   assert.deepEqual(methods.body.methods, []);
-  const principal = (
-    await login(admin, "stage3-admin@example.com", "stage3-admin-password")
-  ).body.principal;
+  const initialLogin = await login(
+    admin,
+    "stage3-admin@example.com",
+    "stage3-admin-password",
+  );
+  const principal = initialLogin.body.principal;
   assertResourceId("user", principal.user_id);
   assertResourceId("org", principal.organization_id);
   assertResourceId("membership", principal.membership_id);
@@ -54,28 +58,64 @@ export async function identity(admin, secrets) {
     (await api("/api/admin/directory")).users[0].user.id,
     principal.user_id,
   );
-  assert.equal(
-    (
-      await api(
-        "/api/admin/account/password",
-        {
-          current_password: "wrong-password",
-          new_password: "stage3-admin-password-updated",
-        },
-        401,
-      )
-    ).code,
-    "invalid_current_password",
+  const rejectedPassword = await request(
+    "/api/session/password",
+    {
+      current_password: "wrong-password",
+      new_password: "stage3-admin-password-updated",
+    },
+    400,
   );
+  assert.equal(rejectedPassword.body.code, "invalid_current_password");
+  assertNoStore(rejectedPassword.headers);
+  assert.equal(rejectedPassword.headers.getSetCookie().length, 0);
   await api("/api/admin/directory");
-  assert.equal(
-    (
-      await api("/api/admin/account/password", {
-        current_password: "stage3-admin-password",
-        new_password: "stage3-admin-password-updated",
-      })
-    ).status,
-    "changed",
+  let previousCookie = admin.cookie;
+  const assertRotation = async (response) => {
+    assert.deepEqual(Object.keys(response.body).sort(), [
+      "activity_interval_ms",
+      "expires_at",
+      "idle_expires_at",
+      "principal",
+    ]);
+    assert(
+      JSON.stringify(response.body.principal) === JSON.stringify(principal),
+      "password rotation changed the principal",
+    );
+    assert.equal(response.body.expires_at, initialLogin.body.expires_at);
+    assert(Date.parse(response.body.idle_expires_at) > Date.now());
+    assert(
+      Date.parse(response.body.idle_expires_at) <=
+        Date.parse(response.body.expires_at),
+    );
+    assert(
+      Number.isInteger(response.body.activity_interval_ms) &&
+        response.body.activity_interval_ms >= 1 &&
+        response.body.activity_interval_ms <= 30000,
+    );
+    assertNoStore(response.headers);
+    assert.equal(response.headers.getSetCookie().length, 2);
+    assert(
+      admin.cookie !== previousCookie,
+      "password rotation must replace the session",
+    );
+    secrets.push(...admin.cookies.values());
+    const denied = await admin.request("/api/session", {
+      headers: { Cookie: previousCookie },
+      status: 401,
+    });
+    assert.equal(denied.headers.getSetCookie().length, 0);
+    assert.equal(
+      (await admin.request("/api/session")).body.principal.user_id,
+      principal.user_id,
+    );
+    previousCookie = admin.cookie;
+  };
+  await assertRotation(
+    await request("/api/session/password", {
+      current_password: "stage3-admin-password",
+      new_password: "stage3-admin-password-updated",
+    }),
   );
   const rotated = new GatewayClient(gateway);
   assert.equal(
@@ -89,16 +129,23 @@ export async function identity(admin, secrets) {
     principal.user_id,
   );
   secrets.push(...rotated.cookies.values());
-  assert.equal(
-    (
-      await api("/api/admin/account/password", {
-        current_password: "stage3-admin-password-updated",
-        new_password: "stage3-admin-password",
-      })
-    ).status,
-    "changed",
+  await assertRotation(
+    await request("/api/session/password", {
+      current_password: "stage3-admin-password-updated",
+      new_password: "stage3-admin-password",
+    }),
   );
-  await rotated.request("/api/session", { method: "DELETE", status: 204 });
+  const revoked = await rotated.request("/api/session", { status: 401 });
+  assert.equal(revoked.headers.getSetCookie().length, 0);
+  const logout = await rotated.request("/api/session", {
+    method: "DELETE",
+    status: 401,
+  });
+  assertClearedSessionCookies(logout.headers);
+  assert(
+    rotated.cookie === "",
+    "logout must clear the revoked session cookies",
+  );
   const created = await api("/api/admin/directory/users", {
     email: ownerCredentials.email,
     display_name: "Stage 3 User",

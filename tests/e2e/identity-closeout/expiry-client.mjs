@@ -73,22 +73,34 @@ if (phase === "prepare") {
     });
     assert.equal(denied.body.code, "unauthenticated");
     assertNoStore(denied.headers);
-    assertClearedSessionCookies(denied.headers);
+    assert.equal(denied.headers.getSetCookie().length, 0);
   }
-  const rejectedPassword = await browser.request(
-    "/api/admin/account/password",
-    {
-      headers: { Cookie: cookie, "X-Antnest-CSRF-Token": csrf },
-      status: 401,
-      body: {
-        current_password: password,
-        new_password: "must-not-become-password",
-      },
+  const rejectedPassword = await browser.request("/api/session/password", {
+    headers: { Cookie: cookie, "X-Antnest-CSRF-Token": csrf },
+    status: 401,
+    body: {
+      current_password: password,
+      new_password: "must-not-become-password",
     },
-  );
+  });
   assert.equal(rejectedPassword.body.code, "unauthenticated");
   assertNoStore(rejectedPassword.headers);
-  assertClearedSessionCookies(rejectedPassword.headers);
+  assert.equal(rejectedPassword.headers.getSetCookie().length, 0);
+  const expiredLogout = await browser.request("/api/session", {
+    method: "DELETE",
+    headers: { Cookie: cookie, "X-Antnest-CSRF-Token": csrf },
+    status: 401,
+  });
+  assert(
+    expiredLogout.body.code === "unauthenticated",
+    "unexpected expired-logout error code",
+  );
+  assertNoStore(expiredLogout.headers);
+  assertClearedSessionCookies(expiredLogout.headers);
+  assert(
+    browser.cookie === "",
+    "logout must clear the expired session cookies",
+  );
   const fresh = await login();
   assert.equal(fresh.body.principal.user_id, issued.body.principal.user_id);
   const secrets = [

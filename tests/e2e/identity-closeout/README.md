@@ -189,14 +189,21 @@ or clocks are modified.
 The same email is provisioned with separate identities and passwords in each
 organization. Tests compare directory and SCIM projections, reject foreign
 resource mutation and forged scope headers or body fields, and exercise password
-rotation and logout independently. A password change preserves issued sessions,
-and logout revokes only the presented session; tests state these semantics
-explicitly. The password command assertions distinguish BFF
-`401 invalid_current_password` (no session cookie change, later access succeeds)
-from Gateway `401 unauthenticated` after real token expiry (both session cookies
-cleared, password unchanged). Console API and App tests consume the same error
-codes and verify dialog retention versus returning to login, including late
-responses from an older in-page session.
+rotation and logout independently. A password change at `/api/session/password`
+replaces the current session without extending its absolute deadline and revokes
+all previous sessions of that User, including sessions in other organizations.
+Logout revokes only the presented session. Membership deactivation revokes that
+membership's sessions; restoring the membership does not revive old cookies.
+The User-deactivation check starts with newly authenticated sessions so an
+earlier revocation cannot produce a false pass.
+
+The password command assertions distinguish `400 invalid_current_password`
+(no cookie change, later access succeeds) from `401 unauthenticated` after real
+token expiry (no cookie change, password unchanged). Ordinary requests never
+clear cookies on 401; explicit logout clears both session cookies even when the
+session has expired. Console and Agent UI tests verify password-dialog retention
+versus returning to login, including late responses from an older in-page
+session.
 
 Finally the coordinator stops only Identity and proves that protected requests
 return 503 without deleting cookies. The stopped Identity keeps its pinned
@@ -204,9 +211,10 @@ Compose address and drops connects. Gateway's 5-second dependency connect bound
 must report the outage within the default 15-second request wait. It restarts Identity with the token TTL set
 to five seconds for new tokens: the earlier long-lived cookie must recover, and a
 new short-lived cookie must work before its deadline and fail after it, even when
-replayed manually. A fresh login must then work. The short TTL override exists
-only in the fixture Compose. HTTP logout and expiry results are not WebSocket
-token revocation results.
+replayed manually. Explicit logout must clear the expired cookies, and a fresh
+login must then work. The short absolute TTL override exists only in the fixture
+Compose. HTTP logout and expiry results are not WebSocket token revocation
+results.
 
 ## Agent organization access and offboarding
 
