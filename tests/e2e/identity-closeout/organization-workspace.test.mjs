@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   assertWorkspaceBootstrap,
   assertWorkspaceDocument,
+  assertRevokingWorkspaceBootstrap,
 } from "./organization-workspace.mjs";
 
 const organization = { slug: "engineering", name: "研发 · Équipe 🚀" };
@@ -134,4 +135,117 @@ test("credential scans reject an opaque Identity access token even without knowi
       assertWorkspaceDocument(document, principal, organization, ["agent-1"]),
     /access credential/,
   );
+});
+
+test("revoking membership permits a shrinking directory while healthy reads still require every Agent", () => {
+  const validate = assertRevokingWorkspaceBootstrap;
+  let remaining = ["agent-1"];
+  const active = bootstrap();
+  assert.equal(
+    validate(active, principal, organization, remaining).agents.length,
+    1,
+  );
+  const empty = bootstrap();
+  empty.agents = [];
+  remaining = validate(empty, principal, organization, remaining).agents.map(
+    (agent) => agent.id,
+  );
+  assert.deepEqual(remaining, []);
+  assert.throws(() => validate(active, principal, organization, remaining));
+  assert.throws(() =>
+    assertWorkspaceBootstrap(empty, principal, organization, ["agent-1"]),
+  );
+});
+
+test("revoking membership retains exact Principal, schema, ownership and duplicate checks", () => {
+  const validate = assertRevokingWorkspaceBootstrap;
+  for (const mutate of [
+    (value) => {
+      value.principal.userId = "other-user";
+    },
+    (value) => {
+      value.principal.organizationId = "other-org";
+    },
+    (value) => {
+      value.principal.organizationSlug = "other-slug";
+    },
+    (value) => {
+      value.principal.organizationName = "Other name";
+    },
+    (value) => {
+      value.principal.administrator = true;
+    },
+    (value) => {
+      delete value.principal.organizationName;
+    },
+    (value) => {
+      delete value.renderedAt;
+    },
+  ]) {
+    const payload = bootstrap();
+    payload.agents = [];
+    mutate(payload);
+    assert.throws(() =>
+      validate(payload, principal, organization, ["agent-1"]),
+    );
+  }
+  for (const mutate of [
+    (value) => {
+      value.agents[0].agentId = "foreign-agent";
+    },
+    (value) => {
+      value.agents.push({ ...value.agents[0] });
+    },
+    (value) => {
+      delete value.agents[0].name;
+    },
+    (value) => {
+      delete value.agents[0].lifecycle;
+    },
+    (value) => {
+      delete value.agents[0].runtime;
+    },
+    (value) => {
+      delete value.agents[0].activation;
+    },
+    (value) => {
+      value.agents[0].lifecycle = "not_created";
+    },
+    (value) => {
+      value.agents = null;
+    },
+  ]) {
+    const payload = bootstrap();
+    mutate(payload);
+    assert.throws(() =>
+      validate(payload, principal, organization, ["agent-1"]),
+    );
+  }
+  const payload = bootstrap();
+  payload.agents = [];
+  assert.throws(
+    () =>
+      validate(
+        payload,
+        principal,
+        organization,
+        ["agent-1"],
+        [organization.name],
+      ),
+    /secret credential/,
+  );
+});
+
+test("revoking directory validates metadata without freezing legitimate Runtime changes", () => {
+  const payload = bootstrap();
+  payload.agents[0].activation = "disabled";
+  payload.agents[0].runtime = "absent";
+  const workspace = assertRevokingWorkspaceBootstrap(
+    payload,
+    principal,
+    organization,
+    ["agent-1"],
+  );
+  assert.equal(workspace.agents[0].managementState.activation, "disabled");
+  assert.equal(workspace.agents[0].managementState.runtime, "absent");
 });

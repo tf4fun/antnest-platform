@@ -27,7 +27,9 @@ function rows() {
       Env:
         name === "identity-service"
           ? ["SSL_CERT_FILE=/test-ca/tls.crt", "ANTNEST_IDENTITY_TOKEN_TTL=12h"]
-          : [],
+          : name === "agent-controller"
+            ? ["ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL=2s"]
+            : [],
     },
     State: { Running: true, Health: { Status: "healthy" } },
     HostConfig: {
@@ -72,5 +74,29 @@ test("Identity deployment requires actual HTTPS trust and isolated ingress", () 
     const value = rows();
     mutate(value);
     assert.throws(() => inspectIdentityDeployment(value, "fixture"));
+  }
+});
+
+test("Identity deployment records the actual diagnostic Controller poll setting", () => {
+  const key = "ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL";
+  for (const interval of ["2s", "100ms"]) {
+    const value = rows();
+    const controller = value.find(
+      (row) =>
+        row.Config.Labels["com.docker.compose.service"] === "agent-controller",
+    );
+    controller.Config.Env = [key + "=" + interval];
+    const result = inspectIdentityDeployment(value, "fixture", interval);
+    assert.equal(result.controller_identity_revocation_poll_interval, interval);
+    for (const invalid of [
+      [],
+      [key + "=5s"],
+      [key + "=" + interval, key + "=" + interval],
+    ]) {
+      controller.Config.Env = invalid;
+      assert.throws(() =>
+        inspectIdentityDeployment(value, "fixture", interval),
+      );
+    }
   }
 });

@@ -195,6 +195,36 @@ for (const [name, selection] of [
   });
 }
 
+test("Identity diagnostic polling can differ without changing retained deployment", () => {
+  const selected = dispatch({ tool_profile: "identity-http" }, "config");
+  const key = "ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL";
+  const overrides = {
+    ANTNEST_E2E_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL: "100ms",
+  };
+  const configured = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ...overrides,
+  });
+  assert.equal(
+    configured.services["agent-controller"].environment[key],
+    "100ms",
+  );
+  const defaults = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+  });
+  assert.equal(defaults.services["agent-controller"].environment[key], "2s");
+  const retained = composeConfig(["compose.yaml"], {
+    ...environment,
+    ...overrides,
+  });
+  assert.equal(
+    retained.services["agent-controller"].environment[key],
+    undefined,
+  );
+});
+
 for (const [name, overlay, prefix] of [
   ["foundation", "lifecycle-closeout/foundation.compose.yaml", "LIFECYCLE"],
   ["c4", "workspace-closeout/c4.compose.yaml", "C4"],

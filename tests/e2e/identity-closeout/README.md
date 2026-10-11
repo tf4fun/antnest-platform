@@ -101,6 +101,17 @@ with the Identity Organization row, including Unicode and escaped HTML text.
 Forged headers, foreign Agent requests, logout/cookie replay and inactive local
 and OIDC memberships must retain ID-based authorization boundaries.
 
+After membership deactivation, Controller's live directory can empty before
+Gateway evicts its still-valid Principal snapshot. During this bounded rejection
+window, each 200 must retain the exact verified Principal and complete valid
+metadata, while its Agent IDs may only be a subset of the preceding read. This
+serial fixture performs no restoration inside the window, so a removed Agent
+must not reappear. Healthy rename/bootstrap/SSR reads still require the exact
+fixture directory. Cold workspace scopes reject immediately, and warm reads
+must converge to 401 within the existing TTL admission bound. Every transitional
+response is retained privately; successful 200 request/source Trace closures
+are validated and included in the final strict result.
+
 Gateway's Go real-output schema tests use `santhosh-tekuri/jsonschema` with the
 default Go regexp engine, whose `\s` whitespace class is ASCII-only (`\S` is
 its complement). Those
@@ -165,6 +176,16 @@ The shared Stage 3a overlay also accepts `ANTNEST_E2E_CONSOLE_IMAGE`,
 `ANTNEST_E2E_EGRESS_IMAGE`. Local admission must verify build inputs or build
 current candidates for every changed image; an old `:local` tag is not evidence
 for the current checkout. Candidate overrides leave baseline tags intact.
+
+For an independent revocation-consumer diagnostic,
+`ANTNEST_E2E_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL=100ms` selects
+Controller's existing poll interval in the disposable Identity overlay. The
+default remains 2s, and retained deployment Compose does not use this override.
+The deployment report verifies and records the actual container setting. A
+shorter interval increases the opportunity to observe Controller directory
+revocation before Gateway cache eviction; it does not guarantee their order or
+establish the cause of a historical failure. Membership scope, bounded rejection
+and strict Trace gates still apply during this diagnostic.
 
 1. Local login establishes HttpOnly session cookies without returning the token
    in JSON. Member access, rejected CSRF logout, successful logout and replay of

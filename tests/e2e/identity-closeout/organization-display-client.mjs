@@ -14,8 +14,10 @@ import {
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { summarizeFailure } from "../../support/verification/failure.mjs";
 import { identityEvidenceExitCode, verifyIdentityEvidence } from "./trace.mjs";
+import { inspectOrganizationRead } from "./organization-freshness.mjs";
 import {
   assertWorkspaceBootstrap,
+  assertRevokingWorkspaceBootstrap,
   assertWorkspaceDocument,
 } from "./organization-workspace.mjs";
 import { createFixtureClient, parseFixtureJSON } from "./oidc-transport.mjs";
@@ -62,6 +64,8 @@ let browser,
   original,
   freshnessEvidence,
   failedMembershipRead,
+  membershipEvidence = [],
+  membershipRejection,
   renamed = false,
   step = "ownership",
   bootstraps = 0,
@@ -673,12 +677,16 @@ try {
   // This token has not warmed a workspace scope, so it must fail immediately.
   await fresh.request("/api/app/workspace/v1/bootstrap", { status: 401 });
   const revocationReads = [];
+  const revocationResponses = [];
+  let remainingAgentIDs = [agentA];
   let membershipRead;
   await observeDisplayRejection({
     committedMS: deactivatedMS,
     ttlMS: freshnessEvidence.timeline.ttl_ms,
     record: (item, response) => {
       membershipRead = item;
+      if (item.status === 200 && Array.isArray(response.body?.agents))
+        item.agent_count = response.body.agents.length;
       revocationReads.push(item);
       writeEvidenceFile(
         process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
@@ -695,6 +703,12 @@ try {
         process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
         "organization-membership-response.private.json",
         JSON.stringify({ ...item, body: response.body }),
+      );
+      revocationResponses.push({ ...item, body: response.body });
+      writeEvidenceFile(
+        process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+        "organization-membership-responses.private.json",
+        JSON.stringify(revocationResponses),
       );
     },
     request: async () => {
@@ -713,19 +727,41 @@ try {
       };
     },
     validate: (response) => {
-      if (response.status === 200)
-        assertWorkspaceBootstrap(
+      if (response.status === 200) {
+        const workspace = assertRevokingWorkspaceBootstrap(
           response.body,
           oidcPrincipal,
           changed,
-          [agentA],
+          remainingAgentIDs,
           secrets,
         );
+        remainingAgentIDs = workspace.agents.map((agent) => agent.id);
+      }
     },
   }).catch((error) => {
     failedMembershipRead = membershipRead;
     throw error;
   });
+  const admittedReads = revocationReads
+    .filter((item) => item.status === 200)
+    .map((item) => ({
+      ...item,
+      surface: "bootstrap",
+      ttlMS: freshnessEvidence.timeline.ttl_ms,
+    }));
+  if (admittedReads.length)
+    membershipEvidence = await verifyIdentityEvidence(
+      jaeger,
+      admittedReads,
+      secrets,
+      { inspect: inspectOrganizationRead },
+    );
+  membershipRejection = {
+    committed_ms: deactivatedMS,
+    ttl_ms: freshnessEvidence.timeline.ttl_ms,
+    reads: revocationReads,
+    trace_evidence: membershipEvidence,
+  };
   await bootstrap(other, b, foreign, [agentB]);
   await admin.request(`/api/admin/directory/memberships/${a.membership_id}`, {
     body: { ...update, active: true },
@@ -845,6 +881,7 @@ process.stdout.write(
     real_browser_sessions: 3,
     oidc_authorize_redirects: oidcRedirects,
     model_prompts_submitted: 0,
+    membership_rejection: membershipRejection,
     organization_freshness: {
       timeline: freshnessEvidence.timeline,
       feed_coverage: freshnessEvidence.feed_coverage,
@@ -859,6 +896,7 @@ process.stdout.write(
   }) + "\n",
 );
 process.exitCode = identityEvidenceExitCode([
+  ...membershipEvidence,
   ...freshnessEvidence.resolutions,
   ...freshnessEvidence.feeds,
   ...freshnessEvidence.refreshes,
