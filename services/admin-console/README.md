@@ -34,6 +34,7 @@ Route authorization and management projections remain Console-owned.
 - Skill inventory, upload, discovery and promotion through Skill Registry.
 - Static application delivery and lifecycle event forwarding (SSE).
 - Browser activity reporting, self session controls through Gateway, and organization session administration through Identity.
+- [OIDC policy review, SCIM pairing and external login controls](docs/oidc-linking.md), including personal binding notices.
 
 ## Non-responsibilities
 
@@ -159,6 +160,9 @@ The Docker acceptance runs the real Console against owning-service doubles
 and checks signed organization scope, projection, pagination and revocation.
 `make e2e-browser-sessions-https` separately verifies real Gateway/Identity
 session transactions and two-browser HTTPS behavior with Console and Workspace.
+It includes default OIDC linking refusal, Console pre-binding/restoration and
+SCIM pairing, exact notice acknowledgment, last-method confirmation and a Run
+that continues after both browser sessions are revoked.
 
 Go integration sources live in
 [`tests/integration/go/admin-console`](../../tests/integration/go/admin-console);

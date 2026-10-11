@@ -16,6 +16,7 @@ import { assertJsonRpcContentTypeRejection } from "../../../support/json-rpc-sec
 import { runCommand } from "../../../support/run-command.mjs";
 import { rotateIdentityFixture } from "./rekey-flow.mjs";
 import { exerciseBrowserSessions } from "./browser-sessions-flow.mjs";
+import { exerciseOIDCPolicy } from "./oidc-policy-flow.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-identity-auth-${randomUUID()}`;
@@ -25,7 +26,9 @@ const evidence = resolve(
   project,
 );
 const credentials = resolve(evidence, "credentials");
+const certificates = resolve(evidence, "certificates");
 mkdirSync(credentials, { recursive: true, mode: 0o700 });
+mkdirSync(certificates, { recursive: true, mode: 0o700 });
 const tokens = Object.fromEntries(
   [
     "edge-gateway",
@@ -71,6 +74,7 @@ const env = {
   IDENTITY_TEST_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
   IDENTITY_TEST_ADMIN_PASSWORD: randomBytes(24).toString("base64url"),
   IDENTITY_TEST_AUTH_DIRECTORY: credentials,
+  IDENTITY_TEST_OIDC_CERT_DIRECTORY: certificates,
 };
 const compose = [
   "compose",
@@ -92,6 +96,34 @@ let checks = 0,
   cleaned = false,
   stage = "starting";
 try {
+  const certificate = await runCommand({
+    command: [
+      "openssl",
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "1",
+      "-subj",
+      "/CN=oidc-fixture",
+      "-addext",
+      "subjectAltName=DNS:oidc-fixture",
+      "-keyout",
+      resolve(certificates, "tls.key"),
+      "-out",
+      resolve(certificates, "tls.crt"),
+    ],
+    output: evidence,
+    name: "oidc-certificate",
+    timeoutMs: 30000,
+  });
+  assert.equal(
+    certificate.exit_code,
+    0,
+    "could not prepare test-only IdP certificate",
+  );
   await docker(
     [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "120"],
     true,
@@ -389,6 +421,31 @@ try {
   writeFileSync(resolve(evidence, "rotation.json"), JSON.stringify(rotation), {
     mode: 0o600,
   });
+  stage = "oidc-policy";
+  const oidc = await exerciseOIDCPolicy({
+    rpc,
+    docker,
+    compose,
+    identityURL: () => url,
+    rebind: (value) => {
+      url = value;
+    },
+    checkpoint: (phase, callbacks) => {
+      writeFileSync(
+        resolve(evidence, "oidc-progress.json"),
+        JSON.stringify({ phase, callbacks }),
+        { mode: 0o600 },
+      );
+    },
+    serviceToken: tokens["edge-gateway"],
+    signal: controller.signal,
+    adminPassword: env.IDENTITY_TEST_ADMIN_PASSWORD,
+    certificate: readFileSync(resolve(certificates, "tls.crt")),
+  });
+  writeFileSync(resolve(evidence, "oidc-policy.json"), JSON.stringify(oidc), {
+    mode: 0o600,
+  });
+  checks += oidc.scim.checks;
   complete = true;
 } catch (error) {
   // Preserve only this disposable project's diagnostics before removing it.
@@ -410,7 +467,12 @@ try {
       assert.equal(row.Config.Labels["com.docker.compose.project"], project);
       const service = row.Config.Labels["com.docker.compose.service"];
       assert(
-        ["identity-service", "postgres", "purpose-health"].includes(service),
+        [
+          "identity-service",
+          "postgres",
+          "purpose-health",
+          "oidc-fixture",
+        ].includes(service),
       );
       writeFileSync(
         resolve(evidence, `${service}.state.json`),
@@ -459,6 +521,7 @@ try {
     cleaned = true;
   } finally {
     rmSync(credentials, { recursive: true, force: true });
+    rmSync(certificates, { recursive: true, force: true });
     writeFileSync(
       resolve(evidence, "result.json"),
       JSON.stringify({ project, stage, complete, cleaned, checks }) + "\n",

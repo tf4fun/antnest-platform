@@ -14,11 +14,17 @@ status mappings; listed error codes without an entry use HTTP 500.
 
 Revision 15 defines [browser session lifecycles](browser-sessions.md): separate
 idle and absolute deadlines, explicit activity, password rotation, session
-inventory and revocation, and the Identity-only `session` CCT profile. Its
-method authorization declarations specify the required policy; active caller
-grants change with the owning service implementation. Identity, Gateway,
-browser consumers and final HTTPS integration have separate admission batches.
-The shared contract does not activate those pending behaviors.
+inventory and revocation, and the Identity-only `session` CCT profile. These
+producer, consumer and HTTPS integration batches were delivered by #58.
+
+Revision 16 adds [OIDC linking policy and ownership](oidc-linking.md), binding
+controls, immutable SCIM token pairing and durable exact-ID notice acknowledgment.
+Its method authorization declarations specify the required policy; active caller
+grants change with the owning service implementation. Identity's Provider policy
+and five binding/notice RPCs implement their producer grants. Identity also
+implements paired SCIM token issuance and exact-lineage reprovisioning.
+Gateway, Console, Agent UI and final HTTPS integration remain separate pending
+#61 batches; the shared contract alone does not deliver these consumers.
 
 OIDC and SCIM payloads keep their standard field names and are not translated
 into this RPC envelope. `start_oidc_login.authorization_url` necessarily

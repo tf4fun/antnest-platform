@@ -89,6 +89,30 @@
       },
       "request_body": "none"
     },
+    "GET /api/admin/directory/identity-providers": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": { "edge-gateway": "required" },
+      "request_body": "none"
+    },
+    "GET /api/admin/directory/memberships/{membership_id}/external-identities": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": { "edge-gateway": "required" },
+      "request_body": "none"
+    },
+    "POST /api/admin/directory/memberships/{membership_id}/external-identities": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": { "edge-gateway": "required" },
+      "request_body": "json"
+    },
+    "DELETE /api/admin/directory/memberships/{membership_id}/external-identities/{binding_id}": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": { "edge-gateway": "required" },
+      "request_body": "json"
+    },
     "GET /api/admin/directory/users/{user_id}/sessions": {
       "callers": ["edge-gateway"],
       "authentication": "workload",

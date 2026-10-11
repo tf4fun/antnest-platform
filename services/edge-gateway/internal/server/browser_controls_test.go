@@ -26,6 +26,7 @@ type browserControlFixture struct {
 	records   []browserRPCRecord
 	status    map[string]int
 	code      map[string]string
+	replies   map[string]string
 	handler   http.Handler
 	now       time.Time
 	principal identity.Principal
@@ -33,7 +34,7 @@ type browserControlFixture struct {
 
 func newBrowserControlFixture(t *testing.T) *browserControlFixture {
 	t.Helper()
-	f := &browserControlFixture{now: time.Now().UTC().Truncate(time.Second), status: map[string]int{}, code: map[string]string{}}
+	f := &browserControlFixture{now: time.Now().UTC().Truncate(time.Second), status: map[string]int{}, code: map[string]string{}, replies: map[string]string{}}
 	f.principal = ordinaryPrincipal()
 	f.principal.ExpiresAt, f.principal.IdleExpiresAt = f.now.Add(12*time.Hour), f.now.Add(30*time.Minute)
 	f.principal.ActivityIntervalMS = 30000
@@ -70,6 +71,14 @@ func newBrowserControlFixture(t *testing.T) *browserControlFixture {
 			if r.Header.Get(identity.CallerContextHeader) != f.principal.CallerContext || body["actor_principal_id"] != f.principal.UserID {
 				t.Error("browser control lost trusted actor or forwarded a browser-supplied CCT")
 			}
+			f.mu.Lock()
+			reply, overridden := f.replies[path]
+			f.mu.Unlock()
+			if overridden {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(reply))
+				return
+			}
 			switch path {
 			case "get-current-account":
 				metadata = map[string]any{"account": map[string]any{"user_id": f.principal.UserID, "organization_id": f.principal.OrganizationID, "organization_slug": "engineering", "organization_name": "Engineering", "membership_id": f.principal.MembershipID, "email": "member@example.com", "display_name": "Member", "source": "local", "local_password_available": true}}
@@ -80,6 +89,13 @@ func newBrowserControlFixture(t *testing.T) *browserControlFixture {
 				metadata = map[string]any{"sessions": []any{map[string]any{"id": "public-session", "organization_id": "org-1", "organization_slug": "engineering", "organization_name": "Engineering", "created_at": f.now, "last_active_at": f.now, "expires_at": f.principal.ExpiresAt, "idle_expires_at": f.principal.IdleExpiresAt, "user_agent_hint": "<script>plain text</script>", "current": true}}}
 			case "revoke-user-sessions":
 				metadata = map[string]any{"revoked_count": 1, "current_revoked": body["mode"] == "all"}
+			case "list-external-identities", "unbind-external-identity", "acknowledge-external-identity-notices":
+				metadata = externalIdentityControlReply(path, body, f.now)
+				if path == "unbind-external-identity" && body["allow_lockout"] == true {
+					f.mu.Lock()
+					f.status["resolve-access-token"], f.code["resolve-access-token"] = 401, "unauthenticated"
+					f.mu.Unlock()
+				}
 			default:
 				t.Error("unexpected Identity call")
 				w.WriteHeader(404)

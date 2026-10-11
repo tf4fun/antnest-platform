@@ -110,7 +110,7 @@ func TestOIDCCompletionDeadlineIncludesDatabaseLockWait(t *testing.T) {
 	completionPID := make(chan uint32, 1)
 	var captured sync.Once
 	f.repository.Repository = f.tracedStore(t, func(_ context.Context, conn *pgx.Conn, sql string) {
-		if strings.Contains(sql, "FOR UPDATE OF s, p") {
+		if strings.Contains(sql, "FROM oidc_providers") && strings.Contains(sql, "FOR UPDATE") {
 			captured.Do(func() { completionPID <- conn.PgConn().PID() })
 		}
 	}).OIDC()

@@ -9,7 +9,12 @@ export const fixtureSecret = (revision) =>
   `synthetic-oidc-client-secret-${revision}`;
 export const providerAccessToken = "synthetic-oidc-provider-access-token";
 
-export function createOIDCProvider({ issuer, callback, userInfo = false }) {
+export function createOIDCProvider({
+  issuer,
+  callback,
+  userInfo = false,
+  additionalAccounts = {},
+}) {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", {
     modulusLength: 2048,
   });
@@ -48,6 +53,7 @@ export function createOIDCProvider({ issuer, callback, userInfo = false }) {
       email: "oidc-local@example.com",
       nonce: "incorrect-nonce",
     },
+    ...additionalAccounts,
   };
   const json = (response, status, body) => {
     response.writeHead(status, {

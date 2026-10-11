@@ -13,12 +13,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 const organizationSlugHeader = "X-Antnest-Organization-Slug"
 const organizationNameHeader = "X-Antnest-Organization-Name"
+
+type contractRegexp struct{ *regexp2.Regexp }
+
+func (r contractRegexp) MatchString(value string) bool {
+	matched, err := r.Regexp.MatchString(value)
+	return err == nil && matched
+}
 
 func displayPrincipal(t *testing.T, name string, administrator bool) identity.Principal {
 	t.Helper()
@@ -66,6 +74,16 @@ func compileOrganizationSchema(t *testing.T, path, definition string) *jsonschem
 	}
 	const id = "https://antnest.test/organization-contract.json"
 	compiler := jsonschema.NewCompiler()
+	// JSON Schema patterns use ECMAScript, including the opaque subject's
+	// Unicode escapes, which the default Go regexp engine cannot parse.
+	compiler.UseRegexpEngine(func(pattern string) (jsonschema.Regexp, error) {
+		compiled, err := regexp2.Compile(pattern, regexp2.ECMAScript)
+		if err != nil {
+			return nil, err
+		}
+		compiled.MatchTimeout = 100 * time.Millisecond
+		return contractRegexp{compiled}, nil
+	})
 	if err := compiler.AddResource(id, document); err != nil {
 		t.Fatal(err)
 	}

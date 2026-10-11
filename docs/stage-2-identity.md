@@ -48,10 +48,20 @@ User
 - `GroupMembership` has an explicit owner (`local` or `scim`). SCIM replacement
   may only replace SCIM-owned edges, and a database foreign key requires the
   edge and Group to have the same owner.
-- `ExternalIdentity` is keyed by OIDC Provider and subject. A verified OIDC
-  identity may bind an existing active non-system Membership with the same
-  normalized email in that Provider's Organization. Email matching never
-  crosses an Organization boundary.
+- `ExternalIdentity` is keyed by OIDC Provider and exact opaque subject.
+  New Providers default to no automatic linking. Explicit `verified_email`
+  or `verified_email_in_domains` policy may bind an active non-system
+  Membership with a verified matching email inside the Provider's Organization;
+  the domain policy requires an exact allowlist match. Organization admins
+  additionally require an authoritative Provider. Existing bindings do not
+  require current email claims or UserInfo.
+- Identity's explicit binding controls reserve revoked Provider/subject
+  tombstones. Unbind atomically revokes only the target Membership's browser
+  sessions, with a guard for its last usable sign-in method and no Agent
+  offboarding. Administrator restoration creates a fresh immutable notice;
+  acknowledgment targets exact owned notice IDs. Gateway, Console, Agent UI
+  remain separate delivery batches under #61. Paired SCIM provisioning is owned
+  by Identity and preserves explicit binding revocation on reprovisioning.
 - Provider identity is `(organization_id, name)`. Issuer and Client ID are
   immutable; a replacement registration requires a new Provider name.
   Client-secret rotation remains supported. The old Provider and external identities stay
@@ -174,11 +184,14 @@ business request observes the new Identity state.
    exchange; provider-controlled descriptions and URIs are neither persisted
    nor returned as trusted application text.
 5. The ID token must pass signature, issuer, audience, expiry, and nonce
-   validation. UserInfo is requested only when the verified ID Token lacks a
-   usable email; its `sub` must exactly equal the ID-token subject. OIDC
-   subjects are opaque identifiers and are never trimmed or normalized.
-6. OIDC never creates a User or Membership. A verified email may bind only an
-   existing active non-system Membership in the Provider's Organization.
+   validation. UserInfo is requested only for a subject without a stored record,
+   under an email-linking policy, when the ID token lacks a usable verified
+   email. Its `sub` must exactly equal the ID-token subject. OIDC subjects are
+   opaque and never trimmed or normalized; they allow at most 255 Unicode code
+   points and reject NUL and invalid UTF-8/JSON surrogate encodings.
+6. OIDC never creates a User or Membership. Automatic linking requires the
+   Provider's explicit email policy and an existing active non-system
+   Membership in its Organization. Admin roles also require `authoritative`.
    Local- and SCIM-owned profile attributes remain authoritative and are never
    refreshed from OIDC claims.
 7. `(provider_id, subject)` is immutable. Callback replay returns committed
@@ -233,6 +246,9 @@ SCIM error instead of being silently discarded. Bulk, sorting, ETags, and
 password mutation are explicitly unsupported.
 
 Mutation bodies contain exactly one JSON object and are limited to 1 MiB.
+User and PATCH objects reject duplicate keys, including case-folded aliases;
+opaque subject validation rejects invalid UTF-8 and unpaired JSON surrogates
+before decoding can repair them.
 Group member references must be non-empty; a Group replacement and its owned
 membership set commit as one row-locked transaction. PUT/PATCH use an
 optimistic compare-and-swap version and strictly advance `updated_at` even
@@ -250,12 +266,29 @@ schema does not invent an `active` attribute.
 `active=false` is a visible deactivation and can be reversed by a later SCIM
 write. User DELETE is different: the SCIM Membership is tombstoned, disappears
 from GET, list, and filters, and can later be provisioned as a fresh resource.
-Exact `externalId` reprovisioning reuses the stable global User, creates a new
-Membership, and repoints existing OIDC identities to that Membership; it never
-reactivates the tombstone. The global User and audit facts remain because they
-are not SCIM resources. Multiple active SCIM tokens are rotating credentials
-for one logical Organization directory authority, not independent ownership
-domains.
+Exact organization/`externalId` reprovisioning reuses the confirmed stable User
+only when the issuing token's Provider pairing equals the deleted Membership's
+pairing, including null. It creates a new Membership and repoints only bindings
+of that confirmed old Membership. Binding method, activation time, explicit
+revocation and prior notices remain unchanged; neither the Membership tombstone
+nor a revoked sign-in method is reactivated. The global User and audit facts
+remain because they are not SCIM resources.
+
+An organization administrator may issue a SCIM token paired to a Provider in
+the signed organization. The pairing is immutable; migration leaves existing
+tokens and Memberships unpaired. Paired User POST requires `externalId` to be
+an exact opaque subject of 1–255 Unicode scalar values without NUL. It is never
+trimmed. A new paired Membership, `method=scim` binding, audit and notice commit
+together. Missing/invalid subjects return SCIM 400 `invalidValue`; ownership or
+pairing collisions return 409 `uniqueness` without business effects.
+
+Stored paired Memberships preserve `externalId` when PUT omits it. PUT/PATCH
+cannot change or clear it, regardless of which same-organization token performs
+the write. Other paired and unpaired tokens can still perform ordinary directory
+CRUD, including Groups, but cannot change the stored pairing or restore revoked
+bindings. Unpaired Memberships retain the existing optional/trimmed external-ID
+semantics. Multiple tokens still operate one logical organization directory;
+the additional pairing grants a specific Provider binding side effect.
 
 ## Credentials
 

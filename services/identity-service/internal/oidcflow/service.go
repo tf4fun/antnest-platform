@@ -22,6 +22,7 @@ type Repository interface {
 	FindProvider(context.Context, string, string) (ProviderWithSecret, error)
 	FindLoginProvider(context.Context, string, string) (ProviderWithSecret, error)
 	GetProvider(context.Context, string) (ProviderWithSecret, error)
+	HasSubjectRecord(context.Context, string, string) (bool, error)
 	UpsertProvider(context.Context, UpsertProviderCommand) (Provider, error)
 	SetProviderEnabled(context.Context, SetProviderEnabledCommand) (Provider, error)
 	ListProviders(context.Context, string) ([]Provider, error)
@@ -35,28 +36,33 @@ type Repository interface {
 type Federation interface {
 	Discover(context.Context, string) (Discovery, error)
 	AuthorizationURL(AuthorizationInput) (string, error)
-	ExchangeAndVerify(context.Context, ExchangeInput) (VerifiedIdentity, error)
+	ExchangeAndVerify(context.Context, ExchangeInput) (ExchangeResult, error)
+	FetchUserInfo(context.Context, UserInfoInput) (VerifiedIdentity, error)
 }
 
 type Provider struct {
-	ID                      string                   `json:"id"`
-	OrganizationID          string                   `json:"organization_id"`
-	Name                    string                   `json:"name"`
-	DisplayName             string                   `json:"display_name"`
-	Issuer                  string                   `json:"issuer"`
-	ClientID                string                   `json:"client_id"`
-	ClientSecret            credentials.SealedSecret `json:"-"`
-	Scopes                  []string                 `json:"scopes"`
-	Enabled                 bool                     `json:"enabled"`
-	Revision                int64                    `json:"revision"`
-	AuthorizationEndpoint   string                   `json:"authorization_endpoint"`
-	TokenEndpoint           string                   `json:"token_endpoint"`
-	TokenEndpointAuthMethod string                   `json:"token_endpoint_auth_method"`
-	IDTokenSigningAlgs      []string                 `json:"id_token_signing_algs"`
-	UserInfoEndpoint        string                   `json:"userinfo_endpoint,omitempty"`
-	JWKSURI                 string                   `json:"jwks_uri"`
-	CreatedAt               time.Time                `json:"created_at"`
-	UpdatedAt               time.Time                `json:"updated_at"`
+	ID                       string                   `json:"id"`
+	OrganizationID           string                   `json:"organization_id"`
+	Name                     string                   `json:"name"`
+	DisplayName              string                   `json:"display_name"`
+	Issuer                   string                   `json:"issuer"`
+	ClientID                 string                   `json:"client_id"`
+	ClientSecret             credentials.SealedSecret `json:"-"`
+	Scopes                   []string                 `json:"scopes"`
+	Enabled                  bool                     `json:"enabled"`
+	LinkPolicy               string                   `json:"link_policy"`
+	LinkDomains              []string                 `json:"link_domains"`
+	Authoritative            bool                     `json:"authoritative"`
+	LinkPolicyReviewRequired bool                     `json:"link_policy_review_required"`
+	Revision                 int64                    `json:"revision"`
+	AuthorizationEndpoint    string                   `json:"authorization_endpoint"`
+	TokenEndpoint            string                   `json:"token_endpoint"`
+	TokenEndpointAuthMethod  string                   `json:"token_endpoint_auth_method"`
+	IDTokenSigningAlgs       []string                 `json:"id_token_signing_algs"`
+	UserInfoEndpoint         string                   `json:"userinfo_endpoint,omitempty"`
+	JWKSURI                  string                   `json:"jwks_uri"`
+	CreatedAt                time.Time                `json:"created_at"`
+	UpdatedAt                time.Time                `json:"updated_at"`
 }
 
 type ProviderWithSecret struct{ Provider }
@@ -89,15 +95,19 @@ type LoginMethod struct {
 }
 
 type UpsertProviderInput struct {
-	RequestID        string
-	ActorPrincipalID string
-	OrganizationID   string
-	Name             string
-	Issuer           string
-	ClientID         string
-	ClientSecret     string
-	Scopes           []string
-	Enabled          bool
+	RequestID                   string
+	ActorPrincipalID            string
+	OrganizationID              string
+	Name                        string
+	Issuer                      string
+	ClientID                    string
+	ClientSecret                string
+	Scopes                      []string
+	Enabled                     bool
+	LinkPolicy                  *string
+	LinkDomains                 *[]string
+	Authoritative               *bool
+	AcknowledgeLinkPolicyReview *bool
 }
 
 type UpsertProviderCommand struct {
@@ -158,6 +168,19 @@ type VerifiedIdentity struct {
 	Email         string
 	EmailVerified bool
 	DisplayName   string
+}
+
+// ExchangeResult remains inside the OIDC flow. The bearer never enters a
+// repository command or a public response.
+type ExchangeResult struct {
+	Identity            VerifiedIdentity
+	UserInfoAccessToken string `json:"-"`
+}
+
+type UserInfoInput struct {
+	Endpoint    string
+	AccessToken string `json:"-"`
+	Identity    VerifiedIdentity
 }
 
 type SessionStatus string
@@ -348,6 +371,10 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 			return Provider{}, err
 		}
 	}
+	policy, err := providerPolicy(existing.Provider, input)
+	if err != nil {
+		return Provider{}, err
+	}
 	now := s.now().UTC()
 	providerID, createdAt, revision := existing.ID, existing.CreatedAt, existing.Revision+1
 	if providerID == "" {
@@ -376,6 +403,8 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 		ID: providerID, OrganizationID: input.OrganizationID, Name: name, DisplayName: displayName,
 		Issuer: issuer, ClientID: clientID, ClientSecret: sealedSecret,
 		Scopes: normalizeScopes(input.Scopes), Enabled: input.Enabled, Revision: revision,
+		LinkPolicy: policy.LinkPolicy, LinkDomains: policy.LinkDomains,
+		Authoritative: policy.Authoritative, LinkPolicyReviewRequired: policy.LinkPolicyReviewRequired,
 		AuthorizationEndpoint: strings.TrimSpace(discovery.AuthorizationEndpoint),
 		TokenEndpoint:         strings.TrimSpace(discovery.TokenEndpoint), TokenEndpointAuthMethod: tokenAuthMethod,
 		IDTokenSigningAlgs: signingAlgs,
@@ -557,7 +586,7 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 	if err != nil {
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "provider_secret", err)
 	}
-	identity, err := s.federation.ExchangeAndVerify(ctx, ExchangeInput{
+	exchange, err := s.federation.ExchangeAndVerify(ctx, ExchangeInput{
 		Provider: provider.Provider, RedirectURI: s.redirectURI,
 		ClientSecret: string(clientSecret), Code: input.Code,
 		Nonce: secrets.Nonce, PKCEVerifier: secrets.PKCEVerifier,
@@ -565,9 +594,28 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 	if err != nil {
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "exchange", err)
 	}
-	identity, err = validateIdentity(provider.Provider, identity)
+	identity, err := validateIdentity(provider.Provider, exchange.Identity)
 	if err != nil {
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "identity", err)
+	}
+	if provider.LinkPolicy != LinkPolicyNone && (identity.Email == "" || !identity.EmailVerified) {
+		hasRecord, lookupErr := s.repository.HasSubjectRecord(ctx, provider.ID, identity.Subject)
+		if lookupErr != nil {
+			return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "identity", lookupErr)
+		}
+		if !hasRecord && exchange.UserInfoAccessToken != "" && provider.UserInfoEndpoint != "" {
+			identity, err = s.federation.FetchUserInfo(ctx, UserInfoInput{Endpoint: provider.UserInfoEndpoint, AccessToken: exchange.UserInfoAccessToken, Identity: identity})
+			if err != nil {
+				return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "exchange", err)
+			}
+			identity, err = validateIdentity(provider.Provider, identity)
+			if err != nil || identity.Subject != exchange.Identity.Subject {
+				if err == nil {
+					err = fmt.Errorf("OIDC UserInfo subject changed")
+				}
+				return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "identity", err)
+			}
+		}
 	}
 	return s.issueLoginCredential(ctx, claim.Session, claimID, state, identity)
 }
@@ -690,24 +738,12 @@ func validateIdentity(provider Provider, identity VerifiedIdentity) (VerifiedIde
 	if err != nil || issuer != provider.Issuer {
 		return VerifiedIdentity{}, fmt.Errorf("verified identity issuer does not match provider")
 	}
-	if identity.Subject == "" || len(identity.Subject) > 255 {
+	if !ValidSubject(identity.Subject) {
 		return VerifiedIdentity{}, fmt.Errorf("verified identity subject is required")
 	}
-	if !identity.EmailVerified {
-		return VerifiedIdentity{}, fmt.Errorf("OIDC email must be verified")
-	}
-	identity.Email, err = domain.NormalizeEmail(identity.Email)
-	if err != nil {
-		return VerifiedIdentity{}, fmt.Errorf("verified identity email: %w", err)
-	}
-	identity.DisplayName = strings.TrimSpace(identity.DisplayName)
-	if identity.DisplayName == "" {
-		identity.DisplayName = identity.Email
-	}
-	identity.DisplayName, err = domain.NormalizeDisplayName(identity.DisplayName)
-	if err != nil {
-		return VerifiedIdentity{}, err
-	}
+	// Optional profile claims cannot invalidate an already bound issuer/subject.
+	// Only automatic linking consumes a usable, verified, normalized email.
+	identity.Email, _ = domain.NormalizeEmail(identity.Email)
 	identity.Issuer = issuer
 	return identity, nil
 }

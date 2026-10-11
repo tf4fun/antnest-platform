@@ -1,21 +1,30 @@
 package scim
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 )
 
 type userRequest struct {
-	Schemas     []string `json:"schemas"`
-	ExternalID  string   `json:"externalId"`
-	UserName    string   `json:"userName"`
-	DisplayName string   `json:"displayName"`
+	Schemas     []string        `json:"schemas"`
+	ExternalID  json.RawMessage `json:"externalId"`
+	UserName    string          `json:"userName"`
+	DisplayName string          `json:"displayName"`
 	Name        struct {
 		Formatted string `json:"formatted"`
 	} `json:"name"`
 	Emails []userEmail `json:"emails"`
 	Active *bool       `json:"active"`
+}
+
+func (b *userRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := scimObject(raw); err != nil {
+		return err
+	}
+	type body userRequest
+	return json.Unmarshal(raw, (*body)(b))
 }
 
 type userEmail struct {
@@ -111,6 +120,12 @@ func (h *HTTPHandler) deleteUser(response http.ResponseWriter, request *http.Req
 }
 
 func (b userRequest) input() (UserInput, error) {
+	var externalID string
+	if b.ExternalID != nil {
+		if err := json.Unmarshal(b.ExternalID, &externalID); err != nil {
+			return UserInput{}, fmt.Errorf("SCIM externalId must be a string")
+		}
+	}
 	active := true
 	if b.Active != nil {
 		active = *b.Active
@@ -124,7 +139,7 @@ func (b userRequest) input() (UserInput, error) {
 		displayName = strings.TrimSpace(b.Name.Formatted)
 	}
 	return UserInput{
-		ExternalID: strings.TrimSpace(b.ExternalID), UserName: b.UserName,
+		ExternalID: externalID, externalIDJSON: b.ExternalID, UserName: b.UserName,
 		Email: email, DisplayName: displayName, Active: active,
 	}, nil
 }

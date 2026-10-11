@@ -4,6 +4,11 @@ services:
   identity-service:
     environment:
       ANTNEST_IDENTITY_SESSION_IDLE_TTL: ${ANTNEST_BROWSER_SESSION_E2E_IDLE_TTL:-30m}
+      SSL_CERT_FILE: /linking-ca/ca.pem
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${ANTNEST_EDGE_TLS_DIRECTORY:?required disposable TLS directory}/ca.pem:/linking-ca/ca.pem:ro
   edge-gateway:
     environment:
       ANTNEST_EDGE_LOGIN_SOURCE_MAX: "100"

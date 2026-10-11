@@ -70,6 +70,17 @@ export async function testBrowserContext(browser, options = {}) {
       });
       return;
     }
+    if (
+      url.pathname === "/api/session/external-identities" &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        status: 200,
+        json: { bindings: [], notices: [] },
+        headers: { "cache-control": "no-store" },
+      });
+      return;
+    }
     const headers = new Headers(request.headers());
     headers.delete("x-antnest-agent-id");
     const path = url.pathname;

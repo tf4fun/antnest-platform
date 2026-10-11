@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 19,
+  "version": 20,
   "session_security": {
     "contract": "session-security.md",
     "secure_cookie_names": ["__Host-antnest_session", "__Host-antnest_csrf"],
@@ -101,11 +101,26 @@
           "cookies": "clear",
           "identity_call": false
         },
-        "revoked": { "status": 204, "cookies": "clear" },
-        "malformed_invalid_or_inactive": { "status": 401, "cookies": "clear" },
-        "identity_unavailable": { "status": 503, "cookies": "preserve" },
-        "csrf_rejected": { "status": 403, "cookies": "preserve" },
-        "origin_rejected": { "status": 403, "cookies": "preserve" }
+        "revoked": {
+          "status": 204,
+          "cookies": "clear"
+        },
+        "malformed_invalid_or_inactive": {
+          "status": 401,
+          "cookies": "clear"
+        },
+        "identity_unavailable": {
+          "status": 503,
+          "cookies": "preserve"
+        },
+        "csrf_rejected": {
+          "status": 403,
+          "cookies": "preserve"
+        },
+        "origin_rejected": {
+          "status": 403,
+          "cookies": "preserve"
+        }
       }
     },
     "admin": {
@@ -347,6 +362,54 @@
       "csrf": "required",
       "origin": "shared origin_admission",
       "scope": "self only; current SID and exceptions never supplied by browser"
+    },
+    "list_external_identities": {
+      "method": "GET",
+      "path": "/api/session/external-identities",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "cookie_mutation": "forbidden",
+      "scope": "self",
+      "response_schema": "session-response.schema.json#/$defs/external_identity_list",
+      "caller_context_profile": "session",
+      "origin": "shared origin_admission",
+      "query_schema": "session-response.schema.json#/$defs/external_identity_list_query"
+    },
+    "unbind_external_identity": {
+      "method": "DELETE",
+      "path": "/api/session/external-identities/{binding_id}",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "cookie_mutation": "forbidden",
+      "scope": "self",
+      "response_schema": "session-response.schema.json#/$defs/external_identity_unbind_response",
+      "caller_context_profile": "session",
+      "origin": "shared origin_admission",
+      "csrf": "required",
+      "request_schema": "session-response.schema.json#/$defs/external_identity_unbind_request",
+      "error_status_by_code": {
+        "external_identity_last_method": 409,
+        "not_found": 404
+      }
+    },
+    "acknowledge_external_identity_notices": {
+      "method": "POST",
+      "path": "/api/session/external-identities/notices/acknowledge",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "cache": "no-store",
+      "cookie_mutation": "forbidden",
+      "scope": "self",
+      "response_schema": "session-response.schema.json#/$defs/external_identity_acknowledge_response",
+      "caller_context_profile": "session",
+      "origin": "shared origin_admission",
+      "csrf": "required",
+      "request_schema": "session-response.schema.json#/$defs/external_identity_acknowledge_request",
+      "error_status_by_code": {
+        "not_found": 404
+      }
     }
   },
   "trusted_headers": [
@@ -397,7 +460,9 @@
       "console_unavailable",
       "workspace_unavailable",
       "agent_unavailable",
-      "invalid_current_password"
+      "invalid_current_password",
+      "external_identity_last_method",
+      "not_found"
     ]
   },
   "service_authentication": {
@@ -442,5 +507,6 @@
       "direct_acp_websocket_cct": "original handshake expiry is a fixed hard cap; reconnect required"
     },
     "session_revocation_feed": "one process-owned Gateway poller; private SID registry; live checks remain authoritative"
-  }
+  },
+  "oidc_linking_contract": "../identity/oidc-linking.md"
 }

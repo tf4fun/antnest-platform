@@ -64,7 +64,7 @@ func TestClientDiscoversBuildsPKCEAndVerifiesSignedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange and verify: %v", err)
 	}
-	if identity.Subject != "subject-1" || identity.Email != "alice@example.com" || !identity.EmailVerified {
+	if identity.Identity.Subject != "subject-1" || identity.Identity.Email != "alice@example.com" || !identity.Identity.EmailVerified {
 		t.Fatalf("identity = %#v", identity)
 	}
 }
@@ -205,6 +205,10 @@ func TestUserInfoCannotReplaceVerifiedEmailWithoutItsOwnVerificationClaim(t *tes
 }
 
 func newFakeProvider(t *testing.T, tokenNonce, userInfoSubject string) *httptest.Server {
+	return newFakeProviderClaims(t, tokenNonce, userInfoSubject, nil)
+}
+
+func newFakeProviderClaims(t *testing.T, tokenNonce, userInfoSubject string, overrides map[string]any) *httptest.Server {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -235,7 +239,7 @@ func newFakeProvider(t *testing.T, tokenNonce, userInfoSubject string) *httptest
 			}
 			writeJSON(t, response, map[string]any{
 				"access_token": "access-1", "token_type": "Bearer",
-				"id_token": signIDToken(t, key, server.URL, tokenNonce),
+				"id_token": signIDToken(t, key, server.URL, tokenNonce, overrides),
 			})
 		case "/jwks":
 			writeJSON(t, response, map[string]any{"keys": []map[string]any{{
@@ -258,15 +262,21 @@ func newFakeProvider(t *testing.T, tokenNonce, userInfoSubject string) *httptest
 	return server
 }
 
-func signIDToken(t *testing.T, key *rsa.PrivateKey, issuer, nonce string) string {
+func signIDToken(t *testing.T, key *rsa.PrivateKey, issuer, nonce string, overrides ...map[string]any) string {
 	t.Helper()
 	now := time.Now().UTC()
 	header := encodeJSONSegment(t, map[string]any{"alg": "RS256", "typ": "JWT", "kid": "test-key"})
-	claims := encodeJSONSegment(t, map[string]any{
+	fields := map[string]any{
 		"iss": issuer, "sub": "subject-1", "aud": "client-1",
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "nonce": nonce,
 		"email": "alice@example.com", "email_verified": true, "name": "Alice",
-	})
+	}
+	for _, values := range overrides {
+		for key, value := range values {
+			fields[key] = value
+		}
+	}
+	claims := encodeJSONSegment(t, fields)
 	unsigned := header + "." + claims
 	digest := crypto.SHA256.New()
 	_, _ = digest.Write([]byte(unsigned))

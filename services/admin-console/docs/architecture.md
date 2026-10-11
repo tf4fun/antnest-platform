@@ -175,6 +175,13 @@ scope and revoke-all mode and strips private fields. Self controls call Gateway
 and span organizations. Public random session references and plain-text browser
 hints are presentation metadata, never authentication credentials.
 
+[External login controls](oidc-linking.md) use signed organization and exact
+Membership paths for administration. Self bindings and immutable notices use
+Gateway directly, with independent pagination and exact notice acknowledgment.
+Provider configuration retains its durable review flag; SCIM grants expose the
+immutable paired Provider ID or null. Current-session unbinding retires private
+state immediately without another logout or read.
+
 ## Page Behavior
 
 ### Overview and first-run guidance
@@ -271,8 +278,9 @@ OIDC Provider and SCIM credential inventories load independently, so one failed
 Identity read cannot erase the other management surface. Directory and
 Provisioning mutations report failures inside the active form or confirmation
 and retain entered values for retry. One-time SCIM credentials remain only in
-page memory, including when clipboard access fails. Group and OIDC database IDs
-are omitted from browser DTOs; a SCIM token ID is retained only for its revoke
+page memory, including when clipboard access fails. Group and OIDC configuration IDs
+are omitted from browser DTOs; the external identity chooser, binding and SCIM
+pairing expose their explicit public Provider references. A SCIM token ID is retained only for its revoke
 action and is not rendered as user-facing credential identity.
 
 ### Account, sign-out and session expiry

@@ -184,6 +184,34 @@ There is no per-field filtering or bespoke payload size limit. See
 - The OIDC callback is fixed from `ANTNEST_IDENTITY_PUBLIC_BASE_URL`; Provider
   configuration cannot supply another redirect URI. An in-flight session is
   rejected after any Provider revision change and must be restarted.
+- New Providers default to `none`: an asserted email cannot create a binding.
+  `verified_email_in_domains` trusts verified email only in the exact allowed
+  domains; `verified_email` trusts all verified email claims from that Provider.
+  Both require explicit configuration. Auto-linking an organization admin
+  additionally requires `authoritative=true`; system admins cannot use OIDC.
+  Domain inputs use ASCII A-label spelling, with no wildcard or suffix matching.
+  Submit `link_policy`, `link_domains` and `authoritative` together, including
+  explicit empty arrays and false values; omit all three to retain the policy.
+- Migration `0006` marks historical `verified_email` Providers as requiring
+  review. Explicitly submit a complete policy with
+  `acknowledge_link_policy_review=true` after assessing the IdP's email controls.
+  Secret rotation and enable/disable do not clear the warning. Migration does
+  not remove an existing unwanted binding or invalidate existing sessions.
+  Console keeps the warning visible until explicit review. Console and Workspace
+  expose binding inventories and durable notices under the
+  [OIDC linking contract](../../../contracts/identity/oidc-linking.md).
+- Identity's binding RPCs require live CCT authority and the exact workload:
+  Console administers bindings for a Membership in the signed organization;
+  Gateway lists/unbinds the signed User's bindings and acknowledges owned
+  notices. New bindings work with `none` and disabled Providers, but disabled
+  Providers cannot issue a login. Unbinding preserves a subject tombstone,
+  revokes that Membership's browser sessions and leaves Agent lifecycle intact.
+  `external_identity_last_method` requires an explicit `allow_lockout=true`
+  second action. `external_identity_restore_required` requires an administrator
+  to submit `restore_revoked=true` for the original owner and Membership.
+  Migration `0007` backfills `method=auto` and the original binding time without
+  emitting notices or changing sessions. Restoring produces a fresh notice ID;
+  list reads never confirm it, and acknowledgment is limited to exact owned IDs.
 - An OIDC exchange that reaches the login deadline before issuing its token
   fails with `oidc_session_expired` (`410`), records an `expired` failure stage,
   and cannot be retried under the same login state. Start a new login instead.
@@ -218,14 +246,34 @@ There is no per-field filtering or bespoke payload size limit. See
   intended.
 - SCIM User `active=false` deactivates the SCIM-owned Membership without
   deleting it. DELETE tombstones and hides that SCIM resource; reprovisioning
-  with the same external ID creates a fresh Membership on the same global User
-  and repoints its OIDC identity while audit history remains. POST never
+  with the same external ID and stored Provider pairing creates a fresh
+  Membership on the confirmed global User and repoints only that old
+  Membership's OIDC identities. Explicit revocation and activation/audit/notice
+  history remain unchanged. POST never
   overwrites an active User or Group; use PUT/PATCH for updates.
   SCIM Group DELETE removes the Group and its owned edges; it does not expose a
   nonstandard Group `active` state.
 - Multiple SCIM bearer tokens for an Organization are rotating credentials for
   the same logical directory authority. Operators must not connect competing
   provisioning authorities to the same Organization.
+- `issue_scim_token` optionally accepts a same-organization `oidc_provider_id`;
+  omission issues a directory-only token, while explicit null is invalid.
+  Pairing cannot be edited. Migration `0008` preserves legacy tokens and
+  Memberships as unpaired; it infers no Provider authority. Paired User POST
+  requires an exact nonempty `externalId` subject (1–255 Unicode scalars, no
+  NUL), and commits binding, audit and notice atomically. Paired PUT omission
+  preserves that subject; changing/clearing it returns 400 `invalidValue`.
+  Pairing/owner collisions return 409 `uniqueness`. A different or unpaired
+  credential can update ordinary directory fields but cannot reinterpret the
+  stored subject or restore a revoked mapping. Create/delete transactions
+  serialize per Organization before row locks to preserve reprovision lineage.
+- Reprovisioning advances the new Membership timestamp beyond its confirmed
+  predecessor, so a fixed or regressing clock cannot reorder new generations.
+  Historical candidates with equal highest deletion timestamps return 409
+  without changes and require explicit reconciliation from reliable lineage
+  evidence. The migration does not reconstruct historical clock regressions
+  that predate this ordering rule; timestamp order alone cannot recover their
+  original execution order.
 - Protocol request bodies and responses are bounded. Unknown fields are
   rejected on internal RPC and tolerated only where the standards require
   extensibility.
@@ -242,8 +290,9 @@ logout and explicit session revocation do not create principal offboarding.
 Back up `session_revocations` with the database and preserve its sequence and
 writer-lock protocol. A consumer starts at zero, reads committed pages of at
 most 500 records, and advances only to the returned cursor. Empty pages preserve
-the cursor. Consumer implementation and stream integration remain separate
-Gateway delivery work under #58.
+the cursor. Gateway consumes the feed and revalidates quiet streams within its
+bounded stale interval; the real HTTPS browser-session gate verifies remote
+SSE/WSS retirement without terminating an accepted Agent Run.
 
 `list_principal_revocations` is a workload-authenticated Controller-only RPC and must not be
 forwarded by Gateway. It uses the same route and automatic driver spans and
@@ -289,5 +338,6 @@ even on loopback; in mTLS mode it uses the Identity certificate for the probe.
 
 Deploy this strict Identity producer together with the completed Gateway/Console
 consumer batches and deployment credential mounts. Existing unauthenticated
-consumers cannot call revision 14. The full Docker/browser regression is deferred
-to the final integration batch on `feat/service-authentication`.
+consumers cannot call the authenticated RPC surface. Service-owned Docker gates
+verify those credentials and grants; `make e2e-browser-sessions-https` also
+verifies the complete Identity/Gateway/Console/Workspace session and OIDC flows.

@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/admin-console/oidc-linking.schema.json",
+  "title": "Admin Console external identity binding requests and responses, revision 52",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "oidc_link_policy": {
+      "type": "string",
+      "enum": ["none", "verified_email_in_domains", "verified_email"]
+    },
+    "oidc_link_domain": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "external_identity_subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^\\u0000\\uD800-\\uDFFF]+$"
+    },
+    "external_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "provider_id",
+        "provider_name",
+        "provider_display_name",
+        "organization_id",
+        "organization_slug",
+        "organization_name",
+        "membership_id",
+        "subject",
+        "method",
+        "provider_enabled",
+        "created_at",
+        "bound_at",
+        "revoked_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "provider_id": {
+          "$ref": "#/$defs/id"
+        },
+        "provider_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "provider_display_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "organization_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "membership_id": {
+          "$ref": "#/$defs/id"
+        },
+        "subject": {
+          "$ref": "#/$defs/external_identity_subject"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["auto", "admin", "scim"]
+        },
+        "provider_enabled": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "bound_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "external_identity_organization_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bindings"],
+      "properties": {
+        "bindings": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/external_identity"
+          }
+        },
+        "next_after_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "external_identity_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "display_name",
+        "enabled",
+        "link_policy",
+        "link_domains",
+        "authoritative",
+        "link_policy_review_required"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "link_policy": {
+          "$ref": "#/$defs/oidc_link_policy"
+        },
+        "link_domains": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/oidc_link_domain"
+          },
+          "uniqueItems": true
+        },
+        "authoritative": {
+          "type": "boolean"
+        },
+        "link_policy_review_required": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["link_policy"],
+            "properties": {
+              "link_policy": {
+                "const": "verified_email_in_domains"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "link_domains": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "link_domains": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "list_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limit"],
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "after_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "bind_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_id", "subject"],
+      "properties": {
+        "provider_id": {
+          "$ref": "#/$defs/id"
+        },
+        "subject": {
+          "$ref": "#/$defs/external_identity_subject"
+        },
+        "restore_revoked": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "unbind_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "allow_lockout": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "binding_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bindings"],
+      "properties": {
+        "bindings": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/external_identity"
+          }
+        },
+        "next_after_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding"],
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/external_identity"
+        }
+      }
+    },
+    "unbind_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revoked_count", "current_revoked"],
+      "properties": {
+        "revoked_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_revoked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "provider_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providers"],
+      "properties": {
+        "providers": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/external_identity_provider"
+          }
+        },
+        "next_after_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    }
+  }
+}

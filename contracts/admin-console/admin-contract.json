@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 51,
+  "version": 52,
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
@@ -145,15 +145,19 @@
     },
     "list_oidc_providers": {
       "method": "GET",
-      "path": "/provisioning/oidc-providers"
+      "path": "/provisioning/oidc-providers",
+      "authorization": "system_admin"
     },
     "upsert_oidc_provider": {
       "method": "POST",
-      "path": "/provisioning/oidc-providers"
+      "path": "/provisioning/oidc-providers",
+      "authorization": "system_admin",
+      "link_policy": "Complete optional link_policy/link_domains/authoritative update; explicit acknowledge_link_policy_review. Omission preserves policy and persistent review warning."
     },
     "set_oidc_provider_enabled": {
       "method": "POST",
-      "path": "/provisioning/oidc-providers/{name}/enabled"
+      "path": "/provisioning/oidc-providers/{name}/enabled",
+      "authorization": "system_admin"
     },
     "list_scim_tokens": {
       "method": "GET",
@@ -161,7 +165,8 @@
     },
     "issue_scim_token": {
       "method": "POST",
-      "path": "/provisioning/scim-tokens"
+      "path": "/provisioning/scim-tokens",
+      "oidc_provider_id": "Optional exact Provider ID chosen from the signed-organization chooser; immutable after token issuance."
     },
     "revoke_scim_token": {
       "method": "POST",
@@ -239,7 +244,9 @@
     "get_agent_skill_preparation_by_key": {
       "method": "GET",
       "path": "/agent-skill-preparations/by-idempotency-key",
-      "headers": { "required": ["Idempotency-Key"] },
+      "headers": {
+        "required": ["Idempotency-Key"]
+      },
       "query": "reject_all",
       "request_identity": "derive_lifecycle_request_id_from_trusted_organization_and_original_key",
       "cache_control": "no-store"
@@ -314,6 +321,53 @@
     "rotate_provider_credential": {
       "method": "POST",
       "path": "/provider-connections/{connection_id}/credentials"
+    },
+    "list_external_identity_providers": {
+      "method": "GET",
+      "path": "/directory/identity-providers",
+      "scope": "signed_organization",
+      "authorization": "organization_admin",
+      "cache": "no-store",
+      "response_schema": "oidc-linking.schema.json#/$defs/provider_list",
+      "query_schema": "oidc-linking.schema.json#/$defs/list_query"
+    },
+    "list_external_identities": {
+      "method": "GET",
+      "path": "/directory/memberships/{membership_id}/external-identities",
+      "scope": "signed_organization",
+      "authorization": "organization_admin",
+      "cache": "no-store",
+      "response_schema": "oidc-linking.schema.json#/$defs/binding_list",
+      "query_schema": "oidc-linking.schema.json#/$defs/list_query"
+    },
+    "bind_external_identity": {
+      "method": "POST",
+      "path": "/directory/memberships/{membership_id}/external-identities",
+      "scope": "signed_organization",
+      "authorization": "organization_admin",
+      "cache": "no-store",
+      "response_schema": "oidc-linking.schema.json#/$defs/binding",
+      "request_schema": "oidc-linking.schema.json#/$defs/bind_request",
+      "requires": ["Idempotency-Key"],
+      "error_status_by_code": {
+        "external_identity_conflict": 409,
+        "external_identity_restore_required": 409,
+        "not_found": 404
+      }
+    },
+    "unbind_external_identity": {
+      "method": "DELETE",
+      "path": "/directory/memberships/{membership_id}/external-identities/{binding_id}",
+      "scope": "signed_organization",
+      "authorization": "organization_admin",
+      "cache": "no-store",
+      "response_schema": "oidc-linking.schema.json#/$defs/unbind_response",
+      "request_schema": "oidc-linking.schema.json#/$defs/unbind_request",
+      "requires": ["Idempotency-Key"],
+      "error_status_by_code": {
+        "external_identity_last_method": 409,
+        "not_found": 404
+      }
     }
   },
   "server_fields": [
@@ -337,7 +391,11 @@
       "set_oidc_provider_enabled",
       "list_scim_tokens",
       "issue_scim_token",
-      "revoke_scim_token"
+      "revoke_scim_token",
+      "list_external_identity_providers",
+      "list_external_identities",
+      "bind_external_identity",
+      "unbind_external_identity"
     ],
     "agent_controller": [
       "catalog_availability",
@@ -505,15 +563,15 @@
       "redisclosure": "forbidden"
     },
     "resource_identity": {
-      "organization_id": "trusted_scope_only_except_explicit_browser_session_metadata",
+      "organization_id": "trusted_scope_only_except_explicit_browser_session_and_external_identity_metadata",
       "directory_group_id": "read_only_internal_identity_not_projected",
-      "oidc_record_id": "internal_identity_not_projected_provider_name_is_command_key",
+      "oidc_record_id": "provider_name_is_configuration_command_key_record_id_only_for_external_identity_bindings_provider_chooser_and_scim_pairing",
       "scim_token_id": "revoke_action_handle_not_presentation_label"
     },
     "account_security": {
       "browser_session_contract": "../identity/browser-sessions.md",
-      "gateway_revision": 19,
-      "identity_revision": 15,
+      "gateway_revision": 20,
+      "identity_revision": 16,
       "password_owner": "edge_gateway_POST_/api/session/password",
       "retired_console_password_route": "deny_without_dependency_effect",
       "profile_fields": [
@@ -693,5 +751,6 @@
       "supported": "deepseek_and_openrouter_api_key",
       "catalogue_owner": "admin_console"
     }
-  }
+  },
+  "oidc_linking_contract": "../identity/oidc-linking.md"
 }

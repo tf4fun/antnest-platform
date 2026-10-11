@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { gatewaySessionCookies } from "../../../support/gateway-session-cookies.mjs";
+import { externalIdentityChecks } from "./external-identities.mjs";
 
 // Exercise the real Gateway against the authenticated Identity wire double.
 // Producer transactions and real browser generations have separate admissions.
@@ -305,5 +306,14 @@ export async function browserSessionChecks({
     status: 204,
     cookies: true,
   });
+  const externalChecks = await externalIdentityChecks({
+    request,
+    login,
+    password: newPassword,
+    url,
+    origin,
+    signal,
+  });
+  checks += externalChecks;
   return checks;
 }

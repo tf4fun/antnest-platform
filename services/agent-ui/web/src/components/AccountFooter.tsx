@@ -26,7 +26,7 @@ export function AccountFooter({
         <small>{principal.organizationName}</small>
       </span>
       <span className="profile-actions">
-        {onAccount ? <button className="icon-button" type="button" onClick={onAccount}
+        {onAccount ? <button className="icon-button" type="button" data-browser-account-trigger onClick={onAccount}
           title="Account and sessions" aria-label="Account and sessions"><UserRound size={15} aria-hidden="true" /></button> : null}
         {principal.administrator ? (
           <a

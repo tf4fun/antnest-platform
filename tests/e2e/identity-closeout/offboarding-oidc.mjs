@@ -30,6 +30,9 @@ export async function oidcOwner(admin, slug, secrets) {
       client_secret: fixtureSecret(1),
       scopes: ["openid", "email", "profile"],
       enabled: true,
+      link_policy: "verified_email",
+      link_domains: [],
+      authoritative: false,
     },
   });
   secrets.push(fixtureSecret(1), providerAccessToken);

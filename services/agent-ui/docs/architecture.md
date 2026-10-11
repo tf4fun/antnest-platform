@@ -121,6 +121,27 @@ dialog's lifetime. The application offers explicit validation retry after a
 transient read failure. Explicit sign-out returns to the login entry; expiry
 preserves the current workspace return route.
 
+External bindings and binding notices belong to that validated shell, outside
+Agent selection and the account dialog. The shell reads inventory once per
+session generation; it does not poll or acknowledge on read. SSR cannot fetch
+this private inventory before browser validation. The notice banner remains
+available during Workspace failure and while an unread notice page remains.
+The dialog preserves the other stream's rows and cursor when paging bindings
+or notices, and keeps displayed data on a transient failure. Provider, organization
+and subject snapshots are plain text, including historical notices whose binding
+or organization is no longer available; subject whitespace is preserved.
+
+Each explicit ACK freezes its notice ID and removes only that notice after a
+successful response, including an already-acknowledged count of zero. Restored
+bindings produce a different notice ID. Unbind confirmation freezes the selected
+binding and is discarded when the dialog closes. A last-method response requires
+a second explicit `allow_lockout` action. A successful noncurrent unbind refreshes
+inventory once; `current_revoked` retires the generation and redirects without
+another read or logout. Late results and CSRF replacement cannot modify a new
+session. Gateway owns all three routes under `/api/session/external-identities`;
+Node does not implement alternate account endpoints. See
+[OIDC linking](../../../contracts/identity/oidc-linking.md).
+
 The browser reports activity only for trusted keyboard, input, pointer, wheel
 and touch events in a visible document. Reports have a leading call and a
 trailing call only when more input arrived, with one in-flight request and the
@@ -361,6 +382,14 @@ There is no browser ACP or Nginx compatibility mode.
   expiry. The receipt Docker test adds a real held Run observed for 95 seconds:
   the browser renews its original SSE delegation and receives the terminal
   state without another Prompt, model request or test-side Workspace read.
+- The external-identity browser helper runs the same desktop/mobile journeys
+  against local production assets and the owning Docker container. Only Gateway
+  browser-session APIs are doubled; authenticated SSR, assets and Workspace
+  bootstrap use the actual Node service. The Docker helper uses the harness's
+  existing signing authority and runs after capacity checks, before normal
+  shutdown. Contexts and Chromium close in `finally`, including interruption.
+  Real Identity grants, persistent transactions and two-browser HTTPS behavior
+  remain a separate integration gate.
 - `test:bridge:memory` samples V8 allocation and post-GC retained heap for small
   updates beside a large unchanged tool body; its RSS values are diagnostic,
   not a container memory limit. `test:bridge:runtime-memory` samples the

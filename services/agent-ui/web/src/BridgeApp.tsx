@@ -6,6 +6,8 @@ import { BridgeHttpClient } from "./lib/workspace-api-client";
 import { csrfFromCookie } from "./lib/session";
 import { listenForSessionActivity } from "./lib/session-activity";
 import { BrowserAccountPanel } from "./components/BrowserAccountPanel";
+import { ExternalIdentityBanner } from "./components/ExternalIdentities";
+import { useExternalIdentities } from "./lib/use-external-identities";
 import { readWorkspaceRoute, workspacePath, type WorkspaceRoute } from "./lib/navigation";
 
 type Props = { initialBootstrap?: unknown; initialRoute?: WorkspaceRoute };
@@ -89,11 +91,22 @@ function AuthenticatedWorkspace({ client, enabled = true, initialBootstrap, init
 }) {
   const [api] = useState(() => new BridgeHttpClient({ session: client }));
   const [accountOpen, setAccountOpen] = useState(false);
+  const shell = useRef<HTMLDivElement>(null);
   const model = useBridgeWorkspace({ api, enabled, initialBootstrap, initialRoute });
-  return <>
-    <WorkspacePage model={model} onAccount={enabled ? () => {
-      if (api.sessionCurrent()) setAccountOpen(true);
-    } : undefined} />
-    {accountOpen ? <BrowserAccountPanel client={client} onClose={() => setAccountOpen(false)} /> : null}
-  </>;
+  const external = useExternalIdentities(client, enabled);
+  const openAccount = () => { if (api.sessionCurrent()) setAccountOpen(true); };
+  const fallbackFocus = () => {
+    const candidates = shell.current?.querySelectorAll<HTMLButtonElement>('[data-browser-account-trigger], button[aria-label="Open navigation"]');
+    for (const button of candidates ?? []) {
+      const bounds = button.getBoundingClientRect();
+      if (bounds.width && bounds.height && bounds.right > 0 && bounds.bottom > 0 && bounds.left < window.innerWidth && bounds.top < window.innerHeight && !button.closest('[inert], [aria-hidden="true"]')) {
+        button.focus(); return;
+      }
+    }
+  };
+  return <div ref={shell} className="browser-workspace-shell">
+    {enabled ? <ExternalIdentityBanner model={external} onReview={openAccount} /> : null}
+    <div className="browser-workspace-content"><WorkspacePage model={model} onAccount={enabled ? openAccount : undefined} /></div>
+    {accountOpen ? <BrowserAccountPanel client={client} external={external} fallbackFocus={fallbackFocus} onClose={() => setAccountOpen(false)} /> : null}
+  </div>;
 }

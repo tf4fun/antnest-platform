@@ -15,6 +15,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/externalidentities"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/oidcflow"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
@@ -24,32 +25,37 @@ import (
 const maxRequestBytes = 1 << 20
 
 var ContractRoutes = map[string]string{
-	"touch_browser_session":       "/rpc/identity/touch-browser-session",
-	"list_user_sessions":          "/rpc/identity/list-user-sessions",
-	"revoke_user_sessions":        "/rpc/identity/revoke-user-sessions",
-	"list_session_revocations":    "/rpc/identity/list-session-revocations",
-	"resolve_owner_authorization": "/rpc/identity/resolve-owner-authorization",
-	"list_principal_revocations":  "/rpc/identity/list-principal-revocations",
-	"create_organization":         "/rpc/identity/create-organization",
-	"create_local_user":           "/rpc/identity/create-local-user",
-	"add_organization_membership": "/rpc/identity/add-organization-membership",
-	"change_local_password":       "/rpc/identity/change-local-password",
-	"update_membership":           "/rpc/identity/update-membership",
-	"set_user_active":             "/rpc/identity/set-user-active",
-	"list_directory":              "/rpc/identity/list-directory",
-	"get_current_account":         "/rpc/identity/get-current-account",
-	"resolve_principal":           "/rpc/identity/resolve-principal",
-	"local_login":                 "/rpc/identity/local-login",
-	"resolve_access_token":        "/rpc/identity/resolve-access-token",
-	"revoke_access_token":         "/rpc/identity/revoke-access-token",
-	"issue_scim_token":            "/rpc/identity/issue-scim-token",
-	"revoke_scim_token":           "/rpc/identity/revoke-scim-token",
-	"list_scim_tokens":            "/rpc/identity/list-scim-tokens",
-	"upsert_oidc_provider":        "/rpc/identity/upsert-oidc-provider",
-	"set_oidc_provider_enabled":   "/rpc/identity/set-oidc-provider-enabled",
-	"list_oidc_providers":         "/rpc/identity/list-oidc-providers",
-	"list_login_methods":          "/rpc/identity/list-login-methods",
-	"start_oidc_login":            "/rpc/identity/start-oidc-login",
+	"list_external_identities":              "/rpc/identity/list-external-identities",
+	"bind_external_identity":                "/rpc/identity/bind-external-identity",
+	"unbind_external_identity":              "/rpc/identity/unbind-external-identity",
+	"acknowledge_external_identity_notices": "/rpc/identity/acknowledge-external-identity-notices",
+	"list_external_identity_providers":      "/rpc/identity/list-external-identity-providers",
+	"touch_browser_session":                 "/rpc/identity/touch-browser-session",
+	"list_user_sessions":                    "/rpc/identity/list-user-sessions",
+	"revoke_user_sessions":                  "/rpc/identity/revoke-user-sessions",
+	"list_session_revocations":              "/rpc/identity/list-session-revocations",
+	"resolve_owner_authorization":           "/rpc/identity/resolve-owner-authorization",
+	"list_principal_revocations":            "/rpc/identity/list-principal-revocations",
+	"create_organization":                   "/rpc/identity/create-organization",
+	"create_local_user":                     "/rpc/identity/create-local-user",
+	"add_organization_membership":           "/rpc/identity/add-organization-membership",
+	"change_local_password":                 "/rpc/identity/change-local-password",
+	"update_membership":                     "/rpc/identity/update-membership",
+	"set_user_active":                       "/rpc/identity/set-user-active",
+	"list_directory":                        "/rpc/identity/list-directory",
+	"get_current_account":                   "/rpc/identity/get-current-account",
+	"resolve_principal":                     "/rpc/identity/resolve-principal",
+	"local_login":                           "/rpc/identity/local-login",
+	"resolve_access_token":                  "/rpc/identity/resolve-access-token",
+	"revoke_access_token":                   "/rpc/identity/revoke-access-token",
+	"issue_scim_token":                      "/rpc/identity/issue-scim-token",
+	"revoke_scim_token":                     "/rpc/identity/revoke-scim-token",
+	"list_scim_tokens":                      "/rpc/identity/list-scim-tokens",
+	"upsert_oidc_provider":                  "/rpc/identity/upsert-oidc-provider",
+	"set_oidc_provider_enabled":             "/rpc/identity/set-oidc-provider-enabled",
+	"list_oidc_providers":                   "/rpc/identity/list-oidc-providers",
+	"list_login_methods":                    "/rpc/identity/list-login-methods",
+	"start_oidc_login":                      "/rpc/identity/start-oidc-login",
 }
 
 type DirectoryService interface {
@@ -95,13 +101,22 @@ type BrowserSessionsService interface {
 }
 
 type Dependencies struct {
-	Directory       DirectoryService
-	LocalAuth       LocalAuthService
-	OIDC            OIDCService
-	SCIM            SCIMService
-	BrowserSessions BrowserSessionsService
-	Authentication  *serviceauth.Receiver
-	CallerContext   *callercontext.Authority
+	Directory          DirectoryService
+	LocalAuth          LocalAuthService
+	OIDC               OIDCService
+	SCIM               SCIMService
+	BrowserSessions    BrowserSessionsService
+	ExternalIdentities ExternalIdentitiesService
+	Authentication     *serviceauth.Receiver
+	CallerContext      *callercontext.Authority
+}
+
+type ExternalIdentitiesService interface {
+	List(context.Context, externalidentities.ListInput) (externalidentities.Page, error)
+	Bind(context.Context, externalidentities.BindInput) (externalidentities.Binding, error)
+	Unbind(context.Context, externalidentities.UnbindInput) (externalidentities.UnbindResult, error)
+	Acknowledge(context.Context, externalidentities.AcknowledgeInput) (externalidentities.AcknowledgeResult, error)
+	ListProviders(context.Context, externalidentities.ProvidersInput) (externalidentities.ProvidersPage, error)
 }
 
 type Handler struct {
@@ -111,10 +126,15 @@ type Handler struct {
 
 func NewHandler(dependencies Dependencies) (*Handler, error) {
 	if dependencies.Directory == nil || dependencies.LocalAuth == nil ||
-		dependencies.OIDC == nil || dependencies.SCIM == nil || dependencies.BrowserSessions == nil || dependencies.Authentication == nil || dependencies.CallerContext == nil {
+		dependencies.OIDC == nil || dependencies.SCIM == nil || dependencies.BrowserSessions == nil || dependencies.ExternalIdentities == nil || dependencies.Authentication == nil || dependencies.CallerContext == nil {
 		return nil, fmt.Errorf("identity RPC handler requires all application services")
 	}
 	handler := &Handler{dependencies: dependencies, mux: http.NewServeMux()}
+	handler.mux.HandleFunc("POST /rpc/identity/list-external-identities", handler.listExternalIdentities)
+	handler.mux.HandleFunc("POST /rpc/identity/bind-external-identity", handler.bindExternalIdentity)
+	handler.mux.HandleFunc("POST /rpc/identity/unbind-external-identity", handler.unbindExternalIdentity)
+	handler.mux.HandleFunc("POST /rpc/identity/acknowledge-external-identity-notices", handler.acknowledgeExternalIdentityNotices)
+	handler.mux.HandleFunc("POST /rpc/identity/list-external-identity-providers", handler.listExternalIdentityProviders)
 	handler.mux.HandleFunc("POST /rpc/identity/touch-browser-session", handler.touchBrowserSession)
 	handler.mux.HandleFunc("POST /rpc/identity/list-user-sessions", handler.listUserSessions)
 	handler.mux.HandleFunc("POST /rpc/identity/revoke-user-sessions", handler.revokeUserSessions)
@@ -432,11 +452,12 @@ type revokeTokenRequest struct {
 }
 
 type issueSCIMTokenRequest struct {
-	RequestID        string   `json:"request_id"`
-	ActorPrincipalID string   `json:"actor_principal_id"`
-	OrganizationID   string   `json:"organization_id"`
-	Name             string   `json:"name"`
-	Scopes           []string `json:"scopes"`
+	RequestID        string          `json:"request_id"`
+	ActorPrincipalID string          `json:"actor_principal_id"`
+	OrganizationID   string          `json:"organization_id"`
+	OIDCProviderID   json.RawMessage `json:"oidc_provider_id"`
+	Name             string          `json:"name"`
+	Scopes           []string        `json:"scopes"`
 }
 
 func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Request) {
@@ -446,10 +467,18 @@ func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
-	result, err := h.dependencies.SCIM.IssueToken(request.Context(), scim.IssueTokenInput{
+	input := scim.IssueTokenInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
 		OrganizationID: body.OrganizationID, Name: body.Name, Scopes: body.Scopes,
-	})
+	}
+	if body.OIDCProviderID != nil {
+		var providerID string
+		if !externalOptionalID(response, body.OIDCProviderID, &providerID) {
+			return
+		}
+		input.OIDCProviderID = &providerID
+	}
+	result, err := h.dependencies.SCIM.IssueToken(request.Context(), input)
 	writeResult(response, result, err)
 }
 
@@ -484,15 +513,19 @@ func (h *Handler) listSCIMTokens(response http.ResponseWriter, request *http.Req
 }
 
 type upsertOIDCProviderRequest struct {
-	RequestID        string   `json:"request_id"`
-	ActorPrincipalID string   `json:"actor_principal_id"`
-	OrganizationID   string   `json:"organization_id"`
-	Name             string   `json:"name"`
-	Issuer           string   `json:"issuer"`
-	ClientID         string   `json:"client_id"`
-	ClientSecret     string   `json:"client_secret"`
-	Scopes           []string `json:"scopes"`
-	Enabled          *bool    `json:"enabled"`
+	RequestID                   string          `json:"request_id"`
+	ActorPrincipalID            string          `json:"actor_principal_id"`
+	OrganizationID              string          `json:"organization_id"`
+	Name                        string          `json:"name"`
+	Issuer                      string          `json:"issuer"`
+	ClientID                    string          `json:"client_id"`
+	ClientSecret                string          `json:"client_secret"`
+	Scopes                      []string        `json:"scopes"`
+	Enabled                     *bool           `json:"enabled"`
+	LinkPolicy                  json.RawMessage `json:"link_policy"`
+	LinkDomains                 json.RawMessage `json:"link_domains"`
+	Authoritative               json.RawMessage `json:"authoritative"`
+	AcknowledgeLinkPolicyReview json.RawMessage `json:"acknowledge_link_policy_review"`
 }
 
 func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http.Request) {
@@ -506,12 +539,16 @@ func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 		writeError(response, domain.NewError("bad_request", "enabled is required", false))
 		return
 	}
-	provider, err := h.dependencies.OIDC.UpsertProvider(request.Context(), oidcflow.UpsertProviderInput{
+	input := oidcflow.UpsertProviderInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
 		OrganizationID: body.OrganizationID, Name: body.Name, Issuer: body.Issuer,
 		ClientID: body.ClientID, ClientSecret: body.ClientSecret,
 		Scopes: body.Scopes, Enabled: *body.Enabled,
-	})
+	}
+	if !decodeProviderPolicy(response, body, &input) {
+		return
+	}
+	provider, err := h.dependencies.OIDC.UpsertProvider(request.Context(), input)
 	writeResult(response, map[string]any{"provider": provider}, err)
 }
 
@@ -736,7 +773,7 @@ func writeError(response http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case "inactive_principal", "oidc_membership_required":
 		status = http.StatusForbidden
-	case "oidc_provider_changed", "oidc_provider_issuer_immutable", "oidc_provider_client_id_immutable", "oidc_exchange_in_progress":
+	case "oidc_provider_changed", "oidc_provider_issuer_immutable", "oidc_provider_client_id_immutable", "oidc_exchange_in_progress", "external_identity_conflict", "external_identity_restore_required", "external_identity_last_method":
 		status = http.StatusConflict
 	case "oidc_session_expired", "oidc_completed_token_unavailable":
 		status = http.StatusGone

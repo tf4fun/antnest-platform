@@ -4,6 +4,7 @@ import {
   agentStreamObserver,
   readTurnContent as readContent,
 } from "../../support/agent-ui/bridge-protocol.mjs";
+import { verifyExternalIdentitiesBrowser } from "../../support/agent-ui/external-identities-browser.mjs";
 import { execFile } from "node:child_process";
 import { createServer, get, request as httpRequest } from "node:http";
 import { createRequire } from "node:module";
@@ -127,6 +128,7 @@ test(
     const gatewayTraceId = "0123456789abcdef0123456789abcdef";
     const gatewayParentSpanId = "1111111111111111";
     const controllerCalls = [];
+    let accountOnly = false;
     let session1Client;
     let session1Watermark = 0;
     let memoryClient;
@@ -370,15 +372,17 @@ test(
           response.setHeader("content-type", "application/json");
           response.end(
             JSON.stringify({
-              agents: [
-                {
-                  agent_id: "agent-1",
-                  name: "Research",
-                  lifecycle_state: "created",
-                  activation_state: "enabled",
-                  runtime_state: "available",
-                },
-              ],
+              agents: accountOnly
+                ? []
+                : [
+                    {
+                      agent_id: "agent-1",
+                      name: "Research",
+                      lifecycle_state: "created",
+                      activation_state: "enabled",
+                      runtime_state: "available",
+                    },
+                  ],
               next_cursor: null,
             }),
           );
@@ -1989,6 +1993,17 @@ test(
         initialIncarnation,
         "Production Bridge must retire an idle owner and rebuild its readable Session",
       );
+      accountOnly = true;
+      try {
+        await verifyExternalIdentitiesBrowser({
+          base,
+          signal: interrupted.signal,
+          headersForRequest: testHeaders,
+          output: `${evidenceRoot}/external-identities`,
+        });
+      } finally {
+        accountOnly = false;
+      }
       const stopStartedAt = performance.now();
       await docker(["stop", "-t", "30", container], 45_000);
       const stopDurationMs = performance.now() - stopStartedAt;

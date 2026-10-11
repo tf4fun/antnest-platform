@@ -5,6 +5,11 @@ deployable components. It contains wire contracts, schemas and shared
 fixtures, not generated application models, persistence records, or reusable
 business code.
 
+[OIDC account linking](identity/oidc-linking.md) defines the revision-16 Identity,
+revision-20 Gateway and revision-52 Console contract for #61. Binding ownership,
+SCIM pairing and exact-ID notices precede their separate service and integration
+batches; active caller grants remain tied to service implementation.
+
 ## Active Contracts
 
 | Directory                                                                    | Owner service                                                                                                     | Consumers                                                                            | Files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

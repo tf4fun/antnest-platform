@@ -21,6 +21,12 @@ import type {
   Directory,
   DirectoryMember,
   DirectoryMembership,
+  ExternalIdentity,
+  ExternalIdentityBindInput,
+  ExternalIdentityPage,
+  ExternalIdentityProviderPage,
+  SelfExternalIdentityPage,
+  OIDCPolicy,
   LifecycleOperation,
   LoginMethodList,
   ModelCatalog,
@@ -343,9 +349,9 @@ async function skillArtifact(skillID: string, version: number): Promise<Blob> {
   }
 }
 
-function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
+function oneShotCommand<T>(path: string, input: unknown, method: "POST" | "DELETE" = "POST"): Promise<T> {
   return request<T>(path, {
-    method: "POST",
+    method,
     headers: { "Idempotency-Key": crypto.randomUUID() },
     body: json(input),
   });
@@ -354,6 +360,14 @@ function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
 async function revokeBrowserSessions(path: string, input: unknown): Promise<SessionRevocation> {
   const session = captureSessionRequest();
   const result = await oneShotCommand<SessionRevocation>(path, input);
+  assertSessionRequest(session);
+  if (result.current_revoked) window.dispatchEvent(new Event("antnest:session-expired"));
+  return result;
+}
+
+async function unbindExternalIdentity(path: string, allowLockout: boolean): Promise<SessionRevocation> {
+  const session = captureSessionRequest();
+  const result = await oneShotCommand<SessionRevocation>(path, { allow_lockout: allowLockout }, "DELETE");
   assertSessionRequest(session);
   if (result.current_revoked) window.dispatchEvent(new Event("antnest:session-expired"));
   return result;
@@ -411,6 +425,19 @@ export const api = {
   revokeSessions: (mode: "others" | "all") => revokeBrowserSessions("/api/session/sessions/revoke", { mode }),
   organizationSessions: (userID: string, afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
   revokeOrganizationSessions: (userID: string) => revokeBrowserSessions(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions/revoke`, {}),
+  externalIdentities: (cursors: { afterID?: string; noticeAfterID?: string } = {}, signal?: AbortSignal) => request<SelfExternalIdentityPage>(
+    `/api/session/external-identities?limit=50${cursors.afterID ? `&after_id=${encodeURIComponent(cursors.afterID)}` : ""}${cursors.noticeAfterID ? `&notice_after_id=${encodeURIComponent(cursors.noticeAfterID)}` : ""}`, { signal }),
+  externalIdentityProviders: (afterID?: string, signal?: AbortSignal) => request<ExternalIdentityProviderPage>(
+    `/api/admin/directory/identity-providers?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+  organizationExternalIdentities: (membershipID: string, afterID?: string, signal?: AbortSignal) => request<ExternalIdentityPage>(
+    `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}/external-identities?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+  bindExternalIdentity: (membershipID: string, input: ExternalIdentityBindInput) => oneShotCommand<{ binding: ExternalIdentity }>(
+    `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}/external-identities`, input),
+  unbindExternalIdentity: (bindingID: string, allowLockout = false) => unbindExternalIdentity(`/api/session/external-identities/${encodeURIComponent(bindingID)}`, allowLockout),
+  unbindOrganizationExternalIdentity: (membershipID: string, bindingID: string, allowLockout = false) => unbindExternalIdentity(
+    `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}/external-identities/${encodeURIComponent(bindingID)}`, allowLockout),
+  acknowledgeExternalIdentityNotices: (noticeIDs: string[]) => oneShotCommand<{ acknowledged_count: number }>(
+    "/api/session/external-identities/notices/acknowledge", { notice_ids: noticeIDs }),
   overview: (signal?: AbortSignal) => request<Overview>("/api/admin/overview", { signal }),
   directory: () => request<Directory>("/api/admin/directory"),
   createLocalUser: (input: {
@@ -443,7 +470,7 @@ export const api = {
     client_secret: string;
     scopes: string[];
     enabled: boolean;
-  }) => idempotentRequest<OIDCProviderResult>(
+  } & Partial<OIDCPolicy> & { acknowledge_link_policy_review?: boolean }) => idempotentRequest<OIDCProviderResult>(
     `upsert-oidc-provider:${input.name}`,
     "/api/admin/provisioning/oidc-providers",
     input,
@@ -458,6 +485,7 @@ export const api = {
   issueSCIMToken: (input: {
     name: string;
     scopes: Array<"scim:read" | "scim:write">;
+    oidc_provider_id?: string;
   }) => idempotentRequest<SCIMTokenIssue>("issue-scim-token", "/api/admin/provisioning/scim-tokens", input),
   revokeSCIMToken: (tokenID: string) => idempotentRequest<{ status: string }>(
     `revoke-scim-token:${tokenID}`,

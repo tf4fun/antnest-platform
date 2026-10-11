@@ -158,6 +158,7 @@ test-repo:
 	$(MAKE) test-workspace-fixtures
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs
 
 .PHONY: test-service-authentication
 test-service-authentication:

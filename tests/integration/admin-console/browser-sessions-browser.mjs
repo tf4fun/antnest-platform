@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { durablePath } from "../../support/storage.mjs";
+import { exerciseExternalIdentities } from "./oidc-linking-browser.mjs";
 import {
   assertNoOverflow,
   prepareConsoleSession,
@@ -126,6 +127,11 @@ async function exercise(browser, origin, viewport, label) {
         directoryReads++;
         return reply({ users: [member], groups: [] });
       }
+      if (
+        path === "/api/session/external-identities" &&
+        request.method() === "GET"
+      )
+        return reply({ bindings: [], notices: [] });
       if (request.method() === "POST")
         assert.equal(request.headers()["x-antnest-csrf-token"], hint);
       if (path === "/api/session/activity") {
@@ -461,5 +467,11 @@ async function exercise(browser, origin, viewport, label) {
 }
 
 console.log(
-  JSON.stringify({ results: await withConsoleBrowser(output, exercise) }),
+  JSON.stringify({
+    results: await withConsoleBrowser(output, exercise),
+    external_identities: await withConsoleBrowser(
+      output,
+      exerciseExternalIdentities,
+    ),
+  }),
 );

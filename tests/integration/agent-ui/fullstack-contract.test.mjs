@@ -646,7 +646,7 @@ test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", (
 
 test("active Gateway contract describes the deployed Node Workspace routes", () => {
   const gateway = json("../../../contracts/edge-gateway/session-contract.json");
-  assert.equal(gateway.version, 19);
+  assert.equal(gateway.version, 20);
   assert.equal(
     gateway.routes.workspace_application.authentication,
     "browser_session_for_html; none_for_assets",
@@ -713,6 +713,9 @@ test("Workspace browser session consumer binds to the current Gateway and Identi
     "revoke_sessions",
     "change_password",
     "logout",
+    "list_external_identities",
+    "unbind_external_identity",
+    "acknowledge_external_identity_notices",
   ]);
   for (const name of consumer.gateway_routes) {
     const route = gateway.routes[name];

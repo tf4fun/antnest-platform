@@ -2,6 +2,7 @@ package scim
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -33,6 +34,7 @@ type Repository interface {
 type Token struct {
 	ID             string     `json:"id"`
 	OrganizationID string     `json:"organization_id"`
+	OIDCProviderID *string    `json:"oidc_provider_id"`
 	Name           string     `json:"name"`
 	Scopes         []string   `json:"scopes"`
 	CreatedAt      time.Time  `json:"created_at"`
@@ -42,6 +44,7 @@ type Token struct {
 type Authorization struct {
 	TokenID        string
 	OrganizationID string
+	OIDCProviderID *string
 	Scopes         []string
 }
 
@@ -49,6 +52,7 @@ type IssueTokenInput struct {
 	RequestID        string
 	ActorPrincipalID string
 	OrganizationID   string
+	OIDCProviderID   *string
 	Name             string
 	Scopes           []string
 }
@@ -59,6 +63,7 @@ type IssueTokenCommand struct {
 	TokenID          string
 	TokenHash        string
 	OrganizationID   string
+	OIDCProviderID   *string
 	Name             string
 	Scopes           []string
 	CreatedAt        time.Time
@@ -70,11 +75,14 @@ type IssueTokenResult struct {
 }
 
 type UserInput struct {
-	ExternalID  string
-	UserName    string
-	Email       string
-	DisplayName string
-	Active      bool
+	ExternalID string
+	// Retain presence and original bytes until the stored Membership pairing
+	// determines whether externalId is an opaque sign-in subject.
+	externalIDJSON json.RawMessage
+	UserName       string
+	Email          string
+	DisplayName    string
+	Active         bool
 }
 
 type UserResource struct {
@@ -192,6 +200,9 @@ func NewService(config Config) (*Service, error) {
 }
 
 func (s *Service) IssueToken(ctx context.Context, input IssueTokenInput) (IssueTokenResult, error) {
+	if input.OIDCProviderID != nil && !domain.ValidID(*input.OIDCProviderID) {
+		return IssueTokenResult{}, domain.InvalidArgument("oidc_provider_id must be a public Provider ID")
+	}
 	principal, err := s.repository.GetPrincipal(ctx, input.ActorPrincipalID, input.OrganizationID)
 	if err != nil {
 		return IssueTokenResult{}, fmt.Errorf("resolve SCIM token actor: %w", err)
@@ -214,7 +225,8 @@ func (s *Service) IssueToken(ctx context.Context, input IssueTokenInput) (IssueT
 	command := IssueTokenCommand{
 		RequestID: input.RequestID, ActorPrincipalID: input.ActorPrincipalID,
 		TokenID: s.newID("scimtoken"), TokenHash: digest, OrganizationID: input.OrganizationID,
-		Name: name, Scopes: scopes, CreatedAt: s.now().UTC(),
+		OIDCProviderID: input.OIDCProviderID,
+		Name:           name, Scopes: scopes, CreatedAt: s.now().UTC(),
 	}
 	token, err := s.repository.IssueToken(ctx, command)
 	if err != nil {
@@ -266,6 +278,10 @@ func (s *Service) Authorize(ctx context.Context, rawToken, requiredScope string)
 }
 
 func (s *Service) CreateUser(ctx context.Context, authorization Authorization, input UserInput) (UserResource, error) {
+	externalID, err := input.externalID(authorization.OIDCProviderID != nil)
+	if err != nil {
+		return UserResource{}, err
+	}
 	userName, email, displayName, err := normalizeUserInput(input)
 	if err != nil {
 		return UserResource{}, err
@@ -279,7 +295,7 @@ func (s *Service) CreateUser(ctx context.Context, authorization Authorization, i
 		ID: s.newID("membership"), OrganizationID: authorization.OrganizationID, UserID: user.ID,
 		Email: email, DisplayName: displayName,
 		Role: domain.OrganizationRoleMember, Source: domain.SourceSCIM, Active: input.Active,
-		SCIMExternalID: strings.TrimSpace(input.ExternalID), SCIMUserName: userName,
+		SCIMExternalID: externalID, SCIMUserName: userName, SCIMOIDCProviderID: authorization.OIDCProviderID,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	return s.repository.CreateUser(ctx, CreateUserCommand{
@@ -311,6 +327,10 @@ func (s *Service) ReplaceUser(
 	if current.Membership.Source != domain.SourceSCIM || current.Membership.OrganizationID != authorization.OrganizationID {
 		return UserResource{}, domain.ErrNotFound
 	}
+	externalID, err := input.replacementExternalID(current.Membership)
+	if err != nil {
+		return UserResource{}, err
+	}
 	userName, email, displayName, err := normalizeUserInput(input.UserInput)
 	if err != nil {
 		return UserResource{}, err
@@ -320,7 +340,7 @@ func (s *Service) ReplaceUser(
 	current.Membership.Email = email
 	current.Membership.DisplayName = displayName
 	current.Membership.Active = input.Active
-	current.Membership.SCIMExternalID = strings.TrimSpace(input.ExternalID)
+	current.Membership.SCIMExternalID = externalID
 	current.Membership.SCIMUserName = userName
 	current.Membership.UpdatedAt = now
 	return s.repository.ReplaceUser(ctx, ReplaceUserCommand{

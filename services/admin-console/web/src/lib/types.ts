@@ -89,7 +89,46 @@ export type Directory = {
   groups: DirectoryGroup[];
 };
 
-export type OIDCProvider = {
+export type OIDCLinkPolicy = "none" | "verified_email_in_domains" | "verified_email";
+export type OIDCPolicy = {
+  link_policy: OIDCLinkPolicy;
+  link_domains: string[];
+  authoritative: boolean;
+};
+
+export type ExternalIdentityProvider = OIDCPolicy & {
+  id: string;
+  name: string;
+  display_name: string;
+  enabled: boolean;
+  link_policy_review_required: boolean;
+};
+export type ExternalIdentityProviderPage = { providers: ExternalIdentityProvider[]; next_after_id?: string };
+export type ExternalIdentityDetails = {
+  id: string;
+  provider_id: string;
+  provider_name: string;
+  provider_display_name: string;
+  organization_id: string;
+  organization_slug: string;
+  organization_name: string;
+  membership_id: string;
+  subject: string;
+  method: "auto" | "admin" | "scim";
+  created_at: string;
+};
+export type ExternalIdentity = ExternalIdentityDetails & {
+  provider_enabled: boolean;
+  bound_at: string;
+  revoked_at: string | null;
+};
+export type ExternalIdentityNotice = ExternalIdentityDetails & { binding_id: string };
+export type ExternalIdentityPage = { bindings: ExternalIdentity[]; next_after_id?: string };
+export type SelfExternalIdentityPage = ExternalIdentityPage & { notices: ExternalIdentityNotice[]; next_notice_after_id?: string };
+export type ExternalIdentityBindInput = { provider_id: string; subject: string; restore_revoked?: boolean };
+
+export type OIDCProvider = OIDCPolicy & {
+  link_policy_review_required: boolean;
   name: string;
   display_name: string;
   issuer: string;
@@ -111,6 +150,7 @@ export type OIDCProviderList = { providers: OIDCProvider[] };
 export type OIDCProviderResult = { provider: OIDCProvider };
 
 export type SCIMToken = {
+  oidc_provider_id: string | null;
   id: string;
   name: string;
   scopes: Array<"scim:read" | "scim:write">;

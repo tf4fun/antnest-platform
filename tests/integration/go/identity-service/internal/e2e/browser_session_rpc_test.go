@@ -15,6 +15,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/externalidentities"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/rpc"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
@@ -34,7 +35,7 @@ func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := rpc.NewHandler(rpc.Dependencies{Directory: directory.NewService(f.store.Directory(), f.newID, f.clock), LocalAuth: f.auth, OIDC: oidc.flow, SCIM: scimService, BrowserSessions: f.service, Authentication: authentication, CallerContext: f.authority})
+	h, err := rpc.NewHandler(rpc.Dependencies{Directory: directory.NewService(f.store.Directory(), f.newID, f.clock), LocalAuth: f.auth, OIDC: oidc.flow, SCIM: scimService, BrowserSessions: f.service, ExternalIdentities: externalidentities.NewService(f.store.ExternalIdentities()), Authentication: authentication, CallerContext: f.authority})
 	if err != nil {
 		t.Fatal(err)
 	}

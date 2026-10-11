@@ -4,7 +4,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash, X509Certificate } from "node:crypto";
 
-export function certificates(directory) {
+export function certificates(directory, { dnsNames = [] } = {}) {
+  assert(dnsNames.every((name) => /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u.test(name)));
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const openssl = (args) => {
     const result = spawnSync("openssl", args, {
@@ -62,7 +63,11 @@ export function certificates(directory) {
       "basicConstraints=critical,CA:FALSE",
       "keyUsage=critical,digitalSignature",
       "extendedKeyUsage=serverAuth",
-      "subjectAltName=IP:127.0.0.1,DNS:tls-proxy",
+      [
+        "subjectAltName=IP:127.0.0.1",
+        "DNS:tls-proxy",
+        ...dnsNames.map((name) => `DNS:${name}`),
+      ].join(","),
     ].join("\n"),
   );
   openssl([

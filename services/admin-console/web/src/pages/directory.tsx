@@ -1,5 +1,6 @@
 import {
   LoaderCircle,
+  Link2,
   Monitor,
   Pencil,
   Power,
@@ -21,6 +22,7 @@ import {
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
 import { SessionManagement } from "../components/session-management";
+import { OrganizationExternalIdentities } from "../components/external-identities";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, Loading, SuccessNotice } from "../components/ui/feedback";
@@ -51,6 +53,7 @@ export function DirectoryPage({
   const [createError, setCreateError] = useState("");
   const [editing, setEditing] = useState<DirectoryMember>();
   const [sessionTarget, setSessionTarget] = useState<DirectoryMember>();
+  const [externalIdentityTarget, setExternalIdentityTarget] = useState<DirectoryMember>();
   const [editError, setEditError] = useState("");
   const [activationTarget, setActivationTarget] = useState<DirectoryMember>();
   const [activationError, setActivationError] = useState("");
@@ -236,6 +239,7 @@ export function DirectoryPage({
             onEdit={(member) => { setEditError(""); setSuccessMessage(""); setEditing(member); }}
             onSetActive={(member) => { setActivationError(""); setSuccessMessage(""); setActivationTarget(member); }}
             onSessions={setSessionTarget}
+            onExternalLogins={setExternalIdentityTarget}
           />
         )
       ) : groups.length === 0 ? (
@@ -305,6 +309,8 @@ export function DirectoryPage({
       <SessionManagement open={Boolean(sessionTarget)} onOpenChange={open => { if (!open) setSessionTarget(undefined); }}
         user={sessionTarget ? { id: sessionTarget.user.id, name: sessionTarget.membership.display_name, current: sessionTarget.user.id === currentUserID } : undefined}
         organizationName={organizationName} />
+      {externalIdentityTarget ? <OrganizationExternalIdentities key={externalIdentityTarget.membership.id}
+        membership={{ id: externalIdentityTarget.membership.id, name: externalIdentityTarget.membership.display_name }} onClose={() => setExternalIdentityTarget(undefined)} /> : null}
       <EditMembershipDialog
         member={editing}
         error={editError}
@@ -331,6 +337,7 @@ function MemberTable({
   onEdit,
   onSetActive,
   onSessions,
+  onExternalLogins,
 }: {
   currentUserID: string;
   members: DirectoryMember[];
@@ -339,6 +346,7 @@ function MemberTable({
   onEdit: (member: DirectoryMember) => void;
   onSetActive: (member: DirectoryMember) => void;
   onSessions: (member: DirectoryMember) => void;
+  onExternalLogins: (member: DirectoryMember) => void;
 }) {
   return (
     <>
@@ -371,6 +379,9 @@ function MemberTable({
               </div>
             </dl>
               <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-3">
+                <Button aria-label={`Manage ${membership.display_name} external logins`} disabled={actionsDisabled} size="sm" variant="secondary" onClick={() => onExternalLogins(member)}>
+                  <Link2 className="h-4 w-4" />External logins
+                </Button>
                 <Button aria-label={`Manage ${membership.display_name} browser sessions`} disabled={actionsDisabled} size="sm" variant="secondary" onClick={() => onSessions(member)}>
                   <Monitor className="h-4 w-4" />Sessions
                 </Button>
@@ -431,6 +442,9 @@ function MemberTable({
                 <td className="px-3 py-3 text-muted-foreground">{dateTime(membership.created_at)}</td>
                 <td className="px-3 py-3">
                   <div className="flex justify-end gap-1">
+                    <Button aria-label={`Manage ${membership.display_name} external logins`} title="Manage external logins" disabled={actionsDisabled} size="icon" variant="ghost" onClick={() => onExternalLogins(member)}>
+                      <Link2 className="h-4 w-4" />
+                    </Button>
                     <Button aria-label={`Manage ${membership.display_name} browser sessions`} title="Manage browser sessions" disabled={actionsDisabled} size="icon" variant="ghost" onClick={() => onSessions(member)}>
                       <Monitor className="h-4 w-4" />
                     </Button>

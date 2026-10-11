@@ -148,7 +148,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
           </span>
           <h1>Workspace unavailable</h1>
           <p>{error}</p>
-          {onAccount ? <button type="button" onClick={onAccount}>Account and sessions</button> : null}
+          {onAccount ? <button type="button" data-browser-account-trigger onClick={onAccount}>Account and sessions</button> : null}
           <button
             className="action-button unavailable-retry"
             type="button"
@@ -166,7 +166,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
       <main className="loading-page">
         <span className="loading-mark" aria-hidden="true" />
         <p role="status">Opening workspace</p>
-        {onAccount ? <button type="button" onClick={onAccount}>Account and sessions</button> : null}
+        {onAccount ? <button type="button" data-browser-account-trigger onClick={onAccount}>Account and sessions</button> : null}
       </main>
     );
 
@@ -206,7 +206,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
             </div>
           ) : null}
           <div className="unavailable-actions">
-            {onAccount ? <button type="button" onClick={onAccount}><UserRound size={15} /> Account and sessions</button> : null}
+            {onAccount ? <button type="button" data-browser-account-trigger onClick={onAccount}><UserRound size={15} /> Account and sessions</button> : null}
             {workspace.principal.administrator ? (
               <a href="/">
                 <Settings size={15} /> Control Center

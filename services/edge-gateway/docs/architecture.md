@@ -53,6 +53,30 @@ generic input failures return `invalid_request`, both without cookie changes.
 See the [shared lifecycle contract](../../../contracts/identity/browser-sessions.md)
 for the Console, Agent UI and script consumers and their HTTPS integration.
 
+The three external identity routes also use the session profile. GET requires
+`limit` from 1 to 100 and accepts separate `after_id` and `notice_after_id`
+exclusive cursors. Each returned array is bounded and strictly ordered; its
+optional cursor must advance independently and cannot precede its last item.
+A self page can span organizations. Notices preserve historical binding facts
+and do not need a matching binding or Membership in the current page.
+
+The typed Identity client rejects missing/null required values, unknown or
+duplicate fields, casing aliases, invalid public IDs and malformed timestamps.
+Opaque subjects retain exact whitespace and Unicode scalars; invalid UTF-8,
+unpaired surrogates and NUL fail closed. Explicit `revoked_at: null` and
+`provider_enabled: false` are valid. Malformed Identity responses return 503
+without exposing upstream payloads or changing cookies.
+
+DELETE accepts only an optional Boolean `allow_lockout` (default false); explicit
+null is rejected. Identity owns the last-login-method decision and atomically
+revokes the affected Membership's sessions. The Gateway returns Identity's
+committed counts even if the current SID was revoked; a later request resolves
+again. POST notice acknowledgment accepts 1–100 unique IDs and never acknowledges
+by a watermark or as a side effect of reading. Both mutations use server-generated
+request IDs; browser actor, scope and Membership overrides are rejected.
+`not_found` stays 404 and `external_identity_last_method` stays 409. Console,
+Agent UI and real Identity HTTPS integration remain subsequent #61 batches.
+
 Gateway defaults COOP and CORP to `same-origin`. Console and Workspace currently
 share one origin; these controls do not provide an XSS privilege boundary
 between them. The [session security contract](../../../contracts/edge-gateway/session-security.md)

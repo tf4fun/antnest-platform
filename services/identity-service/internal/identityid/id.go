@@ -9,7 +9,7 @@ import (
 func New(kind string) (string, error) {
 	switch kind {
 	case "org", "user", "membership", "group", "groupmembership", "oidcprovider",
-		"oidcsession", "oidcclaim", "externalidentity", "authtoken", "browsersession", "scimtoken", "event":
+		"oidcsession", "oidcclaim", "externalidentity", "externalidentitynotice", "authtoken", "browsersession", "scimtoken", "event":
 	default:
 		return "", fmt.Errorf("unknown identity resource kind: %q", kind)
 	}

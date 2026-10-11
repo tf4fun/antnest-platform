@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import type { BrowserAccount, BrowserSessionClient, SessionInventory } from "../lib/browser-session";
+import type { ExternalIdentitiesModel } from "../lib/use-external-identities";
+import { ExternalIdentitiesSection } from "./ExternalIdentities";
 
-export function BrowserAccountPanel({ client, onClose }: { client: BrowserSessionClient; onClose: () => void }) {
+export function BrowserAccountPanel({ client, external, fallbackFocus, onClose }: { client: BrowserSessionClient; external?: ExternalIdentitiesModel; fallbackFocus?: () => void; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [binding] = useState(() => client.capture(true));
   const request = useRef<AbortController | undefined>(undefined);
@@ -38,6 +40,7 @@ export function BrowserAccountPanel({ client, onClose }: { client: BrowserSessio
       controller.abort();
       element.close();
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+      else fallbackFocus?.();
     };
   }, [client]);
 
@@ -99,6 +102,7 @@ export function BrowserAccountPanel({ client, onClose }: { client: BrowserSessio
     {account ? <p>{account.display_name}<br /><span>{account.email}</span></p> : null}
     {error ? <p className="workspace-alert" role="alert">{error}</p> : null}
     {notice ? <p role="status">{notice}</p> : null}
+    {external ? <ExternalIdentitiesSection model={external} disabled={busy || loading} /> : null}
     <section aria-labelledby="browser-sessions-title" aria-busy={loading}>
       <h2 id="browser-sessions-title">Browser sessions</h2>
       <p>Review your signed-in browsers across organizations. Background updates do not keep a session active.</p>

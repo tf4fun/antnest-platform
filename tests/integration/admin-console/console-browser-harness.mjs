@@ -32,7 +32,20 @@ export async function prepareConsoleSession(context, origin) {
 
 export async function fulfillConsoleActivity(route) {
   const request = route.request();
-  if (new URL(request.url()).pathname !== "/api/session/activity") return false;
+  const path = new URL(request.url()).pathname;
+  // Unrelated page fixtures still exercise the account's passive notice read.
+  if (
+    path === "/api/session/external-identities" &&
+    request.method() === "GET"
+  ) {
+    await route.fulfill({
+      status: 200,
+      json: { bindings: [], notices: [] },
+      headers: { "cache-control": "no-store" },
+    });
+    return true;
+  }
+  if (path !== "/api/session/activity") return false;
   assert.equal(request.method(), "POST");
   assert.deepEqual(request.postDataJSON(), {});
   assert.equal(

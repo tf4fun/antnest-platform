@@ -37,7 +37,45 @@ const profiles = {
 };
 const sessions = new Map();
 const revocations = [];
+const externalBindings = [1, 2, 3].map((number) => ({
+  id: `binding-${number}`,
+  provider_id: `provider-${number}`,
+  provider_name: `workforce-${number}`,
+  provider_display_name: `Workforce ${number}`,
+  organization_id:
+    number === 2 ? "other-organization" : principal.organization_id,
+  organization_slug: number === 2 ? "other" : principal.organization_slug,
+  organization_name: number === 2 ? "Other" : principal.organization_name,
+  membership_id: number === 2 ? "other-membership" : principal.membership_id,
+  subject: "  opaque 界 😀 \t",
+  method: ["auto", "scim", "admin"][number - 1],
+  provider_enabled: number !== 2,
+  created_at: "2026-10-10T01:00:00Z",
+  bound_at: "2026-10-10T02:00:00Z",
+  revoked_at: number === 3 ? "2026-10-10T03:00:00Z" : null,
+}));
+const externalNotices = externalBindings.map((binding, index) => {
+  const snapshot = { ...binding };
+  delete snapshot.provider_enabled;
+  delete snapshot.bound_at;
+  delete snapshot.revoked_at;
+  return {
+    ...snapshot,
+    id: `notice-${index + 1}`,
+    binding_id: "old-binding",
+    membership_id: "historical-membership",
+  };
+});
+const acknowledgedNotices = new Set();
 let password = fixture.password;
+
+function externalFields(input, required, optional = []) {
+  if (
+    required.some((key) => input[key] === undefined) ||
+    Object.keys(input).some((key) => ![...required, ...optional].includes(key))
+  )
+    throw Error("external_identity_request_shape_invalid");
+}
 function metadata(session) {
   return {
     expires_at: session.expires_at,
@@ -275,6 +313,105 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           });
         }
         const current = browserControl(request, input);
+        if (path.endsWith("list-external-identities")) {
+          externalFields(
+            input,
+            ["actor_principal_id", "scope", "limit"],
+            ["after_id", "notice_after_id"],
+          );
+          if (
+            input.scope !== "self" ||
+            !Number.isInteger(input.limit) ||
+            input.limit < 1 ||
+            input.limit > 100
+          )
+            throw Error("external_identity_scope_invalid");
+          const bindings = externalBindings.filter(
+            (item) => item.id > (input.after_id ?? ""),
+          );
+          const notices = externalNotices.filter(
+            (item) =>
+              !acknowledgedNotices.has(item.id) &&
+              item.id > (input.notice_after_id ?? ""),
+          );
+          return json(response, {
+            bindings: bindings.slice(0, input.limit),
+            notices: notices.slice(0, input.limit),
+            ...(bindings.length > input.limit
+              ? { next_after_id: bindings[input.limit - 1].id }
+              : {}),
+            ...(notices.length > input.limit
+              ? { next_notice_after_id: notices[input.limit - 1].id }
+              : {}),
+          });
+        }
+        if (path.endsWith("acknowledge-external-identity-notices")) {
+          externalFields(input, [
+            "actor_principal_id",
+            "request_id",
+            "notice_ids",
+          ]);
+          if (
+            !input.request_id ||
+            !Array.isArray(input.notice_ids) ||
+            input.notice_ids.length < 1 ||
+            input.notice_ids.length > 100 ||
+            new Set(input.notice_ids).size !== input.notice_ids.length
+          )
+            throw Error("external_identity_ack_invalid");
+          if (
+            input.notice_ids.some(
+              (id) => !externalNotices.some((notice) => notice.id === id),
+            )
+          )
+            return json(response, { code: "not_found" }, 404);
+          let count = 0;
+          for (const id of input.notice_ids) {
+            if (!acknowledgedNotices.has(id)) count++;
+            acknowledgedNotices.add(id);
+          }
+          return json(response, { acknowledged_count: count });
+        }
+        if (path.endsWith("unbind-external-identity")) {
+          externalFields(input, [
+            "actor_principal_id",
+            "scope",
+            "request_id",
+            "binding_id",
+            "allow_lockout",
+          ]);
+          if (
+            input.scope !== "self" ||
+            !input.request_id ||
+            typeof input.allow_lockout !== "boolean"
+          )
+            throw Error("external_identity_unbind_invalid");
+          const binding = externalBindings.find(
+            (item) => item.id === input.binding_id,
+          );
+          if (!binding) return json(response, { code: "not_found" }, 404);
+          if (
+            !binding.revoked_at &&
+            binding.id === "binding-1" &&
+            !input.allow_lockout
+          )
+            return json(
+              response,
+              { code: "external_identity_last_method" },
+              409,
+            );
+          let count = 0;
+          if (!binding.revoked_at) {
+            binding.revoked_at = new Date().toISOString();
+            if (binding.membership_id === principal.membership_id)
+              for (const session of sessions.values())
+                if (revoke(session, "session_revoked")) count++;
+          }
+          return json(response, {
+            revoked_count: count,
+            current_revoked: current.revoked,
+          });
+        }
         if (path.endsWith("get-current-account")) {
           if (input.organization_id !== principal.organization_id)
             throw Error("invalid_account_scope");

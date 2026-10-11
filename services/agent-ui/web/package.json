@@ -25,7 +25,7 @@
     "test:bridge:docker:soak": "ANTNEST_UI_DOCKER_SOAK=1 node --test ../../../tests/e2e/agent-ui/bridge-container.test.mjs",
     "test:unit": "node --test --test-concurrency=1 --experimental-strip-types src/lib/*.test.ts",
     "test:components": "vitest run --config vitest.config.ts",
-    "test:browser": "npm run build && node --test --test-concurrency=1 ../../../tests/integration/agent-ui/workspace-bridge-browser.test.mjs ../../../tests/integration/agent-ui/workspace-ssr-browser.test.mjs ../../../tests/integration/agent-ui/browser-sessions-browser.test.mjs",
+    "test:browser": "npm run build && node --test --test-concurrency=1 ../../../tests/integration/agent-ui/workspace-bridge-browser.test.mjs ../../../tests/integration/agent-ui/workspace-ssr-browser.test.mjs ../../../tests/integration/agent-ui/browser-sessions-browser.test.mjs ../../../tests/integration/agent-ui/external-identities-browser.test.mjs",
     "test:bridge:browser": "npm run test:browser"
   },
   "dependencies": {

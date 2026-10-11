@@ -70,6 +70,24 @@ and deployment adoption are separate pending batches. The internal RPC schema is
 
 ### Principal response contract
 
+The revision-16 Provider policy batch defaults new OIDC registrations to no
+automatic email linking. Explicit domain/email trust and an additional
+authoritative flag govern first-time administrator linking. Migration preserves
+historical member linking with a durable review warning. Existing issuer/subject
+bindings do not depend on email claims or UserInfo. Optional profile claim
+type errors are treated as absence; they never become verified email authority.
+SCIM token metadata returns its immutable `oidc_provider_id`, or explicit null
+for directory-only credentials. A paired token requires an exact opaque
+`externalId` on User creation and atomically binds that subject with a notice.
+Identity also owns explicit administrator binding/restoration, self and exact
+Membership inventories, atomic unbinding/session revocation, and durable
+notice acknowledgment by ID. Revoked subjects remain reserved and cannot be
+restored by an ordinary callback. These five RPCs require both their exact
+workload grant and a live browser Caller. SCIM reprovisioning preserves the
+confirmed owner's pairing, activation history and any explicit revocation.
+Gateway and browser consumers are delivered in separate batches; see the
+[OIDC linking contract](../../contracts/identity/oidc-linking.md).
+
 Local login, access-token resolution, and both initial and replayed OIDC
 callbacks return all eight required `principal` fields: `user_id`,
 `organization_id`, `organization_slug`, `organization_name`, `membership_id`,
@@ -197,16 +215,25 @@ a frozen nanosecond-clock RPC regression that compares returned login and
 activity deadlines exactly at PostgreSQL's stored microsecond precision, and
 a local HTTPS OIDC fixture (authorization redirect, PKCE, client
 authentication, signed ID token, and JWKS). It also checks completion
-deadlines, immutable client registration, and secret rotation.
+deadlines, immutable client registration, secret rotation, policy/domain/role
+admission, raw subject encoding, migration-review persistence and Provider-first
+locking. Role changes during actual database waits are revalidated before linking.
 Real handler responses are validated against the central principal JSON
 Schema. PostgreSQL tests check every principal builder, both OIDC callback
 paths, fresh organization metadata on token resolution, and organization
 renames during local login without weakening password/role/status checks.
 `node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
-in an isolated Identity/PostgreSQL stack. The broader `make e2e-identity-core`
-remains a final integration gate after Gateway/Console adoption; it checks token
+in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
+real policy-gated callbacks and review persistence through rotation, toggles
+and service restart. The broader `make e2e-identity-core`
+is an integration gate after Gateway/Console adoption; it checks token
 resolution inside the disposable Docker network, before the Gateway/SCIM/OIDC
 suite.
+`make e2e-browser-sessions-https` additionally exercises real Console pre-binding,
+paired SCIM and two-browser account controls through the reference TLS proxy.
+It proves default-policy refusal, exact notice acknowledgment, explicit restore,
+last-method confirmation and remote session/stream retirement while an accepted
+Run continues on the same Runtime.
 
 Root `make` targets that cover this service: `make fmt-check`, `make lint`,
 `make test-go`, `make test-identity-postgres`, and `make docker-build-stage3`.

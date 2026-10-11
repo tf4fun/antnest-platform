@@ -441,8 +441,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 15 {
-		t.Fatalf("identity contract revision=%d want=15", contract.Revision)
+	if contract.Revision != 16 {
+		t.Fatalf("identity contract revision=%d want=16", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -568,6 +568,7 @@ type rpcServicesStub struct {
 	revokedAccessToken             string
 	revokeStatus                   localauth.RevokeStatus
 	providers                      []oidcflow.Provider
+	providerResult                 oidcflow.Provider
 	scimTokens                     []scim.Token
 }
 
@@ -645,7 +646,7 @@ func (s *rpcServicesStub) UpsertProvider(
 ) (oidcflow.Provider, error) {
 	s.upsertProviderCalls++
 	s.upsertProviderInput = input
-	return oidcflow.Provider{}, nil
+	return s.providerResult, nil
 }
 
 func (s *rpcServicesStub) SetProviderEnabled(
@@ -654,6 +655,9 @@ func (s *rpcServicesStub) SetProviderEnabled(
 ) (oidcflow.Provider, error) {
 	s.setProviderEnabledCalls++
 	s.setProviderEnabledInput = input
+	if s.providerResult.ID != "" {
+		return s.providerResult, nil
+	}
 	return oidcflow.Provider{Enabled: input.Enabled}, nil
 }
 
@@ -674,7 +678,10 @@ func (s *rpcServicesStub) CompleteLogin(_ context.Context, input oidcflow.Comple
 	return oidcflow.CompleteLoginResult{AccessToken: "credential"}, s.completeLoginErr
 }
 
-func (*rpcServicesStub) IssueToken(context.Context, scim.IssueTokenInput) (scim.IssueTokenResult, error) {
+func (s *rpcServicesStub) IssueToken(context.Context, scim.IssueTokenInput) (scim.IssueTokenResult, error) {
+	if len(s.scimTokens) != 0 {
+		return scim.IssueTokenResult{Token: s.scimTokens[0], Credential: "test-scim-credential"}, nil
+	}
 	return scim.IssueTokenResult{}, nil
 }
 

@@ -34,6 +34,20 @@ node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 
 Helper tests do not replace the real integration run.
 
+The legacy core, Organization display and offboarding OIDC scenarios explicitly
+select `verified_email`, with no domain restriction and no administrator trust.
+They preserve their existing member-convergence scenarios; SCIM tokens in those
+profiles remain directory-only. New registrations default to `none`.
+`make e2e-browser-sessions-https` exercises that safe default against an asserted
+organization-administrator email, then uses real Console pre-binding and paired
+SCIM controls to admit browser logins. It also verifies notices, explicit
+restoration, last-method confirmation and session retirement without offboarding.
+The HTTPS IdP uses a disposable CA and one hostname shared by Identity and
+Chromium; the browser context sends the two fixture hosts directly, without
+changing machine proxy settings or intercepting product APIs. Raw and partial
+TLS connections, browser contexts, candidate images and stack resources are
+closed on success, failure or interruption.
+
 The core client is invoked by the parent as:
 
 ```sh

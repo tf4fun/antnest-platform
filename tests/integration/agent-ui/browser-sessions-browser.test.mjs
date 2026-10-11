@@ -26,7 +26,7 @@ const principal = {
 const userAgent = "<img src=x onerror=alert(1)> Synthetic browser";
 const output = fileURLToPath(
   new URL(
-    "../../../artifacts/verification/issue-58/agent-ui-browser/",
+    "../../../artifacts/verification/issue-61/agent-ui-browser/sessions/",
     import.meta.url,
   ),
 );
@@ -166,6 +166,11 @@ async function withWorkspace(viewport, exercise) {
             local_password_available: state.localPassword,
           },
         });
+      if (
+        path === "/api/session/external-identities" &&
+        request.method() === "GET"
+      )
+        return reply({ bindings: [], notices: [] });
       if (path === "/api/session/sessions") {
         assert.equal(url.searchParams.get("limit"), "50");
         if (url.searchParams.has("after_id")) {

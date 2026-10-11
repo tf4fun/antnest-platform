@@ -25,6 +25,19 @@ export type SessionInventory = {
   next_after_id?: string;
 };
 export type SessionRevocation = { revoked_count: number; current_revoked: boolean };
+export type ExternalIdentityDetails = {
+  provider_id: string; provider_name: string; provider_display_name: string;
+  organization_id: string; organization_slug: string; organization_name: string; membership_id: string;
+  subject: string; method: "auto" | "admin" | "scim"; created_at: string;
+};
+export type ExternalIdentity = ExternalIdentityDetails & {
+  id: string; provider_enabled: boolean; bound_at: string; revoked_at: string | null;
+};
+export type ExternalIdentityNotice = ExternalIdentityDetails & { id: string; binding_id: string };
+export type ExternalIdentityInventory = {
+  bindings: ExternalIdentity[]; notices: ExternalIdentityNotice[];
+  next_after_id?: string; next_notice_after_id?: string;
+};
 export type BrowserRequest = Readonly<{ generation: symbol; hint: string | undefined }>;
 export type SessionEvent = { type: "validation_required" | "transition" } |
   { type: "ended"; reason: "expired" | "signed_out" } |
@@ -190,6 +203,32 @@ export class BrowserSessionClient {
   }
   sessions(afterID?: string, signal?: AbortSignal): Promise<SessionInventory> {
     return this.request(`/api/session/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }) as Promise<SessionInventory>;
+  }
+  externalIdentities(cursors: { afterID?: string; noticeAfterID?: string } = {}, signal?: AbortSignal): Promise<ExternalIdentityInventory> {
+    return this.request(`/api/session/external-identities?limit=50${cursors.afterID ? `&after_id=${encodeURIComponent(cursors.afterID)}` : ""}${cursors.noticeAfterID ? `&notice_after_id=${encodeURIComponent(cursors.noticeAfterID)}` : ""}`, { signal }) as Promise<ExternalIdentityInventory>;
+  }
+  async unbindExternalIdentity(bindingID: string, allowLockout = false, signal?: AbortSignal): Promise<SessionRevocation> {
+    const before = this.capture();
+    const raw = await this.request(`/api/session/external-identities/${encodeURIComponent(bindingID)}`, {
+      method: "DELETE", body: { allow_lockout: allowLockout }, signal, headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+    this.assert(before);
+    signal?.throwIfAborted();
+    if (!record(raw) || !Number.isSafeInteger(raw.revoked_count) || Number(raw.revoked_count) < 0 || typeof raw.current_revoked !== "boolean" || raw.current_revoked && raw.revoked_count === 0) throw invalidResponse();
+    const result = this.track(raw as SessionRevocation, before);
+    if (result.current_revoked) this.end(before, "signed_out");
+    return result;
+  }
+  async acknowledgeExternalIdentityNotices(noticeIDs: string[], signal?: AbortSignal): Promise<{ acknowledged_count: number }> {
+    const before = this.capture();
+    const ids = [...noticeIDs];
+    const raw = await this.request("/api/session/external-identities/notices/acknowledge", {
+      method: "POST", body: { notice_ids: ids }, signal, headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+    this.assert(before);
+    signal?.throwIfAborted();
+    if (!record(raw) || !Number.isSafeInteger(raw.acknowledged_count) || Number(raw.acknowledged_count) < 0 || Number(raw.acknowledged_count) > ids.length) throw invalidResponse();
+    return this.track(raw as { acknowledged_count: number }, before);
   }
   async revoke(mode: "others" | "all", signal?: AbortSignal): Promise<SessionRevocation> {
     const before = this.capture();

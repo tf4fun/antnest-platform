@@ -50,6 +50,9 @@ async function register(name, revision, registrationIssuer = issuer) {
       client_secret: fixtureSecret(revision),
       scopes: ["openid", "email", "profile"],
       enabled: true,
+      link_policy: "verified_email",
+      link_domains: [],
+      authoritative: false,
     },
   });
   assert(

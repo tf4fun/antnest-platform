@@ -131,7 +131,7 @@ export function Sidebar(props: Props) {
             onAccount={props.onAccount}
           />
         </>
-      ) : props.onAccount ? <button className="icon-button" type="button" onClick={props.onAccount}
+      ) : props.onAccount ? <button className="icon-button" type="button" data-browser-account-trigger onClick={props.onAccount}
         title="Account and sessions" aria-label="Account and sessions"><UserRound size={18} aria-hidden="true" /></button> : null}
     </NavigationPanel>
   );

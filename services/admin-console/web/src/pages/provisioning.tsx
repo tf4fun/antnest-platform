@@ -23,12 +23,13 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, Loading, SuccessNotice } from "../components/ui/feedback";
-import { CheckboxField, Field, Input } from "../components/ui/input";
+import { CheckboxField, Field, Input, Select, Textarea } from "../components/ui/input";
+import { IdentityProviderSelect } from "../components/identity-provider-select";
 import { api, errorMessage } from "../lib/api";
 import { dateTime } from "../lib/format";
 import { provisioningEndpoints, type ProvisioningEndpoints } from "../lib/provisioning-endpoints";
 import { captureResource, type ResourceState } from "../lib/resource-state";
-import type { OIDCProvider, SCIMToken, SCIMTokenIssue } from "../lib/types";
+import type { OIDCLinkPolicy, OIDCProvider, SCIMToken, SCIMTokenIssue } from "../lib/types";
 
 type ProvisioningView = "oidc" | "scim";
 
@@ -38,6 +39,7 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
     systemAdministrator ? { status: "loading" } : { status: "ready", data: [] },
   );
   const [tokens, setTokens] = useState<ResourceState<SCIMToken[]>>({ status: "loading" });
+  const [knownProviders, setKnownProviders] = useState<OIDCProvider[]>([]);
   const [pending, setPending] = useState(false);
   const [providerDialog, setProviderDialog] = useState<OIDCProvider | null | undefined>();
   const [providerDialogError, setProviderDialogError] = useState("");
@@ -57,10 +59,13 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
   const loadProviders = useCallback(async () => {
     if (!systemAdministrator) {
       setProviders({ status: "ready", data: [] });
+      setKnownProviders([]);
       return;
     }
     setProviders({ status: "loading" });
-    setProviders(await captureResource(async () => (await api.oidcProviders()).providers));
+    const result = await captureResource(async () => (await api.oidcProviders()).providers);
+    if (result.status === "ready") setKnownProviders(result.data);
+    setProviders(result);
   }, [systemAdministrator]);
 
   const loadTokens = useCallback(async () => {
@@ -79,18 +84,24 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
     const input = new FormData(form);
     const providerName = String(input.get("name") ?? "").trim();
     const editing = providerDialog !== null && providerDialog !== undefined;
+    const policy = String(input.get("link_policy") ?? "none") as OIDCLinkPolicy;
     setPending(true);
     setProviderDialogError("");
     setSuccessMessage("");
     try {
-      await api.upsertOIDCProvider({
+      const result = await api.upsertOIDCProvider({
         name: providerName,
         issuer: String(input.get("issuer") ?? "").trim(),
         client_id: String(input.get("client_id") ?? "").trim(),
         client_secret: String(input.get("client_secret") ?? ""),
         scopes: parseScopes(String(input.get("scopes") ?? "")),
         enabled: input.get("enabled") === "on",
+        link_policy: policy,
+        link_domains: policy === "verified_email_in_domains" ? String(input.get("link_domains") ?? "").split(/[,\r\n]+/).filter(domain => domain.trim() !== "") : [],
+        authoritative: input.get("authoritative") === "on",
+        ...(providerDialog?.link_policy_review_required ? { acknowledge_link_policy_review: input.get("acknowledge_link_policy_review") === "on" } : {}),
       });
+      setKnownProviders(previous => [...previous.filter(row => row.name !== result.provider.name), result.provider]);
       setProviderDialog(undefined);
       setSuccessMessage(`${providerDialog?.display_name ?? providerName} ${editing ? "updated" : "added"}.`);
       await loadProviders();
@@ -106,7 +117,8 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
     setProviderActionError("");
     setSuccessMessage("");
     try {
-      await api.setOIDCProviderEnabled(provider.name, !provider.enabled);
+      const result = await api.setOIDCProviderEnabled(provider.name, !provider.enabled);
+      setKnownProviders(previous => [...previous.filter(row => row.name !== result.provider.name), result.provider]);
       setSuccessMessage(`${provider.display_name} ${provider.enabled ? "disabled" : "enabled"}.`);
       await loadProviders();
     } catch (cause) {
@@ -119,6 +131,7 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
   async function issueToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const input = new FormData(event.currentTarget);
+    const providerID = String(input.get("oidc_provider_id") ?? "");
     const scopes: Array<"scim:read" | "scim:write"> = [];
     if (input.get("read") === "on") scopes.push("scim:read");
     if (input.get("write") === "on") scopes.push("scim:write");
@@ -129,6 +142,7 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
       const result = await api.issueSCIMToken({
         name: String(input.get("name") ?? "").trim(),
         scopes,
+        ...(providerID ? { oidc_provider_id: providerID } : {}),
       });
       setTokenDialog(false);
       setIssued(result);
@@ -223,6 +237,7 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
       {view === "oidc" ? (
         <ProviderSection
           state={providers}
+          knownProviders={knownProviders}
           actionError={providerActionError}
           pending={pending}
           onRetry={loadProviders}
@@ -328,17 +343,23 @@ function EndpointValue({ value, copied, onCopy }: { value: string; copied: boole
 	);
 }
 
-function ProviderSection({ state, actionError, pending, onRetry, onEdit, onToggle }: {
+function ProviderSection({ state, knownProviders, actionError, pending, onRetry, onEdit, onToggle }: {
   state: ResourceState<OIDCProvider[]>;
+  knownProviders: OIDCProvider[];
   actionError: string;
   pending: boolean;
   onRetry: () => Promise<void>;
   onEdit: (provider: OIDCProvider) => void;
   onToggle: (provider: OIDCProvider) => void;
 }) {
-  if (state.status === "loading") return <Loading label="Loading login providers" />;
-  if (state.status === "error") {
-    return <ResourceFailureNotice failure={state.failure} retryLabel="Retry login providers" onRetry={() => void onRetry()} />;
+  if (state.status !== "ready") {
+    return <div className="grid gap-3">
+      {knownProviders.filter(provider => provider.link_policy_review_required).map(provider => <div key={provider.name} role="status" className="rounded-md border border-border p-4 text-sm">
+        <p className="font-medium">{provider.display_name}</p><p className="text-destructive">Policy review required</p>
+        <p className="text-xs text-muted-foreground">Last confirmed provider status. Refresh the inventory to review this policy.</p>
+      </div>)}
+      {state.status === "loading" ? <Loading label="Loading login providers" /> : <ResourceFailureNotice failure={state.failure} retryLabel="Retry login providers" onRetry={() => void onRetry()} />}
+    </div>;
   }
   return (
     <div className="grid gap-3">
@@ -387,6 +408,7 @@ function ProviderTable({ providers, pending, onEdit, onToggle }: {
             </div>
             <Badge value={provider.enabled ? "active" : "inactive"} />
           </div>
+          <ProviderPolicySummary provider={provider} />
           <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 text-sm">
             <div className="col-span-2 min-w-0">
               <dt className="text-xs text-muted-foreground">Issuer</dt>
@@ -431,7 +453,7 @@ function ProviderTable({ providers, pending, onEdit, onToggle }: {
         </tr></thead>
         <tbody className="divide-y divide-border">{providers.map((provider) => (
           <tr className="hover:bg-muted/35" key={provider.name}>
-            <td className="px-3 py-3.5"><p className="font-medium">{provider.display_name}</p><p className="mt-0.5 font-mono text-xs text-muted-foreground">{provider.name}</p></td>
+            <td className="px-3 py-3.5"><p className="font-medium">{provider.display_name}</p><p className="mt-0.5 font-mono text-xs text-muted-foreground">{provider.name}</p><ProviderPolicySummary provider={provider} /></td>
             <td className="max-w-[280px] truncate px-3 py-3 text-muted-foreground" title={provider.issuer}>{provider.issuer}</td>
             <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{provider.client_id}</td>
             <td className="px-3 py-3 text-muted-foreground">{provider.scopes.join(", ")}</td>
@@ -461,6 +483,7 @@ function TokenTable({ tokens, pending, onRevoke }: {
           <div className="flex min-w-0 items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-medium">{token.name}</p>
+              <TokenPairing token={token} />
             </div>
             <Badge value={token.revoked_at ? "revoked" : "active"} />
           </div>
@@ -492,7 +515,7 @@ function TokenTable({ tokens, pending, onRevoke }: {
       </tr></thead>
       <tbody className="divide-y divide-border">{tokens.map((token) => (
         <tr className="hover:bg-muted/35" key={token.id}>
-          <td className="px-3 py-3.5"><p className="font-medium">{token.name}</p></td>
+          <td className="px-3 py-3.5"><p className="font-medium">{token.name}</p><TokenPairing token={token} /></td>
           <td className="px-3 py-3 text-muted-foreground">{token.scopes.map((scope) => scope.replace("scim:", "")).join(", ")}</td>
           <td className="px-3 py-3 text-muted-foreground">{dateTime(token.created_at)}</td>
           <td className="px-3 py-3"><Badge value={token.revoked_at ? "revoked" : "active"} /></td>
@@ -532,6 +555,7 @@ function ProviderDialog({ provider, error, copyError, callbackURL, copied, pendi
         <Field label="Client ID"><Input name="client_id" defaultValue={provider?.client_id} required /></Field>
         <Field label="Client secret" hint={editing ? "Leave blank to keep the current secret." : "Stored encrypted and never shown again."}><Input name="client_secret" type="password" autoComplete="new-password" required={!editing} /></Field>
         <Field label="Scopes" hint="Comma or space separated. openid and email are added automatically."><Input name="scopes" defaultValue={provider?.scopes.join(" ") ?? "openid email profile"} /></Field>
+        <ProviderPolicyFields key={provider?.name ?? "new"} provider={provider} disabled={pending} />
         <CheckboxField
           containerClassName="bg-muted/35"
           defaultChecked={provider?.enabled ?? true}
@@ -557,6 +581,7 @@ function TokenDialog({ open, error, pending, onClose, onSubmit }: {
       <form className="grid gap-5" onSubmit={onSubmit}>
         {error ? <ErrorNotice message={error} /> : null}
         <Field label="Credential name" hint="Use the external directory name, such as Workday or Okta."><Input name="name" required /></Field>
+        <IdentityProviderSelect name="oidc_provider_id" optional disabled={pending} />
         <fieldset className="grid gap-2"><legend className="mb-1 text-sm font-medium">Permissions</legend>
           <CheckboxField defaultChecked hint="Users and groups" label="Read directory" name="read" />
           <CheckboxField defaultChecked hint="Create and update resources" label="Provision directory" name="write" />
@@ -598,6 +623,7 @@ function CredentialDialog({ issued, baseURL, copied, endpointCopied, error, onCl
     <Dialog open={Boolean(issued)} onOpenChange={(open) => { if (!open) onClose(); }} title="SCIM credential issued" description="Copy this credential now. Antnest stores only its hash and cannot show it again.">
       <div className="grid gap-5">
 		<div><p className="mb-2 text-sm font-medium">SCIM base URL</p><EndpointValue value={baseURL} copied={endpointCopied} onCopy={onCopyEndpoint} /></div>
+        {issued ? <TokenPairing token={issued.token} /> : null}
         <div className="rounded-md border border-[#cfd8ad] bg-[#f3f9d9] p-4"><div className="flex items-center gap-2 text-sm font-medium text-[#536700]"><ShieldCheck className="h-4 w-4" />One-time secret</div><code className="mt-3 block break-all rounded-md bg-white p-3 text-xs text-foreground">{issued?.credential}</code></div>
         {error ? <ErrorNotice message={error} /> : null}
         <div className="flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Done</Button><Button onClick={() => void onCopy()}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy credential"}</Button></div>
@@ -608,4 +634,43 @@ function CredentialDialog({ issued, baseURL, copied, endpointCopied, error, onCl
 
 function parseScopes(value: string): string[] {
   return [...new Set(value.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean))];
+}
+
+const policyLabels: Record<OIDCLinkPolicy, string> = {
+  none: "Explicit binding only",
+  verified_email_in_domains: "Verified email in allowed domains",
+  verified_email: "Any verified email",
+};
+
+function ProviderPolicySummary({ provider }: { provider: OIDCProvider }) {
+  return <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+    <p>{policyLabels[provider.link_policy]}</p>
+    {provider.link_domains.length ? <p className="break-all">{provider.link_domains.join(", ")}</p> : null}
+    <p>{provider.authoritative ? "Trusted for organization administrators" : "No automatic administrator linking"}</p>
+    {provider.link_policy_review_required ? <p className="font-medium text-destructive">Policy review required</p> : null}
+  </div>;
+}
+
+function ProviderPolicyFields({ provider, disabled }: { provider: OIDCProvider | null | undefined; disabled: boolean }) {
+  const [policy, setPolicy] = useState<OIDCLinkPolicy>(provider?.link_policy ?? "none");
+  return <fieldset className="grid gap-3 rounded-md border border-border p-4" disabled={disabled}>
+    <legend className="px-1 text-sm font-medium">External login linking</legend>
+    <p className="text-xs text-muted-foreground">Automatic linking trusts the provider's verified email claim to find an existing membership. System administrator accounts cannot sign in through OIDC.</p>
+    {provider?.link_policy_review_required ? <p className="text-sm text-destructive">Policy review required</p> : null}
+    <Field label="Automatic linking policy">
+      <Select name="link_policy" value={policy} onChange={event => setPolicy(event.target.value as OIDCLinkPolicy)}>
+        {Object.entries(policyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </Select>
+    </Field>
+    {policy === "verified_email_in_domains" ? <Field label="Allowed email domains" hint="Exact ASCII domains, separated by commas or lines. Wildcards and URLs are not accepted.">
+      <Textarea name="link_domains" defaultValue={provider?.link_domains.join(", ")} required />
+    </Field> : null}
+    <CheckboxField name="authoritative" label="Trust provider for organization administrators" defaultChecked={provider?.authoritative ?? false}
+      hint="Only enable for a provider trusted to assert administrators' verified email. Other providers never automatically link administrator memberships." />
+    {provider?.link_policy_review_required ? <CheckboxField name="acknowledge_link_policy_review" label="I have reviewed this linking policy" hint="Saving or rotating a secret without this explicit confirmation keeps the review warning." /> : null}
+  </fieldset>;
+}
+
+function TokenPairing({ token }: { token: SCIMToken }) {
+  return <p className="mt-1 text-xs text-muted-foreground">{token.oidc_provider_id === null ? "Directory only · no login binding" : <>Paired login provider: <code className="break-all">{token.oidc_provider_id}</code></>}</p>;
 }

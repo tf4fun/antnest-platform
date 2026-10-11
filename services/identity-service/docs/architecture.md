@@ -86,11 +86,15 @@ SCIM-owned edge to a local Group or vice versa.
 
 OIDCProvider owns discovered endpoints and an encrypted client secret.
 ExternalIdentity is immutable at `(provider_id, subject)` and maps to one User
-and Membership. A new verified OIDC identity may bind an existing active,
-non-system Membership by normalized email, but only inside the Provider's
-Organization. It never searches another Organization. This permits local,
-SCIM, and multiple OIDC credentials to identify the same organization member
-without making email a global User key.
+and Membership. New Providers default to `link_policy=none`. First automatic
+linking requires an explicit `verified_email` policy, or
+`verified_email_in_domains` with an exact canonical ASCII domain match, plus a
+verified email matching an active non-system Membership in that Organization.
+Administrator Memberships additionally require `authoritative=true`.
+An existing binding uses its validated issuer and exact subject independently
+of current email, display claims, domain policy or UserInfo availability.
+Subjects retain whitespace and case, contain at most 255 Unicode code points,
+and reject NUL, invalid UTF-8 and unpaired JSON surrogates before any repair.
 OIDC is authentication only: it never creates a User or Membership and never
 rewrites a local- or SCIM-owned profile.
 
@@ -119,6 +123,69 @@ revision as a compare-and-swap token rather than accepting a stale replacement.
 Administrative Provider lists use a dedicated metadata query that does not
 select client-secret ciphertext or nonce. This is a persistence boundary, not
 response-time redaction.
+
+Migration `0006` retains `verified_email` for historical registrations and sets
+a durable review flag; it leaves bindings, credentials, revisions and sessions
+unchanged. A complete policy plus `acknowledge_link_policy_review=true` clears
+the flag. Omitted policy fields preserve all values; secret rotation, enable
+changes and a false acknowledgment do not complete review.
+
+Provider mutations lock Provider rows before the actor User. New registrations
+serialize per Organization before locking possible name/issuer conflicts, so
+an insert conflict cannot reverse that order. Callback issuance locks its auth
+session, then Provider, User, Organization and Membership, and rechecks policy
+and roles before binding. Browser authority is revalidated after mutation lock
+waits.
+
+The external identity application preserves the complete signed Caller for
+transactional authorization. Organization controls use the signed organization
+and exact target Membership; self controls use the signed User across its
+organizations. Migration `0007` preserves historical method/time metadata and
+reserves every Provider/subject tombstone while limiting active bindings to
+one per Provider/User. Only an explicit administrator restoration can reactivate
+the same owner and Membership. New automatic bindings and administrator
+bindings/restorations atomically append an audit event and an immutable notice.
+Migration does not manufacture notifications for historical bindings.
+
+Binding writers lock Providers, sorted Users, Organizations, Memberships,
+mapping rows and browser sessions in that order. A changed set of usable
+Providers restarts the entire transaction before any effects. Add-Membership
+and SCIM reprovisioning also lock Users before Memberships. Unbind serializes
+with callback issuance, revokes only the target Membership's sessions and
+publishes its session feed in the same transaction; it never emits principal
+offboarding. The final usable-method guard excludes disabled/revoked Providers
+and bindings in another Membership. Explicit lockout permission does not relax
+caller authorization. Self-revocation still checks the original signed Caller
+and deadlines at completion while holding the parent/session locks.
+
+Inventory reads do not touch session activity or acknowledge notices. Binding
+and pending-notice pages have independent exclusive ID cursors; organization
+responses omit private notices. Acknowledgment validates every requested owned
+notice ID before updating any row. An old acknowledgment cannot clear a later
+restoration notice. Gateway and browser consumers are delivered in separate batches
+in the [shared delivery contract](../../../contracts/identity/oidc-linking.md).
+The real HTTPS integration exercises their public routes and both browser
+applications, including a held Run that survives binding removal.
+
+Paired SCIM token issuance locks the same-organization Provider before actor
+parents and SID, and revalidates the original signed Caller after audit writes.
+Migration `0008` adds nullable token/Membership Provider references without
+backfilling authority. A paired User creation commits the exact subject binding,
+SCIM-actor audit and immutable notice with its new directory resource.
+
+SCIM User creation and deletion first acquire a transaction advisory lock in a
+dedicated namespace for the organization. This protects both absence of a
+deleted candidate and the newest deleted lineage through commit. Creation then
+locks all discovered Providers (including revoked mappings), the issuing token,
+User, Organization and old Membership, rechecking the discovered Provider set.
+Other or null pairing cannot adopt the old lineage. Reprovisioning changes only
+the confirmed old Membership's mapping pointers; method, activation timestamp,
+revocation and existing notices stay unchanged. Directory updates do not publish
+tombstones and retain optimistic concurrency plus active-resource uniqueness.
+Each replacement Membership starts strictly after its confirmed predecessor's
+deletion at database microsecond precision, even when the wall clock stays
+fixed or moves backwards. Equal highest historical deletion timestamps refuse
+reprovisioning rather than selecting a generation by random ID.
 
 ### AuthSession And Token
 
@@ -307,10 +374,13 @@ event without resetting an existing password.
 - SCIM User `active=false` is reversible deactivation. User DELETE tombstones
   the SCIM Membership and hides it from GET, list, and filter results while the
   global User and audit facts remain. Exact external-ID reprovisioning reuses
-  that User, creates a fresh SCIM Membership ID, and repoints any durable OIDC
-  identity to the new Membership.
+  that User only under the same stored Provider pairing (including null),
+  creates a fresh SCIM Membership ID, and repoints that exact old Membership's
+  durable OIDC identities without restoring revoked bindings.
 - SCIM tokens are rotating credentials for one logical directory authority per
-  Organization. They do not create separate ownership namespaces.
+  Organization. They do not create separate directory namespaces. Optional
+  immutable Provider pairing grants only the additional subject-binding effect;
+  another token cannot reinterpret a paired Membership's external ID.
 
 ## Persistence Boundary
 
@@ -336,7 +406,9 @@ whose Organization, User, and Membership match the session result.
 - Startup recovery terminalizes only callbacks whose durable session lifetime
   has expired. It does not fail another replica's still-valid exchange.
 - SCIM POST is create-only and returns conflict for an existing resource ID or
-  external ID. PUT/PATCH are transactional updates addressed by resource ID.
+  external ID. User creation returns the persisted resource metadata, including
+  PostgreSQL timestamp precision, so the response version matches an immediate
+  read. PUT/PATCH are transactional updates addressed by resource ID.
 - Membership and Group replacement compare the previously read update version
   under row lock; successful writes advance it monotonically at PostgreSQL
   timestamp precision.

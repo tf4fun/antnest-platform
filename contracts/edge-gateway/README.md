@@ -6,6 +6,12 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+Revision 20 adds the three self binding/notice routes defined by
+[OIDC account linking](../identity/oidc-linking.md), with closed browser schemas,
+the Identity-only session CCT profile, shared Origin/CSRF admission and no Cookie
+mutation. Identity, Gateway, browser consumers and HTTPS integration have separate
+pending #61 batches; these declarations do not activate the routes.
+
 [Public entry](public-entry.md) defines native TLS, HTTPS proxy trust, public
 Origin, client addresses, forwarding headers, HSTS and certificate rotation.
 
