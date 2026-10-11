@@ -376,8 +376,15 @@ snapshots of the entire request/source/trigger closure. A missing source, late
 SQL or changed diagnostics resets convergence. Partial raw evidence is retained
 on failure. Warnings and errors from every collected Trace remain strict
 failures; missing parents are never classified away as clock skew. Cancellation
-waits for active request/body reads and inspectors before returning. This Trace
-consumer support does not complete #59's pending fault, display-freshness and
+waits for active request/body reads and inspectors before returning.
+[`collectResolveTraceEvidence`](../../support/gateway-resolution-evidence.mjs)
+provides this common collection loop and requires an owning business inspector.
+The Identity wrapper supplies its default inspector and evidence directory.
+Top-level warning/error counts describe the entire raw closure; any overlapping
+business diagnostics are retained in `inspector_diagnostics`, including warning
+arrays used by CI review. Clean source diagnostics cannot clear a business
+inspector's strict failure. This Trace consumer support does not complete #59's
+pending fault, display-freshness and
 load integration scenarios.
 Collectors validate known output files before any HTTP request, and access
 clients validate the directory and failure log before login or database setup.

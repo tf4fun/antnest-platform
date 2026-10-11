@@ -6,18 +6,22 @@ import {
   annotateFailure,
   transportFailure,
 } from "../../support/verification/failure.mjs";
-import { assertSecretFree } from "./evidence.mjs";
 import { collectTrace } from "../observability/collect.mjs";
 import { collectResolutionSources } from "../../support/gateway-resolution-collect.mjs";
+import {
+  resolveTraceSources as identityTraceSources,
+  resolveTraceDiagnostics as identityTraceDiagnostics,
+} from "../../support/gateway-resolution-evidence.mjs";
 import { inspectGatewayResolution } from "../../support/gateway-resolution.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import {
-  assertCaptureDisabled,
   owningServerTopology,
   traceTree,
   traceTopology,
   tag,
 } from "../observability/trace-tree.mjs";
+
+export { identityTraceSources, identityTraceDiagnostics };
 
 export function assertNoStore(headers) {
   // A proxy may append the same cache directive as its upstream.
@@ -139,39 +143,6 @@ export class GatewayClient {
       traceID: response.headers.get("x-antnest-trace-id"),
     };
   }
-}
-
-export function identityTraceSources(trace, secrets, options = {}) {
-  const traces = options.traces ?? new Map([[trace.traceID, trace]]);
-  assert(traces.get(trace.traceID) === trace, "wrong current trace snapshot");
-  for (const [id, source] of traces) {
-    assert.equal(source.traceID, id, "wrong source trace snapshot");
-    traceTopology(source);
-    assertCaptureDisabled(source);
-    assertSecretFree(JSON.stringify(source), secrets);
-  }
-  return [...traces.values()];
-}
-
-export function identityTraceDiagnostics(trace, sources) {
-  const warnings = sources.flatMap((source) => [
-    ...(source.warnings ?? []),
-    ...source.spans.flatMap((span) => span.warnings ?? []),
-  ]);
-  const errors = sources.reduce(
-    (count, source) => count + source.spans.filter(hasError).length,
-    0,
-  );
-  return {
-    warning_count: warnings.length,
-    warnings: [...new Set(warnings)],
-    error_spans: errors,
-    strict_trace: warnings.length || errors ? "failed" : "passed",
-    source_trace_ids: sources
-      .map((source) => source.traceID)
-      .filter((id) => id !== trace.traceID)
-      .sort(),
-  };
 }
 
 export function inspectIdentityTrace(
