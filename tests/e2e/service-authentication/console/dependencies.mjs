@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createOIDCFixture } from "./oidc-fixture.mjs";
 
 const fixture = JSON.parse(readFileSync("/run/auth/fixture.json", "utf8"));
 const publicKey = createPublicKey({ key: fixture.jwks.keys[0], format: "jwk" });
@@ -15,6 +16,7 @@ const stats = {
   browserSessions: [],
 };
 const issuedAt = Date.now();
+const oidcFixture = createOIDCFixture(stats);
 let sessions = [
   ["public-session-01", "org-1"],
   ["public-session-02", "org-1"],
@@ -85,6 +87,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         if (body[field] !== undefined && body[field] !== claims.sub)
           throw Error("actor_not_signed");
       if (service === "identity-service") {
+        if (oidcFixture({ path, r, w, body, claims, token, json })) return;
         if (path.endsWith("list-directory"))
           return json(w, { users: [], groups: [] });
         if (path.endsWith("get-current-account"))

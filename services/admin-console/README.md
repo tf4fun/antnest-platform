@@ -34,6 +34,7 @@ Route authorization and management projections remain Console-owned.
 - Skill inventory, upload, discovery and promotion through Skill Registry.
 - Static application delivery and lifecycle event forwarding (SSE).
 - Browser activity reporting, self session controls through Gateway, and organization session administration through Identity.
+- [OIDC policy review, SCIM pairing and external login controls](docs/oidc-linking.md), including personal binding notices.
 
 ## Non-responsibilities
 

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   LayoutDashboard,
   KeyRound,
+  Link2,
   LoaderCircle,
   LogOut,
   Menu,
@@ -23,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brand } from "./components/brand";
 import { AccountSecurity } from "./components/account-security";
 import { SessionManagement } from "./components/session-management";
+import { SelfExternalIdentities } from "./components/external-identities";
 import { ConfigurationSynchronization } from "./components/configuration-synchronization";
 import { ResourceFailurePage } from "./components/page";
 import { Button } from "./components/ui/button";
@@ -150,6 +152,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountSecurityOpen, setAccountSecurityOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [externalIdentitiesOpen, setExternalIdentitiesOpen] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const logoutRequest = useRef<symbol | undefined>(undefined);
@@ -169,6 +172,7 @@ export default function App() {
     setMenuOpen(false);
     setAccountSecurityOpen(false);
     setSessionsOpen(false);
+    setExternalIdentitiesOpen(false);
     setAccountState({ status: "loading" });
     setSession(null);
     setGeneration(value => value + 1);
@@ -180,6 +184,7 @@ export default function App() {
     setAccountState({ status: "loading" });
     setAccountSecurityOpen(false);
     setSessionsOpen(false);
+    setExternalIdentitiesOpen(false);
     setMenuOpen(false);
     logoutRequest.current = undefined;
     setLogoutPending(false);
@@ -249,6 +254,7 @@ export default function App() {
     const validate = () => {
       setAccountSecurityOpen(false);
       setSessionsOpen(false);
+      setExternalIdentitiesOpen(false);
       setSession(undefined);
       setStartupFailure(undefined);
       setStartupPending(true);
@@ -416,6 +422,9 @@ export default function App() {
             </div>
             <div className="mt-2 pl-11 text-[11px] text-muted-foreground">{role}</div>
             <div className="mt-1 flex min-h-8 items-center justify-end gap-0.5 pl-11">
+              <Button aria-label="Manage external logins" title="Manage external logins" className="h-8 w-8" size="icon" variant="ghost" onClick={() => setExternalIdentitiesOpen(true)}>
+                <Link2 className="h-4 w-4" />
+              </Button>
               <Button aria-label="Manage browser sessions" title="Manage browser sessions" className="h-8 w-8" size="icon" variant="ghost" onClick={() => setSessionsOpen(true)}>
                 <Monitor className="h-4 w-4" />
               </Button>
@@ -531,6 +540,7 @@ export default function App() {
           ref={mainContentRef}
           tabIndex={-1}
         >
+          <SelfExternalIdentities key={`external-identities:${generation}`} open={externalIdentitiesOpen} onOpenChange={setExternalIdentitiesOpen} />
           {["models", "templates", "agents"].includes(route.page) ? <ConfigurationSynchronization key={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
           {route.page === "overview" ? <DashboardPage /> : null}
           {route.page === "directory" ? (

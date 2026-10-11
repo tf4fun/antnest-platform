@@ -68,6 +68,7 @@ type statusSource struct {
 }
 
 type oidcProviderSource struct {
+	oidcPolicySource
 	Name                    string   `json:"name"`
 	DisplayName             string   `json:"display_name"`
 	Issuer                  string   `json:"issuer"`
@@ -94,11 +95,12 @@ type oidcProviderResultSource struct {
 }
 
 type scimTokenSource struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Scopes    []string `json:"scopes"`
-	CreatedAt string   `json:"created_at"`
-	RevokedAt string   `json:"revoked_at,omitempty"`
+	OIDCProviderID json.RawMessage `json:"oidc_provider_id"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Scopes         []string        `json:"scopes"`
+	CreatedAt      string          `json:"created_at"`
+	RevokedAt      string          `json:"revoked_at,omitempty"`
 }
 
 type scimTokenListSource struct {
@@ -358,19 +360,65 @@ func projectStatus(payload []byte) ([]byte, error) {
 }
 
 func projectOIDCProviderList(payload []byte) ([]byte, error) {
-	return projectPayload[oidcProviderListSource](payload)
+	var result oidcProviderListSource
+	if err := decodeProvisioningMetadata(payload, &result, "providers"); err != nil {
+		return nil, err
+	}
+	if result.Providers == nil {
+		return nil, fmt.Errorf("provider inventory is required")
+	}
+	for _, provider := range result.Providers {
+		if err := provider.validate(); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(result)
 }
 
 func projectOIDCProviderResult(payload []byte) ([]byte, error) {
-	return projectPayload[oidcProviderResultSource](payload)
+	var result oidcProviderResultSource
+	if err := decodeProvisioningMetadata(payload, &result, "provider"); err != nil {
+		return nil, err
+	}
+	if err := result.Provider.validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(result)
 }
 
 func projectSCIMTokenList(payload []byte) ([]byte, error) {
-	return projectPayload[scimTokenListSource](payload)
+	var result scimTokenListSource
+	if err := decodeProvisioningMetadata(payload, &result, "tokens"); err != nil {
+		return nil, err
+	}
+	if result.Tokens == nil {
+		return nil, fmt.Errorf("SCIM token inventory is required")
+	}
+	for _, token := range result.Tokens {
+		if err := token.validatePairing(); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(result)
 }
 
 func projectSCIMTokenIssue(payload []byte) ([]byte, error) {
-	return projectPayload[scimTokenIssueSource](payload)
+	var result scimTokenIssueSource
+	if err := decodeProvisioningMetadata(payload, &result, "token", "credential"); err != nil {
+		return nil, err
+	}
+	if err := result.Token.validatePairing(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(result)
+}
+
+func (source scimTokenSource) validatePairing() error {
+	var id *string
+	if len(source.OIDCProviderID) == 0 || json.Unmarshal(source.OIDCProviderID, &id) != nil || id != nil && !browserSessionPublicID.MatchString(*id) {
+		return fmt.Errorf("invalid SCIM Provider pairing metadata")
+	}
+	return nil
 }
 
 func projectModelProfile(payload []byte) ([]byte, error) {

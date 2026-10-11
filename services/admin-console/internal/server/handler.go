@@ -116,6 +116,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/template-defaults", h.withPrincipal(h.templateDefaults))
 	h.mux.HandleFunc("GET /api/admin/account", h.withPrincipal(h.currentAccount))
 	h.registerBrowserSessionRoutes()
+	h.registerExternalIdentityRoutes()
 	h.mux.HandleFunc("GET /api/admin/directory", h.withPrincipal(h.directory))
 	h.mux.HandleFunc("POST /api/admin/directory/users", h.withPrincipal(h.createLocalUser))
 	h.mux.HandleFunc("POST /api/admin/directory/memberships/{membership_id}", h.withPrincipal(h.updateMembership))
@@ -355,6 +356,7 @@ func (h *handler) listOIDCProviders(response http.ResponseWriter, request *http.
 }
 
 type upsertOIDCProviderInput struct {
+	oidcPolicyInput
 	Name         string   `json:"name"`
 	Issuer       string   `json:"issuer"`
 	ClientID     string   `json:"client_id"`
@@ -375,6 +377,11 @@ func (h *handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required OIDC Provider field is invalid")
 		return
 	}
+	policy, err := input.policyFields()
+	if err != nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "OIDC linking policy is invalid")
+		return
+	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
 	if !ok {
 		return
@@ -384,6 +391,9 @@ func (h *handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 		"organization_id": actor.OrganizationID, "name": input.Name,
 		"issuer": input.Issuer, "client_id": input.ClientID,
 		"client_secret": input.ClientSecret, "scopes": input.Scopes, "enabled": *input.Enabled,
+	}
+	for key, value := range policy {
+		payload[key] = value
 	}
 	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
 		"/rpc/identity/upsert-oidc-provider", "", payload, projectOIDCProviderResult)
@@ -431,8 +441,9 @@ func (h *handler) listSCIMTokens(response http.ResponseWriter, request *http.Req
 }
 
 type issueSCIMTokenInput struct {
-	Name   string   `json:"name"`
-	Scopes []string `json:"scopes"`
+	Name           string          `json:"name"`
+	Scopes         []string        `json:"scopes"`
+	OIDCProviderID json.RawMessage `json:"oidc_provider_id"`
 }
 
 func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -444,6 +455,11 @@ func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required SCIM token field is invalid")
 		return
 	}
+	var providerID string
+	if len(input.OIDCProviderID) != 0 && (json.Unmarshal(input.OIDCProviderID, &providerID) != nil || !browserSessionPublicID.MatchString(providerID)) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "OIDC Provider reference is invalid")
+		return
+	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
 	if !ok {
 		return
@@ -451,6 +467,9 @@ func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 	payload := map[string]any{
 		"request_id": requestID, "actor_principal_id": actor.UserID,
 		"organization_id": actor.OrganizationID, "name": input.Name, "scopes": input.Scopes,
+	}
+	if len(input.OIDCProviderID) != 0 {
+		payload["oidc_provider_id"] = providerID
 	}
 	h.forwardProjectedJSONNoStore(response, request, upstream.Identity, http.MethodPost,
 		"/rpc/identity/issue-scim-token", "", payload, projectSCIMTokenIssue)

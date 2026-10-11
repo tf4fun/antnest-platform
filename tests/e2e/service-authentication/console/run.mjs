@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { createFixture, callerContext } from "./auth-fixture.mjs";
+import { verifyOIDCLinking } from "./oidc-linking.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 export async function runConsoleAcceptance({
@@ -22,11 +23,17 @@ export async function runConsoleAcceptance({
     project,
   );
   const credentials = resolve(evidence, "credentials");
-  const fixture = createFixture(credentials);
   assert(
     process.getuid() > 0,
     "use a nonroot user for this disposable fixture",
   );
+  let fixture;
+  try {
+    fixture = createFixture(credentials);
+  } catch (error) {
+    rmSync(credentials, { recursive: true, force: true });
+    throw error;
+  }
   const env = {
     ...process.env,
     CONSOLE_TEST_UID: String(process.getuid()),
@@ -445,6 +452,12 @@ export async function runConsoleAcceptance({
       }
       checks++;
       const file = resolve(credentials, "outgoing/agent-controller");
+      const linkingChecks = await verifyOIDCLinking({
+        request,
+        state,
+        fixture,
+      });
+      checks += linkingChecks;
       writeFileSync(file + ".next", fixture.next, { mode: 0o600 });
       renameSync(file + ".next", file);
       await request("/api/admin/agents");

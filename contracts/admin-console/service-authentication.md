@@ -14,12 +14,20 @@ organization-scoped. The signed subject, organization, membership and roles
 construct the principal; X-Antnest headers never authenticate or select it.
 Existing system/organization administrator checks remain mandatory.
 
-Browser session list/revoke operations use Identity revision 15 and always fix
+Browser session list/revoke operations use Identity revision 16 and always fix
 scope to the signed organization, even for system administrators. Target User
 membership and live `sid` admission are validated by Identity. Public session
 references are unrelated to private `sid` claims; neither may be selected in a
 browser body. The Console password mutation is retired: only Gateway revision
-19 owns browser password rotation and the resulting Cookie transition.
+20 owns browser password rotation and the resulting Cookie transition.
+
+The four organization external identity routes have exact Gateway workload/CCT
+grants. They use the signed actor, path Membership and bounded public IDs;
+requests cannot supply organization, actor or self scope. Only the chooser has
+no Membership target. Binding/unbinding preserve the original CCT for Identity's
+live admission. A current-revoked response is valid only for the current signed
+Membership. Self inventory and notice acknowledgment are Gateway routes, not BFF
+privilege expansions. See [OIDC linking](../identity/oidc-linking.md).
 
 Console obtains bounded public JWKS only from the configured, authenticated
 Identity origin. Cache trust expires after 30 seconds. A refresh uses the

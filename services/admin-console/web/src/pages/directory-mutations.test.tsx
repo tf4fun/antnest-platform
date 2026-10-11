@@ -11,6 +11,23 @@ const member: DirectoryMember = {
   membership: { ...dates, id: "membership-alex", user_id: "user-alex", email: "alex@example.com", display_name: "Alex", role: "member", source: "local", active: true },
 };
 
+it.each(["desktop", "mobile"])("opens Membership external login controls for SCIM people on %s", async layout => {
+  const requests = vi.fn(async (path: string) => {
+    if (path === "/api/admin/directory") return Response.json({ users: [{ ...member, membership: { ...member.membership, source: "scim" } }], groups: [] });
+    if (path === "/api/admin/directory/memberships/membership-alex/external-identities?limit=50") return Response.json({ bindings: [] });
+    if (path === "/api/admin/directory/identity-providers?limit=50") return Response.json({ providers: [] });
+    throw new Error(`Unexpected request ${path}`);
+  }); vi.stubGlobal("fetch", requests);
+  render(<DirectoryPage currentUserID="administrator" organizationName="Example" systemAdministrator={false} />);
+  const root = layout === "mobile" ? await screen.findByRole("list", { name: "Directory people" }) : await screen.findByRole("table");
+  fireEvent.click(within(root).getByRole("button", { name: "Manage Alex external logins" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Alex external logins" }));
+  expect(await dialog.findByText("No external logins to display.")).toBeTruthy();
+  expect(requests.mock.calls.some(([path]) => path.includes("/users/user-alex/"))).toBe(false);
+  fireEvent.click(dialog.getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 it.each(["desktop", "mobile"])("offers organization session controls for SCIM members on %s", async layout => {
   const external = { ...member, membership: { ...member.membership, source: "scim" } };
   const request = vi.fn(async (path: string, init: RequestInit) => {

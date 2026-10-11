@@ -168,6 +168,7 @@ func TestProvisioningListsOnlySafeMetadata(t *testing.T) {
 		"providers":[{"id":"provider-1","organization_id":"org-1","name":"workforce",
 		"display_name":"Workforce","issuer":"https://id.example.com","client_id":"client-1",
 		"scopes":["openid"],"enabled":true,"revision":1,
+		"link_policy":"none","link_domains":[],"authoritative":false,"link_policy_review_required":false,
 		"authorization_endpoint":"https://id.example.com/auth","token_endpoint":"https://id.example.com/token",
 		"token_endpoint_auth_method":"client_secret_basic","id_token_signing_algs":["RS256"],
 		"jwks_uri":"https://id.example.com/jwks","created_at":"2026-09-03T08:00:00Z",
@@ -175,6 +176,7 @@ func TestProvisioningListsOnlySafeMetadata(t *testing.T) {
 	backend.enqueue(http.StatusOK, `{
 		"tokens":[{"id":"token-1","organization_id":"org-1","name":"Workday",
 		"scopes":["scim:read"],"created_at":"2026-09-03T08:00:00Z",
+		"oidc_provider_id":null,
 		"credential":"must-not-reach-browser"}]}`)
 	handler := newTestHandler(t, backend)
 
@@ -219,7 +221,7 @@ func TestIssueSCIMTokenDisclosesCredentialOnceWithoutCaching(t *testing.T) {
 	backend := newBackendStub()
 	backend.enqueue(http.StatusCreated, `{
 		"token":{"id":"token-1","organization_id":"org-1","name":"Workday",
-		"scopes":["scim:read","scim:write"],"created_at":"2026-09-03T08:00:00Z"},
+		"scopes":["scim:read","scim:write"],"created_at":"2026-09-03T08:00:00Z","oidc_provider_id":null},
 		"credential":"ant_scim_one_time_secret","token_hash":"must-not-reach-browser"}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/provisioning/scim-tokens", `{
@@ -246,6 +248,7 @@ func TestOIDCProvisioningShapesCommandsAndNeverReturnsSecret(t *testing.T) {
 		"provider":{"id":"provider-1","organization_id":"org-1","name":"workforce",
 		"display_name":"Workforce","issuer":"https://id.example.com","client_id":"client-1",
 		"scopes":["openid"],"enabled":true,"revision":1,
+		"link_policy":"none","link_domains":[],"authoritative":false,"link_policy_review_required":false,
 		"authorization_endpoint":"https://id.example.com/auth","token_endpoint":"https://id.example.com/token",
 		"token_endpoint_auth_method":"client_secret_basic","id_token_signing_algs":["RS256"],
 		"jwks_uri":"https://id.example.com/jwks","created_at":"2026-09-03T08:00:00Z",
@@ -254,6 +257,7 @@ func TestOIDCProvisioningShapesCommandsAndNeverReturnsSecret(t *testing.T) {
 		"provider":{"id":"provider-1","organization_id":"org-1","name":"workforce",
 		"display_name":"Workforce","issuer":"https://id.example.com","client_id":"client-1",
 		"scopes":["openid"],"enabled":false,"revision":2,
+		"link_policy":"none","link_domains":[],"authoritative":false,"link_policy_review_required":false,
 		"authorization_endpoint":"https://id.example.com/auth","token_endpoint":"https://id.example.com/token",
 		"token_endpoint_auth_method":"client_secret_basic","id_token_signing_algs":["RS256"],
 		"jwks_uri":"https://id.example.com/jwks","created_at":"2026-09-03T08:00:00Z",
@@ -794,6 +798,7 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 			"id":"provider-secret","organization_id":"org-1","name":"workforce",
 			"display_name":"Workforce login","issuer":"https://identity.example.com",
 			"client_id":"antnest","scopes":["openid"],"enabled":true,"revision":1,
+			"link_policy":"none","link_domains":[],"authoritative":false,"link_policy_review_required":false,
 			"authorization_endpoint":"https://identity.example.com/authorize",
 			"token_endpoint":"https://identity.example.com/token",
 			"token_endpoint_auth_method":"client_secret_post","id_token_signing_algs":["RS256"],
@@ -801,7 +806,7 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 			"updated_at":"2026-09-02T00:00:00Z"}]}`},
 		{name: "scim", projector: projectSCIMTokenList, payload: `{"tokens":[{
 			"id":"token-action-id","organization_id":"org-1","name":"HR directory",
-			"scopes":["scim:read","scim:write"],"created_at":"2026-09-02T00:00:00Z"}]}`},
+			"scopes":["scim:read","scim:write"],"created_at":"2026-09-02T00:00:00Z","oidc_provider_id":null}]}`},
 		{name: "model", projector: projectModelProfile, payload: `{
 			"model_profile_id":"model-1","organization_id":"org-1","profile_key":"deepseek",
 			"display_name":"DeepSeek","revision_id":"revision-1","revision":1,"enabled":true,

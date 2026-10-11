@@ -34,6 +34,7 @@ function application(
     switch (input) {
       case "/api/session/password": return changePassword();
       case "/api/session/sessions?limit=50": return Response.json({ sessions: [] });
+      case "/api/session/external-identities?limit=50": return Response.json({ bindings: [], notices: [] });
       case "/api/session/activity": return Response.json(session);
       case "/api/session/account": return Response.json({ account: {
         user_id: "admin-1", organization_id: "org-1", membership_id: "membership-1",
@@ -73,6 +74,16 @@ it.each([false, true])("keeps session management reachable for an OIDC-only acco
   fireEvent.click(await screen.findByRole("button", { name: "Manage browser sessions" }));
   expect(await screen.findByRole("dialog", { name: "Your browser sessions" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Change local password" })).toBeNull();
+});
+
+it.each([false, true])("keeps external logins reachable for OIDC-only accounts without Agent data, compact %s", async compact => {
+  const requests = application(async () => new Response(null, { status: 204 }), compact, async () => Response.json(session), undefined, false);
+  await screen.findByRole("heading", { name: "Directory" });
+  if (compact) fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Manage external logins" }));
+  expect(await screen.findByRole("dialog", { name: "Your external logins" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Change local password" })).toBeNull();
+  expect(requests.mock.calls.some(([path]) => path.includes("agents"))).toBe(false);
 });
 
 it("rebuilds the same-user private page after password replacement", async () => {

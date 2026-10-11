@@ -22,7 +22,7 @@ by the revoke command; the UI never presents it as credential identity.
 
 ## OIDC linking and binding controls
 
-Version 52 defines the pending Console consumer of
+Version 52 defines the Console consumer of
 [OIDC account linking](../identity/oidc-linking.md). The closed request/response
 projections are in [oidc-linking.schema.json](oidc-linking.schema.json).
 Organization administrators receive a bounded Provider chooser with IDs, display
@@ -33,10 +33,13 @@ display, never credentials. Self bindings and pending notices use Gateway routes
 SCIM token metadata returns the immutable paired Provider ID or null; the chooser
 supplies its display name. Identity, Gateway and the two UIs must pass their owning
 batches before the final HTTPS flow is admitted.
+The implemented [Console controls](../../services/admin-console/docs/oidc-linking.md)
+preserve policy review, use exact Membership paths, require explicit restore and
+lockout confirmation, and acknowledge immutable notice IDs independently of binding pagination.
 
 ## Browser sessions and password
 
-The Console consumes Gateway revision 19 and Identity revision 15 under the
+The Console consumes Gateway revision 20 and Identity revision 16 under the
 [browser session contract](../identity/browser-sessions.md). Account reads,
 activity, password rotation and cross-organization self session controls use
 Gateway `/api/session/...` routes. The old Console `/api/admin/account/password`
