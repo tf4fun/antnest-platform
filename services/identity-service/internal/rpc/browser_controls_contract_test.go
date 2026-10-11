@@ -22,7 +22,7 @@ func TestBrowserControlResponsesMatchCompleteSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiler := jsonschema.NewCompiler()
+	compiler := newIdentitySchemaCompiler()
 	if err := compiler.AddResource(schemaID, document); err != nil {
 		t.Fatal(err)
 	}

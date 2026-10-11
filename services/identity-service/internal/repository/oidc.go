@@ -45,13 +45,25 @@ func (a *OIDCAdapter) GetProvider(ctx context.Context, providerID string) (oidcf
 	return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+` WHERE p.id = $1`, providerID))
 }
 
+func (a *OIDCAdapter) HasSubjectRecord(ctx context.Context, providerID, subject string) (bool, error) {
+	var exists bool
+	err := a.store.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM external_identities WHERE provider_id=$1 AND subject=$2)`, providerID, subject).Scan(&exists)
+	return exists, err
+}
+
 func (a *OIDCAdapter) UpsertProvider(
 	ctx context.Context,
 	command oidcflow.UpsertProviderCommand,
 ) (oidcflow.Provider, error) {
 	provider := command.Provider.Provider
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
+		if err := a.lockProviderConfiguration(ctx, tx, provider); err != nil {
+			return err
+		}
 		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
+			return err
+		}
+		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, provider.OrganizationID); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `
@@ -60,9 +72,10 @@ func (a *OIDCAdapter) UpsertProvider(
 				client_secret_ciphertext, client_secret_nonce, scopes, enabled, revision,
 				authorization_endpoint, token_endpoint, token_endpoint_auth_method,
 				id_token_signing_algs, userinfo_endpoint, jwks_uri, created_at, updated_at,
-				client_secret_key_id, client_secret_wrapped_data_key
+				client_secret_key_id, client_secret_wrapped_data_key,
+				link_policy, link_domains, authoritative, link_policy_review_required
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
 			)
 			ON CONFLICT (organization_id, name) DO UPDATE SET
 				display_name = EXCLUDED.display_name,
@@ -74,6 +87,10 @@ func (a *OIDCAdapter) UpsertProvider(
 				client_secret_wrapped_data_key = EXCLUDED.client_secret_wrapped_data_key,
 				scopes = EXCLUDED.scopes,
 				enabled = EXCLUDED.enabled,
+				link_policy = EXCLUDED.link_policy,
+				link_domains = EXCLUDED.link_domains,
+				authoritative = EXCLUDED.authoritative,
+				link_policy_review_required = EXCLUDED.link_policy_review_required,
 				revision = oidc_providers.revision + 1,
 				authorization_endpoint = EXCLUDED.authorization_endpoint,
 				token_endpoint = EXCLUDED.token_endpoint,
@@ -92,6 +109,7 @@ func (a *OIDCAdapter) UpsertProvider(
 			provider.AuthorizationEndpoint, provider.TokenEndpoint, provider.TokenEndpointAuthMethod,
 			provider.IDTokenSigningAlgs, provider.UserInfoEndpoint, provider.JWKSURI,
 			provider.CreatedAt, provider.UpdatedAt, provider.ClientSecret.KeyID, provider.ClientSecret.WrappedDataKey,
+			provider.LinkPolicy, provider.LinkDomains, provider.Authoritative, provider.LinkPolicyReviewRequired,
 		).Scan(&provider.ID, &provider.CreatedAt, &provider.Revision); err != nil {
 			if err == pgx.ErrNoRows {
 				var current oidcflow.Provider
@@ -110,6 +128,9 @@ func (a *OIDCAdapter) UpsertProvider(
 			}
 			return fmt.Errorf("upsert OIDC provider: %w", err)
 		}
+		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, provider.OrganizationID); err != nil {
+			return err
+		}
 		return a.store.appendEvent(ctx, tx, event{
 			OrganizationID: provider.OrganizationID, ActorPrincipalID: command.ActorPrincipalID,
 			Type: "oidc_provider.upserted", SubjectType: "oidc_provider", SubjectID: provider.ID,
@@ -125,9 +146,6 @@ func (a *OIDCAdapter) SetProviderEnabled(
 ) (oidcflow.Provider, error) {
 	var provider oidcflow.Provider
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
-			return err
-		}
 		stored, err := scanProviderRow(tx.QueryRow(ctx, providerSelect+`
 			WHERE p.organization_id = $1 AND p.name = $2
 			FOR UPDATE`, command.OrganizationID, command.Name))
@@ -135,6 +153,12 @@ func (a *OIDCAdapter) SetProviderEnabled(
 			return err
 		}
 		provider = stored.Provider
+		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
+			return err
+		}
+		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, command.OrganizationID); err != nil {
+			return err
+		}
 		if provider.Enabled == command.Enabled {
 			return nil
 		}
@@ -160,6 +184,28 @@ func (a *OIDCAdapter) SetProviderEnabled(
 		})
 	})
 	return provider, err
+}
+
+func (a *OIDCAdapter) lockProviderConfiguration(ctx context.Context, tx *databaseTransaction, provider oidcflow.Provider) error {
+	// Serialize new registrations per organization before taking actor locks.
+	// A missing row cannot be locked; this also prevents a concurrent name or
+	// issuer conflict from acquiring a Provider lock after its User parent.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('identity-oidc-provider:' || $1, 0))`, provider.OrganizationID); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM oidc_providers
+		WHERE organization_id=$1 AND (name=$2 OR issuer=$3) ORDER BY id FOR UPDATE`, provider.OrganizationID, provider.Name, provider.Issuer)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func (a *OIDCAdapter) ListProviders(ctx context.Context, organizationID string) ([]oidcflow.Provider, error) {
@@ -317,20 +363,18 @@ func (a *OIDCAdapter) CompleteLogin(
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var status oidcflow.SessionStatus
 		var providerID, organizationID, claimID, requestID string
-		var sessionProviderRevision, currentProviderRevision int64
+		var sessionProviderRevision int64
 		var sessionExpiresAt time.Time
 		var userAgentHint string
 		if err := tx.QueryRow(ctx, `
 			SELECT s.status, s.provider_id, s.organization_id, COALESCE(s.claim_id, ''), s.request_id,
-			       s.provider_revision, p.revision, s.expires_at, s.user_agent_hint
+			       s.provider_revision, s.expires_at, s.user_agent_hint
 			FROM oidc_auth_sessions s
-			JOIN oidc_providers p
-			  ON p.id = s.provider_id AND p.organization_id = s.organization_id
 			WHERE s.id = $1
-			FOR UPDATE OF s, p`, command.SessionID,
+			FOR UPDATE OF s`, command.SessionID,
 		).Scan(
 			&status, &providerID, &organizationID, &claimID, &requestID,
-			&sessionProviderRevision, &currentProviderRevision, &sessionExpiresAt, &userAgentHint,
+			&sessionProviderRevision, &sessionExpiresAt, &userAgentHint,
 		); err != nil {
 			return err
 		}
@@ -338,11 +382,20 @@ func (a *OIDCAdapter) CompleteLogin(
 			providerID != command.ProviderID || organizationID != command.OrganizationID {
 			return domain.NewError("oidc_exchange_claim_invalid", "OIDC callback claim is invalid", false)
 		}
-		if sessionProviderRevision != currentProviderRevision {
+		provider, err := scanProviderMetadata(tx.QueryRow(ctx, providerMetadataSelect+`
+			WHERE p.id=$1 AND p.organization_id=$2 FOR UPDATE`, providerID, organizationID))
+		if err != nil {
+			return err
+		}
+		if sessionProviderRevision != provider.Revision {
 			return domain.NewError("oidc_provider_changed", "OIDC Provider changed; restart login", false)
 		}
+		if !provider.Enabled || command.Identity.Issuer != provider.Issuer || !oidcflow.ValidSubject(command.Identity.Subject) {
+			return domain.ErrForbidden
+		}
+		command.Identity.Email, _ = domain.NormalizeEmail(command.Identity.Email)
 
-		principal, externalIdentityID, err := a.resolveOIDCIdentity(ctx, tx, command)
+		principal, externalIdentityID, err := a.resolveOIDCIdentity(ctx, tx, command, provider)
 		if err != nil {
 			return err
 		}
@@ -439,6 +492,7 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	ctx context.Context,
 	tx *databaseTransaction,
 	command oidcflow.CompleteLoginCommand,
+	provider oidcflow.Provider,
 ) (domain.Principal, string, error) {
 	var externalID, userID, membershipID string
 	err := tx.QueryRow(ctx, `
@@ -476,6 +530,9 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	if err != pgx.ErrNoRows {
 		return domain.Principal{}, "", fmt.Errorf("find external identity: %w", err)
 	}
+	if !provider.AllowsAutomaticLink(command.Identity, domain.OrganizationRoleMember) {
+		return domain.Principal{}, "", oidcMembershipRequired()
+	}
 
 	userID, membershipID, err = a.findOIDCUser(ctx, tx, command)
 	if err != nil {
@@ -484,6 +541,9 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	principal, err := a.ensureOIDCMembership(ctx, tx, userID, command.OrganizationID, membershipID, command.Identity.Email)
 	if err != nil {
 		return domain.Principal{}, "", err
+	}
+	if !provider.AllowsAutomaticLink(command.Identity, principal.OrganizationRole) {
+		return domain.Principal{}, "", oidcMembershipRequired()
 	}
 	externalID = a.store.newID("externalidentity")
 	if _, err := tx.Exec(ctx, `
@@ -631,14 +691,16 @@ const providerSelect = `
 	       p.client_secret_ciphertext, p.client_secret_nonce, p.scopes,
 	       p.enabled, p.revision, p.authorization_endpoint, p.token_endpoint,
 	       p.token_endpoint_auth_method, p.id_token_signing_algs, p.userinfo_endpoint,
-	       p.jwks_uri, p.created_at, p.updated_at, p.client_secret_key_id, p.client_secret_wrapped_data_key
+	       p.jwks_uri, p.created_at, p.updated_at, p.client_secret_key_id, p.client_secret_wrapped_data_key,
+	       p.link_policy, p.link_domains, p.authoritative, p.link_policy_review_required
 	FROM oidc_providers p`
 
 const providerMetadataSelect = `
 	SELECT p.id, p.organization_id, p.name, p.display_name, p.issuer, p.client_id,
 	       p.scopes, p.enabled, p.revision, p.authorization_endpoint, p.token_endpoint,
 	       p.token_endpoint_auth_method, p.id_token_signing_algs, p.userinfo_endpoint,
-	       p.jwks_uri, p.created_at, p.updated_at
+	       p.jwks_uri, p.created_at, p.updated_at,
+	       p.link_policy, p.link_domains, p.authoritative, p.link_policy_review_required
 	FROM oidc_providers p`
 
 func scanProviderRow(row rowScanner) (oidcflow.ProviderWithSecret, error) {
@@ -650,6 +712,7 @@ func scanProviderRow(row rowScanner) (oidcflow.ProviderWithSecret, error) {
 		&provider.AuthorizationEndpoint, &provider.TokenEndpoint, &provider.TokenEndpointAuthMethod,
 		&provider.IDTokenSigningAlgs, &provider.UserInfoEndpoint,
 		&provider.JWKSURI, &provider.CreatedAt, &provider.UpdatedAt, &provider.ClientSecret.KeyID, &provider.ClientSecret.WrappedDataKey,
+		&provider.LinkPolicy, &provider.LinkDomains, &provider.Authoritative, &provider.LinkPolicyReviewRequired,
 	)
 	if err != nil {
 		return oidcflow.ProviderWithSecret{}, normalizeError(err)
@@ -665,6 +728,7 @@ func scanProviderMetadata(row rowScanner) (oidcflow.Provider, error) {
 		&provider.Revision, &provider.AuthorizationEndpoint, &provider.TokenEndpoint,
 		&provider.TokenEndpointAuthMethod, &provider.IDTokenSigningAlgs,
 		&provider.UserInfoEndpoint, &provider.JWKSURI, &provider.CreatedAt, &provider.UpdatedAt,
+		&provider.LinkPolicy, &provider.LinkDomains, &provider.Authoritative, &provider.LinkPolicyReviewRequired,
 	)
 	if err != nil {
 		return oidcflow.Provider{}, normalizeError(err)

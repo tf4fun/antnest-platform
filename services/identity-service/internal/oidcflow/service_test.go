@@ -549,6 +549,10 @@ func (r *oidcRepositoryStub) GetProvider(context.Context, string) (ProviderWithS
 	return r.provider, nil
 }
 
+func (r *oidcRepositoryStub) HasSubjectRecord(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *oidcRepositoryStub) UpsertProvider(_ context.Context, command UpsertProviderCommand) (Provider, error) {
 	r.upsert = command
 	return command.Provider.Provider, nil
@@ -631,12 +635,16 @@ func (f *federationStub) AuthorizationURL(input AuthorizationInput) (string, err
 	return input.Provider.AuthorizationEndpoint + "?" + values.Encode(), nil
 }
 
-func (f *federationStub) ExchangeAndVerify(context.Context, ExchangeInput) (VerifiedIdentity, error) {
+func (f *federationStub) ExchangeAndVerify(context.Context, ExchangeInput) (ExchangeResult, error) {
 	f.exchangeCalls++
 	if f.repository != nil && !f.repository.claimedBeforeExchange {
 		f.repository.t.Fatal("exchange happened before claim")
 	}
-	return f.identity, f.exchangeErr
+	return ExchangeResult{Identity: f.identity}, f.exchangeErr
+}
+
+func (f *federationStub) FetchUserInfo(_ context.Context, input UserInfoInput) (VerifiedIdentity, error) {
+	return input.Identity, nil
 }
 
 func newTestService(t *testing.T, repository *oidcRepositoryStub, federation *federationStub) *Service {

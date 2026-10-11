@@ -144,7 +144,7 @@ func newOIDCAdmissionFixture(t *testing.T, databaseURL string) *oidcAdmissionFix
 	return newOIDCAdmissionFixtureWithTokenTTL(t, databaseURL, time.Hour)
 }
 
-func newOIDCAdmissionFixtureWithTokenTTL(t *testing.T, databaseURL string, tokenTTL time.Duration) *oidcAdmissionFixture {
+func newOIDCAdmissionFixtureWithTokenTTL(t *testing.T, databaseURL string, tokenTTL time.Duration, configure ...func(*oidcflow.UpsertProviderInput)) *oidcAdmissionFixture {
 	t.Helper()
 	f := &oidcAdmissionFixture{}
 	f.now.Store(time.Now().UnixNano())
@@ -170,9 +170,14 @@ func newOIDCAdmissionFixtureWithTokenTTL(t *testing.T, databaseURL string, token
 	if err != nil {
 		t.Fatal(err)
 	}
+	policy, domains, authoritative := "verified_email", []string{}, false
 	f.providerInput = oidcflow.UpsertProviderInput{
 		RequestID: "provider", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID,
 		Name: "workforce", Issuer: f.idp.URL, ClientID: "client-1", ClientSecret: "client-secret", Enabled: true,
+		LinkPolicy: &policy, LinkDomains: &domains, Authoritative: &authoritative,
+	}
+	for _, apply := range configure {
+		apply(&f.providerInput)
 	}
 	if _, err := f.flow.UpsertProvider(t.Context(), f.providerInput); err != nil {
 		t.Fatal(err)
@@ -218,7 +223,7 @@ type delayedFederation struct {
 	afterExchange func()
 }
 
-func (f *delayedFederation) ExchangeAndVerify(ctx context.Context, input oidcflow.ExchangeInput) (oidcflow.VerifiedIdentity, error) {
+func (f *delayedFederation) ExchangeAndVerify(ctx context.Context, input oidcflow.ExchangeInput) (oidcflow.ExchangeResult, error) {
 	identity, err := f.Federation.ExchangeAndVerify(ctx, input)
 	if f.afterExchange != nil {
 		f.afterExchange()

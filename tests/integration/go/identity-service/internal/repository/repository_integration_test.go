@@ -688,7 +688,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	provider := oidcflow.ProviderWithSecret{Provider: oidcflow.Provider{
 		ID: "provider-1", OrganizationID: bootstrap.Organization.ID, Name: "workforce", DisplayName: "Workforce",
 		Issuer: "https://id.example.com", ClientID: "client", ClientSecret: providerSecret,
-		Scopes: []string{"openid"}, Enabled: true, Revision: 1,
+		Scopes: []string{"openid"}, Enabled: true, Revision: 1, LinkPolicy: "verified_email", LinkDomains: []string{},
 		AuthorizationEndpoint: "https://id.example.com/auth", TokenEndpoint: "https://id.example.com/token",
 		TokenEndpointAuthMethod: "client_secret_basic", IDTokenSigningAlgs: []string{"RS256"},
 		JWKSURI: "https://id.example.com/jwks", CreatedAt: now, UpdatedAt: now,
@@ -964,7 +964,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		ID: "provider-2", OrganizationID: secondaryOrganization.ID,
 		Name: "workforce", DisplayName: "Workforce", Issuer: "https://id.example.com",
 		ClientID: "client-2", ClientSecret: provider2Secret,
-		Scopes: []string{"openid", "email"}, Enabled: true, Revision: 1,
+		Scopes: []string{"openid", "email"}, Enabled: true, Revision: 1, LinkPolicy: "verified_email", LinkDomains: []string{},
 		AuthorizationEndpoint: "https://id.example.com/auth", TokenEndpoint: "https://id.example.com/token",
 		TokenEndpointAuthMethod: "client_secret_basic", IDTokenSigningAlgs: []string{"RS256"},
 		JWKSURI: "https://id.example.com/jwks", CreatedAt: now, UpdatedAt: now,

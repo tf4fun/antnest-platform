@@ -84,13 +84,13 @@ func (c *Client) AuthorizationURL(input oidcflow.AuthorizationInput) (string, er
 func (c *Client) ExchangeAndVerify(
 	ctx context.Context,
 	input oidcflow.ExchangeInput,
-) (_ oidcflow.VerifiedIdentity, resultErr error) {
+) (_ oidcflow.ExchangeResult, resultErr error) {
 	ctx, finish := startOperation(ctx, "identity.oidc.exchange_verify")
 	defer func() { finish(resultErr) }()
 	providerFacts(ctx, input.Provider)
 	authStyle, err := tokenEndpointAuthStyle(input.Provider.TokenEndpointAuthMethod)
 	if err != nil {
-		return oidcflow.VerifiedIdentity{}, err
+		return oidcflow.ExchangeResult{}, err
 	}
 	config := oauth2.Config{
 		ClientID:     input.Provider.ClientID,
@@ -105,11 +105,11 @@ func (c *Client) ExchangeAndVerify(
 	requestContext := oidc.ClientContext(ctx, c.httpClient)
 	token, err := config.Exchange(requestContext, input.Code, oauth2.VerifierOption(input.PKCEVerifier))
 	if err != nil {
-		return oidcflow.VerifiedIdentity{}, fmt.Errorf("exchange OIDC authorization code: %w", err)
+		return oidcflow.ExchangeResult{}, fmt.Errorf("exchange OIDC authorization code: %w", err)
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || strings.TrimSpace(rawIDToken) == "" {
-		return oidcflow.VerifiedIdentity{}, fmt.Errorf("OIDC token response has no id_token")
+		return oidcflow.ExchangeResult{}, fmt.Errorf("OIDC token response has no id_token")
 	}
 	verifier := oidc.NewVerifier(
 		input.Provider.Issuer,
@@ -118,31 +118,38 @@ func (c *Client) ExchangeAndVerify(
 	)
 	idToken, err := verifier.Verify(requestContext, rawIDToken)
 	if err != nil {
-		return oidcflow.VerifiedIdentity{}, fmt.Errorf("verify OIDC id_token: %w", err)
+		return oidcflow.ExchangeResult{}, fmt.Errorf("verify OIDC id_token: %w", err)
 	}
 	var claims struct {
-		Nonce             string `json:"nonce"`
-		Email             string `json:"email"`
-		EmailVerified     bool   `json:"email_verified"`
-		Name              string `json:"name"`
-		PreferredUsername string `json:"preferred_username"`
+		Subject           json.RawMessage `json:"sub"`
+		Nonce             string          `json:"nonce"`
+		Email             json.RawMessage `json:"email"`
+		EmailVerified     json.RawMessage `json:"email_verified"`
+		Name              json.RawMessage `json:"name"`
+		PreferredUsername json.RawMessage `json:"preferred_username"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		return oidcflow.VerifiedIdentity{}, fmt.Errorf("decode OIDC id_token claims: %w", err)
+		return oidcflow.ExchangeResult{}, fmt.Errorf("decode OIDC id_token claims: %w", err)
 	}
 	if claims.Nonce != input.Nonce {
-		return oidcflow.VerifiedIdentity{}, fmt.Errorf("OIDC nonce mismatch")
+		return oidcflow.ExchangeResult{}, fmt.Errorf("OIDC nonce mismatch")
+	}
+	subject, err := oidcflow.ParseSubjectJSON(claims.Subject)
+	if err != nil || subject != idToken.Subject {
+		return oidcflow.ExchangeResult{}, fmt.Errorf("invalid OIDC id_token subject")
 	}
 	identity := oidcflow.VerifiedIdentity{
-		Issuer: idToken.Issuer, Subject: idToken.Subject, Email: claims.Email,
-		EmailVerified: claims.EmailVerified,
-		DisplayName:   firstNonempty(claims.Name, claims.PreferredUsername),
+		Issuer: idToken.Issuer, Subject: subject, Email: optionalString(claims.Email),
+		DisplayName: firstNonempty(optionalString(claims.Name), optionalString(claims.PreferredUsername)),
 	}
-	if (strings.TrimSpace(identity.Email) != "" && identity.EmailVerified) ||
-		input.Provider.UserInfoEndpoint == "" || token.AccessToken == "" {
-		return identity, nil
+	if verified := optionalBoolean(claims.EmailVerified); verified != nil {
+		identity.EmailVerified = *verified
 	}
-	return c.mergeUserInfo(requestContext, input.Provider.UserInfoEndpoint, token.AccessToken, identity)
+	return oidcflow.ExchangeResult{Identity: identity, UserInfoAccessToken: token.AccessToken}, nil
+}
+
+func (c *Client) FetchUserInfo(ctx context.Context, input oidcflow.UserInfoInput) (oidcflow.VerifiedIdentity, error) {
+	return c.mergeUserInfo(ctx, input.Endpoint, input.AccessToken, input.Identity)
 }
 
 func tokenEndpointAuthStyle(method string) (oauth2.AuthStyle, error) {
@@ -219,31 +226,51 @@ func (c *Client) mergeUserInfo(
 		return oidcflow.VerifiedIdentity{}, fmt.Errorf("fetch OIDC UserInfo: provider returned HTTP %d", response.StatusCode)
 	}
 	var userInfo struct {
-		Subject           string `json:"sub"`
-		Email             string `json:"email"`
-		EmailVerified     *bool  `json:"email_verified"`
-		Name              string `json:"name"`
-		PreferredUsername string `json:"preferred_username"`
+		Subject           json.RawMessage `json:"sub"`
+		Email             json.RawMessage `json:"email"`
+		EmailVerified     json.RawMessage `json:"email_verified"`
+		Name              json.RawMessage `json:"name"`
+		PreferredUsername json.RawMessage `json:"preferred_username"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, responseLimit))
 	if err := decoder.Decode(&userInfo); err != nil {
 		return oidcflow.VerifiedIdentity{}, fmt.Errorf("decode OIDC UserInfo: %w", err)
 	}
-	if userInfo.Subject == "" || userInfo.Subject != identity.Subject {
+	subject, err := oidcflow.ParseSubjectJSON(userInfo.Subject)
+	if err != nil || subject != identity.Subject {
 		return oidcflow.VerifiedIdentity{}, fmt.Errorf("OIDC UserInfo subject does not match id_token")
 	}
-	userInfoEmail := strings.TrimSpace(userInfo.Email)
+	userInfoEmail := strings.TrimSpace(optionalString(userInfo.Email))
+	userInfoVerified := optionalBoolean(userInfo.EmailVerified)
 	if userInfoEmail != "" {
-		if !strings.EqualFold(userInfoEmail, strings.TrimSpace(identity.Email)) && userInfo.EmailVerified == nil {
+		if !strings.EqualFold(userInfoEmail, strings.TrimSpace(identity.Email)) && userInfoVerified == nil {
 			identity.EmailVerified = false
 		}
 		identity.Email = userInfoEmail
 	}
-	identity.DisplayName = firstNonempty(userInfo.Name, userInfo.PreferredUsername, identity.DisplayName)
-	if userInfoEmail != "" && userInfo.EmailVerified != nil {
-		identity.EmailVerified = *userInfo.EmailVerified
+	identity.DisplayName = firstNonempty(optionalString(userInfo.Name), optionalString(userInfo.PreferredUsername), identity.DisplayName)
+	if userInfoEmail != "" && userInfoVerified != nil {
+		identity.EmailVerified = *userInfoVerified
 	}
 	return identity, nil
+}
+
+// Optional profile claims never decide whether a verified issuer/subject can
+// be used. Type errors are absence, and are never coerced into email authority.
+func optionalString(raw json.RawMessage) string {
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return value
+}
+
+func optionalBoolean(raw json.RawMessage) *bool {
+	var value *bool
+	if json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	return value
 }
 
 func firstNonempty(values ...string) string {

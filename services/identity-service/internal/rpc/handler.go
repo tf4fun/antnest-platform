@@ -484,15 +484,19 @@ func (h *Handler) listSCIMTokens(response http.ResponseWriter, request *http.Req
 }
 
 type upsertOIDCProviderRequest struct {
-	RequestID        string   `json:"request_id"`
-	ActorPrincipalID string   `json:"actor_principal_id"`
-	OrganizationID   string   `json:"organization_id"`
-	Name             string   `json:"name"`
-	Issuer           string   `json:"issuer"`
-	ClientID         string   `json:"client_id"`
-	ClientSecret     string   `json:"client_secret"`
-	Scopes           []string `json:"scopes"`
-	Enabled          *bool    `json:"enabled"`
+	RequestID                   string          `json:"request_id"`
+	ActorPrincipalID            string          `json:"actor_principal_id"`
+	OrganizationID              string          `json:"organization_id"`
+	Name                        string          `json:"name"`
+	Issuer                      string          `json:"issuer"`
+	ClientID                    string          `json:"client_id"`
+	ClientSecret                string          `json:"client_secret"`
+	Scopes                      []string        `json:"scopes"`
+	Enabled                     *bool           `json:"enabled"`
+	LinkPolicy                  json.RawMessage `json:"link_policy"`
+	LinkDomains                 json.RawMessage `json:"link_domains"`
+	Authoritative               json.RawMessage `json:"authoritative"`
+	AcknowledgeLinkPolicyReview json.RawMessage `json:"acknowledge_link_policy_review"`
 }
 
 func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http.Request) {
@@ -506,12 +510,16 @@ func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 		writeError(response, domain.NewError("bad_request", "enabled is required", false))
 		return
 	}
-	provider, err := h.dependencies.OIDC.UpsertProvider(request.Context(), oidcflow.UpsertProviderInput{
+	input := oidcflow.UpsertProviderInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
 		OrganizationID: body.OrganizationID, Name: body.Name, Issuer: body.Issuer,
 		ClientID: body.ClientID, ClientSecret: body.ClientSecret,
 		Scopes: body.Scopes, Enabled: *body.Enabled,
-	})
+	}
+	if !decodeProviderPolicy(response, body, &input) {
+		return
+	}
+	provider, err := h.dependencies.OIDC.UpsertProvider(request.Context(), input)
 	writeResult(response, map[string]any{"provider": provider}, err)
 }
 

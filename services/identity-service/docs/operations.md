@@ -184,6 +184,22 @@ There is no per-field filtering or bespoke payload size limit. See
 - The OIDC callback is fixed from `ANTNEST_IDENTITY_PUBLIC_BASE_URL`; Provider
   configuration cannot supply another redirect URI. An in-flight session is
   rejected after any Provider revision change and must be restarted.
+- New Providers default to `none`: an asserted email cannot create a binding.
+  `verified_email_in_domains` trusts verified email only in the exact allowed
+  domains; `verified_email` trusts all verified email claims from that Provider.
+  Both require explicit configuration. Auto-linking an organization admin
+  additionally requires `authoritative=true`; system admins cannot use OIDC.
+  Domain inputs use ASCII A-label spelling, with no wildcard or suffix matching.
+  Submit `link_policy`, `link_domains` and `authoritative` together, including
+  explicit empty arrays and false values; omit all three to retain the policy.
+- Migration `0006` marks historical `verified_email` Providers as requiring
+  review. Explicitly submit a complete policy with
+  `acknowledge_link_policy_review=true` after assessing the IdP's email controls.
+  Secret rotation and enable/disable do not clear the warning. Migration does
+  not remove an existing unwanted binding or invalidate existing sessions.
+  The Console warning, binding management, SCIM pairing and notice workflows
+  remain pending consumer/lifecycle batches under
+  [#61](../../../contracts/identity/oidc-linking.md).
 - An OIDC exchange that reaches the login deadline before issuing its token
   fails with `oidc_session_expired` (`410`), records an `expired` failure stage,
   and cannot be retried under the same login state. Start a new login instead.

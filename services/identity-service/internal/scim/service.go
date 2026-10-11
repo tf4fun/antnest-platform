@@ -33,6 +33,7 @@ type Repository interface {
 type Token struct {
 	ID             string     `json:"id"`
 	OrganizationID string     `json:"organization_id"`
+	OIDCProviderID *string    `json:"oidc_provider_id"`
 	Name           string     `json:"name"`
 	Scopes         []string   `json:"scopes"`
 	CreatedAt      time.Time  `json:"created_at"`

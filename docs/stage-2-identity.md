@@ -48,10 +48,13 @@ User
 - `GroupMembership` has an explicit owner (`local` or `scim`). SCIM replacement
   may only replace SCIM-owned edges, and a database foreign key requires the
   edge and Group to have the same owner.
-- `ExternalIdentity` is keyed by OIDC Provider and subject. A verified OIDC
-  identity may bind an existing active non-system Membership with the same
-  normalized email in that Provider's Organization. Email matching never
-  crosses an Organization boundary.
+- `ExternalIdentity` is keyed by OIDC Provider and exact opaque subject.
+  New Providers default to no automatic linking. Explicit `verified_email`
+  or `verified_email_in_domains` policy may bind an active non-system
+  Membership with a verified matching email inside the Provider's Organization;
+  the domain policy requires an exact allowlist match. Organization admins
+  additionally require an authoritative Provider. Existing bindings do not
+  require current email claims or UserInfo.
 - Provider identity is `(organization_id, name)`. Issuer and Client ID are
   immutable; a replacement registration requires a new Provider name.
   Client-secret rotation remains supported. The old Provider and external identities stay
@@ -174,11 +177,14 @@ business request observes the new Identity state.
    exchange; provider-controlled descriptions and URIs are neither persisted
    nor returned as trusted application text.
 5. The ID token must pass signature, issuer, audience, expiry, and nonce
-   validation. UserInfo is requested only when the verified ID Token lacks a
-   usable email; its `sub` must exactly equal the ID-token subject. OIDC
-   subjects are opaque identifiers and are never trimmed or normalized.
-6. OIDC never creates a User or Membership. A verified email may bind only an
-   existing active non-system Membership in the Provider's Organization.
+   validation. UserInfo is requested only for a subject without a stored record,
+   under an email-linking policy, when the ID token lacks a usable verified
+   email. Its `sub` must exactly equal the ID-token subject. OIDC subjects are
+   opaque and never trimmed or normalized; they allow at most 255 Unicode code
+   points and reject NUL and invalid UTF-8/JSON surrogate encodings.
+6. OIDC never creates a User or Membership. Automatic linking requires the
+   Provider's explicit email policy and an existing active non-system
+   Membership in its Organization. Admin roles also require `authoritative`.
    Local- and SCIM-owned profile attributes remain authoritative and are never
    refreshed from OIDC claims.
 7. `(provider_id, subject)` is immutable. Callback replay returns committed

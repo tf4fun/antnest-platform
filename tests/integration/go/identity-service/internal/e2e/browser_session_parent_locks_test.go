@@ -18,11 +18,28 @@ import (
 )
 
 func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
-	for _, binding := range []string{"first-email", "existing-subject"} {
-		t.Run(binding, func(t *testing.T) {
+	for _, test := range []struct {
+		name, binding string
+		authoritative bool
+	}{
+		{name: "trusted-first-email", binding: "first-email", authoritative: true},
+		{name: "trusted-existing-subject", binding: "existing-subject", authoritative: true},
+		{name: "untrusted-first-email", binding: "first-email"},
+		{name: "untrusted-existing-subject", binding: "existing-subject"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			f := browserOIDCFixture(t)
+			f.providerInput.Authoritative = &test.authoritative
+			if _, err := f.flow.UpsertProvider(t.Context(), f.providerInput); err != nil {
+				t.Fatal(err)
+			}
 			wantTokens := 1
-			if binding == "existing-subject" {
+			wantLinks := 1
+			deny := test.binding == "first-email" && !test.authoritative
+			if deny {
+				wantTokens, wantLinks = 0, 0
+			}
+			if test.binding == "existing-subject" {
 				if _, err := f.flow.CompleteLogin(t.Context(), f.start(t)); err != nil {
 					t.Fatal(err)
 				}
@@ -100,7 +117,11 @@ func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
 			}
 			select {
 			case result := <-loginDone:
-				if result.err != nil || result.result.Principal.OrganizationRole != domain.OrganizationRoleAdmin ||
+				if deny {
+					if code, _, _ := domain.ErrorDetails(result.err); code != "oidc_membership_required" || result.result.AccessToken != "" {
+						t.Fatalf("untrusted Provider auto-linked a member promoted during lock wait: %v", result.err)
+					}
+				} else if result.err != nil || result.result.Principal.OrganizationRole != domain.OrganizationRoleAdmin ||
 					result.result.Principal.UserID != f.user.User.ID || result.result.Principal.OrganizationID != f.admin.Organization.ID ||
 					result.result.Principal.MembershipID != f.user.Membership.ID || result.result.AccessToken == "" {
 					var databaseError *pgconn.PgError
@@ -116,7 +137,7 @@ func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
 			if err := f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM api_tokens), (SELECT count(*) FROM external_identities), (SELECT count(*) FROM identity_events WHERE event_type = 'oidc_login.completed')`).Scan(&tokens, &links, &completedEvents); err != nil {
 				t.Fatal(err)
 			}
-			if tokens != wantTokens || links != 1 || completedEvents != wantTokens {
+			if tokens != wantTokens || links != wantLinks || completedEvents != wantTokens {
 				t.Fatal("overlap duplicated or lost OIDC issuance")
 			}
 		})

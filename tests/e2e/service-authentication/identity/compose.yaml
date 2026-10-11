@@ -1,4 +1,25 @@
 services:
+  oidc-fixture:
+    image: node:24.21.0-bookworm-slim
+    user: "${IDENTITY_TEST_UID:?}:${IDENTITY_TEST_GID:?}"
+    command: [node, /fixture/oidc-policy-server.mjs]
+    volumes:
+      - ./oidc-policy-server.mjs:/fixture/oidc-policy-server.mjs:ro
+      - ../../identity-closeout/oidc-provider.mjs:/fixture/oidc-provider.mjs:ro
+      - ${IDENTITY_TEST_OIDC_CERT_DIRECTORY:?}:/certs:ro
+    ports:
+      - "127.0.0.1::8443"
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "require('https').get('https://oidc-fixture:8443/status',{ca:require('fs').readFileSync('/certs/tls.crt')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 30
   postgres:
     image: postgres:17.11-bookworm
     environment:
@@ -28,6 +49,7 @@ services:
       ANTNEST_IDENTITY_ENCRYPTION_KEYS: ${IDENTITY_TEST_ENCRYPTION_KEYS:-}
       ANTNEST_IDENTITY_ENCRYPTION_ACTIVE_KID: ${IDENTITY_TEST_ENCRYPTION_ACTIVE_KID:-}
       ANTNEST_IDENTITY_PUBLIC_BASE_URL: http://127.0.0.1
+      SSL_CERT_FILE: /test-ca/tls.crt
       ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: auth-test
       ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: Authentication Test
       ANTNEST_BOOTSTRAP_ADMIN_EMAIL: admin@example.test
@@ -41,10 +63,13 @@ services:
       OTEL_SDK_DISABLED: "true"
     volumes:
       - ${IDENTITY_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
+      - ${IDENTITY_TEST_OIDC_CERT_DIRECTORY:?}/tls.crt:/test-ca/tls.crt:ro
     ports:
       - "127.0.0.1::8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      oidc-fixture:
         condition: service_healthy
     healthcheck:
       test: [CMD, /usr/local/bin/identity-service, --healthcheck]

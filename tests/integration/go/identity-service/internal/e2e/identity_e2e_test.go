@@ -172,6 +172,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		"organization_id": bootstrap.Organization.ID, "name": "workforce",
 		"issuer": idp.URL, "client_id": "client-1", "client_secret": "client-secret",
 		"scopes": []string{"openid", "email", "profile"}, "enabled": true,
+		"link_policy": "verified_email", "link_domains": []string{}, "authoritative": false,
 	}, &map[string]any{})
 	var started oidcflow.StartLoginResult
 	postJSON(t, identity.Client(), identity.URL+rpc.ContractRoutes["start_oidc_login"], map[string]any{
@@ -359,13 +360,17 @@ func assertResolvedPrincipal(t *testing.T, client *http.Client, serviceURL, toke
 
 type oidcProvider struct {
 	*httptest.Server
-	key          *rsa.PrivateKey
-	mu           sync.Mutex
-	nonce        string
-	challenge    string
-	exchanges    int
-	email        string
-	clientSecret string
+	key             *rsa.PrivateKey
+	mu              sync.Mutex
+	nonce           string
+	challenge       string
+	exchanges       int
+	email           string
+	clientSecret    string
+	userInfoStatus  int
+	userInfoCalls   int
+	userInfoSubject string
+	claimsOverride  map[string]any
 }
 
 func newOIDCProvider(t *testing.T) *oidcProvider {
@@ -439,12 +444,23 @@ func (p *oidcProvider) handle(response http.ResponseWriter, request *http.Reques
 			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(p.key.E)).Bytes()),
 		}}})
 	case "/userinfo":
+		p.mu.Lock()
+		p.userInfoCalls++
+		status, subject, email := p.userInfoStatus, p.userInfoSubject, p.email
+		p.mu.Unlock()
+		if status != 0 {
+			http.Error(response, "userinfo unavailable", status)
+			return
+		}
+		if subject == "" {
+			subject = "subject-1"
+		}
 		if request.Header.Get("Authorization") != "Bearer provider-access-token" {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		writeJSON(response, map[string]any{
-			"sub": "subject-1", "email": p.email, "email_verified": true, "name": "Alice",
+			"sub": subject, "email": email, "email_verified": true, "name": "Alice",
 		})
 	default:
 		http.NotFound(response, request)
@@ -454,11 +470,17 @@ func (p *oidcProvider) handle(response http.ResponseWriter, request *http.Reques
 func (p *oidcProvider) signIDToken(nonce string) string {
 	now := time.Now().UTC()
 	header := encodeSegment(map[string]any{"alg": "RS256", "typ": "JWT", "kid": "test-key"})
-	claims := encodeSegment(map[string]any{
+	p.mu.Lock()
+	values := map[string]any{
 		"iss": p.URL, "sub": "subject-1", "aud": "client-1", "nonce": nonce,
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
 		"email": p.email, "email_verified": true, "name": "Alice",
-	})
+	}
+	for name, value := range p.claimsOverride {
+		values[name] = value
+	}
+	p.mu.Unlock()
+	claims := encodeSegment(values)
 	unsigned := header + "." + claims
 	digest := sha256.Sum256([]byte(unsigned))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, digest[:])

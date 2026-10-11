@@ -70,6 +70,17 @@ and deployment adoption are separate pending batches. The internal RPC schema is
 
 ### Principal response contract
 
+The revision-16 Provider policy batch defaults new OIDC registrations to no
+automatic email linking. Explicit domain/email trust and an additional
+authoritative flag govern first-time administrator linking. Migration preserves
+historical member linking with a durable review warning. Existing issuer/subject
+bindings do not depend on email claims or UserInfo. Optional profile claim
+type errors are treated as absence; they never become verified email authority.
+Existing unpaired SCIM token metadata explicitly returns `oidc_provider_id=null`.
+Binding administration,
+SCIM pairing, notices and browser consumers remain separate batches; see the
+[OIDC linking contract](../../contracts/identity/oidc-linking.md).
+
 Local login, access-token resolution, and both initial and replayed OIDC
 callbacks return all eight required `principal` fields: `user_id`,
 `organization_id`, `organization_slug`, `organization_name`, `membership_id`,
@@ -197,13 +208,17 @@ a frozen nanosecond-clock RPC regression that compares returned login and
 activity deadlines exactly at PostgreSQL's stored microsecond precision, and
 a local HTTPS OIDC fixture (authorization redirect, PKCE, client
 authentication, signed ID token, and JWKS). It also checks completion
-deadlines, immutable client registration, and secret rotation.
+deadlines, immutable client registration, secret rotation, policy/domain/role
+admission, raw subject encoding, migration-review persistence and Provider-first
+locking. Role changes during actual database waits are revalidated before linking.
 Real handler responses are validated against the central principal JSON
 Schema. PostgreSQL tests check every principal builder, both OIDC callback
 paths, fresh organization metadata on token resolution, and organization
 renames during local login without weakening password/role/status checks.
 `node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
-in an isolated Identity/PostgreSQL stack. The broader `make e2e-identity-core`
+in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
+real policy-gated callbacks and review persistence through rotation, toggles
+and service restart. The broader `make e2e-identity-core`
 remains a final integration gate after Gateway/Console adoption; it checks token
 resolution inside the disposable Docker network, before the Gateway/SCIM/OIDC
 suite.

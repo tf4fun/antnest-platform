@@ -13,11 +13,11 @@ service; publishing this document does not activate a route or a workflow.
 Every Provider exposes `link_policy`, `link_domains`, `authoritative` and
 `link_policy_review_required`. The last field is read-only durable state.
 
-| Policy | First login without a binding |
-| --- | --- |
-| `none` | Refuse with `oidc_membership_required`; require an administrator or SCIM pre-binding. |
-| `verified_email_in_domains` | Require a verified email, an exact allowed domain and an active matching Membership. |
-| `verified_email` | Require a verified email and an active matching Membership. Administrators explicitly opt into trusting this Provider's email assertions. |
+| Policy                      | First login without a binding                                                                                                             |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`                      | Refuse with `oidc_membership_required`; require an administrator or SCIM pre-binding.                                                     |
+| `verified_email_in_domains` | Require a verified email, an exact allowed domain and an active matching Membership.                                                      |
+| `verified_email`            | Require a verified email and an active matching Membership. Administrators explicitly opt into trusting this Provider's email assertions. |
 
 Automatic linking to an organization administrator additionally requires
 `authoritative=true`, including for migrated Providers. This is a per-Provider
@@ -28,11 +28,17 @@ New registrations default to `none`, `[]`, `false`. Updating an existing
 registration without policy fields preserves all policy values. If any policy
 field is supplied, all three must be supplied. Domain lists are nonempty only
 for `verified_email_in_domains`; other policies require an empty list. Inputs
-are trimmed and ASCII-lowercased, then validated as exact DNS domains, at most
+are trimmed using ECMAScript WhiteSpace and LineTerminator characters, then
+ASCII-lowercased and validated as exact DNS domains, at most
 253 characters with labels of at most 63 characters. IDNs use their ASCII
 A-label spelling. Wildcards, URLs, ports, trailing dots and empty labels are
 invalid. Canonical duplicates are rejected. Domain matching has no implicit
 subdomain suffix rule. Lists contain at most 100 entries.
+
+The trim set is U+0009–U+000D, U+0020, U+00A0, U+1680,
+U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF.
+U+0085 is not trimmed and makes a domain invalid. This rule applies only to
+domain configuration; opaque subjects are never trimmed.
 
 Migration sets existing Providers to `verified_email`, `[]`, `false` and
 persists `link_policy_review_required=true`. Existing bindings remain usable;

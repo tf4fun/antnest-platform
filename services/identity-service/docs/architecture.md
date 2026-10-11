@@ -86,11 +86,15 @@ SCIM-owned edge to a local Group or vice versa.
 
 OIDCProvider owns discovered endpoints and an encrypted client secret.
 ExternalIdentity is immutable at `(provider_id, subject)` and maps to one User
-and Membership. A new verified OIDC identity may bind an existing active,
-non-system Membership by normalized email, but only inside the Provider's
-Organization. It never searches another Organization. This permits local,
-SCIM, and multiple OIDC credentials to identify the same organization member
-without making email a global User key.
+and Membership. New Providers default to `link_policy=none`. First automatic
+linking requires an explicit `verified_email` policy, or
+`verified_email_in_domains` with an exact canonical ASCII domain match, plus a
+verified email matching an active non-system Membership in that Organization.
+Administrator Memberships additionally require `authoritative=true`.
+An existing binding uses its validated issuer and exact subject independently
+of current email, display claims, domain policy or UserInfo availability.
+Subjects retain whitespace and case, contain at most 255 Unicode code points,
+and reject NUL, invalid UTF-8 and unpaired JSON surrogates before any repair.
 OIDC is authentication only: it never creates a User or Membership and never
 rewrites a local- or SCIM-owned profile.
 
@@ -119,6 +123,20 @@ revision as a compare-and-swap token rather than accepting a stale replacement.
 Administrative Provider lists use a dedicated metadata query that does not
 select client-secret ciphertext or nonce. This is a persistence boundary, not
 response-time redaction.
+
+Migration `0006` retains `verified_email` for historical registrations and sets
+a durable review flag; it leaves bindings, credentials, revisions and sessions
+unchanged. A complete policy plus `acknowledge_link_policy_review=true` clears
+the flag. Omitted policy fields preserve all values; secret rotation, enable
+changes and a false acknowledgment do not complete review.
+
+Provider mutations lock Provider rows before the actor User. New registrations
+serialize per Organization before locking possible name/issuer conflicts, so
+an insert conflict cannot reverse that order. Callback issuance locks its auth
+session, then Provider, User, Organization and Membership, and rechecks policy
+and roles before binding. Browser authority is revalidated after mutation lock
+waits. Binding administration, tombstones, SCIM pairing and durable notices are
+the next Identity batch in the [shared delivery contract](../../../contracts/identity/oidc-linking.md).
 
 ### AuthSession And Token
 
