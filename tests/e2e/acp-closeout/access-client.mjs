@@ -38,10 +38,14 @@ import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import {
-  collectDeniedMessage,
+  collectSessionClosure,
   saveSessionTrace,
   strictSessionEvidence,
 } from "../identity-closeout/session-trace.mjs";
+import {
+  expectSilentSessionClose,
+  sessionCloseCheckpoint,
+} from "../identity-closeout/session-close.mjs";
 import { identityEvidenceExitCode } from "../identity-closeout/trace.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
@@ -111,7 +115,9 @@ async function login(browser, key) {
   return result.body;
 }
 async function open(version, item, browser = item.browser) {
-  const client = connectACP(version, item.agent, browser.cookie);
+  const client = connectACP(version, item.agent, browser.cookie, {
+    injectTraceParent: false,
+  });
   clients.add(client);
   await client.initialize();
   return client;
@@ -365,25 +371,31 @@ async function revoke(version, a, b, other) {
     agent: await agentDetail(agents[2]),
     events: await agentEvents(agents[2]),
   };
+  const closures = new Map(
+    [a, b].map((item) => [item.client, sessionCloseCheckpoint(item.client)]),
+  );
+  const updateOffsets = new Map(
+    [a, b].map((item) => [item.client, item.client.updates.length]),
+  );
   const response = await admin.request(
     `/api/admin/directory/users/${ownerID}/active`,
     { body: { active: false } },
   );
   for (const item of [a, b]) {
-    const offset = item.client.updates.length;
-    await assert.rejects(
-      item.client.request("prompt", {
-        sessionId: item.session,
-        prompt: [{ type: "text", text: "revoked-owner" }],
-      }),
+    const offset = updateOffsets.get(item.client);
+    deniedMessages.push(
+      await expectSilentSessionClose(
+        item.client,
+        closures.get(item.client),
+        "revoked",
+        "prompt",
+        {
+          sessionId: item.session,
+          prompt: [{ type: "text", text: "revoked-owner" }],
+        },
+      ),
     );
-    assert.equal(item.client.closeCode, 1008);
     assert.equal(item.client.updates.length, offset);
-    deniedMessages.push({
-      ...remember(item.client, "session/prompt"),
-      reason: "revoked",
-      closeCode: 1008,
-    });
     close(item.client);
   }
   assertUnchanged(before, await snapshot());
@@ -457,7 +469,7 @@ try {
     );
   for (const request of deniedMessages)
     evidence.push(
-      await collectDeniedMessage("http://jaeger:16686", request, secrets),
+      await collectSessionClosure("http://jaeger:16686", request, secrets),
     );
   process.exitCode = identityEvidenceExitCode([...evidence, ...offboarding]);
   console.log(

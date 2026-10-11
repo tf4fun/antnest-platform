@@ -7,7 +7,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { candidateCommand } from "../../support/candidate-images.mjs";
-import { assertNoOverflow } from "../../integration/admin-console/console-browser-harness.mjs";
+import {
+  assertNoOverflow,
+  consoleSessionMetadata,
+  prepareConsoleSession,
+  fulfillConsoleActivity,
+} from "../../integration/admin-console/console-browser-harness.mjs";
 import { skillArtifact } from "./stage3-fixture.mjs";
 import {
   createFixture,
@@ -318,6 +323,7 @@ try {
     const unexpected = [],
       errors = [];
     try {
+      await prepareConsoleSession(context, consoleOrigin);
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (url.origin !== consoleOrigin) {
@@ -325,12 +331,16 @@ try {
           return route.abort();
         }
         // Gateway session/account shell only. All Skill reads/writes are real BFF HTTP.
+        if (await fulfillConsoleActivity(route)) return;
         if (url.pathname === "/api/session")
           return route.fulfill({
             json: {
+              ...consoleSessionMetadata,
               principal: {
                 user_id: owner,
                 organization_id: org,
+                organization_slug: "test",
+                organization_name: "Test organization",
                 membership_id: "membership-fixture",
                 system_role: "user",
                 organization_role: "admin",
@@ -338,15 +348,16 @@ try {
               },
             },
           });
-        if (url.pathname === "/api/admin/account")
+        if (url.pathname === "/api/session/account")
           return route.fulfill({
             json: {
               account: {
+                user_id: owner,
+                organization_id: org,
+                membership_id: "membership-fixture",
                 email: "admin@example.test",
                 display_name: "Source owner",
                 source: "local",
-                organization_slug: "test",
-                organization_name: "Test organization",
                 local_password_available: true,
               },
             },

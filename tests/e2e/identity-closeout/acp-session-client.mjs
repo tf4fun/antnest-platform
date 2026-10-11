@@ -3,7 +3,11 @@ import { connectACP, gateway } from "./acp-connection.mjs";
 import { GatewayClient } from "./support.mjs";
 import { assertEmptySession } from "./acp-session-evidence.mjs";
 
-import { collectDeniedMessage } from "./session-trace.mjs";
+import { collectSessionClosure } from "./session-trace.mjs";
+import {
+  expectSilentSessionClose,
+  sessionCloseCheckpoint,
+} from "./session-close.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
 
 const agent = process.env.ANTNEST_STAGE3_AGENT_ID;
@@ -22,7 +26,9 @@ for (const version of [1, 2]) {
   await browser.request("/api/session/login", { body: credentials });
   secrets.push(browser.cookie, ...browser.cookies.values());
   const originalCookie = browser.cookie;
-  const connection = connectACP(version, agent, originalCookie);
+  const connection = connectACP(version, agent, originalCookie, {
+    injectTraceParent: false,
+  });
   let sessionId;
   try {
     await connection.initialize();
@@ -32,18 +38,21 @@ for (const version of [1, 2]) {
     }));
     assertEmptySession(connection.updates, sessionId, version, "new");
     const beforeLogout = structuredClone(connection.updates);
+    const beforeClose = sessionCloseCheckpoint(connection);
     await browser.request("/api/session", { method: "DELETE", status: 204 });
-    // Send a real SDK prompt only after authoritative logout has completed.
-    await assert.rejects(
-      connection.request("prompt", {
-        sessionId,
-        prompt: [{ type: "text", text: "revoked-session-must-not-create-run" }],
-      }),
-    );
-    assert.equal(
-      connection.closeCode,
-      1008,
-      "revoked connection did not close with policy violation",
+    expectations.push(
+      await expectSilentSessionClose(
+        connection,
+        beforeClose,
+        "revoked",
+        "prompt",
+        {
+          sessionId,
+          prompt: [
+            { type: "text", text: "revoked-session-must-not-create-run" },
+          ],
+        },
+      ),
     );
     assert.deepEqual(
       connection.updates,
@@ -53,12 +62,6 @@ for (const version of [1, 2]) {
   } finally {
     connection.close();
   }
-  expectations.push({
-    connectionTraceID: connection.traceID,
-    method: "session/prompt",
-    reason: "revoked",
-    closeCode: 1008,
-  });
 
   // A new login must recover the same durable Session without the rejected input.
   await browser.request("/api/session/login", { body: credentials });
@@ -79,7 +82,8 @@ for (const version of [1, 2]) {
   }
   evidence.push({
     version,
-    revoked_prompt_rejected: true,
+    silent_revocation: true,
+    post_close_prompt_blocked: true,
     close_code: connection.closeCode,
     empty_session_recovered: true,
   });
@@ -88,7 +92,7 @@ for (const version of [1, 2]) {
 const traces = [];
 for (const expected of expectations)
   traces.push(
-    await collectDeniedMessage("http://jaeger:16686", expected, secrets),
+    await collectSessionClosure("http://jaeger:16686", expected, secrets),
   );
 process.exitCode = identityEvidenceExitCode(traces);
 process.stdout.write(

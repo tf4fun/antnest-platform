@@ -41,9 +41,13 @@ import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { inspectAccessRun } from "./access-run.mjs";
 import {
   saveSessionTrace,
-  collectDeniedMessage,
+  collectSessionClosure,
   strictSessionEvidence,
 } from "./session-trace.mjs";
+import {
+  expectSilentSessionClose,
+  sessionCloseCheckpoint,
+} from "./session-close.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
@@ -412,7 +416,9 @@ async function rejectedAgent(version, item, browser) {
   }
 }
 async function open(version, item) {
-  const client = connectACP(version, item.agent, item.owner.cookie);
+  const client = connectACP(version, item.agent, item.owner.cookie, {
+    injectTraceParent: false,
+  });
   clients.add(client);
   await client.initialize();
   return client;
@@ -537,25 +543,20 @@ async function membershipBoundary(version, a, b) {
   };
   const before = await snapshot();
   const priorEvents = await agentEvents(resources[1]);
+  const beforeClose = sessionCloseCheckpoint(b.client);
+  const offset = b.client.updates.length;
   const revoked = await adminB.request(
     `/api/admin/directory/memberships/${seed.shared.id}`,
     {
       body: { ...update, active: false },
     },
   );
-  const offset = b.client.updates.length;
-  await assert.rejects(
-    b.client.request("prompt", {
+  revokedMessages.push(
+    await expectSilentSessionClose(b.client, beforeClose, "revoked", "prompt", {
       sessionId: b.session,
       prompt: [{ type: "text", text: "inactive-membership" }],
     }),
   );
-  assert.equal(b.client.closeCode, 1008);
-  revokedMessages.push({
-    ...remember(b.client, "session/prompt"),
-    reason: "revoked",
-    closeCode: 1008,
-  });
   assertNoNotifications(b.client.updates, offset);
   close(b.client);
   await a.client.request("list", {});
@@ -582,6 +583,16 @@ async function membershipBoundary(version, a, b) {
     body: { ...update, active: true },
   });
   await remainsDisabled(resources[1]);
+  const revokedCookie = memberB.cookie;
+  const rejectedSession = await memberB.request("/api/session", {
+    status: 401,
+  });
+  assert.equal(rejectedSession.headers.getSetCookie().length, 0);
+  assert(
+    memberB.cookie === revokedCookie,
+    "ordinary rejection rewrote revoked cookies",
+  );
+  await login(memberB, "access-b", seed.shared.email, secrets[0]);
   await rejectedAgent(version, resources[1], memberB);
   const workspace = (
     await memberB.request("/api/app/bootstrap")
@@ -698,7 +709,7 @@ try {
     );
   for (const request of revokedMessages)
     evidence.push(
-      await collectDeniedMessage("http://jaeger:16686", request, secrets),
+      await collectSessionClosure("http://jaeger:16686", request, secrets),
     );
   process.exitCode = identityEvidenceExitCode([...evidence, ...offboarding]);
   for (const browser of [adminA, adminB, memberB])

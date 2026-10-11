@@ -9,6 +9,17 @@ class Socket extends EventEmitter {
   }
 }
 
+test("ACP socket observer preserves the peer close reason", () => {
+  const closed = new AbortController();
+  let received;
+  const Observed = observeSocket(Socket, closed, (code, reason) => {
+    received = { code, reason: reason.toString() };
+  });
+  new Observed().emit("close", 1008, Buffer.from("session_rejected"));
+  assert.deepEqual(received, { code: 1008, reason: "session_rejected" });
+  assert(closed.signal.aborted);
+});
+
 test("ACP fixture owns late socket errors after an HTTP upgrade rejection", async () => {
   const closed = new AbortController();
   let status,
