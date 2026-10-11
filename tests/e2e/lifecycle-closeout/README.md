@@ -163,6 +163,14 @@ services with ordinary Compose SIGTERM, without closing clients first. Every
 service must exit zero without OOM or forced termination, and the remote ends
 must close the watches and WebSocket. Temporal stops before PostgreSQL.
 
+The SSE observer preserves its first closure cause, actual response Trace ID,
+observation time and delivered-event count in an immutable record. Test-owned
+close, global abort and invalid responses or events have separate causes;
+subsequent cleanup cannot relabel them as a remote transport end. A remote end
+also clears the reconnect timer that EventSource creates after its error callback.
+Resolve-aware shutdown Trace admission and collection remain pending in the #59
+consumer batch.
+
 An HTTP stream cancelled by shutdown may end as `handler_aborted` only when the
 span also carries `antnest.http.request_cancelled=true`, keeps HTTP 200 and ends
 inside the stop window. These spans are still reported as strict failures.
