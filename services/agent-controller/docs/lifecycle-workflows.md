@@ -8,13 +8,13 @@ All five commands use Temporal. PostgreSQL retains Agent state, immutable
 snapshots, request fingerprints, business phases, results and audit events. It
 does not schedule work or retain worker leases, retry counters or trace carriers.
 
-| Command | Activities after admission |
-| --- | --- |
-| Create | network_ensure, runtime_initialize, publish |
-| Rebuild | drain, network_fence, runtime_update, network_ensure, publish |
-| Disable | drain, network_fence, runtime_disable, publish |
-| Enable | network_ensure, runtime_enable, network_restore, publish |
-| Delete | drain, network_fence, runtime_delete, network_release, publish |
+| Command | Activities after admission                                     |
+| ------- | -------------------------------------------------------------- |
+| Create  | network_ensure, runtime_initialize, publish                    |
+| Rebuild | drain, network_fence, runtime_update, network_ensure, publish  |
+| Disable | drain, network_fence, runtime_disable, publish                 |
+| Enable  | network_ensure, runtime_enable, network_restore, publish       |
+| Delete  | drain, network_fence, runtime_delete, network_release, publish |
 
 Delete skips Runtime deletion when the persisted source proves Runtime absence.
 An Identity owner revocation submits the same Disable workflow as the HTTP path;
@@ -126,8 +126,17 @@ valid Template; the script creates and deletes only its own Agent:
 
 ```sh
 node tests/e2e/observability/exercise-lifecycles.mjs \
-  --confirm-development --template TEMPLATE_ID --revision REVISION
+  --confirm-development --template TEMPLATE_ID --revision REVISION \
+  --resolve-evidence-directory artifacts/verification/observability/lifecycles
 ```
 
-Credentials are read locally from `.env`. Only compact final identities and trace
-summaries are printed; raw RPC payloads, headers and credentials are not retained.
+Credentials and effective Resolve TTL/RPC capture settings are read from `.env`
+(exported environment settings take precedence). Enable RPC content capture for
+the Runtime command evidence. Gateway admission is validated against its actual
+`rpc/cache/shared` source, independently of Controller owner authorization and
+workflow SQL. The collector archives three complete snapshots privately in the
+explicit evidence directory; legal receiving RPC payloads may contain credentials.
+Only compact identities and summaries are printed. Strict trace diagnostics keep
+a nonzero exit code even when the owning workflow accepts a completed retry.
+See the [observability contract](../../../docs/observability-contract.md) for the
+fixed sampling policy and the separate creation/readiness and offline commands.

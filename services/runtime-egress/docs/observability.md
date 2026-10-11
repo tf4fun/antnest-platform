@@ -130,10 +130,25 @@ serially.
 
 `tests/e2e/observability/exercise-egress-database.mjs` exercises the database
 spans end to end. Run it from the repository root with
-`node tests/e2e/observability/exercise-egress-database.mjs --confirm-development --agent AGENT_ID`.
+
+```sh
+node tests/e2e/observability/exercise-egress-database.mjs \
+  --confirm-development --agent AGENT_ID \
+  --resolve-evidence-directory artifacts/verification/observability/egress
+```
+
 The script reads development login settings locally, submits the current policy
 and version, asserts unchanged persisted configuration, verifies the trace, and
-logs out. Use an idle test Agent: assigning the same policy can still reset
+logs out. Gateway Resolve may be an actual RPC, a valid cached decision, or a
+shared RPC in another trace. The collector archives and validates the complete
+source/refresh-trigger closure using the effective TTL and RPC capture setting
+from the selected env file and exported environment. The Egress transaction and
+all nine SQL/transaction primitives are still required in the current business
+trace. Raw evidence is private and may contain complete development RPC bodies;
+it must remain outside Git. A strict trace failure rejects the observation and
+still logs out.
+
+Use an idle test Agent: assigning the same policy can still reset
 active flows, so this is neither a data-plane no-op nor a network continuity
 test.
 

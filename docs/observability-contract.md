@@ -14,13 +14,13 @@ HTTP, RPC, storage and executor boundaries and does not intrude on the domain
 model. Observability does not add business interfaces, retries, state machines,
 reliable event delivery or databases.
 
-| Boundary | Captured |
-| --- | --- |
-| HTTP/static assets/proxies | Method, route, status, target, latency, error and parent-child relationship; no header values or bodies |
-| Single request/response RPC | Basic record; when the switch is on, the existing parameter and result objects, without field filtering |
+| Boundary                                                   | Captured                                                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| HTTP/static assets/proxies                                 | Method, route, status, target, latency, error and parent-child relationship; no header values or bodies            |
+| Single request/response RPC                                | Basic record; when the switch is on, the existing parameter and result objects, without field filtering            |
 | Message streams (SSE/WebSocket/model output/notifications) | Basic connection, operation result, cancellation and error; content is never captured, accumulated or concatenated |
-| Database/Executor | Existing operation boundary, correlation IDs, result and error; no additional reads for capture |
-| Egress forwarding data plane | No per-packet or per-flow OTLP; aggregate metrics and control RPCs are retained |
+| Database/Executor                                          | Existing operation boundary, correlation IDs, result and error; no additional reads for capture                    |
+| Egress forwarding data plane                               | No per-packet or per-flow OTLP; aggregate metrics and control RPCs are retained                                    |
 
 RPCs are identified by the existing protocol adapters, not guessed from URLs or
 JSON fields. For example, the Gateway login HTTP request records only basic
@@ -167,7 +167,11 @@ of the business flow, not Gateway health aggregation.
 6. SDK, export and receiver failure tests are reported separately from product
    tests. "A trace is visible" does not substitute for business correctness.
 7. Test output keeps only final metrics, gaps and Jaeger links; raw content is
-   never stored in the repository.
+   never committed to Git or printed in ordinary output. Resolve provenance
+   checks retain complete raw queries and traces privately in an explicitly
+   selected, ignored `artifacts/verification/` directory. Each collection has a
+   separate directory (0700), with evidence files restricted to 0600. Assertions
+   and JSON parser errors must not disclose captured bodies.
 
 Each language keeps a thin instrumentation component, does not import a sibling
 service's internals, and does not build an all-purpose observability framework.
@@ -177,10 +181,107 @@ service's internals, and does not build an all-purpose observability framework.
 The in-memory storage of the development Jaeger 2.20.0 has a query side effect: a
 normal query on a trace that has not fully arrived causes the clock-skew adjuster
 to append missing-parent warnings, and a parent span that arrives later does not
-clear the old warning. Automated tests therefore wait 6 seconds after the
-business request completes and then run one normal query. The wait and the query
-happen only in the test scripts; they do not change any service or SDK export
-configuration, and there are no raw queries or automatic polling.
+clear the old warning. Ordinary observability checks therefore wait 6 seconds
+after the business request completes and then run one normal query. The wait and
+the query happen only in the test scripts; they do not change any service or SDK
+export configuration, and these ordinary helpers do not use raw queries or
+automatic polling.
+
+The [Resolve provenance collector](../tests/e2e/observability/resolve-evidence.mjs)
+has a separate, fixed sampling policy: wait 6 seconds, then collect exactly three
+complete current/source/refresh-trigger snapshots, 1 second apart. A query,
+structure, warning, source error or owning business validation failure stops
+immediately, without retries or a fourth sample. The complete snapshots must
+agree, including payloads, logs, SQL and timing; comparison sorts spans by ID
+without altering the archived raw order. Changed content fails instead of
+restarting convergence. Every sample archives its raw query responses before
+validation and its complete traces before topology checks. The caller supplies
+the effective deployment capture setting and TTL; these are not inferred from
+the observed Resolve decision. With capture enabled, legal receiving RPC JSON
+may contain credentials or objects larger than 16 KiB. HTTP, stream, CLIENT,
+private credential handoff and SQL parameter/result content remain forbidden.
+
+The local-admin login/session, Template and Egress database exercises require an
+explicit private evidence directory before reading login credentials. They read
+`ANTNEST_EDGE_RESOLVE_CACHE_TTL` and `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` from
+the selected `--env-file` (default `.env`), with exported environment values
+taking precedence as in Compose. Use the settings that actually started the
+deployment. For example:
+
+```sh
+node tests/e2e/observability/exercise-local-admin-login.mjs \
+  --confirm-development \
+  --resolve-evidence-directory artifacts/verification/observability/login
+node tests/e2e/observability/exercise-template.mjs \
+  --confirm-development --model MODEL_ID \
+  --resolve-evidence-directory artifacts/verification/observability/template
+node tests/e2e/observability/exercise-egress-database.mjs \
+  --confirm-development --agent AGENT_ID \
+  --resolve-evidence-directory artifacts/verification/observability/egress
+```
+
+The login trace retains its original single-query policy and requires receiving
+RPC request/response events, so that exercise requires deployment capture to be
+enabled. Its session read uses Resolve provenance and requires one non-touching
+Identity SELECT only when a real RPC ran, including a linked shared source.
+Template creation retains its metadata-only Controller boundary, catalog write
+transaction, image/revision reads and idempotency replay. Egress retains the
+unchanged-policy CAS, persisted readback and owning database primitive checks.
+Neither a cached decision nor another trace's Identity SQL replaces the owning
+business SQL. Use an idle test Agent for the Egress exercise: an unchanged CAS
+can still reset active flows. All three exercises keep their logout cleanup on
+observation failure; credential-bearing failure objects are not printed.
+
+The live lifecycle and creation/readiness exercises use the same deployment
+configuration and private Resolve evidence directory:
+
+```sh
+node tests/e2e/observability/exercise-lifecycles.mjs \
+  --confirm-development --template TEMPLATE_ID --revision REVISION \
+  --resolve-evidence-directory artifacts/verification/observability/lifecycles
+node tests/e2e/observability/exercise-creation-observation.mjs \
+  --confirm-development --retain-for-review \
+  --template TEMPLATE_ID --revision REVISION --postgres-container CONTAINER \
+  --resolve-evidence-directory artifacts/verification/observability/creation
+```
+
+These commands retain the owning workflow's Activity ordering, committed SQL,
+Runtime RPC, terminal state and exact-key replay checks. Runtime response bodies
+are required for create/rebuild/enable evidence, so enable deployment RPC capture
+for those commands. Creation/readiness retains its separate Controller-rooted
+readiness trace and persisted PostgreSQL binding check; readiness is queried
+once after the admission collector's export grace and has no Gateway Resolve
+decision. The creation exercise deliberately retains its single test Agent for
+review. A business trace with strict diagnostics returns a nonzero exit code and
+`trace_failed`, even when the owning workflow accepts a completed retry.
+
+Reviewing an existing creation requires the original trace's TTL and capture
+settings explicitly; current deployment settings do not establish historical
+configuration. This mode neither creates an Agent nor replays its creation:
+
+```sh
+node tests/e2e/observability/exercise-creation-observation.mjs \
+  --confirm-development --retain-for-review --postgres-container CONTAINER \
+  --agent AGENT_ID --request REQUEST_ID --trace TRACE_ID \
+  --resolve-ttl-ms 10000 --capture-rpc-content \
+  --resolve-evidence-directory artifacts/verification/observability/creation-review
+```
+
+The two offline trace checks also require explicit historical configuration and
+a private directory before querying Jaeger. Use `--no-capture-rpc-content` only
+when capture was disabled and the owning workflow permits metadata-only proof.
+Their default rejection of workflow retries remains unchanged:
+
+```sh
+node tests/e2e/observability/check-create-workflow.mjs \
+  --trace TRACE_ID --request REQUEST_ID \
+  --resolve-ttl-ms 10000 --capture-rpc-content \
+  --resolve-evidence-directory artifacts/verification/observability/create-check
+node tests/e2e/observability/check-lifecycle.mjs \
+  --admission TRACE_ID --request REQUEST_ID --agent AGENT_ID --kind disable \
+  --resolve-ttl-ms 10000 --no-capture-rpc-content \
+  --resolve-evidence-directory artifacts/verification/observability/lifecycle-check
+```
 
 The 6 seconds is a buffer over the default 5-second batch export interval and
 does not guarantee that all data has arrived. Tests still check parent-child
