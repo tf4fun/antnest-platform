@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
@@ -15,7 +14,7 @@ import {
   saveFoundationFailure,
 } from "./foundation-trace.mjs";
 import { inspectAccessTraceTopology } from "../identity-closeout/agent-access-evidence.mjs";
-import { connectOwner } from "./acp.mjs";
+import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import {
   barrierDiagnostic,
   inspectProbe,
@@ -335,17 +334,13 @@ export async function runNetwork({
   const requestTraces = await collectLifecycleEvidence(
     requests.map((r) => ({ ...r, agentID: r.agentId, requestID: r.requestId })),
     (expected) =>
-      collectManagedTrace(
-        config.jaeger,
+      collectLifecycleACPTrace(
+        config,
         expected,
         secrets,
         expected.kind === "ordinary"
           ? modelRequests.filter((r) => r.phase === expected.phase)
           : [],
-        (trace) => {
-          expected.traceID = trace.traceID;
-          saveFoundationTrace(config, trace);
-        },
         (trace, expected, secrets, calls) => {
           const result = inspectCommandTrace(trace, expected, secrets, calls);
           if (expected.runId)

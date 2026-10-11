@@ -90,14 +90,24 @@ diagnostics are both retained. Source errors cannot inherit clock-only or
 workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
 errors; a restart exception requires the exact reviewed total.
 
+The Foundation, shutdown, network, Runtime-loss and restore ACP request
+collectors select the actual message using its observed connection and request
+identity, then validate the `acp` Resolve source. They retain the owning Run,
+model phase, durable-write and rejection checks. Selection records the actual
+Trace ID before admission can fail, and the complete current/source/trigger
+closure is archived and converges over three snapshots. Raw source diagnostics
+remain in the strict result; the Foundation allowance for two `agent_busy`
+errors cannot absorb additional source errors. Cancellation waits for active
+collection and the owning inspector to finish.
+
 Controller-root Runtime observation and Identity offboarding keep their own
 admission paths. The opt-in killed-process crash collector validates the original
 Console admission through its existing verified recovery projection, preserving
 the complete raw current/source/trigger closure and its failed strict verdict.
 External sources receive no crash exception. See the
 [crash Trace rules](crash-contract.md#trace-rules). Shutdown watches have their
-own cancellation gate; policy writes and ACP requests remain pending consumer
-batches. Cross-service #59 Docker/HTTPS admission remains pending.
+own cancellation gate; policy writes remain a pending consumer batch.
+Cross-service #59 Docker/HTTPS admission remains pending.
 
 ## Foundation
 
@@ -180,8 +190,9 @@ actual stop operation, the same cleanly exited Gateway container and remote
 closure. Source errors remain strict failures and cannot inherit the current
 watch's cancellation classification. See the
 [shutdown Trace rules](shutdown-migration-contract.md#trace-rules) for timing,
-concurrency and unavailable-result limits. The separate ACP request consumer and
-the #59 cross-service Docker/HTTPS integration are still pending.
+concurrency and unavailable-result limits. The separate ACP request consumer
+uses the shared request collector described above; the #59 cross-service
+Docker/HTTPS integration is still pending.
 
 An HTTP stream cancelled by shutdown may end as `handler_aborted` only when the
 span also carries `antnest.http.request_cancelled=true`, keeps HTTP 200 and ends

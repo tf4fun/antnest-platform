@@ -5,16 +5,12 @@ import { mkdtemp, chmod, rm } from "node:fs/promises";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
 import { join } from "node:path";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import {
-  saveFoundationTrace,
-  saveFoundationFailure,
-} from "./foundation-trace.mjs";
+import { saveFoundationFailure } from "./foundation-trace.mjs";
 import { flushTraceProducers } from "./network-support.mjs";
-import { connectOwner } from "./acp.mjs";
+import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import { lines } from "./docker.mjs";
 import {
   keyNames,
@@ -723,17 +719,13 @@ async function restoreScenario(
   const requestTraces = await collectLifecycleEvidence(
     requests,
     (expected) =>
-      collectManagedTrace(
-        config.jaeger,
+      collectLifecycleACPTrace(
+        config,
         expected,
         traceSecrets,
         expected.kind === "ordinary"
           ? calls.filter((c) => c.phase === expected.phase)
           : [],
-        (trace) => {
-          expected.traceID = trace.traceID;
-          saveFoundationTrace(config, trace);
-        },
         (trace, expected, secrets, modelCalls) => {
           const evidence = inspectCommandTrace(
             trace,

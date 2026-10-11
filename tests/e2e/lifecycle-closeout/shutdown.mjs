@@ -5,7 +5,7 @@ import { applicationServices } from "./deployment.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertEmptySession } from "../identity-closeout/acp-session-evidence.mjs";
 import { until } from "../workspace-closeout/state.mjs";
-import { connectOwner } from "./acp.mjs";
+import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import {
   assertStopped,
   assertRestarted,
@@ -13,14 +13,10 @@ import {
   assertReadyExecutionState,
   assertIdleMaintenance,
 } from "./shutdown-evidence.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import {
-  saveFoundationTrace,
-  saveFoundationFailure,
-} from "./foundation-trace.mjs";
+import { saveFoundationFailure } from "./foundation-trace.mjs";
 import { physicalIdentity } from "./network-support.mjs";
 import { openShutdownWatchSet } from "./shutdown-streams.mjs";
 import { collectSingleNodeMembership } from "./temporal-membership.mjs";
@@ -317,15 +313,11 @@ export async function runShutdown({
     const requestTraces = await collectLifecycleEvidence(
       requests,
       (expected) =>
-        collectManagedTrace(
-          config.jaeger,
+        collectLifecycleACPTrace(
+          config,
           expected,
           traceSecrets,
           [],
-          (trace) => {
-            expected.traceID = trace.traceID;
-            saveFoundationTrace(config, trace);
-          },
           (trace, expected, secrets, calls) =>
             strictSessionEvidence(
               inspectCommandTrace(trace, expected, secrets, calls),
