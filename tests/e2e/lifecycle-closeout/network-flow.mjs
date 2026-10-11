@@ -2,17 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
+import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { assertNetworkRun } from "./network-current.mjs";
 import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import {
-  saveFoundationTrace,
-  saveFoundationFailure,
-} from "./foundation-trace.mjs";
+import { saveFoundationFailure } from "./foundation-trace.mjs";
+import { inspectPolicyResolution } from "./policy-resolution.mjs";
 import { inspectAccessTraceTopology } from "../identity-closeout/agent-access-evidence.mjs";
 import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import {
@@ -27,6 +25,8 @@ import {
   flushTraceProducers,
   runtimeExitEvidence,
 } from "./network-support.mjs";
+
+export { inspectPolicyResolution } from "./policy-resolution.mjs";
 
 export async function runNetwork({
   config,
@@ -363,16 +363,7 @@ export async function runNetwork({
   );
   const policyTraces = await collectLifecycleEvidence(
     policies,
-    (item) =>
-      collectTrace(
-        config.jaeger,
-        item.traceID,
-        (trace) => {
-          saveFoundationTrace(config, trace);
-          return inspectPolicyTrace(trace, item, secrets);
-        },
-        signal,
-      ),
+    (item) => collectPolicyTrace(config, item, secrets, signal),
     (item, error) => saveFoundationFailure(config, item, error),
     signal,
   );
@@ -387,6 +378,46 @@ export async function runNetwork({
     runtimes_cleanly_exited: agents.length,
     deleted_before_teardown: true,
   };
+}
+
+export async function collectPolicyTrace(
+  config,
+  expected,
+  secrets,
+  signal,
+  options = {},
+) {
+  const attempts = options.attempts ?? 40;
+  assert(
+    Number.isSafeInteger(attempts) && attempts >= 3,
+    "invalid policy convergence attempts",
+  );
+  const [result] = await collectResolveTraceEvidence(
+    config.jaeger,
+    [expected],
+    secrets,
+    {
+      ...options,
+      attempts,
+      directory: `${config.evidence}/traces`,
+      signal,
+      inspect: async (trace, selected, privateValues, collection) => {
+        const resolution = inspectPolicyResolution(
+          trace,
+          selected,
+          privateValues,
+          collection,
+        );
+        const checked = await inspectPolicyTrace(
+          trace,
+          selected,
+          privateValues,
+        );
+        return { ...checked, gateway_resolution: resolution };
+      },
+    },
+  );
+  return result;
 }
 
 export function inspectPolicyTrace(

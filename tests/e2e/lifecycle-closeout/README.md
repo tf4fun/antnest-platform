@@ -106,7 +106,7 @@ Console admission through its existing verified recovery projection, preserving
 the complete raw current/source/trigger closure and its failed strict verdict.
 External sources receive no crash exception. See the
 [crash Trace rules](crash-contract.md#trace-rules). Shutdown watches have their
-own cancellation gate; policy writes remain a pending consumer batch.
+own cancellation gate; network policy writes use their separate PUT/200 gate.
 Cross-service #59 Docker/HTTPS admission remains pending.
 
 ## Foundation
@@ -273,6 +273,16 @@ The test requires:
   start time, workspace or executable configuration;
 - policy-write traces follow Gateway, Console, Agent Controller and Egress.
   Prompt, model and tool spans stop at Runtime; there is no per-packet tracing.
+
+The four recorded successful policy PUTs validate `console` Resolve admission
+before the actual Gateway CLIENT forwards to the Console SERVER. The Egress
+write must descend from that same Console request and retain the existing Agent,
+route, success and error checks. Current, shared-source and refresh-trigger
+traces are archived and converge over three complete snapshots; raw source
+errors and warnings remain strict failures. The collector uses the caller's
+abort signal and waits for active requests and response bodies. The existing
+409 and idempotent-replay business assertions are unchanged; these requests do
+not acquire additional Trace coverage through this adapter.
 
 ## Unplanned Runtime Loss
 
