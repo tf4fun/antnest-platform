@@ -15,13 +15,13 @@ Trace warnings and expected rejection errors are reported as failures.
 
 ## Running
 
-| Command | Profile |
-| --- | --- |
-| `make e2e-identity-core` | Local login, SCIM and OIDC |
+| Command                         | Profile                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `make e2e-identity-core`        | Local login, SCIM and OIDC                                                      |
 | `make e2e-organization-display` | Real local/OIDC browser sessions, Organization projection and display freshness |
-| `make e2e-identity-access` | HTTP access isolation, Identity outage and token expiry |
-| `make e2e-agent-access` | Agent organization access and owner offboarding |
-| `make e2e-acp-session` | Browser logout and Identity faults on existing ACP connections |
+| `make e2e-identity-access`      | HTTP access isolation, Identity outage and token expiry                         |
+| `make e2e-agent-access`         | Agent organization access and owner offboarding                                 |
+| `make e2e-acp-session`          | Browser logout and Identity faults on existing ACP connections                  |
 
 All targets require Docker and the local Stage 3 images
 (`make docker-build-stage3`). Each profile is independent and must not be
@@ -141,9 +141,14 @@ teardown.
 4. SCIM rotation issues a replacement and revokes the old credential. Lists
    never redisclose secrets, and browser cookies do not authorize SCIM.
 5. Jaeger assertions require actual parent chains from the Gateway through
-   Identity to its repository, including the Console for administrator
-   mutations. Service names alone are not evidence. Passwords, session cookies
-   and SCIM credentials must not appear in Traces.
+   Identity to its owning PostgreSQL spans, including the Console for
+   administrator mutations. Console expectations select the `console` Resolve
+   profile; password-change expectations explicitly select `session`. An
+   admitted Resolve decision must finish before the real Gateway forwarding
+   CLIENT. Its `rpc`, `cache`, or `shared` evidence never replaces the business
+   operation's own SQL or the actual IdP request checks. Login, OIDC and SCIM
+   operations do not acquire an invented Resolve requirement. Passwords,
+   session cookies and SCIM credentials must not appear in any collected Trace.
 
 ## OIDC
 
@@ -343,9 +348,16 @@ must still be error-free.
 Silent close evidence records the peer code, reason, time, absence of local
 shutdown and unchanged SDK request list. The fixture obtains its connection
 Trace ID from the actual upgrade response, without injecting an unexported
-parent. Complete connection Traces must include Gateway, ACP upgrade and the
-initial owning Identity SQL; no message Trace is invented for a request that
-was never sent. Actual message-denial trace validators remain separate.
+parent. Complete connection Traces must include Gateway, the real ACP upgrade,
+and exactly one initial `acp` Resolve decision before the socket CLIENT. A
+live RPC requires its exact Identity receiver and SQL; a cache hit requires
+valid snapshot/proof/deadline budgets; a shared decision requires the archived
+source CLIENT, receiver and SQL, including the cache-hit trigger of a background
+refresh. Every later admitted revalidation has the same source checks. SQL is
+counted by its real receiving SERVER, so repeated shared consumers do not
+invent extra queries. No message Trace is invented for a request that was
+never sent. Actual message-denial trace validators remain separate; a rejected
+or unavailable decision cannot substitute for successful admission.
 Successful requests
 bind the SDK request ID and returned Session ID, and execution binds the
 Provider HTTP span IDs. Traces are scanned for the synthetic cookies and model
@@ -359,6 +371,14 @@ revocation has a bounded delay; admitted Runs continue to completion.
 Compact final metrics and unmodified raw Traces are kept in private
 `artifacts/verification/` directories. `ANTNEST_IDENTITY_EVIDENCE_DIR` must stay
 outside `.cache/`, including symbolic aliases and missing descendants.
+Identity's diagnostic collector waits for three consecutive equal, validated
+snapshots of the entire request/source/trigger closure. A missing source, late
+SQL or changed diagnostics resets convergence. Partial raw evidence is retained
+on failure. Warnings and errors from every collected Trace remain strict
+failures; missing parents are never classified away as clock skew. Cancellation
+waits for active request/body reads and inspectors before returning. This Trace
+consumer support does not complete #59's pending fault, display-freshness and
+load integration scenarios.
 Collectors validate known output files before any HTTP request, and access
 clients validate the directory and failure log before login or database setup.
 Linked or non-regular output files are rejected, and files are written with

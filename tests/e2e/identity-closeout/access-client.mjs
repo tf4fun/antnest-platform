@@ -266,6 +266,7 @@ traces.push({
   method: "POST",
   route: "/rpc/identity/change-local-password",
   rpcMethod: "change_local_password",
+  resolveProfile: "session",
 });
 const oldA = await a.request("/api/session", {
   headers: { Cookie: originalACookie },

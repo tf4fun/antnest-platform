@@ -172,7 +172,7 @@ function closureFixture() {
       ? [{ refType: "CHILD_OF", traceID, spanID: parent }]
       : [],
   });
-  return {
+  const trace = {
     traceID,
     processes: {
       edge: { serviceName: "edge-gateway" },
@@ -220,6 +220,26 @@ function closureFixture() {
       ),
     ],
   };
+  trace.spans[0].duration = 500;
+  trace.spans[3].tags.push(...fields({ "http.response.status_code": 200 }));
+  trace.spans[4].startTime = 120;
+  trace.spans[5].startTime = 122;
+  trace.spans.push({
+    traceID,
+    spanID: "decision",
+    processID: "edge",
+    operationName: "gateway.identity.resolve",
+    startTime: 100,
+    duration: 110,
+    references: [{ refType: "CHILD_OF", traceID, spanID: "gateway" }],
+    tags: fields({
+      "span.kind": "internal",
+      "antnest.identity.resolve.source": "rpc",
+      "antnest.identity.resolve.profile": "acp",
+      "antnest.identity.resolve.outcome": "admitted",
+    }),
+  });
+  return trace;
 }
 function closureExpectation() {
   return {
@@ -256,7 +276,11 @@ test("closure topology rejects foreign connections, missing parents, wrong route
       t.traceID = "f".repeat(32);
     },
     (t) => t.spans.splice(1, 1),
-    (t) => t.spans.pop(),
+    (t) =>
+      t.spans.splice(
+        t.spans.findIndex((s) => s.spanID === "identity-server-db"),
+        1,
+      ),
     (t) => {
       t.spans[0].references = [
         {
