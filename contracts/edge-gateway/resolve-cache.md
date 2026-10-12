@@ -260,6 +260,22 @@ an unrelated error field/event or a missing attempt. Successful feed responses
 retain their actual Identity receiver and read-only session-revocation SELECT.
 Claims never change the original strict result or cover other inventory errors.
 
+The outage stream consumer binds public SSE retirement to the actual Agent,
+Session, credential observation and remote closure after its recorded mutation.
+The warm SSE is retired by that member's password change; successful intervening
+Resolve revalidation remains valid. HTTP Date and observed request/closure
+intervals bound the Gateway end time without assuming identical host and service
+clocks. A claimed root handler abort and forwarding read failure require their
+exact fields/events and successful response with the original Agent UI receiver.
+Internal ACP watches retain the actual view as their causal parent and may
+outlive that HTTP response. Only an observed normal same-container ACP restart
+or final UI drain may explain their precise disconnect diagnostics; the ACP
+execution-state watch additionally requires the producer's `process-shutdown`
+witness. Scan actual view traces rather than assigning a fixed number of watches
+to each view, because a view may reuse an existing connection. Extra errors,
+missing ancestry or archives, local closure and unrelated shutdowns are not
+covered. Every claim names one original trace/span; raw diagnostics stay strict.
+
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
 under the current HTTP or ACP-message root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
