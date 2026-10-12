@@ -268,6 +268,17 @@ execution status. ACP owns the authoritative replay: loading a Session builds
 a replacement projection while keeping the cached transcript readable. Only a
 successful replay replaces that transcript; failed replay retains it.
 
+A complete live user-message delivery schedules a fresh execution/receipt read
+before publishing the next SSE projection. The first read after HTTP admission
+can precede ACP's commit; this delivery signal lets a held prompt move from
+Bridge dispatching to its durable Run status without a browser refresh or model
+output. The signal follows batches actually applied in order, including buffered
+input released by a checkpoint. Partial or duplicate input and ordinary model
+output keep using cached receipts. If an authorization read is already running,
+reconciliation joins it before starting a fresh read; it does not cancel that
+request or reuse its potentially pre-admission observation. Queued refreshes
+continue to share the next authorization workflow.
+
 Both intent receipts and nested execution observations require `errorClass`:
 either `null` or a 1–128 character ASCII code matching `^[a-z][a-z0-9_]*$`.
 Only `failed`, `cancelled` and `unknown` receipts may carry a non-null code.

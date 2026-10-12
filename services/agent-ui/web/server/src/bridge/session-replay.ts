@@ -66,12 +66,14 @@ export class SessionReplay<View, Update> {
     );
   }
 
-  public receive(mark: DeliveryMark, update?: Update): void {
+  public receive(mark: DeliveryMark, update?: Update): DeliveredBatch<Update>[] {
     const target = this.candidate ?? this.current;
-    if (target.error !== undefined) return;
+    if (target.error !== undefined) return [];
     try {
-      for (const batch of target.tracker.accept(mark, update))
+      const delivered = target.tracker.accept(mark, update);
+      for (const batch of delivered)
         target.view = this.projection.apply(target.view, batch);
+      return delivered;
     } catch (error) {
       target.error = error;
       this.needsReconcile = true;

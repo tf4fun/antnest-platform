@@ -279,6 +279,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Workspace SSE now refreshes durable Run receipts when a complete user input
+is delivered. A prompt whose first status read precedes ACP admission no
+longer stays at Bridge dispatching while the model is held; partial, duplicate
+and ordinary model output deliveries do not add receipt reads (#59).
+
 SCIM User creation returns persisted timestamps, so its metadata matches an
 immediate read and its internal update version can be used for replacement.
 Nanosecond host clocks no longer produce a creation response with a version

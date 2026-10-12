@@ -650,9 +650,18 @@ export class AgentBridgeOwner {
     }
   }
 
-  public authorizeSession(sessionId: string): Promise<AuthorizedSession> {
+  public authorizeSession(
+    sessionId: string,
+    options?: { afterCurrent?: boolean },
+  ): Promise<AuthorizedSession> {
     const existing = this.authorizationWorkflows.get(sessionId);
-    if (existing) return existing;
+    if (existing) {
+      if (!options?.afterCurrent) return existing;
+      // A delivery-triggered read must not consume a pre-admission observation.
+      // Join the old workflow first; queued refreshes still share the next one.
+      const next = () => this.authorizeSession(sessionId);
+      return existing.then(next, next);
+    }
     const work = this.authorizeSessionOwned(sessionId);
     this.authorizationWorkflows.set(sessionId, work);
     const clear = () => {
@@ -1230,7 +1239,7 @@ export class AgentBridgeOwner {
     }
     const before = replay.snapshot();
     try {
-      replay.receive(mark, params.update);
+      const delivered = replay.receive(mark, params.update);
       // ACP carries its current catalog on replay checkpoints as well as sideband
       // updates. Keep the checkpoint's delivery semantics and project its metadata.
       let commandsChanged = false;
@@ -1241,7 +1250,11 @@ export class AgentBridgeOwner {
         });
       const after = replay.snapshot();
       if (!after.loading && (after.watermark > before.watermark || commandsChanged))
-        this.notifyChanged(params.sessionId);
+        // A submit-triggered read may precede ACP's admission commit. Complete
+        // user delivery observes that commit even when the prompt stays held.
+        // Use applied batches: a checkpoint can release buffered user input.
+        this.notifyChanged(params.sessionId, delivered.some((batch) =>
+          batch.updates.some((item) => item.sessionUpdate === "user_message_chunk")));
     } catch (error) {
       replay.invalidate(error);
       this.notifyChanged(params.sessionId);
