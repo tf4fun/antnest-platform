@@ -218,6 +218,9 @@ docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 
 # Docker signal regression for long-lived receive streams
 node tests/e2e/edge-gateway/shutdown-docker.mjs
+
+# HTTPS Resolve-cache load batch (default 10-second TTL)
+node tests/e2e/edge-gateway/resolve-cache-docker.mjs
 ```
 
 Integration sources live in
@@ -234,6 +237,18 @@ through the public entry (browser HTTP and ACP v1/v2 logout revocation, SCIM
 provisioning, OIDC, Console projections and causal Jaeger spans);
 `make e2e-acp-session` covers post-upgrade expiry, dependency outage and
 recovery, and durable Run completion after logout or disconnect.
+
+The standalone Resolve-cache load batch builds isolated service candidates and
+uses a fresh HTTPS session for the measured WSS connection. Dial, initialize
+and 100 sequential `session/list` exchanges must finish within eight seconds;
+the test crosses half TTL to witness an actual background refresh. It counts
+Gateway Resolve CLIENT attempts and Identity SERVER receipts independently,
+including handshake, connection probes and refresh, with a maximum of three
+each. Full raw trace closure and warnings remain in private evidence. Set
+`ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` to select an unused directory under
+`artifacts/verification/`. Cleanup verifies the retained environment and removes
+owned candidates. This batch currently reports Identity outage/recovery as
+pending; it does not establish the complete #59 acceptance gate.
 
 ## Documentation
 

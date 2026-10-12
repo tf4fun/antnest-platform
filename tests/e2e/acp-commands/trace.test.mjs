@@ -60,6 +60,7 @@ function catalogRead(f) {
 test("Session setup and command completion may refresh Skill metadata without model or tool execution", () => {
   for (const http of [false, true])
     for (const [kind, method] of [
+      ["request", "initialize"],
       ["request", "session/new"],
       ["request", "session/load"],
       ["request", "session/resume"],
@@ -82,6 +83,47 @@ test("Session setup and command completion may refresh Skill metadata without mo
       assert.equal(result.no_model_or_tools, true);
       assert.equal(result.no_model_or_runtime, false);
     }
+});
+
+test("initialize Skill metadata never permits executable calls, model work or extra reads", () => {
+  for (const mutate of [
+    (f) => f.add("model", "request", "model.complete"),
+    (f) =>
+      f.add(
+        "tool",
+        "catalog-info-operation",
+        "runtime.mcp.tool",
+        "antnest-runtime",
+      ),
+    (f) => {
+      f.trace.spans.find(
+        (span) => span.spanID === "catalog-info-server",
+      ).tags[1].value = "tools/call";
+    },
+    (f) => {
+      f.trace.spans.push({
+        ...structuredClone(
+          f.trace.spans.find((span) => span.spanID === "catalog-info-server"),
+        ),
+        spanID: "duplicate-info",
+      });
+    },
+  ]) {
+    const f = catalogRead(fixture("request"));
+    f.expected.method = "initialize";
+    f.expected.sessionId = undefined;
+    for (const span of f.trace.spans) {
+      if (span.operationName === "acp session/load")
+        span.operationName = "acp initialize";
+      span.tags = span.tags.filter((tag) => tag.key !== "antnest.session.id");
+      for (const tag of span.tags)
+        if (tag.key === "rpc.method" && tag.value === "session/load")
+          tag.value = "initialize";
+    }
+    assert.equal(inspect(f).runtime_information_reads, 1);
+    mutate(f);
+    assert.throws(() => inspect(f));
+  }
 });
 
 test("Skill catalog refresh cannot hide tool execution, detached calls, extra reads or rejected access", () => {

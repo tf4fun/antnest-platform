@@ -107,7 +107,8 @@ export async function searchJaegerTraces(
     assert(detail.ok, "Jaeger trace detail query failed");
     const body = await detail.json();
     assert(
-      !body.errors?.length &&
+      (body.errors == null ||
+        (Array.isArray(body.errors) && body.errors.length === 0)) &&
         Array.isArray(body.data) &&
         body.data.length === 1,
       "Jaeger trace detail missing or failed",

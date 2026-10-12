@@ -245,6 +245,18 @@ Two separate container addresses verify independent login source limits despite
 forged forwarding headers. `ANTNEST_GATEWAY_TLS_E2E_OUTPUT` selects the private
 evidence directory. Cleanup removes the fixture keys, candidates and deployment.
 
+`node tests/e2e/edge-gateway/resolve-cache-docker.mjs` runs the separate #59
+HTTPS/WSS load batch with the same local stack, Node and TLS prerequisites.
+It includes the real upgrade, initialize and 100 sequential `session/list`
+exchanges in an eight-second window, crossing half of the default 10-second
+cache TTL to exercise refresh. Actual Gateway Resolve attempts and Identity
+receipts are independently limited to three. It archives raw wire frames,
+independent Jaeger searches and complete trace sources, then verifies resource
+cleanup; exit 2 retains strict trace warnings. Its report explicitly leaves
+Identity outage/recovery pending. `ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` selects an
+unused private evidence directory. This load batch is not yet registered as the
+complete Resolve-cache CI suite.
+
 Some contract checks can be run directly:
 
 ```sh

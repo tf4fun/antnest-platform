@@ -102,6 +102,10 @@ for (const [name, response] of [
   });
 
 for (const [name, body] of [
+  ...[{}, false, "", 0].map((errors) => [
+    `malformed errors ${JSON.stringify(errors)}`,
+    { data: [{ traceID: first }], errors },
+  ]),
   ["wrong trace", { data: [{ traceID: second }] }],
   ["missing trace", { data: [] }],
   [

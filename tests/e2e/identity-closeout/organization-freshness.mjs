@@ -30,11 +30,22 @@ const one = (items, message) => {
   assert.equal(items.length, 1, message);
   return items[0];
 };
-const failed = (span) =>
+// Runtime records (success, "", OK) for completed MCP operations, including
+// Initialize catalog reads in a refresh trigger's raw closure. Preserve that
+// empty placeholder; no other error-type shape or failed signal is exempt.
+const successfulRuntimeErrorPlaceholder = (span, trace) =>
+  trace.processes[span.processID]?.serviceName === "antnest-runtime" &&
+  span.operationName === "runtime.mcp.operation" &&
+  tag(span, "error.type") === "" &&
+  tag(span, "otel.status_code") === "OK" &&
+  tag(span, "mcp.operation.outcome") === "success" &&
+  tag(span, "antnest.operation.outcome") === "success";
+const failed = (span, trace) =>
   hasError(span) ||
   tag(span, "otel.status_code") === "ERROR" ||
   tag(span, "otel.status_code") === 2 ||
-  tag(span, "error.type") !== undefined ||
+  (tag(span, "error.type") !== undefined &&
+    !successfulRuntimeErrorPlaceholder(span, trace)) ||
   tag(span, "http.response.status_code") >= 400;
 const end = (span) => {
   assert(
@@ -48,7 +59,9 @@ const end = (span) => {
 function successfulSources(trace, secrets, collection) {
   const sources = resolveTraceSources(trace, secrets, collection);
   assert(
-    !sources.some((source) => source.spans.some(failed)),
+    !sources.some((source) =>
+      source.spans.some((span) => failed(span, source)),
+    ),
     "display evidence contains failed request or SQL",
   );
   return resolveTraceDiagnostics(trace, sources);
