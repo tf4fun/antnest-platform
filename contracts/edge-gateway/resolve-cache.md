@@ -244,10 +244,14 @@ with the actual outage and failure evidence; an anonymous Identity CLIENT is
 not sufficient proof of a failed feed request. Historical traces without the
 witness remain unclassified.
 
-The outage feed consumer keeps the broad Gateway Identity CLIENT search and
-its fixed query window, all search rounds, three stable rounds and complete
-archive coverage. It reconciles that inventory against all matching archived
-CLIENTs before selecting process-owned feed roots; browser requests and other
+The outage feed consumer queries the broad Gateway Identity CLIENT inventory
+and the receiving feed SERVER inventory in pairs over one fixed query window.
+It retains every round and requires both inventories to be unchanged for three
+consecutive paired rounds, with every SERVER represented in the CLIENT search
+and every already visible successful feed CLIENT represented in the SERVER
+search. Complete archive coverage remains required. It reconciles that inventory
+against all matching archived CLIENTs before selecting process-owned feed roots;
+browser requests and other
 work remain in the raw diagnostic set. A failed feed claim requires the fixed
 method witness, a lone root CLIENT with no response or receiver, the exact
 send-stage transport error and the observed Identity container lifecycle.
@@ -257,7 +261,9 @@ readiness. The latter must finish before
 both the healthy observation and the first successful post-restart feed.
 Neither phase admits a failure after recovery, an unidentified process root,
 an unrelated error field/event or a missing attempt. Successful feed responses
-retain their actual Identity receiver and read-only session-revocation SELECT.
+retain their actual Identity receiver and read-only session-revocation SELECT;
+their exact set must equal the final SERVER inventory even if the two search
+indexes become visible at different times.
 Claims never change the original strict result or cover other inventory errors.
 
 The outage stream consumer binds public SSE retirement to the actual Agent,
