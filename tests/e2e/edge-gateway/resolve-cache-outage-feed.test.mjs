@@ -210,6 +210,173 @@ const move = (part, ms) => {
 const eventField = (part, key, value) =>
   (part.client.logs[0].fields.find((f) => f.key === key).value = value);
 
+function reconcileSearch(f) {
+  const { collection } = f;
+  const all = [...collection.traces.values()];
+  collection.archivedTraceIDs = new Set(collection.traces.keys());
+  collection.feedAttemptTraceIDs = new Set(collection.traces.keys());
+  const ids = all.map((t) => ({ traceID: t.traceID }));
+  collection.feedSearch.feed_attempt_searches = Array.from({ length: 3 }, () =>
+    structuredClone(ids),
+  );
+  collection.feedSearch.found.feed = all
+    .filter((t) => t.spans.some((s) => s.spanID === "server"))
+    .map((t) => ({ traceID: t.traceID }));
+  collection.feedSearch.feed_server_searches = Array.from({ length: 3 }, () =>
+    structuredClone(collection.feedSearch.found.feed),
+  );
+}
+
+function successfulAcrossRestart() {
+  const f = fixture();
+  f.collection.traces.delete(f.parts.restarting.trace.traceID);
+  const trace = structuredClone(f.parts.before.trace);
+  trace.traceID = f.parts.stopped.trace.traceID;
+  for (const s of trace.spans) {
+    s.traceID = trace.traceID;
+    for (const ref of s.references) ref.traceID = trace.traceID;
+  }
+  const [client, server, sql] = trace.spans;
+  client.startTime = (epoch + 1700) * 1000;
+  client.duration = 4800000;
+  server.startTime = (epoch + 6405) * 1000;
+  server.duration = 50000;
+  sql.startTime = (epoch + 6410) * 1000;
+  sql.duration = 5000;
+  setTag(sql, "pgx.rows_affected", 0);
+  f.parts.cross = { trace, client, server, sql };
+  f.collection.traces.set(trace.traceID, trace);
+  reconcileSearch(f);
+  return f;
+}
+
+test("a real feed started while stopped can succeed after restart without inventing an error", () => {
+  const f = successfulAcrossRestart(),
+    before = structuredClone(f);
+  const result = check(f);
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.owned_error_spans, []);
+  assert.deepEqual(result.successful_outage_requests, [
+    {
+      trace_id: f.parts.cross.trace.traceID,
+      client_span_id: "client",
+      identity_server_span_id: "server",
+      duration_ms: 4800,
+    },
+  ]);
+  assert.equal(
+    result.error_spans,
+    1,
+    "unrelated raw request error remains present",
+  );
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual(f, before);
+});
+
+for (const [name, change] of [
+  [
+    "no stopped-period attempt",
+    (f) => {
+      f.collection.traces.delete(f.parts.cross.trace.traceID);
+      reconcileSearch(f);
+    },
+  ],
+  [
+    "only a restart-command-period send",
+    (f) => {
+      f.parts.cross.client.startTime = (epoch + 6350) * 1000;
+      f.parts.cross.client.duration = 150000;
+    },
+  ],
+  [
+    "receiver before the new container starts",
+    (f) => {
+      f.parts.cross.server.startTime = (epoch + 6390) * 1000;
+      f.parts.cross.sql.startTime = (epoch + 6400) * 1000;
+    },
+  ],
+  [
+    "CLIENT finished while still stopped",
+    (f) => {
+      f.parts.cross.client.duration = 4000000;
+    },
+  ],
+  [
+    "receiver starts after CLIENT completion",
+    (f) => {
+      f.parts.cross.client.duration = 4702000;
+    },
+  ],
+  [
+    "receiver ends after CLIENT completion",
+    (f) => {
+      f.parts.cross.client.duration = 4720000;
+    },
+  ],
+  [
+    "request exceeds five seconds",
+    (f) => {
+      f.parts.cross.client.duration = 5000001;
+    },
+  ],
+  [
+    "missing request budget",
+    (f) =>
+      setTag(f.parts.cross.client, "antnest.request.timeout_ms", undefined),
+  ],
+  [
+    "zero request budget",
+    (f) => setTag(f.parts.cross.client, "antnest.request.timeout_ms", 0),
+  ],
+  [
+    "missing receiver",
+    (f) => {
+      f.parts.cross.trace.spans.splice(1, 1);
+    },
+  ],
+  [
+    "missing SELECT",
+    (f) => {
+      f.parts.cross.trace.spans.pop();
+    },
+  ],
+  [
+    "unknown receiver error",
+    (f) => setTag(f.parts.cross.server, "exception.type", "unrelated"),
+  ],
+  [
+    "unarchived request",
+    (f) => f.collection.archivedTraceIDs.delete(f.parts.cross.trace.traceID),
+  ],
+  [
+    "missing paired SERVER inventory",
+    (f) => {
+      f.collection.feedSearch.found.feed.pop();
+    },
+  ],
+  [
+    "no independent post-restart request",
+    (f) => {
+      f.collection.traces.delete(f.parts.recovered.trace.traceID);
+      reconcileSearch(f);
+    },
+  ],
+  [
+    "late failed request after recovery",
+    (f) => {
+      const p = f.parts.restarting;
+      move(p, 9000);
+      f.collection.traces.set(p.trace.traceID, p.trace);
+      reconcileSearch(f);
+    },
+  ],
+])
+  test(`successful outage receipt rejects ${name}`, () => {
+    const f = successfulAcrossRestart();
+    change(f);
+    assert.throws(() => check(f));
+  });
+
 function withConnection(f) {
   const part = f.parts.recovered,
     sql = part.trace.spans[2];

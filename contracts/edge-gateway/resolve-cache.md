@@ -267,6 +267,16 @@ Identity SERVER and process, with the same driver and database endpoint. It
 cannot replace the SQL receipt, carry SQL/rows/errors, or cover unknown work.
 The successful response set must equal the final SERVER inventory even if the two search
 indexes become visible at different times.
+An outage need not force a feed error: a bounded request may start while Identity
+is stopped and succeed after the same container restarts. If no feed error was
+observed, require that actual process-owned CLIENT to start between the container's
+finished time and the restart command, finish within the existing five-second
+request bound, and enclose its real successful SERVER after this restart's
+container started time. Its positive timeout budget, complete SELECT and archive
+remain mandatory, as does a separate successful CLIENT started after restart.
+Retain this successful cross-restart receipt separately from error claims. A
+missing stopped-period attempt, an out-of-lifetime receiver or any unidentified
+error still fails admission; the five-second business outage is unchanged.
 Claims never change the original strict result or cover other inventory errors.
 
 The outage stream consumer binds public SSE retirement to the actual Agent,

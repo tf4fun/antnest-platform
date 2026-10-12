@@ -156,6 +156,7 @@ function lifecycle(evidence) {
     before: before.observed_at_ms * 1000,
     stopped: finished * 1000,
     restart: restartMS * 1000,
+    started: started * 1000,
     healthy: healthy.observed_at_ms * 1000,
   };
 }
@@ -459,12 +460,54 @@ export function inspectOutageFeed(evidence, collection, secrets = []) {
       phase,
     });
   }
-  assert(owned.length > 0, "actual outage feed failure missing");
+  const successfulOutageRequests = [];
+  if (!owned.length) {
+    // A five-second outage can end before a feed's five-second deadline. Keep
+    // its real successful receiver as evidence instead of inventing an error.
+    for (const f of passed) {
+      if (
+        f.client.startTime < window.stopped ||
+        f.client.startTime >= window.restart
+      )
+        continue;
+      const server = f.trace.spans.find(
+        (s) =>
+          f.tree.service(s) === "identity-service" &&
+          tag(s, "span.kind") === "server",
+      );
+      assert(
+        tag(f.client, "antnest.request.timeout_ms") > 0,
+        "successful outage feed budget missing",
+      );
+      assert(
+        f.client.duration <= 5000000,
+        "successful outage feed exceeded five seconds",
+      );
+      assert(
+        end(f.client) > window.started &&
+          server.startTime >= window.started &&
+          server.startTime < end(f.client) &&
+          end(server) <= end(f.client),
+        "successful outage feed receiver outside restarted CLIENT lifetime",
+      );
+      successfulOutageRequests.push({
+        trace_id: f.trace.traceID,
+        client_span_id: f.client.spanID,
+        identity_server_span_id: server.spanID,
+        duration_ms: f.client.duration / 1000,
+      });
+    }
+    assert(
+      successfulOutageRequests.length > 0,
+      "actual stopped-period feed attempt missing",
+    );
+  }
   return {
     status: "passed",
     attempts,
     inventory_trace_count: found.inventory_trace_count,
     owned_error_spans: owned,
+    successful_outage_requests: successfulOutageRequests,
     ...resolveTraceDiagnostics(first, all),
   };
 }
