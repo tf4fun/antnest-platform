@@ -179,6 +179,20 @@ test("counter expiry and cleanup cannot erase a live backoff or grow work withou
   assert.equal(retention.cleanup_never_deletes_active_lock, true);
 });
 
+test("attempt cleanup has one bounded scheduler per Identity instance and joins before database shutdown", () => {
+  const { retention } = policy().attempts;
+  assert.equal(retention.cleanup_owner, "single-worker-per-identity-instance");
+  assert.equal(
+    retention.cleanup_schedule,
+    "one-interval-before-first-and-after-each-completion",
+  );
+  assert.equal(retention.cleanup_retries_within_interval, false);
+  assert.equal(
+    retention.cleanup_shutdown,
+    "cancel-and-join-before-database-close",
+  );
+});
+
 test("one process-wide resource pool covers every production hash and verify entry", () => {
   const resources = policy().resources;
   assert.equal(resources.owner, "single-identity-process-engine");

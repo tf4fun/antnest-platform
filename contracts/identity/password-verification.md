@@ -5,8 +5,8 @@ The [machine-readable policy](password-verification-policy.json) has its own
 revision. Its historical wire baseline is Identity revision 16 and Gateway
 version 21. The candidate Identity revision-17 catalog declares
 `credential_busy`/503 and `credential_rate_limited`/429. Identity implements both
-projections, persisted login attempts and transactional login rehash.
-Password-change attempt integration and scheduled cleanup remain pending.
+projections, persisted login/password-change attempts and transactional
+rehash/rotation. Scheduled cleanup remains pending.
 Gateway remains at version 21 until its version-22 consumer implementation.
 Console adoption and cross-service
 integration also remain pending. A policy reference alone does not activate a
@@ -69,9 +69,16 @@ holding a transaction.
 The counter window is 15 minutes, anchored at its first failure. Reset on expiry
 only after both the window and any backoff have ended. Use fresh database time
 after lock waits, rather than a replica clock or transaction-start timestamp.
-Once per minute, cleanup may remove at most 500 eligible rows using locked-row
-skipping. Cleanup must not remove a live backoff or an in-use bucket, and cannot
-create an admission path that bypasses a disappeared/recreated row.
+Each Identity instance owns one serial cleanup worker. It waits one minute
+before the first pass and one minute after each completed pass; a pass may remove
+at most 500 eligible rows using locked-row skipping. This bounds work per
+instance; it is not a cluster-wide deletion quota. A full batch or an error never
+causes immediate retries or catch-up passes. Shutdown cancels and joins the
+worker before closing the database pool, including server-error exits where the
+parent context is still live. Cleanup must not remove a live backoff or an in-use
+bucket, and cannot create an admission path that bypasses a disappeared/recreated
+row. Logs may contain a fixed failure classification but no underlying storage
+error, identifier or credential material.
 
 ## Transaction and concurrency boundary
 
