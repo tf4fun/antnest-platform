@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { identityEvidenceExitCode } from "../identity-closeout/trace.mjs";
-import { clockWarningsOnly } from "../stage3-base/trace.mjs";
+import {
+  clockWarningsOnly,
+  reviewedClockDiagnostics,
+} from "../stage3-base/trace.mjs";
+import { reviewedLifecycleErrors } from "../stage3-base/resolve-trace.mjs";
 
 export function foundationLifecycleExpectation(kind, expectation = {}) {
   return {
@@ -52,13 +56,15 @@ export function foundationAcceptedTraceExitCode(
         return (
           item.kind === "rebuild" &&
           item.restart_error_spans === 3 &&
-          (item.error_spans ?? item.restart_error_spans) === 3 &&
+          reviewedLifecycleErrors(item, true) &&
+          reviewedClockDiagnostics(item.inspector_diagnostics ?? item, true) &&
+          reviewedClockDiagnostics(item, true) &&
           Array.isArray(item.workflow_spans) &&
           item.workflow_spans.length === 2 &&
           item.workflow_spans[0].end_reason === "worker_shutdown" &&
           item.workflow_spans[1].end_reason === "workflow_return"
         );
-      return (item.error_spans ?? 0) === 0 && clockWarningsOnly([item]);
+      return clockWarningsOnly([item]);
     });
   return reviewed ? 0 : strictCode;
 }

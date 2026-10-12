@@ -222,6 +222,21 @@ of the business flow, not Gateway health aggregation.
 Each language keeps a thin instrumentation component, does not import a sibling
 service's internals, and does not build an all-purpose observability framework.
 
+Stage 3 Lifecycle consumers retain the full raw error count and strict result
+when adding Resolve provenance. Existing reviewed Skill preparation retries,
+Docker Start response loss, serialization retries and lifecycle interruption
+are identified by their actual current Trace/span IDs and fixed reason. The
+collector verifies each claim against the current raw error inventory. Final
+acceptance requires every current error to be covered, no source/trigger errors,
+and the original owning gate and clock-warning rules. Fenced restart acceptance
+still requires exactly one proved Rebuild cancellation with its two interruption
+errors; independent reviewed retries do not change that count. A retry count,
+foreign/duplicate claim, unclassified platform probe or incomplete business or
+cleanup report cannot establish acceptance.
+Foundation graceful drain retains its separate three-interruption requirement
+and the worker-shutdown/workflow-return sequence, with the same exact error
+coverage; its outer shell still requires successful business completion.
+
 ### Jaeger queries in tests
 
 The in-memory storage of the development Jaeger 2.20.0 has a query side effect: a

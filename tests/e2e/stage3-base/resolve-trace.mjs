@@ -14,6 +14,81 @@ import {
   resolveTraceSources,
 } from "../../support/gateway-resolution-evidence.mjs";
 
+const lifecycleErrorReasons = new Set([
+  "skill-preparation-retry",
+  "docker-start-response-loss",
+  "serialization-retry",
+  "lifecycle-restart",
+]);
+
+function checkedClaims(traceID, ids, claims) {
+  assert(Array.isArray(ids) && new Set(ids).size === ids.length);
+  assert(ids.every((id) => typeof id === "string" && id.length > 0));
+  assert(Array.isArray(claims));
+  const claimed = new Set();
+  for (const claim of claims) {
+    assert.deepEqual(Object.keys(claim).sort(), [
+      "reason",
+      "span_id",
+      "trace_id",
+    ]);
+    assert.equal(claim.trace_id, traceID, "foreign Lifecycle error claim");
+    assert(
+      ids.includes(claim.span_id),
+      "Lifecycle claim is not an actual current error",
+    );
+    assert(
+      lifecycleErrorReasons.has(claim.reason),
+      "unknown Lifecycle error reason",
+    );
+    assert(!claimed.has(claim.span_id), "duplicate Lifecycle error claim");
+    claimed.add(claim.span_id);
+  }
+  return claimed;
+}
+
+export function lifecycleErrorEvidence(trace, checked) {
+  const ids = trace.spans.filter(hasError).map((span) => span.spanID);
+  if (checked.lifecycle_error_span_ids !== undefined)
+    assert.deepEqual(
+      [...checked.lifecycle_error_span_ids].sort(),
+      [...ids].sort(),
+      "Lifecycle raw error identities changed",
+    );
+  const claims = checked.lifecycle_error_claims ?? [];
+  checkedClaims(trace.traceID, ids, claims);
+  return { lifecycle_error_span_ids: ids, lifecycle_error_claims: claims };
+}
+
+// Counts alone cannot authorize an error. The owning inspector identifies each
+// reviewed current span, and collection binds that inventory to the raw trace.
+export function reviewedLifecycleErrors(result, allowRestart = false) {
+  try {
+    if ((result.resolve_source_error_spans ?? 0) !== 0) return false;
+    const ids = result.lifecycle_error_span_ids ?? [];
+    const claims = result.lifecycle_error_claims ?? [];
+    const raw = result.error_spans ?? ids.length;
+    if (!Number.isSafeInteger(raw) || raw !== ids.length) return false;
+    if (ids.length && (typeof result.trace_id !== "string" || !result.trace_id))
+      return false;
+    if (
+      result.gateway_resolution &&
+      result.gateway_resolution.trace_id !== result.trace_id
+    )
+      return false;
+    const claimed = checkedClaims(result.trace_id, ids, claims);
+    if (claimed.size !== ids.length) return false;
+    const restarts = claims.filter(
+      (claim) => claim.reason === "lifecycle-restart",
+    ).length;
+    return allowRestart
+      ? restarts === result.restart_error_spans
+      : restarts === 0 && (result.restart_error_spans ?? 0) === 0;
+  } catch {
+    return false;
+  }
+}
+
 // This is the normal Console POST admission, including read-only Create replay.
 // Offboarding, stream revalidation and killed-process recovery have other roots
 // or explicit topology scopes and keep their own owning inspectors.
@@ -133,6 +208,7 @@ export async function collectLifecycleAdmissionTrace(
           );
         return {
           ...checked,
+          ...lifecycleErrorEvidence(trace, checked),
           gateway_resolution: resolution,
           resolve_source_error_spans: sourceErrors,
         };

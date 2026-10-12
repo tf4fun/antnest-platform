@@ -347,6 +347,13 @@ test("Lifecycle requires an owning inspector instead of cache-only success", asy
 
 test("shared source errors cannot enter the narrow restart diagnostic waivers", () => {
   const fenced = {
+    trace_id: "restart-trace",
+    lifecycle_error_span_ids: ["activity", "client"],
+    lifecycle_error_claims: ["activity", "client"].map((span_id) => ({
+      trace_id: "restart-trace",
+      span_id,
+      reason: "lifecycle-restart",
+    })),
     kind: "rebuild",
     fenced_restart_cancellation: true,
     strict_trace: "failed",
@@ -362,6 +369,15 @@ test("shared source errors cannot enter the narrow restart diagnostic waivers", 
     false,
   );
   const graceful = {
+    trace_id: "graceful-trace",
+    lifecycle_error_span_ids: ["workflow", "activity", "client"],
+    lifecycle_error_claims: ["workflow", "activity", "client"].map(
+      (span_id) => ({
+        trace_id: "graceful-trace",
+        span_id,
+        reason: "lifecycle-restart",
+      }),
+    ),
     kind: "rebuild",
     topology: "passed",
     strict_trace: "failed",
@@ -401,6 +417,13 @@ test("clock-only acceptance cannot hide raw current errors classified by another
 
 test("fenced restart exception cannot hide additional current errors", () => {
   const result = {
+    trace_id: "restart-trace",
+    lifecycle_error_span_ids: ["activity", "client"],
+    lifecycle_error_claims: ["activity", "client"].map((span_id) => ({
+      trace_id: "restart-trace",
+      span_id,
+      reason: "lifecycle-restart",
+    })),
     kind: "rebuild",
     fenced_restart_cancellation: true,
     strict_trace: "failed",
@@ -419,6 +442,15 @@ test("fenced restart exception cannot hide additional current errors", () => {
 
 test("graceful restart exception cannot hide additional current errors", () => {
   const result = {
+    trace_id: "graceful-trace",
+    lifecycle_error_span_ids: ["workflow", "activity", "client"],
+    lifecycle_error_claims: ["workflow", "activity", "client"].map(
+      (span_id) => ({
+        trace_id: "graceful-trace",
+        span_id,
+        reason: "lifecycle-restart",
+      }),
+    ),
     kind: "rebuild",
     topology: "passed",
     strict_trace: "failed",

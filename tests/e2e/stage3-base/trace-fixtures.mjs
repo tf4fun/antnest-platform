@@ -103,3 +103,55 @@ export function fixture(kind) {
     },
   };
 }
+
+export function serializationRetryFixture({ failedCommit = false } = {}) {
+  const f = fixture("disable");
+  const owner = f.trace.spans.find(
+    (s) => s.spanID === "rpc-lifecycle.runtime_disable",
+  );
+  owner.duration = 20;
+  const add = (spanID, parent, operationName, offset, tags) => {
+    const span = {
+      traceID: f.trace.traceID,
+      spanID,
+      processID: "runtime-controller",
+      operationName,
+      startTime: owner.startTime + offset,
+      duration: 2,
+      references: [
+        { refType: "CHILD_OF", traceID: f.trace.traceID, spanID: parent },
+      ],
+      tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
+    };
+    f.trace.spans.push(span);
+    return span;
+  };
+  const conflict = {
+    "span.kind": "client",
+    "db.system.name": "postgresql",
+    "otel.status_code": "ERROR",
+    error: true,
+    "otel.status_description":
+      "ERROR: could not serialize access due to read/write dependencies among transactions (SQLSTATE 40001)",
+  };
+  add("aborted", owner.spanID, "postgresql transaction", 1, {
+    "db.system.name": "postgresql",
+    ...(failedCommit
+      ? {
+          "antnest.transaction.outcome": "failed",
+          "otel.status_code": "ERROR",
+          error: true,
+          "error.type": "transaction_error",
+        }
+      : { "antnest.transaction.outcome": "rolled_back" }),
+  });
+  add("aborted-statement", "aborted", failedCommit ? "COMMIT" : "DELETE", 1, {
+    ...conflict,
+    "db.operation.name": failedCommit ? "COMMIT" : "DELETE",
+  });
+  const retry = add("retry", owner.spanID, "postgresql transaction", 4, {
+    "db.system.name": "postgresql",
+    "antnest.transaction.outcome": "committed",
+  });
+  return { ...f, retry, statement: f.trace.spans.at(-2) };
+}

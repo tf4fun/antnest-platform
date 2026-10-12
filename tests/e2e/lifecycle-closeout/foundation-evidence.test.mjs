@@ -88,10 +88,20 @@ test("foundation admits only the validated busy denial and graceful drain restar
     warning_count: 0,
   };
   const restart = {
+    trace_id: "restart-trace",
     topology: "passed",
     strict_trace: "failed",
     kind: "rebuild",
     restart_error_spans: 3,
+    error_spans: 3,
+    lifecycle_error_span_ids: ["workflow", "activity", "client"],
+    lifecycle_error_claims: ["workflow", "activity", "client"].map(
+      (span_id) => ({
+        trace_id: "restart-trace",
+        span_id,
+        reason: "lifecycle-restart",
+      }),
+    ),
     platform_probe_errors: 0,
     warnings: [],
     warning_count: 0,
@@ -134,6 +144,89 @@ test("foundation admits only the validated busy denial and graceful drain restar
     0,
   );
 });
+
+function reviewedPreparation(restart = false) {
+  const trace_id = "reviewed-trace";
+  const ids = restart
+    ? ["workflow", "activity", "client", "prepare"]
+    : ["prepare"];
+  return {
+    trace_id,
+    topology: "passed",
+    strict_trace: "failed",
+    inspector_diagnostics: {
+      strict_trace: restart ? "failed" : "passed",
+      warning_count: 0,
+      warnings: [],
+    },
+    kind: restart ? "rebuild" : "create",
+    restart_error_spans: restart ? 3 : 0,
+    error_spans: ids.length,
+    lifecycle_error_span_ids: ids,
+    lifecycle_error_claims: ids.map((span_id) => ({
+      trace_id,
+      span_id,
+      reason:
+        span_id === "prepare" ? "skill-preparation-retry" : "lifecycle-restart",
+    })),
+    platform_probe_errors: 0,
+    resolve_source_error_spans: 0,
+    warnings: [],
+    warning_count: 0,
+    ...(restart
+      ? {
+          workflow_spans: [
+            { end_reason: "worker_shutdown" },
+            { end_reason: "workflow_return" },
+          ],
+        }
+      : {}),
+  };
+}
+
+for (const restart of [false, true])
+  test(`foundation preserves raw errors for exact reviewed preparation (restart=${restart})`, () => {
+    const evidence = [reviewedPreparation(restart)];
+    const original = JSON.stringify(evidence);
+    assert.equal(foundationTraceExitCode(evidence), 2);
+    assert.equal(foundationAcceptedTraceExitCode(evidence), 0);
+    assert.equal(JSON.stringify(evidence), original);
+    for (const mutate of [
+      (item) => item.lifecycle_error_claims.pop(),
+      (item) => {
+        item.lifecycle_error_claims[0].trace_id = "foreign";
+      },
+      (item) => {
+        item.lifecycle_error_claims[0].span_id = "foreign";
+      },
+      (item) =>
+        item.lifecycle_error_claims.push(item.lifecycle_error_claims[0]),
+      (item) => {
+        item.lifecycle_error_claims[0].reason = "unknown";
+      },
+      (item) => {
+        item.error_spans++;
+        item.lifecycle_error_span_ids.push("extra");
+      },
+      (item) => {
+        item.resolve_source_error_spans = 1;
+      },
+      (item) => {
+        item.warnings = ["unreviewed warning"];
+        item.warning_count = 1;
+      },
+      (item) => {
+        item.inspector_diagnostics.warnings = ["unreviewed warning"];
+      },
+      (item) => {
+        item.topology = "failed";
+      },
+    ]) {
+      const item = structuredClone(evidence[0]);
+      mutate(item);
+      assert.notEqual(foundationAcceptedTraceExitCode([item]), 0);
+    }
+  });
 
 test("Stage 4 restore accepts only clock warnings after every topology passes", () => {
   const warning =

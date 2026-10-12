@@ -6,7 +6,7 @@ import {
   reviewedFencedRestartOnly,
 } from "./trace.mjs";
 import { tag } from "../observability/trace-tree.mjs";
-import { fixture } from "./trace-fixtures.mjs";
+import { fixture, serializationRetryFixture } from "./trace-fixtures.mjs";
 
 test("an explicitly expected unknown-effect Rebuild requires the current Runtime barrier acknowledgement", () => {
   const f = fixture("rebuild");
@@ -185,57 +185,6 @@ test("Skill preparation queue retry is expected only when declared and followed 
     inspectLifecycle(trace, { ...expected, skillPreparation: true }),
   );
 });
-function serializationRetryFixture({ failedCommit = false } = {}) {
-  const f = fixture("disable");
-  const owner = f.trace.spans.find(
-    (s) => s.spanID === "rpc-lifecycle.runtime_disable",
-  );
-  owner.duration = 20;
-  const add = (spanID, parent, operationName, offset, tags) => {
-    const span = {
-      traceID: f.trace.traceID,
-      spanID,
-      processID: "runtime-controller",
-      operationName,
-      startTime: owner.startTime + offset,
-      duration: 2,
-      references: [
-        { refType: "CHILD_OF", traceID: f.trace.traceID, spanID: parent },
-      ],
-      tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
-    };
-    f.trace.spans.push(span);
-    return span;
-  };
-  const conflict = {
-    "span.kind": "client",
-    "db.system.name": "postgresql",
-    "otel.status_code": "ERROR",
-    error: true,
-    "otel.status_description":
-      "ERROR: could not serialize access due to read/write dependencies among transactions (SQLSTATE 40001)",
-  };
-  add("aborted", owner.spanID, "postgresql transaction", 1, {
-    "db.system.name": "postgresql",
-    ...(failedCommit
-      ? {
-          "antnest.transaction.outcome": "failed",
-          "otel.status_code": "ERROR",
-          error: true,
-          "error.type": "transaction_error",
-        }
-      : { "antnest.transaction.outcome": "rolled_back" }),
-  });
-  add("aborted-statement", "aborted", failedCommit ? "COMMIT" : "DELETE", 1, {
-    ...conflict,
-    "db.operation.name": failedCommit ? "COMMIT" : "DELETE",
-  });
-  const retry = add("retry", owner.spanID, "postgresql transaction", 4, {
-    "db.system.name": "postgresql",
-    "antnest.transaction.outcome": "committed",
-  });
-  return { ...f, retry, statement: f.trace.spans.at(-2) };
-}
 test("a serialization abort is accepted only when a committed transaction retries it", () => {
   for (const failedCommit of [false, true]) {
     const { trace, expected } = serializationRetryFixture({ failedCommit });
@@ -291,11 +240,18 @@ test("clock warning waiver rejects platform errors and unrelated trace warnings"
 });
 test("fenced restart waiver accepts only one proven cancellation and clock warnings", () => {
   const restart = {
+    trace_id: "restart-trace",
     kind: "rebuild",
     fenced_restart_cancellation: true,
     strict_trace: "failed",
     restart_error_spans: 2,
     platform_probe_errors: 0,
+    lifecycle_error_span_ids: ["activity", "client"],
+    lifecycle_error_claims: ["activity", "client"].map((span_id) => ({
+      trace_id: "restart-trace",
+      span_id,
+      reason: "lifecycle-restart",
+    })),
     warnings: [
       "clock skew adjustment disabled; not applying calculated delta of -1µs",
     ],
