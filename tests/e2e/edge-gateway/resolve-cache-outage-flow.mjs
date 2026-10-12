@@ -11,6 +11,7 @@ import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { observeWorkspaceStream } from "./resolve-cache-stream.mjs";
 import { collectOutageTraceArchive } from "./resolve-cache-outage-collect.mjs";
 import { shortenIdleSession } from "./resolve-cache-expiry-fixture.mjs";
+import { verifyRecovery } from "./resolve-cache-recovery-flow.mjs";
 import {
   inspectOutageWindow,
   inspectFreshConsumerWindow,
@@ -159,6 +160,7 @@ export async function verifyWarmOutage({
     label,
     requestSignal = signal,
     timeoutMS = 15000,
+    intervalMS = 25,
   ) => {
     const deadline = performance.now() + timeoutMS;
     for (;;) {
@@ -166,7 +168,7 @@ export async function verifyWarmOutage({
       const value = await check();
       if (value) return value;
       assert(performance.now() < deadline, `${label}: timed out`);
-      await delay(25, undefined, { signal: requestSignal });
+      await delay(intervalMS, undefined, { signal: requestSignal });
     }
   };
   const model = async (requestSignal = signal) => {
@@ -650,10 +652,26 @@ export async function verifyWarmOutage({
       label: "recovered-expired-session",
       status: 401,
     });
+    evidence.recovery_window = await verifyRecovery({
+      config,
+      fixture,
+      credentials: member,
+      administrator,
+      signal,
+      evidence,
+      secrets,
+      http,
+      login,
+      model,
+      credentialScope,
+      poll: (check, label, requestSignal = signal, timeoutMS = 15000) =>
+        poll(check, label, requestSignal, timeoutMS, 250),
+    });
     result = {
       ...result,
       consumer_key_budget: evidence.consumer_key_budget,
-      pending: ["recovery-revocations", "strict-trace-admission"],
+      recovery: evidence.recovery_window,
+      pending: ["recovery-trace-admission", "strict-trace-admission"],
     };
   } catch (error) {
     problem = error;

@@ -227,18 +227,25 @@ function heldModelCancellation(trace, expected, boundary, model, http) {
     ),
     "held model cancellation executed a Tool",
   );
-  cancelledModelError(trace, model, http);
+  cancelledModelError(trace, model, http, expected.cancellationCause);
 }
 
-function cancelledModelError(trace, model, http) {
+function cancelledModelError(trace, model, http, cause) {
+  assert(
+    cause === undefined || cause === "principal_revocation",
+    "undeclared model cancellation cause",
+  );
+  const revoked =
+    cause === "principal_revocation" &&
+    tag(http, "error.type") === "DomainError";
   const requireTags = (span, tags) => {
     for (const [key, value] of Object.entries(tags))
       assert.equal(tag(span, key), value, `wrong model cancellation ${key}`);
     assert(hasError(span), "model cancellation error missing");
   };
   requireTags(http, {
-    "error.type": "Error",
-    "antnest.outcome": "error",
+    "error.type": revoked ? "DomainError" : "Error",
+    "antnest.outcome": revoked ? "rejected" : "error",
     "antnest.operation.phase": "http.send_or_read",
   });
   for (const key of [
@@ -246,7 +253,13 @@ function cancelledModelError(trace, model, http) {
     "error.code",
     "antnest.error.code",
   ])
-    assert.equal(tag(http, key), undefined, "unrelated model HTTP failure");
+    assert.equal(
+      tag(http, key),
+      revoked && key !== "http.response.status_code"
+        ? "access_denied"
+        : undefined,
+      "unrelated model HTTP failure",
+    );
   const events = (http.logs ?? []).filter((event) =>
     event.fields?.some(
       (field) => field.key === "event" && field.value === "antnest.error",
@@ -259,7 +272,8 @@ function cancelledModelError(trace, model, http) {
   );
   for (const [key, value] of Object.entries({
     "antnest.error.stage": "http.send_or_read",
-    "antnest.error.type": "Error",
+    "antnest.error.type": revoked ? "DomainError" : "Error",
+    ...(revoked ? { "antnest.error.code": "access_denied" } : {}),
   }))
     assert.equal(
       events[0].fields.find((field) => field.key === key)?.value,

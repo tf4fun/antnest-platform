@@ -78,6 +78,51 @@ test("outage raw scope includes HTTP/SSE, both actual WSS connections, model ori
     [1, 2, 3, 4, 5, 6, 7, 9, 10, 11].map(id),
   );
 });
+
+function withRecoveryObservers(s) {
+  s.evidence.recovery = { cases: [] };
+  for (const n of [20, 30]) {
+    s.evidence.recovery.cases.push({
+      name: `case-${n}`,
+      wire: {
+        upgrade: { trace_id: id(n) },
+        frames: [{ direction: "send", raw: '{"method":"initialize"}' }],
+      },
+      stream: { trace_id: id(n + 1) },
+    });
+    const message = structuredClone(s.found.messages[0]);
+    message.traceID = id(n + 2);
+    message.spans[0].traceID = message.traceID;
+    message.spans[0].references[0].traceID = id(n);
+    s.found.messages.push(message);
+  }
+}
+
+test("outage inventory includes every recovery WSS message and SSE", () => {
+  const s = sample();
+  withRecoveryObservers(s);
+  assert.deepEqual(
+    outageTraceSelection(s.evidence, s.found),
+    [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 20, 21, 22, 30, 31, 32].map(id),
+  );
+});
+
+test("outage inventory rejects a missing recovery WSS message", () => {
+  const s = sample();
+  withRecoveryObservers(s);
+  s.found.messages.pop();
+  assert.throws(() => outageTraceSelection(s.evidence, s.found), /inventory/u);
+});
+
+test("outage inventory rejects duplicate connection identities", () => {
+  const s = sample();
+  withRecoveryObservers(s);
+  s.evidence.recovery.cases[1].wire.upgrade.trace_id = id(20);
+  assert.throws(
+    () => outageTraceSelection(s.evidence, s.found),
+    /duplicate.*connection/u,
+  );
+});
 for (const [label, change] of [
   [
     "missing actual cancel trace",
@@ -239,6 +284,20 @@ function withOutageChat(s) {
   );
   return f;
 }
+
+test("recovery inventory failure still archives independently known observers", async (t) => {
+  const h = archiveHarness(t, (s) => {
+    withRecoveryObservers(s);
+    s.found.messages.pop();
+    s.evidence.recovery.cases.push({
+      name: "partial",
+      stream: { trace_id: id(40) },
+    });
+  });
+  await assert.rejects(h.archive(), AggregateError);
+  for (const n of [20, 21, 30, 31, 40])
+    assert(existsSync(join(h.root, "outage-traces", `${id(n)}.json`)));
+});
 
 test("outage archive runs HTTP rejection gate against archived sources", async (t) => {
   let observed = false;

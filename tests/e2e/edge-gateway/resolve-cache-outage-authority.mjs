@@ -59,6 +59,99 @@ function ageInterval(decision, key) {
   return [decision.startTime - age * 1000 - 1, end(decision) - age * 1000 + 1];
 }
 
+export function inspectAuthorityOrigin(hit, source, all, get) {
+  assert.equal(hit.result.source, "cache");
+  assert.equal(source.result.source, "rpc");
+  const client = traceTopology(source.trace).spans.get(
+    source.result.rpc_client_span_id,
+  );
+  const interval = ageInterval(hit.decision, "snapshot_age_ms");
+  const minted = [source.decision.startTime - 1, client.startTime + 1];
+  assert(
+    intersects(interval, minted),
+    "cache origin differs from original actual Resolve source",
+  );
+  const candidates = all.flatMap((t) => {
+    const tree = traceTopology(t);
+    return t.spans
+      .filter(
+        (d) =>
+          d.operationName === "gateway.identity.resolve" &&
+          tag(d, prefix + "source") === "rpc" &&
+          tag(d, prefix + "profile") === hit.result.profile,
+      )
+      .flatMap((d) =>
+        t.spans
+          .filter(
+            (c) =>
+              tree.service(c) === "edge-gateway" &&
+              tag(c, "span.kind") === "client" &&
+              tree.parent(c) === tree.parent(d) &&
+              c.startTime >= d.startTime &&
+              end(c) <= end(d) &&
+              t.spans.some(
+                (s) =>
+                  tree.parent(s) === c &&
+                  tree.service(s) === "identity-service" &&
+                  tag(s, "http.route") === "/rpc/identity/resolve-access-token",
+              ),
+          )
+          .filter((c) =>
+            intersects(interval, [d.startTime - 1, c.startTime + 1]),
+          )
+          .map((c) => ({ trace: t, client: c })),
+      );
+  });
+  for (const t of all) {
+    const tree = traceTopology(t);
+    for (const refresh of t.spans.filter(
+      (s) =>
+        s.operationName === "gateway.identity.resolve.refresh" &&
+        tag(s, prefix + "profile") === hit.result.profile,
+    )) {
+      const link = one(
+        refresh.references.filter((r) => r.refType === "FOLLOWS_FROM"),
+        "refresh origin trigger missing",
+      );
+      const trigger = traceTopology(get(link.traceID)).spans.get(link.spanID);
+      assert(
+        trigger?.operationName === "gateway.identity.resolve" &&
+          tag(trigger, prefix + "profile") === hit.result.profile,
+        "wrong refresh origin trigger",
+      );
+      for (const c of t.spans.filter(
+        (c) =>
+          tree.service(c) === "edge-gateway" &&
+          tag(c, "span.kind") === "client" &&
+          tree.parent(c) === refresh &&
+          t.spans.some(
+            (s) =>
+              tree.parent(s) === c &&
+              tree.service(s) === "identity-service" &&
+              tag(s, "http.route") === "/rpc/identity/resolve-access-token",
+          ),
+      )) {
+        if (intersects(interval, [refresh.startTime - 1, c.startTime + 1]))
+          candidates.push({ trace: t, client: c });
+      }
+    }
+  }
+  const candidate = one(candidates, "ambiguous actual Resolve origin");
+  assert(
+    candidate.trace === source.trace && candidate.client === client,
+    "wrong original Resolve origin",
+  );
+  assert(
+    end(client) <= hit.decision.startTime,
+    "cache admitted before its source RPC completed",
+  );
+  return {
+    source_trace_id: source.trace.traceID,
+    snapshot_origin_us: interval,
+    source_start_bounds_us: minted,
+  };
+}
+
 export function inspectOutageAuthority(evidence, collection, secrets = []) {
   const { traces, archivedTraceIDs } = collection;
   assert(
@@ -414,99 +507,7 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
     "GET",
     true,
   );
-  const origin = (hit, source) => {
-    assert.equal(hit.result.source, "cache");
-    assert.equal(source.result.source, "rpc");
-    const client = traceTopology(source.trace).spans.get(
-      source.result.rpc_client_span_id,
-    );
-    const interval = ageInterval(hit.decision, "snapshot_age_ms");
-    const minted = [source.decision.startTime - 1, client.startTime + 1];
-    assert(
-      intersects(interval, minted),
-      "cache origin differs from original actual Resolve source",
-    );
-    const candidates = all.flatMap((t) => {
-      const tree = traceTopology(t);
-      return t.spans
-        .filter(
-          (d) =>
-            d.operationName === "gateway.identity.resolve" &&
-            tag(d, prefix + "source") === "rpc" &&
-            tag(d, prefix + "profile") === hit.result.profile,
-        )
-        .flatMap((d) =>
-          t.spans
-            .filter(
-              (c) =>
-                tree.service(c) === "edge-gateway" &&
-                tag(c, "span.kind") === "client" &&
-                tree.parent(c) === tree.parent(d) &&
-                c.startTime >= d.startTime &&
-                end(c) <= end(d) &&
-                t.spans.some(
-                  (s) =>
-                    tree.parent(s) === c &&
-                    tree.service(s) === "identity-service" &&
-                    tag(s, "http.route") ===
-                      "/rpc/identity/resolve-access-token",
-                ),
-            )
-            .filter((c) =>
-              intersects(interval, [d.startTime - 1, c.startTime + 1]),
-            )
-            .map((c) => ({ trace: t, client: c })),
-        );
-    });
-    for (const t of all) {
-      const tree = traceTopology(t);
-      for (const refresh of t.spans.filter(
-        (s) =>
-          s.operationName === "gateway.identity.resolve.refresh" &&
-          tag(s, prefix + "profile") === hit.result.profile,
-      )) {
-        const link = one(
-          refresh.references.filter((r) => r.refType === "FOLLOWS_FROM"),
-          "refresh origin trigger missing",
-        );
-        const trigger = traceTopology(get(link.traceID)).spans.get(link.spanID);
-        assert(
-          trigger?.operationName === "gateway.identity.resolve" &&
-            tag(trigger, prefix + "profile") === hit.result.profile,
-          "wrong refresh origin trigger",
-        );
-        for (const c of t.spans.filter(
-          (c) =>
-            tree.service(c) === "edge-gateway" &&
-            tag(c, "span.kind") === "client" &&
-            tree.parent(c) === refresh &&
-            t.spans.some(
-              (s) =>
-                tree.parent(s) === c &&
-                tree.service(s) === "identity-service" &&
-                tag(s, "http.route") === "/rpc/identity/resolve-access-token",
-            ),
-        )) {
-          if (intersects(interval, [refresh.startTime - 1, c.startTime + 1]))
-            candidates.push({ trace: t, client: c });
-        }
-      }
-    }
-    const candidate = one(candidates, "ambiguous actual Resolve origin");
-    assert(
-      candidate.trace === source.trace && candidate.client === client,
-      "wrong original Resolve origin",
-    );
-    assert(
-      end(client) <= hit.decision.startTime,
-      "cache admitted before its source RPC completed",
-    );
-    return {
-      source_trace_id: source.trace.traceID,
-      snapshot_origin_us: interval,
-      source_start_bounds_us: minted,
-    };
-  };
+  const origin = (hit, source) => inspectAuthorityOrigin(hit, source, all, get);
   const prewarm = [
     [consoleHit, consoleSource],
     [acpHit, connection],

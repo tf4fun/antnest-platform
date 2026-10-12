@@ -11,6 +11,8 @@ import { inspectWorkspaceChatTrace } from "../workspace-closeout/chat-trace.mjs"
 import { outagePhase } from "./resolve-cache-outage.mjs";
 import { inspectOutageAuthority } from "./resolve-cache-outage-authority.mjs";
 import { inspectOutageRejections } from "./resolve-cache-outage-rejection.mjs";
+import { inspectRecoveryRunTraces } from "./resolve-cache-recovery-trace.mjs";
+import { inspectRecoveryAuthority } from "./resolve-cache-recovery-authority.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -72,10 +74,22 @@ export function outageTraceSelection(evidence, found) {
     ids.add(id);
   };
   for (const row of evidence.http) add(row.trace_id);
-  if (evidence.stream) add(evidence.stream.trace_id);
-  for (const wire of [evidence.prep_wire, evidence.wire]) {
+  for (const stream of [
+    evidence.stream,
+    ...(evidence.recovery?.cases ?? []).map((item) => item.stream),
+  ])
+    if (stream) add(stream.trace_id);
+  for (const wire of [
+    evidence.prep_wire,
+    evidence.wire,
+    ...(evidence.recovery?.cases ?? []).map((item) => item.wire),
+  ]) {
     if (!wire?.upgrade) continue;
     add(wire.upgrade.trace_id);
+    assert(
+      !connections.has(wire.upgrade.trace_id),
+      "duplicate WSS connection Trace inventory entry",
+    );
     const methods = wire.frames
       .filter((frame) => frame.direction === "send")
       .map((frame) => JSON.parse(frame.raw).method)
@@ -143,6 +157,8 @@ export async function collectOutageTraceArchive(
     collect = collectResolveTraceEvidence,
     inspectAuthority = inspectOutageAuthority,
     inspectRejections = inspectOutageRejections,
+    inspectRecovery = inspectRecoveryRunTraces,
+    inspectRecoveryBudgets = inspectRecoveryAuthority,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -160,8 +176,16 @@ export async function collectOutageTraceArchive(
   };
   // Inventory/search failures must not suppress independently known requests.
   for (const row of evidence.http) retainID(row.trace_id);
-  if (evidence.stream) retainID(evidence.stream.trace_id);
-  for (const wire of [evidence.prep_wire, evidence.wire])
+  for (const stream of [
+    evidence.stream,
+    ...(evidence.recovery?.cases ?? []).map((item) => item.stream),
+  ])
+    if (stream) retainID(stream.trace_id);
+  for (const wire of [
+    evidence.prep_wire,
+    evidence.wire,
+    ...(evidence.recovery?.cases ?? []).map((item) => item.wire),
+  ])
     if (wire?.upgrade) retainID(wire.upgrade.trace_id);
   for (const observation of evidence.model_observations)
     for (const request of observation.state.requests)
@@ -329,6 +353,8 @@ export async function collectOutageTraceArchive(
   );
   let authority = { status: "pending" },
     rejections = { status: "pending" },
+    recovery = { status: "pending" },
+    recoveryAuthority = { status: "pending" },
     collection;
   if (evidence.business_window) {
     try {
@@ -371,6 +397,24 @@ export async function collectOutageTraceArchive(
       errors.push(error);
     }
   }
+  if (evidence.recovery_window) {
+    try {
+      assert(collection, "recovery Run raw archive missing");
+      recovery = await inspectRecovery(evidence, collection, secrets);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      assert(collection, "recovery authority raw archive missing");
+      recoveryAuthority = await inspectRecoveryBudgets(
+        evidence,
+        collection,
+        secrets,
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
   const result = {
     status: errors.length
       ? "archive_failed"
@@ -379,6 +423,8 @@ export async function collectOutageTraceArchive(
     owning_gates: {
       authority,
       http_rejections: rejections,
+      recovery_runs: recovery,
+      recovery_authority: recoveryAuthority,
       cancellation: reports.some(
         (row) => row.trace_id === chat?.traceID && row.settled_read === true,
       )

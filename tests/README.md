@@ -285,6 +285,22 @@ and booleans. Two ordinary session reads must not renew the short deadline.
 Database observation proves expiry before dispatch; the
 same Cookie receives an authoritative 401 after recovery. Raw failed Identity
 CLIENT spans and HTTP roots remain in strict diagnostics.
+After recovery, four fresh Sessions each hold one real model request while
+logout, password change, an active Membership role change, and Membership
+deactivation retire their WSS/SSE observers. Remote closure must precede both
+the 30-second revocation bound and the original credential's conservative
+validity bound. Old Cookies receive actual 401 responses without Cookie writes;
+an independent peer SID survives logout and is revoked by the other mutations.
+The first three accepted Runs remain running after transport retirement, then
+complete after an explicit model release; a fresh login reads the same Run's
+answer. Deactivation instead cancels and settles the held Run. Restoring the
+Membership permits login but leaves its Agent disabled until explicit Enable.
+All observers, model requests and HTTP responses enter the raw Trace inventory.
+Run identity, input and execution snapshot remain fixed across the mutation.
+Failure cleanup releases only the observed owned model request and joins the
+same Run's quiescent terminal under a separate finite budget, retaining cleanup
+and business failure evidence separately. Its failure/interruption paths have
+local callback tests; successful Docker execution does not exercise those paths.
 After the recovery observation and public connection cleanup, this batch drains
 its Agent UI process so internal ACP HTTP watches can finish their real SERVER
 spans before collection; raw parents are never fabricated or discarded.
@@ -326,6 +342,8 @@ Observer and failure-first coverage is in `resolve-cache-outage.test.mjs`,
 `resolve-cache-outage-collect.test.mjs`,
 `resolve-cache-outage-authority.test.mjs`,
 `resolve-cache-outage-rejection.test.mjs`, `resolve-cache-expiry-fixture.test.mjs`,
+`resolve-cache-recovery.test.mjs`, `resolve-cache-recovery-authority.test.mjs`,
+`resolve-cache-recovery-cleanup.test.mjs`,
 `resolve-cache-outage-replay.test.mjs`, `workspace-closeout/chat-outage.test.mjs`,
 `resolve-cache-stream.test.mjs`, `workspace-closeout/c4-cache-model.test.mjs`
 and `lifecycle-closeout/acp.test.mjs`. The model fixture holds two stages of the
@@ -335,8 +353,13 @@ retains raw frames without reconnecting, and distinguishes remote closure from
 local cleanup. The ACP helper can negotiate delivery marks and target a cancel
 at the observed Run. A passed business window and raw archive do not establish
 complete outage/recovery admission. Authority, cancellation and HTTP rejection
-have separate owning results; recovery revocations and the remaining owning
-Trace gates stay explicit pending items in the report.
+have separate owning results. Recovery Run and original-authority gates are
+also separate; mutation HTTP receipts, stream retirement diagnostics, stopped
+feed errors and complete CI registration/admission remain pending. Successful
+Run telemetry uses `outcome=ok` with `terminal_class=completed`. Explicit
+principal-revocation cancellation permits the observed `DomainError` /
+`access_denied` Provider rejection with its exact event and ModelError origin;
+other model failures still reject the gate and raw strict findings stay intact.
 
 Some contract checks can be run directly:
 
