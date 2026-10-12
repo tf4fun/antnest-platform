@@ -276,6 +276,16 @@ to each view, because a view may reuse an existing connection. Extra errors,
 missing ancestry or archives, local closure and unrelated shutdowns are not
 covered. Every claim names one original trace/span; raw diagnostics stay strict.
 
+Final outage admission reconciles the entire archived Trace map, including
+shared sources and triggers, against the exact error claims from all passed
+owning gates. Every raw error must have an owner; unknown or non-error IDs,
+conflicting reasons, incomplete archives or pending gates fail admission.
+Repeated evidence of the same span is counted once. Original errors and warnings
+remain intact, and only the already reviewed Jaeger clock-skew warning format
+may accompany completion. The suite is complete only after HTTPS load, outage,
+recovery, all owning gates, diagnostic reconciliation and resource cleanup pass;
+an intermediate report or exit zero alone cannot establish CI admission.
+
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
 under the current HTTP or ACP-message root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
