@@ -17,6 +17,7 @@ Issue 状态最后核对于 2026-10-11：136 个 issue，74 个已关闭，62 �
 
 ## 当前批次
 
+- #59 第二十一轮全新 Docker 在 `9145b57a` 完整准入：100 ACP 5.65s、Gateway CLIENT/Identity SERVER 各 2 次 Resolve；Identity 停止 5.06s，新输出 186ms、取消并 quiescent 315ms；四类恢复关闭 0.10–1.12s。八门禁及全局诊断通过，154 原始 Trace、81 错误全部归属、636 warning 保留；六个停用 GET 各有真实 access-denial 事件，清理验证通过，3,482 个源码输入结束立即核对未变。原 exit 2 按既有完整 CI 准入规则为已审查 warning，非缺失门禁。282 份证据已按 SHA256 保全至主工作区。远端 Repository checks 另发现 ACP HTTP transport 的 guarded-source hash 未随已 review 的诊断修改同步；路由和调用权限未变，同步该单一 hash 后 `make test-service-authentication` 通过。下一步取消草稿并运行完整 CI，合并仍待。
 - #59 第二十轮 Docker 的业务、清理及七门禁通过；feed 已接到完整配对查询，但一条成功请求包含既有契约允许的 PostgreSQL `connect`，被固定三 span 的验收假设误拒。消费方改为核对同 Identity SERVER/进程、driver/DB endpoint、连接先于唯一 SELECT 及无额外错误；合法连接与错误归属反例先 red 后 green，237 项受影响回归通过，复审补齐 SELECT 与 SERVER 同进程约束。八门禁及全局诊断离线复验通过，81 错误全部归属、642 warning 保留，158 原始输入未改；第二十轮原 exit 1 和清理保持。下一步第二十一轮真实 Docker 和完整集成 CI。
 - #59 第十九轮 Docker 已验证业务、关闭原因及清理，最终因 feed 接线遗漏退出 1：已归档 SERVER 配对查询未传给 inspector，其余七门禁通过。3,482 个源码输入结束立即核对未变；补传字段的三个 callback 用例先 red 后 green，333 项受影响回归及独立 review 通过。使用该轮真实原始搜索和 Trace 离线复验，八门禁及全局诊断通过，81 个错误全部归属、695 个 warning 原样保留、158 个输入未变；不改认原 Docker 失败。下一步全新第二十轮 Docker，再运行完整集成 CI。
 - #59 ACP 关闭原因消费方已通过本地复审：精确核对原 GET 的 access-denial event、同 view principal/Agent/组织、实际已提交停用及 disabled readback；允许六个保留 GET 全在停用阶段关闭，但未带事件的断流仍受原停机窗口约束。三种关闭来源及全部停用先 red 后 green，739 项受影响回归无失败或跳过，独立 review 无阻塞。下一步全新第十九轮 Docker，随后取消草稿跑完整集成 CI；旧第十八轮仍失败，Node SDK 亚毫秒调查继续暂缓。
