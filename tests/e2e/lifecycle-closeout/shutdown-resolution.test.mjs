@@ -15,9 +15,93 @@ import {
   triggerID,
 } from "../observability/gateway-resolution-fixtures.mjs";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
+import { inspectWorkspaceWatch } from "../workspace-closeout/current-trace.mjs";
 
 const inspect = (f) =>
   evidence.inspectShutdownTrace(f.trace, f.expected, ["PRIVATE"], f);
+
+function cacheDeliveryRecheckFixture() {
+  const f = shutdownResolutionFixture("rpc", true);
+  for (const span of [f.root, f.upstream, f.receiver])
+    span.duration += 10_000_000;
+  for (const field of ["start", "end"]) f.expected.stopWindow[field] += 10_000;
+  for (const field of ["liveAt", "startedAt", "completedAt"])
+    f.expected.stop[field] += 10_000;
+  f.expected.closure.observedAt += 10_000;
+  for (const value of f.expected.stop.after)
+    value.finished = new Date(
+      Date.parse(value.finished) + 10_000,
+    ).toISOString();
+  f.expected.clock = {
+    requestStartedAt: 1000,
+    responseReceivedAt: 1000,
+    serverDate: new Date(1000).toUTCString(),
+  };
+  const cached = addShutdownCheck(f, {
+    source: "cache",
+    outcome: "admitted",
+    start: 11_010_000,
+    duration: 100,
+  });
+  for (const [key, value] of Object.entries({
+    snapshot_age_ms: 9999,
+    proof_age_ms: 100,
+    valid_for_ms: 1,
+  }))
+    setTag(cached.decision, prefix + key, value);
+  const fresh = addShutdownCheck(f, {
+    source: "rpc",
+    outcome: "admitted",
+    start: 11_012_000,
+    duration: 5000,
+  });
+  const origin = f.trace.spans.find((span) => span.spanID === "resolve-client");
+  const expiry = origin.startTime + 10_000_000;
+  assert(cached.decision.startTime + cached.decision.duration < expiry);
+  assert(expiry < fresh.decision.startTime);
+  return { ...f, cached, fresh };
+}
+
+for (const [name, check] of [
+  ["shutdown", inspect],
+  ["watch", (f) => inspectWorkspaceWatch(f.trace, f.expected, ["PRIVATE"], f)],
+]) {
+  test(`${name} retains a near-expiry cache decision and the subsequent fresh RPC receipt`, () => {
+    const f = cacheDeliveryRecheckFixture();
+    const raw = JSON.stringify([...f.traces.values()]);
+    const result = check(f);
+    assert.deepEqual(
+      result.gateway_revalidations.map((value) => value.source),
+      ["cache", "rpc"],
+    );
+    assert.deepEqual(
+      result.gateway_revalidations.map((value) => value.decision_span_id),
+      [f.cached.decision.spanID, f.fresh.decision.spanID],
+    );
+    assert.equal(result.identity_checks, 2);
+    assert.equal(result.identity_sql, 2);
+    assert.equal(JSON.stringify([...f.traces.values()]), raw);
+  });
+  for (const fault of [
+    "missing-server",
+    "missing-sql",
+    "wrong-parent",
+    "expired-hit",
+  ]) {
+    test(`${name} refuses incomplete ${fault} evidence in a cache-to-RPC recheck`, () => {
+      const f = cacheDeliveryRecheckFixture();
+      if (fault === "missing-server" || fault === "missing-sql") {
+        const removed =
+          fault === "missing-server" ? f.fresh.server : f.fresh.sql;
+        f.trace.spans = f.trace.spans.filter((span) => span !== removed);
+      } else if (fault === "wrong-parent")
+        f.fresh.server.references[0].spanID = f.root.spanID;
+      else setTag(f.cached.decision, prefix + "valid_for_ms", 0);
+      assert.throws(() => check(f));
+    });
+  }
+}
+
 for (const executionState of [false, true])
   for (const source of ["rpc", "cache", "shared"])
     test(`${executionState ? "state" : "events"} shutdown validates ${source} initial admission and cache revalidation`, () => {
