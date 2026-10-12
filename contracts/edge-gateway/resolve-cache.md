@@ -244,6 +244,22 @@ with the actual outage and failure evidence; an anonymous Identity CLIENT is
 not sufficient proof of a failed feed request. Historical traces without the
 witness remain unclassified.
 
+The outage feed consumer keeps the broad Gateway Identity CLIENT search and
+its fixed query window, all search rounds, three stable rounds and complete
+archive coverage. It reconciles that inventory against all matching archived
+CLIENTs before selecting process-owned feed roots; browser requests and other
+work remain in the raw diagnostic set. A failed feed claim requires the fixed
+method witness, a lone root CLIENT with no response or receiver, the exact
+send-stage transport error and the observed Identity container lifecycle.
+Distinguish sends that fail during the actual stopped interval (including
+already in-flight attempts) from failures after restart begins but before
+readiness. The latter must finish before
+both the healthy observation and the first successful post-restart feed.
+Neither phase admits a failure after recovery, an unidentified process root,
+an unrelated error field/event or a missing attempt. Successful feed responses
+retain their actual Identity receiver and read-only session-revocation SELECT.
+Claims never change the original strict result or cover other inventory errors.
+
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
 under the current HTTP or ACP-message root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
