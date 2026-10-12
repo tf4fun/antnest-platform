@@ -17,6 +17,7 @@ import { runCommand } from "../../../support/run-command.mjs";
 import { rotateIdentityFixture } from "./rekey-flow.mjs";
 import { exerciseBrowserSessions } from "./browser-sessions-flow.mjs";
 import { exerciseOIDCPolicy } from "./oidc-policy-flow.mjs";
+import { exercisePasswordResources } from "./password-resource-flow.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-identity-auth-${randomUUID()}`;
@@ -399,6 +400,35 @@ try {
   assert.equal(stopped.State.ExitCode, 0);
   checks++;
   await docker(["rm", healthName]);
+  stage = "password-resources";
+  const resources = await exercisePasswordResources({
+    env,
+    docker,
+    compose,
+    project,
+    id,
+    url,
+    token: tokens["edge-gateway"],
+    signal: controller.signal,
+    evidence,
+    recover: async () => {
+      const fresh = await rpc("local-login", {
+        request_id: randomUUID(),
+        organization_slug: "auth-test",
+        email: "admin@example.test",
+        password: env.IDENTITY_TEST_ADMIN_PASSWORD,
+      });
+      assert.deepEqual(fresh.principal, login.principal);
+      const resolved = await rpc("resolve-access-token", {
+        access_token: fresh.access_token,
+        profile: "console",
+      });
+      assert.deepEqual(resolved.principal, fresh.principal);
+      await rpc("revoke-access-token", { access_token: fresh.access_token });
+      return { login: true, resolve: true, revoke: true };
+    },
+  });
+  checks += resources.requests;
   stage = "encryption-key-rotation";
   const rotation = await rotateIdentityFixture({
     env,
@@ -471,6 +501,7 @@ try {
           "identity-service",
           "postgres",
           "purpose-health",
+          "password-rss-probe",
           "oidc-fixture",
         ].includes(service),
       );

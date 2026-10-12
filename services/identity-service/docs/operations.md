@@ -92,6 +92,14 @@ Identity batch of the [password policy](../../../contracts/identity/password-ver
 The memory budget bounds active Argon2 work, not total process RSS or garbage
 collector retention. Container pressure and recovery require separate evidence.
 
+HTTP completion logs attach `password_admission_reason` only to a typed KDF
+admission error: `queue_full`, `wait_expired`, `weight_exceeds_budget` or
+`shutdown`. A database lock timeout is not reported as a KDF rejection. The
+`Identity password resources drained` shutdown event is emitted after all
+started KDFs have joined, before the database pool and telemetry are closed. It
+contains numeric policy, active/queued work, reserved memory, peak admission
+and rejection counters; it contains no account or credential values.
+
 ## Secret Handling
 
 - Database URLs and URL credentials are redacted from diagnostics.

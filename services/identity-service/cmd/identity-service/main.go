@@ -192,7 +192,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	defer passwords.Close()
+	defer drainPasswordResources(passwords, cfg.Passwords, logger)
 	if err := initializeIdentityFacts(ctx, cfg, store, logger, passwords); err != nil {
 		return classifyFailure("identity_bootstrap", err)
 	}
@@ -303,6 +303,23 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		)
 	}
 	return resultErr
+}
+
+type passwordResources interface {
+	Close()
+	Stats() credentials.PasswordStats
+}
+
+func drainPasswordResources(resources passwordResources, config credentials.PasswordConfig, logger *slog.Logger) {
+	resources.Close()
+	stats := resources.Stats()
+	logger.Info("Identity password resources drained",
+		"memory_budget_kib", config.MemoryBudgetKiB, "max_concurrent", config.MaxConcurrent,
+		"policy_memory_kib", config.Policy.MemoryKiB, "policy_iterations", config.Policy.Iterations, "policy_parallelism", config.Policy.Parallelism,
+		"active", stats.Active, "memory_kib", stats.MemoryKiB, "queued", stats.Queued,
+		"peak_active", stats.PeakActive, "peak_memory_kib", stats.PeakMemoryKiB,
+		"queue_rejected", stats.QueueRejected, "wait_expired", stats.WaitExpired, "over_budget", stats.OverBudget,
+	)
 }
 
 func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repository.Store, logger *slog.Logger, passwords credentials.Passwords) error {

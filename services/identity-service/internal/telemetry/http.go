@@ -108,6 +108,9 @@ func finishHTTPRequest(ctx context.Context, span trace.Span, logger *slog.Logger
 		if observed.err != nil {
 			code, message := ErrorSummary(observed.err)
 			fields = append(fields, "error_type", code, "error_message", message, "cause_types", causeTypes(observed.err))
+			if reason := passwordAdmissionReason(observed.err); reason != "" {
+				fields = append(fields, "password_admission_reason", reason)
+			}
 		}
 		logger.InfoContext(ctx, "Identity HTTP request completed", fields...)
 	}

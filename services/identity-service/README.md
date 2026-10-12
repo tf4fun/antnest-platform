@@ -244,6 +244,14 @@ snapshots check that rejected work preserves credentials, tokens and revocation
 feeds. Production-container RSS requires its separate Docker pressure gate.
 `node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
 in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
+200 concurrent independent unknown-account logins at the default Argon2 cost,
+attributing every busy response to an actual KDF queue rejection. A nonroot
+sampler shares the original Identity PID namespace, reads raw `/proc` high-water
+and current RSS through pressure and real-login recovery, and rejects missing
+sources, restarts or an exceeded memory allowance. Numeric shutdown receipts
+prove that work joined and all permits drained before the original container is
+replaced for key rotation. These measurements are evidence for this run, not a
+universal or byte-exact RSS bound. The suite also checks
 real policy-gated callbacks and review persistence through rotation, toggles
 and service restart. The broader `make e2e-identity-core`
 is an integration gate after Gateway/Console adoption; it checks token

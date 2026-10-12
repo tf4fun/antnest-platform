@@ -120,12 +120,8 @@ func recordError(span trace.Span, phase string, err error, failure bool) {
 	if errors.As(err, &postgres) && validSQLState(postgres.Code) {
 		attrs = append(attrs, attribute.String("db.response.status_code", postgres.Code))
 	}
-	var admission *credentials.PasswordAdmissionError
-	if errors.As(err, &admission) {
-		switch admission.Reason {
-		case "queue_full", "wait_expired", "weight_exceeds_budget", "shutdown":
-			attrs = append(attrs, attribute.String("antnest.password.admission_reason", admission.Reason))
-		}
+	if reason := passwordAdmissionReason(err); reason != "" {
+		attrs = append(attrs, attribute.String("antnest.password.admission_reason", reason))
 	}
 	span.SetAttributes(attrs...)
 	span.AddEvent("antnest.error", trace.WithAttributes(attrs...))
@@ -137,6 +133,17 @@ func recordError(span trace.Span, phase string, err error, failure bool) {
 	if failure {
 		span.SetStatus(codes.Error, code)
 	}
+}
+
+func passwordAdmissionReason(err error) string {
+	var admission *credentials.PasswordAdmissionError
+	if errors.As(err, &admission) {
+		switch admission.Reason {
+		case "queue_full", "wait_expired", "weight_exceeds_budget", "shutdown":
+			return admission.Reason
+		}
+	}
+	return ""
 }
 
 func validSQLState(value string) bool {
