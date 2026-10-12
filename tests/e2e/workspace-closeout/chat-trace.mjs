@@ -227,7 +227,7 @@ function heldModelCancellation(trace, expected, boundary, model, http) {
     ),
     "held model cancellation executed a Tool",
   );
-  cancelledModelError(trace, model, http, expected.cancellationCause);
+  return cancelledModelError(trace, model, http, expected.cancellationCause);
 }
 
 function cancelledModelError(trace, model, http, cause) {
@@ -302,6 +302,18 @@ function cancelledModelError(trace, model, http, cause) {
       span === model || span === http,
       "unrelated error in cancelled chat",
     );
+  return [
+    {
+      trace_id: trace.traceID,
+      span_id: model.spanID,
+      reason: "model-cancellation",
+    },
+    {
+      trace_id: trace.traceID,
+      span_id: http.spanID,
+      reason: "model-http-cancellation",
+    },
+  ];
 }
 
 export function inspectWorkspaceChatTrace(
@@ -418,6 +430,7 @@ export function inspectWorkspaceChatTrace(
     assert(cancelled, "held model cancellation not observed");
   if (expected.phase === "c4-cache-outage")
     assert(cancelled, "outage model cancellation not observed");
+  let ownedErrorSpans = [];
   let checked, endQuantization;
   if (cancelled) {
     if (expected.phase === "c4-cache-outage") {
@@ -428,9 +441,19 @@ export function inspectWorkspaceChatTrace(
         finishes[0],
       );
       endQuantization = cancellation.endQuantization;
-      cancelledModelError(trace, cancellation.model, cancellation.http);
+      ownedErrorSpans = cancelledModelError(
+        trace,
+        cancellation.model,
+        cancellation.http,
+      );
     } else {
-      heldModelCancellation(trace, expected, boundary, models[0], clients[0]);
+      ownedErrorSpans = heldModelCancellation(
+        trace,
+        expected,
+        boundary,
+        models[0],
+        clients[0],
+      );
     }
     checked = {
       ...chatTraceEvidence(
@@ -462,6 +485,7 @@ export function inspectWorkspaceChatTrace(
   }
   return {
     ...checked,
+    owned_error_spans: ownedErrorSpans,
     gateway_resolution: resolution,
     run_id: tag(run, "antnest.run.id"),
     provider_requests: requests.length,

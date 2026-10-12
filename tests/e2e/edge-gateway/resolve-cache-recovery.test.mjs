@@ -341,6 +341,18 @@ test("recovery Run gate binds all four actual Provider requests and durable term
   assert.equal(result.status, "passed");
   assert.equal(result.runs.length, 4);
   assert.equal(result.runs[3].expected_cancellation, true);
+  for (const run of result.runs.slice(0, 3))
+    assert.deepEqual(run.owned_error_spans, []);
+  const id = f.evidence.recovery.cases[3].prompt.trace_id;
+  assert.deepEqual(result.owned_error_spans, [
+    { trace_id: id, span_id: "model", reason: "model-cancellation" },
+    {
+      trace_id: id,
+      span_id: "1111111111111111",
+      reason: "model-http-cancellation",
+    },
+  ]);
+  assert.deepEqual(result.runs[3].owned_error_spans, result.owned_error_spans);
 });
 for (const [name, change] of [
   [

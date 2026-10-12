@@ -33,8 +33,25 @@ for (const source of ["rpc", "cache", "shared"])
     assert.equal(checked.runtime_calls, 1);
     assert.equal(checked.strict_trace, "failed");
     assert.equal(checked.gateway_resolution.source, source);
+    assert.deepEqual(checked.owned_error_spans, [
+      {
+        trace_id: f.trace.traceID,
+        span_id: f.model.spanID,
+        reason: "model-cancellation",
+      },
+      {
+        trace_id: f.trace.traceID,
+        span_id: f.http.spanID,
+        reason: "model-http-cancellation",
+      },
+    ]);
     assert.equal(JSON.stringify([...f.traces.values()]), before);
   });
+
+test("successful chat has no cancellation error claims", () => {
+  const f = workspaceChatFixture();
+  assert.deepEqual(inspect(f).owned_error_spans, []);
+});
 
 test("outage cancellation identifies stages by actual request IDs, independent of array order", () => {
   const f = workspaceOutageFixture();

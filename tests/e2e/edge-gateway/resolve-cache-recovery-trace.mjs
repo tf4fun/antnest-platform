@@ -56,5 +56,10 @@ export function inspectRecoveryRunTraces(evidence, collection, secrets = []) {
     );
     return { name: c.name, ...report };
   });
-  return { status: "passed", business, runs };
+  return {
+    status: "passed",
+    business,
+    runs,
+    owned_error_spans: runs.flatMap((run) => run.owned_error_spans),
+  };
 }
