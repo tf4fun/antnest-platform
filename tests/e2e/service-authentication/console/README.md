@@ -15,6 +15,13 @@ original signed CCT, exact actor/scope fields and command namespace. Responses
 test private-field projection, malformed data rejection, sanitized errors,
 `no-store`, no Cookie forwarding and no mutation replay.
 
+The create-user password matrix additionally checks canonical busy failures,
+invalid status/body/retry metadata, mixed success/error responses and connection
+loss. Each case records one signed Identity RPC and zero users created in the
+double, preserves an authenticated follow-up read, and recovers on an explicit
+later create. Counts are checked again after Console shutdown. Private receipts
+are written to `password-admission.json`; passwords and CCTs are not recorded.
+
 `npm --prefix services/admin-console/web run test:browser:sessions` additionally
 runs the built Console's desktop and mobile account/OIDC flows, including
 independent notice pagination, exact notice acknowledgment, plaintext subjects,

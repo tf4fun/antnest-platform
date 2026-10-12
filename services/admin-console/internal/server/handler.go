@@ -284,8 +284,7 @@ func (h *handler) createLocalUser(response http.ResponseWriter, request *http.Re
 		"organization_id": actor.OrganizationID, "email": input.Email,
 		"display_name": input.DisplayName, "password": input.Password, "role": input.Role,
 	}
-	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
-		"/rpc/identity/create-local-user", "", payload, projectDirectoryMember)
+	h.forwardCreateLocalUser(response, request, payload)
 }
 
 type updateMembershipInput struct {

@@ -73,6 +73,15 @@ browser must sign in again, including when changing its password. Unknown or
 malformed `401` responses are not exempted. Dependency `503` failures keep the
 session and allow an explicit retry; no password command is retried automatically.
 
+Console revision 53 also consumes Identity revision 17 password admission when
+creating a local user. A valid `503 credential_busy` retains `retryable: true`
+and the single `Retry-After: 1` header. Malformed metadata or an unavailable
+transport yields `503 identity_unavailable` without a retry hint. Existing
+parameter, authority and conflict errors retain their status/code with bounded
+messages. Responses are `no-store` and write no Cookies; the form keeps its
+input and only a new explicit click submits again. This hint never schedules a
+retry or stores a password. See the [wire policy](../../../contracts/identity/password-verification.md).
+
 The [browser session policy](../../../contracts/identity/browser-sessions.md)
 defines the default 30-minute idle and 12-hour absolute limits. Only genuine
 input triggers `/api/session/activity`; background reads, event recovery,

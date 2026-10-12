@@ -16,6 +16,7 @@ const read = (name) =>
   );
 const identity = read("identity/identity-contract.json");
 const gateway = read("edge-gateway/session-contract.json");
+const consoleContract = read("admin-console/admin-contract.json");
 const policy = () => read("identity/password-verification-policy.json");
 
 test("both owning contracts reference one versioned password policy", () => {
@@ -502,6 +503,37 @@ test("Console user creation has an explicit bounded busy-error consumer batch", 
     invalid_failure_metadata: "503-identity_unavailable-without-retry-after",
     consumer_batch: "admin-console-consumer",
   });
+});
+
+test("Console revision 53 activates busy admission only on user creation", () => {
+  assert.equal(consoleContract.version, 53);
+  const route = consoleContract.routes.create_local_user;
+  assert.equal(route.password_failure_schema, "password-failure.schema.json");
+  assert.deepEqual(route.error_status_by_code, { credential_busy: 503 });
+  assert.equal(
+    route.retry_after_policy,
+    "../identity/password-verification-policy.json#/wire",
+  );
+  for (const [name, value] of Object.entries(consoleContract.routes)) {
+    if (name !== "create_local_user")
+      assert.equal(value.password_failure_schema, undefined);
+  }
+  const validate = new Ajv2020({ strict: true }).compile(
+    read("admin-console/password-failure.schema.json"),
+  );
+  const busy = failure("credential_busy").body;
+  assert.equal(validate(busy), true);
+  for (const candidate of [
+    failure().body,
+    { ...busy, retryable: false },
+    { ...busy, message: "private password" },
+    { ...busy, password: "private password" },
+    { ...busy, retry_after: "1" },
+    { code: busy.code, message: busy.message },
+    { code: busy.code, retryable: true },
+    { message: busy.message, retryable: true },
+  ])
+    assert.equal(validate(candidate), false);
 });
 
 test("real password rotation retains the browser-session authority and all-session revocation boundary", () => {

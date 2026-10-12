@@ -8,6 +8,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { createFixture, callerContext } from "./auth-fixture.mjs";
 import { verifyOIDCLinking } from "./oidc-linking.mjs";
+import {
+  passwordCases,
+  passwordCaseEmail,
+  passwordCanary,
+} from "./password-fixture.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 export async function runConsoleAcceptance({
@@ -58,6 +63,7 @@ export async function runConsoleAcceptance({
   let checks = 0,
     complete = false,
     cleaned = false;
+  const passwordAdmission = { cases: [], afterStop: null };
   try {
     await docker(
       [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "120"],
@@ -272,6 +278,91 @@ export async function runConsoleAcceptance({
           body,
           status,
         });
+      for (const scenario of passwordCases) {
+        const context = callerContext(fixture);
+        const before = (await state()).passwordAdmission;
+        const result = await request("/api/admin/directory/users", {
+          method: "POST",
+          status: 503,
+          context,
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": `console-password-${scenario.id}`,
+            Cookie: "existing=browser-private",
+          },
+          body: JSON.stringify({
+            email: passwordCaseEmail(scenario.id),
+            display_name: "Password admission",
+            password: passwordCanary,
+            role: "member",
+          }),
+        });
+        assert.deepEqual(
+          JSON.parse(result.text),
+          scenario.valid
+            ? {
+                code: "credential_busy",
+                message: "Password verification is busy",
+                retryable: true,
+              }
+            : {
+                code: "identity_unavailable",
+                message: "Identity Service is unavailable",
+              },
+        );
+        assert.equal(
+          result.response.headers.get("retry-after"),
+          scenario.valid ? "1" : null,
+        );
+        assert.equal(result.response.headers.get("cache-control"), "no-store");
+        assert.equal(result.response.headers.get("set-cookie"), null);
+        assert(!result.text.includes(passwordCanary));
+        const after = (await state()).passwordAdmission;
+        assert.equal(after.total, before.total + 1);
+        assert.equal(after.created, before.created);
+        assert.equal(after.calls[scenario.id], 1);
+        assert.equal(
+          after.contexts[scenario.id],
+          createHash("sha256").update(context).digest("hex"),
+        );
+        const receipt = {
+          id: scenario.id,
+          status: result.response.status,
+          rpcCalls: 1,
+          usersCreated: 0,
+          noCookie: true,
+          noStore: true,
+          recovery: false,
+        };
+        passwordAdmission.cases.push(receipt);
+        await request("/api/admin/directory", {
+          context,
+          headers: { Cookie: "existing=browser-private" },
+        });
+        const recovered = await request("/api/admin/directory/users", {
+          method: "POST",
+          context,
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": `console-recovery-${scenario.id}`,
+          },
+          body: JSON.stringify({
+            email: `recovered-${scenario.id}@example.test`,
+            display_name: "Recovered",
+            password: passwordCanary,
+            role: "member",
+          }),
+        });
+        assert.equal(JSON.parse(recovered.text).user.id, "created-user");
+        assert.equal(recovered.response.headers.get("set-cookie"), null);
+        const final = (await state()).passwordAdmission;
+        assert.equal(final.total, after.total + 1);
+        assert.equal(final.created, after.created + 1);
+        assert.equal(final.calls[scenario.id], 1);
+        receipt.recovery = true;
+        checks++;
+      }
+      assert(!(await docker(["logs", id])).includes(passwordCanary));
       for (const name of [
         "Antnest-Service-Authorization",
         "Antnest-Caller-Context",
@@ -667,6 +758,17 @@ export async function runConsoleAcceptance({
         checks++;
       }
     }
+    if (authentication) {
+      const after = (await state()).passwordAdmission;
+      for (const scenario of passwordCases)
+        assert.equal(after.calls[scenario.id], 1);
+      passwordAdmission.afterStop = {
+        checkedAfterStop: shutdown,
+        calls: after.calls,
+      };
+      assert(!(await docker(["logs", id])).includes(passwordCanary));
+      checks++;
+    }
     complete = true;
   } finally {
     clearTimeout(timer);
@@ -710,6 +812,12 @@ export async function runConsoleAcceptance({
           JSON.stringify({ project, complete, cleaned, checks }) + "\n",
           { mode: 0o600 },
         );
+        if (authentication)
+          writeFileSync(
+            resolve(evidence, "password-admission.json"),
+            JSON.stringify(passwordAdmission, null, 2) + "\n",
+            { mode: 0o600 },
+          );
       }
     }
   }

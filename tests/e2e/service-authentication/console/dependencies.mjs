@@ -3,6 +3,11 @@ import { createServer } from "node:http";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createOIDCFixture } from "./oidc-fixture.mjs";
+import {
+  passwordCases,
+  passwordCaseEmail,
+  passwordCanary,
+} from "./password-fixture.mjs";
 
 const fixture = JSON.parse(readFileSync("/run/auth/fixture.json", "utf8"));
 const publicKey = createPublicKey({ key: fixture.jwks.keys[0], format: "jwk" });
@@ -14,6 +19,7 @@ const stats = {
   active: 0,
   discovery: [],
   browserSessions: [],
+  passwordAdmission: { total: 0, created: 0, calls: {}, contexts: {} },
 };
 const issuedAt = Date.now();
 const oidcFixture = createOIDCFixture(stats);
@@ -97,7 +103,42 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               display_name: "Administrator",
             },
           });
-        if (path === "/rpc/identity/create-local-user")
+        if (path === "/rpc/identity/create-local-user") {
+          const admission = stats.passwordAdmission;
+          admission.total++;
+          const scenario = passwordCases.find(
+            (item) => body.email === passwordCaseEmail(item.id),
+          );
+          if (scenario) {
+            if (
+              r.method !== "POST" ||
+              Object.keys(body).length !== 7 ||
+              body.organization_id !== claims.org ||
+              body.actor_principal_id !== claims.sub ||
+              body.password !== passwordCanary ||
+              body.role !== "member" ||
+              !body.request_id?.startsWith("directory-")
+            )
+              throw Error("create_user_scope_invalid");
+            admission.calls[scenario.id] =
+              (admission.calls[scenario.id] ?? 0) + 1;
+            admission.contexts[scenario.id] = createHash("sha256")
+              .update(token)
+              .digest("hex");
+            if (scenario.disconnect) {
+              r.socket.destroy();
+              return;
+            }
+            w.writeHead(scenario.status, {
+              "Content-Type": "application/json",
+              "Cache-Control": "public, max-age=3600",
+              "Set-Cookie": `${passwordCanary}=private`,
+              ...(scenario.retry ? { "Retry-After": scenario.retry } : {}),
+            });
+            w.end(scenario.body);
+            return;
+          }
+          admission.created++;
           return json(w, {
             user: { id: "created-user", system_role: "user", active: true },
             membership: {
@@ -110,6 +151,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               active: true,
             },
           });
+        }
         if (
           [
             "/rpc/identity/list-user-sessions",
